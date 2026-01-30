@@ -719,3 +719,475 @@ class DailyBriefing:
                 'daily_tip': self.daily_tip,
             },
         }
+
+
+# ==============================================================================
+# PROMETHEUS IC TRADING MODELS
+# ==============================================================================
+# These models support PROMETHEUS's own Iron Condor trading using borrowed capital.
+# Instead of deploying to ARES/TITAN/PEGASUS, PROMETHEUS trades its own ICs.
+# ==============================================================================
+
+
+class ICPositionStatus(Enum):
+    """Iron Condor position lifecycle states"""
+    PENDING = "pending"          # Order submitted, awaiting fill
+    OPEN = "open"                # Position is active
+    CLOSING = "closing"          # Close order submitted
+    CLOSED = "closed"            # Position fully closed
+    EXPIRED = "expired"          # Let expire worthless (ideal outcome)
+    STOPPED_OUT = "stopped_out"  # Hit stop loss
+
+
+@dataclass
+class PrometheusICSignal:
+    """
+    A signal to open an Iron Condor position using borrowed capital.
+
+    EDUCATIONAL NOTE - Iron Condor Basics:
+    ======================================
+    An Iron Condor is a neutral options strategy that profits when the
+    underlying stays within a range. It consists of:
+
+    1. Sell OTM Put (lower strike) - collect premium
+    2. Buy further OTM Put (protection) - pay premium
+    3. Sell OTM Call (upper strike) - collect premium
+    4. Buy further OTM Call (protection) - pay premium
+
+    Max Profit: Net credit received (if price stays between short strikes)
+    Max Loss: Width of spread - credit received (if price breaks through)
+
+    PROMETHEUS uses borrowed capital to trade ICs, aiming to earn more
+    from IC premium than the cost of borrowing via box spreads.
+    """
+
+    # Signal identification
+    signal_id: str
+    signal_time: datetime
+    source_box_position_id: str   # Which box spread is funding this trade
+
+    # Underlying details
+    ticker: str                   # SPX (same as box spread for simplicity)
+    spot_price: float             # Current underlying price
+
+    # Put spread (lower side)
+    put_short_strike: float       # Sell this put
+    put_long_strike: float        # Buy this put (protection)
+    put_spread_width: float       # Difference
+
+    # Call spread (upper side)
+    call_short_strike: float      # Sell this call
+    call_long_strike: float       # Buy this call (protection)
+    call_spread_width: float      # Difference
+
+    # Expiration
+    expiration: str               # Target expiration date (YYYY-MM-DD)
+    dte: int                      # Days to expiration (0-7 typically)
+
+    # Pricing
+    put_spread_credit: float      # Credit from put spread
+    call_spread_credit: float     # Credit from call spread
+    total_credit: float           # Net credit received
+    max_loss: float               # If breached
+
+    # Risk metrics
+    probability_of_profit: float  # Estimated PoP
+    delta_of_short_put: float     # Delta of short put
+    delta_of_short_call: float    # Delta of short call
+
+    # Position sizing
+    contracts: int                # Number of contracts
+    margin_required: float        # Margin for this position
+    capital_at_risk: float        # Max loss × contracts
+
+    # Oracle/SAGE recommendation
+    oracle_approved: bool
+    oracle_confidence: float
+    oracle_reasoning: str
+
+    # Market context
+    vix_level: float
+    gamma_regime: str             # POSITIVE/NEGATIVE/NEUTRAL
+    gex_regime: str               # Market maker positioning
+
+    # Validity
+    is_valid: bool = True
+    skip_reason: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'signal_id': self.signal_id,
+            'signal_time': self.signal_time.isoformat() if self.signal_time else None,
+            'source_box_position_id': self.source_box_position_id,
+            'ticker': self.ticker,
+            'spot_price': self.spot_price,
+            'put_spread': {
+                'short_strike': self.put_short_strike,
+                'long_strike': self.put_long_strike,
+                'width': self.put_spread_width,
+                'credit': self.put_spread_credit,
+            },
+            'call_spread': {
+                'short_strike': self.call_short_strike,
+                'long_strike': self.call_long_strike,
+                'width': self.call_spread_width,
+                'credit': self.call_spread_credit,
+            },
+            'expiration': self.expiration,
+            'dte': self.dte,
+            'total_credit': self.total_credit,
+            'max_loss': self.max_loss,
+            'probability_of_profit': self.probability_of_profit,
+            'contracts': self.contracts,
+            'margin_required': self.margin_required,
+            'capital_at_risk': self.capital_at_risk,
+            'oracle_approved': self.oracle_approved,
+            'oracle_confidence': self.oracle_confidence,
+            'oracle_reasoning': self.oracle_reasoning,
+            'vix_level': self.vix_level,
+            'gamma_regime': self.gamma_regime,
+            'gex_regime': self.gex_regime,
+            'is_valid': self.is_valid,
+            'skip_reason': self.skip_reason,
+        }
+
+
+@dataclass
+class PrometheusICPosition:
+    """
+    An active Iron Condor position traded with borrowed capital.
+
+    EDUCATIONAL NOTE - Tracking IC Performance:
+    ===========================================
+    Each IC position is linked to a box spread position. The goal is:
+    IC Returns > Box Spread Borrowing Cost
+
+    Example:
+    - Box spread borrowed $100K at 4.5% annual = $375/month cost
+    - IC trades on that capital earn $2,000/month
+    - Net profit = $2,000 - $375 = $1,625/month
+
+    This position tracks the IC side of that equation.
+    """
+
+    # Position identification
+    position_id: str
+    source_box_position_id: str   # Which box spread funded this
+    ticker: str                   # SPX
+
+    # Leg details
+    put_short_strike: float
+    put_long_strike: float
+    call_short_strike: float
+    call_long_strike: float
+    spread_width: float           # Width of each spread
+
+    # Option symbols (OCC format)
+    put_short_symbol: str
+    put_long_symbol: str
+    call_short_symbol: str
+    call_long_symbol: str
+
+    # Order IDs
+    put_spread_order_id: str
+    call_spread_order_id: str
+
+    # Expiration
+    expiration: str
+    dte_at_entry: int
+    current_dte: int
+
+    # Execution
+    contracts: int
+    entry_credit: float           # Credit per contract (total IC)
+    total_credit_received: float  # entry_credit × contracts × 100
+    max_loss: float               # (spread_width - entry_credit) × contracts × 100
+
+    # Current value (for mark-to-market)
+    current_value: float          # What it would cost to close
+    unrealized_pnl: float         # total_credit - current_value
+
+    # Exit details
+    exit_price: float = 0.0
+    realized_pnl: float = 0.0
+
+    # Market context at entry
+    spot_at_entry: float
+    vix_at_entry: float
+    gamma_regime_at_entry: str
+
+    # Oracle decision context
+    oracle_confidence_at_entry: float
+    oracle_reasoning: str
+
+    # Status
+    status: ICPositionStatus = ICPositionStatus.OPEN
+    open_time: datetime = None
+    close_time: Optional[datetime] = None
+    close_reason: str = ""
+
+    # Risk management
+    stop_loss_pct: float = 200.0  # Close if loss reaches 200% of credit
+    profit_target_pct: float = 50.0  # Close if profit reaches 50% of credit
+    time_stop_dte: int = 0        # Close at this DTE if still open
+
+    # Audit trail
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'position_id': self.position_id,
+            'source_box_position_id': self.source_box_position_id,
+            'ticker': self.ticker,
+            'put_spread': {
+                'short_strike': self.put_short_strike,
+                'long_strike': self.put_long_strike,
+            },
+            'call_spread': {
+                'short_strike': self.call_short_strike,
+                'long_strike': self.call_long_strike,
+            },
+            'spread_width': self.spread_width,
+            'expiration': self.expiration,
+            'dte_at_entry': self.dte_at_entry,
+            'current_dte': self.current_dte,
+            'contracts': self.contracts,
+            'entry_credit': self.entry_credit,
+            'total_credit_received': self.total_credit_received,
+            'max_loss': self.max_loss,
+            'current_value': self.current_value,
+            'unrealized_pnl': self.unrealized_pnl,
+            'exit_price': self.exit_price,
+            'realized_pnl': self.realized_pnl,
+            'spot_at_entry': self.spot_at_entry,
+            'vix_at_entry': self.vix_at_entry,
+            'gamma_regime_at_entry': self.gamma_regime_at_entry,
+            'oracle_confidence_at_entry': self.oracle_confidence_at_entry,
+            'oracle_reasoning': self.oracle_reasoning,
+            'status': self.status.value,
+            'open_time': self.open_time.isoformat() if self.open_time else None,
+            'close_time': self.close_time.isoformat() if self.close_time else None,
+            'close_reason': self.close_reason,
+            'stop_loss_pct': self.stop_loss_pct,
+            'profit_target_pct': self.profit_target_pct,
+            'time_stop_dte': self.time_stop_dte,
+        }
+
+
+@dataclass
+class PrometheusICConfig:
+    """
+    Configuration for PROMETHEUS IC trading.
+
+    EDUCATIONAL NOTE - IC Trading Parameters:
+    =========================================
+    These settings control how PROMETHEUS trades Iron Condors
+    using the capital borrowed via box spreads.
+
+    The goal is to earn consistent premium while managing risk.
+    """
+
+    # Trading mode
+    enabled: bool = True          # Enable IC trading
+    mode: TradingMode = TradingMode.PAPER
+
+    # Underlying
+    ticker: str = "SPX"           # Trade SPX (matches box spreads)
+
+    # Expiration preferences
+    target_dte_min: int = 0       # 0DTE trading
+    target_dte_max: int = 7       # Up to weekly
+    prefer_0dte: bool = True      # Focus on 0DTE
+
+    # Strike selection (delta-based)
+    short_put_delta: float = 0.10   # ~10 delta for short put
+    short_call_delta: float = 0.10  # ~10 delta for short call
+    spread_width: float = 25.0      # $25 wide spreads on SPX
+
+    # Position sizing
+    max_positions: int = 3          # Max simultaneous IC positions
+    max_capital_per_trade_pct: float = 10.0  # Max 10% of borrowed capital per trade
+    max_daily_trades: int = 5       # Max trades per day
+
+    # Risk management
+    stop_loss_pct: float = 200.0    # Close if loss = 200% of credit
+    profit_target_pct: float = 50.0 # Close if profit = 50% of credit
+    time_stop_dte: int = 0          # Close at expiration
+
+    # Oracle integration
+    require_oracle_approval: bool = True
+    min_oracle_confidence: float = 0.6
+    min_win_probability: float = 0.50
+
+    # VIX filters
+    min_vix: float = 12.0         # Don't trade if VIX too low (thin premiums)
+    max_vix: float = 35.0         # Don't trade if VIX too high (too risky)
+
+    # Trading window
+    entry_start: str = "08:35"    # 8:35 AM CT
+    entry_end: str = "14:30"      # 2:30 PM CT (stop new trades before close)
+    exit_by: str = "15:00"        # Exit all by 3:00 PM CT
+
+    # Cooldown
+    cooldown_after_loss_minutes: int = 30  # Wait after a loss
+    cooldown_after_win_minutes: int = 15   # Brief pause after win
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'enabled': self.enabled,
+            'mode': self.mode.value,
+            'ticker': self.ticker,
+            'expiration': {
+                'target_dte_min': self.target_dte_min,
+                'target_dte_max': self.target_dte_max,
+                'prefer_0dte': self.prefer_0dte,
+            },
+            'strikes': {
+                'short_put_delta': self.short_put_delta,
+                'short_call_delta': self.short_call_delta,
+                'spread_width': self.spread_width,
+            },
+            'sizing': {
+                'max_positions': self.max_positions,
+                'max_capital_per_trade_pct': self.max_capital_per_trade_pct,
+                'max_daily_trades': self.max_daily_trades,
+            },
+            'risk': {
+                'stop_loss_pct': self.stop_loss_pct,
+                'profit_target_pct': self.profit_target_pct,
+                'time_stop_dte': self.time_stop_dte,
+            },
+            'oracle': {
+                'require_approval': self.require_oracle_approval,
+                'min_confidence': self.min_oracle_confidence,
+                'min_win_probability': self.min_win_probability,
+            },
+            'vix_filters': {
+                'min_vix': self.min_vix,
+                'max_vix': self.max_vix,
+            },
+            'trading_window': {
+                'entry_start': self.entry_start,
+                'entry_end': self.entry_end,
+                'exit_by': self.exit_by,
+            },
+            'cooldown': {
+                'after_loss_minutes': self.cooldown_after_loss_minutes,
+                'after_win_minutes': self.cooldown_after_win_minutes,
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'PrometheusICConfig':
+        """Create config from dictionary"""
+        config = cls()
+        if 'mode' in data:
+            config.mode = TradingMode(data['mode'])
+        if 'enabled' in data:
+            config.enabled = data['enabled']
+
+        # Handle nested structures
+        if 'expiration' in data:
+            config.target_dte_min = data['expiration'].get('target_dte_min', 0)
+            config.target_dte_max = data['expiration'].get('target_dte_max', 7)
+            config.prefer_0dte = data['expiration'].get('prefer_0dte', True)
+
+        if 'strikes' in data:
+            config.short_put_delta = data['strikes'].get('short_put_delta', 0.10)
+            config.short_call_delta = data['strikes'].get('short_call_delta', 0.10)
+            config.spread_width = data['strikes'].get('spread_width', 25.0)
+
+        if 'sizing' in data:
+            config.max_positions = data['sizing'].get('max_positions', 3)
+            config.max_capital_per_trade_pct = data['sizing'].get('max_capital_per_trade_pct', 10.0)
+            config.max_daily_trades = data['sizing'].get('max_daily_trades', 5)
+
+        if 'risk' in data:
+            config.stop_loss_pct = data['risk'].get('stop_loss_pct', 200.0)
+            config.profit_target_pct = data['risk'].get('profit_target_pct', 50.0)
+            config.time_stop_dte = data['risk'].get('time_stop_dte', 0)
+
+        if 'oracle' in data:
+            config.require_oracle_approval = data['oracle'].get('require_approval', True)
+            config.min_oracle_confidence = data['oracle'].get('min_confidence', 0.6)
+            config.min_win_probability = data['oracle'].get('min_win_probability', 0.50)
+
+        return config
+
+
+@dataclass
+class PrometheusPerformanceSummary:
+    """
+    Combined performance summary for PROMETHEUS system.
+
+    Shows both box spread (borrowing) and IC trading (returns) performance.
+    """
+
+    summary_time: datetime
+
+    # Box Spread Performance (Capital Raising Side)
+    total_box_positions: int
+    total_borrowed: float
+    total_borrowing_cost: float
+    average_borrowing_rate: float
+    borrowing_cost_to_date: float
+
+    # IC Trading Performance (Returns Side)
+    total_ic_trades: int
+    ic_win_rate: float
+    total_ic_premium_collected: float
+    total_ic_realized_pnl: float
+    total_ic_unrealized_pnl: float
+    average_ic_return_per_trade: float
+
+    # Combined Performance
+    net_profit: float             # IC returns - borrowing costs
+    roi_on_borrowed_capital: float  # Net profit / total borrowed
+    monthly_return_rate: float    # Annualized return rate
+
+    # Risk Metrics
+    max_drawdown: float
+    sharpe_ratio: float
+    win_streak: int
+    loss_streak: int
+
+    # Comparison
+    vs_margin_borrowing: float    # What you saved vs margin loan
+    vs_buy_and_hold_spx: float    # Performance vs just holding SPX
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'summary_time': self.summary_time.isoformat(),
+            'box_spread': {
+                'total_positions': self.total_box_positions,
+                'total_borrowed': self.total_borrowed,
+                'total_cost': self.total_borrowing_cost,
+                'avg_rate': self.average_borrowing_rate,
+                'cost_to_date': self.borrowing_cost_to_date,
+            },
+            'ic_trading': {
+                'total_trades': self.total_ic_trades,
+                'win_rate': self.ic_win_rate,
+                'premium_collected': self.total_ic_premium_collected,
+                'realized_pnl': self.total_ic_realized_pnl,
+                'unrealized_pnl': self.total_ic_unrealized_pnl,
+                'avg_return_per_trade': self.average_ic_return_per_trade,
+            },
+            'combined': {
+                'net_profit': self.net_profit,
+                'roi': self.roi_on_borrowed_capital,
+                'monthly_return': self.monthly_return_rate,
+            },
+            'risk': {
+                'max_drawdown': self.max_drawdown,
+                'sharpe_ratio': self.sharpe_ratio,
+                'win_streak': self.win_streak,
+                'loss_streak': self.loss_streak,
+            },
+            'comparison': {
+                'vs_margin': self.vs_margin_borrowing,
+                'vs_buy_hold': self.vs_buy_and_hold_spx,
+            },
+        }
+
