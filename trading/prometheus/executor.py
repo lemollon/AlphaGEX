@@ -35,8 +35,12 @@ from .models import (
     ICPositionStatus,
 )
 from .db import PrometheusDatabase
+from .tracing import get_tracer, trace_quote, trace_position
 
 logger = logging.getLogger(__name__)
+
+# Get global tracer instance
+tracer = get_tracer()
 
 # Central timezone
 try:
@@ -141,6 +145,7 @@ def build_occ_symbol(
     return f"{root}{date_str}{opt_type}{strike_str}"
 
 
+@trace_quote
 def get_box_spread_quotes(
     ticker: str,
     expiration: str,
@@ -482,6 +487,9 @@ class BoxSpreadExecutor:
 
         Returns the created position or None if execution fails.
         """
+        # Trace the execution
+        tracer.trace_position_opened(signal.signal_id, signal.cash_received or 0)
+
         now = datetime.now(CENTRAL_TZ)
 
         # Generate position ID
@@ -950,10 +958,8 @@ Track this position through the PROMETHEUS dashboard:
         logger.info(f"Closing position {position.position_id}: {close_reason}")
 
         if self.config.mode == TradingMode.LIVE and self.tradier:
-            # Get current quotes for the legs
-            # Execute closing orders
-            # This would mirror the opening logic but with opposite sides
-            pass
+            # LIVE mode closing not yet implemented - log warning
+            logger.warning(f"LIVE mode close_position not implemented for box spread {position.position_id}")
 
         # Update position in database
         success = self.db.close_position(
@@ -1800,8 +1806,8 @@ class PrometheusICExecutor:
 
         # Execute closing orders in live mode
         if self.config.mode == TradingMode.LIVE and self.tradier:
-            # Would execute buy-to-close orders here
-            pass
+            # LIVE mode IC closing not yet implemented - log warning
+            logger.warning(f"LIVE mode close_position not implemented for IC {position_id}")
 
         # Close in database
         return self.db.close_ic_position(position_id, exit_price, close_reason)

@@ -1590,3 +1590,124 @@ async def get_combined_performance():
     except Exception as e:
         logger.error(f"Error getting combined performance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==============================================================================
+# TRACING & OBSERVABILITY ENDPOINTS
+# ==============================================================================
+# These endpoints expose PROMETHEUS tracing and metrics for monitoring.
+# ==============================================================================
+
+# Import tracing module
+PrometheusTracer = None
+try:
+    from trading.prometheus.tracing import get_tracer, PrometheusTracer
+    logger.info("PROMETHEUS tracing module loaded successfully")
+except ImportError as e:
+    logger.warning(f"PROMETHEUS tracing module not available: {e}")
+
+
+@router.get("/tracing/metrics")
+async def get_tracing_metrics():
+    """
+    Get PROMETHEUS tracing metrics.
+
+    Returns:
+    - Total spans tracked
+    - Error rate
+    - Operation counts and durations
+    - PROMETHEUS-specific metrics (quotes, rates, positions)
+    """
+    if PrometheusTracer is None:
+        return {
+            "available": False,
+            "message": "Tracing module not available",
+        }
+
+    try:
+        tracer = get_tracer()
+        metrics = tracer.get_metrics()
+        return {
+            "available": True,
+            "metrics": metrics,
+        }
+    except Exception as e:
+        logger.error(f"Error getting tracing metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tracing/recent")
+async def get_recent_traces(limit: int = Query(50, ge=1, le=200)):
+    """
+    Get recent trace spans for debugging.
+
+    Returns completed trace spans with timing and attributes.
+    """
+    if PrometheusTracer is None:
+        return {
+            "available": False,
+            "message": "Tracing module not available",
+        }
+
+    try:
+        tracer = get_tracer()
+        traces = tracer.get_recent_traces(limit)
+        return {
+            "available": True,
+            "count": len(traces),
+            "traces": traces,
+        }
+    except Exception as e:
+        logger.error(f"Error getting recent traces: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tracing/rate-audit")
+async def get_rate_audit_trail(limit: int = Query(50, ge=1, le=100)):
+    """
+    Get rate calculation audit trail.
+
+    Shows history of implied rate calculations for transparency.
+    """
+    if PrometheusTracer is None:
+        return {
+            "available": False,
+            "message": "Tracing module not available",
+        }
+
+    try:
+        tracer = get_tracer()
+        audit = tracer.get_rate_audit_trail(limit)
+        return {
+            "available": True,
+            "count": len(audit),
+            "calculations": audit,
+        }
+    except Exception as e:
+        logger.error(f"Error getting rate audit trail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tracing/reset")
+async def reset_tracing_metrics():
+    """
+    Reset tracing metrics (for testing/debugging).
+
+    Clears all accumulated metrics and trace history.
+    """
+    if PrometheusTracer is None:
+        return {
+            "available": False,
+            "message": "Tracing module not available",
+        }
+
+    try:
+        tracer = get_tracer()
+        tracer.reset_metrics()
+        return {
+            "success": True,
+            "message": "Tracing metrics reset",
+        }
+    except Exception as e:
+        logger.error(f"Error resetting tracing metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

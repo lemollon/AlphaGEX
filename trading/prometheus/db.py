@@ -583,6 +583,20 @@ class PrometheusDatabase:
                 )
             """)
 
+            # IC Equity Snapshots table - for intraday IC equity tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_equity_snapshots (
+                    id SERIAL PRIMARY KEY,
+                    snapshot_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    total_equity DECIMAL(15, 2),
+                    starting_capital DECIMAL(15, 2),
+                    total_realized_pnl DECIMAL(15, 2),
+                    total_unrealized_pnl DECIMAL(15, 2),
+                    open_position_count INTEGER,
+                    details JSONB
+                )
+            """)
+
             # ==================================================================
             # IC TABLE INDEXES - per STANDARDS.md Performance Requirements
             # ==================================================================
@@ -2284,19 +2298,7 @@ class PrometheusDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Ensure IC equity snapshots table exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prometheus_ic_equity_snapshots (
-                    id SERIAL PRIMARY KEY,
-                    snapshot_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    total_equity DECIMAL(15, 2),
-                    starting_capital DECIMAL(15, 2),
-                    total_realized_pnl DECIMAL(15, 2),
-                    total_unrealized_pnl DECIMAL(15, 2),
-                    open_position_count INTEGER,
-                    details JSONB
-                )
-            """)
+            # Table created in _ensure_tables() - no lazy creation needed
 
             # Get IC config for starting capital
             ic_config = self.load_ic_config()
@@ -2370,20 +2372,7 @@ class PrometheusDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Ensure table exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prometheus_ic_equity_snapshots (
-                    id SERIAL PRIMARY KEY,
-                    snapshot_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                    total_equity DECIMAL(15, 2),
-                    starting_capital DECIMAL(15, 2),
-                    total_realized_pnl DECIMAL(15, 2),
-                    total_unrealized_pnl DECIMAL(15, 2),
-                    open_position_count INTEGER,
-                    details JSONB
-                )
-            """)
-            conn.commit()
+            # Table created in _ensure_tables() - no lazy creation needed
 
             # Get today's snapshots
             cursor.execute("""
