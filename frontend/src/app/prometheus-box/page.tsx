@@ -57,6 +57,7 @@ interface Position {
 
 export default function PrometheusBoxDashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'analytics' | 'education'>('overview')
+  const [equityView, setEquityView] = useState<'historical' | 'intraday'>('historical')
 
   // Data fetching
   const { data: status, error: statusError } = useSWR('/api/prometheus-box/status', fetcher, { refreshInterval: 30000 })
@@ -810,81 +811,227 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* Equity Curve */}
+                {/* Equity Curve - Historical & Intraday */}
                 <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-xl font-bold mb-4">Equity Curve</h2>
-                  {equityCurve?.equity_curve && equityCurve.equity_curve.length > 0 ? (
-                    <div>
-                      <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
-                        <span>Starting: {formatCurrency(equityCurve.starting_capital)}</span>
-                        <span>Current: {formatCurrency(equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.equity || equityCurve.starting_capital)}</span>
-                      </div>
-                      <div className="bg-black/30 rounded-lg p-4 mb-4">
-                        <div className="h-48 relative">
-                          {(() => {
-                            const data = equityCurve.equity_curve.slice(-30)
-                            if (data.length < 2) return <div className="text-center text-gray-500 pt-20">Insufficient data</div>
-                            const values = data.map((d: any) => d.equity)
-                            const min = Math.min(...values)
-                            const max = Math.max(...values)
-                            const range = max - min || 1
-                            return (
-                              <svg className="w-full h-full" viewBox="0 0 400 150" preserveAspectRatio="none">
-                                <line x1="0" y1="75" x2="400" y2="75" stroke="#374151" strokeWidth="0.5" />
-                                <polyline fill="none" stroke="#22c55e" strokeWidth="2"
-                                  points={data.map((d: any, i: number) => {
-                                    const x = (i / (data.length - 1)) * 400
-                                    const y = 150 - ((d.equity - min) / range) * 140 - 5
-                                    return `${x},${y}`
-                                  }).join(' ')}
-                                />
-                                <polygon fill="url(#equityGrad)" points={`0,150 ${data.map((d: any, i: number) => {
-                                  const x = (i / (data.length - 1)) * 400
-                                  const y = 150 - ((d.equity - min) / range) * 140 - 5
-                                  return `${x},${y}`
-                                }).join(' ')} 400,150`} />
-                                <defs>
-                                  <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
-                                    <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
-                                  </linearGradient>
-                                </defs>
-                              </svg>
-                            )
-                          })()}
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-bold">Equity Curve</h2>
+                    <div className="flex bg-gray-700 rounded-lg p-1">
+                      <button
+                        onClick={() => setEquityView('historical')}
+                        className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+                          equityView === 'historical' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        Historical
+                      </button>
+                      <button
+                        onClick={() => setEquityView('intraday')}
+                        className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+                          equityView === 'intraday' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        Intraday
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Historical View */}
+                  {equityView === 'historical' && (
+                    <>
+                      {equityCurve?.equity_curve && equityCurve.equity_curve.length > 0 ? (
+                        <div>
+                          <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
+                            <span>Starting: {formatCurrency(equityCurve.starting_capital)}</span>
+                            <span>Current: {formatCurrency(equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.equity || equityCurve.starting_capital)}</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-4 mb-4">
+                            <div className="h-48 relative">
+                              {(() => {
+                                const data = equityCurve.equity_curve.slice(-30)
+                                if (data.length < 2) return <div className="text-center text-gray-500 pt-20">Insufficient data</div>
+                                const values = data.map((d: any) => d.equity)
+                                const min = Math.min(...values)
+                                const max = Math.max(...values)
+                                const range = max - min || 1
+                                return (
+                                  <svg className="w-full h-full" viewBox="0 0 400 150" preserveAspectRatio="none">
+                                    <line x1="0" y1="75" x2="400" y2="75" stroke="#374151" strokeWidth="0.5" />
+                                    <polyline fill="none" stroke="#22c55e" strokeWidth="2"
+                                      points={data.map((d: any, i: number) => {
+                                        const x = (i / (data.length - 1)) * 400
+                                        const y = 150 - ((d.equity - min) / range) * 140 - 5
+                                        return `${x},${y}`
+                                      }).join(' ')}
+                                    />
+                                    <polygon fill="url(#equityGradHist)" points={`0,150 ${data.map((d: any, i: number) => {
+                                      const x = (i / (data.length - 1)) * 400
+                                      const y = 150 - ((d.equity - min) / range) * 140 - 5
+                                      return `${x},${y}`
+                                    }).join(' ')} 400,150`} />
+                                    <defs>
+                                      <linearGradient id="equityGradHist" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
+                                        <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
+                                      </linearGradient>
+                                    </defs>
+                                  </svg>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-left text-gray-400 border-b border-gray-700">
+                                  <th className="pb-2">Date</th>
+                                  <th className="pb-2 text-right">Daily P&L</th>
+                                  <th className="pb-2 text-right">Cumulative</th>
+                                  <th className="pb-2 text-right">Equity</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {equityCurve.equity_curve.slice(-10).map((point: any, idx: number) => (
+                                  <tr key={idx} className="border-b border-gray-700/50">
+                                    <td className="py-2">{point.date}</td>
+                                    <td className={`py-2 text-right ${point.daily_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {formatCurrency(point.daily_profit)}
+                                    </td>
+                                    <td className={`py-2 text-right ${point.cumulative_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {formatCurrency(point.cumulative_pnl)}
+                                    </td>
+                                    <td className="py-2 text-right font-medium">{formatCurrency(point.equity)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="text-left text-gray-400 border-b border-gray-700">
-                              <th className="pb-2">Date</th>
-                              <th className="pb-2 text-right">Daily P&L</th>
-                              <th className="pb-2 text-right">Cumulative</th>
-                              <th className="pb-2 text-right">Equity</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {equityCurve.equity_curve.slice(-10).map((point: any, idx: number) => (
-                              <tr key={idx} className="border-b border-gray-700/50">
-                                <td className="py-2">{point.date}</td>
-                                <td className={`py-2 text-right ${point.daily_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  {formatCurrency(point.daily_profit)}
-                                </td>
-                                <td className={`py-2 text-right ${point.cumulative_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  {formatCurrency(point.cumulative_pnl)}
-                                </td>
-                                <td className="py-2 text-right font-medium">{formatCurrency(point.equity)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-gray-400">
-                      <p>No equity history yet. Data appears after positions close.</p>
-                    </div>
+                      ) : (
+                        <div className="text-center py-8 text-gray-400">
+                          <p>No equity history yet. Data appears after positions close.</p>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Intraday View */}
+                  {equityView === 'intraday' && (
+                    <>
+                      {intradayEquity?.snapshots && intradayEquity.snapshots.length > 0 ? (
+                        <div>
+                          <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
+                            <span>Market Open: {formatCurrency(intradayEquity.snapshots[0]?.total_equity || 0)}</span>
+                            <span>Current: {formatCurrency(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity || 0)}</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-4 mb-4">
+                            <div className="h-48 relative">
+                              {(() => {
+                                const data = intradayEquity.snapshots
+                                if (data.length < 2) return <div className="text-center text-gray-500 pt-20">Insufficient data</div>
+                                const values = data.map((d: any) => d.total_equity)
+                                const min = Math.min(...values)
+                                const max = Math.max(...values)
+                                const range = max - min || 1
+                                const openValue = data[0]?.total_equity || 0
+                                const currentValue = data[data.length - 1]?.total_equity || 0
+                                const isPositive = currentValue >= openValue
+                                return (
+                                  <svg className="w-full h-full" viewBox="0 0 400 150" preserveAspectRatio="none">
+                                    {/* Zero line at opening value */}
+                                    <line
+                                      x1="0"
+                                      y1={150 - ((openValue - min) / range) * 140 - 5}
+                                      x2="400"
+                                      y2={150 - ((openValue - min) / range) * 140 - 5}
+                                      stroke="#6b7280"
+                                      strokeWidth="1"
+                                      strokeDasharray="4,4"
+                                    />
+                                    <polyline fill="none" stroke={isPositive ? '#22c55e' : '#ef4444'} strokeWidth="2"
+                                      points={data.map((d: any, i: number) => {
+                                        const x = (i / (data.length - 1)) * 400
+                                        const y = 150 - ((d.total_equity - min) / range) * 140 - 5
+                                        return `${x},${y}`
+                                      }).join(' ')}
+                                    />
+                                    <polygon fill={`url(#equityGradIntra${isPositive ? 'Up' : 'Down'})`} points={`0,150 ${data.map((d: any, i: number) => {
+                                      const x = (i / (data.length - 1)) * 400
+                                      const y = 150 - ((d.total_equity - min) / range) * 140 - 5
+                                      return `${x},${y}`
+                                    }).join(' ')} 400,150`} />
+                                    <defs>
+                                      <linearGradient id="equityGradIntraUp" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
+                                        <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
+                                      </linearGradient>
+                                      <linearGradient id="equityGradIntraDown" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.3" />
+                                        <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
+                                      </linearGradient>
+                                    </defs>
+                                  </svg>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                          {/* Intraday Change Summary */}
+                          <div className="grid grid-cols-3 gap-4 mb-4">
+                            <div className="bg-black/30 rounded-lg p-3 text-center">
+                              <div className="text-xs text-gray-400">Day&apos;s Change</div>
+                              <div className={`text-lg font-bold ${
+                                (intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity || 0) -
+                                (intradayEquity.snapshots[0]?.total_equity || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                {formatCurrency(
+                                  (intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity || 0) -
+                                  (intradayEquity.snapshots[0]?.total_equity || 0)
+                                )}
+                              </div>
+                            </div>
+                            <div className="bg-black/30 rounded-lg p-3 text-center">
+                              <div className="text-xs text-gray-400">Unrealized P&L</div>
+                              <div className={`text-lg font-bold ${
+                                (intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                {formatCurrency(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.unrealized_pnl || 0)}
+                              </div>
+                            </div>
+                            <div className="bg-black/30 rounded-lg p-3 text-center">
+                              <div className="text-xs text-gray-400">Snapshots</div>
+                              <div className="text-lg font-bold text-blue-400">{intradayEquity.snapshots.length}</div>
+                            </div>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-left text-gray-400 border-b border-gray-700">
+                                  <th className="pb-2">Time</th>
+                                  <th className="pb-2 text-right">Equity</th>
+                                  <th className="pb-2 text-right">Unrealized P&L</th>
+                                  <th className="pb-2 text-right">Source</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {intradayEquity.snapshots.slice(-10).map((snap: any, idx: number) => (
+                                  <tr key={idx} className="border-b border-gray-700/50">
+                                    <td className="py-2">{new Date(snap.snapshot_time).toLocaleTimeString()}</td>
+                                    <td className="py-2 text-right font-medium">{formatCurrency(snap.total_equity)}</td>
+                                    <td className={`py-2 text-right ${snap.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {formatCurrency(snap.unrealized_pnl)}
+                                    </td>
+                                    <td className="py-2 text-right text-xs text-gray-500">{snap.quote_source || 'calculated'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-gray-400">
+                          <p>No intraday snapshots yet. Data appears during market hours.</p>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -1056,37 +1203,6 @@ export default function PrometheusBoxDashboard() {
                     </div>
                   </div>
                 </div>
-
-                {/* Intraday Snapshots */}
-                {intradayEquity?.snapshots && intradayEquity.snapshots.length > 0 && (
-                  <div className="bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-xl font-bold mb-4">Today&apos;s Equity Snapshots</h2>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="text-left text-gray-400 border-b border-gray-700">
-                            <th className="pb-2">Time</th>
-                            <th className="pb-2 text-right">Equity</th>
-                            <th className="pb-2 text-right">Unrealized P&L</th>
-                            <th className="pb-2 text-right">Source</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {intradayEquity.snapshots.slice(-10).map((snap: any, idx: number) => (
-                            <tr key={idx} className="border-b border-gray-700/50">
-                              <td className="py-2">{new Date(snap.snapshot_time).toLocaleTimeString()}</td>
-                              <td className="py-2 text-right font-medium">{formatCurrency(snap.total_equity)}</td>
-                              <td className={`py-2 text-right ${snap.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                {formatCurrency(snap.unrealized_pnl)}
-                              </td>
-                              <td className="py-2 text-right text-xs text-gray-500">{snap.quote_source || 'calculated'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
