@@ -69,6 +69,9 @@ export default function PrometheusBoxDashboard() {
   const { data: equityCurve } = useSWR('/api/prometheus-box/equity-curve', fetcher, { refreshInterval: 60000 })
   const { data: intradayEquity } = useSWR('/api/prometheus-box/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
 
+  // Live interest rates
+  const { data: interestRates } = useSWR('/api/prometheus-box/analytics/interest-rates', fetcher, { refreshInterval: 300000 }) // 5 min refresh
+
   // IC Bot positions - to show where capital is deployed
   const { data: aresPositions } = useSWR('/api/ares/positions', fetcher, { refreshInterval: 30000 })
   const { data: titanPositions } = useSWR('/api/titan/positions', fetcher, { refreshInterval: 30000 })
@@ -591,8 +594,20 @@ export default function PrometheusBoxDashboard() {
                     </div>
                   ) : (
                     <div className="p-8 text-center text-gray-400">
-                      <p>No open positions</p>
-                      <p className="text-sm mt-2">Run a signal scan to find opportunities</p>
+                      <div className="text-4xl mb-4">📦</div>
+                      <p className="text-lg">No Open Box Spread Positions</p>
+                      <p className="text-sm mt-2 max-w-md mx-auto">
+                        PROMETHEUS automatically scans for box spread opportunities during the daily cycle at 9:30 AM CT.
+                        When favorable rates are found, positions are opened automatically.
+                      </p>
+                      <div className="mt-4 p-4 bg-blue-900/20 border border-blue-700/30 rounded-lg inline-block text-left">
+                        <div className="text-xs text-blue-400 font-medium mb-2">Automated Schedule:</div>
+                        <div className="text-xs text-gray-400 space-y-1">
+                          <div>• Daily cycle: 9:30 AM CT</div>
+                          <div>• Roll check: When DTE &lt; 30</div>
+                          <div>• Equity snapshots: Every 30 minutes</div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -748,9 +763,77 @@ export default function PrometheusBoxDashboard() {
 
                   {equityCurve?.equity_curve && equityCurve.equity_curve.length > 0 ? (
                     <div>
-                      <div className="text-sm text-gray-400 mb-4">
-                        Starting Capital: {formatCurrency(equityCurve.starting_capital)}
+                      <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
+                        <span>Starting Capital: {formatCurrency(equityCurve.starting_capital)}</span>
+                        <span>Current Equity: {formatCurrency(equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.equity || equityCurve.starting_capital)}</span>
                       </div>
+
+                      {/* Visual Chart */}
+                      <div className="bg-black/30 rounded-lg p-4 mb-4">
+                        <div className="h-48 relative">
+                          {(() => {
+                            const data = equityCurve.equity_curve.slice(-30)
+                            if (data.length < 2) return <div className="text-center text-gray-500 pt-20">Not enough data points for chart</div>
+
+                            const values = data.map((d: any) => d.equity)
+                            const min = Math.min(...values)
+                            const max = Math.max(...values)
+                            const range = max - min || 1
+
+                            return (
+                              <svg className="w-full h-full" viewBox="0 0 400 150" preserveAspectRatio="none">
+                                {/* Grid lines */}
+                                <line x1="0" y1="37.5" x2="400" y2="37.5" stroke="#374151" strokeWidth="0.5" />
+                                <line x1="0" y1="75" x2="400" y2="75" stroke="#374151" strokeWidth="0.5" />
+                                <line x1="0" y1="112.5" x2="400" y2="112.5" stroke="#374151" strokeWidth="0.5" />
+
+                                {/* Starting capital line */}
+                                {(() => {
+                                  const startY = 150 - ((equityCurve.starting_capital - min) / range) * 140 - 5
+                                  return (
+                                    <line x1="0" y1={startY} x2="400" y2={startY} stroke="#f97316" strokeWidth="1" strokeDasharray="4,4" opacity="0.5" />
+                                  )
+                                })()}
+
+                                {/* Equity line */}
+                                <polyline
+                                  fill="none"
+                                  stroke="#22c55e"
+                                  strokeWidth="2"
+                                  points={data.map((d: any, i: number) => {
+                                    const x = (i / (data.length - 1)) * 400
+                                    const y = 150 - ((d.equity - min) / range) * 140 - 5
+                                    return `${x},${y}`
+                                  }).join(' ')}
+                                />
+
+                                {/* Area fill */}
+                                <polygon
+                                  fill="url(#equityGradient)"
+                                  points={`0,150 ${data.map((d: any, i: number) => {
+                                    const x = (i / (data.length - 1)) * 400
+                                    const y = 150 - ((d.equity - min) / range) * 140 - 5
+                                    return `${x},${y}`
+                                  }).join(' ')} 400,150`}
+                                />
+
+                                <defs>
+                                  <linearGradient id="equityGradient" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
+                                    <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
+                                  </linearGradient>
+                                </defs>
+                              </svg>
+                            )
+                          })()}
+                        </div>
+                        <div className="flex justify-between text-xs text-gray-500 mt-2">
+                          <span>{equityCurve.equity_curve[0]?.date || 'Start'}</span>
+                          <span>{equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.date || 'Now'}</span>
+                        </div>
+                      </div>
+
+                      {/* Data Table */}
                       <div className="bg-black/30 rounded-lg p-4 overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead>
@@ -783,7 +866,11 @@ export default function PrometheusBoxDashboard() {
                   ) : (
                     <div className="text-center py-8 text-gray-400">
                       <div className="text-4xl mb-2">📊</div>
-                      <p>No equity history yet. Equity curve will appear after positions are closed.</p>
+                      <p>No equity history yet.</p>
+                      <p className="text-sm mt-2">Equity curve will appear after positions are opened and closed.</p>
+                      <p className="text-xs mt-4 text-gray-500">
+                        PROMETHEUS runs automatically at 9:30 AM CT daily to manage positions.
+                      </p>
                     </div>
                   )}
 
@@ -960,7 +1047,63 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* Rate History */}
+                {/* Live Interest Rates */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    💹 Live Interest Rates
+                  </h2>
+                  <p className="text-gray-400 text-sm mb-4">
+                    Real-time benchmark rates for comparing box spread borrowing costs
+                  </p>
+
+                  {interestRates ? (
+                    <div>
+                      <div className="grid md:grid-cols-5 gap-3 mb-4">
+                        <div className="bg-blue-900/30 rounded-lg p-4 text-center border border-blue-700/30">
+                          <div className="text-xs text-gray-400 mb-1">Fed Funds</div>
+                          <div className="text-xl font-bold text-blue-400">{formatPct(interestRates.fed_funds_rate)}</div>
+                          <div className="text-xs text-gray-500">Risk-free rate</div>
+                        </div>
+                        <div className="bg-cyan-900/30 rounded-lg p-4 text-center border border-cyan-700/30">
+                          <div className="text-xs text-gray-400 mb-1">SOFR</div>
+                          <div className="text-xl font-bold text-cyan-400">{formatPct(interestRates.sofr_rate)}</div>
+                          <div className="text-xs text-gray-500">Repo market</div>
+                        </div>
+                        <div className="bg-purple-900/30 rounded-lg p-4 text-center border border-purple-700/30">
+                          <div className="text-xs text-gray-400 mb-1">3M Treasury</div>
+                          <div className="text-xl font-bold text-purple-400">{formatPct(interestRates.treasury_3m)}</div>
+                          <div className="text-xs text-gray-500">T-Bill yield</div>
+                        </div>
+                        <div className="bg-red-900/30 rounded-lg p-4 text-center border border-red-700/30">
+                          <div className="text-xs text-gray-400 mb-1">Margin Rate</div>
+                          <div className="text-xl font-bold text-red-400">{formatPct(interestRates.margin_rate)}</div>
+                          <div className="text-xs text-gray-500">Broker estimate</div>
+                        </div>
+                        <div className="bg-green-900/30 rounded-lg p-4 text-center border border-green-700/30">
+                          <div className="text-xs text-gray-400 mb-1">Box Spread</div>
+                          <div className="text-xl font-bold text-green-400">{formatPct(rateAnalysis?.box_implied_rate || 0)}</div>
+                          <div className="text-xs text-gray-500">Your rate</div>
+                        </div>
+                      </div>
+
+                      <div className="bg-black/30 rounded-lg p-3 flex justify-between items-center text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${interestRates.source === 'live' ? 'bg-green-500' : interestRates.source === 'cached' ? 'bg-yellow-500' : 'bg-gray-500'}`}></span>
+                          <span className="text-gray-400">
+                            Source: {interestRates.source?.toUpperCase() || 'UNKNOWN'}
+                          </span>
+                        </div>
+                        <span className="text-gray-500">
+                          Updated: {interestRates.last_updated ? new Date(interestRates.last_updated).toLocaleTimeString() : 'N/A'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 text-gray-500">Loading rates...</div>
+                  )}
+                </div>
+
+                {/* Rate Trend */}
                 <div className="bg-gray-800 rounded-lg p-6">
                   <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
                     📉 Borrowing Rate Trend
