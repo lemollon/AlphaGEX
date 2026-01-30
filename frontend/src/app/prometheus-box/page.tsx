@@ -68,12 +68,15 @@ export default function PrometheusBoxDashboard() {
   const { data: intradayEquity } = useSWR('/api/prometheus-box/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
   const { data: interestRates } = useSWR('/api/prometheus-box/analytics/interest-rates', fetcher, { refreshInterval: 300000 })
 
-  // IC Trading data
+  // IC Trading data - All required endpoints per STANDARDS.md
   const { data: icStatus } = useSWR('/api/prometheus-box/ic/status', fetcher, { refreshInterval: 30000 })
   const { data: icPositions } = useSWR('/api/prometheus-box/ic/positions', fetcher, { refreshInterval: 15000 })
   const { data: icPerformance } = useSWR('/api/prometheus-box/ic/performance', fetcher, { refreshInterval: 30000 })
   const { data: icClosedTrades } = useSWR('/api/prometheus-box/ic/closed-trades?limit=20', fetcher, { refreshInterval: 60000 })
   const { data: icEquityCurve } = useSWR('/api/prometheus-box/ic/equity-curve', fetcher, { refreshInterval: 60000 })
+  const { data: icIntradayEquity } = useSWR('/api/prometheus-box/ic/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
+  const { data: icLogs } = useSWR('/api/prometheus-box/ic/logs?limit=50', fetcher, { refreshInterval: 30000 })
+  const { data: icSignals } = useSWR('/api/prometheus-box/ic/signals/recent?limit=20', fetcher, { refreshInterval: 30000 })
   const { data: combinedPerformance } = useSWR('/api/prometheus-box/combined/performance', fetcher, { refreshInterval: 60000 })
 
   // IC Bot positions for capital deployment tracking (legacy - to be removed)
@@ -1014,6 +1017,166 @@ export default function PrometheusBoxDashboard() {
                   ) : (
                     <div className="p-8 text-center text-gray-400">
                       <p>No closed trades yet</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* IC Intraday Equity - per STANDARDS.md */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">IC Intraday Equity ({icIntradayEquity?.date || 'Today'})</h3>
+                  {icIntradayEquity?.snapshots?.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="grid md:grid-cols-4 gap-4">
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Market Open</div>
+                          <div className="text-lg font-bold text-blue-400">
+                            {formatCurrency(icIntradayEquity.snapshots[0]?.total_equity || 0)}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Current</div>
+                          <div className="text-lg font-bold">
+                            {formatCurrency(icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0)}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Day Change</div>
+                          <div className={`text-lg font-bold ${
+                            (icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0) -
+                            (icIntradayEquity.snapshots[0]?.total_equity || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {formatCurrency(
+                              (icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0) -
+                              (icIntradayEquity.snapshots[0]?.total_equity || 0)
+                            )}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Snapshots</div>
+                          <div className="text-lg font-bold text-blue-400">{icIntradayEquity.count || 0}</div>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto max-h-40">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-gray-800">
+                            <tr className="text-gray-400 border-b border-gray-700">
+                              <th className="text-left py-1 px-2">Time</th>
+                              <th className="text-right py-1 px-2">Equity</th>
+                              <th className="text-right py-1 px-2">Unrealized</th>
+                              <th className="text-right py-1 px-2">Positions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {icIntradayEquity.snapshots.slice(-10).map((snap: any, idx: number) => (
+                              <tr key={idx} className="border-b border-gray-700/30">
+                                <td className="py-1 px-2">{new Date(snap.time).toLocaleTimeString()}</td>
+                                <td className="py-1 px-2 text-right">{formatCurrency(snap.total_equity)}</td>
+                                <td className={`py-1 px-2 text-right ${snap.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(snap.unrealized_pnl)}
+                                </td>
+                                <td className="py-1 px-2 text-right">{snap.open_positions}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-gray-400 text-sm">
+                      <p>No intraday snapshots yet. Data appears during market hours.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* IC Signals (Scan Activity) - per STANDARDS.md */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">Recent IC Signals ({icSignals?.count || 0})</h3>
+                  {icSignals?.signals?.length > 0 ? (
+                    <div className="overflow-x-auto max-h-60">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-gray-800">
+                          <tr className="text-gray-400 border-b border-gray-700">
+                            <th className="text-left py-2 px-3">Time</th>
+                            <th className="text-left py-2 px-3">Structure</th>
+                            <th className="text-right py-2 px-3">Credit</th>
+                            <th className="text-right py-2 px-3">Oracle</th>
+                            <th className="text-left py-2 px-3">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {icSignals.signals.map((signal: any, idx: number) => (
+                            <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                              <td className="py-2 px-3 text-xs">
+                                {signal.signal_time ? new Date(signal.signal_time).toLocaleTimeString() : '-'}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-xs">
+                                {signal.put_long_strike}/{signal.put_short_strike} - {signal.call_short_strike}/{signal.call_long_strike}
+                              </td>
+                              <td className="py-2 px-3 text-right text-green-400">${signal.total_credit?.toFixed(2) || '0.00'}</td>
+                              <td className="py-2 px-3 text-right">
+                                <span className={signal.oracle_approved ? 'text-green-400' : 'text-red-400'}>
+                                  {signal.oracle_confidence ? `${(signal.oracle_confidence * 100).toFixed(0)}%` : '-'}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className={`px-2 py-0.5 rounded text-xs ${
+                                  signal.was_executed ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                                }`}>
+                                  {signal.was_executed ? 'EXECUTED' : signal.skip_reason || 'SKIPPED'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-gray-400 text-sm">
+                      <p>No signals generated yet. Signals appear during market hours when conditions are met.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* IC Activity Logs - per STANDARDS.md */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">IC Activity Log ({icLogs?.count || 0})</h3>
+                  {icLogs?.logs?.length > 0 ? (
+                    <div className="overflow-x-auto max-h-60">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-gray-800">
+                          <tr className="text-gray-400 border-b border-gray-700">
+                            <th className="text-left py-2 px-3">Time</th>
+                            <th className="text-left py-2 px-3">Action</th>
+                            <th className="text-left py-2 px-3">Message</th>
+                            <th className="text-left py-2 px-3">Position</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {icLogs.logs.map((log: any, idx: number) => (
+                            <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                              <td className="py-2 px-3 text-xs">
+                                {log.time ? new Date(log.time).toLocaleTimeString() : '-'}
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className={`px-2 py-0.5 rounded text-xs ${
+                                  log.action?.includes('OPENED') ? 'bg-green-500/20 text-green-400' :
+                                  log.action?.includes('CLOSED') ? 'bg-blue-500/20 text-blue-400' :
+                                  log.action?.includes('ERROR') ? 'bg-red-500/20 text-red-400' :
+                                  'bg-gray-500/20 text-gray-400'
+                                }`}>
+                                  {log.action}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 text-xs text-gray-300 max-w-xs truncate">{log.message}</td>
+                              <td className="py-2 px-3 font-mono text-xs text-gray-400">{log.position_id || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-gray-400 text-sm">
+                      <p>No activity logs yet. Logs appear when IC trading actions occur.</p>
                     </div>
                   )}
                 </div>

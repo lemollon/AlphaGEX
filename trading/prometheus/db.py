@@ -583,6 +583,49 @@ class PrometheusDatabase:
                 )
             """)
 
+            # ==================================================================
+            # IC TABLE INDEXES - per STANDARDS.md Performance Requirements
+            # ==================================================================
+            # These indexes ensure efficient queries on IC trading data
+
+            # IC Positions - query by status and open_time
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_ic_positions_status
+                ON prometheus_ic_positions (status)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_ic_positions_open_time
+                ON prometheus_ic_positions (open_time DESC)
+            """)
+
+            # IC Closed Trades - query by close_time for equity curve
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_ic_closed_trades_close_time
+                ON prometheus_ic_closed_trades (close_time DESC)
+            """)
+
+            # IC Signals - query by time and execution status
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_ic_signals_time
+                ON prometheus_ic_signals (signal_time DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_ic_signals_executed
+                ON prometheus_ic_signals (was_executed, signal_time DESC)
+            """)
+
+            # IC Equity Snapshots - query by time for intraday
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_ic_equity_snapshots_time
+                ON prometheus_ic_equity_snapshots (snapshot_time DESC)
+            """)
+
+            # Logs - query by action type for IC logs
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_logs_action
+                ON prometheus_logs (action, log_time DESC)
+            """)
+
             # Add new columns if they don't exist (for schema migration)
             # These columns were added for enhanced transparency tracking
             migration_columns = [
@@ -1712,6 +1755,23 @@ class PrometheusDatabase:
                 f"Closed IC position {position_id}: exit=${exit_price:.4f}, "
                 f"P&L=${realized_pnl:,.2f}, reason={close_reason}"
             )
+
+            # Log action for audit trail (per STANDARDS.md)
+            self.log_action(
+                action="IC_POSITION_CLOSED",
+                message=f"Closed IC position {position_id}: P&L=${realized_pnl:,.2f}",
+                level="INFO",
+                details={
+                    'exit_price': exit_price,
+                    'realized_pnl': realized_pnl,
+                    'close_reason': close_reason,
+                    'hold_duration_minutes': hold_duration_minutes,
+                    'entry_credit': entry_credit,
+                    'contracts': contracts,
+                },
+                position_id=position_id,
+            )
+
             return True
 
         except Exception as e:
