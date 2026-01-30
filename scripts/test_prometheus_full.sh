@@ -49,10 +49,21 @@ run_test() {
 # Change to project root
 cd "$(dirname "$0")/.."
 
-# Set API base URL if not set
+# Add project root to PYTHONPATH for Render shell
+export PYTHONPATH="$(pwd):$PYTHONPATH"
+echo "PYTHONPATH set to: $(pwd)"
+
+# Set API base URL - prefer RENDER_EXTERNAL_URL for Render deployments
 if [ -z "$API_BASE_URL" ]; then
-    export API_BASE_URL="http://localhost:8000"
-    echo "Using default API_BASE_URL: $API_BASE_URL"
+    if [ -n "$RENDER_EXTERNAL_URL" ]; then
+        export API_BASE_URL="$RENDER_EXTERNAL_URL"
+        echo "Using RENDER_EXTERNAL_URL: $API_BASE_URL"
+    else
+        export API_BASE_URL="http://localhost:8000"
+        echo "Using default API_BASE_URL: $API_BASE_URL"
+    fi
+else
+    echo "Using API_BASE_URL: $API_BASE_URL"
 fi
 
 # Run database tests

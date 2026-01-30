@@ -14,11 +14,19 @@ This runs minimal checks to verify:
 
 import os
 import sys
+
+# Add project root to Python path for Render shell
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import requests
 from datetime import datetime
 
-# Configuration
-BASE_URL = os.environ.get('API_BASE_URL', 'http://localhost:8000')
+# Configuration - Render uses internal URL or RENDER_EXTERNAL_URL
+BASE_URL = os.environ.get('API_BASE_URL') or os.environ.get('RENDER_EXTERNAL_URL') or 'http://localhost:8000'
+# Remove trailing slash if present
+BASE_URL = BASE_URL.rstrip('/')
 PROMETHEUS_PREFIX = '/api/prometheus-box'
 
 # ANSI colors
@@ -80,8 +88,10 @@ def test_db() -> bool:
         cursor.close()
         return True
 
-    except ImportError:
-        print(f"  {RED}✗{RESET} database_adapter not available")
+    except ImportError as e:
+        print(f"  {RED}✗{RESET} database_adapter not available: {e}")
+        print(f"      Make sure you're in the project root directory")
+        print(f"      Current working dir: {os.getcwd()}")
         return False
     except Exception as e:
         print(f"  {RED}✗{RESET} Database error: {str(e)[:50]}")
@@ -149,6 +159,13 @@ def main():
 
     if failed > 0:
         print(f"\n{RED}SMOKE TEST FAILED{RESET}")
+        print(f"\n{YELLOW}Troubleshooting:{RESET}")
+        print(f"  1. Make sure you're in the project root directory:")
+        print(f"     cd ~/project/src  # or wherever the project is")
+        print(f"  2. Set the API URL to your Render deployment:")
+        print(f"     export API_BASE_URL='https://your-app.onrender.com'")
+        print(f"  3. Verify DATABASE_URL is set for database tests")
+        print(f"  4. Run again: python scripts/test_prometheus_smoke.py")
         sys.exit(1)
     else:
         print(f"\n{GREEN}SMOKE TEST PASSED{RESET}")

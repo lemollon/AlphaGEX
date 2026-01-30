@@ -5,18 +5,26 @@ PROMETHEUS API Test Script for Render Shell
 Run this script in the Render shell to verify all PROMETHEUS endpoints are working:
     python scripts/test_prometheus_api.py
 
-This tests all 48 PROMETHEUS Box Spread API endpoints.
+This tests all 52 PROMETHEUS Box Spread API endpoints.
 """
 
 import os
 import sys
+
+# Add project root to Python path for Render shell
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import json
 import requests
 from datetime import datetime
 from typing import Dict, List, Tuple, Any
 
-# Configuration
-BASE_URL = os.environ.get('API_BASE_URL', 'http://localhost:8000')
+# Configuration - Render uses internal URL or RENDER_EXTERNAL_URL
+BASE_URL = os.environ.get('API_BASE_URL') or os.environ.get('RENDER_EXTERNAL_URL') or 'http://localhost:8000'
+# Remove trailing slash if present
+BASE_URL = BASE_URL.rstrip('/')
 PROMETHEUS_PREFIX = '/api/prometheus-box'
 
 # ANSI colors for output
