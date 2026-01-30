@@ -405,215 +405,50 @@ export default function PrometheusBoxDashboard() {
                             </div>
                           </div>
 
-                          {/* Mini Equity Curve Sparkline */}
-                          {equityCurve?.equity_curve && equityCurve.equity_curve.length > 0 && (
-                            <div className="bg-black/40 rounded-lg p-4">
-                              <div className="flex justify-between items-center mb-3">
-                                <h3 className="text-sm font-medium text-gray-400">EQUITY CURVE (Last 30 Days)</h3>
-                                <div className="flex items-center gap-2 text-sm">
-                                  <span className="text-gray-500">Current:</span>
-                                  <span className={`font-bold ${(equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.equity || 0) >= (equityCurve.starting_capital || 0) ? 'text-green-400' : 'text-red-400'}`}>
-                                    {formatCurrency(equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.equity || equityCurve.starting_capital)}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="h-24 relative bg-gray-900/50 rounded">
-                                {(() => {
-                                  const data = equityCurve.equity_curve.slice(-30)
-                                  if (data.length < 2) return <div className="text-center text-gray-500 pt-8 text-sm">Insufficient data</div>
-                                  const values = data.map((d: any) => d.equity)
-                                  const min = Math.min(...values) * 0.99
-                                  const max = Math.max(...values) * 1.01
-                                  const range = max - min || 1
-                                  const startVal = data[0]?.equity || 0
-                                  const endVal = data[data.length - 1]?.equity || 0
-                                  const isUp = endVal >= startVal
-                                  return (
-                                    <svg className="w-full h-full" viewBox="0 0 400 96" preserveAspectRatio="none">
-                                      {/* Grid lines */}
-                                      <line x1="0" y1="24" x2="400" y2="24" stroke="#374151" strokeWidth="0.5" strokeDasharray="4" />
-                                      <line x1="0" y1="48" x2="400" y2="48" stroke="#374151" strokeWidth="0.5" strokeDasharray="4" />
-                                      <line x1="0" y1="72" x2="400" y2="72" stroke="#374151" strokeWidth="0.5" strokeDasharray="4" />
-                                      {/* Area fill */}
-                                      <polygon
-                                        fill={isUp ? 'url(#equityGradUp)' : 'url(#equityGradDown)'}
-                                        points={`0,96 ${data.map((d: any, i: number) => {
-                                          const x = (i / (data.length - 1)) * 400
-                                          const y = 96 - ((d.equity - min) / range) * 88 - 4
-                                          return `${x},${y}`
-                                        }).join(' ')} 400,96`}
-                                      />
-                                      {/* Line */}
-                                      <polyline
-                                        fill="none"
-                                        stroke={isUp ? '#22c55e' : '#ef4444'}
-                                        strokeWidth="2"
-                                        points={data.map((d: any, i: number) => {
-                                          const x = (i / (data.length - 1)) * 400
-                                          const y = 96 - ((d.equity - min) / range) * 88 - 4
-                                          return `${x},${y}`
-                                        }).join(' ')}
-                                      />
-                                      <defs>
-                                        <linearGradient id="equityGradUp" x1="0" y1="0" x2="0" y2="1">
-                                          <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
-                                          <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
-                                        </linearGradient>
-                                        <linearGradient id="equityGradDown" x1="0" y1="0" x2="0" y2="1">
-                                          <stop offset="0%" stopColor="#ef4444" stopOpacity="0.3" />
-                                          <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
-                                        </linearGradient>
-                                      </defs>
-                                    </svg>
-                                  )
-                                })()}
-                              </div>
-                              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>{equityCurve.equity_curve.slice(-30)[0]?.date || ''}</span>
-                                <span className={((equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.cumulative_pnl || 0) >= 0) ? 'text-green-400' : 'text-red-400'}>
-                                  Total P&L: {formatCurrency(equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.cumulative_pnl || 0)}
-                                </span>
-                                <span>{equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.date || ''}</span>
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Money Life Cycle - Visual Timeline */}
+                          {/* Capital Deployment Summary */}
                           <div className="bg-black/40 rounded-lg p-4">
-                            <h3 className="text-sm font-medium text-gray-400 mb-4">MONEY LIFE CYCLE</h3>
-                            <div className="relative">
-                              {/* Timeline bar */}
-                              <div className="absolute left-4 right-4 top-8 h-1 bg-gray-700 rounded">
-                                {/* Progress indicator */}
-                                <div
-                                  className="absolute left-0 top-0 h-full bg-gradient-to-r from-green-500 via-blue-500 to-purple-500 rounded"
-                                  style={{ width: `${progressPct}%` }}
-                                />
+                            <h3 className="text-sm font-medium text-gray-400 mb-3">CAPITAL DEPLOYED TO IC BOTS</h3>
+                            <div className="grid grid-cols-4 gap-3">
+                              <div className="text-center">
+                                <div className="text-xs text-gray-500">ARES</div>
+                                <div className="text-lg font-bold text-blue-400">{formatCurrency(pos.cash_deployed_to_ares)}</div>
+                                <div className="text-xs text-green-400">+{formatCurrency(pos.returns_from_ares)}</div>
                               </div>
-
-                              {/* Timeline stages */}
-                              <div className="relative flex justify-between">
-                                {/* Day 0: Credit Received */}
-                                <div className="flex flex-col items-center w-1/3">
-                                  <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-sm font-bold z-10 border-2 border-green-400">
-                                    $
-                                  </div>
-                                  <div className="mt-3 text-center">
-                                    <div className="text-xs text-gray-500">Day 0</div>
-                                    <div className="text-sm font-medium text-green-400">Credit Received</div>
-                                    <div className="text-xs text-gray-400">{formatCurrency(creditReceived)}</div>
-                                  </div>
-                                </div>
-
-                                {/* Now: Holding Period */}
-                                <div className="flex flex-col items-center w-1/3">
-                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold z-10 border-2 ${daysElapsed > 0 ? 'bg-blue-600 border-blue-400' : 'bg-gray-600 border-gray-400'}`}>
-                                    {Math.round(progressPct)}%
-                                  </div>
-                                  <div className="mt-3 text-center">
-                                    <div className="text-xs text-gray-500">Now ({daysElapsed} days)</div>
-                                    <div className="text-sm font-medium text-blue-400">Interest Accruing</div>
-                                    <div className="text-xs text-gray-400">-{formatCurrency(costAccruedSoFar)} accrued</div>
-                                    <div className="text-xs text-green-400">+{formatCurrency(pos.total_ic_returns)} IC returns</div>
-                                  </div>
-                                </div>
-
-                                {/* Expiration: Repay Face Value */}
-                                <div className="flex flex-col items-center w-1/3">
-                                  <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center text-white text-sm font-bold z-10 border-2 border-gray-400">
-                                    ⏱
-                                  </div>
-                                  <div className="mt-3 text-center">
-                                    <div className="text-xs text-gray-500">Day {totalDays}</div>
-                                    <div className="text-sm font-medium text-gray-400">Repay Face Value</div>
-                                    <div className="text-xs text-red-400">-{formatCurrency(owedAtExpiration)}</div>
-                                    <div className="text-xs text-gray-500">({pos.current_dte} days left)</div>
-                                  </div>
-                                </div>
+                              <div className="text-center">
+                                <div className="text-xs text-gray-500">TITAN</div>
+                                <div className="text-lg font-bold text-purple-400">{formatCurrency(pos.cash_deployed_to_titan)}</div>
+                                <div className="text-xs text-green-400">+{formatCurrency(pos.returns_from_titan)}</div>
                               </div>
-
-                              {/* Net projection */}
-                              <div className="mt-6 pt-4 border-t border-gray-700 grid grid-cols-3 gap-4 text-center text-xs">
-                                <div>
-                                  <span className="text-gray-500">Total Borrowed:</span>
-                                  <span className="ml-1 text-green-400 font-medium">{formatCurrency(creditReceived)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Proj. Total Cost:</span>
-                                  <span className="ml-1 text-red-400 font-medium">{formatCurrency(projectedTotalCost)}</span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-500">Net at Exp:</span>
-                                  <span className={`ml-1 font-medium ${creditReceived - owedAtExpiration + pos.total_ic_returns >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                    {formatCurrency(creditReceived - owedAtExpiration + pos.total_ic_returns)}
-                                  </span>
-                                </div>
+                              <div className="text-center">
+                                <div className="text-xs text-gray-500">PEGASUS</div>
+                                <div className="text-lg font-bold text-green-400">{formatCurrency(pos.cash_deployed_to_pegasus)}</div>
+                                <div className="text-xs text-green-400">+{formatCurrency(pos.returns_from_pegasus)}</div>
+                              </div>
+                              <div className="text-center">
+                                <div className="text-xs text-gray-500">Reserve</div>
+                                <div className="text-lg font-bold text-gray-400">{formatCurrency(pos.cash_held_in_reserve)}</div>
+                                <div className="text-xs text-gray-500">buffer</div>
                               </div>
                             </div>
                           </div>
 
-                          {/* Today's Intraday Activity */}
-                          {intradayEquity?.snapshots && intradayEquity.snapshots.length > 0 && (
-                            <div className="bg-black/40 rounded-lg p-4">
-                              <div className="flex justify-between items-center mb-3">
-                                <h3 className="text-sm font-medium text-gray-400">TODAY&apos;S ACTIVITY</h3>
-                                <span className="text-xs text-gray-500">{intradayEquity.snapshots.length} snapshots</span>
-                              </div>
-                              <div className="grid md:grid-cols-4 gap-3 mb-3">
-                                <div className="bg-gray-800/50 rounded p-2 text-center">
-                                  <div className="text-xs text-gray-500">Open</div>
-                                  <div className="font-medium">{formatCurrency(intradayEquity.snapshots[0]?.total_equity)}</div>
-                                </div>
-                                <div className="bg-gray-800/50 rounded p-2 text-center">
-                                  <div className="text-xs text-gray-500">Current</div>
-                                  <div className="font-medium">{formatCurrency(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity)}</div>
-                                </div>
-                                <div className="bg-gray-800/50 rounded p-2 text-center">
-                                  <div className="text-xs text-gray-500">Change</div>
-                                  <div className={`font-medium ${(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity - intradayEquity.snapshots[0]?.total_equity) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                    {formatCurrency(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity - intradayEquity.snapshots[0]?.total_equity)}
-                                  </div>
-                                </div>
-                                <div className="bg-gray-800/50 rounded p-2 text-center">
-                                  <div className="text-xs text-gray-500">Unrealized</div>
-                                  <div className={`font-medium ${(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                    {formatCurrency(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.unrealized_pnl || 0)}
-                                  </div>
+                          {/* Net P&L Summary */}
+                          <div className={`rounded-lg p-4 ${pos.net_profit >= 0 ? 'bg-green-900/20 border border-green-600/30' : 'bg-red-900/20 border border-red-600/30'}`}>
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <div className="text-sm text-gray-400">Net Profit (IC Returns - Borrowing Cost)</div>
+                                <div className={`text-3xl font-bold ${pos.net_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(pos.net_profit)}
                                 </div>
                               </div>
-                              {/* Mini intraday sparkline */}
-                              <div className="h-12 relative bg-gray-900/50 rounded">
-                                {(() => {
-                                  const snaps = intradayEquity.snapshots
-                                  if (snaps.length < 2) return null
-                                  const values = snaps.map((s: any) => s.total_equity)
-                                  const min = Math.min(...values) * 0.9999
-                                  const max = Math.max(...values) * 1.0001
-                                  const range = max - min || 1
-                                  const isUp = values[values.length - 1] >= values[0]
-                                  return (
-                                    <svg className="w-full h-full" viewBox="0 0 400 48" preserveAspectRatio="none">
-                                      <polyline
-                                        fill="none"
-                                        stroke={isUp ? '#22c55e' : '#ef4444'}
-                                        strokeWidth="1.5"
-                                        points={snaps.map((s: any, i: number) => {
-                                          const x = (i / (snaps.length - 1)) * 400
-                                          const y = 48 - ((s.total_equity - min) / range) * 44 - 2
-                                          return `${x},${y}`
-                                        }).join(' ')}
-                                      />
-                                    </svg>
-                                  )
-                                })()}
-                              </div>
-                              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>{new Date(intradayEquity.snapshots[0]?.snapshot_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                                <span>Intraday P&L Trend</span>
-                                <span>{new Date(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.snapshot_time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                              <div className="text-right">
+                                <div className="text-sm text-gray-400">ROI on Borrowed Capital</div>
+                                <div className={`text-2xl font-bold ${netROI >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatPct(netROI)}
+                                </div>
                               </div>
                             </div>
-                          )}
+                          </div>
                         </div>
                       )
                     })}
