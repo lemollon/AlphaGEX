@@ -28,8 +28,12 @@ from .models import (
 from .db import PrometheusDatabase
 from .signals import BoxSpreadSignalGenerator, PrometheusICSignalGenerator
 from .executor import BoxSpreadExecutor, PrometheusICExecutor
+from .tracing import get_tracer
 
 logger = logging.getLogger(__name__)
+
+# Get global tracer instance for metrics
+tracer = get_tracer()
 
 # Import IC bot database adapters for real returns integration
 try:

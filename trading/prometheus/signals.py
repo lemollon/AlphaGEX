@@ -19,8 +19,12 @@ from .models import (
     PrometheusICSignal,
     PrometheusICConfig,
 )
+from .tracing import get_tracer, trace_signal, trace_rate
 
 logger = logging.getLogger(__name__)
+
+# Get global tracer instance
+tracer = get_tracer()
 
 # Central timezone
 try:
@@ -107,6 +111,7 @@ class BoxSpreadSignalGenerator:
 
         Returns None if no favorable opportunity exists.
         """
+        logger.info("Generating box spread signal...")
         now = datetime.now(CENTRAL_TZ)
 
         # Get market data

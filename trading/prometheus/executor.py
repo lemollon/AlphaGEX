@@ -35,8 +35,12 @@ from .models import (
     ICPositionStatus,
 )
 from .db import PrometheusDatabase
+from .tracing import get_tracer, trace_quote, trace_position
 
 logger = logging.getLogger(__name__)
+
+# Get global tracer instance
+tracer = get_tracer()
 
 # Central timezone
 try:
@@ -141,6 +145,7 @@ def build_occ_symbol(
     return f"{root}{date_str}{opt_type}{strike_str}"
 
 
+@trace_quote
 def get_box_spread_quotes(
     ticker: str,
     expiration: str,
@@ -482,6 +487,9 @@ class BoxSpreadExecutor:
 
         Returns the created position or None if execution fails.
         """
+        # Trace the execution
+        tracer.trace_position_opened(signal.signal_id, signal.cash_received or 0)
+
         now = datetime.now(CENTRAL_TZ)
 
         # Generate position ID
