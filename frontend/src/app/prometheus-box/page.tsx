@@ -4,7 +4,13 @@ import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import Navigation from '@/components/Navigation'
 
-const fetcher = (url: string) => fetch(url).then(res => res.json())
+// API URL for backend calls - must be set in production
+const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+
+const fetcher = (url: string) => fetch(`${API_URL}${url}`).then(res => {
+  if (!res.ok) throw new Error(`API error: ${res.status}`)
+  return res.json()
+})
 
 interface Position {
   position_id: string
