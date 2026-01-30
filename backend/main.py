@@ -63,7 +63,6 @@ from backend.api.routes import (
     scan_activity_routes,  # Scan Activity - EVERY scan with full reasoning for ARES/ATHENA
     apollo_routes,  # APOLLO ML-powered scanner
     daily_manna_routes,  # Daily Manna - Economic news with faith-based devotionals
-    prometheus_routes,  # PROMETHEUS - Enhanced ML system for SPX Wheel
     argus_routes,  # ARGUS - 0DTE Gamma Live real-time visualization
     hyperion_routes,  # HYPERION - Weekly Gamma visualization for stocks/ETFs
     data_transparency_routes,  # Data Transparency - expose ALL hidden collected data
@@ -313,7 +312,6 @@ app.include_router(logs_routes.router)
 app.include_router(scan_activity_routes.router)
 app.include_router(apollo_routes.router)
 app.include_router(daily_manna_routes.router)
-app.include_router(prometheus_routes.router)
 app.include_router(argus_routes.router)
 app.include_router(hyperion_routes.router)
 app.include_router(data_transparency_routes.router)

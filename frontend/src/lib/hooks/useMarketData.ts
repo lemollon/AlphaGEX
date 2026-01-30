@@ -570,59 +570,6 @@ const fetchers = {
     }
   },
 
-  // PROMETHEUS ML System
-  prometheusStatus: async () => {
-    try {
-      const response = await api.get('/api/prometheus/status')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
-  },
-  prometheusFeatureImportance: async () => {
-    try {
-      const response = await api.get('/api/prometheus/feature-importance')
-      return response.data
-    } catch {
-      return { success: false, data: { features: [] } }
-    }
-  },
-  prometheusLogs: async (limit: number = 100, logType?: string) => {
-    try {
-      const params = new URLSearchParams()
-      params.append('limit', String(limit))
-      if (logType) params.append('log_type', logType)
-      const response = await api.get(`/api/prometheus/logs?${params}`)
-      return response.data
-    } catch {
-      return { success: false, data: { logs: [] } }
-    }
-  },
-  prometheusTrainingHistory: async (limit: number = 20) => {
-    try {
-      const response = await api.get(`/api/prometheus/training-history?limit=${limit}`)
-      return response.data
-    } catch {
-      return { success: false, data: { history: [] } }
-    }
-  },
-  prometheusPerformance: async (periodDays: number = 30) => {
-    try {
-      const response = await api.get(`/api/prometheus/performance?period_days=${periodDays}`)
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
-  },
-  prometheusHealth: async () => {
-    try {
-      const response = await api.get('/api/prometheus/health')
-      return response.data
-    } catch {
-      return { status: 'error', prometheus_available: false }
-    }
-  },
-
   // Zero DTE Backtest
   zeroDTEResults: async () => {
     const response = await apiClient.getZeroDTEResults()
@@ -1676,58 +1623,6 @@ export function useMLDecisionLogs(limit: number = 50, options?: SWRConfiguration
     () => fetchers.mlDecisionLogs(limit),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
-}
-
-// =============================================================================
-// PROMETHEUS ML SYSTEM HOOKS
-// =============================================================================
-
-export function usePrometheusStatus(options?: SWRConfiguration) {
-  return useSWR('prometheus-status', fetchers.prometheusStatus, {
-    ...swrConfig,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
-}
-
-export function usePrometheusFeatureImportance(options?: SWRConfiguration) {
-  return useSWR('prometheus-feature-importance', fetchers.prometheusFeatureImportance, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
-}
-
-export function usePrometheusLogs(limit: number = 100, logType?: string, options?: SWRConfiguration) {
-  return useSWR(
-    `prometheus-logs-${limit}-${logType || 'all'}`,
-    () => fetchers.prometheusLogs(limit, logType),
-    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
-  )
-}
-
-export function usePrometheusTrainingHistory(limit: number = 20, options?: SWRConfiguration) {
-  return useSWR(
-    `prometheus-training-history-${limit}`,
-    () => fetchers.prometheusTrainingHistory(limit),
-    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
-  )
-}
-
-export function usePrometheusPerformance(periodDays: number = 30, options?: SWRConfiguration) {
-  return useSWR(
-    `prometheus-performance-${periodDays}`,
-    () => fetchers.prometheusPerformance(periodDays),
-    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
-  )
-}
-
-export function usePrometheusHealth(options?: SWRConfiguration) {
-  return useSWR('prometheus-health', fetchers.prometheusHealth, {
-    ...swrConfig,
-    refreshInterval: 60 * 1000,
-    ...options,
-  })
 }
 
 // =============================================================================

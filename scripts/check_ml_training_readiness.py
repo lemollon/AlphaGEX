@@ -76,17 +76,6 @@ ML_MODELS = {
         'priority': 'MEDIUM',
         'used_by': ['ARES Iron Condor'],
     },
-    'prometheus': {
-        'name': 'Prometheus ML',
-        'description': 'SPX Wheel trade quality prediction',
-        'train_script': 'scripts/train_prometheus_model.py',
-        'model_path': None,  # Stored in database
-        'db_model_table': 'prometheus_live_model',
-        'min_records': 30,
-        'data_tables': ['spx_wheel_ml_outcomes', 'backtest_results'],
-        'priority': 'HIGH',
-        'used_by': ['ATLAS SPX Wheel'],
-    },
 }
 
 
@@ -141,7 +130,7 @@ def check_model_exists(model_config: Dict, model_id: str = None) -> bool:
         if os.path.exists(model_config['model_path']):
             return True
 
-    # Check legacy database-stored model (oracle_trained_models, prometheus_live_model)
+    # Check legacy database-stored model (oracle_trained_models)
     if model_config.get('db_model_table'):
         try:
             conn = get_connection()
@@ -288,8 +277,6 @@ def check_all_models() -> Dict:
                     model_result['fix'] = 'Need historical options data (ORAT) or more GEX snapshots'
             elif model_id == 'oracle':
                 model_result['fix'] = 'Run backtests or accumulate live trading outcomes'
-            elif model_id == 'prometheus':
-                model_result['fix'] = 'Run: python scripts/train_prometheus_model.py --generate-synthetic'
 
         results['models'][model_id] = model_result
 

@@ -196,18 +196,7 @@ class MLModelRegistry:
         )
 
         # =====================================================================
-        # 7. PROMETHEUS ML (SPX Wheel Optimizer)
-        # =====================================================================
-        self.register_model(
-            name="prometheus_ml",
-            description="ML for SPX cash-secured put selling - learns profitable CSP conditions",
-            validate_func=self._validate_prometheus_ml,
-            retrain_func=self._retrain_prometheus_ml,
-            degradation_threshold=0.20
-        )
-
-        # =====================================================================
-        # 8. SPX WHEEL ML
+        # 7. SPX WHEEL ML
         # =====================================================================
         self.register_model(
             name="spx_wheel_ml",
@@ -596,54 +585,6 @@ class MLModelRegistry:
             return False
         except Exception as e:
             logger.error(f"Apollo ML Engine retrain failed: {e}")
-            return False
-
-    # =========================================================================
-    # PROMETHEUS ML
-    # =========================================================================
-
-    def _validate_prometheus_ml(self) -> ModelValidationResult:
-        """Validate Prometheus ML (SPX Wheel Optimizer)"""
-        try:
-            from trading.prometheus_ml import PrometheusMLSystem
-
-            prometheus = PrometheusMLSystem()
-            metrics = prometheus.get_metrics() if hasattr(prometheus, 'get_metrics') else {}
-
-            is_accuracy = metrics.get('train_accuracy', 0.65)
-            oos_accuracy = metrics.get('validation_accuracy', 0.55)
-            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
-
-            is_robust = degradation < 0.20
-
-            return ModelValidationResult(
-                model_name="prometheus_ml",
-                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
-                in_sample_accuracy=is_accuracy,
-                out_of_sample_accuracy=oos_accuracy,
-                degradation_pct=degradation * 100,
-                is_robust=is_robust,
-                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
-                recommendation="KEEP" if is_robust else "RETRAIN",
-                details=metrics
-            )
-        except Exception as e:
-            logger.warning(f"Prometheus ML validation failed: {e}")
-            return self._failed_validation("prometheus_ml", str(e))
-
-    def _retrain_prometheus_ml(self) -> bool:
-        """Retrain Prometheus ML"""
-        try:
-            from trading.prometheus_ml import PrometheusMLSystem
-
-            prometheus = PrometheusMLSystem()
-            if hasattr(prometheus, 'train'):
-                prometheus.train()
-                logger.info("Prometheus ML retrained successfully")
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Prometheus ML retrain failed: {e}")
             return False
 
     # =========================================================================
