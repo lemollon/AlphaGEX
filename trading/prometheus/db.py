@@ -12,9 +12,9 @@ import json
 
 # Database adapter import with fallback
 try:
-    from database_adapter import get_db_connection
+    from database_adapter import get_connection
 except ImportError:
-    get_db_connection = None
+    get_connection = None
 
 from .models import (
     BoxSpreadPosition,
@@ -63,9 +63,9 @@ class PrometheusDatabase:
 
     def _get_connection(self):
         """Get database connection with fallback handling"""
-        if get_db_connection is None:
+        if get_connection is None:
             raise RuntimeError("Database adapter not available")
-        return get_db_connection()
+        return get_connection()
 
     def _ensure_tables(self):
         """Create all PROMETHEUS tables if they don't exist"""
