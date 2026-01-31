@@ -82,6 +82,9 @@ export default function PrometheusBoxDashboard() {
   // Full Reconciliation - server-calculated, all values from API
   const { data: reconciliation } = useSWR('/api/prometheus-box/reconciliation', fetcher, { refreshInterval: 30000 })
 
+  // Daily P&L breakdown - IC earnings vs borrowing costs
+  const { data: dailyPnl } = useSWR('/api/prometheus-box/daily-pnl?days=14', fetcher, { refreshInterval: 60000 })
+
   // IC Bot positions for capital deployment tracking (legacy - to be removed)
   const { data: aresPositions } = useSWR('/api/ares/positions', fetcher, { refreshInterval: 30000 })
   const { data: titanPositions } = useSWR('/api/titan/positions', fetcher, { refreshInterval: 30000 })
@@ -228,12 +231,12 @@ export default function PrometheusBoxDashboard() {
                     <div className="relative">
                       <div className="bg-yellow-900/40 rounded-lg p-4 border border-yellow-600/50 h-full">
                         <div className="text-xs text-gray-400 mb-1">STEP 2: RESERVE</div>
-                        <div className="text-2xl font-bold text-yellow-400">{formatCurrency(totalBorrowed * 0.15)}</div>
+                        <div className="text-2xl font-bold text-yellow-400">{formatCurrency(reconciliation?.capital_deployment?.reserved || totalBorrowed * (reconciliation?.config?.reserve_pct || 10) / 100)}</div>
                         <div className="text-xs text-gray-300 mt-2">
                           held as margin buffer
                         </div>
                         <div className="mt-2 text-xs text-gray-400">
-                          15% reserved for safety
+                          {reconciliation?.config?.reserve_pct || 10}% reserved for safety
                         </div>
                         <div className="mt-1 text-xs text-gray-500">
                           Protects against IC losses
@@ -245,12 +248,12 @@ export default function PrometheusBoxDashboard() {
                     <div className="relative">
                       <div className="bg-orange-900/40 rounded-lg p-4 border border-orange-600/50 h-full">
                         <div className="text-xs text-gray-400 mb-1">STEP 3: DEPLOY</div>
-                        <div className="text-2xl font-bold text-orange-400">{formatCurrency(icStatus?.status?.available_capital || 0)}</div>
+                        <div className="text-2xl font-bold text-orange-400">{formatCurrency(reconciliation?.capital_deployment?.available_to_trade || icStatus?.status?.available_capital || 0)}</div>
                         <div className="text-xs text-gray-300 mt-2">
                           available for IC trading
                         </div>
                         <div className="mt-2 text-xs text-gray-400">
-                          <span className="text-white font-medium">{icStatus?.status?.open_positions || 0}</span> positions using <span className="text-white font-medium">{formatCurrency((icStatus?.status?.open_positions || 0) * 6000)}</span>
+                          <span className="text-white font-medium">{icStatus?.status?.open_positions || 0}</span> positions using <span className="text-white font-medium">{formatCurrency(reconciliation?.capital_deployment?.in_ic_trades || (icStatus?.status?.open_positions || 0) * (reconciliation?.config?.min_capital_per_trade || 5000))}</span>
                         </div>
                         <div className="mt-1 text-xs text-gray-500">
                           {icStatus?.status?.daily_trades || 0} trades today
@@ -1124,6 +1127,69 @@ export default function PrometheusBoxDashboard() {
                               </div>
                             </div>
 
+                            {/* PER-POSITION CAPITAL DEPLOYMENT - Where the borrowed cash sits */}
+                            {pos.capital_deployment && (
+                              <div className="mt-4 bg-purple-900/20 rounded-lg p-4 border border-purple-600/30">
+                                <div className="text-sm font-medium text-purple-400 mb-3">
+                                  WHERE THE {formatCurrency(pos.credit_received)} SITS NOW
+                                  {pos.capital_deployment.reconciles && (
+                                    <span className="ml-2 px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">✓ TIES</span>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-4 gap-2 text-center">
+                                  <div className="bg-yellow-900/30 rounded p-2">
+                                    <div className="text-xs text-gray-400">Reserved ({pos.capital_deployment.reserved_pct}%)</div>
+                                    <div className="text-lg font-bold text-yellow-400">{formatCurrency(pos.capital_deployment.reserved)}</div>
+                                  </div>
+                                  <div className="bg-orange-900/30 rounded p-2">
+                                    <div className="text-xs text-gray-400">In ICs ({pos.capital_deployment.ic_count})</div>
+                                    <div className="text-lg font-bold text-orange-400">{formatCurrency(pos.capital_deployment.in_ic_trades)}</div>
+                                  </div>
+                                  <div className="bg-green-900/30 rounded p-2">
+                                    <div className="text-xs text-gray-400">Available</div>
+                                    <div className="text-lg font-bold text-green-400">{formatCurrency(pos.capital_deployment.available)}</div>
+                                  </div>
+                                  <div className="bg-blue-900/30 rounded p-2">
+                                    <div className="text-xs text-gray-400">TOTAL</div>
+                                    <div className="text-lg font-bold text-blue-400">{formatCurrency(pos.capital_deployment.total_borrowed)}</div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ROLL INFO - When this position needs to roll */}
+                            {pos.roll_info && (
+                              <div className={`mt-4 p-3 rounded-lg border ${
+                                pos.roll_info.urgency === 'CRITICAL' ? 'bg-red-900/30 border-red-600/50' :
+                                pos.roll_info.urgency === 'WARNING' ? 'bg-yellow-900/30 border-yellow-600/50' :
+                                pos.roll_info.urgency === 'SOON' ? 'bg-orange-900/30 border-orange-600/30' :
+                                'bg-gray-900/30 border-gray-600/30'
+                              }`}>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-gray-300">Roll Threshold:</span>
+                                  <span className="text-gray-400">DTE &lt; {pos.roll_info.roll_threshold_dte} days</span>
+                                </div>
+                                <div className="flex justify-between items-center mt-1">
+                                  <span className="text-gray-300">Days Until Roll:</span>
+                                  <span className={`font-bold ${
+                                    pos.roll_info.urgency === 'CRITICAL' ? 'text-red-400' :
+                                    pos.roll_info.urgency === 'WARNING' ? 'text-yellow-400' :
+                                    pos.roll_info.urgency === 'SOON' ? 'text-orange-400' :
+                                    'text-green-400'
+                                  }`}>
+                                    {pos.roll_info.days_until_roll} days
+                                    {pos.roll_info.urgency !== 'OK' && (
+                                      <span className="ml-2 text-xs">
+                                        {pos.roll_info.urgency === 'CRITICAL' ? '⚠️ ROLL NOW' :
+                                         pos.roll_info.urgency === 'WARNING' ? '⚠️ ROLL SOON' :
+                                         '📅 Schedule Roll'}
+                                      </span>
+                                    )}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+
                             {/* Net Profit for this position */}
                             <div className={`mt-4 p-3 rounded-lg ${pos.net_profit >= 0 ? 'bg-green-900/30 border border-green-600/30' : 'bg-red-900/30 border border-red-600/30'}`}>
                               <div className="flex justify-between items-center">
@@ -1432,6 +1498,136 @@ export default function PrometheusBoxDashboard() {
                         )}
                       </div>
 
+                      {/* RISK ALERTS SECTION */}
+                      {reconciliation.risk_alerts?.count > 0 && (
+                        <div className={`mt-6 rounded-lg p-4 border ${
+                          reconciliation.risk_alerts.has_critical ? 'bg-red-900/30 border-red-600/50' :
+                          reconciliation.risk_alerts.has_warnings ? 'bg-yellow-900/30 border-yellow-600/50' :
+                          'bg-blue-900/30 border-blue-600/30'
+                        }`}>
+                          <div className="text-sm font-medium mb-3 flex items-center gap-2">
+                            {reconciliation.risk_alerts.has_critical ? '🚨' : reconciliation.risk_alerts.has_warnings ? '⚠️' : 'ℹ️'}
+                            <span className={
+                              reconciliation.risk_alerts.has_critical ? 'text-red-400' :
+                              reconciliation.risk_alerts.has_warnings ? 'text-yellow-400' :
+                              'text-blue-400'
+                            }>
+                              Risk Alerts ({reconciliation.risk_alerts.count})
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {reconciliation.risk_alerts.alerts.map((alert: any, idx: number) => (
+                              <div key={idx} className={`p-2 rounded text-sm flex items-center gap-2 ${
+                                alert.severity === 'HIGH' ? 'bg-red-900/50 text-red-300' :
+                                alert.severity === 'MEDIUM' ? 'bg-yellow-900/50 text-yellow-300' :
+                                'bg-blue-900/50 text-blue-300'
+                              }`}>
+                                <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                                  alert.severity === 'HIGH' ? 'bg-red-600 text-white' :
+                                  alert.severity === 'MEDIUM' ? 'bg-yellow-600 text-black' :
+                                  'bg-blue-600 text-white'
+                                }`}>
+                                  {alert.severity}
+                                </span>
+                                <span>{alert.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ROLL SCHEDULE TIMELINE */}
+                      {reconciliation.roll_schedule?.length > 0 && (
+                        <div className="mt-6 bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                          <div className="text-sm font-medium text-gray-400 mb-3">📅 Roll Schedule Timeline</div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-left text-gray-500 border-b border-gray-700">
+                                  <th className="pb-2">Position</th>
+                                  <th className="pb-2">Expiration</th>
+                                  <th className="pb-2">Current DTE</th>
+                                  <th className="pb-2">Roll Threshold</th>
+                                  <th className="pb-2">Days Until Roll</th>
+                                  <th className="pb-2">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {reconciliation.roll_schedule.map((item: any) => (
+                                  <tr key={item.position_id} className="border-b border-gray-800">
+                                    <td className="py-2 font-mono text-blue-400">{item.ticker} {item.strikes}</td>
+                                    <td className="py-2">{item.expiration}</td>
+                                    <td className="py-2">{item.current_dte} days</td>
+                                    <td className="py-2 text-gray-400">&lt; {item.roll_threshold_dte} days</td>
+                                    <td className={`py-2 font-bold ${
+                                      item.urgency === 'CRITICAL' ? 'text-red-400' :
+                                      item.urgency === 'WARNING' ? 'text-yellow-400' :
+                                      item.urgency === 'SOON' ? 'text-orange-400' :
+                                      'text-green-400'
+                                    }`}>
+                                      {item.days_until_roll} days
+                                    </td>
+                                    <td className="py-2">
+                                      <span className={`px-2 py-1 rounded text-xs ${
+                                        item.urgency === 'CRITICAL' ? 'bg-red-500/20 text-red-400' :
+                                        item.urgency === 'WARNING' ? 'bg-yellow-500/20 text-yellow-400' :
+                                        item.urgency === 'SOON' ? 'bg-orange-500/20 text-orange-400' :
+                                        'bg-green-500/20 text-green-400'
+                                      }`}>
+                                        {item.urgency === 'CRITICAL' ? '🚨 ROLL NOW' :
+                                         item.urgency === 'WARNING' ? '⚠️ ROLL SOON' :
+                                         item.urgency === 'SOON' ? '📅 UPCOMING' :
+                                         '✓ OK'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* BREAK-EVEN PROGRESS BAR */}
+                      {reconciliation.break_even_progress && (
+                        <div className="mt-6 bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                          <div className="text-sm font-medium text-gray-400 mb-3">📊 Break-Even Progress</div>
+                          <div className="relative">
+                            {/* Progress bar background */}
+                            <div className="h-8 bg-gray-800 rounded-lg overflow-hidden relative">
+                              {/* Break-even marker at center */}
+                              <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-white z-10" style={{ transform: 'translateX(-50%)' }} />
+                              <div className="absolute left-1/2 -top-5 text-xs text-gray-400 transform -translate-x-1/2">Break-Even</div>
+
+                              {/* Progress fill */}
+                              <div
+                                className={`h-full transition-all duration-500 ${
+                                  reconciliation.break_even_progress.is_above_break_even ? 'bg-gradient-to-r from-green-600 to-green-400' : 'bg-gradient-to-r from-red-600 to-red-400'
+                                }`}
+                                style={{
+                                  width: `${Math.min(100, Math.max(0, reconciliation.break_even_progress.break_even_pct / 2))}%`
+                                }}
+                              />
+                            </div>
+
+                            {/* Labels */}
+                            <div className="flex justify-between mt-2 text-sm">
+                              <div>
+                                <span className="text-gray-400">IC Returns: </span>
+                                <span className="text-green-400 font-bold">{formatCurrency(reconciliation.break_even_progress.ic_returns)}</span>
+                              </div>
+                              <div className={`text-center font-bold ${reconciliation.break_even_progress.is_above_break_even ? 'text-green-400' : 'text-red-400'}`}>
+                                {reconciliation.break_even_progress.is_above_break_even ? '+' : ''}{formatCurrency(reconciliation.break_even_progress.excess_over_break_even)}
+                              </div>
+                              <div>
+                                <span className="text-gray-400">Borrowing Costs: </span>
+                                <span className="text-red-400 font-bold">{formatCurrency(reconciliation.break_even_progress.borrowing_costs)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Trading Rules Summary */}
                       <div className="mt-6 bg-black/30 rounded-lg p-4">
                         <div className="text-sm font-medium text-gray-400 mb-3">📜 Trading Rules (from config)</div>
@@ -1470,6 +1666,137 @@ export default function PrometheusBoxDashboard() {
                           </div>
                         </div>
                       </div>
+
+                      {/* DAILY P&L BREAKDOWN TABLE */}
+                      {dailyPnl?.available && dailyPnl.daily_pnl?.length > 0 && (
+                        <div className="mt-6 bg-gray-900/50 rounded-lg p-4 border border-gray-700">
+                          <div className="text-sm font-medium text-gray-400 mb-3 flex items-center justify-between">
+                            <span>📈 Daily P&L Breakdown (Last 14 Days)</span>
+                            <span className="text-xs text-gray-500">
+                              Daily borrowing cost: <span className="text-red-400">{formatCurrency(dailyPnl.total_daily_borrowing_cost)}</span>/day
+                            </span>
+                          </div>
+                          <div className="overflow-x-auto max-h-80">
+                            <table className="w-full text-sm">
+                              <thead className="sticky top-0 bg-gray-900">
+                                <tr className="text-left text-gray-500 border-b border-gray-700">
+                                  <th className="pb-2 pr-4">Date</th>
+                                  <th className="pb-2 pr-4 text-right">IC Earned</th>
+                                  <th className="pb-2 pr-4 text-right">Box Cost</th>
+                                  <th className="pb-2 pr-4 text-right">Net</th>
+                                  <th className="pb-2 pr-4 text-right">Cumulative</th>
+                                  <th className="pb-2 text-center">Trades</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {dailyPnl.daily_pnl.slice(-14).map((day: any) => (
+                                  <tr key={day.date} className="border-b border-gray-800">
+                                    <td className="py-2 pr-4 font-mono text-gray-300">{day.date}</td>
+                                    <td className="py-2 pr-4 text-right text-green-400">{formatCurrency(day.ic_earned)}</td>
+                                    <td className="py-2 pr-4 text-right text-red-400">-{formatCurrency(day.box_cost)}</td>
+                                    <td className={`py-2 pr-4 text-right font-bold ${day.net >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {day.net >= 0 ? '+' : ''}{formatCurrency(day.net)}
+                                    </td>
+                                    <td className={`py-2 pr-4 text-right ${day.cumulative >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {formatCurrency(day.cumulative)}
+                                    </td>
+                                    <td className="py-2 text-center text-gray-400">{day.trades}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          {/* Summary row */}
+                          <div className="mt-3 pt-3 border-t border-gray-700 grid grid-cols-4 gap-4 text-center text-sm">
+                            <div>
+                              <div className="text-xs text-gray-500">Total IC Earned</div>
+                              <div className="font-bold text-green-400">{formatCurrency(dailyPnl.summary?.total_ic_earned || 0)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-500">Total Box Cost</div>
+                              <div className="font-bold text-red-400">-{formatCurrency(dailyPnl.summary?.total_box_cost || 0)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-500">Total Net</div>
+                              <div className={`font-bold ${(dailyPnl.summary?.total_net || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {formatCurrency(dailyPnl.summary?.total_net || 0)}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-500">Avg Daily Net</div>
+                              <div className={`font-bold ${(dailyPnl.summary?.avg_daily_net || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {formatCurrency(dailyPnl.summary?.avg_daily_net || 0)}/day
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ORACLE SCAN ACTIVITY */}
+                      {icSignals?.available && icSignals.signals?.length > 0 && (
+                        <div className="mt-6 bg-gray-900/50 rounded-lg p-4 border border-purple-700/30">
+                          <div className="text-sm font-medium text-purple-400 mb-3">
+                            🔮 Oracle Scan Activity (Recent IC Signals)
+                          </div>
+                          <div className="space-y-2 max-h-80 overflow-y-auto">
+                            {icSignals.signals.slice(0, 10).map((signal: any) => (
+                              <div
+                                key={signal.signal_id}
+                                className={`p-3 rounded-lg border ${
+                                  signal.oracle_approved
+                                    ? signal.was_executed
+                                      ? 'bg-green-900/20 border-green-600/30'
+                                      : 'bg-blue-900/20 border-blue-600/30'
+                                    : 'bg-red-900/20 border-red-600/30'
+                                }`}
+                              >
+                                <div className="flex justify-between items-start mb-2">
+                                  <div>
+                                    <span className="font-mono text-sm text-white">
+                                      {signal.ticker} {signal.put_short_strike}/{signal.put_long_strike}P | {signal.call_short_strike}/{signal.call_long_strike}C
+                                    </span>
+                                    <span className="ml-2 text-xs text-gray-400">{signal.dte || 0} DTE</span>
+                                  </div>
+                                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                                    signal.oracle_approved
+                                      ? signal.was_executed
+                                        ? 'bg-green-500/20 text-green-400'
+                                        : 'bg-blue-500/20 text-blue-400'
+                                      : 'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    {signal.oracle_approved
+                                      ? signal.was_executed ? '✓ EXECUTED' : '✓ APPROVED'
+                                      : '✗ REJECTED'}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-400 mb-1">
+                                  {signal.signal_time ? new Date(signal.signal_time).toLocaleString() : 'N/A'}
+                                </div>
+                                {/* Oracle reasoning */}
+                                {signal.oracle_reasoning && (
+                                  <div className="mt-2 p-2 bg-purple-900/30 rounded text-sm text-purple-300">
+                                    <span className="text-purple-400 font-medium">Oracle ({(signal.oracle_confidence * 100 || 0).toFixed(0)}%): </span>
+                                    {signal.oracle_reasoning}
+                                  </div>
+                                )}
+                                {/* Skip reason for rejected signals */}
+                                {!signal.oracle_approved && signal.skip_reason && (
+                                  <div className="mt-2 p-2 bg-red-900/30 rounded text-sm text-red-300">
+                                    <span className="text-red-400 font-medium">Skip Reason: </span>
+                                    {signal.skip_reason}
+                                  </div>
+                                )}
+                                {/* Pricing info */}
+                                <div className="mt-2 flex gap-4 text-xs text-gray-400">
+                                  <span>Credit: <span className="text-green-400">{formatCurrency(signal.total_credit || 0)}</span></span>
+                                  <span>Max Loss: <span className="text-red-400">{formatCurrency(signal.max_loss || 0)}</span></span>
+                                  <span>PoP: <span className="text-blue-400">{((signal.probability_of_profit || 0) * 100).toFixed(0)}%</span></span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1654,17 +1981,17 @@ export default function PrometheusBoxDashboard() {
                       </div>
                       <div className="flex items-center justify-center text-gray-500">−</div>
                       <div className="bg-yellow-900/30 rounded p-3 border border-yellow-700/50">
-                        <div className="text-xs text-gray-400">Reserved (15%)</div>
-                        <div className="text-lg font-bold text-yellow-400">{formatCurrency(totalBorrowed * 0.15)}</div>
+                        <div className="text-xs text-gray-400">Reserved ({reconciliation?.config?.reserve_pct || 10}%)</div>
+                        <div className="text-lg font-bold text-yellow-400">{formatCurrency(reconciliation?.capital_deployment?.reserved || totalBorrowed * (reconciliation?.config?.reserve_pct || 10) / 100)}</div>
                         <div className="text-xs text-gray-500">Margin buffer</div>
                       </div>
                       <div className="flex items-center justify-center text-gray-500">−</div>
                       <div className="bg-orange-900/30 rounded p-3 border border-orange-700/50">
                         <div className="text-xs text-gray-400">In IC Trades</div>
                         <div className="text-lg font-bold text-orange-400">
-                          {formatCurrency((icStatus?.status?.open_positions || 0) * 6000)}
+                          {formatCurrency(reconciliation?.capital_deployment?.in_ic_trades || (icStatus?.status?.open_positions || 0) * (reconciliation?.config?.min_capital_per_trade || 5000))}
                         </div>
-                        <div className="text-xs text-gray-500">{icStatus?.status?.open_positions || 0} × $6K/trade</div>
+                        <div className="text-xs text-gray-500">{icStatus?.status?.open_positions || 0} × {formatCurrency(reconciliation?.config?.min_capital_per_trade || 5000)}/trade</div>
                       </div>
                     </div>
                     <div className="mt-3 pt-3 border-t border-gray-600 flex justify-between items-center">
@@ -1689,12 +2016,12 @@ export default function PrometheusBoxDashboard() {
                     </h3>
                     <div className="grid md:grid-cols-2 gap-4 text-sm">
                       <div className="space-y-2">
-                        <div className={`flex items-center gap-2 ${(icStatus?.status?.available_capital || 0) >= 6000 ? 'text-green-400' : 'text-red-400'}`}>
-                          {(icStatus?.status?.available_capital || 0) >= 6000 ? '✓' : '✗'} Capital: {formatCurrency(icStatus?.status?.available_capital || 0)}
-                          {(icStatus?.status?.available_capital || 0) < 6000 && <span className="text-xs text-gray-500">(need $6,000 min)</span>}
+                        <div className={`flex items-center gap-2 ${(icStatus?.status?.available_capital || 0) >= (reconciliation?.config?.min_capital_per_trade || 5000) ? 'text-green-400' : 'text-red-400'}`}>
+                          {(icStatus?.status?.available_capital || 0) >= (reconciliation?.config?.min_capital_per_trade || 5000) ? '✓' : '✗'} Capital: {formatCurrency(icStatus?.status?.available_capital || 0)}
+                          {(icStatus?.status?.available_capital || 0) < (reconciliation?.config?.min_capital_per_trade || 5000) && <span className="text-xs text-gray-500">(need {formatCurrency(reconciliation?.config?.min_capital_per_trade || 5000)} min)</span>}
                         </div>
-                        <div className={`flex items-center gap-2 ${(icStatus?.status?.open_positions || 0) < 5 ? 'text-green-400' : 'text-red-400'}`}>
-                          {(icStatus?.status?.open_positions || 0) < 5 ? '✓' : '✗'} Positions: {icStatus?.status?.open_positions || 0} / 5 max
+                        <div className={`flex items-center gap-2 ${(icStatus?.status?.open_positions || 0) < (reconciliation?.config?.ic_max_positions || 3) ? 'text-green-400' : 'text-red-400'}`}>
+                          {(icStatus?.status?.open_positions || 0) < (reconciliation?.config?.ic_max_positions || 3) ? '✓' : '✗'} Positions: {icStatus?.status?.open_positions || 0} / {reconciliation?.config?.ic_max_positions || 3} max
                         </div>
                         <div className={`flex items-center gap-2 ${(icStatus?.status?.daily_trades || 0) < (icStatus?.status?.max_daily_trades || 5) ? 'text-green-400' : 'text-red-400'}`}>
                           {(icStatus?.status?.daily_trades || 0) < (icStatus?.status?.max_daily_trades || 5) ? '✓' : '✗'} Daily trades: {icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 5}

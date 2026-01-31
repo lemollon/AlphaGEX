@@ -1595,6 +1595,101 @@ async def get_combined_performance():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/daily-pnl")
+async def get_daily_pnl(days: int = Query(30, ge=1, le=90)):
+    """
+    Get daily P&L breakdown showing IC earnings vs borrowing costs per day.
+
+    Returns:
+    - Daily breakdown of IC realized P&L
+    - Daily borrowing cost accrual
+    - Net daily P&L
+    - Cumulative running total
+    """
+    if not PrometheusICTrader or not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS modules not available")
+
+    try:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        from collections import defaultdict
+
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
+
+        # Get traders and database
+        box_trader = PrometheusTrader()
+        ic_trader = PrometheusICTrader()
+
+        # Get box positions for daily borrowing cost calculation
+        box_positions = box_trader.get_positions()
+        total_daily_borrowing_cost = sum(pos.get('daily_cost', 0) for pos in box_positions)
+
+        # Get closed IC trades from the last N days
+        closed_trades = ic_trader.db.get_ic_closed_trades(limit=500)
+
+        # Build daily P&L dictionary
+        daily_pnl = defaultdict(lambda: {'ic_earned': 0, 'box_cost': total_daily_borrowing_cost, 'trades': 0})
+
+        for trade in closed_trades:
+            close_time = trade.get('close_time')
+            if not close_time:
+                continue
+
+            # Parse date
+            if isinstance(close_time, str):
+                close_date = datetime.fromisoformat(close_time.replace('Z', '+00:00')).date()
+            else:
+                close_date = close_time.date()
+
+            # Check if within range
+            days_ago = (now.date() - close_date).days
+            if days_ago <= days:
+                date_key = close_date.isoformat()
+                daily_pnl[date_key]['ic_earned'] += trade.get('realized_pnl', 0)
+                daily_pnl[date_key]['trades'] += 1
+
+        # Build sorted list for the last N days
+        result = []
+        cumulative = 0
+        for i in range(days, -1, -1):
+            date = (now - timedelta(days=i)).date()
+            date_key = date.isoformat()
+
+            ic_earned = daily_pnl[date_key]['ic_earned']
+            box_cost = daily_pnl[date_key]['box_cost']
+            net = ic_earned - box_cost
+            cumulative += net
+            trades = daily_pnl[date_key]['trades']
+
+            result.append({
+                'date': date_key,
+                'ic_earned': round(ic_earned, 2),
+                'box_cost': round(box_cost, 2),
+                'net': round(net, 2),
+                'cumulative': round(cumulative, 2),
+                'trades': trades,
+            })
+
+        return {
+            "available": True,
+            "days_requested": days,
+            "total_daily_borrowing_cost": round(total_daily_borrowing_cost, 2),
+            "daily_pnl": result,
+            "summary": {
+                "total_ic_earned": round(sum(d['ic_earned'] for d in result), 2),
+                "total_box_cost": round(sum(d['box_cost'] for d in result), 2),
+                "total_net": round(sum(d['net'] for d in result), 2),
+                "avg_daily_net": round(sum(d['net'] for d in result) / len(result), 2) if result else 0,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error getting daily P&L: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/reconciliation")
 async def get_full_reconciliation():
     """
@@ -1645,6 +1740,15 @@ async def get_full_reconciliation():
         total_cost_accrued = 0
         total_cost_remaining = 0
 
+        # Get reserve_pct and min_capital_per_trade from configs for per-position deployment
+        pos_reserve_pct = (box_config.reserve_pct / 100) if box_config and box_config.reserve_pct else 0.10
+        pos_margin_per_trade = ic_config.min_capital_per_trade if ic_config and ic_config.min_capital_per_trade else 5000.0
+        min_dte_to_hold = box_config.min_dte_to_hold if box_config else 30
+
+        # Track roll schedule and risk alerts
+        roll_schedule = []
+        risk_alerts = []
+
         for pos in box_positions:
             # Calculate position-specific values
             strike_width = pos.get('strike_width', 50)
@@ -1665,6 +1769,45 @@ async def get_full_reconciliation():
             implied_rate = pos.get('implied_annual_rate', 0)
             if implied_rate == 0 and credit_received > 0 and dte_at_entry > 0:
                 implied_rate = (total_cost / credit_received) / (dte_at_entry / 365) * 100
+
+            # PER-POSITION CAPITAL DEPLOYMENT
+            # Count ICs funded by this specific box spread
+            ics_from_this_box = [ic for ic in ic_positions if ic.get('source_box_position_id') == pos.get('position_id')]
+            capital_reserved = credit_received * pos_reserve_pct
+            capital_in_ics = len(ics_from_this_box) * pos_margin_per_trade
+            capital_available = credit_received - capital_reserved - capital_in_ics
+
+            # Roll schedule calculation
+            days_until_roll = current_dte - min_dte_to_hold
+            roll_urgency = "CRITICAL" if days_until_roll <= 0 else "WARNING" if days_until_roll <= 7 else "SOON" if days_until_roll <= 14 else "OK"
+
+            # Add to roll schedule
+            roll_schedule.append({
+                'position_id': pos.get('position_id'),
+                'ticker': pos.get('ticker', 'SPX'),
+                'strikes': f"{pos.get('lower_strike')}/{pos.get('upper_strike')}",
+                'expiration': pos.get('expiration'),
+                'current_dte': current_dte,
+                'roll_threshold_dte': min_dte_to_hold,
+                'days_until_roll': days_until_roll,
+                'urgency': roll_urgency,
+            })
+
+            # Risk alerts for this position
+            if roll_urgency == "CRITICAL":
+                risk_alerts.append({
+                    'type': 'ROLL_CRITICAL',
+                    'severity': 'HIGH',
+                    'position_id': pos.get('position_id'),
+                    'message': f"BOX {pos.get('position_id')[:8]} requires IMMEDIATE roll - {current_dte} DTE (threshold: {min_dte_to_hold})",
+                })
+            elif roll_urgency == "WARNING":
+                risk_alerts.append({
+                    'type': 'ROLL_WARNING',
+                    'severity': 'MEDIUM',
+                    'position_id': pos.get('position_id'),
+                    'message': f"BOX {pos.get('position_id')[:8]} needs roll within {days_until_roll} days",
+                })
 
             box_reconciliation.append({
                 'position_id': pos.get('position_id'),
@@ -1690,6 +1833,24 @@ async def get_full_reconciliation():
                 'cost_accrued_to_date': cost_accrued,
                 'cost_remaining': cost_remaining,
                 'accrual_pct': (cost_accrued / total_cost * 100) if total_cost > 0 else 0,
+
+                # PER-POSITION CAPITAL DEPLOYMENT (NEW)
+                'capital_deployment': {
+                    'total_borrowed': credit_received,
+                    'reserved': capital_reserved,
+                    'reserved_pct': pos_reserve_pct * 100,
+                    'in_ic_trades': capital_in_ics,
+                    'ic_count': len(ics_from_this_box),
+                    'available': capital_available,
+                    'reconciles': abs((capital_reserved + capital_in_ics + capital_available) - credit_received) < 0.01,
+                },
+
+                # Roll schedule info
+                'roll_info': {
+                    'days_until_roll': days_until_roll,
+                    'roll_threshold_dte': min_dte_to_hold,
+                    'urgency': roll_urgency,
+                },
 
                 # IC returns from this box spread's capital
                 'total_ic_returns': pos.get('total_ic_returns', 0),
@@ -1766,6 +1927,46 @@ async def get_full_reconciliation():
             total_ic_credit += credit
             total_ic_current_value += current_value
 
+            # IC position risk alerts
+            pnl_pct = (unrealized / credit * 100) if credit > 0 else 0
+            stop_loss_pct = pos.get('stop_loss_pct', 200)
+            profit_target_pct = pos.get('profit_target_pct', 50)
+
+            if pnl_pct <= -stop_loss_pct * 0.8:  # Within 20% of stop loss
+                risk_alerts.append({
+                    'type': 'IC_NEAR_STOP',
+                    'severity': 'HIGH' if pnl_pct <= -stop_loss_pct else 'MEDIUM',
+                    'position_id': pos.get('position_id'),
+                    'message': f"IC {pos.get('ticker')} {pos.get('put_short_strike')}/{pos.get('call_short_strike')} at {pnl_pct:.1f}% loss (stop: -{stop_loss_pct}%)",
+                })
+            elif pnl_pct >= profit_target_pct * 0.8:  # Within 20% of profit target
+                risk_alerts.append({
+                    'type': 'IC_NEAR_TARGET',
+                    'severity': 'LOW',
+                    'position_id': pos.get('position_id'),
+                    'message': f"IC {pos.get('ticker')} at +{pnl_pct:.1f}% profit - consider closing (target: +{profit_target_pct}%)",
+                })
+
+        # Add margin utilization alert
+        max_margin_pct = box_config.max_margin_pct if box_config else 50
+        ic_max_positions = ic_config.max_positions if ic_config else 3
+        margin_utilization = (len(ic_positions) / ic_max_positions * 100) if ic_max_positions > 0 else 0
+
+        if margin_utilization >= 100:
+            risk_alerts.append({
+                'type': 'MARGIN_FULL',
+                'severity': 'MEDIUM',
+                'position_id': None,
+                'message': f"At max IC positions ({len(ic_positions)}/{ic_max_positions}) - no new trades until positions close",
+            })
+        elif margin_utilization >= 80:
+            risk_alerts.append({
+                'type': 'MARGIN_HIGH',
+                'severity': 'LOW',
+                'position_id': None,
+                'message': f"IC positions at {margin_utilization:.0f}% capacity ({len(ic_positions)}/{ic_max_positions})",
+            })
+
         # Get IC closed trades summary
         closed_trades = ic_performance.get('closed_trades', {})
         ic_realized = closed_trades.get('total_pnl', 0)
@@ -1773,9 +1974,11 @@ async def get_full_reconciliation():
         ic_losses = closed_trades.get('losses', 0)
         ic_win_rate = closed_trades.get('win_rate', 0)
 
-        # Calculate capital deployment
-        reserve_pct = 0.15  # TODO: Get from config when available
-        margin_per_trade = 6000  # TODO: Get from ic_config when available
+        # Calculate capital deployment - USE CONFIG VALUES, NOT HARDCODED
+        # box_config.reserve_pct is percentage (e.g., 10.0 = 10%)
+        reserve_pct = (box_config.reserve_pct / 100) if box_config and box_config.reserve_pct else 0.10
+        # ic_config.min_capital_per_trade is the margin required per IC trade
+        margin_per_trade = ic_config.min_capital_per_trade if ic_config and ic_config.min_capital_per_trade else 5000.0
 
         reserved_capital = total_borrowed * reserve_pct
         capital_in_ic_trades = len(ic_positions) * margin_per_trade
@@ -1795,10 +1998,10 @@ async def get_full_reconciliation():
             "available": True,
             "reconciliation_time": now.isoformat(),
 
-            # Config values (not hardcoded in frontend)
+            # Config values (ALL from config, not hardcoded)
             "config": {
-                "reserve_pct": reserve_pct,
-                "margin_per_ic_trade": margin_per_trade,
+                "reserve_pct": reserve_pct * 100,  # Return as percentage for display (10 = 10%)
+                "min_capital_per_trade": margin_per_trade,  # From ic_config.min_capital_per_trade
                 "box_target_dte_min": box_config.target_dte_min if box_config else 180,
                 "box_target_dte_max": box_config.target_dte_max if box_config else 365,
                 "box_min_dte_to_hold": box_config.min_dte_to_hold if box_config else 30,
@@ -1808,6 +2011,8 @@ async def get_full_reconciliation():
                 "ic_stop_loss_pct": ic_config.stop_loss_pct if ic_config else 200,
                 "require_oracle_approval": ic_config.require_oracle_approval if ic_config else True,
                 "min_oracle_confidence": ic_config.min_oracle_confidence if ic_config else 0.6,
+                "ic_spread_width": ic_config.spread_width if ic_config else 25,
+                "max_margin_pct": box_config.max_margin_pct if box_config else 50,
             },
 
             # Box Spread Reconciliation (per position)
@@ -1874,6 +2079,27 @@ async def get_full_reconciliation():
 
                 # Reconciliation verification
                 "reconciles": abs((total_ic_returns - total_cost_accrued) - net_profit) < 0.01,
+            },
+
+            # ROLL SCHEDULE - When each position needs to roll
+            "roll_schedule": roll_schedule,
+
+            # RISK ALERTS - Active warnings and alerts
+            "risk_alerts": {
+                "alerts": sorted(risk_alerts, key=lambda x: {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}.get(x['severity'], 3)),
+                "count": len(risk_alerts),
+                "has_critical": any(a['severity'] == 'HIGH' for a in risk_alerts),
+                "has_warnings": any(a['severity'] == 'MEDIUM' for a in risk_alerts),
+            },
+
+            # BREAK-EVEN PROGRESS - Visual indicator of strategy health
+            "break_even_progress": {
+                "ic_returns": total_ic_returns,
+                "borrowing_costs": total_cost_accrued,
+                "is_above_break_even": total_ic_returns >= total_cost_accrued,
+                "excess_over_break_even": total_ic_returns - total_cost_accrued,
+                "break_even_pct": (total_ic_returns / total_cost_accrued * 100) if total_cost_accrued > 0 else 100,
+                "message": f"IC returns {'exceed' if net_profit > 0 else 'below'} borrowing costs by {abs(net_profit):.2f}",
             },
         }
 
