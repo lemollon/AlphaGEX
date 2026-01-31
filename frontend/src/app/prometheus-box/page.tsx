@@ -736,11 +736,23 @@ export default function PrometheusBoxDashboard() {
                         <span className="px-3 py-1 bg-yellow-600 text-white rounded-full text-sm font-medium">STANDBY</span>
                       </div>
                       <p className="text-gray-400 mb-4">
-                        No active box spread position. System scans for favorable opportunities daily at 9:30 AM CT.
+                        No active box spread position. System scans for favorable opportunities at market open (8:30 AM CT) and throughout the trading day.
                       </p>
                       {rateAnalysis && (
-                        <div className={`inline-block px-4 py-2 rounded-lg ${rateAnalysis.is_favorable ? 'bg-green-900/50 text-green-400 border border-green-600' : 'bg-yellow-900/50 text-yellow-400 border border-yellow-600'}`}>
-                          Current rates are <strong>{rateAnalysis.is_favorable ? 'FAVORABLE' : 'UNFAVORABLE'}</strong> for new positions
+                        <div className="space-y-2">
+                          <div className={`inline-block px-4 py-2 rounded-lg ${rateAnalysis.is_favorable ? 'bg-green-900/50 text-green-400 border border-green-600' : 'bg-yellow-900/50 text-yellow-400 border border-yellow-600'}`}>
+                            Current rates are <strong>{rateAnalysis.is_favorable ? 'FAVORABLE' : 'UNFAVORABLE'}</strong> for new positions
+                            <span className="ml-2 text-xs opacity-75">
+                              (Fed Funds: {rateAnalysis.fed_funds_rate?.toFixed(2)}% | Box Rate: {rateAnalysis.box_implied_rate?.toFixed(2)}%)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <span className={`w-2 h-2 rounded-full ${rateAnalysis.rates_source === 'live' ? 'bg-green-500' : rateAnalysis.rates_source === 'cached' ? 'bg-yellow-500' : 'bg-red-500'}`}></span>
+                            <span>Rates: {rateAnalysis.rates_source?.toUpperCase() || 'UNKNOWN'}</span>
+                            {rateAnalysis.rates_last_updated && (
+                              <span className="text-gray-600">| Updated: {new Date(rateAnalysis.rates_last_updated).toLocaleTimeString()}</span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -1027,7 +1039,7 @@ export default function PrometheusBoxDashboard() {
                     <div className="p-8 text-center text-gray-400">
                       <div className="text-4xl mb-4">📦</div>
                       <p className="text-lg">No Open Positions</p>
-                      <p className="text-sm mt-2">PROMETHEUS scans for opportunities daily at 9:30 AM CT</p>
+                      <p className="text-sm mt-2">PROMETHEUS scans for opportunities starting at market open (8:30 AM CT)</p>
                     </div>
                   )}
                 </div>
