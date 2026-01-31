@@ -1038,6 +1038,11 @@ class PrometheusICConfig:
     starting_capital: float = 100000.0      # Starting capital for IC trading
     min_capital_per_trade: float = 5000.0   # Minimum capital required per trade
 
+    @property
+    def max_trades_per_day(self) -> int:
+        """Alias for max_daily_trades for compatibility with trader code"""
+        return self.max_daily_trades
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'enabled': self.enabled,
