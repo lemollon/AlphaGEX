@@ -777,8 +777,16 @@ export default function PrometheusBoxDashboard() {
                             </span>
                           </div>
                           <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <span className={`w-2 h-2 rounded-full ${rateAnalysis.rates_source === 'live' ? 'bg-green-500' : rateAnalysis.rates_source === 'cached' ? 'bg-yellow-500' : 'bg-red-500'}`}></span>
-                            <span>Rates: {rateAnalysis.rates_source?.toUpperCase() || 'UNKNOWN'}</span>
+                            <span className={`w-2 h-2 rounded-full ${
+                              rateAnalysis.rates_source === 'live' ? 'bg-green-500' :
+                              rateAnalysis.rates_source === 'cached' ? 'bg-yellow-500' :
+                              rateAnalysis.rates_source === 'fomc_based' ? 'bg-blue-500' : 'bg-red-500'
+                            }`}></span>
+                            <span>Rates: {
+                              rateAnalysis.rates_source === 'live' ? 'LIVE (FRED API)' :
+                              rateAnalysis.rates_source === 'cached' ? 'CACHED' :
+                              rateAnalysis.rates_source === 'fomc_based' ? 'FOMC TARGET (4.25-4.50%)' : 'FALLBACK'
+                            }</span>
                             {rateAnalysis.rates_last_updated && (
                               <span className="text-gray-600">| Updated: {new Date(rateAnalysis.rates_last_updated).toLocaleTimeString()}</span>
                             )}
