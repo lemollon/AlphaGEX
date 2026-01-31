@@ -2105,97 +2105,160 @@ async def get_all_bots_status():
     """
     Get status of all trading bots.
 
-    Returns status for: PHOENIX, ATLAS, HERMES, ORACLE
+    Returns status for all 10 bots:
+    - LIVE: ARES, ATHENA, PEGASUS
+    - PAPER: TITAN, ICARUS, PROMETHEUS
+    - LEGACY/MANUAL: PHOENIX, ATLAS, HERMES, ORACLE
     """
     try:
         from trading.decision_logger import get_bot_decision_summary
 
-        # Capital allocation configuration
-        TOTAL_CAPITAL = 1_000_000
-        RESERVE_CAPITAL = 100_000
-
         bots = {
+            # === LIVE TRADING BOTS ===
+            "ARES": {
+                "name": "ARES",
+                "description": "Aggressive Iron Condor (SPY 0DTE)",
+                "type": "autonomous",
+                "mode": "LIVE",
+                "scheduled": True,
+                "schedule": "8:30 AM - 3:30 PM CT, every 5 min",
+                "strategy": "0DTE Iron Condor at 1 SD",
+                "symbol": "SPY",
+                "data_sources": ["VIX", "Oracle", "GEX Regime"]
+            },
+            "ATHENA": {
+                "name": "ATHENA",
+                "description": "Directional Spreads (Bull/Bear)",
+                "type": "autonomous",
+                "mode": "LIVE",
+                "scheduled": True,
+                "schedule": "8:35 AM - 2:30 PM CT, every 5 min",
+                "strategy": "GEX-based directional spreads",
+                "symbol": "SPY",
+                "data_sources": ["GEX Walls", "Oracle", "VIX"]
+            },
+            "PEGASUS": {
+                "name": "PEGASUS",
+                "description": "SPX Weekly Iron Condor",
+                "type": "autonomous",
+                "mode": "LIVE",
+                "scheduled": True,
+                "schedule": "Every 5 min during market hours",
+                "strategy": "SPX Iron Condor, conservative strikes",
+                "symbol": "SPX",
+                "data_sources": ["VIX", "Oracle", "Expected Move"]
+            },
+
+            # === PAPER TRADING BOTS ===
+            "TITAN": {
+                "name": "TITAN",
+                "description": "Aggressive SPX Iron Condor",
+                "type": "autonomous",
+                "mode": "PAPER",
+                "scheduled": True,
+                "schedule": "Multiple trades daily, 30-min cooldown",
+                "strategy": "Aggressive SPX IC, 15% risk/trade",
+                "symbol": "SPX",
+                "data_sources": ["VIX", "Oracle", "GEX"]
+            },
+            "ICARUS": {
+                "name": "ICARUS",
+                "description": "Aggressive Directional Spreads",
+                "type": "autonomous",
+                "mode": "PAPER",
+                "scheduled": True,
+                "schedule": "Every 5 min during market hours",
+                "strategy": "Aggressive directional, relaxed GEX filters",
+                "symbol": "SPY",
+                "data_sources": ["GEX", "Oracle", "VIX"]
+            },
+            "PROMETHEUS": {
+                "name": "PROMETHEUS",
+                "description": "Box Spread Synthetic Borrowing + IC Trading",
+                "type": "autonomous",
+                "mode": "PAPER",
+                "scheduled": True,
+                "schedule": "Box: Daily 9:30 AM CT | IC: Every 10 min",
+                "strategy": "Borrow via box spreads, trade ICs with borrowed capital",
+                "symbol": "SPX",
+                "data_sources": ["Fed Funds Rate", "Oracle (PEGASUS rules)", "Tradier Production"]
+            },
+
+            # === LEGACY / PARTIAL IMPLEMENTATION ===
             "PHOENIX": {
                 "name": "PHOENIX",
-                "description": "0DTE SPY/SPX Options Trader",
+                "description": "0DTE Options (Partial Implementation)",
                 "type": "autonomous",
+                "mode": "PAPER",
                 "scheduled": True,
-                "schedule": "Hourly 10 AM - 3 PM ET (Mon-Fri)",
-                "capital_allocation": 300_000,
-                "capital_pct": 30,
-                "strategy": "0DTE directional + premium selling",
-                "data_sources": ["GEX", "IV Surface", "Psychology Rules", "ML Regime"]
+                "schedule": "Every 5 min during market hours",
+                "strategy": "0DTE SPY/SPX options",
+                "symbol": "SPY/SPX",
+                "data_sources": ["GEX", "Psychology Rules"]
             },
             "ATLAS": {
                 "name": "ATLAS",
-                "description": "SPX Cash-Secured Put Wheel",
+                "description": "SPX Wheel (Partial Implementation)",
                 "type": "autonomous",
+                "mode": "LIVE",
                 "scheduled": True,
-                "schedule": "Daily at 10:05 AM ET (Mon-Fri)",
-                "capital_allocation": 400_000,
-                "capital_pct": 40,
-                "strategy": "Weekly CSP wheel with ML optimization",
-                "data_sources": ["Backtester", "VIX", "Delta Targeting", "Walk-Forward"]
-            },
-            "ARES": {
-                "name": "ARES",
-                "description": "Aggressive Iron Condor (10% Monthly Target)",
-                "type": "autonomous",
-                "scheduled": True,
-                "schedule": "8:30 AM - 3:30 PM CT (Mon-Fri), every 5 min",
-                "capital_allocation": 200_000,
-                "capital_pct": 20,
-                "strategy": "0DTE Iron Condor at 1 SD, 10% risk per trade",
-                "data_sources": ["VIX", "Expected Move", "Tradier Sandbox"]
+                "schedule": "Daily at 9:05 AM CT",
+                "strategy": "SPX Wheel premium collection",
+                "symbol": "SPX",
+                "data_sources": ["VIX", "Delta Targeting"]
             },
             "HERMES": {
                 "name": "HERMES",
-                "description": "Manual Wheel Strategy Manager",
+                "description": "Manual Wheel Manager",
                 "type": "manual",
+                "mode": "N/A",
                 "scheduled": False,
-                "schedule": "User-initiated",
-                "capital_allocation": 0,
-                "capital_pct": 0,
-                "strategy": "User-initiated wheel trades via UI"
+                "schedule": "User-initiated via UI",
+                "strategy": "Manual wheel trades",
+                "symbol": "Various",
+                "data_sources": []
             },
             "ORACLE": {
                 "name": "ORACLE",
-                "description": "Strategy Recommendation Engine",
+                "description": "ML Advisory System",
                 "type": "advisory",
+                "mode": "N/A",
                 "scheduled": False,
                 "schedule": "On-demand",
-                "capital_allocation": 0,
-                "capital_pct": 0,
-                "strategy": "12-strategy comparison with ensemble weighting"
+                "strategy": "ML-based trade recommendations for all bots",
+                "symbol": "N/A",
+                "data_sources": ["SAGE ML", "VIX", "GEX", "Historical outcomes"]
             }
         }
 
         # Get decision counts for each bot
         for bot_name in bots:
-            summary = get_bot_decision_summary(bot_name=bot_name, days=7)
-            bots[bot_name]["last_7_days"] = {
-                "decisions": summary.get("total_decisions", 0),
-                "trades": summary.get("trades_executed", 0),
-                "pnl": summary.get("total_pnl", 0)
-            }
+            try:
+                summary = get_bot_decision_summary(bot_name=bot_name, days=7)
+                bots[bot_name]["last_7_days"] = {
+                    "decisions": summary.get("total_decisions", 0),
+                    "trades": summary.get("trades_executed", 0),
+                    "pnl": summary.get("total_pnl", 0)
+                }
+            except Exception:
+                bots[bot_name]["last_7_days"] = {"decisions": 0, "trades": 0, "pnl": 0}
+
+        # Count by mode
+        live_bots = [b for b, info in bots.items() if info.get("mode") == "LIVE"]
+        paper_bots = [b for b, info in bots.items() if info.get("mode") == "PAPER"]
+        scheduled_bots = [b for b, info in bots.items() if info.get("scheduled")]
 
         return {
             "success": True,
             "data": {
                 "bots": bots,
-                "capital_summary": {
-                    "total_capital": TOTAL_CAPITAL,
-                    "allocated_capital": sum(b["capital_allocation"] for b in bots.values()),
-                    "reserve_capital": RESERVE_CAPITAL,
-                    "allocation": {
-                        "PHOENIX": {"amount": 300_000, "pct": 30},
-                        "ATLAS": {"amount": 400_000, "pct": 40},
-                        "ARES": {"amount": 200_000, "pct": 20},
-                        "RESERVE": {"amount": 100_000, "pct": 10}
-                    }
+                "summary": {
+                    "total_bots": len(bots),
+                    "live_bots": live_bots,
+                    "paper_bots": paper_bots,
+                    "scheduled_count": len(scheduled_bots),
+                    "autonomous_count": len([b for b, info in bots.items() if info.get("type") == "autonomous"])
                 },
-                "active_count": sum(1 for b in bots.values() if b["scheduled"]),
-                "autonomous_bots": ["PHOENIX", "ATLAS", "ARES"],
                 "timestamp": datetime.now().isoformat()
             }
         }

@@ -56,7 +56,7 @@ interface Position {
 }
 
 export default function PrometheusBoxDashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'ic-trading' | 'analytics' | 'education'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'ic-trading' | 'analytics' | 'education' | 'howItWorks'>('overview')
   const [equityView, setEquityView] = useState<'historical' | 'intraday'>('historical')
 
   // Data fetching - Box Spread
@@ -168,6 +168,7 @@ export default function PrometheusBoxDashboard() {
               { key: 'ic-trading', label: 'IC Trading' },
               { key: 'analytics', label: 'Analytics' },
               { key: 'education', label: 'Education' },
+              { key: 'howItWorks', label: 'How It Works' },
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -3305,6 +3306,689 @@ export default function PrometheusBoxDashboard() {
                       </p>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* How It Works Tab - Complete System Documentation with Wireframes */}
+            {activeTab === 'howItWorks' && (
+              <div className="space-y-8">
+                {/* Header */}
+                <div className="bg-gradient-to-r from-purple-900/50 via-indigo-900/30 to-purple-900/50 rounded-xl p-8 border border-purple-500/30">
+                  <div className="text-center mb-4">
+                    <h1 className="text-4xl font-bold text-white mb-2">PROMETHEUS System Flow</h1>
+                    <p className="text-xl text-purple-300">Complete Operational Reference Guide</p>
+                    <p className="text-gray-400 mt-2 max-w-2xl mx-auto">
+                      This reference shows exactly how PROMETHEUS operates from market open to close.
+                      Use this guide to understand what is happening at any moment.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Table of Contents */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
+                  <h2 className="text-xl font-bold mb-4 text-orange-400">Quick Navigation</h2>
+                  <div className="grid md:grid-cols-3 gap-4 text-sm">
+                    <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
+                      <div className="font-medium text-blue-400 mb-2">Part 1: Box Spreads</div>
+                      <ul className="text-gray-400 space-y-1">
+                        <li>Pre-Market Startup</li>
+                        <li>Daily Position Check</li>
+                        <li>Roll Decision Logic</li>
+                      </ul>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
+                      <div className="font-medium text-orange-400 mb-2">Part 2: IC Trading</div>
+                      <ul className="text-gray-400 space-y-1">
+                        <li>Oracle Approval Flow</li>
+                        <li>PEGASUS Trading Rules</li>
+                        <li>Position Management</li>
+                      </ul>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
+                      <div className="font-medium text-green-400 mb-2">Reference</div>
+                      <ul className="text-gray-400 space-y-1">
+                        <li>Daily Timeline</li>
+                        <li>Data Flow Diagram</li>
+                        <li>Key Thresholds</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PART 1: PRE-MARKET STARTUP FLOW */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-blue-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-xl">1</span>
+                    <span className="text-blue-400">Pre-Market Startup Flow (8:00-8:30 AM CT)</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                    <pre className="text-green-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PROMETHEUS PRE-MARKET STARTUP                             │
+│                        (8:00 AM CT Daily)                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐     ┌────────────────┐     ┌─────────────────────────────┐ │
+│  │   SYSTEM    │────▶│  TRADIER API   │────▶│  POSITION RECONCILIATION    │ │
+│  │   WAKES UP  │     │  (Production)  │     │                             │ │
+│  └─────────────┘     └────────────────┘     │  • Load all open boxes      │ │
+│                              │              │  • Calculate current MTM     │ │
+│                              │              │  • Check DTE on each         │ │
+│                              ▼              │  • Update cost accruals      │ │
+│                      ┌────────────────┐     └─────────────────────────────┘ │
+│                      │  RATE CHECK    │                    │                │
+│                      │                │                    │                │
+│                      │ Fed Funds: X%  │                    ▼                │
+│                      │ Margin:    Y%  │     ┌─────────────────────────────┐ │
+│                      │ Box Rate:  Z%  │     │       ROLL DECISIONS        │ │
+│                      └────────────────┘     │                             │ │
+│                                             │  IF DTE ≤ 30:              │ │
+│                                             │    → Flag for roll          │ │
+│                                             │    → Check new rates        │ │
+│                                             │    → Queue if favorable     │ │
+│                                             └─────────────────────────────┘ │
+│                                                          │                  │
+│                                                          ▼                  │
+│                                             ┌─────────────────────────────┐ │
+│                                             │     CAPITAL ALLOCATION      │ │
+│                                             │                             │ │
+│                                             │  Total Borrowed: $XXX       │ │
+│                                             │  - Reserve (10%): $XXX      │ │
+│                                             │  = Available: $XXX          │ │
+│                                             │                             │ │
+│                                             │  Per IC Trade: $5,000       │ │
+│                                             │  Max Positions: 3           │ │
+│                                             └─────────────────────────────┘ │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+
+                  {/* Explanation */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-600/30">
+                      <h4 className="font-bold text-blue-400 mb-2">What Happens</h4>
+                      <ul className="text-sm text-gray-300 space-y-2">
+                        <li>1. System connects to Tradier PRODUCTION API</li>
+                        <li>2. Loads all open box spread positions</li>
+                        <li>3. Fetches current market prices for MTM</li>
+                        <li>4. Calculates daily interest accrual</li>
+                        <li>5. Checks which positions need rolling</li>
+                      </ul>
+                    </div>
+                    <div className="bg-purple-900/20 rounded-lg p-4 border border-purple-600/30">
+                      <h4 className="font-bold text-purple-400 mb-2">Key Thresholds</h4>
+                      <ul className="text-sm text-gray-300 space-y-2">
+                        <li><span className="text-yellow-400">Roll Threshold:</span> DTE ≤ 30 days</li>
+                        <li><span className="text-yellow-400">Reserve:</span> 10% of borrowed capital</li>
+                        <li><span className="text-yellow-400">Capital/Trade:</span> $5,000 per IC</li>
+                        <li><span className="text-yellow-400">Max Positions:</span> 3 ICs at a time</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PART 2: BOX SPREAD SIDE */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-blue-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-xl">2</span>
+                    <span className="text-blue-400">Box Spread Side - "The Loan"</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                    <pre className="text-cyan-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     BOX SPREAD POSITION LIFECYCLE                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  OPEN NEW BOX                          DAILY MONITORING                     │
+│  ═══════════                           ════════════════                     │
+│  ┌───────────────┐                     ┌───────────────────────────────┐    │
+│  │ Check Rates   │                     │  For each open box:           │    │
+│  │               │                     │                               │    │
+│  │ Box < Margin? │─── NO ──▶ SKIP      │  1. Fetch current prices      │    │
+│  │               │                     │  2. Calculate MTM value       │    │
+│  └───────┬───────┘                     │  3. Accrue daily interest     │    │
+│          │                             │  4. Check roll eligibility    │    │
+│         YES                            │                               │    │
+│          │                             └───────────────────────────────┘    │
+│          ▼                                          │                       │
+│  ┌───────────────┐                                  ▼                       │
+│  │ Select Strikes│                     ┌───────────────────────────────┐    │
+│  │               │                     │  ROLL DECISION MATRIX         │    │
+│  │ Lower: SPX-25 │                     │                               │    │
+│  │ Upper: SPX+25 │                     │  DTE ≤ 0:   CRITICAL (roll!)  │    │
+│  │ Width: 50pts  │                     │  DTE 1-7:   WARNING           │    │
+│  └───────┬───────┘                     │  DTE 8-14:  SOON              │    │
+│          │                             │  DTE 15-30: SCHEDULED         │    │
+│          ▼                             │  DTE > 30:  OK                │    │
+│  ┌───────────────┐                     └───────────────────────────────┘    │
+│  │ Execute Box   │                                                          │
+│  │               │                     EXPIRATION                           │
+│  │ 4-leg order:  │                     ══════════                           │
+│  │ +Call K1      │                     ┌───────────────────────────────┐    │
+│  │ -Call K2      │                     │  Box settles at strike width  │    │
+│  │ +Put  K2      │                     │  Cash-settled (SPX)           │    │
+│  │ -Put  K1      │                     │  "Loan" repaid automatically  │    │
+│  └───────┬───────┘                     │  No stock delivery            │    │
+│          │                             └───────────────────────────────┘    │
+│          ▼                                                                  │
+│  ┌───────────────┐                                                          │
+│  │ Record:       │                                                          │
+│  │ • Credit rcvd │                                                          │
+│  │ • Implied rate│                                                          │
+│  │ • Expiration  │                                                          │
+│  │ • Margin held │                                                          │
+│  └───────────────┘                                                          │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+
+                  {/* Capital Flow */}
+                  <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 rounded-lg p-4 border border-blue-600/30 mb-4">
+                    <h4 className="font-bold text-white mb-3">Capital Flow Example</h4>
+                    <div className="grid md:grid-cols-4 gap-4 text-sm">
+                      <div className="text-center">
+                        <div className="text-gray-400">Box Credit</div>
+                        <div className="text-2xl font-bold text-green-400">$49,250</div>
+                        <div className="text-xs text-gray-500">($50 width × 10 contracts × 98.5)</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-gray-400">Reserve (10%)</div>
+                        <div className="text-2xl font-bold text-yellow-400">$4,925</div>
+                        <div className="text-xs text-gray-500">Safety buffer</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-gray-400">Available for IC</div>
+                        <div className="text-2xl font-bold text-orange-400">$44,325</div>
+                        <div className="text-xs text-gray-500">Deployed to trading</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-gray-400">Owed at Expiry</div>
+                        <div className="text-2xl font-bold text-red-400">$50,000</div>
+                        <div className="text-xs text-gray-500">Strike width × contracts × 100</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PART 3: IC TRADING CYCLE */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-orange-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-orange-600 rounded-lg flex items-center justify-center text-xl">3</span>
+                    <span className="text-orange-400">IC Trading Cycle (Every 5-15 Minutes)</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                    <pre className="text-orange-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PROMETHEUS IC TRADING CYCLE                               │
+│                    (Follows PEGASUS Trading Rules)                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────────┐                                                        │
+│  │  SCAN TRIGGER   │   Every 5-15 minutes during market hours               │
+│  │  (8:35 AM CT)   │   (configurable interval)                              │
+│  └────────┬────────┘                                                        │
+│           │                                                                 │
+│           ▼                                                                 │
+│  ┌─────────────────┐        ┌─────────────────────────────────────────┐     │
+│  │ MARKET CHECK    │        │  VIX FILTER (from PEGASUS rules):       │     │
+│  │                 │        │  • Min VIX: 12 (premiums too thin)      │     │
+│  │ • Get SPX price │───────▶│  • Max VIX: 35 (too risky)              │     │
+│  │ • Get VIX       │        │  • Mon/Fri Max: 30 (decay risk)         │     │
+│  │ • Get GEX regime│        └─────────────────────────────────────────┘     │
+│  └────────┬────────┘                         │                              │
+│           │                                PASS?                            │
+│           │                                  │                              │
+│  ┌────────┴────────────────────────────────┐ │                              │
+│  │                                          │ │                              │
+│  │                   NO ◀───────────────────┘ │                              │
+│  │                   │                        │                              │
+│  │         Log: "VIX 38 too high"            YES                            │
+│  │         Skip scan                          │                              │
+│  │                                            ▼                              │
+│  │                              ┌─────────────────────────────┐             │
+│  │                              │       ORACLE CHECK          │             │
+│  │                              │                             │             │
+│  │                              │  get_pegasus_advice()       │             │
+│  │                              │                             │             │
+│  │                              │  Returns:                   │             │
+│  │                              │  • advice: TRADE/SKIP/HOLD  │             │
+│  │                              │  • confidence: 0-100%       │             │
+│  │                              │  • win_probability: 0-100%  │             │
+│  │                              │  • suggested_strikes        │             │
+│  │                              │  • reasoning                │             │
+│  │                              └──────────────┬──────────────┘             │
+│  │                                             │                            │
+│  │                                             ▼                            │
+│  │                              ┌─────────────────────────────┐             │
+│  │                              │    APPROVAL GATES            │             │
+│  │                              │                             │             │
+│  │                              │  1. Advice = TRADE_FULL     │             │
+│  │                              │     or TRADE_REDUCED?       │             │
+│  │                              │                             │             │
+│  │                              │  2. Confidence ≥ 60%?       │             │
+│  │                              │                             │             │
+│  │                              │  3. Win Prob ≥ 55%?         │             │
+│  │                              │                             │             │
+│  │                              │  4. Max Positions < 3?      │             │
+│  │                              └──────────────┬──────────────┘             │
+│  │                                             │                            │
+│  │                              ALL PASS?      │                            │
+│  │                                │            │                            │
+│  │                    NO ◀────────┘            │                            │
+│  │                    │                       YES                           │
+│  │         Log: "Oracle says SKIP"             │                            │
+│  │         or "Confidence 45% < 60%"           ▼                            │
+│  │                              ┌─────────────────────────────┐             │
+│  │                              │     EXECUTE IC TRADE        │             │
+│  │                              │                             │             │
+│  │                              │  • Select strikes (~10Δ)    │             │
+│  │                              │  • Size: $5,000 max risk    │             │
+│  │                              │  • Execute 4-leg order      │             │
+│  │                              │  • Record to database       │             │
+│  │                              │  • Log scan activity        │             │
+│  │                              └─────────────────────────────┘             │
+│  │                                                                          │
+│  └──────────────────────────────────────────────────────────────────────────┘
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+
+                  {/* PEGASUS Rules Reference */}
+                  <div className="bg-orange-900/20 rounded-lg p-4 border border-orange-600/30 mb-4">
+                    <h4 className="font-bold text-orange-400 mb-3">PEGASUS Trading Rules (Used by PROMETHEUS IC)</h4>
+                    <div className="grid md:grid-cols-3 gap-4 text-sm">
+                      <div className="bg-black/30 rounded-lg p-3">
+                        <div className="font-medium text-white mb-2">Entry Rules</div>
+                        <ul className="text-gray-300 space-y-1">
+                          <li>• Trading hours: 8:35 AM - 2:30 PM CT</li>
+                          <li>• VIX range: 12-35 (12-30 Mon/Fri)</li>
+                          <li>• Max 3 open positions</li>
+                          <li>• Oracle confidence ≥ 60%</li>
+                          <li>• Win probability ≥ 55%</li>
+                        </ul>
+                      </div>
+                      <div className="bg-black/30 rounded-lg p-3">
+                        <div className="font-medium text-white mb-2">Strike Selection</div>
+                        <ul className="text-gray-300 space-y-1">
+                          <li>• Target delta: ~10 (both sides)</li>
+                          <li>• SPX $25 spread width</li>
+                          <li>• Round to nearest $5</li>
+                          <li>• Priority: Oracle → GEX → Delta</li>
+                          <li>• 0DTE or 1DTE expiration</li>
+                        </ul>
+                      </div>
+                      <div className="bg-black/30 rounded-lg p-3">
+                        <div className="font-medium text-white mb-2">Exit Rules</div>
+                        <ul className="text-gray-300 space-y-1">
+                          <li>• Profit target: 50% of credit</li>
+                          <li>• Stop loss: 200% of credit</li>
+                          <li>• Force exit: 10 min before close</li>
+                          <li>• Expiration: Auto-settle (SPX)</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PART 4: ORACLE SCAN ACTIVITY FORMAT */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-green-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-green-600 rounded-lg flex items-center justify-center text-xl">4</span>
+                    <span className="text-green-400">Oracle Scan Activity Display</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                    <pre className="text-green-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PROMETHEUS IC - ORACLE SCAN ACTIVITY LOG                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  TIME        SPX     VIX   ORACLE   CONF   WIN%   DECISION    REASON        │
+│  ────────────────────────────────────────────────────────────────────────── │
+│  10:35:22   5982   18.4   TRADE    72%    68%    ✅ OPENED    IC 5945/6020  │
+│  10:20:15   5978   18.6   TRADE    65%    62%    ⏸️ SKIP      Max positions │
+│  10:05:08   5975   18.9   HOLD     52%    55%    ⏸️ SKIP      Conf < 60%    │
+│  09:50:01   5972   19.1   SKIP     45%    48%    ⏸️ SKIP      Oracle: HOLD  │
+│  09:35:44   5968   19.4   TRADE    78%    71%    ✅ OPENED    IC 5935/6010  │
+│  09:20:37   5965   19.2   TRADE    71%    65%    ✅ OPENED    IC 5930/6005  │
+│  09:05:30   5962   19.5   SKIP     42%    45%    ⏸️ SKIP      VIX spike     │
+│  08:50:23   5960   20.1   N/A      --     --     ⏸️ SKIP      Pre-window    │
+│                                                                             │
+│  ────────────────────────────────────────────────────────────────────────── │
+│  TODAY'S STATS:  8 scans | 3 trades | 5 skips | 37.5% trade rate           │
+│                                                                             │
+│  CLICK ROW FOR FULL ORACLE REASONING:                                       │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │  10:35:22 - TRADE_FULL Decision                                       │  │
+│  │                                                                       │  │
+│  │  Oracle says: "Strong IC conditions. VIX 18.4 in sweet spot.          │  │
+│  │  Gamma regime POSITIVE = mean reversion favorable.                    │  │
+│  │  Call wall at 6050, put wall at 5920 provide cushion.                 │  │
+│  │  Day: Wednesday (best IC day historically)."                          │  │
+│  │                                                                       │  │
+│  │  Top Factors:                                                         │  │
+│  │  1. vix_level: +15% (favorable range)                                 │  │
+│  │  2. gex_regime: +12% (positive gamma)                                 │  │
+│  │  3. day_of_week: +8% (mid-week)                                       │  │
+│  │                                                                       │  │
+│  │  Suggested Strikes: 5945P / 6020C (from Oracle)                       │  │
+│  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+                </div>
+
+                {/* PART 5: DAILY P&L BREAKDOWN */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-yellow-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-yellow-600 rounded-lg flex items-center justify-center text-xl">5</span>
+                    <span className="text-yellow-400">Daily P&L Breakdown Format</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                    <pre className="text-yellow-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  PROMETHEUS - DAILY P&L BREAKDOWN (Last 14 Days)                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  DATE         IC EARNED    BOX COST    NET P&L    CUMULATIVE    TRADES     │
+│  ──────────────────────────────────────────────────────────────────────────│
+│  2026-01-30     $425.00     -$12.50    +$412.50     $3,247.50      3       │
+│  2026-01-29     $380.00     -$12.50    +$367.50     $2,835.00      2       │
+│  2026-01-28    -$125.00     -$12.50    -$137.50     $2,467.50      2       │
+│  2026-01-27     $290.00     -$12.50    +$277.50     $2,605.00      2       │
+│  2026-01-24     $510.00     -$12.50    +$497.50     $2,327.50      3       │
+│  2026-01-23     $445.00     -$12.50    +$432.50     $1,830.00      3       │
+│  2026-01-22     $315.00     -$12.50    +$302.50     $1,397.50      2       │
+│  ...                                                                        │
+│  ──────────────────────────────────────────────────────────────────────────│
+│                                                                             │
+│  LEGEND:                                                                    │
+│  IC EARNED = Premium collected from Iron Condor trades                      │
+│  BOX COST  = Daily interest accrual on borrowed capital                     │
+│  NET P&L   = IC Earned - Box Cost (what you actually made)                  │
+│                                                                             │
+│  ══════════════════════════════════════════════════════════════════════════│
+│  BREAK-EVEN ANALYSIS:                                                       │
+│  Daily Box Cost: $12.50  →  Need IC returns > $12.50/day to profit         │
+│  Current Avg IC/Day: $377.14  →  Cost Efficiency: 30.2x                    │
+│  ══════════════════════════════════════════════════════════════════════════│
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+                </div>
+
+                {/* PART 6: RISK ALERTS */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-red-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-red-600 rounded-lg flex items-center justify-center text-xl">6</span>
+                    <span className="text-red-400">Risk Alerts Display</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                    <pre className="text-red-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  🚨 PROMETHEUS RISK ALERTS                                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─ CRITICAL ─────────────────────────────────────────────────────────────┐ │
+│  │ ⛔ BOX ROLL NEEDED: Position PROM-20241015 expires in 2 days!          │ │
+│  │    Action: Roll to new expiration or close position                    │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ┌─ WARNING ──────────────────────────────────────────────────────────────┐ │
+│  │ ⚠️ IC NEAR STOP: Position IC-5945/6020 at 180% of credit              │ │
+│  │    Current: $3.60 (entry: $2.00, stop: $4.00)                          │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ┌─ INFO ─────────────────────────────────────────────────────────────────┐ │
+│  │ ℹ️ MARGIN UTILIZATION: 72% of available margin in use                  │ │
+│  │    Consider reducing IC positions if approaching 85%                   │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ALERT THRESHOLDS:                                                          │
+│  ─────────────────                                                          │
+│  Box Roll:  DTE ≤ 30 = Warning, DTE ≤ 7 = Critical                         │
+│  IC Stop:   150% = Warning, 180% = Critical, 200% = Auto-close             │
+│  Margin:    70% = Info, 85% = Warning, 95% = Critical                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+                </div>
+
+                {/* PART 7: DATA FLOW DIAGRAM */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-indigo-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-xl">7</span>
+                    <span className="text-indigo-400">Complete Data Flow</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                    <pre className="text-indigo-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PROMETHEUS COMPLETE DATA FLOW                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                     │
+│  │   TRADIER   │    │  FRED API   │    │ GEX CALC    │                     │
+│  │ (Production)│    │ (Fed Funds) │    │ (Gamma)     │                     │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                     │
+│         │                  │                  │                            │
+│         └──────────────────┼──────────────────┘                            │
+│                            │                                               │
+│                            ▼                                               │
+│         ┌─────────────────────────────────────────────┐                    │
+│         │              PROMETHEUS ENGINE              │                    │
+│         │                                             │                    │
+│         │  ┌───────────────┐   ┌───────────────────┐  │                    │
+│         │  │ Box Spread    │   │ IC Signal         │  │                    │
+│         │  │ Manager       │   │ Generator         │  │                    │
+│         │  │               │   │                   │  │                    │
+│         │  │ • Open/Close  │   │ • Uses Oracle     │  │                    │
+│         │  │ • MTM Calc    │   │ • PEGASUS rules   │  │                    │
+│         │  │ • Roll Logic  │   │ • Strike select   │  │                    │
+│         │  └───────┬───────┘   └─────────┬─────────┘  │                    │
+│         │          │                     │            │                    │
+│         │          └──────────┬──────────┘            │                    │
+│         │                     │                       │                    │
+│         │                     ▼                       │                    │
+│         │  ┌─────────────────────────────────────┐    │                    │
+│         │  │         CAPITAL ALLOCATOR           │    │                    │
+│         │  │                                     │    │                    │
+│         │  │ Total Borrowed → Reserve (10%)      │    │                    │
+│         │  │              → IC Trading (90%)     │    │                    │
+│         │  └─────────────────────────────────────┘    │                    │
+│         │                     │                       │                    │
+│         └─────────────────────┼───────────────────────┘                    │
+│                               │                                            │
+│                               ▼                                            │
+│         ┌─────────────────────────────────────────────┐                    │
+│         │               POSTGRESQL DB                 │                    │
+│         │                                             │                    │
+│         │  Tables:                                    │                    │
+│         │  • prometheus_box_positions (open boxes)    │                    │
+│         │  • prometheus_box_closed (historical)       │                    │
+│         │  • prometheus_ic_positions (open ICs)       │                    │
+│         │  • prometheus_ic_closed (IC history)        │                    │
+│         │  • prometheus_scan_activity (Oracle logs)   │                    │
+│         │  • prometheus_equity_snapshots              │                    │
+│         └─────────────────────────────────────────────┘                    │
+│                               │                                            │
+│                               ▼                                            │
+│         ┌─────────────────────────────────────────────┐                    │
+│         │              FRONTEND DASHBOARD             │                    │
+│         │                                             │                    │
+│         │  Tabs: Overview | Boxes | IC | Analytics    │                    │
+│         │                                             │                    │
+│         │  Refresh: 15-60 sec (configurable)          │                    │
+│         └─────────────────────────────────────────────┘                    │
+│                                                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+                </div>
+
+                {/* PART 8: DAILY TIMELINE */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-teal-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-teal-600 rounded-lg flex items-center justify-center text-xl">8</span>
+                    <span className="text-teal-400">Daily Timeline (All Times CT)</span>
+                  </h2>
+
+                  {/* Timeline Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-700">
+                          <th className="text-left py-2 px-3 text-gray-400">Time</th>
+                          <th className="text-left py-2 px-3 text-gray-400">Event</th>
+                          <th className="text-left py-2 px-3 text-gray-400">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody className="text-gray-300">
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-yellow-400">8:00 AM</td>
+                          <td className="py-2 px-3">System Startup</td>
+                          <td className="py-2 px-3 text-gray-400">Connect to APIs, load positions, check rates</td>
+                        </tr>
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-green-400">8:30 AM</td>
+                          <td className="py-2 px-3">Market Open</td>
+                          <td className="py-2 px-3 text-gray-400">Begin box spread monitoring, IC trading preparation</td>
+                        </tr>
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-blue-400">8:35 AM</td>
+                          <td className="py-2 px-3">IC Trading Starts</td>
+                          <td className="py-2 px-3 text-gray-400">First Oracle check, begin 5-15 min scan cycle</td>
+                        </tr>
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-orange-400">9:30 AM</td>
+                          <td className="py-2 px-3">Box Position Check</td>
+                          <td className="py-2 px-3 text-gray-400">Daily box MTM update, roll decision evaluation</td>
+                        </tr>
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-purple-400">Ongoing</td>
+                          <td className="py-2 px-3">IC Scan Cycle</td>
+                          <td className="py-2 px-3 text-gray-400">Every 5-15 min: Oracle check, trade if approved</td>
+                        </tr>
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-blue-400">2:30 PM</td>
+                          <td className="py-2 px-3">IC Entry Stops</td>
+                          <td className="py-2 px-3 text-gray-400">No new IC trades, only manage existing</td>
+                        </tr>
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-red-400">2:50 PM</td>
+                          <td className="py-2 px-3">Force Exit</td>
+                          <td className="py-2 px-3 text-gray-400">Close all IC positions 10 min before market close</td>
+                        </tr>
+                        <tr className="border-b border-gray-800">
+                          <td className="py-2 px-3 font-mono text-gray-400">3:00 PM</td>
+                          <td className="py-2 px-3">Market Close</td>
+                          <td className="py-2 px-3 text-gray-400">0DTE ICs auto-settle (SPX cash settled)</td>
+                        </tr>
+                        <tr>
+                          <td className="py-2 px-3 font-mono text-gray-500">After Hours</td>
+                          <td className="py-2 px-3">Daily Summary</td>
+                          <td className="py-2 px-3 text-gray-400">Update equity snapshots, log day results</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* KEY CONFIG VALUES REFERENCE */}
+                <div className="bg-gradient-to-r from-gray-800 to-gray-900 rounded-xl p-6 border border-orange-500/20">
+                  <h2 className="text-2xl font-bold mb-6 text-orange-400">Key Configuration Values</h2>
+
+                  <div className="grid md:grid-cols-2 gap-6">
+                    {/* Box Spread Config */}
+                    <div className="bg-black/30 rounded-lg p-4 border border-blue-700/30">
+                      <h4 className="font-bold text-blue-400 mb-3">Box Spread Settings</h4>
+                      <div className="space-y-2 text-sm font-mono">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">strike_width</span>
+                          <span className="text-white">50 points</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">target_dte_min</span>
+                          <span className="text-white">90 days</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">target_dte_max</span>
+                          <span className="text-white">365 days</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">min_dte_to_hold</span>
+                          <span className="text-white">30 days (roll threshold)</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">reserve_pct</span>
+                          <span className="text-white">10%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">max_implied_rate</span>
+                          <span className="text-white">6.0%</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* IC Config */}
+                    <div className="bg-black/30 rounded-lg p-4 border border-orange-700/30">
+                      <h4 className="font-bold text-orange-400 mb-3">IC Trading Settings (PEGASUS Rules)</h4>
+                      <div className="space-y-2 text-sm font-mono">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">min_capital_per_trade</span>
+                          <span className="text-white">$5,000</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">max_positions</span>
+                          <span className="text-white">3</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">spread_width</span>
+                          <span className="text-white">$25</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">profit_target</span>
+                          <span className="text-white">50%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">stop_loss</span>
+                          <span className="text-white">200%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">min_oracle_confidence</span>
+                          <span className="text-white">60%</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">min_win_probability</span>
+                          <span className="text-white">55%</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Print/Export Note */}
+                <div className="bg-gray-800/50 rounded-lg p-4 text-center text-sm text-gray-400 border border-gray-700">
+                  <p>This documentation is designed for on-screen reference. Bookmark this tab for quick access during trading hours.</p>
                 </div>
               </div>
             )}

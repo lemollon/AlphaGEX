@@ -743,6 +743,56 @@ const fetchers = {
       return { success: false, data: { scans: [] } }
     }
   },
+
+  // PROMETHEUS Box Spread Synthetic Borrowing + IC Trading Bot
+  prometheusStatus: async () => {
+    try {
+      const response = await api.get('/api/prometheus-box/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  prometheusICStatus: async () => {
+    try {
+      const response = await api.get('/api/prometheus-box/ic/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  prometheusPositions: async () => {
+    try {
+      const response = await api.get('/api/prometheus-box/positions')
+      return response.data
+    } catch {
+      return { success: false, data: { positions: [] } }
+    }
+  },
+  prometheusICPositions: async () => {
+    try {
+      const response = await api.get('/api/prometheus-box/ic/positions')
+      return response.data
+    } catch {
+      return { success: false, data: { positions: [] } }
+    }
+  },
+  prometheusLivePnL: async () => {
+    try {
+      const response = await api.get('/api/prometheus-box/combined-performance')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  prometheusReconciliation: async () => {
+    try {
+      const response = await api.get('/api/prometheus-box/reconciliation')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
 }
 
 // =============================================================================
@@ -1332,6 +1382,58 @@ export function useScanActivityTitan(limit: number = 50, date?: string, options?
     () => fetchers.scanActivityTitan(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
+}
+
+// =============================================================================
+// PROMETHEUS BOX SPREAD + IC TRADING HOOKS
+// =============================================================================
+
+export function usePROMETHEUSStatus(options?: SWRConfiguration) {
+  return useSWR('prometheus-status', fetchers.prometheusStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function usePROMETHEUSICStatus(options?: SWRConfiguration) {
+  return useSWR('prometheus-ic-status', fetchers.prometheusICStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function usePROMETHEUSPositions(options?: SWRConfiguration) {
+  return useSWR('prometheus-positions', fetchers.prometheusPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function usePROMETHEUSICPositions(options?: SWRConfiguration) {
+  return useSWR('prometheus-ic-positions', fetchers.prometheusICPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function usePROMETHEUSLivePnL(options?: SWRConfiguration) {
+  return useSWR('prometheus-live-pnl', fetchers.prometheusLivePnL, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function usePROMETHEUSReconciliation(options?: SWRConfiguration) {
+  return useSWR('prometheus-reconciliation', fetchers.prometheusReconciliation, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
 }
 
 // =============================================================================

@@ -18,7 +18,8 @@ import {
   Target,
   Zap,
   Flame,
-  Rocket
+  Rocket,
+  Boxes
 } from 'lucide-react'
 import {
   useARESStatus,
@@ -26,11 +27,13 @@ import {
   usePEGASUSStatus,
   useICARUSStatus,
   useTITANStatus,
+  usePROMETHEUSStatus,
   useARESLivePnL,
   useATHENALivePnL,
   usePEGASUSLivePnL,
   useICARUSLivePnL,
-  useTITANLivePnL
+  useTITANLivePnL,
+  usePROMETHEUSLivePnL
 } from '@/lib/hooks/useMarketData'
 
 // PERFORMANCE FIX: Move colorClasses outside component (was recreated every render)
@@ -40,6 +43,7 @@ const COLOR_CLASSES: Record<string, { bg: string; border: string; text: string }
   amber: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
   cyan: { bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', text: 'text-cyan-500' },
   rose: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-500' },
+  orange: { bg: 'bg-orange-500/10', border: 'border-orange-500/30', text: 'text-orange-500' },
 }
 
 // Helper to format timestamp in Central Time
@@ -158,12 +162,14 @@ export default function BotStatusOverview() {
   // Paper trading bots
   const { data: icarusStatus, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSStatus()
   const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useTITANStatus()
+  const { data: prometheusStatus, isLoading: prometheusLoading, mutate: refreshPrometheus } = usePROMETHEUSStatus()
 
   const { data: aresLivePnL } = useARESLivePnL()
   const { data: athenaLivePnL } = useATHENALivePnL()
   const { data: pegasusLivePnL } = usePEGASUSLivePnL()
   const { data: icarusLivePnL } = useICARUSLivePnL()
   const { data: titanLivePnL } = useTITANLivePnL()
+  const { data: prometheusLivePnL } = usePROMETHEUSLivePnL()
 
   // PERFORMANCE FIX: useCallback for refreshAll to prevent child re-renders
   const refreshAll = useCallback(() => {
@@ -172,7 +178,8 @@ export default function BotStatusOverview() {
     refreshPegasus()
     refreshIcarus()
     refreshTitan()
-  }, [refreshAres, refreshAthena, refreshPegasus, refreshIcarus, refreshTitan])
+    refreshPrometheus()
+  }, [refreshAres, refreshAthena, refreshPegasus, refreshIcarus, refreshTitan, refreshPrometheus])
 
   // PERFORMANCE FIX: useMemo for calculated P&L values (was recalculating every render)
   const { totalTodayPnL, totalUnrealizedPnL, paperTodayPnL } = useMemo(() => ({
@@ -183,8 +190,9 @@ export default function BotStatusOverview() {
                         (athenaLivePnL?.data?.total_unrealized_pnl || 0) +
                         (pegasusLivePnL?.data?.total_unrealized_pnl || 0),
     paperTodayPnL: (icarusLivePnL?.data?.today_pnl || 0) +
-                   (titanLivePnL?.data?.today_pnl || 0)
-  }), [aresLivePnL, athenaLivePnL, pegasusLivePnL, icarusLivePnL, titanLivePnL])
+                   (titanLivePnL?.data?.today_pnl || 0) +
+                   (prometheusLivePnL?.net_profit || 0)
+  }), [aresLivePnL, athenaLivePnL, pegasusLivePnL, icarusLivePnL, titanLivePnL, prometheusLivePnL])
 
   // PERFORMANCE FIX: useMemo for active bot counts (was filtering on every render)
   const { activeLiveBots, activePaperBots, totalActiveBots } = useMemo(() => {
@@ -196,11 +204,12 @@ export default function BotStatusOverview() {
 
     const paper = [
       icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
-      titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE'
+      titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE',
+      prometheusStatus?.box_spread?.enabled || prometheusStatus?.ic_trading?.enabled
     ].filter(Boolean).length
 
     return { activeLiveBots: live, activePaperBots: paper, totalActiveBots: live + paper }
-  }, [aresStatus, athenaStatus, pegasusStatus, icarusStatus, titanStatus])
+  }, [aresStatus, athenaStatus, pegasusStatus, icarusStatus, titanStatus, prometheusStatus])
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">
@@ -217,7 +226,7 @@ export default function BotStatusOverview() {
             <div className="flex items-center gap-3 text-xs text-text-muted">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 bg-success rounded-full animate-pulse" />
-                {totalActiveBots}/5 active
+                {totalActiveBots}/6 active
               </span>
               <span className={totalTodayPnL >= 0 ? 'text-success' : 'text-danger'}>
                 Live: {totalTodayPnL >= 0 ? '+' : ''}${totalTodayPnL.toFixed(0)}
@@ -303,7 +312,7 @@ export default function BotStatusOverview() {
           {/* Paper Trading Bots */}
           <div>
             <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Paper Trading</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <BotStatusCard
                 name="ICARUS"
                 icon={<Flame className="w-5 h-5 text-cyan-500" />}
@@ -321,6 +330,22 @@ export default function BotStatusOverview() {
                 livePnL={titanLivePnL?.data}
                 color="rose"
                 isLoading={titanLoading}
+              />
+              <BotStatusCard
+                name="PROMETHEUS"
+                icon={<Boxes className="w-5 h-5 text-orange-500" />}
+                href="/prometheus-box"
+                status={{
+                  is_active: prometheusStatus?.box_spread?.enabled || prometheusStatus?.ic_trading?.enabled,
+                  open_positions: (prometheusStatus?.box_spread?.open_positions || 0) + (prometheusStatus?.ic_trading?.open_positions || 0),
+                  last_scan_at: prometheusStatus?.last_updated
+                }}
+                livePnL={{
+                  today_pnl: prometheusLivePnL?.net_profit || 0,
+                  total_unrealized_pnl: prometheusLivePnL?.ic_unrealized || 0
+                }}
+                color="orange"
+                isLoading={prometheusLoading}
               />
             </div>
           </div>

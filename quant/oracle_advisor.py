@@ -167,6 +167,7 @@ class BotName(Enum):
     PEGASUS = "PEGASUS"    # SPX Iron Condor ($10 spreads, weekly)
     ICARUS = "ICARUS"      # Aggressive Directional Spreads (relaxed filters)
     TITAN = "TITAN"        # Aggressive SPX Iron Condor ($12 spreads)
+    PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
 
 
 class TradeOutcome(Enum):
