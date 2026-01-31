@@ -550,21 +550,29 @@ Strike width tradeoff:
                 logger.error(f"Empty option chain for {self.config.ticker} exp {expiration} after retries")
                 return None
 
+            # OptionChain has chains dict: {expiration -> List[OptionContract]}
+            # OptionContract is a dataclass with strike, option_type, bid, ask, etc.
+            options_list = chain.chains.get(expiration, [])
+            if not options_list:
+                logger.error(f"No options found for expiration {expiration} in chain")
+                return None
+
             # Find our strikes
             legs = {}
-            for option in chain:
-                strike = option.get('strike')
-                opt_type = option.get('option_type', option.get('type', ''))
+            for option in options_list:
+                # OptionContract is a dataclass - access attributes directly
+                strike = option.strike
+                opt_type = option.option_type  # 'call' or 'put'
 
                 if strike == lower_strike:
-                    if 'call' in opt_type.lower():
+                    if opt_type == 'call':
                         legs['call_long'] = option
-                    elif 'put' in opt_type.lower():
+                    elif opt_type == 'put':
                         legs['put_short'] = option
                 elif strike == upper_strike:
-                    if 'call' in opt_type.lower():
+                    if opt_type == 'call':
                         legs['call_short'] = option
-                    elif 'put' in opt_type.lower():
+                    elif opt_type == 'put':
                         legs['put_long'] = option
 
             if len(legs) < 4:
@@ -581,36 +589,41 @@ Strike width tradeoff:
 
             # For selling the box, we want the BID prices for what we sell
             # and ASK prices for what we buy
+            # OptionContract is a dataclass - access attributes directly
 
             call_spread_credit = (
-                legs['call_short'].get('bid', 0) -  # Sell upper call
-                legs['call_long'].get('ask', 0)     # Buy lower call
+                legs['call_short'].bid -  # Sell upper call
+                legs['call_long'].ask     # Buy lower call
             )
             put_spread_credit = (
-                legs['put_short'].get('bid', 0) -   # Sell lower put
-                legs['put_long'].get('ask', 0)      # Buy upper put
+                legs['put_short'].bid -   # Sell lower put
+                legs['put_long'].ask      # Buy upper put
             )
 
             box_bid = call_spread_credit + put_spread_credit
 
             # For the ask side (if we were buying)
             call_spread_debit = (
-                legs['call_short'].get('ask', 0) -
-                legs['call_long'].get('bid', 0)
+                legs['call_short'].ask -
+                legs['call_long'].bid
             )
             put_spread_debit = (
-                legs['put_short'].get('ask', 0) -
-                legs['put_long'].get('bid', 0)
+                legs['put_short'].ask -
+                legs['put_long'].bid
             )
 
             box_ask = call_spread_debit + put_spread_debit
             mid_price = (box_bid + box_ask) / 2
 
+            # Convert OptionContract dataclasses to dicts for serialization
+            from dataclasses import asdict
+            legs_dict = {k: asdict(v) for k, v in legs.items()}
+
             return {
                 'bid': box_bid,
                 'ask': box_ask,
                 'mid_price': mid_price,
-                'legs': legs,
+                'legs': legs_dict,
                 'source': 'tradier_production',
             }
 
