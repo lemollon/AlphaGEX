@@ -197,6 +197,262 @@ export default function PrometheusBoxDashboard() {
             {/* Overview Tab */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
+                {/* THE STORY - How PROMETHEUS Works */}
+                <div className="bg-gradient-to-r from-gray-800 via-gray-800 to-gray-800 rounded-lg p-6 border border-orange-500/30">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span className="text-2xl">📖</span> How PROMETHEUS Works
+                  </h2>
+                  <div className="grid md:grid-cols-4 gap-4">
+                    {/* Step 1: Borrow */}
+                    <div className="relative">
+                      <div className="bg-blue-900/40 rounded-lg p-4 border border-blue-600/50 h-full">
+                        <div className="text-3xl mb-2">1️⃣</div>
+                        <div className="text-lg font-bold text-blue-400">BORROW</div>
+                        <div className="text-sm text-gray-300 mt-2">
+                          Sell SPX box spreads to generate cash at low rates (~4-5%/year)
+                        </div>
+                        <div className="mt-3 text-xs text-gray-400">
+                          <strong>Capital Locked:</strong> Strike width × 100 per contract as collateral
+                        </div>
+                      </div>
+                      <div className="hidden md:block absolute -right-2 top-1/2 text-2xl z-10">→</div>
+                    </div>
+                    {/* Step 2: Deploy */}
+                    <div className="relative">
+                      <div className="bg-orange-900/40 rounded-lg p-4 border border-orange-600/50 h-full">
+                        <div className="text-3xl mb-2">2️⃣</div>
+                        <div className="text-lg font-bold text-orange-400">DEPLOY</div>
+                        <div className="text-sm text-gray-300 mt-2">
+                          Use borrowed capital to trade PROMETHEUS Iron Condors on SPX
+                        </div>
+                        <div className="mt-3 text-xs text-gray-400">
+                          <strong>Strategy:</strong> 0DTE SPX Iron Condors, Oracle-approved
+                        </div>
+                      </div>
+                      <div className="hidden md:block absolute -right-2 top-1/2 text-2xl z-10">→</div>
+                    </div>
+                    {/* Step 3: Earn */}
+                    <div className="relative">
+                      <div className="bg-green-900/40 rounded-lg p-4 border border-green-600/50 h-full">
+                        <div className="text-3xl mb-2">3️⃣</div>
+                        <div className="text-lg font-bold text-green-400">EARN</div>
+                        <div className="text-sm text-gray-300 mt-2">
+                          IC trading generates premium income (~20-40%/year target)
+                        </div>
+                        <div className="mt-3 text-xs text-gray-400">
+                          <strong>Daily:</strong> Premium collected minus any losses
+                        </div>
+                      </div>
+                      <div className="hidden md:block absolute -right-2 top-1/2 text-2xl z-10">→</div>
+                    </div>
+                    {/* Step 4: Profit */}
+                    <div>
+                      <div className="bg-purple-900/40 rounded-lg p-4 border border-purple-600/50 h-full">
+                        <div className="text-3xl mb-2">4️⃣</div>
+                        <div className="text-lg font-bold text-purple-400">PROFIT</div>
+                        <div className="text-sm text-gray-300 mt-2">
+                          Net = IC Returns − Borrowing Cost = Your Edge
+                        </div>
+                        <div className="mt-3 text-xs text-gray-400">
+                          <strong>Goal:</strong> Earn more than you pay to borrow
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 p-3 bg-black/30 rounded-lg text-sm text-gray-300">
+                    <strong className="text-orange-400">Why it works:</strong> Box spreads let you borrow at near risk-free rates (~Fed Funds).
+                    If your IC trading earns more than the borrowing cost, you profit the difference.
+                    This is <em>synthetic leverage</em> without margin interest.
+                  </div>
+                </div>
+
+                {/* MARGIN & COLLATERAL REQUIRED */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span className="text-2xl">🏦</span> Margin & Collateral
+                  </h2>
+                  <div className="grid md:grid-cols-3 gap-4">
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Box Spread Collateral</div>
+                      <div className="text-2xl font-bold text-yellow-400">
+                        {positions?.positions?.length > 0
+                          ? formatCurrency(positions.positions.reduce((sum: number, p: Position) => sum + (p.strike_width * 100 * p.contracts), 0))
+                          : formatCurrency((status?.config?.strike_width || 50) * 100 * 10)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        = Strike width × $100 × contracts
+                      </div>
+                      <div className="mt-2 text-xs text-gray-400">
+                        This is the face value owed at expiration - your broker holds this as collateral
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">IC Trading Margin</div>
+                      <div className="text-2xl font-bold text-blue-400">
+                        {formatCurrency(icStatus?.status?.available_capital || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Available for Iron Condor trades
+                      </div>
+                      <div className="mt-2 text-xs text-gray-400">
+                        PROMETHEUS uses borrowed capital to fund IC margin requirements
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Tradier Requirements</div>
+                      <div className="text-lg font-bold text-gray-300">PM Account Required</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Portfolio Margin for best rates
+                      </div>
+                      <div className="mt-2 text-xs text-gray-400">
+                        SPX options = European style (no early assignment risk)
+                      </div>
+                    </div>
+                  </div>
+                  {positions?.positions?.length > 0 && (
+                    <div className="mt-4 grid md:grid-cols-2 gap-4 text-sm">
+                      <div className="bg-black/30 rounded p-3">
+                        <span className="text-gray-400">Cash Received: </span>
+                        <span className="text-green-400 font-bold">{formatCurrency(totalBorrowed)}</span>
+                        <span className="text-gray-500"> (what you have to deploy)</span>
+                      </div>
+                      <div className="bg-black/30 rounded p-3">
+                        <span className="text-gray-400">Face Value Owed: </span>
+                        <span className="text-red-400 font-bold">
+                          {formatCurrency(positions.positions.reduce((sum: number, p: Position) => sum + (p.strike_width * 100 * p.contracts), 0))}
+                        </span>
+                        <span className="text-gray-500"> (at expiration)</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* TODAY'S ACTIVITY */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span className="text-2xl">📊</span> Today&apos;s Activity
+                  </h2>
+                  <div className="grid md:grid-cols-4 gap-4">
+                    <div className="bg-gradient-to-br from-green-900/30 to-gray-800 rounded-lg p-4 border border-green-700/30">
+                      <div className="text-xs text-gray-400 mb-1">Today&apos;s IC P&L</div>
+                      <div className={`text-2xl font-bold ${(icPerformance?.performance?.today?.pnl_today || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(icPerformance?.performance?.today?.pnl_today || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {icPerformance?.performance?.today?.trades_today || 0} trades closed today
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-4 border border-orange-700/30">
+                      <div className="text-xs text-gray-400 mb-1">IC Positions Open</div>
+                      <div className="text-2xl font-bold text-orange-400">
+                        {icStatus?.status?.open_positions || 0}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Unrealized: {formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-blue-900/30 to-gray-800 rounded-lg p-4 border border-blue-700/30">
+                      <div className="text-xs text-gray-400 mb-1">Trade Activity</div>
+                      <div className="text-2xl font-bold text-blue-400">
+                        {icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 5}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Trades today / max allowed
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-900/30 to-gray-800 rounded-lg p-4 border border-purple-700/30">
+                      <div className="text-xs text-gray-400 mb-1">Borrowing Cost Today</div>
+                      <div className="text-2xl font-bold text-purple-400">
+                        {positions?.positions?.length > 0
+                          ? formatCurrency(positions.positions.reduce((sum: number, p: Position) => sum + (p.daily_cost || 0), 0))
+                          : formatCurrency(0)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Daily interest accrual
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recent Activity Feed */}
+                  {icLogs?.logs?.length > 0 && (
+                    <div className="mt-4">
+                      <div className="text-sm font-medium text-gray-400 mb-2">Recent Activity</div>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {icLogs.logs.slice(0, 5).map((log: any, idx: number) => (
+                          <div key={idx} className="text-xs bg-black/30 rounded p-2 flex justify-between">
+                            <span className="text-gray-300">{log.action}: {log.message?.substring(0, 60)}...</span>
+                            <span className="text-gray-500">{new Date(log.log_time).toLocaleTimeString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* CAPITAL DEPLOYMENT - Using capitalFlow data */}
+                {capitalFlow && (
+                  <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      <span className="text-2xl">💰</span> Capital Deployment
+                    </h2>
+                    <div className="grid md:grid-cols-2 gap-6">
+                      {/* Left: Where the money goes */}
+                      <div>
+                        <div className="text-sm font-medium text-gray-400 mb-3">Where Your Borrowed Capital Goes</div>
+                        <div className="space-y-3">
+                          <div className="bg-black/30 rounded-lg p-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-orange-400 font-medium">🔥 PROMETHEUS IC Trading</span>
+                              <span className="font-bold">{formatCurrency(icStatus?.status?.available_capital || 0)}</span>
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">
+                              SPX 0DTE Iron Condors - Primary return generator
+                            </div>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400 font-medium">💵 Reserve</span>
+                              <span className="font-bold">{formatCurrency(capitalFlow?.deployment_summary?.reserve?.amount || 0)}</span>
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">
+                              Buffer for IC margin and adjustments
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Returns breakdown */}
+                      <div>
+                        <div className="text-sm font-medium text-gray-400 mb-3">Returns Generated</div>
+                        <div className="bg-black/30 rounded-lg p-4">
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-gray-400">Total IC Returns</span>
+                            <span className="text-green-400 font-bold text-xl">{formatCurrency(totalICReturns)}</span>
+                          </div>
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-gray-400">Borrowing Costs Paid</span>
+                            <span className="text-red-400 font-bold text-xl">-{formatCurrency(totalBorrowingCosts)}</span>
+                          </div>
+                          <div className="border-t border-gray-600 pt-3 flex justify-between items-center">
+                            <span className="text-white font-medium">Net Profit</span>
+                            <span className={`font-bold text-2xl ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {formatCurrency(netPnL)}
+                            </span>
+                          </div>
+                        </div>
+                        {totalBorrowed > 0 && (
+                          <div className="mt-3 text-center p-2 bg-gray-700/50 rounded">
+                            <span className="text-gray-400">ROI on Borrowed Capital: </span>
+                            <span className={`font-bold ${returnOnBorrowed >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {formatPct(returnOnBorrowed)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Active Position Details - Show when positions exist */}
                 {positions?.positions?.length > 0 && (
                   <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-6 border border-orange-500/50">
