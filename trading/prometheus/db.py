@@ -395,7 +395,7 @@ class PrometheusDatabase:
                     open_position_count INTEGER,
 
                     -- Enhanced transparency fields
-                    quote_source VARCHAR(50),                    -- 'tradier_production', 'cache', 'simulated'
+                    quote_source VARCHAR(50),                    -- 'tradier_production', 'cache', 'unavailable'
                     calculation_method VARCHAR(50),              -- 'real_quotes', 'theoretical'
                     total_mtm_unrealized DECIMAL(15, 2),         -- Box spread MTM unrealized
                     total_ic_returns DECIMAL(15, 2),             -- IC bot returns
