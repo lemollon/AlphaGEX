@@ -2105,9 +2105,9 @@ class PrometheusDatabase:
             rows = cursor.fetchall()
             cursor.close()
 
-            # Get IC starting capital from config
+            # Get IC starting capital from config (load_ic_config always returns object with defaults)
             ic_config = self.load_ic_config()
-            starting_capital = ic_config.starting_capital if ic_config else 100000.0
+            starting_capital = ic_config.starting_capital
 
             cumulative_pnl = 0
             equity_curve = []
@@ -2300,9 +2300,9 @@ class PrometheusDatabase:
 
             # Table created in _ensure_tables() - no lazy creation needed
 
-            # Get IC config for starting capital
+            # Get IC config for starting capital (load_ic_config always returns object with defaults)
             ic_config = self.load_ic_config()
-            starting_capital = ic_config.starting_capital if ic_config else 100000.0
+            starting_capital = ic_config.starting_capital
 
             # Get total realized P&L from closed trades
             cursor.execute("""
