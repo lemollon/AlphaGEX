@@ -8,7 +8,7 @@ import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, Ale
 // =============================================================================
 // Unified branding for ARES, ATHENA, and PEGASUS to ensure visual consistency
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS'
+export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS'
 
 export interface BotBrand {
   name: BotName
@@ -291,6 +291,41 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#6366F1',
     hexLight: '#A5B4FC',
     hexDark: '#4F46E5',
+  },
+  PROMETHEUS: {
+    name: 'PROMETHEUS',
+    fullName: 'PROMETHEUS Box Spread + IC',
+    description: 'Synthetic Borrowing via Box Spreads + Iron Condor Trading',
+    strategy: 'Box Spread Synthetic Borrowing + IC Strategy',
+    // Primary - Emerald/Green (wealth, growth, fire-bringer)
+    primaryColor: 'emerald',
+    primaryBg: 'bg-emerald-600',
+    primaryBorder: 'border-emerald-500',
+    primaryText: 'text-emerald-400',
+    // Light variants
+    lightBg: 'bg-emerald-900/20',
+    lightText: 'text-emerald-300',
+    lightBorder: 'border-emerald-700/50',
+    // Chart colors
+    chartLine: 'stroke-emerald-400',
+    chartFill: 'fill-emerald-500/20',
+    chartPositive: 'text-emerald-400',
+    chartNegative: 'text-emerald-600',
+    // Position cards
+    positionBorder: 'border-emerald-600/50',
+    positionBg: 'bg-emerald-950/30',
+    positionAccent: 'bg-emerald-500',
+    // Badges
+    badgeBg: 'bg-emerald-900/50',
+    badgeText: 'text-emerald-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-emerald-500',
+    gradientTo: 'to-emerald-900',
+    // Hex for Recharts
+    hexPrimary: '#10B981',
+    hexLight: '#6EE7B7',
+    hexDark: '#059669',
   },
 }
 
