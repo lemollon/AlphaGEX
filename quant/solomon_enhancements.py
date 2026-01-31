@@ -2049,6 +2049,9 @@ class SolomonEnhanced:
 
         Migration 023: This enables Solomon to understand which strategy works
         best in different market conditions and provide insights to Oracle.
+
+        Fix: Now queries unified_trades directly instead of solomon_performance
+        to ensure we're analyzing actual trade data.
         """
         if not DB_AVAILABLE:
             return {'status': 'database_unavailable'}
@@ -2057,59 +2060,102 @@ class SolomonEnhanced:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get Iron Condor performance
+            # Get Iron Condor performance from actual trades
+            # IC bots: ARES, TITAN, PEGASUS, PROMETHEUS
             cursor.execute("""
                 SELECT
                     COUNT(*) as trades,
-                    SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins,
-                    SUM(pnl) as total_pnl,
-                    AVG(pnl) as avg_pnl
-                FROM solomon_performance
-                WHERE strategy_type = 'IRON_CONDOR'
-                    AND trade_date >= CURRENT_DATE - INTERVAL '%s days'
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl,
+                    bot_name
+                FROM unified_trades
+                WHERE bot_name IN ('ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS')
+                    AND created_at >= NOW() - INTERVAL '%s days'
+                GROUP BY bot_name
             """, (days,))
-            ic_row = cursor.fetchone()
+            ic_rows = cursor.fetchall()
 
-            # Get Directional performance
+            # Aggregate IC stats
+            ic_trades = sum(row[0] or 0 for row in ic_rows)
+            ic_wins = sum(row[1] or 0 for row in ic_rows)
+            ic_total_pnl = sum(float(row[2] or 0) for row in ic_rows)
+            ic_avg_pnl = ic_total_pnl / ic_trades if ic_trades > 0 else 0
+
+            # Per-bot breakdown for IC
+            ic_bot_breakdown = {}
+            for row in ic_rows:
+                bot_name = row[4]
+                ic_bot_breakdown[bot_name] = {
+                    'trades': row[0] or 0,
+                    'wins': row[1] or 0,
+                    'pnl': float(row[2] or 0),
+                    'win_rate': (row[1] / row[0] * 100) if row[0] else 0
+                }
+
+            # Get Directional performance from actual trades
+            # Directional bots: ATHENA, ICARUS
             cursor.execute("""
                 SELECT
                     COUNT(*) as trades,
-                    SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins,
-                    SUM(pnl) as total_pnl,
-                    AVG(pnl) as avg_pnl,
-                    SUM(CASE WHEN direction_correct THEN 1 ELSE 0 END) as direction_correct
-                FROM solomon_performance
-                WHERE strategy_type = 'DIRECTIONAL'
-                    AND trade_date >= CURRENT_DATE - INTERVAL '%s days'
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl,
+                    bot_name
+                FROM unified_trades
+                WHERE bot_name IN ('ATHENA', 'ICARUS')
+                    AND created_at >= NOW() - INTERVAL '%s days'
+                GROUP BY bot_name
             """, (days,))
-            dir_row = cursor.fetchone()
+            dir_rows = cursor.fetchall()
+
+            # Aggregate Directional stats
+            dir_trades = sum(row[0] or 0 for row in dir_rows)
+            dir_wins = sum(row[1] or 0 for row in dir_rows)
+            dir_total_pnl = sum(float(row[2] or 0) for row in dir_rows)
+            dir_avg_pnl = dir_total_pnl / dir_trades if dir_trades > 0 else 0
+
+            # Per-bot breakdown for Directional
+            dir_bot_breakdown = {}
+            for row in dir_rows:
+                bot_name = row[4]
+                dir_bot_breakdown[bot_name] = {
+                    'trades': row[0] or 0,
+                    'wins': row[1] or 0,
+                    'pnl': float(row[2] or 0),
+                    'win_rate': (row[1] / row[0] * 100) if row[0] else 0
+                }
 
             conn.close()
 
-            ic_trades = ic_row[0] or 0
-            dir_trades = dir_row[0] or 0
+            # Build response with actual trade data
+            ic_result = {
+                'trades': ic_trades,
+                'wins': ic_wins,
+                'win_rate': (ic_wins / ic_trades * 100) if ic_trades > 0 else 0,
+                'total_pnl': ic_total_pnl,
+                'avg_pnl': ic_avg_pnl,
+                'bots': ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS'],
+                'bot_breakdown': ic_bot_breakdown
+            }
+
+            dir_result = {
+                'trades': dir_trades,
+                'wins': dir_wins,
+                'win_rate': (dir_wins / dir_trades * 100) if dir_trades > 0 else 0,
+                'total_pnl': dir_total_pnl,
+                'avg_pnl': dir_avg_pnl,
+                'bots': ['ATHENA', 'ICARUS'],
+                'bot_breakdown': dir_bot_breakdown
+            }
 
             return {
                 'status': 'analyzed',
                 'period_days': days,
-                'iron_condor': {
-                    'trades': ic_trades,
-                    'wins': ic_row[1] or 0,
-                    'win_rate': (ic_row[1] / ic_trades * 100) if ic_trades > 0 else 0,
-                    'total_pnl': float(ic_row[2] or 0),
-                    'avg_pnl': float(ic_row[3] or 0),
-                    'bots': ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
-                },
-                'directional': {
-                    'trades': dir_trades,
-                    'wins': dir_row[1] or 0,
-                    'win_rate': (dir_row[1] / dir_trades * 100) if dir_trades > 0 else 0,
-                    'total_pnl': float(dir_row[2] or 0),
-                    'avg_pnl': float(dir_row[3] or 0),
-                    'direction_accuracy': (dir_row[4] / dir_trades * 100) if dir_trades > 0 else 0,
-                    'bots': ['ATHENA', 'ICARUS']
-                },
-                'recommendation': self._generate_strategy_recommendation(ic_row, dir_row, ic_trades, dir_trades)
+                'data_source': 'unified_trades',
+                'iron_condor': ic_result,
+                'directional': dir_result,
+                'recommendation': self._generate_strategy_recommendation_v2(ic_result, dir_result)
             }
 
         except Exception as e:
@@ -2138,11 +2184,38 @@ class SolomonEnhanced:
         else:
             return "Strategies performing similarly - no allocation change recommended"
 
+    def _generate_strategy_recommendation_v2(self, ic_result: Dict, dir_result: Dict) -> str:
+        """Generate a recommendation based on strategy performance comparison (v2 for unified_trades)."""
+        ic_trades = ic_result.get('trades', 0)
+        dir_trades = dir_result.get('trades', 0)
+
+        if ic_trades < 5 and dir_trades < 5:
+            return "Insufficient data - need at least 5 trades per strategy for meaningful analysis"
+
+        ic_win_rate = ic_result.get('win_rate', 0)
+        dir_win_rate = dir_result.get('win_rate', 0)
+        ic_avg_pnl = ic_result.get('avg_pnl', 0)
+        dir_avg_pnl = dir_result.get('avg_pnl', 0)
+
+        if ic_win_rate > dir_win_rate + 10 and ic_avg_pnl > dir_avg_pnl:
+            return "Iron Condor strategy outperforming - consider increasing IC allocation"
+        elif dir_win_rate > ic_win_rate + 10 and dir_avg_pnl > ic_avg_pnl:
+            return "Directional strategy outperforming - market may be trending"
+        elif ic_win_rate > 60 and dir_win_rate > 60:
+            return "Both strategies performing well - maintain current allocation"
+        elif ic_win_rate < 45 and dir_win_rate < 45:
+            return "Both strategies underperforming - consider reducing position sizes"
+        else:
+            return "Strategies performing similarly - no allocation change recommended"
+
     def get_oracle_accuracy(self, days: int = 30) -> Dict:
         """
         Analyze Oracle recommendation accuracy by strategy type.
 
         Migration 023: This measures how well Oracle's advice correlates with outcomes.
+
+        Fix: Now queries unified_trades for actual trade data and oracle_predictions
+        for advice correlation where available.
         """
         if not DB_AVAILABLE:
             return {'status': 'database_unavailable'}
@@ -2151,82 +2224,110 @@ class SolomonEnhanced:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Analyze Oracle advice accuracy
+            # Step 1: Get actual trade performance by bot from unified_trades
             cursor.execute("""
                 SELECT
-                    oracle_advice,
-                    strategy_type,
+                    bot_name,
                     COUNT(*) as trades,
-                    SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins,
-                    AVG(pnl) as avg_pnl
-                FROM solomon_performance
-                WHERE oracle_advice IS NOT NULL
-                    AND trade_date >= CURRENT_DATE - INTERVAL '%s days'
-                GROUP BY oracle_advice, strategy_type
-                ORDER BY oracle_advice, strategy_type
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl
+                FROM unified_trades
+                WHERE created_at >= NOW() - INTERVAL '%s days'
+                GROUP BY bot_name
+                ORDER BY bot_name
             """, (days,))
+            bot_rows = cursor.fetchall()
 
-            rows = cursor.fetchall()
+            # Step 2: Get Oracle predictions summary
+            cursor.execute("""
+                SELECT
+                    advice,
+                    bot_name,
+                    COUNT(*) as predictions
+                FROM oracle_predictions
+                WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
+                GROUP BY advice, bot_name
+                ORDER BY advice, bot_name
+            """, (days,))
+            oracle_rows = cursor.fetchall()
+
             conn.close()
 
-            # Build nested advice -> strategy structure
-            advice_analysis = {}
-            for row in rows:
-                advice = row[0]
-                strategy = row[1]
-                if advice not in advice_analysis:
-                    advice_analysis[advice] = {}
-                advice_analysis[advice][strategy] = {
-                    'trades': row[2],
-                    'wins': row[3],
-                    'win_rate': (row[3] / row[2] * 100) if row[2] > 0 else 0,
-                    'avg_pnl': float(row[4] or 0)
+            # Build strategy-level performance from actual trades
+            ic_bots = ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
+            dir_bots = ['ATHENA', 'ICARUS']
+
+            by_strategy = {
+                'IRON_CONDOR': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}},
+                'DIRECTIONAL': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
+            }
+
+            for row in bot_rows:
+                bot_name, trades, wins, total_pnl, avg_pnl = row
+                bot_data = {
+                    'trades': trades or 0,
+                    'wins': wins or 0,
+                    'total_pnl': float(total_pnl or 0),
+                    'avg_pnl': float(avg_pnl or 0),
+                    'win_rate': (wins / trades * 100) if trades else 0
                 }
 
-            # Build flattened by_advice for UI display (aggregate across strategies)
-            by_advice_flat = {}
-            for advice, strategies in advice_analysis.items():
-                total_trades = sum(s.get('trades', 0) for s in strategies.values())
-                total_wins = sum(s.get('wins', 0) for s in strategies.values())
-                total_pnl = sum(s.get('avg_pnl', 0) * s.get('trades', 0) for s in strategies.values())
-                by_advice_flat[advice] = {
-                    'count': total_trades,
-                    'accuracy': (total_wins / total_trades * 100) if total_trades > 0 else 0,
-                    'avg_pnl': (total_pnl / total_trades) if total_trades > 0 else 0,
-                    'strategies': strategies  # Keep detailed breakdown
-                }
+                if bot_name in ic_bots:
+                    by_strategy['IRON_CONDOR']['trades'] += trades or 0
+                    by_strategy['IRON_CONDOR']['wins'] += wins or 0
+                    by_strategy['IRON_CONDOR']['total_pnl'] += float(total_pnl or 0)
+                    by_strategy['IRON_CONDOR']['bots'][bot_name] = bot_data
+                elif bot_name in dir_bots:
+                    by_strategy['DIRECTIONAL']['trades'] += trades or 0
+                    by_strategy['DIRECTIONAL']['wins'] += wins or 0
+                    by_strategy['DIRECTIONAL']['total_pnl'] += float(total_pnl or 0)
+                    by_strategy['DIRECTIONAL']['bots'][bot_name] = bot_data
 
-            # Build by_strategy aggregation (aggregate across advice types)
-            by_strategy = {}
-            for advice, strategies in advice_analysis.items():
-                for strategy, metrics in strategies.items():
-                    if strategy not in by_strategy:
-                        by_strategy[strategy] = {'trades': 0, 'wins': 0, 'total_pnl': 0}
-                    by_strategy[strategy]['trades'] += metrics.get('trades', 0)
-                    by_strategy[strategy]['wins'] += metrics.get('wins', 0)
-                    by_strategy[strategy]['total_pnl'] += metrics.get('avg_pnl', 0) * metrics.get('trades', 0)
-
-            # Calculate final strategy metrics
+            # Calculate strategy-level metrics
             for strategy in by_strategy:
                 trades = by_strategy[strategy]['trades']
                 wins = by_strategy[strategy]['wins']
                 total_pnl = by_strategy[strategy]['total_pnl']
-                by_strategy[strategy] = {
-                    'count': trades,
-                    'accuracy': (wins / trades * 100) if trades > 0 else 0,
-                    'avg_pnl': (total_pnl / trades) if trades > 0 else 0
-                }
+                by_strategy[strategy]['count'] = trades
+                by_strategy[strategy]['accuracy'] = (wins / trades * 100) if trades > 0 else 0
+                by_strategy[strategy]['avg_pnl'] = (total_pnl / trades) if trades > 0 else 0
 
-            summary_data = self._generate_oracle_accuracy_summary(advice_analysis)
+            # Build Oracle advice summary
+            by_advice = {}
+            for row in oracle_rows:
+                advice, bot_name, predictions = row
+                if advice not in by_advice:
+                    by_advice[advice] = {'count': 0, 'bots': {}}
+                by_advice[advice]['count'] += predictions or 0
+                by_advice[advice]['bots'][bot_name] = predictions or 0
+
+            # Generate summary
+            total_trades = sum(s['trades'] for s in by_strategy.values())
+            total_wins = sum(s['wins'] for s in by_strategy.values())
+            overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+
+            summary_text = f"Analyzed {total_trades} trades over {days} days. "
+            if overall_win_rate >= 60:
+                summary_text += f"Overall win rate of {overall_win_rate:.1f}% is strong."
+            elif overall_win_rate >= 50:
+                summary_text += f"Overall win rate of {overall_win_rate:.1f}% is acceptable."
+            else:
+                summary_text += f"Overall win rate of {overall_win_rate:.1f}% needs improvement."
 
             return {
                 'status': 'analyzed',
                 'period_days': days,
-                'by_advice': by_advice_flat,  # Flattened for UI
-                'by_advice_detailed': advice_analysis,  # Nested for detailed view
-                'by_strategy': by_strategy,  # Aggregated by strategy type
-                'summary': summary_data.get('summary_text', ''),  # String for display
-                'summary_data': summary_data  # Full data for programmatic use
+                'data_source': 'unified_trades + oracle_predictions',
+                'by_advice': by_advice,
+                'by_strategy': by_strategy,
+                'summary': summary_text,
+                'summary_data': {
+                    'total_trades': total_trades,
+                    'total_wins': total_wins,
+                    'overall_win_rate': overall_win_rate,
+                    'summary_text': summary_text
+                }
             }
 
         except Exception as e:
