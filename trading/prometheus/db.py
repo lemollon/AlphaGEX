@@ -598,6 +598,49 @@ class PrometheusDatabase:
             """)
 
             # ==================================================================
+            # BOX SPREAD TABLE INDEXES - per STANDARDS.md Performance Requirements
+            # ==================================================================
+            # These indexes ensure efficient queries on box spread data
+
+            # Box Positions - query by status and close_time
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_positions_status
+                ON prometheus_positions (status)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_positions_close_time
+                ON prometheus_positions (close_time DESC NULLS LAST)
+            """)
+
+            # Box Signals - query by time and execution status
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_signals_time
+                ON prometheus_signals (signal_time DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_signals_executed
+                ON prometheus_signals (was_executed, signal_time DESC)
+            """)
+
+            # Box Equity Snapshots - query by time for intraday
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_equity_snapshots_time
+                ON prometheus_equity_snapshots (snapshot_time DESC)
+            """)
+
+            # Capital Deployments - query by time
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_capital_deployments_time
+                ON prometheus_capital_deployments (deployment_time DESC)
+            """)
+
+            # Rate Analysis - query by time
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_prometheus_rate_analysis_time
+                ON prometheus_rate_analysis (analysis_time DESC)
+            """)
+
+            # ==================================================================
             # IC TABLE INDEXES - per STANDARDS.md Performance Requirements
             # ==================================================================
             # These indexes ensure efficient queries on IC trading data
