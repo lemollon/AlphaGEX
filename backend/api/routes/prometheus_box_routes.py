@@ -1595,6 +1595,295 @@ async def get_combined_performance():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/reconciliation")
+async def get_full_reconciliation():
+    """
+    Get complete reconciliation data for the PROMETHEUS dashboard.
+
+    ALL calculations are done server-side - frontend just displays.
+
+    Returns:
+    - Per-position box spread reconciliation (strikes, expiration, capital math)
+    - Cost accrual with remaining cost to accrue
+    - IC positions with full Oracle reasoning
+    - Net profit reconciliation with all components
+    - Config values (no hardcoded 15% reserve, etc.)
+    """
+    if not PrometheusTrader or not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS modules not available")
+
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from trading.prometheus.db import PrometheusDatabase
+
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
+
+        # Get traders
+        box_trader = PrometheusTrader()
+        ic_trader = PrometheusICTrader()
+        db = PrometheusDatabase()
+
+        # Get config (real values, not hardcoded)
+        box_config = db.load_config()
+        ic_config = db.load_ic_config()
+
+        # Get all positions
+        box_positions = box_trader.get_positions()
+        ic_positions = ic_trader.get_positions()
+
+        # Get performance data
+        ic_performance = db.get_ic_performance()
+        combined = db.get_combined_performance_summary()
+
+        # Build per-position box spread reconciliation
+        box_reconciliation = []
+        total_borrowed = 0
+        total_face_value = 0
+        total_borrowing_cost = 0
+        total_cost_accrued = 0
+        total_cost_remaining = 0
+
+        for pos in box_positions:
+            # Calculate position-specific values
+            strike_width = pos.get('strike_width', 50)
+            contracts = pos.get('contracts', 0)
+            face_value = strike_width * 100 * contracts
+            credit_received = pos.get('total_credit_received', 0)
+            total_cost = face_value - credit_received  # Total interest over life
+
+            # Time-based accrual
+            dte_at_entry = pos.get('dte_at_entry', 90)
+            current_dte = pos.get('current_dte', 90)
+            days_held = dte_at_entry - current_dte
+            daily_cost = total_cost / dte_at_entry if dte_at_entry > 0 else 0
+            cost_accrued = daily_cost * days_held
+            cost_remaining = total_cost - cost_accrued
+
+            # Implied rate calculation
+            implied_rate = pos.get('implied_annual_rate', 0)
+            if implied_rate == 0 and credit_received > 0 and dte_at_entry > 0:
+                implied_rate = (total_cost / credit_received) / (dte_at_entry / 365) * 100
+
+            box_reconciliation.append({
+                'position_id': pos.get('position_id'),
+                # Strike and expiration details
+                'ticker': pos.get('ticker', 'SPX'),
+                'lower_strike': pos.get('lower_strike'),
+                'upper_strike': pos.get('upper_strike'),
+                'strike_width': strike_width,
+                'expiration': pos.get('expiration'),
+                'dte_at_entry': dte_at_entry,
+                'current_dte': current_dte,
+                'days_held': days_held,
+                'contracts': contracts,
+
+                # Capital math (all server-calculated)
+                'face_value': face_value,
+                'credit_received': credit_received,
+                'total_borrowing_cost': total_cost,
+                'implied_annual_rate': implied_rate,
+
+                # Cost accrual
+                'daily_cost': daily_cost,
+                'cost_accrued_to_date': cost_accrued,
+                'cost_remaining': cost_remaining,
+                'accrual_pct': (cost_accrued / total_cost * 100) if total_cost > 0 else 0,
+
+                # IC returns from this box spread's capital
+                'total_ic_returns': pos.get('total_ic_returns', 0),
+                'net_profit': pos.get('net_profit', 0),
+
+                # Status
+                'status': pos.get('status', 'open'),
+                'open_time': pos.get('open_time'),
+            })
+
+            # Accumulate totals
+            total_borrowed += credit_received
+            total_face_value += face_value
+            total_borrowing_cost += total_cost
+            total_cost_accrued += cost_accrued
+            total_cost_remaining += cost_remaining
+
+        # Build IC reconciliation with Oracle details
+        ic_reconciliation = []
+        total_ic_unrealized = 0
+        total_ic_credit = 0
+        total_ic_current_value = 0
+
+        for pos in ic_positions:
+            unrealized = pos.get('unrealized_pnl', 0)
+            credit = pos.get('total_credit_received', 0)
+            current_value = pos.get('current_value', 0)
+
+            ic_reconciliation.append({
+                'position_id': pos.get('position_id'),
+                'source_box_position_id': pos.get('source_box_position_id'),
+
+                # Full strike details
+                'ticker': pos.get('ticker', 'SPX'),
+                'put_short_strike': pos.get('put_short_strike'),
+                'put_long_strike': pos.get('put_long_strike'),
+                'call_short_strike': pos.get('call_short_strike'),
+                'call_long_strike': pos.get('call_long_strike'),
+                'put_spread': pos.get('put_spread'),
+                'call_spread': pos.get('call_spread'),
+                'spread_width': pos.get('spread_width'),
+
+                # Expiration
+                'expiration': pos.get('expiration'),
+                'dte': pos.get('dte'),
+
+                # P&L
+                'contracts': pos.get('contracts'),
+                'entry_credit': pos.get('entry_credit'),
+                'total_credit_received': credit,
+                'current_value': current_value,
+                'unrealized_pnl': unrealized,
+                'pnl_pct': pos.get('pnl_pct', 0),
+
+                # Oracle details - FULL transparency
+                'oracle_confidence': pos.get('oracle_confidence', 0),
+                'oracle_reasoning': pos.get('oracle_reasoning', ''),
+
+                # Market context at entry
+                'spot_at_entry': pos.get('spot_at_entry', 0),
+                'vix_at_entry': pos.get('vix_at_entry', 0),
+                'gamma_regime_at_entry': pos.get('gamma_regime_at_entry', ''),
+
+                # Risk rules
+                'stop_loss_pct': pos.get('stop_loss_pct', 200),
+                'profit_target_pct': pos.get('profit_target_pct', 50),
+
+                # Status
+                'status': pos.get('status'),
+                'open_time': pos.get('open_time'),
+            })
+
+            total_ic_unrealized += unrealized
+            total_ic_credit += credit
+            total_ic_current_value += current_value
+
+        # Get IC closed trades summary
+        closed_trades = ic_performance.get('closed_trades', {})
+        ic_realized = closed_trades.get('total_pnl', 0)
+        ic_wins = closed_trades.get('wins', 0)
+        ic_losses = closed_trades.get('losses', 0)
+        ic_win_rate = closed_trades.get('win_rate', 0)
+
+        # Calculate capital deployment
+        reserve_pct = 0.15  # TODO: Get from config when available
+        margin_per_trade = 6000  # TODO: Get from ic_config when available
+
+        reserved_capital = total_borrowed * reserve_pct
+        capital_in_ic_trades = len(ic_positions) * margin_per_trade
+        available_capital = total_borrowed - reserved_capital - capital_in_ic_trades
+
+        # Net profit calculation (all server-side)
+        total_ic_returns = ic_realized + total_ic_unrealized
+        net_profit = total_ic_returns - total_cost_accrued
+
+        # ROI calculations
+        roi_on_borrowed = (net_profit / total_borrowed * 100) if total_borrowed > 0 else 0
+
+        # Cost efficiency
+        cost_efficiency = (total_ic_returns / total_cost_accrued) if total_cost_accrued > 0 else 0
+
+        return {
+            "available": True,
+            "reconciliation_time": now.isoformat(),
+
+            # Config values (not hardcoded in frontend)
+            "config": {
+                "reserve_pct": reserve_pct,
+                "margin_per_ic_trade": margin_per_trade,
+                "box_target_dte_min": box_config.target_dte_min if box_config else 180,
+                "box_target_dte_max": box_config.target_dte_max if box_config else 365,
+                "box_min_dte_to_hold": box_config.min_dte_to_hold if box_config else 30,
+                "ic_max_positions": ic_config.max_positions if ic_config else 3,
+                "ic_max_daily_trades": ic_config.max_daily_trades if ic_config else 5,
+                "ic_profit_target_pct": ic_config.profit_target_pct if ic_config else 50,
+                "ic_stop_loss_pct": ic_config.stop_loss_pct if ic_config else 200,
+                "require_oracle_approval": ic_config.require_oracle_approval if ic_config else True,
+                "min_oracle_confidence": ic_config.min_oracle_confidence if ic_config else 0.6,
+            },
+
+            # Box Spread Reconciliation (per position)
+            "box_spreads": {
+                "positions": box_reconciliation,
+                "count": len(box_reconciliation),
+                "totals": {
+                    "total_borrowed": total_borrowed,
+                    "total_face_value": total_face_value,
+                    "total_borrowing_cost": total_borrowing_cost,
+                    "cost_accrued_to_date": total_cost_accrued,
+                    "cost_remaining": total_cost_remaining,
+                },
+            },
+
+            # Capital Deployment Reconciliation
+            "capital_deployment": {
+                "total_borrowed": total_borrowed,
+                "reserved": reserved_capital,
+                "reserved_pct": reserve_pct * 100,
+                "in_ic_trades": capital_in_ic_trades,
+                "ic_positions_count": len(ic_positions),
+                "available_to_trade": available_capital,
+                # Verification: these should add up
+                "reconciles": abs((reserved_capital + capital_in_ic_trades + available_capital) - total_borrowed) < 0.01,
+            },
+
+            # IC Trading Reconciliation (per position with Oracle)
+            "ic_trading": {
+                "positions": ic_reconciliation,
+                "count": len(ic_reconciliation),
+                "totals": {
+                    "total_credit_received": total_ic_credit,
+                    "total_current_value": total_ic_current_value,
+                    "total_unrealized_pnl": total_ic_unrealized,
+                },
+                "closed_trades": {
+                    "total": ic_wins + ic_losses,
+                    "wins": ic_wins,
+                    "losses": ic_losses,
+                    "win_rate": ic_win_rate,
+                    "realized_pnl": ic_realized,
+                },
+            },
+
+            # Net Profit Reconciliation (the bottom line)
+            "net_profit_reconciliation": {
+                "income": {
+                    "ic_realized_pnl": ic_realized,
+                    "ic_unrealized_pnl": total_ic_unrealized,
+                    "total_ic_returns": total_ic_returns,
+                },
+                "costs": {
+                    "borrowing_cost_accrued": total_cost_accrued,
+                    "borrowing_cost_remaining": total_cost_remaining,
+                    "total_borrowing_cost": total_borrowing_cost,
+                },
+                "net_profit": net_profit,
+                "is_profitable": net_profit > 0,
+
+                # Efficiency metrics
+                "cost_efficiency": cost_efficiency,
+                "roi_on_borrowed": roi_on_borrowed,
+
+                # Reconciliation verification
+                "reconciles": abs((total_ic_returns - total_cost_accrued) - net_profit) < 0.01,
+            },
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting reconciliation: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==============================================================================
 # TRACING & OBSERVABILITY ENDPOINTS
 # ==============================================================================

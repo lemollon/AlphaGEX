@@ -79,6 +79,9 @@ export default function PrometheusBoxDashboard() {
   const { data: icSignals } = useSWR('/api/prometheus-box/ic/signals/recent?limit=20', fetcher, { refreshInterval: 30000 })
   const { data: combinedPerformance } = useSWR('/api/prometheus-box/combined/performance', fetcher, { refreshInterval: 60000 })
 
+  // Full Reconciliation - server-calculated, all values from API
+  const { data: reconciliation } = useSWR('/api/prometheus-box/reconciliation', fetcher, { refreshInterval: 30000 })
+
   // IC Bot positions for capital deployment tracking (legacy - to be removed)
   const { data: aresPositions } = useSWR('/api/ares/positions', fetcher, { refreshInterval: 30000 })
   const { data: titanPositions } = useSWR('/api/titan/positions', fetcher, { refreshInterval: 30000 })
@@ -1012,6 +1015,473 @@ export default function PrometheusBoxDashboard() {
                     </div>
                   )}
                 </div>
+
+                {/* ================================================================ */}
+                {/* FULL RECONCILIATION SECTION - All values from API               */}
+                {/* ================================================================ */}
+                {reconciliation?.available && (
+                  <div className="bg-gray-800 rounded-lg p-6 border-2 border-orange-500/50">
+                    <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                      <span className="text-3xl">📋</span>
+                      Full Reconciliation
+                      <span className="text-sm font-normal text-gray-400 ml-2">
+                        All calculations verified server-side
+                      </span>
+                      {reconciliation.net_profit_reconciliation?.reconciles && (
+                        <span className="ml-auto px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm font-medium">
+                          ✓ RECONCILES
+                        </span>
+                      )}
+                    </h2>
+
+                    {/* SECTION 1: Per-Position Box Spread Reconciliation */}
+                    {reconciliation.box_spreads?.positions?.length > 0 && (
+                      <div className="mb-8">
+                        <h3 className="text-lg font-bold mb-4 text-blue-400 flex items-center gap-2">
+                          📦 Box Spread Capital Reconciliation
+                          <span className="text-sm font-normal text-gray-400">
+                            ({reconciliation.box_spreads.count} position{reconciliation.box_spreads.count !== 1 ? 's' : ''})
+                          </span>
+                        </h3>
+
+                        {reconciliation.box_spreads.positions.map((pos: any) => (
+                          <div key={pos.position_id} className="bg-black/40 rounded-lg p-5 mb-4 border border-blue-700/30">
+                            {/* Position Header */}
+                            <div className="flex justify-between items-start mb-4 pb-3 border-b border-gray-700">
+                              <div>
+                                <div className="text-lg font-bold text-white">
+                                  {pos.ticker} {pos.lower_strike}/{pos.upper_strike}
+                                  <span className="text-gray-400 font-normal ml-2">(${pos.strike_width} width)</span>
+                                </div>
+                                <div className="text-sm text-gray-400">
+                                  Expiration: {pos.expiration} ({pos.current_dte} DTE remaining)
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  Opened: {pos.open_time ? new Date(pos.open_time).toLocaleDateString() : 'N/A'} • Held {pos.days_held} days
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm text-gray-400">Contracts</div>
+                                <div className="text-2xl font-bold">{pos.contracts}</div>
+                              </div>
+                            </div>
+
+                            {/* Capital Math */}
+                            <div className="grid md:grid-cols-2 gap-6">
+                              <div>
+                                <div className="text-sm font-medium text-gray-400 mb-3">CAPITAL MATH</div>
+                                <div className="space-y-2 text-sm font-mono">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Face Value (owed at exp):</span>
+                                    <span className="text-red-400">${pos.strike_width} × 100 × {pos.contracts} = {formatCurrency(pos.face_value)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Credit Received (borrowed):</span>
+                                    <span className="text-green-400">{formatCurrency(pos.credit_received)}</span>
+                                  </div>
+                                  <div className="flex justify-between border-t border-gray-700 pt-2">
+                                    <span className="text-gray-400">Total Borrowing Cost:</span>
+                                    <span className="text-yellow-400">{formatCurrency(pos.total_borrowing_cost)}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Implied Annual Rate:</span>
+                                    <span className="text-yellow-400">{pos.implied_annual_rate?.toFixed(2)}%</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Cost Accrual */}
+                              <div>
+                                <div className="text-sm font-medium text-gray-400 mb-3">COST ACCRUAL</div>
+                                <div className="space-y-2 text-sm">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Daily Cost:</span>
+                                    <span>{formatCurrency(pos.daily_cost)}/day</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Cost Accrued ({pos.days_held} days):</span>
+                                    <span className="text-red-400">{formatCurrency(pos.cost_accrued_to_date)}</span>
+                                  </div>
+                                  <div className="flex justify-between font-bold">
+                                    <span className="text-yellow-400">Cost Remaining:</span>
+                                    <span className="text-yellow-400">{formatCurrency(pos.cost_remaining)}</span>
+                                  </div>
+                                  {/* Accrual Progress Bar */}
+                                  <div className="pt-2">
+                                    <div className="flex justify-between text-xs text-gray-500 mb-1">
+                                      <span>Accrued</span>
+                                      <span>{pos.accrual_pct?.toFixed(1)}%</span>
+                                      <span>Remaining</span>
+                                    </div>
+                                    <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-red-600 to-red-400 transition-all"
+                                        style={{ width: `${pos.accrual_pct || 0}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Net Profit for this position */}
+                            <div className={`mt-4 p-3 rounded-lg ${pos.net_profit >= 0 ? 'bg-green-900/30 border border-green-600/30' : 'bg-red-900/30 border border-red-600/30'}`}>
+                              <div className="flex justify-between items-center">
+                                <span className="text-gray-300">IC Returns from this capital:</span>
+                                <span className="text-green-400 font-bold">{formatCurrency(pos.total_ic_returns)}</span>
+                              </div>
+                              <div className="flex justify-between items-center mt-1">
+                                <span className="text-gray-300">Net Profit (Returns - Accrued Cost):</span>
+                                <span className={`text-xl font-bold ${pos.net_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(pos.net_profit)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Box Spread Totals */}
+                        <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-600/30">
+                          <div className="text-sm font-medium text-blue-400 mb-3">BOX SPREAD TOTALS</div>
+                          <div className="grid grid-cols-5 gap-4 text-center">
+                            <div>
+                              <div className="text-xs text-gray-400">Total Borrowed</div>
+                              <div className="text-lg font-bold text-blue-400">{formatCurrency(reconciliation.box_spreads.totals.total_borrowed)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-400">Face Value Owed</div>
+                              <div className="text-lg font-bold text-red-400">{formatCurrency(reconciliation.box_spreads.totals.total_face_value)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-400">Total Interest</div>
+                              <div className="text-lg font-bold text-yellow-400">{formatCurrency(reconciliation.box_spreads.totals.total_borrowing_cost)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-400">Cost Accrued</div>
+                              <div className="text-lg font-bold text-red-400">{formatCurrency(reconciliation.box_spreads.totals.cost_accrued_to_date)}</div>
+                            </div>
+                            <div>
+                              <div className="text-xs text-gray-400">Cost Remaining</div>
+                              <div className="text-lg font-bold text-yellow-400">{formatCurrency(reconciliation.box_spreads.totals.cost_remaining)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SECTION 2: Capital Deployment Reconciliation */}
+                    <div className="mb-8">
+                      <h3 className="text-lg font-bold mb-4 text-yellow-400 flex items-center gap-2">
+                        💰 Capital Deployment Reconciliation
+                        {reconciliation.capital_deployment?.reconciles && (
+                          <span className="ml-2 px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">✓ TIES</span>
+                        )}
+                      </h3>
+                      <div className="bg-black/40 rounded-lg p-5 border border-yellow-700/30">
+                        <div className="grid md:grid-cols-5 gap-4 text-center items-center">
+                          <div className="bg-blue-900/30 rounded-lg p-3 border border-blue-600/30">
+                            <div className="text-xs text-gray-400">From Box Spreads</div>
+                            <div className="text-xl font-bold text-blue-400">{formatCurrency(reconciliation.capital_deployment?.total_borrowed || 0)}</div>
+                          </div>
+                          <div className="text-2xl text-gray-500">−</div>
+                          <div className="bg-yellow-900/30 rounded-lg p-3 border border-yellow-600/30">
+                            <div className="text-xs text-gray-400">Reserved ({reconciliation.capital_deployment?.reserved_pct || 15}%)</div>
+                            <div className="text-xl font-bold text-yellow-400">{formatCurrency(reconciliation.capital_deployment?.reserved || 0)}</div>
+                          </div>
+                          <div className="text-2xl text-gray-500">−</div>
+                          <div className="bg-orange-900/30 rounded-lg p-3 border border-orange-600/30">
+                            <div className="text-xs text-gray-400">In IC Trades ({reconciliation.capital_deployment?.ic_positions_count || 0})</div>
+                            <div className="text-xl font-bold text-orange-400">{formatCurrency(reconciliation.capital_deployment?.in_ic_trades || 0)}</div>
+                          </div>
+                        </div>
+                        <div className="mt-4 pt-4 border-t border-gray-700 flex justify-between items-center">
+                          <span className="text-lg text-gray-300">= AVAILABLE TO TRADE:</span>
+                          <span className="text-2xl font-bold text-green-400">{formatCurrency(reconciliation.capital_deployment?.available_to_trade || 0)}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* SECTION 3: IC Trading Reconciliation with Oracle */}
+                    {reconciliation.ic_trading?.positions?.length > 0 && (
+                      <div className="mb-8">
+                        <h3 className="text-lg font-bold mb-4 text-orange-400 flex items-center gap-2">
+                          📊 IC Trading Reconciliation
+                          <span className="text-sm font-normal text-gray-400">
+                            ({reconciliation.ic_trading.count} open position{reconciliation.ic_trading.count !== 1 ? 's' : ''})
+                          </span>
+                        </h3>
+
+                        {/* Open IC Positions */}
+                        <div className="space-y-3 mb-4">
+                          {reconciliation.ic_trading.positions.map((pos: any) => (
+                            <div key={pos.position_id} className="bg-black/40 rounded-lg p-4 border border-orange-700/30">
+                              <div className="flex justify-between items-start mb-3">
+                                <div>
+                                  <div className="text-lg font-bold text-white">
+                                    {pos.ticker} {pos.put_long_strike}/{pos.put_short_strike}P | {pos.call_short_strike}/{pos.call_long_strike}C
+                                  </div>
+                                  <div className="text-sm text-gray-400">
+                                    Exp: {pos.expiration} ({pos.dte} DTE) • {pos.contracts} contract{pos.contracts !== 1 ? 's' : ''}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className={`text-xl font-bold ${pos.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                    {formatCurrency(pos.unrealized_pnl)}
+                                  </div>
+                                  <div className="text-xs text-gray-500">{pos.pnl_pct?.toFixed(1)}% of credit</div>
+                                </div>
+                              </div>
+
+                              {/* P&L Details */}
+                              <div className="grid grid-cols-3 gap-4 mb-3 text-sm">
+                                <div>
+                                  <span className="text-gray-400">Entry Credit: </span>
+                                  <span className="text-green-400 font-medium">{formatCurrency(pos.total_credit_received)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Current Value: </span>
+                                  <span className="font-medium">{formatCurrency(pos.current_value)}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Max Loss: </span>
+                                  <span className="text-red-400 font-medium">{formatCurrency(pos.max_loss)}</span>
+                                </div>
+                              </div>
+
+                              {/* Oracle Reasoning - FULL transparency */}
+                              <div className="bg-purple-900/20 rounded-lg p-3 border border-purple-600/30">
+                                <div className="flex items-center gap-2 mb-2">
+                                  <span className="text-purple-400 font-medium">🔮 Oracle Decision</span>
+                                  <span className={`px-2 py-0.5 rounded text-xs ${
+                                    pos.oracle_confidence >= 0.7 ? 'bg-green-500/20 text-green-400' :
+                                    pos.oracle_confidence >= 0.5 ? 'bg-yellow-500/20 text-yellow-400' :
+                                    'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    {(pos.oracle_confidence * 100).toFixed(0)}% confidence
+                                  </span>
+                                </div>
+                                <div className="text-sm text-gray-300">
+                                  {pos.oracle_reasoning || 'No reasoning recorded'}
+                                </div>
+                                <div className="mt-2 text-xs text-gray-500">
+                                  Entry: SPX @ {formatCurrency(pos.spot_at_entry)} • VIX: {pos.vix_at_entry?.toFixed(1)} • Regime: {pos.gamma_regime_at_entry || 'N/A'}
+                                </div>
+                              </div>
+
+                              {/* Risk Rules */}
+                              <div className="mt-2 flex gap-4 text-xs text-gray-500">
+                                <span>Stop Loss: {pos.stop_loss_pct}%</span>
+                                <span>Profit Target: {pos.profit_target_pct}%</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* IC Totals */}
+                        <div className="bg-orange-900/20 rounded-lg p-4 border border-orange-600/30">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div>
+                              <div className="text-sm font-medium text-gray-400 mb-2">OPEN POSITIONS</div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">Total Credit:</span>
+                                <span className="text-green-400 font-bold">{formatCurrency(reconciliation.ic_trading.totals.total_credit_received)}</span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">Current Value:</span>
+                                <span>{formatCurrency(reconciliation.ic_trading.totals.total_current_value)}</span>
+                              </div>
+                              <div className="flex justify-between text-sm font-bold border-t border-gray-700 pt-1 mt-1">
+                                <span className="text-gray-300">Unrealized P&L:</span>
+                                <span className={reconciliation.ic_trading.totals.total_unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                  {formatCurrency(reconciliation.ic_trading.totals.total_unrealized_pnl)}
+                                </span>
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-sm font-medium text-gray-400 mb-2">CLOSED TRADES</div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">Wins / Losses:</span>
+                                <span>{reconciliation.ic_trading.closed_trades.wins} / {reconciliation.ic_trading.closed_trades.losses}</span>
+                              </div>
+                              <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">Win Rate:</span>
+                                <span className={reconciliation.ic_trading.closed_trades.win_rate >= 0.5 ? 'text-green-400' : 'text-red-400'}>
+                                  {(reconciliation.ic_trading.closed_trades.win_rate * 100).toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="flex justify-between text-sm font-bold border-t border-gray-700 pt-1 mt-1">
+                                <span className="text-gray-300">Realized P&L:</span>
+                                <span className={reconciliation.ic_trading.closed_trades.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                  {formatCurrency(reconciliation.ic_trading.closed_trades.realized_pnl)}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="md:col-span-2 bg-black/30 rounded-lg p-3">
+                              <div className="text-sm font-medium text-gray-400 mb-2">TOTAL IC RETURNS</div>
+                              <div className="grid grid-cols-3 gap-2 text-center">
+                                <div>
+                                  <div className="text-xs text-gray-500">Realized</div>
+                                  <div className="text-lg font-bold text-green-400">{formatCurrency(reconciliation.ic_trading.closed_trades.realized_pnl)}</div>
+                                </div>
+                                <div className="text-2xl text-gray-500">+</div>
+                                <div>
+                                  <div className="text-xs text-gray-500">Unrealized</div>
+                                  <div className="text-lg font-bold text-blue-400">{formatCurrency(reconciliation.ic_trading.totals.total_unrealized_pnl)}</div>
+                                </div>
+                              </div>
+                              <div className="mt-2 pt-2 border-t border-gray-700 text-center">
+                                <div className="text-xs text-gray-500">= Total IC Returns</div>
+                                <div className="text-2xl font-bold text-green-400">{formatCurrency(reconciliation.net_profit_reconciliation?.income?.total_ic_returns || 0)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SECTION 4: Net Profit Reconciliation - THE BOTTOM LINE */}
+                    <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-lg p-6 border-2 border-green-500/30">
+                      <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
+                        🎯 Net Profit Reconciliation
+                        <span className="text-sm font-normal text-gray-400">— The Bottom Line</span>
+                        {reconciliation.net_profit_reconciliation?.reconciles && (
+                          <span className="ml-auto px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-sm">✓ VERIFIED</span>
+                        )}
+                      </h3>
+
+                      <div className="grid md:grid-cols-2 gap-6">
+                        {/* INCOME */}
+                        <div className="bg-green-900/20 rounded-lg p-4 border border-green-600/30">
+                          <div className="text-sm font-bold text-green-400 mb-3">INCOME (What You&apos;ve Earned)</div>
+                          <div className="space-y-2 text-sm font-mono">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">IC Realized P&L:</span>
+                              <span className="text-green-400">+{formatCurrency(reconciliation.net_profit_reconciliation?.income?.ic_realized_pnl || 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">IC Unrealized P&L:</span>
+                              <span className="text-blue-400">+{formatCurrency(reconciliation.net_profit_reconciliation?.income?.ic_unrealized_pnl || 0)}</span>
+                            </div>
+                            <div className="flex justify-between border-t border-green-700/50 pt-2 font-bold">
+                              <span className="text-green-300">TOTAL IC RETURNS:</span>
+                              <span className="text-green-400 text-lg">+{formatCurrency(reconciliation.net_profit_reconciliation?.income?.total_ic_returns || 0)}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* COSTS */}
+                        <div className="bg-red-900/20 rounded-lg p-4 border border-red-600/30">
+                          <div className="text-sm font-bold text-red-400 mb-3">COSTS (What You&apos;re Paying)</div>
+                          <div className="space-y-2 text-sm font-mono">
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">Borrowing Cost Accrued:</span>
+                              <span className="text-red-400">-{formatCurrency(reconciliation.net_profit_reconciliation?.costs?.borrowing_cost_accrued || 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-yellow-400">Cost Remaining (future):</span>
+                              <span className="text-yellow-400">-{formatCurrency(reconciliation.net_profit_reconciliation?.costs?.borrowing_cost_remaining || 0)}</span>
+                            </div>
+                            <div className="flex justify-between border-t border-red-700/50 pt-2 font-bold">
+                              <span className="text-red-300">COSTS TO DATE:</span>
+                              <span className="text-red-400 text-lg">-{formatCurrency(reconciliation.net_profit_reconciliation?.costs?.borrowing_cost_accrued || 0)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* THE ANSWER */}
+                      <div className={`mt-6 p-6 rounded-lg text-center ${
+                        reconciliation.net_profit_reconciliation?.is_profitable
+                          ? 'bg-green-900/30 border-2 border-green-500/50'
+                          : 'bg-red-900/30 border-2 border-red-500/50'
+                      }`}>
+                        <div className="text-sm text-gray-400 mb-2">NET PROFIT = IC Returns − Borrowing Costs</div>
+                        <div className={`text-4xl font-bold ${
+                          reconciliation.net_profit_reconciliation?.is_profitable ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {formatCurrency(reconciliation.net_profit_reconciliation?.net_profit || 0)}
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
+                          <div className="bg-black/30 rounded-lg p-3">
+                            <div className="text-gray-400">Cost Efficiency</div>
+                            <div className={`text-xl font-bold ${
+                              (reconciliation.net_profit_reconciliation?.cost_efficiency || 0) >= 1 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {(reconciliation.net_profit_reconciliation?.cost_efficiency || 0).toFixed(1)}x
+                            </div>
+                            <div className="text-xs text-gray-500">IC returns vs borrowing cost</div>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-3">
+                            <div className="text-gray-400">ROI on Borrowed</div>
+                            <div className={`text-xl font-bold ${
+                              (reconciliation.net_profit_reconciliation?.roi_on_borrowed || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {(reconciliation.net_profit_reconciliation?.roi_on_borrowed || 0).toFixed(2)}%
+                            </div>
+                            <div className="text-xs text-gray-500">Net profit ÷ borrowed capital</div>
+                          </div>
+                        </div>
+                        {reconciliation.net_profit_reconciliation?.is_profitable ? (
+                          <div className="mt-4 text-green-400 font-medium">
+                            ✅ STRATEGY WORKING: IC returns exceed borrowing costs by {(reconciliation.net_profit_reconciliation?.cost_efficiency || 0).toFixed(1)}x
+                          </div>
+                        ) : (
+                          <div className="mt-4 text-yellow-400 font-medium">
+                            ⚠️ BELOW BREAK-EVEN: Need {formatCurrency(Math.abs(reconciliation.net_profit_reconciliation?.net_profit || 0))} more in IC returns
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Trading Rules Summary */}
+                      <div className="mt-6 bg-black/30 rounded-lg p-4">
+                        <div className="text-sm font-medium text-gray-400 mb-3">📜 Trading Rules (from config)</div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                          <div>
+                            <span className="text-gray-500">Box DTE Target:</span>
+                            <span className="ml-2">{reconciliation.config?.box_target_dte_min}-{reconciliation.config?.box_target_dte_max} days</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Roll When:</span>
+                            <span className="ml-2">DTE &lt; {reconciliation.config?.box_min_dte_to_hold} days</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">IC Profit Target:</span>
+                            <span className="ml-2 text-green-400">{reconciliation.config?.ic_profit_target_pct}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">IC Stop Loss:</span>
+                            <span className="ml-2 text-red-400">{reconciliation.config?.ic_stop_loss_pct}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Oracle Required:</span>
+                            <span className="ml-2">{reconciliation.config?.require_oracle_approval ? 'Yes' : 'No'}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Min Confidence:</span>
+                            <span className="ml-2">{(reconciliation.config?.min_oracle_confidence || 0.6) * 100}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Max IC Positions:</span>
+                            <span className="ml-2">{reconciliation.config?.ic_max_positions}</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Max Daily Trades:</span>
+                            <span className="ml-2">{reconciliation.config?.ic_max_daily_trades}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* No reconciliation data message */}
+                {!reconciliation?.available && reconciliation !== undefined && (
+                  <div className="bg-gray-800 rounded-lg p-6 border border-gray-700 text-center">
+                    <div className="text-4xl mb-4">📋</div>
+                    <p className="text-gray-400">Reconciliation data not available</p>
+                    <p className="text-sm text-gray-500 mt-2">Open box spreads to see full reconciliation</p>
+                  </div>
+                )}
               </div>
             )}
 

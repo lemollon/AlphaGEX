@@ -1214,26 +1214,43 @@ class PrometheusICTrader:
         return [self._position_to_dict(p) for p in positions]
 
     def _position_to_dict(self, position: PrometheusICPosition) -> Dict[str, Any]:
-        """Convert IC position to dictionary"""
+        """Convert IC position to dictionary with full details for reconciliation"""
         return {
             'position_id': position.position_id,
             'source_box_position_id': position.source_box_position_id,
             'ticker': position.ticker,
+            # Full strike details for reconciliation display
+            'put_short_strike': position.put_short_strike,
+            'put_long_strike': position.put_long_strike,
+            'call_short_strike': position.call_short_strike,
+            'call_long_strike': position.call_long_strike,
+            # Formatted spreads for display
             'put_spread': f"{position.put_long_strike}/{position.put_short_strike}",
             'call_spread': f"{position.call_short_strike}/{position.call_long_strike}",
             'spread_width': position.spread_width,
             'expiration': position.expiration,
             'dte': position.current_dte,
             'contracts': position.contracts,
+            # Credit and P&L
             'entry_credit': position.entry_credit,
             'total_credit_received': position.total_credit_received,
             'max_loss': position.max_loss,
             'current_value': position.current_value,
             'unrealized_pnl': position.unrealized_pnl,
             'pnl_pct': (position.unrealized_pnl / position.total_credit_received * 100) if position.total_credit_received else 0,
+            # Status and timing
             'status': position.status.value,
             'open_time': position.open_time.isoformat() if position.open_time else None,
+            # Oracle details - FULL reasoning for transparency
             'oracle_confidence': position.oracle_confidence_at_entry,
+            'oracle_reasoning': position.oracle_reasoning,
+            # Market context at entry
+            'spot_at_entry': position.spot_at_entry,
+            'vix_at_entry': position.vix_at_entry,
+            'gamma_regime_at_entry': position.gamma_regime_at_entry,
+            # Risk management rules
+            'stop_loss_pct': position.stop_loss_pct,
+            'profit_target_pct': position.profit_target_pct,
         }
 
     def close_position(self, position_id: str, reason: str = "manual") -> Dict[str, Any]:
