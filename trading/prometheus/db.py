@@ -711,6 +711,150 @@ class PrometheusDatabase:
                     # Column might already exist or other issue
                     logger.debug(f"Column migration for {table}.{column}: {e}")
 
+            # ==================================================================
+            # FOREIGN KEY CONSTRAINTS - Referential Integrity
+            # ==================================================================
+            # These ensure data consistency across related tables.
+            # Using DO NOTHING on conflict since constraint may already exist.
+
+            foreign_keys = [
+                # IC Positions → Box Spread Positions (capital source)
+                (
+                    "prometheus_ic_positions",
+                    "fk_ic_positions_box_source",
+                    "source_box_position_id",
+                    "prometheus_positions(position_id)",
+                    "SET NULL"  # If box spread deleted, IC position retains but loses link
+                ),
+                # IC Closed Trades → Box Spread Positions (capital source history)
+                (
+                    "prometheus_ic_closed_trades",
+                    "fk_ic_closed_trades_box_source",
+                    "source_box_position_id",
+                    "prometheus_positions(position_id)",
+                    "SET NULL"  # Preserve trade history even if box spread deleted
+                ),
+                # IC Signals → Box Spread Positions (capital source for signal)
+                (
+                    "prometheus_ic_signals",
+                    "fk_ic_signals_box_source",
+                    "source_box_position_id",
+                    "prometheus_positions(position_id)",
+                    "SET NULL"
+                ),
+                # Capital Deployments → Box Spread Positions
+                (
+                    "prometheus_capital_deployments",
+                    "fk_deployments_box_source",
+                    "source_box_position_id",
+                    "prometheus_positions(position_id)",
+                    "CASCADE"  # If box spread deleted, deployment records should go too
+                ),
+                # Signals → Box Spread Positions (executed position)
+                (
+                    "prometheus_signals",
+                    "fk_signals_executed_position",
+                    "executed_position_id",
+                    "prometheus_positions(position_id)",
+                    "SET NULL"  # Preserve signal history
+                ),
+            ]
+
+            for table, constraint_name, column, references, on_delete in foreign_keys:
+                try:
+                    # Check if constraint already exists
+                    cursor.execute("""
+                        SELECT 1 FROM information_schema.table_constraints
+                        WHERE constraint_name = %s AND table_name = %s
+                    """, (constraint_name, table))
+                    if cursor.fetchone():
+                        continue  # Constraint already exists
+
+                    cursor.execute(f"""
+                        ALTER TABLE {table}
+                        ADD CONSTRAINT {constraint_name}
+                        FOREIGN KEY ({column})
+                        REFERENCES {references}
+                        ON DELETE {on_delete}
+                    """)
+                    logger.info(f"Added foreign key {constraint_name} on {table}")
+                except Exception as e:
+                    # Constraint might already exist or column has invalid data
+                    logger.debug(f"Foreign key {constraint_name}: {e}")
+
+            # ==================================================================
+            # DEFAULT VALUE MIGRATIONS - Reduce NULL handling in code
+            # ==================================================================
+            # Set DEFAULT 0 on numeric columns that currently allow NULL.
+            # This reduces the need for "or 0" fallbacks throughout the codebase.
+
+            default_value_columns = [
+                # prometheus_positions - cost tracking
+                ("prometheus_positions", "borrowing_cost", "0"),
+                ("prometheus_positions", "implied_annual_rate", "0"),
+                ("prometheus_positions", "daily_cost", "0"),
+                ("prometheus_positions", "cost_accrued_to_date", "0"),
+                ("prometheus_positions", "fed_funds_at_entry", "0"),
+                ("prometheus_positions", "margin_rate_at_entry", "0"),
+                ("prometheus_positions", "savings_vs_margin", "0"),
+                ("prometheus_positions", "spot_at_entry", "0"),
+                ("prometheus_positions", "vix_at_entry", "0"),
+                ("prometheus_positions", "current_margin_used", "0"),
+                ("prometheus_positions", "margin_cushion", "0"),
+                ("prometheus_positions", "contracts", "1"),
+                ("prometheus_positions", "entry_credit", "0"),
+                ("prometheus_positions", "total_credit_received", "0"),
+                ("prometheus_positions", "dte_at_entry", "0"),
+                ("prometheus_positions", "current_dte", "0"),
+                # prometheus_ic_positions - IC trading
+                ("prometheus_ic_positions", "contracts", "1"),
+                ("prometheus_ic_positions", "entry_credit", "0"),
+                ("prometheus_ic_positions", "total_credit_received", "0"),
+                ("prometheus_ic_positions", "current_value", "0"),
+                ("prometheus_ic_positions", "unrealized_pnl", "0"),
+                ("prometheus_ic_positions", "entry_delta", "0"),
+                ("prometheus_ic_positions", "entry_vega", "0"),
+                ("prometheus_ic_positions", "entry_theta", "0"),
+                ("prometheus_ic_positions", "current_dte", "0"),
+                ("prometheus_ic_positions", "max_profit", "0"),
+                ("prometheus_ic_positions", "max_loss", "0"),
+                ("prometheus_ic_positions", "profit_target_pct", "50"),
+                ("prometheus_ic_positions", "stop_loss_pct", "200"),
+                ("prometheus_ic_positions", "oracle_confidence_at_entry", "0"),
+                # prometheus_ic_closed_trades
+                ("prometheus_ic_closed_trades", "realized_pnl", "0"),
+                ("prometheus_ic_closed_trades", "exit_price", "0"),
+                ("prometheus_ic_closed_trades", "hold_duration_minutes", "0"),
+            ]
+
+            for table, column, default_val in default_value_columns:
+                try:
+                    cursor.execute(f"""
+                        ALTER TABLE {table}
+                        ALTER COLUMN {column} SET DEFAULT {default_val}
+                    """)
+                except Exception as e:
+                    # Column might not exist or already has default
+                    logger.debug(f"Default value for {table}.{column}: {e}")
+
+            # Update existing NULL values to their defaults
+            null_updates = [
+                ("prometheus_positions", "borrowing_cost", "0"),
+                ("prometheus_positions", "cost_accrued_to_date", "0"),
+                ("prometheus_ic_positions", "unrealized_pnl", "0"),
+                ("prometheus_ic_positions", "current_value", "0"),
+            ]
+
+            for table, column, default_val in null_updates:
+                try:
+                    cursor.execute(f"""
+                        UPDATE {table}
+                        SET {column} = {default_val}
+                        WHERE {column} IS NULL
+                    """)
+                except Exception as e:
+                    logger.debug(f"NULL update for {table}.{column}: {e}")
+
             conn.commit()
             cursor.close()
             logger.info("PROMETHEUS tables initialized successfully")
@@ -1436,6 +1580,227 @@ class PrometheusDatabase:
 
         except Exception as e:
             logger.error(f"Error getting intraday equity: {e}")
+            return []
+
+    # ========== Daily Briefings Methods ==========
+
+    def save_daily_briefing(self, briefing: Dict[str, Any]) -> bool:
+        """
+        Save daily briefing to database.
+
+        This persists the daily briefing data for historical analysis
+        and operational tracking.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO prometheus_daily_briefings (
+                    briefing_date, briefing_time, system_status,
+                    total_open_positions, total_borrowed_amount, total_cash_deployed,
+                    total_margin_used, margin_remaining,
+                    total_borrowing_cost_to_date, average_borrowing_rate, comparison_to_margin_rate,
+                    total_ic_returns_to_date, net_profit_to_date, roi_on_strategy,
+                    highest_assignment_risk_position, days_until_nearest_expiration,
+                    current_box_rate, rate_vs_yesterday, rate_trend_7d,
+                    recommended_actions, warnings, daily_tip
+                ) VALUES (
+                    %s, NOW(), %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s
+                )
+                ON CONFLICT (briefing_date)
+                DO UPDATE SET
+                    briefing_time = NOW(),
+                    system_status = EXCLUDED.system_status,
+                    total_open_positions = EXCLUDED.total_open_positions,
+                    total_borrowed_amount = EXCLUDED.total_borrowed_amount,
+                    total_cash_deployed = EXCLUDED.total_cash_deployed,
+                    total_margin_used = EXCLUDED.total_margin_used,
+                    margin_remaining = EXCLUDED.margin_remaining,
+                    total_borrowing_cost_to_date = EXCLUDED.total_borrowing_cost_to_date,
+                    average_borrowing_rate = EXCLUDED.average_borrowing_rate,
+                    comparison_to_margin_rate = EXCLUDED.comparison_to_margin_rate,
+                    total_ic_returns_to_date = EXCLUDED.total_ic_returns_to_date,
+                    net_profit_to_date = EXCLUDED.net_profit_to_date,
+                    roi_on_strategy = EXCLUDED.roi_on_strategy,
+                    highest_assignment_risk_position = EXCLUDED.highest_assignment_risk_position,
+                    days_until_nearest_expiration = EXCLUDED.days_until_nearest_expiration,
+                    current_box_rate = EXCLUDED.current_box_rate,
+                    rate_vs_yesterday = EXCLUDED.rate_vs_yesterday,
+                    rate_trend_7d = EXCLUDED.rate_trend_7d,
+                    recommended_actions = EXCLUDED.recommended_actions,
+                    warnings = EXCLUDED.warnings,
+                    daily_tip = EXCLUDED.daily_tip
+            """, (
+                briefing.get('briefing_date'),
+                briefing.get('system_status'),
+                briefing.get('total_open_positions', 0),
+                briefing.get('total_borrowed_amount', 0),
+                briefing.get('total_cash_deployed', 0),
+                briefing.get('total_margin_used', 0),
+                briefing.get('margin_remaining', 0),
+                briefing.get('total_borrowing_cost_to_date', 0),
+                briefing.get('average_borrowing_rate', 0),
+                briefing.get('comparison_to_margin_rate', 0),
+                briefing.get('total_ic_returns_to_date', 0),
+                briefing.get('net_profit_to_date', 0),
+                briefing.get('roi_on_strategy', 0),
+                briefing.get('highest_assignment_risk_position', ''),
+                briefing.get('days_until_nearest_expiration', 999),
+                briefing.get('current_box_rate', 0),
+                briefing.get('rate_vs_yesterday', 0),
+                briefing.get('rate_trend_7d', 'STABLE'),
+                json.dumps(briefing.get('recommended_actions', [])),
+                json.dumps(briefing.get('warnings', [])),
+                briefing.get('daily_tip', ''),
+            ))
+
+            conn.commit()
+            cursor.close()
+            logger.info(f"Saved daily briefing for {briefing.get('briefing_date')}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving daily briefing: {e}")
+            return False
+
+    def get_daily_briefing_history(self, days: int = 30) -> List[Dict[str, Any]]:
+        """Get historical daily briefings for trend analysis"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM prometheus_daily_briefings
+                ORDER BY briefing_date DESC
+                LIMIT %s
+            """, (days,))
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            cursor.close()
+
+            return [dict(zip(columns, row)) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error getting briefing history: {e}")
+            return []
+
+    # ========== Roll Decisions Methods ==========
+
+    def save_roll_decision(
+        self,
+        position_id: str,
+        current_expiration: date,
+        current_dte: int,
+        current_rate: float,
+        target_expiration: date,
+        target_dte: int,
+        target_rate: float,
+        roll_cost: float,
+        should_roll: bool,
+        reasoning: str
+    ) -> bool:
+        """
+        Save a roll decision for audit trail.
+
+        Tracks all roll evaluations whether executed or not.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO prometheus_roll_decisions (
+                    decision_time, current_position_id,
+                    current_expiration, current_dte, current_implied_rate,
+                    target_expiration, target_dte, target_implied_rate,
+                    roll_cost, rate_improvement, total_borrowing_extension,
+                    should_roll, decision_reasoning,
+                    was_executed, new_position_id
+                ) VALUES (
+                    NOW(), %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    FALSE, NULL
+                )
+            """, (
+                position_id,
+                current_expiration, current_dte, current_rate,
+                target_expiration, target_dte, target_rate,
+                roll_cost,
+                target_rate - current_rate,  # rate_improvement
+                target_dte - current_dte,    # borrowing extension
+                should_roll, reasoning,
+            ))
+
+            conn.commit()
+            cursor.close()
+            logger.info(f"Saved roll decision for position {position_id}: should_roll={should_roll}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving roll decision: {e}")
+            return False
+
+    def mark_roll_executed(self, position_id: str, new_position_id: str) -> bool:
+        """Mark a roll decision as executed with the new position ID"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE prometheus_roll_decisions
+                SET was_executed = TRUE, new_position_id = %s
+                WHERE current_position_id = %s
+                  AND was_executed = FALSE
+                ORDER BY decision_time DESC
+                LIMIT 1
+            """, (new_position_id, position_id))
+
+            conn.commit()
+            cursor.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error marking roll executed: {e}")
+            return False
+
+    def get_roll_history(self, position_id: str = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get roll decision history"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            if position_id:
+                cursor.execute("""
+                    SELECT * FROM prometheus_roll_decisions
+                    WHERE current_position_id = %s
+                    ORDER BY decision_time DESC
+                    LIMIT %s
+                """, (position_id, limit))
+            else:
+                cursor.execute("""
+                    SELECT * FROM prometheus_roll_decisions
+                    ORDER BY decision_time DESC
+                    LIMIT %s
+                """, (limit,))
+
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            cursor.close()
+
+            return [dict(zip(columns, row)) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error getting roll history: {e}")
             return []
 
     # ========== Logging Methods ==========

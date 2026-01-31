@@ -429,7 +429,11 @@ class PrometheusTrader:
             daily_tip=daily_tip,
         )
 
-        return briefing.to_dict()
+        # Persist daily briefing to database for historical analysis
+        briefing_dict = briefing.to_dict()
+        self.db.save_daily_briefing(briefing_dict)
+
+        return briefing_dict
 
     def get_rate_analysis(self) -> Dict[str, Any]:
         """Get current rate analysis"""
