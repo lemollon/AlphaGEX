@@ -859,7 +859,8 @@ async def get_realtime_status(
     Get real-time Solomon monitoring status with actual trade data.
 
     This endpoint provides visibility into what Solomon is actively monitoring,
-    derived directly from unified_trades rather than summary tables.
+    derived directly from each bot's positions table (ares_positions, titan_positions, etc.)
+    rather than summary tables.
 
     Returns per-bot:
     - Recent trade count and P&L
@@ -873,52 +874,69 @@ async def get_realtime_status(
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get recent trade performance by bot
-        cursor.execute("""
-            SELECT
-                bot_name,
-                COUNT(*) as total_trades,
-                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-                SUM(realized_pnl) as total_pnl,
-                AVG(realized_pnl) as avg_pnl,
-                MAX(created_at) as last_trade_time
-            FROM unified_trades
-            WHERE created_at >= NOW() - INTERVAL '%s days'
-            GROUP BY bot_name
-            ORDER BY bot_name
-        """, (days,))
-        bot_rows = cursor.fetchall()
+        # Bot tables mapping - query actual position tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
 
-        # Get today's performance
-        cursor.execute("""
-            SELECT
-                bot_name,
-                COUNT(*) as today_trades,
-                SUM(realized_pnl) as today_pnl
-            FROM unified_trades
-            WHERE DATE(created_at) = CURRENT_DATE
-            GROUP BY bot_name
-        """)
-        today_rows = cursor.fetchall()
-        today_by_bot = {row[0]: {'trades': row[1], 'pnl': float(row[2] or 0)} for row in today_rows}
+        # Collect performance from each bot's actual table
+        bot_rows = []
+        today_by_bot = {}
+        streak_rows = []
 
-        # Get recent streak (last 10 trades per bot)
-        cursor.execute("""
-            WITH recent_trades AS (
-                SELECT
-                    bot_name,
-                    realized_pnl,
-                    ROW_NUMBER() OVER (PARTITION BY bot_name ORDER BY created_at DESC) as rn
-                FROM unified_trades
-                WHERE created_at >= NOW() - INTERVAL '%s days'
-            )
-            SELECT bot_name, realized_pnl
-            FROM recent_trades
-            WHERE rn <= 10
-            ORDER BY bot_name, rn
-        """, (days,))
-        streak_rows = cursor.fetchall()
+        for bot_name, table_name in BOT_TABLES.items():
+            try:
+                # Get recent trade performance for this bot
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+                        COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                        COALESCE(AVG(realized_pnl), 0) as avg_pnl,
+                        MAX(close_time) as last_trade_time
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                      AND close_time >= NOW() - INTERVAL '{days} days'
+                """)
+                row = cursor.fetchone()
+                if row and row[0] > 0:
+                    bot_rows.append((bot_name, row[0], row[1], row[2], row[3], row[4], row[5]))
+
+                # Get today's performance for this bot
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as today_trades,
+                        COALESCE(SUM(realized_pnl), 0) as today_pnl
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                      AND DATE(close_time AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                """)
+                today_row = cursor.fetchone()
+                if today_row and today_row[0] > 0:
+                    today_by_bot[bot_name] = {'trades': today_row[0], 'pnl': float(today_row[1] or 0)}
+
+                # Get last 10 trades for streak calculation
+                cursor.execute(f"""
+                    SELECT realized_pnl
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                      AND close_time >= NOW() - INTERVAL '{days} days'
+                    ORDER BY close_time DESC
+                    LIMIT 10
+                """)
+                trades = cursor.fetchall()
+                for trade in trades:
+                    streak_rows.append((bot_name, trade[0]))
+
+            except Exception as table_err:
+                logger.warning(f"Could not query {table_name}: {table_err}")
+                continue
 
         conn.close()
 
@@ -977,7 +995,7 @@ async def get_realtime_status(
 
         return {
             'success': True,
-            'data_source': 'unified_trades (real-time)',
+            'data_source': 'bot_positions_tables (real-time)',
             'period_days': days,
             'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
             'bots': bots,

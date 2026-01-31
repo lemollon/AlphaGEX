@@ -1689,7 +1689,7 @@ class SolomonFeedbackLoop:
             return False
 
     def _get_current_performance(self, bot_name: str) -> Dict:
-        """Get current performance metrics for a bot from unified_trades"""
+        """Get current performance metrics for a bot from its actual positions table"""
         if not DB_AVAILABLE:
             return {}
 
@@ -1698,19 +1698,35 @@ class SolomonFeedbackLoop:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Always use unified_trades with bot_name filter for consistency
-            # This ensures all bots are tracked the same way
-            cursor.execute("""
+            # Map bot names to their actual positions tables
+            # Bots store closed trades in *_positions tables with status='closed'
+            BOT_TABLES = {
+                'ARES': 'ares_positions',
+                'ATHENA': 'athena_positions',
+                'TITAN': 'titan_positions',
+                'PEGASUS': 'pegasus_positions',
+                'ICARUS': 'icarus_positions',
+                'PROMETHEUS': 'prometheus_ic_positions',
+            }
+
+            table = BOT_TABLES.get(bot_name.upper())
+            if not table:
+                logger.warning(f"Unknown bot_name '{bot_name}' - no table mapping")
+                return {}
+
+            # Query closed positions from the bot's actual table
+            # Table name is from whitelisted BOT_TABLES dict (safe)
+            cursor.execute(f"""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
                     SUM(realized_pnl) as total_pnl,
                     AVG(realized_pnl) as avg_pnl
-                FROM unified_trades
-                WHERE bot_name = %s
-                    AND created_at > NOW() - INTERVAL '30 days'
-            """, (bot_name.upper(),))
+                FROM {table}
+                WHERE status = 'closed'
+                    AND close_time > NOW() - INTERVAL '30 days'
+            """)
 
             row = cursor.fetchone()
 
@@ -1847,7 +1863,7 @@ class SolomonFeedbackLoop:
         """
         Detect performance degradation by comparing recent vs previous period.
 
-        Uses unified_trades for actual trade data.
+        Uses actual bot positions tables for trade data.
         Returns alert info if degradation detected, None otherwise.
         """
         if not DB_AVAILABLE:
@@ -1857,23 +1873,37 @@ class SolomonFeedbackLoop:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Compare last 7 days vs previous 7 days using unified_trades
-            cursor.execute("""
+            # Map bot names to their actual positions tables
+            BOT_TABLES = {
+                'ARES': 'ares_positions',
+                'ATHENA': 'athena_positions',
+                'TITAN': 'titan_positions',
+                'PEGASUS': 'pegasus_positions',
+                'ICARUS': 'icarus_positions',
+                'PROMETHEUS': 'prometheus_ic_positions',
+            }
+
+            table = BOT_TABLES.get(bot_name.upper())
+            if not table:
+                return None
+
+            # Compare last 7 days vs previous 7 days using bot's actual positions table
+            cursor.execute(f"""
                 WITH period_stats AS (
                     SELECT
                         CASE
-                            WHEN created_at > NOW() - INTERVAL '7 days' THEN 'recent'
+                            WHEN close_time > NOW() - INTERVAL '7 days' THEN 'recent'
                             ELSE 'previous'
                         END as period,
                         COUNT(*) as trades,
                         SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                         SUM(realized_pnl) as total_pnl
-                    FROM unified_trades
-                    WHERE bot_name = %s
-                        AND created_at > NOW() - INTERVAL '14 days'
+                    FROM {table}
+                    WHERE status = 'closed'
+                        AND close_time > NOW() - INTERVAL '14 days'
                     GROUP BY
                         CASE
-                            WHEN created_at > NOW() - INTERVAL '7 days' THEN 'recent'
+                            WHEN close_time > NOW() - INTERVAL '7 days' THEN 'recent'
                             ELSE 'previous'
                         END
                 )
@@ -1882,7 +1912,7 @@ class SolomonFeedbackLoop:
                     CASE WHEN trades > 0 THEN wins::float / trades * 100 ELSE 0 END as win_rate
                 FROM period_stats
                 ORDER BY period
-            """, (bot_name.upper(),))
+            """)
 
             rows = cursor.fetchall()
             conn.close()

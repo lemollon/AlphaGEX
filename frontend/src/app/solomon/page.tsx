@@ -1513,8 +1513,10 @@ export default function SolomonPage() {
               >
                 <option value="ARES">ARES</option>
                 <option value="ATHENA">ATHENA</option>
+                <option value="TITAN">TITAN</option>
                 <option value="PEGASUS">PEGASUS</option>
-                <option value="PHOENIX">PHOENIX</option>
+                <option value="ICARUS">ICARUS</option>
+                <option value="PROMETHEUS">PROMETHEUS</option>
               </select>
             </div>
 

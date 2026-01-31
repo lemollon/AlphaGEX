@@ -585,23 +585,37 @@ class TimeOfDayAnalyzer:
         if not DB_AVAILABLE:
             return []
 
+        # Map bot names to their actual position tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
+
+        table_name = BOT_TABLES.get(bot_name.upper())
+        if not table_name:
+            return []
+
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get trades with hour info - using unified_trades table
-            cursor.execute("""
+            # Get trades with hour info - using bot-specific positions table
+            cursor.execute(f"""
                 SELECT
-                    EXTRACT(HOUR FROM created_at) as hour,
+                    EXTRACT(HOUR FROM close_time AT TIME ZONE 'America/Chicago') as hour,
                     COUNT(*) as trades,
                     AVG(CASE WHEN realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
                     AVG(realized_pnl) as avg_pnl
-                FROM unified_trades
-                WHERE bot_name = %s
-                AND created_at > NOW() - INTERVAL '%s days'
-                GROUP BY EXTRACT(HOUR FROM created_at)
+                FROM {table_name}
+                WHERE status = 'closed'
+                AND close_time > NOW() - INTERVAL '{days} days'
+                GROUP BY EXTRACT(HOUR FROM close_time AT TIME ZONE 'America/Chicago')
                 ORDER BY hour
-            """, (bot_name, days))
+            """)
 
             rows = cursor.fetchall()
             conn.close()
@@ -666,31 +680,53 @@ class CrossBotAnalyzer:
         if not DB_AVAILABLE:
             return None
 
+        # Map bot names to their actual position tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
+
+        table_a = BOT_TABLES.get(bot_a.upper())
+        table_b = BOT_TABLES.get(bot_b.upper())
+        if not table_a or not table_b:
+            return None
+
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get daily P&L for each bot
-            cursor.execute("""
-                WITH daily_pnl AS (
+            # Get daily P&L for each bot from their respective tables
+            cursor.execute(f"""
+                WITH daily_a AS (
                     SELECT
-                        DATE(created_at) as trade_date,
-                        bot_name,
+                        DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
                         SUM(realized_pnl) as daily_pnl
-                    FROM unified_trades
-                    WHERE bot_name IN (%s, %s)
-                    AND created_at > NOW() - INTERVAL '%s days'
-                    GROUP BY DATE(created_at), bot_name
+                    FROM {table_a}
+                    WHERE status = 'closed'
+                    AND close_time > NOW() - INTERVAL '{days} days'
+                    GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                ),
+                daily_b AS (
+                    SELECT
+                        DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                        SUM(realized_pnl) as daily_pnl
+                    FROM {table_b}
+                    WHERE status = 'closed'
+                    AND close_time > NOW() - INTERVAL '{days} days'
+                    GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
                 )
                 SELECT
                     a.trade_date,
                     a.daily_pnl as a_pnl,
                     b.daily_pnl as b_pnl
-                FROM daily_pnl a
-                JOIN daily_pnl b ON a.trade_date = b.trade_date
-                WHERE a.bot_name = %s AND b.bot_name = %s
+                FROM daily_a a
+                JOIN daily_b b ON a.trade_date = b.trade_date
                 ORDER BY a.trade_date
-            """, (bot_a, bot_b, days, bot_a, bot_b))
+            """)
 
             rows = cursor.fetchall()
             conn.close()
@@ -764,26 +800,40 @@ class RegimePerformanceTracker:
         if not DB_AVAILABLE:
             return []
 
+        # Map bot names to their actual position tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
+
+        table_name = BOT_TABLES.get(bot_name.upper())
+        if not table_name:
+            return []
+
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
             # Join trades with regime classifications
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT
                     rc.regime,
                     COUNT(*) as trades,
-                    AVG(CASE WHEN ut.realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
-                    AVG(ut.realized_pnl) as avg_pnl
-                FROM unified_trades ut
+                    AVG(CASE WHEN t.realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                    AVG(t.realized_pnl) as avg_pnl
+                FROM {table_name} t
                 LEFT JOIN regime_classifications rc
-                    ON DATE(ut.created_at) = rc.classification_date
-                WHERE ut.bot_name = %s
-                AND ut.created_at > NOW() - INTERVAL '%s days'
+                    ON DATE(t.close_time AT TIME ZONE 'America/Chicago') = rc.classification_date
+                WHERE t.status = 'closed'
+                AND t.close_time > NOW() - INTERVAL '{days} days'
                 AND rc.regime IS NOT NULL
                 GROUP BY rc.regime
                 ORDER BY trades DESC
-            """, (bot_name, days))
+            """)
 
             rows = cursor.fetchall()
             conn.close()
@@ -1274,19 +1324,34 @@ class DailyDigestGenerator:
         if not DB_AVAILABLE:
             return {'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0}
 
+        # Map bot names to their actual position tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
+
+        table_name = BOT_TABLES.get(bot_name.upper())
+        if not table_name:
+            return {'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0}
+
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT
                     COUNT(*) as trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-                    SUM(realized_pnl) as total_pnl
-                FROM unified_trades
-                WHERE bot_name = %s AND DATE(created_at) = %s
-            """, (bot_name, date))
+                    COALESCE(SUM(realized_pnl), 0) as total_pnl
+                FROM {table_name}
+                WHERE status = 'closed'
+                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+            """, (date,))
 
             row = cursor.fetchone()
             conn.close()
@@ -2060,73 +2125,79 @@ class SolomonEnhanced:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get Iron Condor performance from actual trades
-            # IC bots: ARES, TITAN, PEGASUS, PROMETHEUS
-            cursor.execute("""
-                SELECT
-                    COUNT(*) as trades,
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    SUM(realized_pnl) as total_pnl,
-                    AVG(realized_pnl) as avg_pnl,
-                    bot_name
-                FROM unified_trades
-                WHERE bot_name IN ('ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS')
-                    AND created_at >= NOW() - INTERVAL '%s days'
-                GROUP BY bot_name
-            """, (days,))
-            ic_rows = cursor.fetchall()
+            # Bot tables mapping - bots store closed trades in *_positions tables
+            BOT_TABLES = {
+                'ARES': 'ares_positions',
+                'ATHENA': 'athena_positions',
+                'TITAN': 'titan_positions',
+                'PEGASUS': 'pegasus_positions',
+                'ICARUS': 'icarus_positions',
+                'PROMETHEUS': 'prometheus_ic_positions',
+            }
 
-            # Aggregate IC stats
-            ic_trades = sum(row[0] or 0 for row in ic_rows)
-            ic_wins = sum(row[1] or 0 for row in ic_rows)
-            ic_total_pnl = sum(float(row[2] or 0) for row in ic_rows)
-            ic_avg_pnl = ic_total_pnl / ic_trades if ic_trades > 0 else 0
-
-            # Per-bot breakdown for IC
+            # Get performance from actual bot positions tables
             ic_bot_breakdown = {}
-            for row in ic_rows:
-                bot_name = row[4]
-                ic_bot_breakdown[bot_name] = {
-                    'trades': row[0] or 0,
-                    'wins': row[1] or 0,
-                    'pnl': float(row[2] or 0),
-                    'win_rate': (row[1] / row[0] * 100) if row[0] else 0
-                }
-
-            # Get Directional performance from actual trades
-            # Directional bots: ATHENA, ICARUS
-            cursor.execute("""
-                SELECT
-                    COUNT(*) as trades,
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    SUM(realized_pnl) as total_pnl,
-                    AVG(realized_pnl) as avg_pnl,
-                    bot_name
-                FROM unified_trades
-                WHERE bot_name IN ('ATHENA', 'ICARUS')
-                    AND created_at >= NOW() - INTERVAL '%s days'
-                GROUP BY bot_name
-            """, (days,))
-            dir_rows = cursor.fetchall()
-
-            # Aggregate Directional stats
-            dir_trades = sum(row[0] or 0 for row in dir_rows)
-            dir_wins = sum(row[1] or 0 for row in dir_rows)
-            dir_total_pnl = sum(float(row[2] or 0) for row in dir_rows)
-            dir_avg_pnl = dir_total_pnl / dir_trades if dir_trades > 0 else 0
-
-            # Per-bot breakdown for Directional
             dir_bot_breakdown = {}
-            for row in dir_rows:
-                bot_name = row[4]
-                dir_bot_breakdown[bot_name] = {
-                    'trades': row[0] or 0,
-                    'wins': row[1] or 0,
-                    'pnl': float(row[2] or 0),
-                    'win_rate': (row[1] / row[0] * 100) if row[0] else 0
-                }
+
+            # IC bots: ARES, TITAN, PEGASUS, PROMETHEUS
+            for bot_name in ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']:
+                table = BOT_TABLES.get(bot_name)
+                if table:
+                    cursor.execute(f"""
+                        SELECT
+                            COUNT(*) as trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            SUM(realized_pnl) as total_pnl,
+                            AVG(realized_pnl) as avg_pnl
+                        FROM {table}
+                        WHERE status = 'closed'
+                            AND close_time >= NOW() - INTERVAL '{days} days'
+                    """)
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        ic_bot_breakdown[bot_name] = {
+                            'trades': row[0] or 0,
+                            'wins': row[1] or 0,
+                            'pnl': float(row[2] or 0),
+                            'win_rate': (row[1] / row[0] * 100) if row[0] else 0
+                        }
+
+            # Directional bots: ATHENA, ICARUS
+            for bot_name in ['ATHENA', 'ICARUS']:
+                table = BOT_TABLES.get(bot_name)
+                if table:
+                    cursor.execute(f"""
+                        SELECT
+                            COUNT(*) as trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            SUM(realized_pnl) as total_pnl,
+                            AVG(realized_pnl) as avg_pnl
+                        FROM {table}
+                        WHERE status = 'closed'
+                            AND close_time >= NOW() - INTERVAL '{days} days'
+                    """)
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        dir_bot_breakdown[bot_name] = {
+                            'trades': row[0] or 0,
+                            'wins': row[1] or 0,
+                            'pnl': float(row[2] or 0),
+                            'win_rate': (row[1] / row[0] * 100) if row[0] else 0
+                        }
 
             conn.close()
+
+            # Aggregate IC stats
+            ic_trades = sum(b.get('trades', 0) for b in ic_bot_breakdown.values())
+            ic_wins = sum(b.get('wins', 0) for b in ic_bot_breakdown.values())
+            ic_total_pnl = sum(b.get('pnl', 0) for b in ic_bot_breakdown.values())
+            ic_avg_pnl = ic_total_pnl / ic_trades if ic_trades > 0 else 0
+
+            # Aggregate Directional stats
+            dir_trades = sum(b.get('trades', 0) for b in dir_bot_breakdown.values())
+            dir_wins = sum(b.get('wins', 0) for b in dir_bot_breakdown.values())
+            dir_total_pnl = sum(b.get('pnl', 0) for b in dir_bot_breakdown.values())
+            dir_avg_pnl = dir_total_pnl / dir_trades if dir_trades > 0 else 0
 
             # Build response with actual trade data
             ic_result = {
@@ -2214,7 +2285,7 @@ class SolomonEnhanced:
 
         Migration 023: This measures how well Oracle's advice correlates with outcomes.
 
-        Fix: Now queries unified_trades for actual trade data and oracle_predictions
+        Fix: Now queries actual bot positions tables for trade data and oracle_predictions
         for advice correlation where available.
         """
         if not DB_AVAILABLE:
@@ -2224,20 +2295,32 @@ class SolomonEnhanced:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Step 1: Get actual trade performance by bot from unified_trades
-            cursor.execute("""
-                SELECT
-                    bot_name,
-                    COUNT(*) as trades,
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    SUM(realized_pnl) as total_pnl,
-                    AVG(realized_pnl) as avg_pnl
-                FROM unified_trades
-                WHERE created_at >= NOW() - INTERVAL '%s days'
-                GROUP BY bot_name
-                ORDER BY bot_name
-            """, (days,))
-            bot_rows = cursor.fetchall()
+            # Bot tables mapping
+            BOT_TABLES = {
+                'ARES': 'ares_positions',
+                'ATHENA': 'athena_positions',
+                'TITAN': 'titan_positions',
+                'PEGASUS': 'pegasus_positions',
+                'ICARUS': 'icarus_positions',
+                'PROMETHEUS': 'prometheus_ic_positions',
+            }
+
+            # Step 1: Get actual trade performance by bot from their actual tables
+            bot_rows = []
+            for bot_name, table in BOT_TABLES.items():
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as trades,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        SUM(realized_pnl) as total_pnl,
+                        AVG(realized_pnl) as avg_pnl
+                    FROM {table}
+                    WHERE status = 'closed'
+                        AND close_time >= NOW() - INTERVAL '{days} days'
+                """)
+                row = cursor.fetchone()
+                if row and row[0]:
+                    bot_rows.append((bot_name, row[0], row[1], row[2], row[3]))
 
             # Step 2: Get Oracle predictions summary
             cursor.execute("""

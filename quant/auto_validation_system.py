@@ -1370,9 +1370,26 @@ def get_capital_allocation(total_capital: float = 100000) -> CapitalAllocation:
 
 
 def record_bot_outcome(bot_name: str, win: bool, pnl: float = 0):
-    """Record bot trade outcome for Thompson Sampling"""
+    """Record bot trade outcome for Thompson Sampling and Solomon feedback loop"""
+    # Record for Thompson Sampling (capital allocation)
     system = get_auto_validation_system()
     system.record_bot_outcome(bot_name, win, pnl)
+
+    # Also record to Solomon feedback loop for analytics
+    try:
+        from trading.mixins.solomon_integration import record_bot_outcome as solomon_record
+        outcome = "WIN" if win else "LOSS"
+        trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+        solomon_record(
+            bot_name=bot_name,
+            trade_date=trade_date,
+            outcome=outcome,
+            pnl=pnl,
+            metadata={'source': 'auto_validation_system', 'win': win}
+        )
+        logger.debug(f"[{bot_name}] Trade outcome also recorded to Solomon feedback loop")
+    except Exception as e:
+        logger.debug(f"[{bot_name}] Could not record to Solomon: {e}")
 
 
 def get_validation_status() -> Dict:
