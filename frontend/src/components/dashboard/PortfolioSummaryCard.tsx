@@ -45,6 +45,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   TITAN: 200000,
   PHOENIX: 100000,
   ATLAS: 100000,
+  PROMETHEUS: 500000,
 }
 
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [

@@ -88,6 +88,7 @@ export default function AllBotReportsSummary() {
     TITAN: titanReport,
     PHOENIX: undefined,
     ATLAS: undefined,
+    PROMETHEUS: undefined,
   }
 
   // Calculate aggregate stats
