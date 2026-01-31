@@ -42,12 +42,105 @@ except ImportError:
     data_provider = None
     logger.warning("UnifiedDataProvider not available")
 
+import os
+
+# Tradier client - MUST use production for SPX quotes
+# Sandbox API does NOT provide SPX option data
 try:
     from data.tradier_data_fetcher import TradierDataFetcher
-    tradier = TradierDataFetcher()
+    TRADIER_AVAILABLE = True
 except ImportError:
-    tradier = None
+    TradierDataFetcher = None
+    TRADIER_AVAILABLE = False
     logger.warning("TradierDataFetcher not available")
+
+
+# Lazy-loaded Tradier client (initialized on first use, not at module import)
+# This ensures environment variables are available before client creation
+_tradier_client = None
+
+
+def _get_tradier():
+    """
+    Get Tradier client for SPX quotes - LAZY LOADED, ALWAYS uses production API.
+
+    CRITICAL: The Tradier sandbox API does NOT provide SPX option quotes.
+    For accurate box spread pricing, we MUST use the production API.
+    This follows the same pattern used by PEGASUS/TradierGEXCalculator.
+
+    LAZY LOADING: Client is created on first use, not at module import time.
+    This ensures environment variables are available when the client is created.
+    """
+    global _tradier_client
+
+    if _tradier_client is not None:
+        return _tradier_client
+
+    if not TRADIER_AVAILABLE:
+        logger.error("TradierDataFetcher module not available")
+        return None
+
+    try:
+        # Check production keys - TRADIER_PROD_API_KEY takes priority
+        prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
+
+        if prod_key:
+            _tradier_client = TradierDataFetcher(api_key=prod_key, sandbox=False)
+            logger.info("PROMETHEUS: Tradier PRODUCTION client initialized for SPX quotes")
+            return _tradier_client
+        else:
+            logger.error(
+                "PROMETHEUS: SPX quotes require production Tradier API key "
+                "(TRADIER_PROD_API_KEY or TRADIER_API_KEY) - NOT SET!"
+            )
+            return None
+
+    except Exception as e:
+        logger.error(f"PROMETHEUS: Could not create production Tradier client: {e}")
+        return None
+
+import time  # For retry delays
+
+
+def _tradier_call_with_retry(func, *args, max_retries: int = 3, **kwargs):
+    """
+    Execute a Tradier API call with exponential backoff retry.
+
+    This ensures resilience against transient network/API failures.
+    Pattern borrowed from PEGASUS executor.py.
+
+    Args:
+        func: The function to call (e.g., _get_tradier().get_quote)
+        *args: Positional arguments to pass to the function
+        max_retries: Number of retry attempts (default 3)
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        The result of the function call, or None if all retries fail
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            result = func(*args, **kwargs)
+            if result is not None:
+                return result
+            # Empty result is not necessarily an error - might just be no data
+            logger.warning(f"Tradier returned empty result on attempt {attempt + 1}")
+            return None
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                delay = 1.0 * (2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                logger.warning(
+                    f"Tradier API error (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+            else:
+                logger.error(f"Tradier API failed after {max_retries} attempts: {e}")
+
+    return None
+
 
 # Dynamic rate fetching
 try:
@@ -90,13 +183,16 @@ class BoxSpreadSignalGenerator:
                 self._margin_rate = self._rates_cache.margin_rate
                 logger.info(f"Rates updated: Fed Funds={self._fed_funds_rate:.2f}%, Margin={self._margin_rate:.2f}% (source: {self._rates_cache.source})")
             except Exception as e:
-                logger.warning(f"Failed to fetch rates: {e}, using defaults")
-                self._fed_funds_rate = 4.33  # Current Fed Funds (Jan 2025)
-                self._margin_rate = 8.33     # Fed Funds + 4% spread
+                logger.warning(f"Failed to fetch rates: {e}, using FOMC target midpoint")
+                # FOMC target range: 4.25-4.50% (as of Jan 2025)
+                self._fed_funds_rate = 4.38  # FOMC midpoint
+                self._margin_rate = 8.38     # Fed Funds + 4% spread
         else:
-            # Static fallback
-            self._fed_funds_rate = 4.33  # Current Fed Funds (Jan 2025)
-            self._margin_rate = 8.33     # Fed Funds + 4% spread
+            # Static fallback - use FOMC target midpoint
+            # IMPORTANT: Update these when Fed changes rates!
+            self._fed_funds_rate = 4.38  # FOMC midpoint (4.25-4.50%)
+            self._margin_rate = 8.38     # Fed Funds + 4% spread
+            logger.warning("Rate fetcher not available - using FOMC target midpoint 4.38%")
 
     @property
     def rates_source(self) -> str:
@@ -219,42 +315,54 @@ class BoxSpreadSignalGenerator:
         return signal
 
     def _get_market_data(self) -> Optional[Dict[str, Any]]:
-        """Get current market data for the underlying"""
-        try:
-            if tradier:
-                quote = tradier.get_quote(self.config.ticker)
-                if quote:
-                    return {
-                        'spot_price': quote.get('last', quote.get('bid', 0)),
-                        'bid': quote.get('bid', 0),
-                        'ask': quote.get('ask', 0),
-                        'vix': self._get_vix(),
-                    }
+        """
+        Get current market data for the underlying from PRODUCTION Tradier.
 
-            # Fallback to simulated data for testing
-            logger.warning("Using simulated market data")
-            return {
-                'spot_price': 5950.0 if 'SPX' in self.config.ticker else 595.0,
-                'bid': 5949.0 if 'SPX' in self.config.ticker else 594.90,
-                'ask': 5951.0 if 'SPX' in self.config.ticker else 595.10,
-                'vix': 15.0,
-            }
+        CRITICAL: SPX quotes require production Tradier API.
+        This function does NOT fall back to simulated data.
+        If live data is unavailable, returns None and signal generation is skipped.
 
-        except Exception as e:
-            logger.error(f"Error getting market data: {e}")
+        Uses retry logic with exponential backoff for API resilience.
+        """
+        tradier = _get_tradier()
+        if not tradier:
+            logger.error(
+                "Tradier client not available - cannot get SPX quotes. "
+                "Ensure TRADIER_API_KEY or TRADIER_PROD_API_KEY is set."
+            )
             return None
 
+        # Get SPX/SPXW quote from PRODUCTION Tradier with retry
+        quote = _tradier_call_with_retry(tradier.get_quote, self.config.ticker)
+        if not quote:
+            logger.error(f"No quote returned for {self.config.ticker} after retries - check Tradier API")
+            return None
+
+        spot = quote.get('last') or quote.get('bid') or quote.get('close')
+        if not spot or spot <= 0:
+            logger.error(f"Invalid spot price for {self.config.ticker}: {quote}")
+            return None
+
+        return {
+            'spot_price': float(spot),
+            'bid': float(quote.get('bid', 0) or 0),
+            'ask': float(quote.get('ask', 0) or 0),
+            'vix': self._get_vix(),
+            'source': 'tradier_production',
+        }
+
     def _get_vix(self) -> float:
-        """Get current VIX level"""
-        try:
-            if tradier:
-                quote = tradier.get_quote('VIX')
-                if quote:
-                    return quote.get('last', 15.0)
-            return 15.0
-        except Exception as e:
-            logger.debug(f"Error fetching VIX, using default 15.0: {e}")
-            return 15.0
+        """Get current VIX level with retry logic"""
+        tradier = _get_tradier()
+        if tradier:
+            quote = _tradier_call_with_retry(tradier.get_quote, 'VIX', max_retries=2)
+            if quote:
+                vix = quote.get('last', 15.0)
+                if vix and vix > 0:
+                    return float(vix)
+        # VIX is supplementary - use conservative default if unavailable
+        logger.debug("VIX quote unavailable, using default 15.0")
+        return 15.0
 
     def _select_expiration(
         self, market_data: Dict[str, Any]
@@ -276,16 +384,14 @@ class BoxSpreadSignalGenerator:
         Returns: (expiration_date, dte, explanation)
         """
         try:
-            # Get available expirations
+            # Get available expirations with retry
+            tradier = _get_tradier()
             if tradier:
-                expirations = tradier.get_expirations(self.config.ticker)
+                expirations = _tradier_call_with_retry(
+                    tradier.get_expirations, self.config.ticker, max_retries=2
+                )
             else:
-                # Generate synthetic expirations for testing
-                today = date.today()
-                expirations = [
-                    (today + timedelta(days=d)).strftime('%Y-%m-%d')
-                    for d in [30, 60, 90, 120, 180, 270, 365]
-                ]
+                expirations = None
 
             if not expirations:
                 return None, 0, "No expirations available"
@@ -425,117 +531,92 @@ Strike width tradeoff:
         - You receive a credit today
         - You owe the strike width at expiration
 
-        Returns: {bid, ask, mid_price, legs: {...}}
+        Returns: {bid, ask, mid_price, legs: {...}} or None if live data unavailable
+
+        CRITICAL: No longer falls back to simulated pricing.
+        If live option chain is unavailable, returns None.
         """
         try:
-            if tradier:
-                # Get option chain
-                chain = tradier.get_option_chain(self.config.ticker, expiration)
-                if not chain:
-                    return self._simulate_pricing(lower_strike, upper_strike, expiration)
+            tradier = _get_tradier()
+            if not tradier:
+                logger.error("Tradier client not available - cannot price box spread")
+                return None
 
-                # Find our strikes
-                legs = {}
-                for option in chain:
-                    strike = option.get('strike')
-                    opt_type = option.get('option_type', option.get('type', ''))
+            # Get option chain from PRODUCTION Tradier with retry
+            chain = _tradier_call_with_retry(
+                tradier.get_option_chain, self.config.ticker, expiration, max_retries=3
+            )
+            if not chain:
+                logger.error(f"Empty option chain for {self.config.ticker} exp {expiration} after retries")
+                return None
 
-                    if strike == lower_strike:
-                        if 'call' in opt_type.lower():
-                            legs['call_long'] = option
-                        elif 'put' in opt_type.lower():
-                            legs['put_short'] = option
-                    elif strike == upper_strike:
-                        if 'call' in opt_type.lower():
-                            legs['call_short'] = option
-                        elif 'put' in opt_type.lower():
-                            legs['put_long'] = option
+            # Find our strikes
+            legs = {}
+            for option in chain:
+                strike = option.get('strike')
+                opt_type = option.get('option_type', option.get('type', ''))
 
-                if len(legs) < 4:
-                    logger.warning(f"Could not find all 4 legs, found: {list(legs.keys())}")
-                    return self._simulate_pricing(lower_strike, upper_strike, expiration)
+                if strike == lower_strike:
+                    if 'call' in opt_type.lower():
+                        legs['call_long'] = option
+                    elif 'put' in opt_type.lower():
+                        legs['put_short'] = option
+                elif strike == upper_strike:
+                    if 'call' in opt_type.lower():
+                        legs['call_short'] = option
+                    elif 'put' in opt_type.lower():
+                        legs['put_long'] = option
 
-                # Calculate box spread price
-                # Selling the box = receiving call spread credit + put spread credit
-                # Bull call spread: Sell high call, buy low call
-                # Bear put spread: Sell low put, buy high put
-
-                # For selling the box, we want the BID prices for what we sell
-                # and ASK prices for what we buy
-
-                call_spread_credit = (
-                    legs['call_short'].get('bid', 0) -  # Sell upper call
-                    legs['call_long'].get('ask', 0)     # Buy lower call
+            if len(legs) < 4:
+                logger.warning(
+                    f"Could not find all 4 legs for {lower_strike}/{upper_strike}, "
+                    f"found: {list(legs.keys())} - check strikes exist in chain"
                 )
-                put_spread_credit = (
-                    legs['put_short'].get('bid', 0) -   # Sell lower put
-                    legs['put_long'].get('ask', 0)      # Buy upper put
-                )
+                return None
 
-                box_bid = call_spread_credit + put_spread_credit
+            # Calculate box spread price
+            # Selling the box = receiving call spread credit + put spread credit
+            # Bull call spread: Sell high call, buy low call
+            # Bear put spread: Sell low put, buy high put
 
-                # For the ask side (if we were buying)
-                call_spread_debit = (
-                    legs['call_short'].get('ask', 0) -
-                    legs['call_long'].get('bid', 0)
-                )
-                put_spread_debit = (
-                    legs['put_short'].get('ask', 0) -
-                    legs['put_long'].get('bid', 0)
-                )
+            # For selling the box, we want the BID prices for what we sell
+            # and ASK prices for what we buy
 
-                box_ask = call_spread_debit + put_spread_debit
-                mid_price = (box_bid + box_ask) / 2
+            call_spread_credit = (
+                legs['call_short'].get('bid', 0) -  # Sell upper call
+                legs['call_long'].get('ask', 0)     # Buy lower call
+            )
+            put_spread_credit = (
+                legs['put_short'].get('bid', 0) -   # Sell lower put
+                legs['put_long'].get('ask', 0)      # Buy upper put
+            )
 
-                return {
-                    'bid': box_bid,
-                    'ask': box_ask,
-                    'mid_price': mid_price,
-                    'legs': legs,
-                }
+            box_bid = call_spread_credit + put_spread_credit
 
-            return self._simulate_pricing(lower_strike, upper_strike, expiration)
+            # For the ask side (if we were buying)
+            call_spread_debit = (
+                legs['call_short'].get('ask', 0) -
+                legs['call_long'].get('bid', 0)
+            )
+            put_spread_debit = (
+                legs['put_short'].get('ask', 0) -
+                legs['put_long'].get('bid', 0)
+            )
+
+            box_ask = call_spread_debit + put_spread_debit
+            mid_price = (box_bid + box_ask) / 2
+
+            return {
+                'bid': box_bid,
+                'ask': box_ask,
+                'mid_price': mid_price,
+                'legs': legs,
+                'source': 'tradier_production',
+            }
 
         except Exception as e:
-            logger.error(f"Error pricing box spread: {e}")
-            return self._simulate_pricing(lower_strike, upper_strike, expiration)
-
-    def _simulate_pricing(
-        self,
-        lower_strike: float,
-        upper_strike: float,
-        expiration: str
-    ) -> Dict[str, Any]:
-        """
-        Simulate box spread pricing for testing.
-
-        In reality, box spreads trade at a discount to theoretical value.
-        The discount represents the implied interest rate.
-        """
-        strike_width = upper_strike - lower_strike
-        theoretical = strike_width
-
-        # Calculate DTE
-        exp_date = datetime.strptime(expiration, '%Y-%m-%d').date()
-        dte = (exp_date - date.today()).days
-
-        # Implied rate determines discount
-        # Assume ~4.5% annual rate for simulation
-        annual_rate = 0.045
-        discount_factor = 1 / (1 + annual_rate * dte / 365)
-        present_value = theoretical * discount_factor
-
-        # Add bid-ask spread
-        spread = 0.10  # 10 cents spread
-        bid = present_value - spread / 2
-        ask = present_value + spread / 2
-
-        return {
-            'bid': bid,
-            'ask': ask,
-            'mid_price': present_value,
-            'legs': {'simulated': True},
-        }
+            logger.error(f"Error pricing box spread from Tradier: {e}")
+            return None
 
     def _calculate_implied_rate(
         self,
@@ -1037,40 +1118,41 @@ class PrometheusICSignalGenerator:
                 logger.warning(f"PROMETHEUS IC: GEX init failed: {e}")
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
-        """Get current market data for IC signal generation"""
+        """
+        Get current market data for IC signal generation.
+
+        Uses PRODUCTION Tradier with retry logic for SPX quotes.
+        No fallback to simulated data - returns None if unavailable.
+        """
         try:
             # Get spot price
             spot = None
             vix = None
             gex_data = {}
 
-            if tradier:
-                # Get SPX quote
-                quote = tradier.get_quote(self.config.ticker)
-                if quote:
-                    spot = quote.get('last', quote.get('bid', 0))
+            tradier = _get_tradier()
+            if not tradier:
+                logger.error("PROMETHEUS IC: Tradier not available - cannot get SPX quotes")
+                return None
 
-                # Get VIX
-                vix_quote = tradier.get_quote('VIX')
-                if vix_quote:
-                    vix = vix_quote.get('last', 20.0)
+            # Get SPX quote with retry
+            quote = _tradier_call_with_retry(tradier.get_quote, self.config.ticker)
+            if quote:
+                spot = quote.get('last', quote.get('bid', 0))
 
-            if not spot:
-                # Fallback to GEX calculator
-                if self.gex_calculator:
-                    gex = self.gex_calculator.calculate_gex(self.config.ticker)
-                    if gex:
-                        spot = gex.get('spot_price', 0)
-                        gex_data = gex
+            # Get VIX with retry
+            vix_quote = _tradier_call_with_retry(tradier.get_quote, 'VIX', max_retries=2)
+            if vix_quote:
+                vix = vix_quote.get('last', 20.0)
 
             if not spot:
-                logger.warning("PROMETHEUS IC: No spot price available")
+                logger.error("PROMETHEUS IC: No spot price available from Tradier")
                 return None
 
             vix = vix or 20.0
 
-            # Get GEX data if not already fetched
-            if not gex_data and self.gex_calculator:
+            # Get GEX data for gamma regime
+            if self.gex_calculator:
                 gex_data = self.gex_calculator.calculate_gex(self.config.ticker) or {}
 
             # Calculate expected move

@@ -474,11 +474,11 @@ async def get_rate_analysis():
         return {
             "analysis_time": datetime.now().isoformat(),
             "box_implied_rate": 4.5,
-            "fed_funds_rate": 4.5,
-            "sofr_rate": 4.45,
-            "broker_margin_rate": 8.5,
-            "spread_to_fed_funds": 0.0,
-            "spread_to_margin": -4.0,
+            "fed_funds_rate": 4.38,  # Current FOMC target midpoint (4.25-4.50%)
+            "sofr_rate": 4.35,
+            "broker_margin_rate": 8.38,  # Fed Funds + 4%
+            "spread_to_fed_funds": 0.12,
+            "spread_to_margin": -3.88,
             "cost_per_100k_monthly": 375.0,
             "cost_per_100k_annual": 4500.0,
             "required_ic_return_monthly": 0.375,
@@ -489,7 +489,10 @@ async def get_rate_analysis():
             "rate_trend": "STABLE",
             "is_favorable": True,
             "recommendation": "FAVORABLE - Box spread rates estimated at 4.5%",
-            "reasoning": "Live market data unavailable - using estimated rates. Box spreads typically offer rates 3-4% below margin.",
+            "reasoning": "Live market data unavailable - using estimated rates based on FOMC target range (4.25-4.50%).",
+            # CRITICAL: Include these fields - frontend expects them
+            "rates_source": "fallback",
+            "rates_last_updated": datetime.now().isoformat(),
             "data_source": "estimated",
             "error": str(e),
         }
@@ -547,17 +550,17 @@ async def get_interest_rates():
         except Exception as e:
             logger.warning(f"Rate fetcher error: {e}")
 
-    # Fallback
+    # Fallback - use FOMC target midpoint (4.25-4.50% as of Jan 2026)
     return {
-        "fed_funds_rate": 4.33,
-        "sofr_rate": 4.30,
-        "treasury_3m": 4.25,
-        "treasury_1y": 4.15,
-        "margin_rate": 8.33,
+        "fed_funds_rate": 4.38,  # FOMC midpoint
+        "sofr_rate": 4.35,
+        "treasury_3m": 4.30,
+        "treasury_1y": 4.25,
+        "margin_rate": 8.38,  # Fed Funds + 4%
         "last_updated": datetime.now().isoformat(),
-        "source": "fallback",
+        "source": "fomc_based",  # More accurate than generic "fallback"
         "cache_hours": 4,
-        "error": "Rate fetcher not available",
+        "note": "Using FOMC target range (4.25-4.50%) - Rate fetcher not available",
     }
 
 

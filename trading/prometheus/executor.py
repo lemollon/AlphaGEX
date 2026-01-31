@@ -90,10 +90,10 @@ def _get_production_tradier_client(underlying: str = "SPX"):
             logger.info(f"Using Tradier PRODUCTION API for {underlying} box spread quotes")
             return TradierDataFetcher(api_key=prod_key, sandbox=False)
         else:
-            logger.warning(
+            logger.error(
                 f"SPX quotes require production Tradier API key "
-                f"(TRADIER_PROD_API_KEY or TRADIER_API_KEY) but NEITHER is set. "
-                f"Falling back to simulated pricing."
+                f"(TRADIER_PROD_API_KEY or TRADIER_API_KEY) - NEITHER is set. "
+                f"Box spread quotes will NOT be available until API key is configured."
             )
             return None
 
@@ -264,8 +264,8 @@ def get_box_spread_quotes(
                 result['error'] = f"Tradier API error: {str(e)}"
                 logger.error(f"Error fetching box spread quotes: {e}")
         else:
-            result['error'] = "No production Tradier client available"
-            result['source'] = 'simulated'
+            result['error'] = "No production Tradier client available - SPX quotes require TRADIER_API_KEY"
+            result['source'] = 'unavailable'
 
     # Check if we have all 4 legs
     if len(result['quotes']) == 4:
@@ -548,11 +548,10 @@ class BoxSpreadExecutor:
                     f"implied_rate={implied_rate_str}"
                 )
             else:
-                logger.warning(
-                    f"Could not get production quotes ({real_quotes.get('error', 'unknown')}). "
-                    f"Using simulated pricing."
+                logger.error(
+                    f"CRITICAL: Could not get production quotes ({real_quotes.get('error', 'unknown')}). "
+                    f"Position will NOT have accurate pricing - ensure TRADIER_API_KEY is set."
                 )
-                logger.info("Paper trading mode - using simulated fills")
 
         # Calculate capital deployment
         deployment = self._calculate_deployment(signal, position_id)
@@ -1397,8 +1396,8 @@ def get_ic_quotes(
             except Exception as e:
                 result['error'] = f"Tradier API error: {str(e)}"
         else:
-            result['error'] = "No production Tradier client available"
-            result['source'] = 'simulated'
+            result['error'] = "No production Tradier client available - SPX quotes require TRADIER_API_KEY"
+            result['source'] = 'unavailable'
 
     # Check if we have all 4 legs
     if len(result['quotes']) == 4:

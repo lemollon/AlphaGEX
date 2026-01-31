@@ -415,7 +415,7 @@ class PrometheusTrader:
             margin_remaining=margin_remaining,
             total_borrowing_cost_to_date=total_costs,
             average_borrowing_rate=avg_rate,
-            comparison_to_margin_rate=self.config.capital * 0.085 - total_costs,  # 8.5% margin
+            comparison_to_margin_rate=self.config.capital * (rate_analysis.broker_margin_rate / 100) - total_costs,
             total_ic_returns_to_date=total_returns,
             net_profit_to_date=net_profit,
             roi_on_strategy=net_profit / total_borrowed * 100 if total_borrowed > 0 else 0,
@@ -429,7 +429,11 @@ class PrometheusTrader:
             daily_tip=daily_tip,
         )
 
-        return briefing.to_dict()
+        # Persist daily briefing to database for historical analysis
+        briefing_dict = briefing.to_dict()
+        self.db.save_daily_briefing(briefing_dict)
+
+        return briefing_dict
 
     def get_rate_analysis(self) -> Dict[str, Any]:
         """Get current rate analysis"""
@@ -1036,13 +1040,31 @@ class PrometheusICTrader:
         return "Unknown"
 
     def _in_cooldown(self) -> bool:
-        """Check if in cooldown period after last trade"""
+        """
+        Check if in cooldown period after last trade.
+
+        Uses different cooldown periods for wins vs losses:
+        - After a win: shorter cooldown (config.cooldown_after_win_minutes)
+        - After a loss: longer cooldown (config.cooldown_after_loss_minutes)
+        - Default: config.cooldown_minutes_after_trade
+        """
         try:
             last_trade_time = self.db.get_last_ic_trade_time()
             if not last_trade_time:
                 return False
 
-            cooldown_minutes = self.config.cooldown_minutes_after_trade
+            # Determine cooldown based on last closed trade result
+            last_result = self.db.get_last_ic_trade_result()
+            if last_result and last_result.get('close_time'):
+                # Use win/loss specific cooldown
+                if last_result.get('was_winner'):
+                    cooldown_minutes = self.config.cooldown_after_win_minutes
+                else:
+                    cooldown_minutes = self.config.cooldown_after_loss_minutes
+            else:
+                # Fallback to generic cooldown
+                cooldown_minutes = self.config.cooldown_minutes_after_trade
+
             cooldown_end = last_trade_time + timedelta(minutes=cooldown_minutes)
 
             # Handle timezone comparison - make both aware or both naive
@@ -1240,7 +1262,7 @@ def run_prometheus_ic_cycle():
 
 
 def run_prometheus_ic_mtm_update():
-    """Update mark-to-market for all open IC positions"""
+    """Update mark-to-market for all open IC positions and record equity snapshot"""
     db = PrometheusDatabase(bot_name="PROMETHEUS_IC")
     config = db.load_ic_config()
     executor = PrometheusICExecutor(config, db)
@@ -1255,4 +1277,15 @@ def run_prometheus_ic_mtm_update():
         except Exception as e:
             logger.error(f"MTM update failed for {position.position_id}: {e}")
 
-    return {'updated': updated, 'total': len(positions)}
+    # CRITICAL: Record equity snapshot after MTM update to preserve intraday state
+    # This ensures unrealized P&L is tracked for the intraday equity curve
+    snapshot_saved = False
+    if updated > 0:
+        try:
+            snapshot_saved = db.record_ic_equity_snapshot()
+            if snapshot_saved:
+                logger.info(f"IC equity snapshot recorded with {updated} positions updated")
+        except Exception as e:
+            logger.error(f"Failed to record IC equity snapshot: {e}")
+
+    return {'updated': updated, 'total': len(positions), 'snapshot_saved': snapshot_saved}
