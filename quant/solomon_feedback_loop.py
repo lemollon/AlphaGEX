@@ -139,13 +139,15 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 class BotName(Enum):
     """Trading bots under Solomon's oversight"""
-    ARES = "ARES"
-    ATHENA = "ATHENA"
-    ATLAS = "ATLAS"       # SPX Wheel (Cash-Secured Puts)
-    PEGASUS = "PEGASUS"
-    PHOENIX = "PHOENIX"
-    ICARUS = "ICARUS"     # Aggressive Directional Spreads
-    TITAN = "TITAN"       # Aggressive SPX Iron Condor
+    ARES = "ARES"           # SPY Iron Condor (0DTE)
+    ATHENA = "ATHENA"       # SPY Directional Spreads
+    TITAN = "TITAN"         # SPX Aggressive Iron Condor
+    PEGASUS = "PEGASUS"     # SPX Weekly Iron Condor
+    ICARUS = "ICARUS"       # SPY Aggressive Directional
+    PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
+    # Legacy bots (not actively traded)
+    ATLAS = "ATLAS"         # SPX Wheel (Cash-Secured Puts)
+    PHOENIX = "PHOENIX"     # 0DTE Options (partial implementation)
 
 
 class ActionType(Enum):
@@ -1687,7 +1689,7 @@ class SolomonFeedbackLoop:
             return False
 
     def _get_current_performance(self, bot_name: str) -> Dict:
-        """Get current performance metrics for a bot"""
+        """Get current performance metrics for a bot from its actual positions table"""
         if not DB_AVAILABLE:
             return {}
 
@@ -1696,44 +1698,47 @@ class SolomonFeedbackLoop:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # SECURITY: Whitelist table names to prevent SQL injection
-            # Only these exact table names are allowed
-            ALLOWED_TABLES = {
+            # Map bot names to their actual positions tables
+            # Bots store closed trades in *_positions tables with status='closed'
+            BOT_TABLES = {
                 'ARES': 'ares_positions',
                 'ATHENA': 'athena_positions',
+                'TITAN': 'titan_positions',
                 'PEGASUS': 'pegasus_positions',
-                'PHOENIX': 'autonomous_trades',
-                'ATLAS': 'atlas_positions',
+                'ICARUS': 'icarus_positions',
+                'PROMETHEUS': 'prometheus_ic_positions',
             }
 
-            # Validate bot_name against whitelist
-            table = ALLOWED_TABLES.get(bot_name.upper())
+            table = BOT_TABLES.get(bot_name.upper())
             if not table:
-                logger.warning(f"Unknown bot_name '{bot_name}' - using unified_trades")
-                table = 'unified_trades'
+                logger.warning(f"Unknown bot_name '{bot_name}' - no table mapping")
+                return {}
 
-            # Build query with whitelisted table name (safe from SQL injection)
-            query = f"""
+            # Query closed positions from the bot's actual table
+            # Table name is from whitelisted BOT_TABLES dict (safe)
+            cursor.execute(f"""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-                    SUM(realized_pnl) as total_pnl
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl
                 FROM {table}
-                WHERE created_at > NOW() - INTERVAL '30 days'
-            """
-            cursor.execute(query)
+                WHERE status = 'closed'
+                    AND close_time > NOW() - INTERVAL '30 days'
+            """)
 
             row = cursor.fetchone()
 
-            if row:
-                total, wins, losses, pnl = row
+            if row and row[0]:
+                total, wins, losses, pnl, avg_pnl = row
                 return {
                     'total_trades': total or 0,
                     'wins': wins or 0,
                     'losses': losses or 0,
                     'win_rate': (wins / total * 100) if total and total > 0 else 0,
-                    'total_pnl': float(pnl) if pnl else 0
+                    'total_pnl': float(pnl) if pnl else 0,
+                    'avg_pnl': float(avg_pnl) if avg_pnl else 0
                 }
             return {}
 
@@ -1830,25 +1835,59 @@ class SolomonFeedbackLoop:
             return None
 
     def get_performance_history(self, bot_name: str, days: int = 30) -> List[Dict]:
-        """Get performance history for a bot"""
+        """Get performance history for a bot from actual positions tables"""
         if not DB_AVAILABLE:
+            return []
+
+        # Map bot names to their actual positions tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
+
+        table_name = BOT_TABLES.get(bot_name.upper())
+        if not table_name:
             return []
 
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT * FROM solomon_performance
-                WHERE bot_name = %s AND timestamp > NOW() - INTERVAL '%s days'
-                ORDER BY timestamp DESC
-            """, (bot_name, days))
+            # Get daily P&L for sparkline data
+            cursor.execute(f"""
+                SELECT
+                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    COUNT(*) as trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                    COALESCE(AVG(realized_pnl), 0) as avg_pnl
+                FROM {table_name}
+                WHERE status = 'closed'
+                AND close_time > NOW() - INTERVAL '{days} days'
+                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                ORDER BY trade_date DESC
+            """)
 
-            columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
             conn.close()
 
-            return [dict(zip(columns, row)) for row in rows]
+            results = []
+            for row in rows:
+                results.append({
+                    'timestamp': row[0].isoformat() if row[0] else None,
+                    'trade_date': row[0].isoformat() if row[0] else None,
+                    'trades': row[1] or 0,
+                    'wins': row[2] or 0,
+                    'total_pnl': float(row[3]) if row[3] else 0,
+                    'avg_pnl': float(row[4]) if row[4] else 0,
+                    'win_rate': (row[2] / row[1] * 100) if row[1] else 0
+                })
+
+            return results
 
         except Exception as e:
             logger.error(f"Failed to get performance history: {e}")
@@ -1856,8 +1895,9 @@ class SolomonFeedbackLoop:
 
     def detect_degradation(self, bot_name: str) -> Optional[Dict]:
         """
-        Detect performance degradation.
+        Detect performance degradation by comparing recent vs previous period.
 
+        Uses actual bot positions tables for trade data.
         Returns alert info if degradation detected, None otherwise.
         """
         if not DB_AVAILABLE:
@@ -1867,51 +1907,167 @@ class SolomonFeedbackLoop:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Compare last 7 days vs previous 7 days
-            cursor.execute("""
-                SELECT
-                    SUM(CASE WHEN timestamp > NOW() - INTERVAL '7 days' THEN win_rate ELSE 0 END) /
-                    NULLIF(COUNT(CASE WHEN timestamp > NOW() - INTERVAL '7 days' THEN 1 END), 0) as recent_wr,
-                    SUM(CASE WHEN timestamp BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '7 days' THEN win_rate ELSE 0 END) /
-                    NULLIF(COUNT(CASE WHEN timestamp BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '7 days' THEN 1 END), 0) as prev_wr
-                FROM solomon_performance
-                WHERE bot_name = %s
-            """, (bot_name,))
+            # Map bot names to their actual positions tables
+            BOT_TABLES = {
+                'ARES': 'ares_positions',
+                'ATHENA': 'athena_positions',
+                'TITAN': 'titan_positions',
+                'PEGASUS': 'pegasus_positions',
+                'ICARUS': 'icarus_positions',
+                'PROMETHEUS': 'prometheus_ic_positions',
+            }
 
-            row = cursor.fetchone()
+            table = BOT_TABLES.get(bot_name.upper())
+            if not table:
+                return None
+
+            # Compare last 7 days vs previous 7 days using bot's actual positions table
+            cursor.execute(f"""
+                WITH period_stats AS (
+                    SELECT
+                        CASE
+                            WHEN close_time > NOW() - INTERVAL '7 days' THEN 'recent'
+                            ELSE 'previous'
+                        END as period,
+                        COUNT(*) as trades,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        SUM(realized_pnl) as total_pnl
+                    FROM {table}
+                    WHERE status = 'closed'
+                        AND close_time > NOW() - INTERVAL '14 days'
+                    GROUP BY
+                        CASE
+                            WHEN close_time > NOW() - INTERVAL '7 days' THEN 'recent'
+                            ELSE 'previous'
+                        END
+                )
+                SELECT
+                    period, trades, wins, total_pnl,
+                    CASE WHEN trades > 0 THEN wins::float / trades * 100 ELSE 0 END as win_rate
+                FROM period_stats
+                ORDER BY period
+            """)
+
+            rows = cursor.fetchall()
             conn.close()
 
-            if row and row[0] is not None and row[1] is not None:
-                recent_wr, prev_wr = float(row[0]), float(row[1])
+            # Parse results
+            recent_stats = None
+            prev_stats = None
+            for row in rows:
+                period, trades, wins, total_pnl, win_rate = row
+                if period == 'recent':
+                    recent_stats = {'trades': trades, 'wins': wins, 'pnl': float(total_pnl or 0), 'win_rate': float(win_rate or 0)}
+                else:
+                    prev_stats = {'trades': trades, 'wins': wins, 'pnl': float(total_pnl or 0), 'win_rate': float(win_rate or 0)}
 
-                if prev_wr > 0:
-                    degradation = ((prev_wr - recent_wr) / prev_wr) * 100
+            # Need both periods with minimum trades
+            if not recent_stats or not prev_stats:
+                return None
+            if recent_stats['trades'] < 3 or prev_stats['trades'] < 3:
+                return None
 
-                    if degradation > GUARDRAILS['degradation_threshold']:
-                        alert = {
-                            'bot_name': bot_name,
-                            'alert_type': 'DEGRADATION',
-                            'recent_win_rate': recent_wr,
-                            'previous_win_rate': prev_wr,
-                            'degradation_pct': degradation,
-                            'threshold': GUARDRAILS['degradation_threshold'],
-                            'recommendation': 'Consider rollback to previous version'
-                        }
+            recent_wr = recent_stats['win_rate']
+            prev_wr = prev_stats['win_rate']
 
-                        self.log_action(
-                            bot_name=bot_name,
-                            action_type=ActionType.DEGRADATION_DETECTED,
-                            description=f"Performance degradation detected: {degradation:.1f}%",
-                            reason="Win rate decline exceeds threshold",
-                            justification=alert
-                        )
+            if prev_wr > 0:
+                degradation = ((prev_wr - recent_wr) / prev_wr) * 100
 
-                        return alert
+                if degradation > GUARDRAILS['degradation_threshold']:
+                    alert = {
+                        'bot_name': bot_name,
+                        'alert_type': 'DEGRADATION',
+                        'recent_win_rate': recent_wr,
+                        'previous_win_rate': prev_wr,
+                        'recent_trades': recent_stats['trades'],
+                        'previous_trades': prev_stats['trades'],
+                        'recent_pnl': recent_stats['pnl'],
+                        'previous_pnl': prev_stats['pnl'],
+                        'degradation_pct': degradation,
+                        'threshold': GUARDRAILS['degradation_threshold'],
+                        'recommendation': 'Consider rollback to previous version or parameter adjustment'
+                    }
+
+                    self.log_action(
+                        bot_name=bot_name,
+                        action_type=ActionType.DEGRADATION_DETECTED,
+                        description=f"Performance degradation detected: {degradation:.1f}%",
+                        reason=f"Win rate dropped from {prev_wr:.1f}% to {recent_wr:.1f}%",
+                        justification=alert
+                    )
+
+                    # AUTO-GENERATE improvement proposal
+                    self._create_degradation_proposal(bot_name, alert)
+
+                    return alert
 
             return None
 
         except Exception as e:
             logger.error(f"Failed to detect degradation: {e}")
+            return None
+
+    def _create_degradation_proposal(self, bot_name: str, degradation_info: Dict) -> Optional[str]:
+        """
+        Automatically create a proposal when degradation is detected.
+
+        This is the automated proposal generation that Solomon performs.
+        """
+        try:
+            # Determine strategy type and appropriate adjustments
+            ic_bots = ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
+            is_ic = bot_name.upper() in ic_bots
+
+            if is_ic:
+                # Iron Condor bots - suggest widening strikes
+                proposal_type = ProposalType.PARAMETER_CHANGE
+                title = f"Widen {bot_name} IC strikes after degradation"
+                description = f"Performance degradation of {degradation_info['degradation_pct']:.1f}% detected. " \
+                             f"Win rate dropped from {degradation_info['previous_win_rate']:.1f}% to {degradation_info['recent_win_rate']:.1f}%. " \
+                             f"Recommend widening strikes to increase win probability."
+                current_value = {'sd_multiplier': 1.0}  # Placeholder - actual value would come from config
+                proposed_value = {'sd_multiplier': 1.2}  # Widen by 20%
+                expected_improvement = {'win_rate_increase': 5.0}
+            else:
+                # Directional bots - suggest tightening entry criteria
+                proposal_type = ProposalType.PARAMETER_CHANGE
+                title = f"Tighten {bot_name} entry criteria after degradation"
+                description = f"Performance degradation of {degradation_info['degradation_pct']:.1f}% detected. " \
+                             f"Win rate dropped from {degradation_info['previous_win_rate']:.1f}% to {degradation_info['recent_win_rate']:.1f}%. " \
+                             f"Recommend tightening wall proximity filter."
+                current_value = {'wall_filter_pct': 0.5}
+                proposed_value = {'wall_filter_pct': 0.3}  # Require closer to wall
+                expected_improvement = {'direction_accuracy_increase': 3.0}
+
+            proposal_id = self.create_proposal(
+                bot_name=bot_name,
+                proposal_type=proposal_type,
+                title=title,
+                description=description,
+                current_value=current_value,
+                proposed_value=proposed_value,
+                reason=f"Auto-generated due to {degradation_info['degradation_pct']:.1f}% performance degradation",
+                supporting_metrics=degradation_info,
+                expected_improvement=expected_improvement,
+                risk_level="MEDIUM",
+                risk_factors=["May reduce trade frequency", "Requires validation period"],
+                rollback_plan="Revert to previous parameter values if win rate doesn't improve within 7 days"
+            )
+
+            if proposal_id:
+                logger.info(f"[SOLOMON] Auto-created proposal {proposal_id} for {bot_name} degradation")
+                self.log_action(
+                    bot_name=bot_name,
+                    action_type=ActionType.PROPOSAL_CREATED,
+                    description=f"Auto-generated improvement proposal: {title}",
+                    reason=f"Degradation detected: {degradation_info['degradation_pct']:.1f}%",
+                    justification={'proposal_id': proposal_id, 'degradation': degradation_info}
+                )
+
+            return proposal_id
+
+        except Exception as e:
+            logger.error(f"Failed to create degradation proposal: {e}")
             return None
 
     # =========================================================================
@@ -2075,7 +2231,8 @@ class SolomonFeedbackLoop:
         errors = []
         outcomes_processed = 0
 
-        bots = [BotName.ARES, BotName.ATHENA, BotName.ATLAS, BotName.PEGASUS, BotName.PHOENIX]
+        # All active trading bots - IC bots: ARES, TITAN, PEGASUS, PROMETHEUS | Directional: ATHENA, ICARUS
+        bots = [BotName.ARES, BotName.ATHENA, BotName.TITAN, BotName.PEGASUS, BotName.ICARUS, BotName.PROMETHEUS]
 
         try:
             # Step 1: Expire old proposals
