@@ -1835,25 +1835,59 @@ class SolomonFeedbackLoop:
             return None
 
     def get_performance_history(self, bot_name: str, days: int = 30) -> List[Dict]:
-        """Get performance history for a bot"""
+        """Get performance history for a bot from actual positions tables"""
         if not DB_AVAILABLE:
+            return []
+
+        # Map bot names to their actual positions tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
+
+        table_name = BOT_TABLES.get(bot_name.upper())
+        if not table_name:
             return []
 
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT * FROM solomon_performance
-                WHERE bot_name = %s AND timestamp > NOW() - INTERVAL '%s days'
-                ORDER BY timestamp DESC
-            """, (bot_name, days))
+            # Get daily P&L for sparkline data
+            cursor.execute(f"""
+                SELECT
+                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    COUNT(*) as trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                    COALESCE(AVG(realized_pnl), 0) as avg_pnl
+                FROM {table_name}
+                WHERE status = 'closed'
+                AND close_time > NOW() - INTERVAL '{days} days'
+                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                ORDER BY trade_date DESC
+            """)
 
-            columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
             conn.close()
 
-            return [dict(zip(columns, row)) for row in rows]
+            results = []
+            for row in rows:
+                results.append({
+                    'timestamp': row[0].isoformat() if row[0] else None,
+                    'trade_date': row[0].isoformat() if row[0] else None,
+                    'trades': row[1] or 0,
+                    'wins': row[2] or 0,
+                    'total_pnl': float(row[3]) if row[3] else 0,
+                    'avg_pnl': float(row[4]) if row[4] else 0,
+                    'win_rate': (row[2] / row[1] * 100) if row[1] else 0
+                })
+
+            return results
 
         except Exception as e:
             logger.error(f"Failed to get performance history: {e}")

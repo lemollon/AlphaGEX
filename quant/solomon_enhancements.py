@@ -2281,12 +2281,12 @@ class SolomonEnhanced:
 
     def get_oracle_accuracy(self, days: int = 30) -> Dict:
         """
-        Analyze Oracle recommendation accuracy by strategy type.
+        Analyze Oracle recommendation accuracy by correlating oracle_advice with trade outcomes.
 
-        Migration 023: This measures how well Oracle's advice correlates with outcomes.
+        Migration 023: This measures how well Oracle's advice correlates with actual outcomes.
 
-        Fix: Now queries actual bot positions tables for trade data and oracle_predictions
-        for advice correlation where available.
+        Enhancement: Now queries the oracle_advice column directly from position tables to
+        measure how often Oracle's TAKE_TRADE vs SKIP advice led to wins or losses.
         """
         if not DB_AVAILABLE:
             return {'status': 'database_unavailable'}
@@ -2295,7 +2295,7 @@ class SolomonEnhanced:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Bot tables mapping
+            # Bot tables mapping - all have oracle_advice column
             BOT_TABLES = {
                 'ARES': 'ares_positions',
                 'ATHENA': 'athena_positions',
@@ -2305,67 +2305,73 @@ class SolomonEnhanced:
                 'PROMETHEUS': 'prometheus_ic_positions',
             }
 
-            # Step 1: Get actual trade performance by bot from their actual tables
-            bot_rows = []
-            for bot_name, table in BOT_TABLES.items():
-                cursor.execute(f"""
-                    SELECT
-                        COUNT(*) as trades,
-                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                        SUM(realized_pnl) as total_pnl,
-                        AVG(realized_pnl) as avg_pnl
-                    FROM {table}
-                    WHERE status = 'closed'
-                        AND close_time >= NOW() - INTERVAL '{days} days'
-                """)
-                row = cursor.fetchone()
-                if row and row[0]:
-                    bot_rows.append((bot_name, row[0], row[1], row[2], row[3]))
-
-            # Step 2: Get Oracle predictions summary
-            cursor.execute("""
-                SELECT
-                    advice,
-                    bot_name,
-                    COUNT(*) as predictions
-                FROM oracle_predictions
-                WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
-                GROUP BY advice, bot_name
-                ORDER BY advice, bot_name
-            """, (days,))
-            oracle_rows = cursor.fetchall()
-
-            conn.close()
-
-            # Build strategy-level performance from actual trades
             ic_bots = ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
             dir_bots = ['ATHENA', 'ICARUS']
 
+            # Step 1: Get Oracle advice accuracy from actual positions tables
+            by_advice = {}
             by_strategy = {
                 'IRON_CONDOR': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}},
                 'DIRECTIONAL': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
             }
 
-            for row in bot_rows:
-                bot_name, trades, wins, total_pnl, avg_pnl = row
-                bot_data = {
-                    'trades': trades or 0,
-                    'wins': wins or 0,
-                    'total_pnl': float(total_pnl or 0),
-                    'avg_pnl': float(avg_pnl or 0),
-                    'win_rate': (wins / trades * 100) if trades else 0
-                }
+            for bot_name, table in BOT_TABLES.items():
+                try:
+                    # Query oracle_advice accuracy for this bot
+                    cursor.execute(f"""
+                        SELECT
+                            COALESCE(oracle_advice, 'UNKNOWN') as advice,
+                            COUNT(*) as trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                            COALESCE(AVG(realized_pnl), 0) as avg_pnl
+                        FROM {table}
+                        WHERE status = 'closed'
+                            AND close_time >= NOW() - INTERVAL '{days} days'
+                        GROUP BY COALESCE(oracle_advice, 'UNKNOWN')
+                    """)
+                    rows = cursor.fetchall()
 
-                if bot_name in ic_bots:
-                    by_strategy['IRON_CONDOR']['trades'] += trades or 0
-                    by_strategy['IRON_CONDOR']['wins'] += wins or 0
-                    by_strategy['IRON_CONDOR']['total_pnl'] += float(total_pnl or 0)
-                    by_strategy['IRON_CONDOR']['bots'][bot_name] = bot_data
-                elif bot_name in dir_bots:
-                    by_strategy['DIRECTIONAL']['trades'] += trades or 0
-                    by_strategy['DIRECTIONAL']['wins'] += wins or 0
-                    by_strategy['DIRECTIONAL']['total_pnl'] += float(total_pnl or 0)
-                    by_strategy['DIRECTIONAL']['bots'][bot_name] = bot_data
+                    for row in rows:
+                        advice, trades, wins, total_pnl, avg_pnl = row
+                        if not advice or advice == '' or advice == 'UNKNOWN':
+                            advice = 'NO_ADVICE'
+
+                        # Aggregate by Oracle advice type
+                        if advice not in by_advice:
+                            by_advice[advice] = {'count': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
+                        by_advice[advice]['count'] += trades or 0
+                        by_advice[advice]['wins'] += wins or 0
+                        by_advice[advice]['total_pnl'] += float(total_pnl or 0)
+                        if bot_name not in by_advice[advice]['bots']:
+                            by_advice[advice]['bots'][bot_name] = {'trades': 0, 'wins': 0}
+                        by_advice[advice]['bots'][bot_name]['trades'] += trades or 0
+                        by_advice[advice]['bots'][bot_name]['wins'] += wins or 0
+
+                        # Aggregate by strategy
+                        strategy = 'IRON_CONDOR' if bot_name in ic_bots else 'DIRECTIONAL'
+                        by_strategy[strategy]['trades'] += trades or 0
+                        by_strategy[strategy]['wins'] += wins or 0
+                        by_strategy[strategy]['total_pnl'] += float(total_pnl or 0)
+                        if bot_name not in by_strategy[strategy]['bots']:
+                            by_strategy[strategy]['bots'][bot_name] = {'trades': 0, 'wins': 0, 'total_pnl': 0}
+                        by_strategy[strategy]['bots'][bot_name]['trades'] += trades or 0
+                        by_strategy[strategy]['bots'][bot_name]['wins'] += wins or 0
+                        by_strategy[strategy]['bots'][bot_name]['total_pnl'] += float(total_pnl or 0)
+
+                except Exception as e:
+                    logger.warning(f"Could not query oracle_advice from {table}: {e}")
+                    continue
+
+            conn.close()
+
+            # Calculate accuracy metrics for each advice type
+            for advice in by_advice:
+                count = by_advice[advice]['count']
+                wins = by_advice[advice]['wins']
+                total_pnl = by_advice[advice]['total_pnl']
+                by_advice[advice]['accuracy'] = (wins / count * 100) if count > 0 else 0
+                by_advice[advice]['avg_pnl'] = (total_pnl / count) if count > 0 else 0
 
             # Calculate strategy-level metrics
             for strategy in by_strategy:
@@ -2375,22 +2381,25 @@ class SolomonEnhanced:
                 by_strategy[strategy]['count'] = trades
                 by_strategy[strategy]['accuracy'] = (wins / trades * 100) if trades > 0 else 0
                 by_strategy[strategy]['avg_pnl'] = (total_pnl / trades) if trades > 0 else 0
-
-            # Build Oracle advice summary
-            by_advice = {}
-            for row in oracle_rows:
-                advice, bot_name, predictions = row
-                if advice not in by_advice:
-                    by_advice[advice] = {'count': 0, 'bots': {}}
-                by_advice[advice]['count'] += predictions or 0
-                by_advice[advice]['bots'][bot_name] = predictions or 0
+                # Calculate per-bot win rates
+                for bot in by_strategy[strategy]['bots']:
+                    b = by_strategy[strategy]['bots'][bot]
+                    b['win_rate'] = (b['wins'] / b['trades'] * 100) if b['trades'] > 0 else 0
 
             # Generate summary
             total_trades = sum(s['trades'] for s in by_strategy.values())
             total_wins = sum(s['wins'] for s in by_strategy.values())
             overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
 
+            # Check Oracle advice effectiveness
+            take_trade = by_advice.get('TAKE_TRADE', {})
+            skip = by_advice.get('SKIP', {})
+            take_accuracy = take_trade.get('accuracy', 0)
+            take_count = take_trade.get('count', 0)
+
             summary_text = f"Analyzed {total_trades} trades over {days} days. "
+            if take_count > 0:
+                summary_text += f"When Oracle advised TAKE_TRADE: {take_accuracy:.1f}% win rate ({take_count} trades). "
             if overall_win_rate >= 60:
                 summary_text += f"Overall win rate of {overall_win_rate:.1f}% is strong."
             elif overall_win_rate >= 50:
@@ -2401,7 +2410,7 @@ class SolomonEnhanced:
             return {
                 'status': 'analyzed',
                 'period_days': days,
-                'data_source': 'unified_trades + oracle_predictions',
+                'data_source': 'bot_positions_tables (oracle_advice column)',
                 'by_advice': by_advice,
                 'by_strategy': by_strategy,
                 'summary': summary_text,
