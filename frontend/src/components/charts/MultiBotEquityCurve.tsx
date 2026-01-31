@@ -25,6 +25,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   TITAN: 200000,
   PHOENIX: 100000,
   ATLAS: 100000,
+  PROMETHEUS: 100000,
 }
 
 // Bot configuration with colors
@@ -34,6 +35,7 @@ const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'ICARUS', endpoint: '/api/icarus/equity-curve' },
   { name: 'PEGASUS', endpoint: '/api/pegasus/equity-curve' },
   { name: 'TITAN', endpoint: '/api/titan/equity-curve' },
+  { name: 'PROMETHEUS', endpoint: '/api/prometheus-box/ic/equity-curve' },
 ]
 
 interface EquityCurvePoint {
@@ -82,6 +84,7 @@ export default function MultiBotEquityCurve({
     ICARUS: true,
     PEGASUS: true,
     TITAN: true,
+    PROMETHEUS: true,
     PHOENIX: false,
     ATLAS: false,
   })
@@ -113,8 +116,13 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
+  const { data: prometheusData, isLoading: prometheusLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[5].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading
+  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -123,6 +131,7 @@ export default function MultiBotEquityCurve({
     ICARUS: icarusData,
     PEGASUS: pegasusData,
     TITAN: titanData,
+    PROMETHEUS: prometheusData,
     PHOENIX: undefined,
     ATLAS: undefined,
   }
@@ -170,7 +179,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, showPercentage])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -180,6 +189,7 @@ export default function MultiBotEquityCurve({
       ICARUS: null,
       PEGASUS: null,
       TITAN: null,
+      PROMETHEUS: null,
       PHOENIX: null,
       ATLAS: null,
     }
@@ -198,7 +208,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, athenaData, icarusData, pegasusData, titanData])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {
@@ -392,7 +402,7 @@ export default function MultiBotEquityCurve({
 
       {/* Summary Stats Table */}
       <div className="px-4 pb-4">
-        <div className="grid grid-cols-5 gap-2">
+        <div className="grid grid-cols-6 gap-2">
           {LIVE_BOTS.map(bot => {
             const brand = BOT_BRANDS[bot.name]
             const stats = botStats[bot.name]
