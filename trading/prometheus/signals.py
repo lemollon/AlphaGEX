@@ -55,15 +55,29 @@ except ImportError:
     logger.warning("TradierDataFetcher not available")
 
 
-def _get_production_tradier():
+# Lazy-loaded Tradier client (initialized on first use, not at module import)
+# This ensures environment variables are available before client creation
+_tradier_client = None
+
+
+def _get_tradier():
     """
-    Get Tradier client for SPX quotes - ALWAYS uses production API.
+    Get Tradier client for SPX quotes - LAZY LOADED, ALWAYS uses production API.
 
     CRITICAL: The Tradier sandbox API does NOT provide SPX option quotes.
     For accurate box spread pricing, we MUST use the production API.
-    This follows the same pattern used by TITAN/PEGASUS/executor.py.
+    This follows the same pattern used by PEGASUS/TradierGEXCalculator.
+
+    LAZY LOADING: Client is created on first use, not at module import time.
+    This ensures environment variables are available when the client is created.
     """
+    global _tradier_client
+
+    if _tradier_client is not None:
+        return _tradier_client
+
     if not TRADIER_AVAILABLE:
+        logger.error("TradierDataFetcher module not available")
         return None
 
     try:
@@ -71,22 +85,19 @@ def _get_production_tradier():
         prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
 
         if prod_key:
-            logger.debug("Using Tradier PRODUCTION API for SPX quotes")
-            return TradierDataFetcher(api_key=prod_key, sandbox=False)
+            _tradier_client = TradierDataFetcher(api_key=prod_key, sandbox=False)
+            logger.info("PROMETHEUS: Tradier PRODUCTION client initialized for SPX quotes")
+            return _tradier_client
         else:
-            logger.warning(
-                "SPX quotes require production Tradier API key "
-                "(TRADIER_PROD_API_KEY or TRADIER_API_KEY) - not set!"
+            logger.error(
+                "PROMETHEUS: SPX quotes require production Tradier API key "
+                "(TRADIER_PROD_API_KEY or TRADIER_API_KEY) - NOT SET!"
             )
             return None
 
     except Exception as e:
-        logger.warning(f"Could not create production Tradier client: {e}")
+        logger.error(f"PROMETHEUS: Could not create production Tradier client: {e}")
         return None
-
-
-# Initialize production Tradier client
-tradier = _get_production_tradier()
 
 import time  # For retry delays
 
@@ -99,7 +110,7 @@ def _tradier_call_with_retry(func, *args, max_retries: int = 3, **kwargs):
     Pattern borrowed from PEGASUS executor.py.
 
     Args:
-        func: The function to call (e.g., tradier.get_quote)
+        func: The function to call (e.g., _get_tradier().get_quote)
         *args: Positional arguments to pass to the function
         max_retries: Number of retry attempts (default 3)
         **kwargs: Keyword arguments to pass to the function
@@ -313,6 +324,7 @@ class BoxSpreadSignalGenerator:
 
         Uses retry logic with exponential backoff for API resilience.
         """
+        tradier = _get_tradier()
         if not tradier:
             logger.error(
                 "Tradier client not available - cannot get SPX quotes. "
@@ -341,6 +353,7 @@ class BoxSpreadSignalGenerator:
 
     def _get_vix(self) -> float:
         """Get current VIX level with retry logic"""
+        tradier = _get_tradier()
         if tradier:
             quote = _tradier_call_with_retry(tradier.get_quote, 'VIX', max_retries=2)
             if quote:
@@ -372,6 +385,7 @@ class BoxSpreadSignalGenerator:
         """
         try:
             # Get available expirations with retry
+            tradier = _get_tradier()
             if tradier:
                 expirations = _tradier_call_with_retry(
                     tradier.get_expirations, self.config.ticker, max_retries=2
@@ -523,6 +537,7 @@ Strike width tradeoff:
         If live option chain is unavailable, returns None.
         """
         try:
+            tradier = _get_tradier()
             if not tradier:
                 logger.error("Tradier client not available - cannot price box spread")
                 return None
@@ -1115,6 +1130,7 @@ class PrometheusICSignalGenerator:
             vix = None
             gex_data = {}
 
+            tradier = _get_tradier()
             if not tradier:
                 logger.error("PROMETHEUS IC: Tradier not available - cannot get SPX quotes")
                 return None
