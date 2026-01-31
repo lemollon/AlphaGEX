@@ -707,11 +707,18 @@ For box spreads to be profitable:
         """
         Fetch REAL returns from IC bots for the deployed capital.
 
+        LEGACY NOTE: This method is for the OLD capital deployment model where
+        PROMETHEUS deployed borrowed capital to ARES/TITAN/PEGASUS.
+        The new standalone model uses PrometheusICTrader instead.
+
         Queries ARES, TITAN, and PEGASUS closed_trades tables to get
         actual realized P&L since this PROMETHEUS position was opened.
 
         Returns are proportionally attributed based on each bot's share
         of total IC capital at time of deployment.
+
+        Fallback: Uses 100000.0 as default starting capital for each bot
+        if their config tables don't have starting_capital set.
         """
         returns = {
             'ares': 0.0,
@@ -829,7 +836,12 @@ For box spreads to be profitable:
         """
         Fallback: Estimate IC returns when database unavailable.
 
-        Uses conservative 2.5% monthly return estimate.
+        LEGACY NOTE: This method is for the OLD capital deployment model.
+        The new standalone model uses PrometheusICTrader which tracks
+        its own IC positions in prometheus_ic_positions table.
+
+        Uses conservative 2.5% monthly return estimate as fallback.
+        This is intentionally conservative to avoid overstating returns.
         """
         days_held = (date.today() - position.open_time.date()).days
         monthly_return_rate = 0.025  # 2.5% monthly estimate

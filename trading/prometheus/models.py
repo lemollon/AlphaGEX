@@ -337,6 +337,10 @@ class BorrowingCostAnalysis:
     recommendation: str           # Plain English recommendation
     reasoning: str                # Why this recommendation
 
+    # Rate source tracking
+    rates_source: str = "unknown"      # 'live', 'cached', or 'fallback'
+    rates_last_updated: datetime = None  # When rates were last fetched
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'analysis_time': self.analysis_time.isoformat(),
@@ -357,6 +361,8 @@ class BorrowingCostAnalysis:
             'is_favorable': self.is_favorable,
             'recommendation': self.recommendation,
             'reasoning': self.reasoning,
+            'rates_source': self.rates_source,
+            'rates_last_updated': self.rates_last_updated.isoformat() if self.rates_last_updated else None,
         }
 
 
@@ -508,8 +514,8 @@ class PrometheusConfig:
     min_dte_to_hold: int = 30     # Roll if DTE < 30
     assignment_check_frequency: str = "daily"
 
-    # Trading window
-    entry_start: str = "09:00"    # 9 AM CT
+    # Trading window (SPX opens at 8:30 AM CT)
+    entry_start: str = "08:30"    # 8:30 AM CT - market open
     entry_end: str = "15:00"      # 3 PM CT
 
     # Educational mode
@@ -1037,6 +1043,11 @@ class PrometheusICConfig:
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 100000.0      # Starting capital for IC trading
     min_capital_per_trade: float = 5000.0   # Minimum capital required per trade
+
+    @property
+    def max_trades_per_day(self) -> int:
+        """Alias for max_daily_trades for compatibility with trader code"""
+        return self.max_daily_trades
 
     def to_dict(self) -> Dict[str, Any]:
         return {

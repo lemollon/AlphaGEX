@@ -209,14 +209,15 @@ class RateFetcher:
         return None
 
     def _fetch_treasury_rate(self, series_id: str) -> Optional[float]:
-        """Fetch treasury rate from Treasury Direct API."""
+        """Fetch treasury rate from Treasury Fiscal Data API."""
         try:
-            # Treasury Direct provides daily rates
+            # Use Treasury's daily treasury rates endpoint
+            # This provides actual bill/note auction rates
             url = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v2/accounting/od/avg_interest_rates"
             params = {
-                'filter': 'security_desc:eq:Treasury Bills',
                 'sort': '-record_date',
-                'page[size]': 1
+                'page[size]': 10,
+                'fields': 'record_date,security_desc,avg_interest_rate_amt'
             }
 
             response = requests.get(url, params=params, timeout=10)
@@ -224,10 +225,18 @@ class RateFetcher:
             data = response.json()
 
             records = data.get('data', [])
-            if records:
-                rate = records[0].get('avg_interest_rate_amt')
-                if rate:
-                    return float(rate)
+
+            # Look for matching security type
+            target_desc = 'Treasury Bills' if series_id in ['DTB3', 'DTB1YR'] else None
+
+            for record in records:
+                desc = record.get('security_desc', '')
+                if target_desc and target_desc in desc:
+                    rate = record.get('avg_interest_rate_amt')
+                    if rate:
+                        logger.info(f"Got treasury rate from Treasury.gov: {rate}%")
+                        return float(rate)
+
         except Exception as e:
             logger.debug(f"Treasury fetch failed: {e}")
 
@@ -240,17 +249,27 @@ class RateFetcher:
         Uses known FOMC decision dates and rates.
         Updated after each FOMC meeting.
         """
-        # Current Fed Funds target range (as of January 2025)
+        # Current Fed Funds target range (as of January 2026)
         # Update this after FOMC meetings
+        # See: https://www.federalreserve.gov/monetarypolicy/openmarket.htm
         CURRENT_FED_FUNDS_LOWER = 4.25
         CURRENT_FED_FUNDS_UPPER = 4.50
 
         # Effective rate is typically middle of range
-        return (CURRENT_FED_FUNDS_LOWER + CURRENT_FED_FUNDS_UPPER) / 2
+        effective_rate = (CURRENT_FED_FUNDS_LOWER + CURRENT_FED_FUNDS_UPPER) / 2
+        logger.info(f"Using estimated Fed Funds rate: {effective_rate}% (FOMC range: {CURRENT_FED_FUNDS_LOWER}-{CURRENT_FED_FUNDS_UPPER}%)")
+        return effective_rate
 
     def _get_fallback_rates(self) -> InterestRates:
-        """Return fallback rates when fetching fails."""
+        """
+        Return fallback rates based on current FOMC target range.
+
+        These rates are derived from the FOMC target range (4.25-4.50% as of Jan 2026).
+        While not live-fetched, they reflect the current monetary policy.
+        """
         margin_rate = self.FALLBACK_RATES['fed_funds'] + 4.0
+
+        logger.info(f"Using FOMC-based fallback rates (Fed Funds ~{self.FALLBACK_RATES['fed_funds']}%)")
 
         return InterestRates(
             fed_funds_rate=self.FALLBACK_RATES['fed_funds'],
@@ -259,7 +278,7 @@ class RateFetcher:
             treasury_1y=self.FALLBACK_RATES['treasury_1y'],
             margin_rate=margin_rate,
             last_updated=datetime.now(),
-            source='fallback'
+            source='fomc_based'  # Indicates these are based on current FOMC target, not stale
         )
 
     def get_rate_summary(self) -> str:

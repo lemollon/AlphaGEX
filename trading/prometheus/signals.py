@@ -938,6 +938,10 @@ Consider waiting for more favorable rate conditions or using
 margin for smaller positions.
 """.strip()
 
+        # Get rate source info
+        rates_source = self._rates_cache.source if self._rates_cache else "fallback"
+        rates_last_updated = self._rates_cache.last_updated if self._rates_cache else now
+
         return BorrowingCostAnalysis(
             analysis_time=now,
             box_implied_rate=implied_rate,
@@ -957,6 +961,8 @@ margin for smaller positions.
             is_favorable=is_favorable,
             recommendation=recommendation,
             reasoning=reasoning,
+            rates_source=rates_source,
+            rates_last_updated=rates_last_updated,
         )
 
 

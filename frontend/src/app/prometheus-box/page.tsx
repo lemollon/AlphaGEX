@@ -197,6 +197,292 @@ export default function PrometheusBoxDashboard() {
             {/* Overview Tab */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
+                {/* THE MONEY FLOW - With REAL Numbers */}
+                <div className="bg-gradient-to-r from-gray-800 via-gray-800 to-gray-800 rounded-lg p-6 border border-orange-500/30">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span className="text-2xl">💸</span> Your Money Flow
+                    <span className="text-sm font-normal text-gray-400">- How capital moves through PROMETHEUS</span>
+                  </h2>
+                  <div className="grid md:grid-cols-4 gap-4">
+                    {/* Step 1: Borrow */}
+                    <div className="relative">
+                      <div className="bg-blue-900/40 rounded-lg p-4 border border-blue-600/50 h-full">
+                        <div className="text-xs text-gray-400 mb-1">STEP 1: BORROW</div>
+                        <div className="text-2xl font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
+                        <div className="text-xs text-gray-300 mt-2">
+                          via <span className="text-white font-medium">{positions?.positions?.length || 0}</span> box spread{(positions?.positions?.length || 0) !== 1 ? 's' : ''}
+                        </div>
+                        <div className="mt-2 text-xs text-gray-400">
+                          at <span className="text-yellow-400 font-medium">{(status?.performance?.avg_implied_rate || rateAnalysis?.box_implied_rate || 0).toFixed(2)}%</span> annual rate
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          Daily cost: <span className="text-red-400">{formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 365)}</span>
+                        </div>
+                      </div>
+                      <div className="hidden md:block absolute -right-2 top-1/2 text-2xl z-10 text-gray-500">→</div>
+                    </div>
+                    {/* Step 2: Reserve */}
+                    <div className="relative">
+                      <div className="bg-yellow-900/40 rounded-lg p-4 border border-yellow-600/50 h-full">
+                        <div className="text-xs text-gray-400 mb-1">STEP 2: RESERVE</div>
+                        <div className="text-2xl font-bold text-yellow-400">{formatCurrency(totalBorrowed * 0.15)}</div>
+                        <div className="text-xs text-gray-300 mt-2">
+                          held as margin buffer
+                        </div>
+                        <div className="mt-2 text-xs text-gray-400">
+                          15% reserved for safety
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          Protects against IC losses
+                        </div>
+                      </div>
+                      <div className="hidden md:block absolute -right-2 top-1/2 text-2xl z-10 text-gray-500">→</div>
+                    </div>
+                    {/* Step 3: Deploy to IC */}
+                    <div className="relative">
+                      <div className="bg-orange-900/40 rounded-lg p-4 border border-orange-600/50 h-full">
+                        <div className="text-xs text-gray-400 mb-1">STEP 3: DEPLOY</div>
+                        <div className="text-2xl font-bold text-orange-400">{formatCurrency(icStatus?.status?.available_capital || 0)}</div>
+                        <div className="text-xs text-gray-300 mt-2">
+                          available for IC trading
+                        </div>
+                        <div className="mt-2 text-xs text-gray-400">
+                          <span className="text-white font-medium">{icStatus?.status?.open_positions || 0}</span> positions using <span className="text-white font-medium">{formatCurrency((icStatus?.status?.open_positions || 0) * 6000)}</span>
+                        </div>
+                        <div className="mt-1 text-xs text-gray-500">
+                          {icStatus?.status?.daily_trades || 0} trades today
+                        </div>
+                      </div>
+                      <div className="hidden md:block absolute -right-2 top-1/2 text-2xl z-10 text-gray-500">→</div>
+                    </div>
+                    {/* Step 4: Returns */}
+                    <div>
+                      <div className={`rounded-lg p-4 h-full ${netPnL >= 0 ? 'bg-green-900/40 border border-green-600/50' : 'bg-red-900/40 border border-red-600/50'}`}>
+                        <div className="text-xs text-gray-400 mb-1">STEP 4: RETURNS</div>
+                        <div className={`text-2xl font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {formatCurrency(netPnL)}
+                        </div>
+                        <div className="text-xs text-gray-300 mt-2">
+                          net profit (IC returns - costs)
+                        </div>
+                        <div className="mt-2 text-xs text-gray-400">
+                          IC: <span className="text-green-400">+{formatCurrency(totalICReturns)}</span>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          Cost: <span className="text-red-400">-{formatCurrency(totalBorrowingCosts)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  {totalBorrowed > 0 ? (
+                    <div className={`mt-4 p-3 rounded-lg text-sm ${costEfficiency > 1 ? 'bg-green-900/30 border border-green-600/30' : 'bg-yellow-900/30 border border-yellow-600/30'}`}>
+                      <strong className={costEfficiency > 1 ? 'text-green-400' : 'text-yellow-400'}>
+                        {costEfficiency > 1 ? '✅ PROFITABLE:' : '⚠️ BELOW BREAK-EVEN:'}
+                      </strong>
+                      <span className="text-gray-300 ml-2">
+                        IC returns are <span className="font-bold">{costEfficiency.toFixed(1)}x</span> borrowing costs.
+                        {costEfficiency > 1
+                          ? ` You're earning ${formatCurrency(netPnL)} more than your borrowing costs.`
+                          : ` You need to earn ${formatCurrency(-netPnL)} more to break even.`}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="mt-4 p-3 bg-yellow-900/30 border border-yellow-600/30 rounded-lg text-sm">
+                      <strong className="text-yellow-400">⚠️ NO CAPITAL DEPLOYED:</strong>
+                      <span className="text-gray-300 ml-2">
+                        Open box spreads first to borrow capital for IC trading.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* MARGIN & COLLATERAL REQUIRED */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span className="text-2xl">🏦</span> Margin & Collateral
+                  </h2>
+                  <div className="grid md:grid-cols-3 gap-4">
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Box Spread Collateral</div>
+                      <div className="text-2xl font-bold text-yellow-400">
+                        {positions?.positions?.length > 0
+                          ? formatCurrency(positions.positions.reduce((sum: number, p: Position) => sum + (p.strike_width * 100 * p.contracts), 0))
+                          : formatCurrency((status?.config?.strike_width || 50) * 100 * 10)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        = Strike width × $100 × contracts
+                      </div>
+                      <div className="mt-2 text-xs text-gray-400">
+                        This is the face value owed at expiration - your broker holds this as collateral
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">IC Trading Margin</div>
+                      <div className="text-2xl font-bold text-blue-400">
+                        {formatCurrency(icStatus?.status?.available_capital || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Available for Iron Condor trades
+                      </div>
+                      <div className="mt-2 text-xs text-gray-400">
+                        PROMETHEUS uses borrowed capital to fund IC margin requirements
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Tradier Requirements</div>
+                      <div className="text-lg font-bold text-gray-300">PM Account Required</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Portfolio Margin for best rates
+                      </div>
+                      <div className="mt-2 text-xs text-gray-400">
+                        SPX options = European style (no early assignment risk)
+                      </div>
+                    </div>
+                  </div>
+                  {positions?.positions?.length > 0 && (
+                    <div className="mt-4 grid md:grid-cols-2 gap-4 text-sm">
+                      <div className="bg-black/30 rounded p-3">
+                        <span className="text-gray-400">Cash Received: </span>
+                        <span className="text-green-400 font-bold">{formatCurrency(totalBorrowed)}</span>
+                        <span className="text-gray-500"> (what you have to deploy)</span>
+                      </div>
+                      <div className="bg-black/30 rounded p-3">
+                        <span className="text-gray-400">Face Value Owed: </span>
+                        <span className="text-red-400 font-bold">
+                          {formatCurrency(positions.positions.reduce((sum: number, p: Position) => sum + (p.strike_width * 100 * p.contracts), 0))}
+                        </span>
+                        <span className="text-gray-500"> (at expiration)</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* TODAY'S ACTIVITY */}
+                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span className="text-2xl">📊</span> Today&apos;s Activity
+                  </h2>
+                  <div className="grid md:grid-cols-4 gap-4">
+                    <div className="bg-gradient-to-br from-green-900/30 to-gray-800 rounded-lg p-4 border border-green-700/30">
+                      <div className="text-xs text-gray-400 mb-1">Today&apos;s IC P&L</div>
+                      <div className={`text-2xl font-bold ${(icPerformance?.performance?.today?.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(icPerformance?.performance?.today?.pnl || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {icPerformance?.performance?.today?.trades || 0} trades closed today
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-4 border border-orange-700/30">
+                      <div className="text-xs text-gray-400 mb-1">IC Positions Open</div>
+                      <div className="text-2xl font-bold text-orange-400">
+                        {icStatus?.status?.open_positions || 0}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Unrealized: {formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-blue-900/30 to-gray-800 rounded-lg p-4 border border-blue-700/30">
+                      <div className="text-xs text-gray-400 mb-1">Trade Activity</div>
+                      <div className="text-2xl font-bold text-blue-400">
+                        {icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 5}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Trades today / max allowed
+                      </div>
+                    </div>
+                    <div className="bg-gradient-to-br from-purple-900/30 to-gray-800 rounded-lg p-4 border border-purple-700/30">
+                      <div className="text-xs text-gray-400 mb-1">Borrowing Cost Today</div>
+                      <div className="text-2xl font-bold text-purple-400">
+                        {positions?.positions?.length > 0
+                          ? formatCurrency(positions.positions.reduce((sum: number, p: Position) => sum + (p.daily_cost || 0), 0))
+                          : formatCurrency(0)}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Daily interest accrual
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Recent Activity Feed */}
+                  {icLogs?.logs?.length > 0 && (
+                    <div className="mt-4">
+                      <div className="text-sm font-medium text-gray-400 mb-2">Recent Activity</div>
+                      <div className="space-y-1 max-h-32 overflow-y-auto">
+                        {icLogs.logs.slice(0, 5).map((log: any, idx: number) => (
+                          <div key={idx} className="text-xs bg-black/30 rounded p-2 flex justify-between">
+                            <span className="text-gray-300">{log.action}: {log.message?.substring(0, 60)}...</span>
+                            <span className="text-gray-500">{new Date(log.log_time).toLocaleTimeString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* CAPITAL DEPLOYMENT - Using capitalFlow data */}
+                {capitalFlow && (
+                  <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      <span className="text-2xl">💰</span> Capital Deployment
+                    </h2>
+                    <div className="grid md:grid-cols-2 gap-6">
+                      {/* Left: Where the money goes */}
+                      <div>
+                        <div className="text-sm font-medium text-gray-400 mb-3">Where Your Borrowed Capital Goes</div>
+                        <div className="space-y-3">
+                          <div className="bg-black/30 rounded-lg p-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-orange-400 font-medium">🔥 PROMETHEUS IC Trading</span>
+                              <span className="font-bold">{formatCurrency(icStatus?.status?.available_capital || 0)}</span>
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">
+                              SPX 0DTE Iron Condors - Primary return generator
+                            </div>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400 font-medium">💵 Reserve</span>
+                              <span className="font-bold">{formatCurrency(capitalFlow?.deployment_summary?.reserve?.amount || 0)}</span>
+                            </div>
+                            <div className="mt-1 text-xs text-gray-500">
+                              Buffer for IC margin and adjustments
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Returns breakdown */}
+                      <div>
+                        <div className="text-sm font-medium text-gray-400 mb-3">Returns Generated</div>
+                        <div className="bg-black/30 rounded-lg p-4">
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-gray-400">Total IC Returns</span>
+                            <span className="text-green-400 font-bold text-xl">{formatCurrency(totalICReturns)}</span>
+                          </div>
+                          <div className="flex justify-between items-center mb-3">
+                            <span className="text-gray-400">Borrowing Costs Paid</span>
+                            <span className="text-red-400 font-bold text-xl">-{formatCurrency(totalBorrowingCosts)}</span>
+                          </div>
+                          <div className="border-t border-gray-600 pt-3 flex justify-between items-center">
+                            <span className="text-white font-medium">Net Profit</span>
+                            <span className={`font-bold text-2xl ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {formatCurrency(netPnL)}
+                            </span>
+                          </div>
+                        </div>
+                        {totalBorrowed > 0 && (
+                          <div className="mt-3 text-center p-2 bg-gray-700/50 rounded">
+                            <span className="text-gray-400">ROI on Borrowed Capital: </span>
+                            <span className={`font-bold ${returnOnBorrowed >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {formatPct(returnOnBorrowed)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Active Position Details - Show when positions exist */}
                 {positions?.positions?.length > 0 && (
                   <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-6 border border-orange-500/50">
@@ -480,11 +766,31 @@ export default function PrometheusBoxDashboard() {
                         <span className="px-3 py-1 bg-yellow-600 text-white rounded-full text-sm font-medium">STANDBY</span>
                       </div>
                       <p className="text-gray-400 mb-4">
-                        No active box spread position. System scans for favorable opportunities daily at 9:30 AM CT.
+                        No active box spread position. System scans for favorable opportunities at market open (8:30 AM CT) and throughout the trading day.
                       </p>
                       {rateAnalysis && (
-                        <div className={`inline-block px-4 py-2 rounded-lg ${rateAnalysis.is_favorable ? 'bg-green-900/50 text-green-400 border border-green-600' : 'bg-yellow-900/50 text-yellow-400 border border-yellow-600'}`}>
-                          Current rates are <strong>{rateAnalysis.is_favorable ? 'FAVORABLE' : 'UNFAVORABLE'}</strong> for new positions
+                        <div className="space-y-2">
+                          <div className={`inline-block px-4 py-2 rounded-lg ${rateAnalysis.is_favorable ? 'bg-green-900/50 text-green-400 border border-green-600' : 'bg-yellow-900/50 text-yellow-400 border border-yellow-600'}`}>
+                            Current rates are <strong>{rateAnalysis.is_favorable ? 'FAVORABLE' : 'UNFAVORABLE'}</strong> for new positions
+                            <span className="ml-2 text-xs opacity-75">
+                              (Fed Funds: {rateAnalysis.fed_funds_rate?.toFixed(2)}% | Box Rate: {rateAnalysis.box_implied_rate?.toFixed(2)}%)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-gray-500">
+                            <span className={`w-2 h-2 rounded-full ${
+                              rateAnalysis.rates_source === 'live' ? 'bg-green-500' :
+                              rateAnalysis.rates_source === 'cached' ? 'bg-yellow-500' :
+                              rateAnalysis.rates_source === 'fomc_based' ? 'bg-blue-500' : 'bg-red-500'
+                            }`}></span>
+                            <span>Rates: {
+                              rateAnalysis.rates_source === 'live' ? 'LIVE (FRED API)' :
+                              rateAnalysis.rates_source === 'cached' ? 'CACHED' :
+                              rateAnalysis.rates_source === 'fomc_based' ? 'FOMC TARGET (4.25-4.50%)' : 'FALLBACK'
+                            }</span>
+                            {rateAnalysis.rates_last_updated && (
+                              <span className="text-gray-600">| Updated: {new Date(rateAnalysis.rates_last_updated).toLocaleTimeString()}</span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -705,13 +1011,65 @@ export default function PrometheusBoxDashboard() {
               </div>
             )}
 
-            {/* Positions Tab */}
+            {/* Positions Tab - Box Spreads (Borrowing Side) */}
             {activeTab === 'positions' && (
               <div className="space-y-6">
+                {/* Borrowing Summary */}
+                <div className="bg-gradient-to-br from-blue-900/30 to-gray-800 rounded-lg p-6 border border-blue-500/50">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    <span className="text-2xl">📦</span> Box Spread Borrowing
+                    <span className="text-sm font-normal text-gray-400">- Your synthetic loan positions</span>
+                  </h2>
+                  <div className="grid md:grid-cols-5 gap-4">
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Total Borrowed</div>
+                      <div className="text-2xl font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
+                      <div className="text-xs text-gray-500">{positions?.positions?.length || 0} position{(positions?.positions?.length || 0) !== 1 ? 's' : ''}</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Face Value Owed</div>
+                      <div className="text-2xl font-bold text-red-400">
+                        {formatCurrency(positions?.positions?.reduce((sum: number, p: Position) => sum + (p.strike_width * 100 * p.contracts), 0) || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500">at expiration</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Avg Implied Rate</div>
+                      <div className="text-2xl font-bold text-yellow-400">
+                        {(status?.performance?.avg_implied_rate || rateAnalysis?.box_implied_rate || 0).toFixed(2)}%
+                      </div>
+                      <div className="text-xs text-gray-500">annual cost</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Daily Cost</div>
+                      <div className="text-2xl font-bold text-red-400">
+                        {formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 365)}
+                      </div>
+                      <div className="text-xs text-gray-500">interest accrual</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Total Costs Paid</div>
+                      <div className="text-2xl font-bold text-red-400">
+                        {formatCurrency(totalBorrowingCosts)}
+                      </div>
+                      <div className="text-xs text-gray-500">since inception</div>
+                    </div>
+                  </div>
+                  {totalBorrowed > 0 && (
+                    <div className="mt-4 p-3 bg-black/30 rounded-lg text-sm">
+                      <span className="text-gray-400">Margin saved vs broker margin: </span>
+                      <span className="text-green-400 font-bold">
+                        {formatCurrency(totalBorrowed * ((8.5 - (rateAnalysis?.box_implied_rate || 4.0)) / 100))}
+                      </span>
+                      <span className="text-gray-500"> /year (vs 8.5% margin rate)</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Position Details */}
                 <div className="bg-gray-800 rounded-lg overflow-hidden">
                   <div className="p-4 border-b border-gray-700">
-                    <h2 className="text-xl font-bold">Open Box Spread Positions</h2>
-                    <p className="text-sm text-gray-400">{positions?.count || 0} active</p>
+                    <h2 className="text-lg font-bold">Position Details</h2>
                   </div>
 
                   {positions?.positions?.length > 0 ? (
@@ -771,7 +1129,7 @@ export default function PrometheusBoxDashboard() {
                     <div className="p-8 text-center text-gray-400">
                       <div className="text-4xl mb-4">📦</div>
                       <p className="text-lg">No Open Positions</p>
-                      <p className="text-sm mt-2">PROMETHEUS scans for opportunities daily at 9:30 AM CT</p>
+                      <p className="text-sm mt-2">PROMETHEUS scans for opportunities starting at market open (8:30 AM CT)</p>
                     </div>
                   )}
                 </div>
@@ -781,14 +1139,24 @@ export default function PrometheusBoxDashboard() {
             {/* IC Trading Tab */}
             {activeTab === 'ic-trading' && (
               <div className="space-y-6">
-                {/* IC Status Header */}
+                {/* IC Status Header - NOW WITH SPECIFIC AMOUNTS */}
                 <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-6 border border-orange-500/50">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                       <div className="text-3xl">📊</div>
                       <div>
                         <h2 className="text-xl font-bold">Iron Condor Trading</h2>
-                        <p className="text-sm text-gray-400">Trading with borrowed capital from box spreads</p>
+                        {totalBorrowed > 0 ? (
+                          <p className="text-sm text-gray-400">
+                            Trading with <span className="text-blue-400 font-bold">{formatCurrency(totalBorrowed)}</span> borrowed from{' '}
+                            <span className="text-orange-400 font-bold">{positions?.positions?.length || 0} box spread{(positions?.positions?.length || 0) !== 1 ? 's' : ''}</span>{' '}
+                            at <span className="text-yellow-400">{(status?.performance?.avg_implied_rate || rateAnalysis?.box_implied_rate || 0).toFixed(2)}%</span> avg rate
+                          </p>
+                        ) : (
+                          <p className="text-sm text-yellow-400">
+                            ⚠️ No capital borrowed yet - Open box spreads first to fund IC trading
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className={`px-3 py-1 rounded-full text-sm font-medium ${
@@ -798,32 +1166,77 @@ export default function PrometheusBoxDashboard() {
                     </div>
                   </div>
 
-                  {/* Quick Stats */}
-                  <div className="grid md:grid-cols-5 gap-4">
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Open Positions</div>
-                      <div className="text-2xl font-bold">{icStatus?.status?.open_positions || 0}</div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Unrealized P&L</div>
-                      <div className={`text-2xl font-bold ${(icStatus?.status?.total_unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)}
+                  {/* CAPITAL SOURCE - WHERE THE MONEY COMES FROM */}
+                  <div className="bg-black/40 rounded-lg p-4 mb-4 border border-gray-600">
+                    <h3 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
+                      💰 YOUR CAPITAL SOURCE
+                      <span className="text-xs font-normal text-gray-500">(Where the money comes from)</span>
+                    </h3>
+                    <div className="grid md:grid-cols-5 gap-3 text-sm">
+                      <div className="bg-blue-900/30 rounded p-3 border border-blue-700/50">
+                        <div className="text-xs text-gray-400">From Box Spreads</div>
+                        <div className="text-lg font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
+                        <div className="text-xs text-gray-500">{positions?.positions?.length || 0} positions</div>
+                      </div>
+                      <div className="flex items-center justify-center text-gray-500">−</div>
+                      <div className="bg-yellow-900/30 rounded p-3 border border-yellow-700/50">
+                        <div className="text-xs text-gray-400">Reserved (15%)</div>
+                        <div className="text-lg font-bold text-yellow-400">{formatCurrency(totalBorrowed * 0.15)}</div>
+                        <div className="text-xs text-gray-500">Margin buffer</div>
+                      </div>
+                      <div className="flex items-center justify-center text-gray-500">−</div>
+                      <div className="bg-orange-900/30 rounded p-3 border border-orange-700/50">
+                        <div className="text-xs text-gray-400">In IC Trades</div>
+                        <div className="text-lg font-bold text-orange-400">
+                          {formatCurrency((icStatus?.status?.open_positions || 0) * 6000)}
+                        </div>
+                        <div className="text-xs text-gray-500">{icStatus?.status?.open_positions || 0} × $6K/trade</div>
                       </div>
                     </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Available Capital</div>
-                      <div className="text-2xl font-bold text-blue-400">
-                        {formatCurrency(icStatus?.status?.available_capital || 0)}
+                    <div className="mt-3 pt-3 border-t border-gray-600 flex justify-between items-center">
+                      <span className="text-gray-400">AVAILABLE TO TRADE:</span>
+                      <span className="text-2xl font-bold text-green-400">{formatCurrency(icStatus?.status?.available_capital || 0)}</span>
+                    </div>
+                    {totalBorrowed > 0 && (
+                      <div className="mt-2 text-xs text-gray-500">
+                        Daily borrowing cost: <span className="text-red-400">{formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 365)}</span>/day
+                        {' '}| Must earn at least: <span className="text-yellow-400">{formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 12)}</span>/month to break even
                       </div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Todays Trades</div>
-                      <div className="text-2xl font-bold">{icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 3}</div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Can Trade?</div>
-                      <div className={`text-2xl font-bold ${icStatus?.status?.can_trade ? 'text-green-400' : 'text-yellow-400'}`}>
-                        {icStatus?.status?.can_trade ? 'YES' : 'NO'}
+                    )}
+                  </div>
+
+                  {/* TRADING STATUS - WHY CAN/CAN'T TRADE */}
+                  <div className="bg-black/40 rounded-lg p-4 border border-gray-600">
+                    <h3 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
+                      🎯 TRADING STATUS
+                      <span className={`ml-auto px-2 py-1 rounded text-xs font-bold ${icStatus?.status?.can_trade ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {icStatus?.status?.can_trade ? '✓ CAN TRADE' : '✗ CANNOT TRADE'}
+                      </span>
+                    </h3>
+                    <div className="grid md:grid-cols-2 gap-4 text-sm">
+                      <div className="space-y-2">
+                        <div className={`flex items-center gap-2 ${(icStatus?.status?.available_capital || 0) >= 6000 ? 'text-green-400' : 'text-red-400'}`}>
+                          {(icStatus?.status?.available_capital || 0) >= 6000 ? '✓' : '✗'} Capital: {formatCurrency(icStatus?.status?.available_capital || 0)}
+                          {(icStatus?.status?.available_capital || 0) < 6000 && <span className="text-xs text-gray-500">(need $6,000 min)</span>}
+                        </div>
+                        <div className={`flex items-center gap-2 ${(icStatus?.status?.open_positions || 0) < 5 ? 'text-green-400' : 'text-red-400'}`}>
+                          {(icStatus?.status?.open_positions || 0) < 5 ? '✓' : '✗'} Positions: {icStatus?.status?.open_positions || 0} / 5 max
+                        </div>
+                        <div className={`flex items-center gap-2 ${(icStatus?.status?.daily_trades || 0) < (icStatus?.status?.max_daily_trades || 5) ? 'text-green-400' : 'text-red-400'}`}>
+                          {(icStatus?.status?.daily_trades || 0) < (icStatus?.status?.max_daily_trades || 5) ? '✓' : '✗'} Daily trades: {icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 5}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <div className={`flex items-center gap-2 ${icStatus?.status?.in_trading_window ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {icStatus?.status?.in_trading_window ? '✓' : '○'} Trading window: {icStatus?.status?.in_trading_window ? 'OPEN' : 'CLOSED'}
+                          <span className="text-xs text-gray-500">(8:35 AM - 2:30 PM CT)</span>
+                        </div>
+                        <div className={`flex items-center gap-2 ${!icStatus?.status?.in_cooldown ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {!icStatus?.status?.in_cooldown ? '✓' : '○'} Cooldown: {!icStatus?.status?.in_cooldown ? 'Ready' : 'Waiting'}
+                        </div>
+                        <div className={`flex items-center gap-2 ${icStatus?.status?.enabled ? 'text-green-400' : 'text-red-400'}`}>
+                          {icStatus?.status?.enabled ? '✓' : '✗'} IC Trading: {icStatus?.status?.enabled ? 'Enabled' : 'Disabled'}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -835,36 +1248,84 @@ export default function PrometheusBoxDashboard() {
                     <span>Combined Performance</span>
                     <span className="text-sm font-normal text-gray-400">(Are IC returns &gt; borrowing costs?)</span>
                   </h3>
-                  <div className="grid md:grid-cols-4 gap-4">
+                  <div className="grid md:grid-cols-4 gap-4 mb-4">
                     <div className="bg-gray-700/50 rounded-lg p-4">
                       <div className="text-xs text-gray-400 mb-1">Total Borrowed</div>
                       <div className="text-xl font-bold text-blue-400">
-                        {formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowed || 0)}
+                        {formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowed || totalBorrowed || 0)}
                       </div>
+                      <div className="text-xs text-gray-500">{positions?.positions?.length || 0} box spreads</div>
                     </div>
                     <div className="bg-gray-700/50 rounded-lg p-4">
                       <div className="text-xs text-gray-400 mb-1">Borrowing Cost</div>
                       <div className="text-xl font-bold text-red-400">
-                        -{formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowing_cost || 0)}
+                        -{formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowing_cost || totalBorrowingCosts || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 365)}/day
                       </div>
                     </div>
                     <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">IC Returns</div>
+                      <div className="text-xs text-gray-400 mb-1">IC Returns (Realized)</div>
                       <div className="text-xl font-bold text-green-400">
-                        +{formatCurrency(combinedPerformance?.summary?.ic_trading?.total_realized_pnl || 0)}
+                        +{formatCurrency(combinedPerformance?.summary?.ic_trading?.total_realized_pnl || icPerformance?.performance?.closed_trades?.total_pnl || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        +{formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)} unrealized
                       </div>
                     </div>
                     <div className={`rounded-lg p-4 ${
-                      (combinedPerformance?.summary?.net_profit || 0) >= 0
+                      (combinedPerformance?.summary?.net_profit || netPnL || 0) >= 0
                         ? 'bg-green-500/20 border border-green-500/50'
                         : 'bg-red-500/20 border border-red-500/50'
                     }`}>
                       <div className="text-xs text-gray-300 mb-1">NET PROFIT</div>
-                      <div className={`text-2xl font-bold ${(combinedPerformance?.summary?.net_profit || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(combinedPerformance?.summary?.net_profit || 0)}
+                      <div className={`text-2xl font-bold ${(combinedPerformance?.summary?.net_profit || netPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(combinedPerformance?.summary?.net_profit || netPnL || 0)}
                       </div>
                     </div>
                   </div>
+
+                  {/* Break-Even Analysis */}
+                  {totalBorrowed > 0 && (
+                    <div className="bg-black/30 rounded-lg p-4 border border-gray-600">
+                      <h4 className="text-sm font-bold text-gray-300 mb-3">📊 BREAK-EVEN ANALYSIS</h4>
+                      <div className="grid md:grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <div className="text-xs text-gray-400">Monthly Break-Even</div>
+                          <div className="text-lg font-bold text-yellow-400">
+                            {formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 12)}
+                          </div>
+                          <div className="text-xs text-gray-500">IC returns needed to cover borrowing</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400">Actual Monthly IC Return</div>
+                          <div className={`text-lg font-bold ${(icPerformance?.performance?.today?.pnl || 0) * 30 > (totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 12 ? 'text-green-400' : 'text-red-400'}`}>
+                            {formatCurrency((icPerformance?.performance?.closed_trades?.total_pnl || 0) / Math.max(1, Math.ceil((Date.now() - new Date(positions?.positions?.[0]?.open_time || Date.now()).getTime()) / (30 * 24 * 60 * 60 * 1000))))}
+                          </div>
+                          <div className="text-xs text-gray-500">Average monthly performance</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-400">Cost Efficiency</div>
+                          <div className={`text-lg font-bold ${costEfficiency > 1 ? 'text-green-400' : 'text-red-400'}`}>
+                            {costEfficiency.toFixed(1)}x
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {costEfficiency > 1 ? `IC returns are ${costEfficiency.toFixed(1)}x borrowing costs` : 'Below break-even'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-3 pt-3 border-t border-gray-600">
+                        <div className={`text-sm font-medium ${costEfficiency > 1 ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {costEfficiency > 1.5
+                            ? '✅ PROFITABLE: IC returns significantly exceed borrowing costs'
+                            : costEfficiency > 1
+                              ? '✓ PROFITABLE: IC returns exceed borrowing costs'
+                              : '⚠️ BELOW BREAK-EVEN: IC returns not covering borrowing costs yet'}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* IC Performance Stats */}
@@ -968,10 +1429,33 @@ export default function PrometheusBoxDashboard() {
                       </table>
                     </div>
                   ) : (
-                    <div className="p-8 text-center text-gray-400">
+                    <div className="p-6 text-center">
                       <div className="text-4xl mb-4">📊</div>
-                      <p className="text-lg">No Open IC Positions</p>
-                      <p className="text-sm mt-2">IC trades are generated every 10 minutes when Oracle approves</p>
+                      <p className="text-lg text-gray-300 font-medium">No Open IC Positions</p>
+                      {totalBorrowed <= 0 ? (
+                        <div className="mt-4 p-4 bg-yellow-900/30 border border-yellow-600/50 rounded-lg inline-block">
+                          <p className="text-yellow-400 font-medium">⚠️ No capital to trade with</p>
+                          <p className="text-sm text-gray-400 mt-1">Open box spreads first in the &quot;Box Spreads&quot; tab to fund IC trading</p>
+                        </div>
+                      ) : !icStatus?.status?.enabled ? (
+                        <div className="mt-4 p-4 bg-red-900/30 border border-red-600/50 rounded-lg inline-block">
+                          <p className="text-red-400 font-medium">❌ IC Trading is disabled</p>
+                          <p className="text-sm text-gray-400 mt-1">Enable IC trading in settings to start generating trades</p>
+                        </div>
+                      ) : !icStatus?.status?.in_trading_window ? (
+                        <div className="mt-4 p-4 bg-blue-900/30 border border-blue-600/50 rounded-lg inline-block">
+                          <p className="text-blue-400 font-medium">⏰ Outside trading hours</p>
+                          <p className="text-sm text-gray-400 mt-1">IC trades are generated 8:35 AM - 2:30 PM CT when Oracle approves</p>
+                        </div>
+                      ) : (
+                        <div className="mt-4 p-4 bg-green-900/30 border border-green-600/50 rounded-lg inline-block">
+                          <p className="text-green-400 font-medium">✓ Ready to trade</p>
+                          <p className="text-sm text-gray-400 mt-1">
+                            {formatCurrency(icStatus?.status?.available_capital || 0)} available from {positions?.positions?.length || 0} box spread(s)
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">Waiting for Oracle-approved signal...</p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
