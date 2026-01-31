@@ -335,11 +335,11 @@ export default function PrometheusBoxDashboard() {
                   <div className="grid md:grid-cols-4 gap-4">
                     <div className="bg-gradient-to-br from-green-900/30 to-gray-800 rounded-lg p-4 border border-green-700/30">
                       <div className="text-xs text-gray-400 mb-1">Today&apos;s IC P&L</div>
-                      <div className={`text-2xl font-bold ${(icPerformance?.performance?.today?.pnl_today || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(icPerformance?.performance?.today?.pnl_today || 0)}
+                      <div className={`text-2xl font-bold ${(icPerformance?.performance?.today?.pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(icPerformance?.performance?.today?.pnl || 0)}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        {icPerformance?.performance?.today?.trades_today || 0} trades closed today
+                        {icPerformance?.performance?.today?.trades || 0} trades closed today
                       </div>
                     </div>
                     <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-4 border border-orange-700/30">
