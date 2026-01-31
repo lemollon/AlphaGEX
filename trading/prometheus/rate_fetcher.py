@@ -108,28 +108,44 @@ class RateFetcher:
 
     def _fetch_rates(self) -> InterestRates:
         """
-        Fetch rates from FRED API.
+        Fetch rates from FRED API or fallback sources.
 
         FRED provides free access without API key for basic requests.
         We use the observations endpoint with limit=1 to get latest value.
         """
         rates = {}
+        sources_used = []  # Track what sources we actually used
 
         for rate_name, series_id in self.FRED_SERIES.items():
             try:
-                value = self._fetch_fred_series(series_id)
+                value, source = self._fetch_fred_series_with_source(series_id)
                 if value is not None:
                     rates[rate_name] = value
+                    sources_used.append(source)
                 else:
                     rates[rate_name] = self.FALLBACK_RATES.get(rate_name, 4.5)
+                    sources_used.append('fallback')
             except Exception as e:
                 logger.debug(f"Failed to fetch {series_id}: {e}")
                 rates[rate_name] = self.FALLBACK_RATES.get(rate_name, 4.5)
+                sources_used.append('fallback')
 
         # Margin rate is estimated as Fed Funds + spread
         # Most brokers charge Fed Funds + 3-4%
         margin_spread = 4.0  # Typical broker spread over Fed Funds
         margin_rate = rates.get('fed_funds', 4.5) + margin_spread
+
+        # Determine overall source based on what was used
+        if 'live' in sources_used and sources_used.count('live') == len(self.FRED_SERIES):
+            overall_source = 'live'
+        elif 'live' in sources_used:
+            overall_source = 'mixed'  # Some live, some fallback
+        elif 'fomc_based' in sources_used or 'treasury_direct' in sources_used:
+            overall_source = 'fomc_based'  # Using estimates based on FOMC
+        else:
+            overall_source = 'fallback'
+
+        logger.info(f"Rate sources used: {sources_used} -> overall: {overall_source}")
 
         return InterestRates(
             fed_funds_rate=rates.get('fed_funds', self.FALLBACK_RATES['fed_funds']),
@@ -138,15 +154,15 @@ class RateFetcher:
             treasury_1y=rates.get('treasury_1y', self.FALLBACK_RATES['treasury_1y']),
             margin_rate=margin_rate,
             last_updated=datetime.now(),
-            source='live'
+            source=overall_source
         )
 
-    def _fetch_fred_series(self, series_id: str) -> Optional[float]:
+    def _fetch_fred_series_with_source(self, series_id: str) -> Tuple[Optional[float], str]:
         """
-        Fetch a single FRED series value.
+        Fetch a single FRED series value with source tracking.
 
-        Uses the FRED API without requiring an API key by accessing
-        the public data endpoint.
+        Returns:
+            Tuple of (value, source) where source is 'live', 'fomc_based', or 'treasury_direct'
         """
         # FRED API key from environment (optional but recommended)
         api_key = os.environ.get('FRED_API_KEY')
@@ -161,52 +177,59 @@ class RateFetcher:
                 'limit': 1,
                 'sort_order': 'desc'
             }
+
+            try:
+                response = requests.get(url, params=params, timeout=10)
+                response.raise_for_status()
+                data = response.json()
+
+                observations = data.get('observations', [])
+                if observations:
+                    value_str = observations[0].get('value', '.')
+                    if value_str != '.':  # FRED uses '.' for missing data
+                        return float(value_str), 'live'
+            except Exception as e:
+                logger.debug(f"FRED API fetch failed for {series_id}: {e}")
+
+            return None, 'fallback'
         else:
             # Use alternative approach - fetch from public data page
             # This is less reliable but works without API key
-            return self._fetch_fred_fallback(series_id)
+            return self._fetch_fred_fallback_with_source(series_id)
 
-        try:
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-
-            observations = data.get('observations', [])
-            if observations:
-                value_str = observations[0].get('value', '.')
-                if value_str != '.':  # FRED uses '.' for missing data
-                    return float(value_str)
-        except Exception as e:
-            logger.debug(f"FRED API fetch failed for {series_id}: {e}")
-
-        return None
-
-    def _fetch_fred_fallback(self, series_id: str) -> Optional[float]:
+    def _fetch_fred_fallback_with_source(self, series_id: str) -> Tuple[Optional[float], str]:
         """
         Fallback method to get FRED data without API key.
 
         Uses the Treasury Direct API for treasury rates,
         and estimated values for others.
+
+        Returns:
+            Tuple of (value, source)
         """
         try:
             # For treasury rates, use Treasury Direct API
             if series_id in ['DTB3', 'DTB1YR']:
-                return self._fetch_treasury_rate(series_id)
+                value = self._fetch_treasury_rate(series_id)
+                if value:
+                    return value, 'treasury_direct'
 
             # For Fed Funds and SOFR, try alternative sources
             if series_id == 'FEDFUNDS':
-                return self._estimate_fed_funds()
+                value = self._estimate_fed_funds()
+                if value:
+                    return value, 'fomc_based'
 
             if series_id == 'SOFR':
                 # SOFR is typically very close to Fed Funds
                 fed_funds = self._estimate_fed_funds()
                 if fed_funds:
-                    return fed_funds - 0.03  # SOFR usually slightly below
+                    return fed_funds - 0.03, 'fomc_based'  # SOFR usually slightly below
 
         except Exception as e:
             logger.debug(f"Fallback fetch failed for {series_id}: {e}")
 
-        return None
+        return None, 'fallback'
 
     def _fetch_treasury_rate(self, series_id: str) -> Optional[float]:
         """Fetch treasury rate from Treasury Fiscal Data API."""
