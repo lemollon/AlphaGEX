@@ -732,8 +732,8 @@ class CrossBotAnalyzer:
     def get_all_correlations(self, days: int = 30) -> List[CrossBotCorrelation]:
         """Get correlations between all bot pairs"""
         # Migration 023: Updated bot list to match actual trading bots
-        # IC bots: ARES, TITAN, PEGASUS | Directional bots: ATHENA, ICARUS
-        bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']
+        # IC bots: ARES, TITAN, PEGASUS, PROMETHEUS | Directional bots: ATHENA, ICARUS
+        bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS', 'PROMETHEUS']
         correlations = []
 
         for i, bot_a in enumerate(bots):
@@ -1082,8 +1082,9 @@ class WeekendPreChecker:
 
         # Analyze each bot
         # Migration 023: Updated bot list to include TITAN and ICARUS
+        # Migration 024: Added PROMETHEUS (Box Spread + IC Trading)
         bot_recommendations = {}
-        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']:
+        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
             bot_recommendations[bot] = self._analyze_bot_readiness(bot)
 
         # Overall risk assessment
@@ -1239,7 +1240,8 @@ class DailyDigestGenerator:
         total_wins = 0
 
         # Migration 023: Updated bot list to include TITAN and ICARUS
-        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']:
+        # Migration 024: Added PROMETHEUS (Box Spread + IC Trading)
+        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
             bot_stats = self._get_bot_daily_stats(bot, for_date)
             digest['bots'][bot] = bot_stats
 
@@ -2035,6 +2037,7 @@ class SolomonEnhanced:
         'ARES': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPY'},
         'TITAN': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
         'PEGASUS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
+        'PROMETHEUS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},  # Box Spread + IC
         # Directional bots - want price movement in predicted direction
         'ATHENA': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
         'ICARUS': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
@@ -2095,7 +2098,7 @@ class SolomonEnhanced:
                     'win_rate': (ic_row[1] / ic_trades * 100) if ic_trades > 0 else 0,
                     'total_pnl': float(ic_row[2] or 0),
                     'avg_pnl': float(ic_row[3] or 0),
-                    'bots': ['ARES', 'TITAN', 'PEGASUS']
+                    'bots': ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
                 },
                 'directional': {
                     'trades': dir_trades,

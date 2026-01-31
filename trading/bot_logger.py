@@ -48,6 +48,8 @@ class BotName(Enum):
     ATHENA = "ATHENA"    # Directional Spreads (Bull Call / Bear Call)
     ICARUS = "ICARUS"    # Aggressive Directional Spreads (relaxed GEX filters)
     PEGASUS = "PEGASUS"  # SPX Iron Condor ($10 spreads, weekly)
+    TITAN = "TITAN"      # Aggressive SPX Iron Condor ($12 spreads)
+    PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
 
 
 class DecisionType(Enum):
@@ -909,3 +911,13 @@ def get_pegasus_logger():
 def get_icarus_logger():
     """Get a pre-configured logger for ICARUS"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "ICARUS" else None
+
+
+def get_titan_logger():
+    """Get a pre-configured logger for TITAN"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "TITAN" else None
+
+
+def get_prometheus_logger():
+    """Get a pre-configured logger for PROMETHEUS"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "PROMETHEUS" else None

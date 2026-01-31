@@ -48,6 +48,9 @@ class BotName(Enum):
     ARES = "ARES"        # ARESTrader - Aggressive Iron Condor (10% monthly target)
     ATHENA = "ATHENA"    # ATHENATrader - Directional Spreads (Bull/Bear Call Spreads)
     PEGASUS = "PEGASUS"  # PEGASUSTrader - SPX Iron Condor ($10 spreads, weekly)
+    ICARUS = "ICARUS"    # ICARUSTrader - Aggressive Directional Spreads
+    TITAN = "TITAN"      # TITANTrader - Aggressive SPX Iron Condor ($12 spreads)
+    PROMETHEUS = "PROMETHEUS"  # PrometheusTrader - Box Spread Synthetic Borrowing + IC Trading
 
 
 class DecisionType(Enum):
@@ -1323,3 +1326,24 @@ def get_pegasus_logger() -> DecisionLogger:
     if 'PEGASUS' not in _bot_loggers:
         _bot_loggers['PEGASUS'] = DecisionLogger()
     return _bot_loggers['PEGASUS']
+
+
+def get_icarus_logger() -> DecisionLogger:
+    """Get logger for ICARUS (Aggressive Directional Spreads)"""
+    if 'ICARUS' not in _bot_loggers:
+        _bot_loggers['ICARUS'] = DecisionLogger()
+    return _bot_loggers['ICARUS']
+
+
+def get_titan_logger() -> DecisionLogger:
+    """Get logger for TITAN (Aggressive SPX Iron Condor)"""
+    if 'TITAN' not in _bot_loggers:
+        _bot_loggers['TITAN'] = DecisionLogger()
+    return _bot_loggers['TITAN']
+
+
+def get_prometheus_logger() -> DecisionLogger:
+    """Get logger for PROMETHEUS (Box Spread Synthetic Borrowing + IC Trading)"""
+    if 'PROMETHEUS' not in _bot_loggers:
+        _bot_loggers['PROMETHEUS'] = DecisionLogger()
+    return _bot_loggers['PROMETHEUS']
