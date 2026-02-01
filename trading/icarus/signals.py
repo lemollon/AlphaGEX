@@ -23,6 +23,14 @@ from .models import TradeSignal, SpreadType, ICARUSConfig, CENTRAL_TZ
 
 logger = logging.getLogger(__name__)
 
+# Database for win rate queries
+try:
+    from database_adapter import get_connection
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+    get_connection = None
+
 # Oracle is the god of all trade decisions
 
 # Optional imports with clear fallbacks
@@ -99,7 +107,9 @@ class SignalGenerator:
 
     def __init__(self, config: ICARUSConfig):
         self.config = config
+        self._price_provider = None
         self._init_components()
+        self._init_price_provider()
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
@@ -141,6 +151,95 @@ class SignalGenerator:
                 logger.info("ICARUS SignalGenerator: Oracle initialized")
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
+
+    def _init_price_provider(self) -> None:
+        """Initialize price data provider for historical data (VIX/price history)."""
+        try:
+            from data.unified_data_provider import UnifiedDataProvider
+            self._price_provider = UnifiedDataProvider()
+            logger.info("ICARUS SignalGenerator: Price provider initialized")
+        except Exception as e:
+            logger.warning(f"Price provider init failed: {e}")
+            self._price_provider = None
+
+    def _get_ml_features(self, spot_price: float, vix: float) -> Dict[str, Any]:
+        """
+        Calculate the 4 remaining Oracle ML features:
+        - vix_percentile_30d: Where current VIX sits in 30-day range (0-100)
+        - vix_change_1d: % change in VIX from yesterday
+        - price_change_1d: % change in underlying price from yesterday
+        - win_rate_30d: Win rate of closed trades in last 30 days (0-1)
+
+        These complete the full 11-feature Oracle ML model.
+        """
+        features = {
+            'vix_percentile_30d': 50.0,  # Default: middle of range
+            'vix_change_1d': 0.0,        # Default: no change
+            'price_change_1d': 0.0,      # Default: no change
+            'win_rate_30d': 0.68,        # Default: historical average
+        }
+
+        # Calculate VIX percentile and change from historical data
+        if self._price_provider:
+            try:
+                # Get 30 days of VIX history
+                from datetime import timedelta
+                vix_bars = self._price_provider.get_historical_bars('VIX', days=35, interval='day')
+                if vix_bars and len(vix_bars) >= 2:
+                    vix_closes = [bar.close for bar in vix_bars if bar.close > 0]
+                    if vix_closes:
+                        # VIX percentile: where current VIX sits in 30-day range
+                        min_vix = min(vix_closes[-30:]) if len(vix_closes) >= 30 else min(vix_closes)
+                        max_vix = max(vix_closes[-30:]) if len(vix_closes) >= 30 else max(vix_closes)
+                        if max_vix > min_vix:
+                            features['vix_percentile_30d'] = ((vix - min_vix) / (max_vix - min_vix)) * 100
+                            features['vix_percentile_30d'] = max(0, min(100, features['vix_percentile_30d']))
+
+                        # VIX change: yesterday's close to current
+                        yesterday_vix = vix_closes[-1] if vix_closes else vix
+                        if yesterday_vix > 0:
+                            features['vix_change_1d'] = ((vix - yesterday_vix) / yesterday_vix) * 100
+
+                        logger.debug(f"VIX features: percentile={features['vix_percentile_30d']:.1f}, change={features['vix_change_1d']:.2f}%")
+            except Exception as e:
+                logger.debug(f"VIX history fetch failed (using defaults): {e}")
+
+            try:
+                # Get price change from yesterday
+                price_bars = self._price_provider.get_historical_bars(self.config.ticker, days=5, interval='day')
+                if price_bars and len(price_bars) >= 2:
+                    yesterday_close = price_bars[-1].close if price_bars[-1].close > 0 else spot_price
+                    if yesterday_close > 0:
+                        features['price_change_1d'] = ((spot_price - yesterday_close) / yesterday_close) * 100
+                        logger.debug(f"Price change: {features['price_change_1d']:.2f}% (yesterday=${yesterday_close:.2f})")
+            except Exception as e:
+                logger.debug(f"Price history fetch failed (using defaults): {e}")
+
+        # Calculate win rate from closed trades
+        if DB_AVAILABLE:
+            try:
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins
+                    FROM icarus_positions
+                    WHERE status = 'closed'
+                      AND close_time >= NOW() - INTERVAL '30 days'
+                      AND realized_pnl IS NOT NULL
+                """)
+                result = c.fetchone()
+                conn.close()
+
+                if result and result[0] and result[0] > 0:
+                    total, wins = result[0], result[1] or 0
+                    features['win_rate_30d'] = wins / total
+                    logger.debug(f"Win rate 30d: {wins}/{total} = {features['win_rate_30d']:.2%}")
+            except Exception as e:
+                logger.debug(f"Win rate query failed (using defaults): {e}")
+
+        return features
 
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
@@ -194,6 +293,9 @@ class SignalGenerator:
             import math
             expected_move_pct = (vix / 100 / math.sqrt(252)) * 100  # Daily expected move %
 
+            # Get remaining ML features (vix_percentile_30d, vix_change_1d, price_change_1d, win_rate_30d)
+            ml_features = self._get_ml_features(spot, vix)
+
             return {
                 'spot_price': spot,
                 'call_wall': call_wall,
@@ -203,11 +305,16 @@ class SignalGenerator:
                 'flip_point': flip_point,
                 'vix': vix,
                 'timestamp': datetime.now(CENTRAL_TZ),
-                # Additional fields for Oracle ML model
+                # Additional fields for Oracle ML model (7 features)
                 'gex_normalized': gex_normalized,
                 'distance_to_flip_pct': distance_to_flip_pct,
                 'between_walls': between_walls,
                 'expected_move_pct': expected_move_pct,
+                # Remaining 4 ML features (complete 11-feature model)
+                'vix_percentile_30d': ml_features['vix_percentile_30d'],
+                'vix_change_1d': ml_features['vix_change_1d'],
+                'price_change_1d': ml_features['price_change_1d'],
+                'win_rate_30d': ml_features['win_rate_30d'],
                 # Raw Kronos data for audit
                 'kronos_raw': gex,
             }
@@ -291,11 +398,16 @@ class SignalGenerator:
                 gex_net=gex_data.get('net_gex', 0),
                 gex_flip_point=gex_data.get('flip_point', 0),
                 day_of_week=now_ct.weekday(),  # 0=Monday, 4=Friday
-                # Additional ML model features (root cause fix)
+                # Additional ML model features (root cause fix - 7 features)
                 gex_normalized=gex_data.get('gex_normalized', 0),
                 gex_distance_to_flip_pct=gex_data.get('distance_to_flip_pct', 0),
                 gex_between_walls=gex_data.get('between_walls', True),
                 expected_move_pct=gex_data.get('expected_move_pct', 1.0),
+                # Remaining 4 ML features (complete 11-feature model)
+                vix_percentile_30d=gex_data.get('vix_percentile_30d', 50.0),
+                vix_change_1d=gex_data.get('vix_change_1d', 0.0),
+                price_change_1d=gex_data.get('price_change_1d', 0.0),
+                win_rate_30d=gex_data.get('win_rate_30d', 0.68),
             )
 
             # Call ATHENA-specific advice method (ICARUS uses same model)
