@@ -1370,9 +1370,46 @@ def get_capital_allocation(total_capital: float = 100000) -> CapitalAllocation:
 
 
 def record_bot_outcome(bot_name: str, win: bool, pnl: float = 0):
-    """Record bot trade outcome for Thompson Sampling"""
+    """Record bot trade outcome for Thompson Sampling, Solomon feedback loop, and active validations"""
+    # Record for Thompson Sampling (capital allocation)
     system = get_auto_validation_system()
     system.record_bot_outcome(bot_name, win, pnl)
+
+    # Also record to Solomon feedback loop for analytics
+    try:
+        from trading.mixins.solomon_integration import record_bot_outcome as solomon_record
+        outcome = "WIN" if win else "LOSS"
+        trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+        solomon_record(
+            bot_name=bot_name,
+            trade_date=trade_date,
+            outcome=outcome,
+            pnl=pnl,
+            metadata={'source': 'auto_validation_system', 'win': win}
+        )
+        logger.debug(f"[{bot_name}] Trade outcome also recorded to Solomon feedback loop")
+    except Exception as e:
+        logger.debug(f"[{bot_name}] Could not record to Solomon: {e}")
+
+    # Record to active proposal validations if any exist
+    try:
+        from quant.solomon_enhancements import get_solomon_enhanced
+        solomon_enhanced = get_solomon_enhanced()
+
+        # Check for active validations for this bot
+        active_validations = solomon_enhanced.proposal_validator.get_pending_validations(bot_name)
+        for validation in active_validations:
+            if validation.get('status') == 'RUNNING':
+                validation_id = validation.get('validation_id')
+                # Record to the proposed config side (as trades happen under new config during validation)
+                solomon_enhanced.proposal_validator.record_validation_trade(
+                    validation_id=validation_id,
+                    is_proposed=True,  # During validation, trades use proposed config
+                    pnl=pnl
+                )
+                logger.debug(f"[{bot_name}] Trade recorded to validation {validation_id}")
+    except Exception as e:
+        logger.debug(f"[{bot_name}] Could not record to proposal validation: {e}")
 
 
 def get_validation_status() -> Dict:

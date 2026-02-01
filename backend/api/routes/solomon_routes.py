@@ -851,6 +851,177 @@ except ImportError as e:
     logger.warning(f"Solomon enhanced features not available: {e}")
 
 
+@router.get("/realtime-status")
+async def get_realtime_status(
+    days: int = Query(7, ge=1, le=30, description="Number of days for recent analysis")
+):
+    """
+    Get real-time Solomon monitoring status with actual trade data.
+
+    This endpoint provides visibility into what Solomon is actively monitoring,
+    derived directly from each bot's positions table (ares_positions, titan_positions, etc.)
+    rather than summary tables.
+
+    Returns per-bot:
+    - Recent trade count and P&L
+    - Win/loss streak status
+    - Daily P&L status
+    - Trend indicators
+    """
+    try:
+        from database_adapter import get_connection
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Bot tables mapping - query actual position tables
+        BOT_TABLES = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'TITAN': 'titan_positions',
+            'PEGASUS': 'pegasus_positions',
+            'ICARUS': 'icarus_positions',
+            'PROMETHEUS': 'prometheus_ic_positions',
+        }
+
+        # Collect performance from each bot's actual table
+        bot_rows = []
+        today_by_bot = {}
+        streak_rows = []
+
+        for bot_name, table_name in BOT_TABLES.items():
+            try:
+                # Get recent trade performance for this bot
+                # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+                        COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                        COALESCE(AVG(realized_pnl), 0) as avg_pnl,
+                        MAX(close_time::timestamptz) as last_trade_time
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                      AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
+                """)
+                row = cursor.fetchone()
+                if row and row[0] > 0:
+                    bot_rows.append((bot_name, row[0], row[1], row[2], row[3], row[4], row[5]))
+
+                # Get today's performance for this bot
+                # Cast to timestamptz to handle ARES TEXT columns
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as today_trades,
+                        COALESCE(SUM(realized_pnl), 0) as today_pnl
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                      AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                """)
+                today_row = cursor.fetchone()
+                if today_row and today_row[0] > 0:
+                    today_by_bot[bot_name] = {'trades': today_row[0], 'pnl': float(today_row[1] or 0)}
+
+                # Get last 10 trades for streak calculation
+                # Cast to timestamptz to handle ARES TEXT columns
+                cursor.execute(f"""
+                    SELECT realized_pnl
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                      AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
+                    ORDER BY close_time::timestamptz DESC
+                    LIMIT 10
+                """)
+                trades = cursor.fetchall()
+                for trade in trades:
+                    streak_rows.append((bot_name, trade[0]))
+
+            except Exception as table_err:
+                logger.warning(f"Could not query {table_name}: {table_err}")
+                continue
+
+        conn.close()
+
+        # Calculate streaks
+        bot_streaks = {}
+        for row in streak_rows:
+            bot_name, pnl = row
+            if bot_name not in bot_streaks:
+                bot_streaks[bot_name] = []
+            bot_streaks[bot_name].append(pnl)
+
+        def calculate_streak(pnls):
+            if not pnls:
+                return {'current_streak': 0, 'streak_type': 'none'}
+            streak = 0
+            streak_type = 'win' if pnls[0] > 0 else 'loss'
+            for pnl in pnls:
+                if (pnl > 0 and streak_type == 'win') or (pnl < 0 and streak_type == 'loss'):
+                    streak += 1
+                else:
+                    break
+            return {'current_streak': streak, 'streak_type': streak_type}
+
+        # Build bot status
+        bots = {}
+        ic_bots = ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
+        dir_bots = ['ATHENA', 'ICARUS']
+
+        for row in bot_rows:
+            bot_name, total_trades, wins, losses, total_pnl, avg_pnl, last_trade = row
+            streak_info = calculate_streak(bot_streaks.get(bot_name, []))
+            today_info = today_by_bot.get(bot_name, {'trades': 0, 'pnl': 0})
+
+            bots[bot_name] = {
+                'strategy_type': 'IRON_CONDOR' if bot_name in ic_bots else 'DIRECTIONAL',
+                'period_days': days,
+                'total_trades': total_trades or 0,
+                'wins': wins or 0,
+                'losses': losses or 0,
+                'win_rate': (wins / total_trades * 100) if total_trades else 0,
+                'total_pnl': float(total_pnl or 0),
+                'avg_pnl': float(avg_pnl or 0),
+                'last_trade': last_trade.isoformat() if last_trade else None,
+                'current_streak': streak_info['current_streak'],
+                'streak_type': streak_info['streak_type'],
+                'today_trades': today_info['trades'],
+                'today_pnl': today_info['pnl'],
+                'status': 'active' if total_trades > 0 else 'inactive'
+            }
+
+        # Calculate totals
+        total_trades = sum(b['total_trades'] for b in bots.values())
+        total_wins = sum(b['wins'] for b in bots.values())
+        total_pnl = sum(b['total_pnl'] for b in bots.values())
+        today_pnl = sum(b['today_pnl'] for b in bots.values())
+
+        return {
+            'success': True,
+            'data_source': 'bot_positions_tables (real-time)',
+            'period_days': days,
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+            'bots': bots,
+            'summary': {
+                'total_trades': total_trades,
+                'total_wins': total_wins,
+                'overall_win_rate': (total_wins / total_trades * 100) if total_trades else 0,
+                'total_pnl': total_pnl,
+                'today_pnl': today_pnl,
+                'active_bots': len([b for b in bots.values() if b['status'] == 'active'])
+            },
+            'alerts': [
+                {'type': 'loss_streak', 'bot': bot, 'streak': bots[bot]['current_streak']}
+                for bot in bots
+                if bots[bot]['streak_type'] == 'loss' and bots[bot]['current_streak'] >= 3
+            ]
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get realtime status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/strategy-analysis")
 async def get_strategy_analysis(
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze")

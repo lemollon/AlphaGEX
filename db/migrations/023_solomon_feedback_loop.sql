@@ -220,3 +220,39 @@ CREATE TABLE IF NOT EXISTS oracle_strategy_accuracy (
 
 CREATE INDEX IF NOT EXISTS idx_oracle_strategy_acc_date ON oracle_strategy_accuracy(analysis_date);
 CREATE INDEX IF NOT EXISTS idx_oracle_strategy_acc_rec ON oracle_strategy_accuracy(strategy_recommended);
+
+-- ============================================================================
+-- 7. SOLOMON A/B TESTS TABLE (New)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS solomon_ab_tests (
+    id SERIAL PRIMARY KEY,
+    test_id TEXT UNIQUE NOT NULL,
+    bot_name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Test configuration
+    control_config JSONB NOT NULL,
+    variant_config JSONB NOT NULL,
+    control_allocation NUMERIC(3,2) DEFAULT 0.5,
+
+    -- Control group results
+    control_trades INTEGER DEFAULT 0,
+    control_win_rate NUMERIC(5,4) DEFAULT 0,
+    control_pnl NUMERIC(12,2) DEFAULT 0,
+
+    -- Variant group results
+    variant_trades INTEGER DEFAULT 0,
+    variant_win_rate NUMERIC(5,4) DEFAULT 0,
+    variant_pnl NUMERIC(12,2) DEFAULT 0,
+
+    -- Test outcome
+    status TEXT NOT NULL DEFAULT 'RUNNING',  -- RUNNING, COMPLETED, STOPPED
+    winner TEXT,  -- CONTROL, VARIANT, NULL
+    confidence NUMERIC(5,4) DEFAULT 0,
+
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_solomon_ab_tests_bot ON solomon_ab_tests(bot_name);
+CREATE INDEX IF NOT EXISTS idx_solomon_ab_tests_status ON solomon_ab_tests(status);

@@ -1802,6 +1802,7 @@ class PrometheusICExecutor:
         )
 
         exit_price = mtm.get('current_value', position.entry_credit) if mtm['success'] else position.entry_credit
+        realized_pnl = (position.entry_credit - exit_price) * position.contracts * 100
 
         # Execute closing orders in live mode
         if self.config.mode == TradingMode.LIVE and self.tradier:
@@ -1809,4 +1810,15 @@ class PrometheusICExecutor:
             logger.warning(f"LIVE mode close_position not implemented for IC {position_id}")
 
         # Close in database
-        return self.db.close_ic_position(position_id, exit_price, close_reason)
+        success = self.db.close_ic_position(position_id, exit_price, close_reason)
+
+        # Record outcome to auto-validation system (which also notifies Solomon)
+        if success:
+            try:
+                from quant.auto_validation_system import record_bot_outcome
+                record_bot_outcome('PROMETHEUS', win=(realized_pnl > 0), pnl=realized_pnl)
+                logger.info(f"[PROMETHEUS] Trade outcome recorded: ${realized_pnl:+,.2f}")
+            except Exception as e:
+                logger.debug(f"[PROMETHEUS] Could not record outcome: {e}")
+
+        return success
