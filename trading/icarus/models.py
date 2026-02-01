@@ -62,8 +62,8 @@ class ICARUSConfig:
     - max_daily_trades: 8 (vs 5) - more trades
     - max_open_positions: 4 (vs 3) - more exposure
     - spread_width: $3 (vs $2) - wider spreads
-    - profit_target_pct: 40% (vs 50%) - take profits earlier
-    - stop_loss_pct: 60% (vs 50%) - wider stops
+    - profit_target_pct: 50% (aligned with ATHENA - fixed inverted R:R)
+    - stop_loss_pct: 50% (aligned with ATHENA - fixed inverted R:R)
     """
     # Mode
     mode: TradingMode = TradingMode.PAPER
@@ -94,9 +94,11 @@ class ICARUSConfig:
     min_gex_ratio_bearish: float = 1.3  # 1.3 vs ATHENA's 1.5 for bearish
     max_gex_ratio_bullish: float = 0.77  # 0.77 vs ATHENA's 0.67 for bullish
 
-    # Exit thresholds - AGGRESSIVE
-    profit_target_pct: float = 40.0  # 40% vs ATHENA's 50% - take profits earlier
-    stop_loss_pct: float = 60.0  # 60% vs ATHENA's 50% - slightly wider stops
+    # Exit thresholds - ALIGNED WITH ATHENA (fixed inverted R:R)
+    # Previous: 40% profit / 60% stop = 0.67:1 R:R (INVERTED - caused massive losses)
+    # New: 50% profit / 50% stop = 1:1 R:R (matches ATHENA's proven config)
+    profit_target_pct: float = 50.0  # 50% - aligned with ATHENA
+    stop_loss_pct: float = 50.0  # 50% - aligned with ATHENA
 
     # Trading hours (Central Time)
     # Market closes at 3:00 PM CT (4:00 PM ET)
