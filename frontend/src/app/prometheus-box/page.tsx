@@ -3498,41 +3498,60 @@ export default function PrometheusBoxDashboard() {
                 {/* Header */}
                 <div className="bg-gradient-to-r from-purple-900/50 via-indigo-900/30 to-purple-900/50 rounded-xl p-8 border border-purple-500/30">
                   <div className="text-center mb-4">
+                    <div className="w-20 h-20 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center">
+                      <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                      </svg>
+                    </div>
                     <h1 className="text-4xl font-bold text-white mb-2">PROMETHEUS System Flow</h1>
                     <p className="text-xl text-purple-300">Complete Operational Reference Guide</p>
                     <p className="text-gray-400 mt-2 max-w-2xl mx-auto">
-                      This reference shows exactly how PROMETHEUS operates from market open to close.
-                      Use this guide to understand what is happening at any moment.
+                      Visual decision trees showing exactly how PROMETHEUS operates from market open to close.
+                      Every decision point, threshold, and data flow documented.
                     </p>
                   </div>
                 </div>
 
-                {/* Table of Contents */}
+                {/* Quick Navigation */}
                 <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
-                  <h2 className="text-xl font-bold mb-4 text-orange-400">Quick Navigation</h2>
+                  <h2 className="text-xl font-bold mb-4 text-orange-400 flex items-center gap-2">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                    </svg>
+                    Quick Navigation
+                  </h2>
                   <div className="grid md:grid-cols-3 gap-4 text-sm">
-                    <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
-                      <div className="font-medium text-blue-400 mb-2">Part 1: Box Spreads</div>
-                      <ul className="text-gray-400 space-y-1">
-                        <li>Pre-Market Startup</li>
-                        <li>Daily Position Check</li>
-                        <li>Roll Decision Logic</li>
+                    <div className="bg-gradient-to-br from-blue-900/30 to-blue-900/10 rounded-lg p-4 border border-blue-700/30 hover:border-blue-500/50 transition-colors">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold">1</div>
+                        <span className="font-medium text-blue-400">Box Spreads</span>
+                      </div>
+                      <ul className="text-gray-400 space-y-1 ml-10">
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-blue-500 rounded-full"></span>Pre-Market Startup</li>
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-blue-500 rounded-full"></span>Position Lifecycle</li>
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-blue-500 rounded-full"></span>Roll Decision Matrix</li>
                       </ul>
                     </div>
-                    <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
-                      <div className="font-medium text-orange-400 mb-2">Part 2: IC Trading</div>
-                      <ul className="text-gray-400 space-y-1">
-                        <li>Oracle Approval Flow</li>
-                        <li>PEGASUS Trading Rules</li>
-                        <li>Position Management</li>
+                    <div className="bg-gradient-to-br from-orange-900/30 to-orange-900/10 rounded-lg p-4 border border-orange-700/30 hover:border-orange-500/50 transition-colors">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="w-8 h-8 rounded-lg bg-orange-600 flex items-center justify-center text-white font-bold">2</div>
+                        <span className="font-medium text-orange-400">IC Trading</span>
+                      </div>
+                      <ul className="text-gray-400 space-y-1 ml-10">
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-orange-500 rounded-full"></span>Oracle Approval Flow</li>
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-orange-500 rounded-full"></span>PEGASUS Rules</li>
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-orange-500 rounded-full"></span>Position Management</li>
                       </ul>
                     </div>
-                    <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
-                      <div className="font-medium text-green-400 mb-2">Reference</div>
-                      <ul className="text-gray-400 space-y-1">
-                        <li>Daily Timeline</li>
-                        <li>Data Flow Diagram</li>
-                        <li>Key Thresholds</li>
+                    <div className="bg-gradient-to-br from-green-900/30 to-green-900/10 rounded-lg p-4 border border-green-700/30 hover:border-green-500/50 transition-colors">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="w-8 h-8 rounded-lg bg-green-600 flex items-center justify-center text-white font-bold">3</div>
+                        <span className="font-medium text-green-400">Reference</span>
+                      </div>
+                      <ul className="text-gray-400 space-y-1 ml-10">
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-green-500 rounded-full"></span>Daily Timeline</li>
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-green-500 rounded-full"></span>Data Flow Diagram</li>
+                        <li className="flex items-center gap-2"><span className="w-1 h-1 bg-green-500 rounded-full"></span>Key Thresholds</li>
                       </ul>
                     </div>
                   </div>
@@ -3545,155 +3564,341 @@ export default function PrometheusBoxDashboard() {
                     <span className="text-blue-400">Pre-Market Startup Flow (8:00-8:30 AM CT)</span>
                   </h2>
 
-                  {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
-                    <pre className="text-green-400 whitespace-pre">{`
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    PROMETHEUS PRE-MARKET STARTUP                             │
-│                        (8:00 AM CT Daily)                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────┐     ┌────────────────┐     ┌─────────────────────────────┐ │
-│  │   SYSTEM    │────▶│  TRADIER API   │────▶│  POSITION RECONCILIATION    │ │
-│  │   WAKES UP  │     │  (Production)  │     │                             │ │
-│  └─────────────┘     └────────────────┘     │  • Load all open boxes      │ │
-│                              │              │  • Calculate current MTM     │ │
-│                              │              │  • Check DTE on each         │ │
-│                              ▼              │  • Update cost accruals      │ │
-│                      ┌────────────────┐     └─────────────────────────────┘ │
-│                      │  RATE CHECK    │                    │                │
-│                      │                │                    │                │
-│                      │ Fed Funds: X%  │                    ▼                │
-│                      │ Margin:    Y%  │     ┌─────────────────────────────┐ │
-│                      │ Box Rate:  Z%  │     │       ROLL DECISIONS        │ │
-│                      └────────────────┘     │                             │ │
-│                                             │  IF DTE ≤ 30:              │ │
-│                                             │    → Flag for roll          │ │
-│                                             │    → Check new rates        │ │
-│                                             │    → Queue if favorable     │ │
-│                                             └─────────────────────────────┘ │
-│                                                          │                  │
-│                                                          ▼                  │
-│                                             ┌─────────────────────────────┐ │
-│                                             │     CAPITAL ALLOCATION      │ │
-│                                             │                             │ │
-│                                             │  Total Borrowed: $XXX       │ │
-│                                             │  - Reserve (10%): $XXX      │ │
-│                                             │  = Available: $XXX          │ │
-│                                             │                             │ │
-│                                             │  Per IC Trade: $5,000       │ │
-│                                             │  Max Positions: 3           │ │
-│                                             └─────────────────────────────┘ │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-`}</pre>
+                  {/* Visual Flowchart */}
+                  <div className="bg-gradient-to-b from-blue-900/20 to-transparent rounded-xl p-6 mb-6">
+                    {/* Row 1: System Wakes → Tradier API → Position Reconciliation */}
+                    <div className="flex flex-wrap items-start justify-center gap-4 mb-6">
+                      {/* System Wakes */}
+                      <div className="flex flex-col items-center">
+                        <div className="w-32 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-4 text-center border-2 border-blue-400 shadow-lg shadow-blue-500/20">
+                          <div className="w-10 h-10 mx-auto mb-2 rounded-full bg-blue-500/30 flex items-center justify-center">
+                            <svg className="w-6 h-6 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" />
+                            </svg>
+                          </div>
+                          <div className="text-white font-bold text-sm">SYSTEM</div>
+                          <div className="text-blue-200 text-xs">Wakes Up</div>
+                          <div className="text-blue-300 text-xs mt-1">8:00 AM CT</div>
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex items-center py-8">
+                        <div className="w-8 h-0.5 bg-blue-500"></div>
+                        <div className="w-0 h-0 border-t-4 border-b-4 border-l-8 border-transparent border-l-blue-500"></div>
+                      </div>
+
+                      {/* Tradier API */}
+                      <div className="flex flex-col items-center">
+                        <div className="w-36 bg-gradient-to-br from-green-600 to-green-700 rounded-xl p-4 text-center border-2 border-green-400 shadow-lg shadow-green-500/20">
+                          <div className="w-10 h-10 mx-auto mb-2 rounded-full bg-green-500/30 flex items-center justify-center">
+                            <svg className="w-6 h-6 text-green-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                          </div>
+                          <div className="text-white font-bold text-sm">TRADIER API</div>
+                          <div className="text-green-200 text-xs">Production</div>
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex items-center py-8">
+                        <div className="w-8 h-0.5 bg-green-500"></div>
+                        <div className="w-0 h-0 border-t-4 border-b-4 border-l-8 border-transparent border-l-green-500"></div>
+                      </div>
+
+                      {/* Position Reconciliation */}
+                      <div className="flex flex-col items-center">
+                        <div className="w-48 bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl p-4 border-2 border-purple-400 shadow-lg shadow-purple-500/20">
+                          <div className="flex items-center justify-center gap-2 mb-2">
+                            <svg className="w-6 h-6 text-purple-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                            </svg>
+                            <span className="text-white font-bold text-sm">RECONCILIATION</span>
+                          </div>
+                          <ul className="text-xs text-purple-100 text-left space-y-1">
+                            <li className="flex items-center gap-1"><span className="text-green-400">✓</span> Load open boxes</li>
+                            <li className="flex items-center gap-1"><span className="text-green-400">✓</span> Calculate MTM</li>
+                            <li className="flex items-center gap-1"><span className="text-green-400">✓</span> Check DTE</li>
+                            <li className="flex items-center gap-1"><span className="text-green-400">✓</span> Update accruals</li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 2: Rate Check + Roll Decisions + Capital Allocation */}
+                    <div className="flex flex-wrap items-start justify-center gap-6">
+                      {/* Rate Check */}
+                      <div className="w-40 bg-gradient-to-br from-yellow-600/80 to-yellow-700/80 rounded-xl p-4 border-2 border-yellow-500/50">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                          <svg className="w-5 h-5 text-yellow-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          <span className="text-white font-bold text-sm">RATE CHECK</span>
+                        </div>
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between"><span className="text-yellow-200">Fed Funds:</span><span className="text-white font-mono">X%</span></div>
+                          <div className="flex justify-between"><span className="text-yellow-200">Margin:</span><span className="text-white font-mono">Y%</span></div>
+                          <div className="flex justify-between"><span className="text-yellow-200">Box Rate:</span><span className="text-white font-mono">Z%</span></div>
+                        </div>
+                      </div>
+
+                      {/* Arrow down to Roll Decisions */}
+                      <div className="hidden md:flex flex-col items-center">
+                        <div className="w-0.5 h-6 bg-purple-500"></div>
+                        <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-purple-500"></div>
+                      </div>
+
+                      {/* Roll Decisions */}
+                      <div className="w-56 bg-gradient-to-br from-red-600/80 to-red-700/80 rounded-xl p-4 border-2 border-red-500/50">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                          <svg className="w-5 h-5 text-red-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          <span className="text-white font-bold text-sm">ROLL DECISIONS</span>
+                        </div>
+                        <div className="bg-black/30 rounded-lg p-2 text-xs">
+                          <div className="text-red-200 mb-1">IF DTE ≤ 30:</div>
+                          <ul className="text-red-100 space-y-0.5 ml-2">
+                            <li>→ Flag for roll</li>
+                            <li>→ Check new rates</li>
+                            <li>→ Queue if favorable</li>
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Arrow to Capital Allocation */}
+                      <div className="hidden md:flex items-center">
+                        <div className="w-8 h-0.5 bg-emerald-500"></div>
+                        <div className="w-0 h-0 border-t-4 border-b-4 border-l-8 border-transparent border-l-emerald-500"></div>
+                      </div>
+
+                      {/* Capital Allocation */}
+                      <div className="w-52 bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-xl p-4 border-2 border-emerald-400 shadow-lg shadow-emerald-500/20">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                          <svg className="w-5 h-5 text-emerald-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-white font-bold text-sm">CAPITAL</span>
+                        </div>
+                        <div className="space-y-1 text-xs bg-black/20 rounded-lg p-2">
+                          <div className="flex justify-between"><span className="text-emerald-200">Total Borrowed:</span><span className="text-white">$XXX</span></div>
+                          <div className="flex justify-between"><span className="text-emerald-200">- Reserve (10%):</span><span className="text-yellow-300">$XXX</span></div>
+                          <div className="flex justify-between border-t border-emerald-500/30 pt-1"><span className="text-emerald-200">= Available:</span><span className="text-green-300 font-bold">$XXX</span></div>
+                        </div>
+                        <div className="mt-2 pt-2 border-t border-emerald-500/30 text-xs text-emerald-100">
+                          <div>Per IC: $5,000 | Max: 3</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Explanation */}
+                  {/* Explanation Cards */}
                   <div className="grid md:grid-cols-2 gap-4">
                     <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-600/30">
-                      <h4 className="font-bold text-blue-400 mb-2">What Happens</h4>
-                      <ul className="text-sm text-gray-300 space-y-2">
-                        <li>1. System connects to Tradier PRODUCTION API</li>
-                        <li>2. Loads all open box spread positions</li>
-                        <li>3. Fetches current market prices for MTM</li>
-                        <li>4. Calculates daily interest accrual</li>
-                        <li>5. Checks which positions need rolling</li>
-                      </ul>
+                      <h4 className="font-bold text-blue-400 mb-3 flex items-center gap-2">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        What Happens
+                      </h4>
+                      <ol className="text-sm text-gray-300 space-y-2">
+                        <li className="flex gap-2"><span className="text-blue-400 font-bold">1.</span> System connects to Tradier PRODUCTION API</li>
+                        <li className="flex gap-2"><span className="text-blue-400 font-bold">2.</span> Loads all open box spread positions</li>
+                        <li className="flex gap-2"><span className="text-blue-400 font-bold">3.</span> Fetches current market prices for MTM</li>
+                        <li className="flex gap-2"><span className="text-blue-400 font-bold">4.</span> Calculates daily interest accrual</li>
+                        <li className="flex gap-2"><span className="text-blue-400 font-bold">5.</span> Checks which positions need rolling</li>
+                      </ol>
                     </div>
                     <div className="bg-purple-900/20 rounded-lg p-4 border border-purple-600/30">
-                      <h4 className="font-bold text-purple-400 mb-2">Key Thresholds</h4>
-                      <ul className="text-sm text-gray-300 space-y-2">
-                        <li><span className="text-yellow-400">Roll Threshold:</span> DTE ≤ 30 days</li>
-                        <li><span className="text-yellow-400">Reserve:</span> 10% of borrowed capital</li>
-                        <li><span className="text-yellow-400">Capital/Trade:</span> $5,000 per IC</li>
-                        <li><span className="text-yellow-400">Max Positions:</span> 3 ICs at a time</li>
-                      </ul>
+                      <h4 className="font-bold text-purple-400 mb-3 flex items-center gap-2">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        Key Thresholds
+                      </h4>
+                      <div className="text-sm text-gray-300 space-y-2">
+                        <div className="flex justify-between items-center bg-black/20 rounded px-3 py-1.5">
+                          <span className="text-yellow-400">Roll Threshold</span>
+                          <span className="font-mono text-white">DTE ≤ 30 days</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-black/20 rounded px-3 py-1.5">
+                          <span className="text-yellow-400">Reserve</span>
+                          <span className="font-mono text-white">10% of borrowed</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-black/20 rounded px-3 py-1.5">
+                          <span className="text-yellow-400">Capital/Trade</span>
+                          <span className="font-mono text-white">$5,000 per IC</span>
+                        </div>
+                        <div className="flex justify-between items-center bg-black/20 rounded px-3 py-1.5">
+                          <span className="text-yellow-400">Max Positions</span>
+                          <span className="font-mono text-white">3 ICs at a time</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 {/* PART 2: BOX SPREAD SIDE */}
-                <div className="bg-gray-800 rounded-xl p-6 border border-blue-500/30">
+                <div className="bg-gray-800 rounded-xl p-6 border border-cyan-500/30">
                   <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
-                    <span className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-xl">2</span>
-                    <span className="text-blue-400">Box Spread Side - "The Loan"</span>
+                    <span className="w-10 h-10 bg-cyan-600 rounded-lg flex items-center justify-center text-xl">2</span>
+                    <span className="text-cyan-400">Box Spread Side - &quot;The Loan&quot;</span>
                   </h2>
 
-                  {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
-                    <pre className="text-cyan-400 whitespace-pre">{`
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     BOX SPREAD POSITION LIFECYCLE                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  OPEN NEW BOX                          DAILY MONITORING                     │
-│  ═══════════                           ════════════════                     │
-│  ┌───────────────┐                     ┌───────────────────────────────┐    │
-│  │ Check Rates   │                     │  For each open box:           │    │
-│  │               │                     │                               │    │
-│  │ Box < Margin? │─── NO ──▶ SKIP      │  1. Fetch current prices      │    │
-│  │               │                     │  2. Calculate MTM value       │    │
-│  └───────┬───────┘                     │  3. Accrue daily interest     │    │
-│          │                             │  4. Check roll eligibility    │    │
-│         YES                            │                               │    │
-│          │                             └───────────────────────────────┘    │
-│          ▼                                          │                       │
-│  ┌───────────────┐                                  ▼                       │
-│  │ Select Strikes│                     ┌───────────────────────────────┐    │
-│  │               │                     │  ROLL DECISION MATRIX         │    │
-│  │ Lower: SPX-25 │                     │                               │    │
-│  │ Upper: SPX+25 │                     │  DTE ≤ 0:   CRITICAL (roll!)  │    │
-│  │ Width: 50pts  │                     │  DTE 1-7:   WARNING           │    │
-│  └───────┬───────┘                     │  DTE 8-14:  SOON              │    │
-│          │                             │  DTE 15-30: SCHEDULED         │    │
-│          ▼                             │  DTE > 30:  OK                │    │
-│  ┌───────────────┐                     └───────────────────────────────┘    │
-│  │ Execute Box   │                                                          │
-│  │               │                     EXPIRATION                           │
-│  │ 4-leg order:  │                     ══════════                           │
-│  │ +Call K1      │                     ┌───────────────────────────────┐    │
-│  │ -Call K2      │                     │  Box settles at strike width  │    │
-│  │ +Put  K2      │                     │  Cash-settled (SPX)           │    │
-│  │ -Put  K1      │                     │  "Loan" repaid automatically  │    │
-│  └───────┬───────┘                     │  No stock delivery            │    │
-│          │                             └───────────────────────────────┘    │
-│          ▼                                                                  │
-│  ┌───────────────┐                                                          │
-│  │ Record:       │                                                          │
-│  │ • Credit rcvd │                                                          │
-│  │ • Implied rate│                                                          │
-│  │ • Expiration  │                                                          │
-│  │ • Margin held │                                                          │
-│  └───────────────┘                                                          │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-`}</pre>
+                  {/* Visual Lifecycle - Two Column Layout */}
+                  <div className="grid md:grid-cols-2 gap-6 mb-6">
+                    {/* Left Column: Open New Box Flow */}
+                    <div className="bg-gradient-to-b from-cyan-900/30 to-transparent rounded-xl p-5 border border-cyan-700/30">
+                      <h3 className="text-lg font-bold text-cyan-400 mb-4 text-center">OPEN NEW BOX</h3>
+
+                      {/* Decision: Check Rates */}
+                      <div className="flex flex-col items-center">
+                        <div className="w-full max-w-xs bg-gradient-to-br from-yellow-600/80 to-yellow-700/80 rounded-xl p-4 border-2 border-yellow-500/50 mb-3">
+                          <div className="text-center text-white font-bold mb-2">Check Rates</div>
+                          <div className="bg-black/30 rounded-lg p-2 text-center">
+                            <span className="text-yellow-200 text-sm">Box Rate &lt; Margin Rate?</span>
+                          </div>
+                        </div>
+
+                        {/* Decision Branch */}
+                        <div className="flex items-center gap-4 mb-3">
+                          <div className="flex items-center">
+                            <div className="w-16 h-0.5 bg-red-500"></div>
+                            <div className="px-2 py-1 bg-red-600 rounded text-xs text-white">NO</div>
+                            <div className="w-8 h-0.5 bg-red-500"></div>
+                            <div className="px-3 py-1 bg-red-900/50 rounded border border-red-600 text-red-400 text-xs">SKIP</div>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col items-center">
+                          <div className="w-0.5 h-4 bg-green-500"></div>
+                          <div className="px-2 py-0.5 bg-green-600 rounded text-xs text-white mb-1">YES</div>
+                          <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-green-500"></div>
+                        </div>
+
+                        {/* Select Strikes */}
+                        <div className="w-full max-w-xs bg-gradient-to-br from-blue-600/80 to-blue-700/80 rounded-xl p-4 border-2 border-blue-500/50 my-3">
+                          <div className="text-center text-white font-bold mb-2">Select Strikes</div>
+                          <div className="grid grid-cols-3 gap-2 text-xs text-center">
+                            <div className="bg-black/30 rounded p-1"><span className="text-blue-200">Lower:</span> <span className="text-white">SPX-25</span></div>
+                            <div className="bg-black/30 rounded p-1"><span className="text-blue-200">Upper:</span> <span className="text-white">SPX+25</span></div>
+                            <div className="bg-black/30 rounded p-1"><span className="text-blue-200">Width:</span> <span className="text-white">50pts</span></div>
+                          </div>
+                        </div>
+
+                        <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-blue-500 my-2"></div>
+
+                        {/* Execute Box */}
+                        <div className="w-full max-w-xs bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl p-4 border-2 border-purple-400 mb-3">
+                          <div className="text-center text-white font-bold mb-2">Execute 4-Leg Order</div>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="bg-green-900/50 rounded p-1.5 text-center"><span className="text-green-400">+Call K1</span></div>
+                            <div className="bg-red-900/50 rounded p-1.5 text-center"><span className="text-red-400">-Call K2</span></div>
+                            <div className="bg-green-900/50 rounded p-1.5 text-center"><span className="text-green-400">+Put K2</span></div>
+                            <div className="bg-red-900/50 rounded p-1.5 text-center"><span className="text-red-400">-Put K1</span></div>
+                          </div>
+                        </div>
+
+                        <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-purple-500 my-2"></div>
+
+                        {/* Record */}
+                        <div className="w-full max-w-xs bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-xl p-4 border-2 border-emerald-400">
+                          <div className="text-center text-white font-bold mb-2">Record Position</div>
+                          <div className="text-xs text-emerald-100 space-y-1">
+                            <div className="flex items-center gap-2"><span className="text-emerald-300">•</span> Credit received</div>
+                            <div className="flex items-center gap-2"><span className="text-emerald-300">•</span> Implied rate</div>
+                            <div className="flex items-center gap-2"><span className="text-emerald-300">•</span> Expiration date</div>
+                            <div className="flex items-center gap-2"><span className="text-emerald-300">•</span> Margin held</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Column: Daily Monitoring + Roll Matrix + Expiration */}
+                    <div className="space-y-4">
+                      {/* Daily Monitoring */}
+                      <div className="bg-gradient-to-br from-indigo-900/30 to-transparent rounded-xl p-5 border border-indigo-700/30">
+                        <h3 className="text-lg font-bold text-indigo-400 mb-3 text-center">DAILY MONITORING</h3>
+                        <div className="bg-black/30 rounded-lg p-4">
+                          <div className="text-indigo-200 text-sm mb-2 font-medium">For each open box:</div>
+                          <ol className="text-sm text-indigo-100 space-y-1.5">
+                            <li className="flex items-center gap-2"><span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">1</span> Fetch current prices</li>
+                            <li className="flex items-center gap-2"><span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">2</span> Calculate MTM value</li>
+                            <li className="flex items-center gap-2"><span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">3</span> Accrue daily interest</li>
+                            <li className="flex items-center gap-2"><span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">4</span> Check roll eligibility</li>
+                          </ol>
+                        </div>
+                      </div>
+
+                      {/* Roll Decision Matrix */}
+                      <div className="bg-gradient-to-br from-red-900/30 to-transparent rounded-xl p-5 border border-red-700/30">
+                        <h3 className="text-lg font-bold text-red-400 mb-3 text-center">ROLL DECISION MATRIX</h3>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between bg-red-900/50 rounded-lg px-3 py-2 border border-red-600">
+                            <span className="text-red-200 font-mono text-sm">DTE ≤ 0</span>
+                            <span className="px-2 py-0.5 bg-red-600 rounded text-white text-xs font-bold">CRITICAL</span>
+                          </div>
+                          <div className="flex items-center justify-between bg-orange-900/30 rounded-lg px-3 py-2 border border-orange-700/50">
+                            <span className="text-orange-200 font-mono text-sm">DTE 1-7</span>
+                            <span className="px-2 py-0.5 bg-orange-600 rounded text-white text-xs">WARNING</span>
+                          </div>
+                          <div className="flex items-center justify-between bg-yellow-900/30 rounded-lg px-3 py-2 border border-yellow-700/50">
+                            <span className="text-yellow-200 font-mono text-sm">DTE 8-14</span>
+                            <span className="px-2 py-0.5 bg-yellow-600 rounded text-white text-xs">SOON</span>
+                          </div>
+                          <div className="flex items-center justify-between bg-blue-900/30 rounded-lg px-3 py-2 border border-blue-700/50">
+                            <span className="text-blue-200 font-mono text-sm">DTE 15-30</span>
+                            <span className="px-2 py-0.5 bg-blue-600 rounded text-white text-xs">SCHEDULED</span>
+                          </div>
+                          <div className="flex items-center justify-between bg-green-900/30 rounded-lg px-3 py-2 border border-green-700/50">
+                            <span className="text-green-200 font-mono text-sm">DTE &gt; 30</span>
+                            <span className="px-2 py-0.5 bg-green-600 rounded text-white text-xs">OK</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expiration */}
+                      <div className="bg-gradient-to-br from-gray-700/50 to-transparent rounded-xl p-5 border border-gray-600/30">
+                        <h3 className="text-lg font-bold text-gray-300 mb-3 text-center">EXPIRATION</h3>
+                        <div className="bg-black/30 rounded-lg p-3 text-sm text-gray-200 space-y-1">
+                          <div className="flex items-center gap-2"><span className="text-green-400">✓</span> Box settles at strike width</div>
+                          <div className="flex items-center gap-2"><span className="text-green-400">✓</span> Cash-settled (SPX)</div>
+                          <div className="flex items-center gap-2"><span className="text-green-400">✓</span> &quot;Loan&quot; repaid automatically</div>
+                          <div className="flex items-center gap-2"><span className="text-green-400">✓</span> No stock delivery</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Capital Flow */}
-                  <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 rounded-lg p-4 border border-blue-600/30 mb-4">
-                    <h4 className="font-bold text-white mb-3">Capital Flow Example</h4>
-                    <div className="grid md:grid-cols-4 gap-4 text-sm">
-                      <div className="text-center">
-                        <div className="text-gray-400">Box Credit</div>
+                  {/* Capital Flow Example */}
+                  <div className="bg-gradient-to-r from-cyan-900/30 via-blue-900/30 to-purple-900/30 rounded-xl p-5 border border-cyan-600/30">
+                    <h4 className="font-bold text-white mb-4 flex items-center gap-2 justify-center">
+                      <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Capital Flow Example
+                    </h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-black/30 rounded-xl p-4 text-center border border-green-600/30">
+                        <div className="text-gray-400 text-sm mb-1">Box Credit</div>
                         <div className="text-2xl font-bold text-green-400">$49,250</div>
-                        <div className="text-xs text-gray-500">($50 width × 10 contracts × 98.5)</div>
+                        <div className="text-xs text-gray-500 mt-1">$50 width × 10 contracts × 98.5</div>
                       </div>
-                      <div className="text-center">
-                        <div className="text-gray-400">Reserve (10%)</div>
+                      <div className="bg-black/30 rounded-xl p-4 text-center border border-yellow-600/30">
+                        <div className="text-gray-400 text-sm mb-1">Reserve (10%)</div>
                         <div className="text-2xl font-bold text-yellow-400">$4,925</div>
-                        <div className="text-xs text-gray-500">Safety buffer</div>
+                        <div className="text-xs text-gray-500 mt-1">Safety buffer</div>
                       </div>
-                      <div className="text-center">
-                        <div className="text-gray-400">Available for IC</div>
+                      <div className="bg-black/30 rounded-xl p-4 text-center border border-orange-600/30">
+                        <div className="text-gray-400 text-sm mb-1">Available for IC</div>
                         <div className="text-2xl font-bold text-orange-400">$44,325</div>
-                        <div className="text-xs text-gray-500">Deployed to trading</div>
+                        <div className="text-xs text-gray-500 mt-1">Deployed to trading</div>
                       </div>
-                      <div className="text-center">
-                        <div className="text-gray-400">Owed at Expiry</div>
+                      <div className="bg-black/30 rounded-xl p-4 text-center border border-red-600/30">
+                        <div className="text-gray-400 text-sm mb-1">Owed at Expiry</div>
                         <div className="text-2xl font-bold text-red-400">$50,000</div>
-                        <div className="text-xs text-gray-500">Strike width × contracts × 100</div>
+                        <div className="text-xs text-gray-500 mt-1">Strike width × contracts × 100</div>
                       </div>
                     </div>
                   </div>
@@ -3706,116 +3911,233 @@ export default function PrometheusBoxDashboard() {
                     <span className="text-orange-400">IC Trading Cycle (Every 5-15 Minutes)</span>
                   </h2>
 
-                  {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
-                    <pre className="text-orange-400 whitespace-pre">{`
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    PROMETHEUS IC TRADING CYCLE                               │
-│                    (Follows PEGASUS Trading Rules)                           │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────┐                                                        │
-│  │  SCAN TRIGGER   │   Every 5-15 minutes during market hours               │
-│  │  (8:35 AM CT)   │   (configurable interval)                              │
-│  └────────┬────────┘                                                        │
-│           │                                                                 │
-│           ▼                                                                 │
-│  ┌─────────────────┐        ┌─────────────────────────────────────────┐     │
-│  │ MARKET CHECK    │        │  VIX FILTER (from PEGASUS rules):       │     │
-│  │                 │        │  • Min VIX: 12 (premiums too thin)      │     │
-│  │ • Get SPX price │───────▶│  • Max VIX: 35 (too risky)              │     │
-│  │ • Get VIX       │        │  • Mon/Fri Max: 30 (decay risk)         │     │
-│  │ • Get GEX regime│        └─────────────────────────────────────────┘     │
-│  └────────┬────────┘                         │                              │
-│           │                                PASS?                            │
-│           │                                  │                              │
-│  ┌────────┴────────────────────────────────┐ │                              │
-│  │                                          │ │                              │
-│  │                   NO ◀───────────────────┘ │                              │
-│  │                   │                        │                              │
-│  │         Log: "VIX 38 too high"            YES                            │
-│  │         Skip scan                          │                              │
-│  │                                            ▼                              │
-│  │                              ┌─────────────────────────────┐             │
-│  │                              │       ORACLE CHECK          │             │
-│  │                              │                             │             │
-│  │                              │  get_pegasus_advice()       │             │
-│  │                              │                             │             │
-│  │                              │  Returns:                   │             │
-│  │                              │  • advice: TRADE/SKIP/HOLD  │             │
-│  │                              │  • confidence: 0-100%       │             │
-│  │                              │  • win_probability: 0-100%  │             │
-│  │                              │  • suggested_strikes        │             │
-│  │                              │  • reasoning                │             │
-│  │                              └──────────────┬──────────────┘             │
-│  │                                             │                            │
-│  │                                             ▼                            │
-│  │                              ┌─────────────────────────────┐             │
-│  │                              │    APPROVAL GATES            │             │
-│  │                              │                             │             │
-│  │                              │  1. Advice = TRADE_FULL     │             │
-│  │                              │     or TRADE_REDUCED?       │             │
-│  │                              │                             │             │
-│  │                              │  2. Confidence ≥ 60%?       │             │
-│  │                              │                             │             │
-│  │                              │  3. Win Prob ≥ 55%?         │             │
-│  │                              │                             │             │
-│  │                              │  4. Max Positions < 3?      │             │
-│  │                              └──────────────┬──────────────┘             │
-│  │                                             │                            │
-│  │                              ALL PASS?      │                            │
-│  │                                │            │                            │
-│  │                    NO ◀────────┘            │                            │
-│  │                    │                       YES                           │
-│  │         Log: "Oracle says SKIP"             │                            │
-│  │         or "Confidence 45% < 60%"           ▼                            │
-│  │                              ┌─────────────────────────────┐             │
-│  │                              │     EXECUTE IC TRADE        │             │
-│  │                              │                             │             │
-│  │                              │  • Select strikes (~10Δ)    │             │
-│  │                              │  • Size: $5,000 max risk    │             │
-│  │                              │  • Execute 4-leg order      │             │
-│  │                              │  • Record to database       │             │
-│  │                              │  • Log scan activity        │             │
-│  │                              └─────────────────────────────┘             │
-│  │                                                                          │
-│  └──────────────────────────────────────────────────────────────────────────┘
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-`}</pre>
+                  {/* Visual Decision Tree Flowchart */}
+                  <div className="bg-gradient-to-b from-orange-900/20 to-transparent rounded-xl p-6 mb-6">
+                    <div className="text-center text-sm text-orange-300 mb-4">Follows PEGASUS Trading Rules</div>
+
+                    {/* Flow Container */}
+                    <div className="flex flex-col items-center">
+                      {/* Scan Trigger */}
+                      <div className="w-full max-w-md bg-gradient-to-br from-orange-600 to-orange-700 rounded-xl p-4 border-2 border-orange-400 shadow-lg shadow-orange-500/20 mb-4">
+                        <div className="flex items-center justify-center gap-2 mb-2">
+                          <svg className="w-6 h-6 text-orange-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-white font-bold">SCAN TRIGGER</span>
+                        </div>
+                        <div className="text-center text-orange-100 text-sm">
+                          Every 5-15 minutes during 8:35 AM - 2:30 PM CT
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex flex-col items-center mb-4">
+                        <div className="w-0.5 h-4 bg-orange-500"></div>
+                        <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-orange-500"></div>
+                      </div>
+
+                      {/* Market Check + VIX Filter Row */}
+                      <div className="flex flex-wrap items-start justify-center gap-4 mb-4">
+                        {/* Market Check */}
+                        <div className="w-48 bg-gradient-to-br from-blue-600/80 to-blue-700/80 rounded-xl p-4 border-2 border-blue-500/50">
+                          <div className="text-center text-white font-bold mb-2">MARKET CHECK</div>
+                          <ul className="text-xs text-blue-100 space-y-1">
+                            <li className="flex items-center gap-1"><span className="text-blue-300">•</span> Get SPX price</li>
+                            <li className="flex items-center gap-1"><span className="text-blue-300">•</span> Get VIX</li>
+                            <li className="flex items-center gap-1"><span className="text-blue-300">•</span> Get GEX regime</li>
+                          </ul>
+                        </div>
+
+                        {/* Arrow */}
+                        <div className="flex items-center py-6">
+                          <div className="w-6 h-0.5 bg-blue-500"></div>
+                          <div className="w-0 h-0 border-t-4 border-b-4 border-l-8 border-transparent border-l-blue-500"></div>
+                        </div>
+
+                        {/* VIX Filter */}
+                        <div className="w-56 bg-gradient-to-br from-yellow-600/80 to-yellow-700/80 rounded-xl p-4 border-2 border-yellow-500/50">
+                          <div className="text-center text-white font-bold mb-2">VIX FILTER</div>
+                          <div className="text-xs text-yellow-100 space-y-1">
+                            <div className="flex justify-between bg-black/20 rounded px-2 py-1">
+                              <span>Min VIX:</span><span className="text-white font-mono">12</span>
+                            </div>
+                            <div className="flex justify-between bg-black/20 rounded px-2 py-1">
+                              <span>Max VIX:</span><span className="text-white font-mono">35</span>
+                            </div>
+                            <div className="flex justify-between bg-black/20 rounded px-2 py-1">
+                              <span>Mon/Fri:</span><span className="text-white font-mono">30</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* VIX Decision Branch */}
+                      <div className="flex items-center gap-6 mb-4">
+                        <div className="flex items-center">
+                          <div className="w-20 h-0.5 bg-red-500"></div>
+                          <div className="px-2 py-1 bg-red-600 rounded text-xs text-white font-bold">FAIL</div>
+                          <div className="w-8 h-0.5 bg-red-500"></div>
+                          <div className="px-4 py-2 bg-red-900/50 rounded-lg border border-red-600 text-red-400 text-xs">
+                            <div className="font-bold">SKIP SCAN</div>
+                            <div className="text-red-300">Log: &quot;VIX too high&quot;</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Pass Arrow */}
+                      <div className="flex flex-col items-center mb-4">
+                        <div className="px-3 py-1 bg-green-600 rounded text-xs text-white font-bold">PASS</div>
+                        <div className="w-0.5 h-4 bg-green-500"></div>
+                        <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-green-500"></div>
+                      </div>
+
+                      {/* Oracle Check */}
+                      <div className="w-full max-w-sm bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl p-5 border-2 border-purple-400 shadow-lg shadow-purple-500/20 mb-4">
+                        <div className="flex items-center justify-center gap-2 mb-3">
+                          <svg className="w-6 h-6 text-purple-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                          </svg>
+                          <span className="text-white font-bold">ORACLE CHECK</span>
+                        </div>
+                        <div className="bg-black/30 rounded-lg p-3 text-xs">
+                          <div className="text-purple-200 mb-2 font-mono">get_pegasus_advice()</div>
+                          <div className="text-purple-100 space-y-1">
+                            <div className="flex items-center gap-2"><span className="text-purple-300">→</span> advice: TRADE/SKIP/HOLD</div>
+                            <div className="flex items-center gap-2"><span className="text-purple-300">→</span> confidence: 0-100%</div>
+                            <div className="flex items-center gap-2"><span className="text-purple-300">→</span> win_probability: 0-100%</div>
+                            <div className="flex items-center gap-2"><span className="text-purple-300">→</span> suggested_strikes</div>
+                            <div className="flex items-center gap-2"><span className="text-purple-300">→</span> reasoning</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Arrow */}
+                      <div className="flex flex-col items-center mb-4">
+                        <div className="w-0.5 h-4 bg-purple-500"></div>
+                        <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-purple-500"></div>
+                      </div>
+
+                      {/* Approval Gates */}
+                      <div className="w-full max-w-md bg-gradient-to-br from-indigo-600/80 to-indigo-700/80 rounded-xl p-5 border-2 border-indigo-500/50 mb-4">
+                        <div className="text-center text-white font-bold mb-3">APPROVAL GATES</div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center">1</span>
+                            <span className="text-xs text-indigo-100">Advice = TRADE?</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center">2</span>
+                            <span className="text-xs text-indigo-100">Confidence ≥ 60%</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center">3</span>
+                            <span className="text-xs text-indigo-100">Win Prob ≥ 55%</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center">4</span>
+                            <span className="text-xs text-indigo-100">Positions &lt; 3</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* All Pass Decision */}
+                      <div className="flex flex-wrap items-center justify-center gap-6 mb-4">
+                        <div className="flex items-center">
+                          <div className="px-4 py-2 bg-red-900/50 rounded-lg border border-red-600 text-xs">
+                            <div className="text-red-400 font-bold">ANY FAIL → SKIP</div>
+                            <div className="text-red-300 text-xs">Log reason</div>
+                          </div>
+                          <div className="w-8 h-0.5 bg-red-500"></div>
+                          <div className="px-2 py-1 bg-red-600 rounded text-xs text-white font-bold">NO</div>
+                        </div>
+                        <div className="flex flex-col items-center">
+                          <div className="px-3 py-1 bg-green-600 rounded text-xs text-white font-bold">ALL PASS</div>
+                          <div className="w-0.5 h-4 bg-green-500"></div>
+                          <div className="w-0 h-0 border-l-4 border-r-4 border-t-8 border-transparent border-t-green-500"></div>
+                        </div>
+                      </div>
+
+                      {/* Execute IC Trade */}
+                      <div className="w-full max-w-md bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-xl p-5 border-2 border-emerald-400 shadow-lg shadow-emerald-500/20">
+                        <div className="flex items-center justify-center gap-2 mb-3">
+                          <svg className="w-6 h-6 text-emerald-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-white font-bold">EXECUTE IC TRADE</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="text-emerald-300">•</span>
+                            <span className="text-emerald-100">Select strikes (~10Δ)</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="text-emerald-300">•</span>
+                            <span className="text-emerald-100">Size: $5,000 max risk</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="text-emerald-300">•</span>
+                            <span className="text-emerald-100">Execute 4-leg order</span>
+                          </div>
+                          <div className="bg-black/30 rounded-lg p-2 flex items-center gap-2">
+                            <span className="text-emerald-300">•</span>
+                            <span className="text-emerald-100">Record to database</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   {/* PEGASUS Rules Reference */}
-                  <div className="bg-orange-900/20 rounded-lg p-4 border border-orange-600/30 mb-4">
-                    <h4 className="font-bold text-orange-400 mb-3">PEGASUS Trading Rules (Used by PROMETHEUS IC)</h4>
-                    <div className="grid md:grid-cols-3 gap-4 text-sm">
-                      <div className="bg-black/30 rounded-lg p-3">
-                        <div className="font-medium text-white mb-2">Entry Rules</div>
-                        <ul className="text-gray-300 space-y-1">
-                          <li>• Trading hours: 8:35 AM - 2:30 PM CT</li>
-                          <li>• VIX range: 12-35 (12-30 Mon/Fri)</li>
-                          <li>• Max 3 open positions</li>
-                          <li>• Oracle confidence ≥ 60%</li>
-                          <li>• Win probability ≥ 55%</li>
+                  <div className="bg-gradient-to-r from-orange-900/20 to-transparent rounded-xl p-5 border border-orange-600/30">
+                    <h4 className="font-bold text-orange-400 mb-4 flex items-center gap-2">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                      PEGASUS Trading Rules (Used by PROMETHEUS IC)
+                    </h4>
+                    <div className="grid md:grid-cols-3 gap-4">
+                      <div className="bg-black/30 rounded-xl p-4 border border-blue-700/30">
+                        <div className="font-medium text-blue-400 mb-3 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                          </svg>
+                          Entry Rules
+                        </div>
+                        <ul className="text-sm text-gray-300 space-y-1.5">
+                          <li className="flex items-start gap-2"><span className="text-blue-400 mt-1">•</span> Trading hours: 8:35 AM - 2:30 PM CT</li>
+                          <li className="flex items-start gap-2"><span className="text-blue-400 mt-1">•</span> VIX range: 12-35 (12-30 Mon/Fri)</li>
+                          <li className="flex items-start gap-2"><span className="text-blue-400 mt-1">•</span> Max 3 open positions</li>
+                          <li className="flex items-start gap-2"><span className="text-blue-400 mt-1">•</span> Oracle confidence ≥ 60%</li>
+                          <li className="flex items-start gap-2"><span className="text-blue-400 mt-1">•</span> Win probability ≥ 55%</li>
                         </ul>
                       </div>
-                      <div className="bg-black/30 rounded-lg p-3">
-                        <div className="font-medium text-white mb-2">Strike Selection</div>
-                        <ul className="text-gray-300 space-y-1">
-                          <li>• Target delta: ~10 (both sides)</li>
-                          <li>• SPX $25 spread width</li>
-                          <li>• Round to nearest $5</li>
-                          <li>• Priority: Oracle → GEX → Delta</li>
-                          <li>• 0DTE or 1DTE expiration</li>
+                      <div className="bg-black/30 rounded-xl p-4 border border-purple-700/30">
+                        <div className="font-medium text-purple-400 mb-3 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                          </svg>
+                          Strike Selection
+                        </div>
+                        <ul className="text-sm text-gray-300 space-y-1.5">
+                          <li className="flex items-start gap-2"><span className="text-purple-400 mt-1">•</span> Target delta: ~10 (both sides)</li>
+                          <li className="flex items-start gap-2"><span className="text-purple-400 mt-1">•</span> SPX $25 spread width</li>
+                          <li className="flex items-start gap-2"><span className="text-purple-400 mt-1">•</span> Round to nearest $5</li>
+                          <li className="flex items-start gap-2"><span className="text-purple-400 mt-1">•</span> Priority: Oracle → GEX → Delta</li>
+                          <li className="flex items-start gap-2"><span className="text-purple-400 mt-1">•</span> 0DTE or 1DTE expiration</li>
                         </ul>
                       </div>
-                      <div className="bg-black/30 rounded-lg p-3">
-                        <div className="font-medium text-white mb-2">Exit Rules</div>
-                        <ul className="text-gray-300 space-y-1">
-                          <li>• Profit target: 50% of credit</li>
-                          <li>• Stop loss: 200% of credit</li>
-                          <li>• Force exit: 10 min before close</li>
-                          <li>• Expiration: Auto-settle (SPX)</li>
+                      <div className="bg-black/30 rounded-xl p-4 border border-red-700/30">
+                        <div className="font-medium text-red-400 mb-3 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                          </svg>
+                          Exit Rules
+                        </div>
+                        <ul className="text-sm text-gray-300 space-y-1.5">
+                          <li className="flex items-start gap-2"><span className="text-green-400 mt-1">•</span> Profit target: 50% of credit</li>
+                          <li className="flex items-start gap-2"><span className="text-red-400 mt-1">•</span> Stop loss: 200% of credit</li>
+                          <li className="flex items-start gap-2"><span className="text-yellow-400 mt-1">•</span> Force exit: 10 min before close</li>
+                          <li className="flex items-start gap-2"><span className="text-gray-400 mt-1">•</span> Expiration: Auto-settle (SPX)</li>
                         </ul>
                       </div>
                     </div>
@@ -3829,46 +4151,248 @@ export default function PrometheusBoxDashboard() {
                     <span className="text-green-400">Oracle Scan Activity Display</span>
                   </h2>
 
-                  {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
-                    <pre className="text-green-400 whitespace-pre">{`
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  PROMETHEUS IC - ORACLE SCAN ACTIVITY LOG                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  TIME        SPX     VIX   ORACLE   CONF   WIN%   DECISION    REASON        │
-│  ────────────────────────────────────────────────────────────────────────── │
-│  10:35:22   5982   18.4   TRADE    72%    68%    ✅ OPENED    IC 5945/6020  │
-│  10:20:15   5978   18.6   TRADE    65%    62%    ⏸️ SKIP      Max positions │
-│  10:05:08   5975   18.9   HOLD     52%    55%    ⏸️ SKIP      Conf < 60%    │
-│  09:50:01   5972   19.1   SKIP     45%    48%    ⏸️ SKIP      Oracle: HOLD  │
-│  09:35:44   5968   19.4   TRADE    78%    71%    ✅ OPENED    IC 5935/6010  │
-│  09:20:37   5965   19.2   TRADE    71%    65%    ✅ OPENED    IC 5930/6005  │
-│  09:05:30   5962   19.5   SKIP     42%    45%    ⏸️ SKIP      VIX spike     │
-│  08:50:23   5960   20.1   N/A      --     --     ⏸️ SKIP      Pre-window    │
-│                                                                             │
-│  ────────────────────────────────────────────────────────────────────────── │
-│  TODAY'S STATS:  8 scans | 3 trades | 5 skips | 37.5% trade rate           │
-│                                                                             │
-│  CLICK ROW FOR FULL ORACLE REASONING:                                       │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  10:35:22 - TRADE_FULL Decision                                       │  │
-│  │                                                                       │  │
-│  │  Oracle says: "Strong IC conditions. VIX 18.4 in sweet spot.          │  │
-│  │  Gamma regime POSITIVE = mean reversion favorable.                    │  │
-│  │  Call wall at 6050, put wall at 5920 provide cushion.                 │  │
-│  │  Day: Wednesday (best IC day historically)."                          │  │
-│  │                                                                       │  │
-│  │  Top Factors:                                                         │  │
-│  │  1. vix_level: +15% (favorable range)                                 │  │
-│  │  2. gex_regime: +12% (positive gamma)                                 │  │
-│  │  3. day_of_week: +8% (mid-week)                                       │  │
-│  │                                                                       │  │
-│  │  Suggested Strikes: 5945P / 6020C (from Oracle)                       │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-`}</pre>
+                  {/* Visual Activity Log */}
+                  <div className="space-y-4">
+                    {/* Header Bar */}
+                    <div className="bg-gradient-to-r from-green-900/40 to-gray-900 rounded-lg p-4 border border-green-600/40">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-green-600/30 rounded-lg flex items-center justify-center">
+                            <svg className="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                            </svg>
+                          </div>
+                          <span className="font-bold text-green-300">PROMETHEUS IC - Oracle Scan Activity Log</span>
+                        </div>
+                        <span className="text-xs text-gray-400 bg-black/30 px-3 py-1 rounded">Live Feed</span>
+                      </div>
+                    </div>
+
+                    {/* Activity Log Table */}
+                    <div className="bg-black/40 rounded-xl border border-gray-700 overflow-hidden">
+                      {/* Table Header */}
+                      <div className="grid grid-cols-8 gap-2 px-4 py-3 bg-gray-800/80 border-b border-gray-700 text-xs font-medium text-gray-400 uppercase">
+                        <div>Time</div>
+                        <div>SPX</div>
+                        <div>VIX</div>
+                        <div>Oracle</div>
+                        <div>Conf</div>
+                        <div>Win%</div>
+                        <div>Decision</div>
+                        <div>Reason</div>
+                      </div>
+
+                      {/* Log Entries */}
+                      <div className="divide-y divide-gray-800">
+                        {/* Entry 1 - Trade Opened */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm hover:bg-green-900/10 transition-colors cursor-pointer">
+                          <div className="font-mono text-gray-300">10:35:22</div>
+                          <div className="text-white">5982</div>
+                          <div className="text-yellow-400">18.4</div>
+                          <div><span className="px-2 py-0.5 bg-green-600/30 text-green-400 rounded text-xs">TRADE</span></div>
+                          <div className="text-green-400">72%</div>
+                          <div className="text-green-400">68%</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-green-400">✓</span>
+                            <span className="text-green-400">OPENED</span>
+                          </div>
+                          <div className="text-gray-400 text-xs">IC 5945/6020</div>
+                        </div>
+
+                        {/* Entry 2 - Skipped */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm hover:bg-gray-800/50 transition-colors cursor-pointer">
+                          <div className="font-mono text-gray-300">10:20:15</div>
+                          <div className="text-white">5978</div>
+                          <div className="text-yellow-400">18.6</div>
+                          <div><span className="px-2 py-0.5 bg-green-600/30 text-green-400 rounded text-xs">TRADE</span></div>
+                          <div className="text-green-400">65%</div>
+                          <div className="text-green-400">62%</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-400">⏸</span>
+                            <span className="text-gray-400">SKIP</span>
+                          </div>
+                          <div className="text-gray-400 text-xs">Max positions</div>
+                        </div>
+
+                        {/* Entry 3 - Low Conf */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm hover:bg-gray-800/50 transition-colors cursor-pointer">
+                          <div className="font-mono text-gray-300">10:05:08</div>
+                          <div className="text-white">5975</div>
+                          <div className="text-yellow-400">18.9</div>
+                          <div><span className="px-2 py-0.5 bg-yellow-600/30 text-yellow-400 rounded text-xs">HOLD</span></div>
+                          <div className="text-yellow-400">52%</div>
+                          <div className="text-yellow-400">55%</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-400">⏸</span>
+                            <span className="text-gray-400">SKIP</span>
+                          </div>
+                          <div className="text-gray-400 text-xs">Conf &lt; 60%</div>
+                        </div>
+
+                        {/* Entry 4 - Oracle HOLD */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm hover:bg-gray-800/50 transition-colors cursor-pointer">
+                          <div className="font-mono text-gray-300">09:50:01</div>
+                          <div className="text-white">5972</div>
+                          <div className="text-yellow-400">19.1</div>
+                          <div><span className="px-2 py-0.5 bg-gray-600/30 text-gray-400 rounded text-xs">SKIP</span></div>
+                          <div className="text-gray-400">45%</div>
+                          <div className="text-gray-400">48%</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-400">⏸</span>
+                            <span className="text-gray-400">SKIP</span>
+                          </div>
+                          <div className="text-gray-400 text-xs">Oracle: HOLD</div>
+                        </div>
+
+                        {/* Entry 5 - Trade Opened */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm hover:bg-green-900/10 transition-colors cursor-pointer">
+                          <div className="font-mono text-gray-300">09:35:44</div>
+                          <div className="text-white">5968</div>
+                          <div className="text-yellow-400">19.4</div>
+                          <div><span className="px-2 py-0.5 bg-green-600/30 text-green-400 rounded text-xs">TRADE</span></div>
+                          <div className="text-green-400">78%</div>
+                          <div className="text-green-400">71%</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-green-400">✓</span>
+                            <span className="text-green-400">OPENED</span>
+                          </div>
+                          <div className="text-gray-400 text-xs">IC 5935/6010</div>
+                        </div>
+
+                        {/* Entry 6 - Trade Opened */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm hover:bg-green-900/10 transition-colors cursor-pointer">
+                          <div className="font-mono text-gray-300">09:20:37</div>
+                          <div className="text-white">5965</div>
+                          <div className="text-yellow-400">19.2</div>
+                          <div><span className="px-2 py-0.5 bg-green-600/30 text-green-400 rounded text-xs">TRADE</span></div>
+                          <div className="text-green-400">71%</div>
+                          <div className="text-green-400">65%</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-green-400">✓</span>
+                            <span className="text-green-400">OPENED</span>
+                          </div>
+                          <div className="text-gray-400 text-xs">IC 5930/6005</div>
+                        </div>
+
+                        {/* Entry 7 - VIX Spike */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm hover:bg-gray-800/50 transition-colors cursor-pointer">
+                          <div className="font-mono text-gray-300">09:05:30</div>
+                          <div className="text-white">5962</div>
+                          <div className="text-red-400">19.5</div>
+                          <div><span className="px-2 py-0.5 bg-gray-600/30 text-gray-400 rounded text-xs">SKIP</span></div>
+                          <div className="text-gray-400">42%</div>
+                          <div className="text-gray-400">45%</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-400">⏸</span>
+                            <span className="text-gray-400">SKIP</span>
+                          </div>
+                          <div className="text-gray-400 text-xs">VIX spike</div>
+                        </div>
+
+                        {/* Entry 8 - Pre-window */}
+                        <div className="grid grid-cols-8 gap-2 px-4 py-3 text-sm bg-gray-900/50">
+                          <div className="font-mono text-gray-500">08:50:23</div>
+                          <div className="text-gray-500">5960</div>
+                          <div className="text-gray-500">20.1</div>
+                          <div><span className="px-2 py-0.5 bg-gray-700/30 text-gray-500 rounded text-xs">N/A</span></div>
+                          <div className="text-gray-500">--</div>
+                          <div className="text-gray-500">--</div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-gray-500">⏸</span>
+                            <span className="text-gray-500">SKIP</span>
+                          </div>
+                          <div className="text-gray-500 text-xs">Pre-window</div>
+                        </div>
+                      </div>
+
+                      {/* Stats Footer */}
+                      <div className="bg-gray-800/60 px-4 py-3 border-t border-gray-700">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-400 text-sm font-medium">TODAY'S STATS:</span>
+                          <div className="flex items-center gap-4 text-sm">
+                            <span className="text-gray-300"><strong className="text-white">8</strong> scans</span>
+                            <span className="text-green-400"><strong>3</strong> trades</span>
+                            <span className="text-gray-400"><strong>5</strong> skips</span>
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded"><strong>37.5%</strong> trade rate</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Oracle Reasoning Expansion Panel */}
+                    <div className="bg-gradient-to-r from-green-900/30 to-gray-900 rounded-xl border border-green-600/30 overflow-hidden">
+                      <div className="px-4 py-3 bg-green-900/40 border-b border-green-600/30">
+                        <div className="flex items-center gap-2">
+                          <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          <span className="font-medium text-green-300">Click row for full Oracle reasoning</span>
+                          <span className="text-xs text-gray-400 ml-2">→ Example: 10:35:22</span>
+                        </div>
+                      </div>
+                      <div className="p-4">
+                        {/* Decision Header */}
+                        <div className="flex items-center justify-between mb-4">
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono text-green-400 bg-black/40 px-2 py-1 rounded">10:35:22</span>
+                            <span className="px-3 py-1 bg-green-600/30 text-green-400 rounded-lg font-medium">TRADE_FULL Decision</span>
+                          </div>
+                          <span className="text-gray-400 text-sm">IC 5945/6020</span>
+                        </div>
+
+                        {/* Oracle Reasoning */}
+                        <div className="bg-black/30 rounded-lg p-4 mb-4 border-l-4 border-green-500">
+                          <p className="text-gray-300 italic">
+                            "Strong IC conditions. VIX 18.4 in sweet spot. Gamma regime POSITIVE = mean reversion favorable.
+                            Call wall at 6050, put wall at 5920 provide cushion. Day: Wednesday (best IC day historically)."
+                          </p>
+                        </div>
+
+                        {/* Top Factors Grid */}
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                          <div className="bg-black/40 rounded-lg p-3 border border-green-700/30">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-gray-400 text-xs">1. vix_level</span>
+                              <span className="text-green-400 font-bold">+15%</span>
+                            </div>
+                            <div className="text-xs text-gray-500">favorable range</div>
+                            <div className="mt-2 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                              <div className="h-full w-[75%] bg-gradient-to-r from-green-600 to-green-400 rounded-full"></div>
+                            </div>
+                          </div>
+                          <div className="bg-black/40 rounded-lg p-3 border border-green-700/30">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-gray-400 text-xs">2. gex_regime</span>
+                              <span className="text-green-400 font-bold">+12%</span>
+                            </div>
+                            <div className="text-xs text-gray-500">positive gamma</div>
+                            <div className="mt-2 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                              <div className="h-full w-[65%] bg-gradient-to-r from-green-600 to-green-400 rounded-full"></div>
+                            </div>
+                          </div>
+                          <div className="bg-black/40 rounded-lg p-3 border border-green-700/30">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-gray-400 text-xs">3. day_of_week</span>
+                              <span className="text-green-400 font-bold">+8%</span>
+                            </div>
+                            <div className="text-xs text-gray-500">mid-week</div>
+                            <div className="mt-2 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                              <div className="h-full w-[50%] bg-gradient-to-r from-green-600 to-green-400 rounded-full"></div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Suggested Strikes */}
+                        <div className="flex items-center justify-center gap-4 p-3 bg-green-900/20 rounded-lg border border-green-600/30">
+                          <span className="text-gray-400">Suggested Strikes:</span>
+                          <span className="px-3 py-1 bg-red-600/20 text-red-400 rounded font-mono font-bold">5945P</span>
+                          <span className="text-gray-500">/</span>
+                          <span className="px-3 py-1 bg-green-600/20 text-green-400 rounded font-mono font-bold">6020C</span>
+                          <span className="text-xs text-gray-500">(from Oracle)</span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -3879,38 +4403,180 @@ export default function PrometheusBoxDashboard() {
                     <span className="text-yellow-400">Daily P&L Breakdown Format</span>
                   </h2>
 
-                  {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
-                    <pre className="text-yellow-400 whitespace-pre">{`
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  PROMETHEUS - DAILY P&L BREAKDOWN (Last 14 Days)                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  DATE         IC EARNED    BOX COST    NET P&L    CUMULATIVE    TRADES     │
-│  ──────────────────────────────────────────────────────────────────────────│
-│  2026-01-30     $425.00     -$12.50    +$412.50     $3,247.50      3       │
-│  2026-01-29     $380.00     -$12.50    +$367.50     $2,835.00      2       │
-│  2026-01-28    -$125.00     -$12.50    -$137.50     $2,467.50      2       │
-│  2026-01-27     $290.00     -$12.50    +$277.50     $2,605.00      2       │
-│  2026-01-24     $510.00     -$12.50    +$497.50     $2,327.50      3       │
-│  2026-01-23     $445.00     -$12.50    +$432.50     $1,830.00      3       │
-│  2026-01-22     $315.00     -$12.50    +$302.50     $1,397.50      2       │
-│  ...                                                                        │
-│  ──────────────────────────────────────────────────────────────────────────│
-│                                                                             │
-│  LEGEND:                                                                    │
-│  IC EARNED = Premium collected from Iron Condor trades                      │
-│  BOX COST  = Daily interest accrual on borrowed capital                     │
-│  NET P&L   = IC Earned - Box Cost (what you actually made)                  │
-│                                                                             │
-│  ══════════════════════════════════════════════════════════════════════════│
-│  BREAK-EVEN ANALYSIS:                                                       │
-│  Daily Box Cost: $12.50  →  Need IC returns > $12.50/day to profit         │
-│  Current Avg IC/Day: $377.14  →  Cost Efficiency: 30.2x                    │
-│  ══════════════════════════════════════════════════════════════════════════│
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-`}</pre>
+                  {/* Visual P&L Display */}
+                  <div className="space-y-4">
+                    {/* Header */}
+                    <div className="bg-gradient-to-r from-yellow-900/40 to-gray-900 rounded-lg p-4 border border-yellow-600/40">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-yellow-600/30 rounded-lg flex items-center justify-center">
+                            <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <span className="font-bold text-yellow-300">PROMETHEUS - Daily P&L Breakdown (Last 14 Days)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* P&L Table */}
+                    <div className="bg-black/40 rounded-xl border border-gray-700 overflow-hidden">
+                      {/* Table Header */}
+                      <div className="grid grid-cols-6 gap-2 px-4 py-3 bg-gray-800/80 border-b border-gray-700 text-xs font-medium text-gray-400 uppercase">
+                        <div>Date</div>
+                        <div className="text-right">IC Earned</div>
+                        <div className="text-right">Box Cost</div>
+                        <div className="text-right">Net P&L</div>
+                        <div className="text-right">Cumulative</div>
+                        <div className="text-center">Trades</div>
+                      </div>
+
+                      {/* Table Rows */}
+                      <div className="divide-y divide-gray-800">
+                        {/* Row 1 */}
+                        <div className="grid grid-cols-6 gap-2 px-4 py-3 text-sm hover:bg-yellow-900/10 transition-colors">
+                          <div className="font-mono text-gray-300">2026-01-30</div>
+                          <div className="text-right text-green-400 font-medium">$425.00</div>
+                          <div className="text-right text-red-400">-$12.50</div>
+                          <div className="text-right">
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded font-medium">+$412.50</span>
+                          </div>
+                          <div className="text-right text-white font-medium">$3,247.50</div>
+                          <div className="text-center"><span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded">3</span></div>
+                        </div>
+
+                        {/* Row 2 */}
+                        <div className="grid grid-cols-6 gap-2 px-4 py-3 text-sm hover:bg-yellow-900/10 transition-colors">
+                          <div className="font-mono text-gray-300">2026-01-29</div>
+                          <div className="text-right text-green-400 font-medium">$380.00</div>
+                          <div className="text-right text-red-400">-$12.50</div>
+                          <div className="text-right">
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded font-medium">+$367.50</span>
+                          </div>
+                          <div className="text-right text-white font-medium">$2,835.00</div>
+                          <div className="text-center"><span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded">2</span></div>
+                        </div>
+
+                        {/* Row 3 - Loss */}
+                        <div className="grid grid-cols-6 gap-2 px-4 py-3 text-sm hover:bg-red-900/10 transition-colors bg-red-900/5">
+                          <div className="font-mono text-gray-300">2026-01-28</div>
+                          <div className="text-right text-red-400 font-medium">-$125.00</div>
+                          <div className="text-right text-red-400">-$12.50</div>
+                          <div className="text-right">
+                            <span className="px-2 py-0.5 bg-red-600/20 text-red-400 rounded font-medium">-$137.50</span>
+                          </div>
+                          <div className="text-right text-white font-medium">$2,467.50</div>
+                          <div className="text-center"><span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded">2</span></div>
+                        </div>
+
+                        {/* Row 4 */}
+                        <div className="grid grid-cols-6 gap-2 px-4 py-3 text-sm hover:bg-yellow-900/10 transition-colors">
+                          <div className="font-mono text-gray-300">2026-01-27</div>
+                          <div className="text-right text-green-400 font-medium">$290.00</div>
+                          <div className="text-right text-red-400">-$12.50</div>
+                          <div className="text-right">
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded font-medium">+$277.50</span>
+                          </div>
+                          <div className="text-right text-white font-medium">$2,605.00</div>
+                          <div className="text-center"><span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded">2</span></div>
+                        </div>
+
+                        {/* Row 5 */}
+                        <div className="grid grid-cols-6 gap-2 px-4 py-3 text-sm hover:bg-yellow-900/10 transition-colors">
+                          <div className="font-mono text-gray-300">2026-01-24</div>
+                          <div className="text-right text-green-400 font-medium">$510.00</div>
+                          <div className="text-right text-red-400">-$12.50</div>
+                          <div className="text-right">
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded font-medium">+$497.50</span>
+                          </div>
+                          <div className="text-right text-white font-medium">$2,327.50</div>
+                          <div className="text-center"><span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded">3</span></div>
+                        </div>
+
+                        {/* Row 6 */}
+                        <div className="grid grid-cols-6 gap-2 px-4 py-3 text-sm hover:bg-yellow-900/10 transition-colors">
+                          <div className="font-mono text-gray-300">2026-01-23</div>
+                          <div className="text-right text-green-400 font-medium">$445.00</div>
+                          <div className="text-right text-red-400">-$12.50</div>
+                          <div className="text-right">
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded font-medium">+$432.50</span>
+                          </div>
+                          <div className="text-right text-white font-medium">$1,830.00</div>
+                          <div className="text-center"><span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded">3</span></div>
+                        </div>
+
+                        {/* Row 7 */}
+                        <div className="grid grid-cols-6 gap-2 px-4 py-3 text-sm hover:bg-yellow-900/10 transition-colors">
+                          <div className="font-mono text-gray-300">2026-01-22</div>
+                          <div className="text-right text-green-400 font-medium">$315.00</div>
+                          <div className="text-right text-red-400">-$12.50</div>
+                          <div className="text-right">
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded font-medium">+$302.50</span>
+                          </div>
+                          <div className="text-right text-white font-medium">$1,397.50</div>
+                          <div className="text-center"><span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded">2</span></div>
+                        </div>
+
+                        {/* More indicator */}
+                        <div className="px-4 py-2 text-center text-gray-500 text-sm bg-gray-900/30">
+                          ... 7 more days
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Legend & Break-Even Analysis */}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {/* Legend */}
+                      <div className="bg-black/30 rounded-xl p-4 border border-gray-700">
+                        <h4 className="font-medium text-yellow-400 mb-3 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          Legend
+                        </h4>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex items-start gap-3">
+                            <span className="px-2 py-0.5 bg-green-600/20 text-green-400 rounded text-xs shrink-0">IC EARNED</span>
+                            <span className="text-gray-400">Premium collected from Iron Condor trades</span>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <span className="px-2 py-0.5 bg-red-600/20 text-red-400 rounded text-xs shrink-0">BOX COST</span>
+                            <span className="text-gray-400">Daily interest accrual on borrowed capital</span>
+                          </div>
+                          <div className="flex items-start gap-3">
+                            <span className="px-2 py-0.5 bg-yellow-600/20 text-yellow-400 rounded text-xs shrink-0">NET P&L</span>
+                            <span className="text-gray-400">IC Earned - Box Cost (what you actually made)</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Break-Even Analysis */}
+                      <div className="bg-gradient-to-br from-yellow-900/30 to-gray-900 rounded-xl p-4 border border-yellow-600/30">
+                        <h4 className="font-medium text-yellow-400 mb-3 flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                          Break-Even Analysis
+                        </h4>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between p-2 bg-black/30 rounded-lg">
+                            <span className="text-gray-400 text-sm">Daily Box Cost</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-red-400 font-bold">$12.50</span>
+                              <span className="text-gray-500 text-xs">→ Need IC returns &gt; $12.50/day</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between p-2 bg-black/30 rounded-lg">
+                            <span className="text-gray-400 text-sm">Avg IC/Day</span>
+                            <span className="text-green-400 font-bold">$377.14</span>
+                          </div>
+                          <div className="flex items-center justify-between p-3 bg-green-900/30 rounded-lg border border-green-600/30">
+                            <span className="text-green-300 font-medium">Cost Efficiency</span>
+                            <span className="text-2xl font-bold text-green-400">30.2x</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -3921,36 +4587,194 @@ export default function PrometheusBoxDashboard() {
                     <span className="text-red-400">Risk Alerts Display</span>
                   </h2>
 
-                  {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
-                    <pre className="text-red-400 whitespace-pre">{`
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  🚨 PROMETHEUS RISK ALERTS                                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─ CRITICAL ─────────────────────────────────────────────────────────────┐ │
-│  │ ⛔ BOX ROLL NEEDED: Position PROM-20241015 expires in 2 days!          │ │
-│  │    Action: Roll to new expiration or close position                    │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                             │
-│  ┌─ WARNING ──────────────────────────────────────────────────────────────┐ │
-│  │ ⚠️ IC NEAR STOP: Position IC-5945/6020 at 180% of credit              │ │
-│  │    Current: $3.60 (entry: $2.00, stop: $4.00)                          │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                             │
-│  ┌─ INFO ─────────────────────────────────────────────────────────────────┐ │
-│  │ ℹ️ MARGIN UTILIZATION: 72% of available margin in use                  │ │
-│  │    Consider reducing IC positions if approaching 85%                   │ │
-│  └────────────────────────────────────────────────────────────────────────┘ │
-│                                                                             │
-│  ALERT THRESHOLDS:                                                          │
-│  ─────────────────                                                          │
-│  Box Roll:  DTE ≤ 30 = Warning, DTE ≤ 7 = Critical                         │
-│  IC Stop:   150% = Warning, 180% = Critical, 200% = Auto-close             │
-│  Margin:    70% = Info, 85% = Warning, 95% = Critical                      │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-`}</pre>
+                  {/* Visual Risk Alerts */}
+                  <div className="space-y-4">
+                    {/* Header */}
+                    <div className="bg-gradient-to-r from-red-900/40 to-gray-900 rounded-lg p-4 border border-red-600/40">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-red-600/30 rounded-lg flex items-center justify-center animate-pulse">
+                          <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                        </div>
+                        <span className="font-bold text-red-300">PROMETHEUS RISK ALERTS</span>
+                      </div>
+                    </div>
+
+                    {/* Alert Cards */}
+                    <div className="space-y-3">
+                      {/* CRITICAL Alert */}
+                      <div className="bg-gradient-to-r from-red-900/50 to-red-900/20 rounded-xl border-2 border-red-500 overflow-hidden">
+                        <div className="px-4 py-2 bg-red-600 flex items-center gap-2">
+                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                          </svg>
+                          <span className="font-bold text-white uppercase text-sm">Critical</span>
+                        </div>
+                        <div className="p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="w-8 h-8 bg-red-600/30 rounded-lg flex items-center justify-center shrink-0">
+                              <span className="text-lg">⛔</span>
+                            </div>
+                            <div className="flex-1">
+                              <div className="font-bold text-red-300 mb-1">BOX ROLL NEEDED</div>
+                              <div className="text-gray-300 text-sm mb-2">
+                                Position <span className="font-mono text-red-400">PROM-20241015</span> expires in <span className="text-red-400 font-bold">2 days!</span>
+                              </div>
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="text-gray-400">Action:</span>
+                                <span className="px-2 py-0.5 bg-red-600/30 text-red-300 rounded">Roll to new expiration or close position</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* WARNING Alert */}
+                      <div className="bg-gradient-to-r from-yellow-900/40 to-yellow-900/10 rounded-xl border-2 border-yellow-500/60 overflow-hidden">
+                        <div className="px-4 py-2 bg-yellow-600 flex items-center gap-2">
+                          <svg className="w-4 h-4 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          <span className="font-bold text-black uppercase text-sm">Warning</span>
+                        </div>
+                        <div className="p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="w-8 h-8 bg-yellow-600/30 rounded-lg flex items-center justify-center shrink-0">
+                              <span className="text-lg">⚠️</span>
+                            </div>
+                            <div className="flex-1">
+                              <div className="font-bold text-yellow-300 mb-1">IC NEAR STOP</div>
+                              <div className="text-gray-300 text-sm mb-2">
+                                Position <span className="font-mono text-yellow-400">IC-5945/6020</span> at <span className="text-yellow-400 font-bold">180%</span> of credit
+                              </div>
+                              <div className="flex items-center gap-4 text-sm">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-gray-400">Current:</span>
+                                  <span className="font-mono text-yellow-400">$3.60</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-gray-400">Entry:</span>
+                                  <span className="font-mono text-gray-300">$2.00</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-gray-400">Stop:</span>
+                                  <span className="font-mono text-red-400">$4.00</span>
+                                </div>
+                              </div>
+                              {/* Progress bar showing proximity to stop */}
+                              <div className="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                <div className="h-full w-[90%] bg-gradient-to-r from-yellow-500 to-red-500 rounded-full"></div>
+                              </div>
+                              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>Entry</span>
+                                <span>Stop (200%)</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* INFO Alert */}
+                      <div className="bg-gradient-to-r from-blue-900/30 to-blue-900/10 rounded-xl border border-blue-500/40 overflow-hidden">
+                        <div className="px-4 py-2 bg-blue-600/80 flex items-center gap-2">
+                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="font-bold text-white uppercase text-sm">Info</span>
+                        </div>
+                        <div className="p-4">
+                          <div className="flex items-start gap-3">
+                            <div className="w-8 h-8 bg-blue-600/30 rounded-lg flex items-center justify-center shrink-0">
+                              <span className="text-lg">ℹ️</span>
+                            </div>
+                            <div className="flex-1">
+                              <div className="font-bold text-blue-300 mb-1">MARGIN UTILIZATION</div>
+                              <div className="text-gray-300 text-sm mb-2">
+                                <span className="text-blue-400 font-bold">72%</span> of available margin in use
+                              </div>
+                              <div className="text-sm text-gray-400">
+                                Consider reducing IC positions if approaching 85%
+                              </div>
+                              {/* Margin utilization bar */}
+                              <div className="mt-3 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                <div className="h-full w-[72%] bg-gradient-to-r from-blue-500 to-blue-400 rounded-full"></div>
+                              </div>
+                              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                <span>0%</span>
+                                <span className="text-yellow-400">85% Warning</span>
+                                <span className="text-red-400">95% Critical</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Alert Thresholds Reference */}
+                    <div className="bg-black/40 rounded-xl p-4 border border-gray-700">
+                      <h4 className="font-medium text-gray-300 mb-4 flex items-center gap-2">
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Alert Thresholds
+                      </h4>
+                      <div className="grid md:grid-cols-3 gap-4">
+                        {/* Box Roll */}
+                        <div className="bg-gray-900/50 rounded-lg p-3">
+                          <div className="font-medium text-gray-300 mb-2 text-sm">Box Roll</div>
+                          <div className="space-y-1 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">DTE ≤ 30</span>
+                              <span className="px-2 py-0.5 bg-yellow-600/30 text-yellow-400 rounded">Warning</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">DTE ≤ 7</span>
+                              <span className="px-2 py-0.5 bg-red-600/30 text-red-400 rounded">Critical</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* IC Stop */}
+                        <div className="bg-gray-900/50 rounded-lg p-3">
+                          <div className="font-medium text-gray-300 mb-2 text-sm">IC Stop</div>
+                          <div className="space-y-1 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">150%</span>
+                              <span className="px-2 py-0.5 bg-yellow-600/30 text-yellow-400 rounded">Warning</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">180%</span>
+                              <span className="px-2 py-0.5 bg-red-600/30 text-red-400 rounded">Critical</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">200%</span>
+                              <span className="px-2 py-0.5 bg-red-600 text-white rounded">Auto-close</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Margin */}
+                        <div className="bg-gray-900/50 rounded-lg p-3">
+                          <div className="font-medium text-gray-300 mb-2 text-sm">Margin</div>
+                          <div className="space-y-1 text-xs">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">70%</span>
+                              <span className="px-2 py-0.5 bg-blue-600/30 text-blue-400 rounded">Info</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">85%</span>
+                              <span className="px-2 py-0.5 bg-yellow-600/30 text-yellow-400 rounded">Warning</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">95%</span>
+                              <span className="px-2 py-0.5 bg-red-600/30 text-red-400 rounded">Critical</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -3961,69 +4785,212 @@ export default function PrometheusBoxDashboard() {
                     <span className="text-indigo-400">Complete Data Flow</span>
                   </h2>
 
-                  {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
-                    <pre className="text-indigo-400 whitespace-pre">{`
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    PROMETHEUS COMPLETE DATA FLOW                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                     │
-│  │   TRADIER   │    │  FRED API   │    │ GEX CALC    │                     │
-│  │ (Production)│    │ (Fed Funds) │    │ (Gamma)     │                     │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                     │
-│         │                  │                  │                            │
-│         └──────────────────┼──────────────────┘                            │
-│                            │                                               │
-│                            ▼                                               │
-│         ┌─────────────────────────────────────────────┐                    │
-│         │              PROMETHEUS ENGINE              │                    │
-│         │                                             │                    │
-│         │  ┌───────────────┐   ┌───────────────────┐  │                    │
-│         │  │ Box Spread    │   │ IC Signal         │  │                    │
-│         │  │ Manager       │   │ Generator         │  │                    │
-│         │  │               │   │                   │  │                    │
-│         │  │ • Open/Close  │   │ • Uses Oracle     │  │                    │
-│         │  │ • MTM Calc    │   │ • PEGASUS rules   │  │                    │
-│         │  │ • Roll Logic  │   │ • Strike select   │  │                    │
-│         │  └───────┬───────┘   └─────────┬─────────┘  │                    │
-│         │          │                     │            │                    │
-│         │          └──────────┬──────────┘            │                    │
-│         │                     │                       │                    │
-│         │                     ▼                       │                    │
-│         │  ┌─────────────────────────────────────┐    │                    │
-│         │  │         CAPITAL ALLOCATOR           │    │                    │
-│         │  │                                     │    │                    │
-│         │  │ Total Borrowed → Reserve (10%)      │    │                    │
-│         │  │              → IC Trading (90%)     │    │                    │
-│         │  └─────────────────────────────────────┘    │                    │
-│         │                     │                       │                    │
-│         └─────────────────────┼───────────────────────┘                    │
-│                               │                                            │
-│                               ▼                                            │
-│         ┌─────────────────────────────────────────────┐                    │
-│         │               POSTGRESQL DB                 │                    │
-│         │                                             │                    │
-│         │  Tables:                                    │                    │
-│         │  • prometheus_box_positions (open boxes)    │                    │
-│         │  • prometheus_box_closed (historical)       │                    │
-│         │  • prometheus_ic_positions (open ICs)       │                    │
-│         │  • prometheus_ic_closed (IC history)        │                    │
-│         │  • prometheus_scan_activity (Oracle logs)   │                    │
-│         │  • prometheus_equity_snapshots              │                    │
-│         └─────────────────────────────────────────────┘                    │
-│                               │                                            │
-│                               ▼                                            │
-│         ┌─────────────────────────────────────────────┐                    │
-│         │              FRONTEND DASHBOARD             │                    │
-│         │                                             │                    │
-│         │  Tabs: Overview | Boxes | IC | Analytics    │                    │
-│         │                                             │                    │
-│         │  Refresh: 15-60 sec (configurable)          │                    │
-│         └─────────────────────────────────────────────┘                    │
-│                                                                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-`}</pre>
+                  {/* Visual Data Flow Architecture */}
+                  <div className="space-y-6">
+                    {/* Header */}
+                    <div className="bg-gradient-to-r from-indigo-900/40 to-gray-900 rounded-lg p-4 border border-indigo-600/40 text-center">
+                      <span className="font-bold text-indigo-300">PROMETHEUS COMPLETE DATA FLOW</span>
+                    </div>
+
+                    {/* Data Sources Layer */}
+                    <div>
+                      <div className="text-xs text-gray-500 uppercase tracking-wider mb-3 text-center">External Data Sources</div>
+                      <div className="grid grid-cols-3 gap-4">
+                        {/* Tradier */}
+                        <div className="bg-gradient-to-br from-blue-900/40 to-blue-900/20 rounded-xl p-4 border border-blue-500/40 text-center">
+                          <div className="w-12 h-12 bg-blue-600/30 rounded-xl mx-auto mb-3 flex items-center justify-center">
+                            <svg className="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                            </svg>
+                          </div>
+                          <div className="font-bold text-blue-300">TRADIER</div>
+                          <div className="text-xs text-gray-400 mt-1">(Production API)</div>
+                          <div className="text-xs text-gray-500 mt-2">Options quotes, execution</div>
+                        </div>
+
+                        {/* FRED API */}
+                        <div className="bg-gradient-to-br from-green-900/40 to-green-900/20 rounded-xl p-4 border border-green-500/40 text-center">
+                          <div className="w-12 h-12 bg-green-600/30 rounded-xl mx-auto mb-3 flex items-center justify-center">
+                            <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                          </div>
+                          <div className="font-bold text-green-300">FRED API</div>
+                          <div className="text-xs text-gray-400 mt-1">(Fed Funds Rate)</div>
+                          <div className="text-xs text-gray-500 mt-2">Interest rate benchmarks</div>
+                        </div>
+
+                        {/* GEX Calculator */}
+                        <div className="bg-gradient-to-br from-purple-900/40 to-purple-900/20 rounded-xl p-4 border border-purple-500/40 text-center">
+                          <div className="w-12 h-12 bg-purple-600/30 rounded-xl mx-auto mb-3 flex items-center justify-center">
+                            <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                            </svg>
+                          </div>
+                          <div className="font-bold text-purple-300">GEX CALC</div>
+                          <div className="text-xs text-gray-400 mt-1">(Gamma Engine)</div>
+                          <div className="text-xs text-gray-500 mt-2">Market structure signals</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Arrow Down */}
+                    <div className="flex justify-center">
+                      <div className="w-0 h-0 border-l-[20px] border-l-transparent border-r-[20px] border-r-transparent border-t-[16px] border-t-indigo-500"></div>
+                    </div>
+
+                    {/* Prometheus Engine */}
+                    <div className="bg-gradient-to-br from-indigo-900/50 to-gray-900 rounded-2xl border-2 border-indigo-500/60 p-5">
+                      <div className="text-center mb-4">
+                        <span className="px-4 py-1.5 bg-indigo-600 rounded-lg font-bold text-white">PROMETHEUS ENGINE</span>
+                      </div>
+
+                      {/* Two Managers */}
+                      <div className="grid md:grid-cols-2 gap-4 mb-4">
+                        {/* Box Spread Manager */}
+                        <div className="bg-black/40 rounded-xl p-4 border border-blue-600/40">
+                          <div className="font-bold text-blue-300 mb-3 flex items-center gap-2">
+                            <div className="w-6 h-6 bg-blue-600/30 rounded flex items-center justify-center">
+                              <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                              </svg>
+                            </div>
+                            Box Spread Manager
+                          </div>
+                          <ul className="text-sm text-gray-300 space-y-1.5">
+                            <li className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                              Open/Close positions
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                              MTM Calculation
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 bg-blue-400 rounded-full"></span>
+                              Roll Logic
+                            </li>
+                          </ul>
+                        </div>
+
+                        {/* IC Signal Generator */}
+                        <div className="bg-black/40 rounded-xl p-4 border border-orange-600/40">
+                          <div className="font-bold text-orange-300 mb-3 flex items-center gap-2">
+                            <div className="w-6 h-6 bg-orange-600/30 rounded flex items-center justify-center">
+                              <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                              </svg>
+                            </div>
+                            IC Signal Generator
+                          </div>
+                          <ul className="text-sm text-gray-300 space-y-1.5">
+                            <li className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 bg-orange-400 rounded-full"></span>
+                              Uses Oracle
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 bg-orange-400 rounded-full"></span>
+                              PEGASUS rules
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 bg-orange-400 rounded-full"></span>
+                              Strike selection
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Capital Allocator */}
+                      <div className="bg-gradient-to-r from-emerald-900/40 to-gray-900 rounded-xl p-4 border border-emerald-500/40">
+                        <div className="font-bold text-emerald-300 mb-3 text-center">CAPITAL ALLOCATOR</div>
+                        <div className="flex items-center justify-center gap-8">
+                          <div className="text-center">
+                            <div className="text-gray-400 text-xs mb-1">Total Borrowed</div>
+                            <div className="text-emerald-400 font-bold">100%</div>
+                          </div>
+                          <div className="text-gray-500">→</div>
+                          <div className="flex gap-4">
+                            <div className="text-center px-4 py-2 bg-yellow-900/30 rounded-lg border border-yellow-600/30">
+                              <div className="text-yellow-400 font-bold">10%</div>
+                              <div className="text-gray-400 text-xs">Reserve</div>
+                            </div>
+                            <div className="text-center px-4 py-2 bg-green-900/30 rounded-lg border border-green-600/30">
+                              <div className="text-green-400 font-bold">90%</div>
+                              <div className="text-gray-400 text-xs">IC Trading</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Arrow Down */}
+                    <div className="flex justify-center">
+                      <div className="w-0 h-0 border-l-[20px] border-l-transparent border-r-[20px] border-r-transparent border-t-[16px] border-t-indigo-500"></div>
+                    </div>
+
+                    {/* PostgreSQL Database */}
+                    <div className="bg-gradient-to-br from-cyan-900/40 to-gray-900 rounded-xl p-5 border border-cyan-500/40">
+                      <div className="flex items-center justify-center gap-3 mb-4">
+                        <div className="w-10 h-10 bg-cyan-600/30 rounded-lg flex items-center justify-center">
+                          <svg className="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                          </svg>
+                        </div>
+                        <span className="font-bold text-cyan-300">POSTGRESQL DB</span>
+                      </div>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                        <div className="px-3 py-2 bg-black/40 rounded-lg border border-gray-700">
+                          <span className="text-cyan-400 font-mono">prometheus_box_positions</span>
+                          <div className="text-gray-500 text-[10px]">Open boxes</div>
+                        </div>
+                        <div className="px-3 py-2 bg-black/40 rounded-lg border border-gray-700">
+                          <span className="text-cyan-400 font-mono">prometheus_box_closed</span>
+                          <div className="text-gray-500 text-[10px]">Historical</div>
+                        </div>
+                        <div className="px-3 py-2 bg-black/40 rounded-lg border border-gray-700">
+                          <span className="text-cyan-400 font-mono">prometheus_ic_positions</span>
+                          <div className="text-gray-500 text-[10px]">Open ICs</div>
+                        </div>
+                        <div className="px-3 py-2 bg-black/40 rounded-lg border border-gray-700">
+                          <span className="text-cyan-400 font-mono">prometheus_ic_closed</span>
+                          <div className="text-gray-500 text-[10px]">IC history</div>
+                        </div>
+                        <div className="px-3 py-2 bg-black/40 rounded-lg border border-gray-700">
+                          <span className="text-cyan-400 font-mono">prometheus_scan_activity</span>
+                          <div className="text-gray-500 text-[10px]">Oracle logs</div>
+                        </div>
+                        <div className="px-3 py-2 bg-black/40 rounded-lg border border-gray-700">
+                          <span className="text-cyan-400 font-mono">prometheus_equity_snapshots</span>
+                          <div className="text-gray-500 text-[10px]">Equity curve</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Arrow Down */}
+                    <div className="flex justify-center">
+                      <div className="w-0 h-0 border-l-[20px] border-l-transparent border-r-[20px] border-r-transparent border-t-[16px] border-t-indigo-500"></div>
+                    </div>
+
+                    {/* Frontend Dashboard */}
+                    <div className="bg-gradient-to-br from-pink-900/40 to-gray-900 rounded-xl p-5 border border-pink-500/40">
+                      <div className="flex items-center justify-center gap-3 mb-4">
+                        <div className="w-10 h-10 bg-pink-600/30 rounded-lg flex items-center justify-center">
+                          <svg className="w-5 h-5 text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                        </div>
+                        <span className="font-bold text-pink-300">FRONTEND DASHBOARD</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-2 mb-3">
+                        <span className="px-3 py-1 bg-pink-600/30 text-pink-300 rounded-lg text-sm">Overview</span>
+                        <span className="px-3 py-1 bg-pink-600/30 text-pink-300 rounded-lg text-sm">Boxes</span>
+                        <span className="px-3 py-1 bg-pink-600/30 text-pink-300 rounded-lg text-sm">IC</span>
+                        <span className="px-3 py-1 bg-pink-600/30 text-pink-300 rounded-lg text-sm">Analytics</span>
+                      </div>
+                      <div className="text-center text-sm text-gray-400">
+                        Refresh: <span className="text-pink-400 font-mono">15-60 sec</span> (configurable)
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -4034,64 +5001,169 @@ export default function PrometheusBoxDashboard() {
                     <span className="text-teal-400">Daily Timeline (All Times CT)</span>
                   </h2>
 
-                  {/* Timeline Table */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-700">
-                          <th className="text-left py-2 px-3 text-gray-400">Time</th>
-                          <th className="text-left py-2 px-3 text-gray-400">Event</th>
-                          <th className="text-left py-2 px-3 text-gray-400">Description</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-gray-300">
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-yellow-400">8:00 AM</td>
-                          <td className="py-2 px-3">System Startup</td>
-                          <td className="py-2 px-3 text-gray-400">Connect to APIs, load positions, check rates</td>
-                        </tr>
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-green-400">8:30 AM</td>
-                          <td className="py-2 px-3">Market Open</td>
-                          <td className="py-2 px-3 text-gray-400">Begin box spread monitoring, IC trading preparation</td>
-                        </tr>
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-blue-400">8:35 AM</td>
-                          <td className="py-2 px-3">IC Trading Starts</td>
-                          <td className="py-2 px-3 text-gray-400">First Oracle check, begin 5-15 min scan cycle</td>
-                        </tr>
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-orange-400">9:30 AM</td>
-                          <td className="py-2 px-3">Box Position Check</td>
-                          <td className="py-2 px-3 text-gray-400">Daily box MTM update, roll decision evaluation</td>
-                        </tr>
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-purple-400">Ongoing</td>
-                          <td className="py-2 px-3">IC Scan Cycle</td>
-                          <td className="py-2 px-3 text-gray-400">Every 5-15 min: Oracle check, trade if approved</td>
-                        </tr>
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-blue-400">2:30 PM</td>
-                          <td className="py-2 px-3">IC Entry Stops</td>
-                          <td className="py-2 px-3 text-gray-400">No new IC trades, only manage existing</td>
-                        </tr>
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-red-400">2:50 PM</td>
-                          <td className="py-2 px-3">Force Exit</td>
-                          <td className="py-2 px-3 text-gray-400">Close all IC positions 10 min before market close</td>
-                        </tr>
-                        <tr className="border-b border-gray-800">
-                          <td className="py-2 px-3 font-mono text-gray-400">3:00 PM</td>
-                          <td className="py-2 px-3">Market Close</td>
-                          <td className="py-2 px-3 text-gray-400">0DTE ICs auto-settle (SPX cash settled)</td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 px-3 font-mono text-gray-500">After Hours</td>
-                          <td className="py-2 px-3">Daily Summary</td>
-                          <td className="py-2 px-3 text-gray-400">Update equity snapshots, log day results</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                  {/* Visual Timeline */}
+                  <div className="relative">
+                    {/* Timeline line */}
+                    <div className="absolute left-[60px] top-0 bottom-0 w-0.5 bg-gradient-to-b from-yellow-500 via-blue-500 to-gray-600"></div>
+
+                    <div className="space-y-4">
+                      {/* 8:00 AM - System Startup */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-sm text-yellow-400 font-bold">8:00 AM</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-yellow-500 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-yellow-900/30 to-gray-900 rounded-lg p-3 border border-yellow-600/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            <span className="font-bold text-yellow-300">System Startup</span>
+                          </div>
+                          <p className="text-sm text-gray-400">Connect to APIs, load positions, check rates</p>
+                        </div>
+                      </div>
+
+                      {/* 8:30 AM - Market Open */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-sm text-green-400 font-bold">8:30 AM</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-green-500 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-green-900/30 to-gray-900 rounded-lg p-3 border border-green-600/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span className="font-bold text-green-300">Market Open</span>
+                          </div>
+                          <p className="text-sm text-gray-400">Begin box spread monitoring, IC trading preparation</p>
+                        </div>
+                      </div>
+
+                      {/* 8:35 AM - IC Trading Starts */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-sm text-blue-400 font-bold">8:35 AM</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-blue-500 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-blue-900/30 to-gray-900 rounded-lg p-3 border border-blue-600/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                            <span className="font-bold text-blue-300">IC Trading Starts</span>
+                          </div>
+                          <p className="text-sm text-gray-400">First Oracle check, begin 5-15 min scan cycle</p>
+                        </div>
+                      </div>
+
+                      {/* 9:30 AM - Box Position Check */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-sm text-orange-400 font-bold">9:30 AM</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-orange-500 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-orange-900/30 to-gray-900 rounded-lg p-3 border border-orange-600/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                            </svg>
+                            <span className="font-bold text-orange-300">Box Position Check</span>
+                          </div>
+                          <p className="text-sm text-gray-400">Daily box MTM update, roll decision evaluation</p>
+                        </div>
+                      </div>
+
+                      {/* Ongoing - IC Scan Cycle */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-xs text-purple-400 font-bold">Ongoing</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-purple-500 border-4 border-gray-800 z-10 mt-1 shrink-0 animate-pulse"></div>
+                        <div className="flex-1 bg-gradient-to-r from-purple-900/30 to-gray-900 rounded-lg p-3 border border-purple-600/30 border-dashed">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                            <span className="font-bold text-purple-300">IC Scan Cycle</span>
+                            <span className="text-xs text-purple-400 bg-purple-600/20 px-2 py-0.5 rounded">Every 5-15 min</span>
+                          </div>
+                          <p className="text-sm text-gray-400">Oracle check → trade if approved</p>
+                        </div>
+                      </div>
+
+                      {/* 2:30 PM - IC Entry Stops */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-sm text-blue-400 font-bold">2:30 PM</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-blue-500 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-blue-900/30 to-gray-900 rounded-lg p-3 border border-blue-600/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span className="font-bold text-blue-300">IC Entry Stops</span>
+                          </div>
+                          <p className="text-sm text-gray-400">No new IC trades, only manage existing</p>
+                        </div>
+                      </div>
+
+                      {/* 2:50 PM - Force Exit */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-sm text-red-400 font-bold">2:50 PM</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-red-500 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-red-900/30 to-gray-900 rounded-lg p-3 border border-red-600/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                            <span className="font-bold text-red-300">Force Exit</span>
+                          </div>
+                          <p className="text-sm text-gray-400">Close all IC positions 10 min before market close</p>
+                        </div>
+                      </div>
+
+                      {/* 3:00 PM - Market Close */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-sm text-gray-400 font-bold">3:00 PM</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-gray-500 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-gray-700/30 to-gray-900 rounded-lg p-3 border border-gray-600/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                            </svg>
+                            <span className="font-bold text-gray-300">Market Close</span>
+                          </div>
+                          <p className="text-sm text-gray-400">0DTE ICs auto-settle (SPX cash settled)</p>
+                        </div>
+                      </div>
+
+                      {/* After Hours - Daily Summary */}
+                      <div className="flex items-start gap-4 relative">
+                        <div className="w-[55px] text-right shrink-0">
+                          <span className="font-mono text-xs text-gray-500 font-bold">After Hrs</span>
+                        </div>
+                        <div className="w-4 h-4 rounded-full bg-gray-600 border-4 border-gray-800 z-10 mt-1 shrink-0"></div>
+                        <div className="flex-1 bg-gradient-to-r from-gray-800/30 to-gray-900 rounded-lg p-3 border border-gray-700/30">
+                          <div className="flex items-center gap-2 mb-1">
+                            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span className="font-bold text-gray-400">Daily Summary</span>
+                          </div>
+                          <p className="text-sm text-gray-500">Update equity snapshots, log day results</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
