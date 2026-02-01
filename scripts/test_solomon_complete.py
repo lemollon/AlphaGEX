@@ -73,12 +73,7 @@ class SolomonTestSuite:
     def test_1_database_connection(self):
         print(f"\n{BOLD}TEST 1: DATABASE CONNECTION{RESET}")
         try:
-            from database_adapter import get_connection, DB_AVAILABLE
-
-            if not DB_AVAILABLE:
-                fail("DB_AVAILABLE is False - check DATABASE_URL")
-                self.record("Database Connection", False, "DB_AVAILABLE is False")
-                return
+            from database_adapter import get_connection
 
             conn = get_connection()
             if conn is None:
@@ -255,7 +250,7 @@ class SolomonTestSuite:
 
             self.solomon.log_action(
                 bot_name="TEST_BOT",
-                action_type=ActionType.SYSTEM_CHECK,
+                action_type=ActionType.HEALTH_CHECK,
                 description=test_desc,
                 reason="Automated verification test",
             )

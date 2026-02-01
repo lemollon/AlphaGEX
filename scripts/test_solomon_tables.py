@@ -30,17 +30,16 @@ def main():
     # Step 1: Check database connection
     print("1. CHECKING DATABASE CONNECTION...")
     try:
-        from database_adapter import get_connection, DB_AVAILABLE
-        if not DB_AVAILABLE:
-            print("   ❌ DATABASE NOT AVAILABLE - Check DATABASE_URL")
-            return False
-
+        from database_adapter import get_connection
         conn = get_connection()
         if conn is None:
             print("   ❌ Failed to get database connection")
             return False
         print("   ✅ Database connection successful")
         conn.close()
+    except ImportError as e:
+        print(f"   ❌ DATABASE NOT AVAILABLE - Import error: {e}")
+        return False
     except Exception as e:
         print(f"   ❌ Database error: {e}")
         return False
@@ -174,7 +173,7 @@ def main():
 
         solomon.log_action(
             bot_name="TEST_BOT",
-            action_type=ActionType.SYSTEM_CHECK,
+            action_type=ActionType.HEALTH_CHECK,
             description="Table verification test",
             reason="Testing audit logging",
         )
