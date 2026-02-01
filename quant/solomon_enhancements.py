@@ -604,17 +604,17 @@ class TimeOfDayAnalyzer:
             cursor = conn.cursor()
 
             # Get trades with hour info - using bot-specific positions table
-            # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
-                    EXTRACT(HOUR FROM COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') as hour,
+                    EXTRACT(HOUR FROM close_time::timestamptz AT TIME ZONE 'America/Chicago') as hour,
                     COUNT(*) as trades,
                     AVG(CASE WHEN realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
                     AVG(realized_pnl) as avg_pnl
                 FROM {table_name}
                 WHERE status = 'closed'
-                AND COALESCE(close_time, open_time) > NOW() - INTERVAL '{days} days'
-                GROUP BY EXTRACT(HOUR FROM COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago')
+                AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                GROUP BY EXTRACT(HOUR FROM close_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY hour
             """)
 
@@ -701,25 +701,25 @@ class CrossBotAnalyzer:
             cursor = conn.cursor()
 
             # Get daily P&L for each bot from their respective tables
-            # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 WITH daily_a AS (
                     SELECT
-                        DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') as trade_date,
+                        DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                         SUM(realized_pnl) as daily_pnl
                     FROM {table_a}
                     WHERE status = 'closed'
-                    AND COALESCE(close_time, open_time) > NOW() - INTERVAL '{days} days'
-                    GROUP BY DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago')
+                    AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                    GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ),
                 daily_b AS (
                     SELECT
-                        DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') as trade_date,
+                        DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                         SUM(realized_pnl) as daily_pnl
                     FROM {table_b}
                     WHERE status = 'closed'
-                    AND COALESCE(close_time, open_time) > NOW() - INTERVAL '{days} days'
-                    GROUP BY DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago')
+                    AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                    GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
                 )
                 SELECT
                     a.trade_date,
@@ -821,7 +821,7 @@ class RegimePerformanceTracker:
             cursor = conn.cursor()
 
             # Join trades with regime classifications
-            # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
                     rc.regime,
@@ -830,9 +830,9 @@ class RegimePerformanceTracker:
                     AVG(t.realized_pnl) as avg_pnl
                 FROM {table_name} t
                 LEFT JOIN regime_classifications rc
-                    ON DATE(COALESCE(t.close_time, t.open_time) AT TIME ZONE 'America/Chicago') = rc.classification_date
+                    ON DATE(t.close_time::timestamptz AT TIME ZONE 'America/Chicago') = rc.classification_date
                 WHERE t.status = 'closed'
-                AND COALESCE(t.close_time, t.open_time) > NOW() - INTERVAL '{days} days'
+                AND t.close_time::timestamptz > NOW() - INTERVAL '{days} days'
                 AND rc.regime IS NOT NULL
                 GROUP BY rc.regime
                 ORDER BY trades DESC
@@ -1345,7 +1345,7 @@ class DailyDigestGenerator:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
                     COUNT(*) as trades,
@@ -1354,7 +1354,7 @@ class DailyDigestGenerator:
                     COALESCE(SUM(realized_pnl), 0) as total_pnl
                 FROM {table_name}
                 WHERE status = 'closed'
-                AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = %s
+                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             """, (date,))
 
             row = cursor.fetchone()
@@ -2144,7 +2144,7 @@ class SolomonEnhanced:
             dir_bot_breakdown = {}
 
             # IC bots: ARES, TITAN, PEGASUS, PROMETHEUS
-            # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
             for bot_name in ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']:
                 table = BOT_TABLES.get(bot_name)
                 if table:
@@ -2156,7 +2156,7 @@ class SolomonEnhanced:
                             AVG(realized_pnl) as avg_pnl
                         FROM {table}
                         WHERE status = 'closed'
-                            AND COALESCE(close_time, open_time) >= NOW() - INTERVAL '{days} days'
+                            AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
                     """)
                     row = cursor.fetchone()
                     if row and row[0]:
@@ -2168,7 +2168,7 @@ class SolomonEnhanced:
                         }
 
             # Directional bots: ATHENA, ICARUS
-            # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz to handle TEXT columns where applicable
             for bot_name in ['ATHENA', 'ICARUS']:
                 table = BOT_TABLES.get(bot_name)
                 if table:
@@ -2180,7 +2180,7 @@ class SolomonEnhanced:
                             AVG(realized_pnl) as avg_pnl
                         FROM {table}
                         WHERE status = 'closed'
-                            AND COALESCE(close_time, open_time) >= NOW() - INTERVAL '{days} days'
+                            AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
                     """)
                     row = cursor.fetchone()
                     if row and row[0]:
@@ -2324,7 +2324,7 @@ class SolomonEnhanced:
             for bot_name, table in BOT_TABLES.items():
                 try:
                     # Query oracle_advice accuracy for this bot
-                    # Use COALESCE to handle legacy data with NULL close_time
+                    # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
                     cursor.execute(f"""
                         SELECT
                             COALESCE(oracle_advice, 'UNKNOWN') as advice,
@@ -2334,7 +2334,7 @@ class SolomonEnhanced:
                             COALESCE(AVG(realized_pnl), 0) as avg_pnl
                         FROM {table}
                         WHERE status = 'closed'
-                            AND COALESCE(close_time, open_time) >= NOW() - INTERVAL '{days} days'
+                            AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
                         GROUP BY COALESCE(oracle_advice, 'UNKNOWN')
                     """)
                     rows = cursor.fetchall()
