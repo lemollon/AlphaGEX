@@ -737,8 +737,9 @@ class CrossBotAnalyzer:
                 return None
 
             # Calculate correlation manually
-            a_values = [r[1] for r in rows]
-            b_values = [r[2] for r in rows]
+            # Convert Decimal to float (PostgreSQL returns decimal.Decimal for numeric fields)
+            a_values = [float(r[1]) if r[1] is not None else 0.0 for r in rows]
+            b_values = [float(r[2]) if r[2] is not None else 0.0 for r in rows]
 
             n = len(a_values)
             sum_a = sum(a_values)
