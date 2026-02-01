@@ -671,6 +671,40 @@ CREATE TABLE IF NOT EXISTS solomon_validations (
 CREATE INDEX IF NOT EXISTS idx_solomon_validations_proposal ON solomon_validations(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_solomon_validations_bot ON solomon_validations(bot_name);
 CREATE INDEX IF NOT EXISTS idx_solomon_validations_status ON solomon_validations(status);
+
+-- Solomon A/B Tests: Track A/B test configurations and results
+CREATE TABLE IF NOT EXISTS solomon_ab_tests (
+    id SERIAL PRIMARY KEY,
+    test_id TEXT UNIQUE NOT NULL,
+    bot_name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Test configuration
+    control_config JSONB NOT NULL,
+    variant_config JSONB NOT NULL,
+    control_allocation NUMERIC(3,2) DEFAULT 0.5,
+
+    -- Control group results
+    control_trades INTEGER DEFAULT 0,
+    control_win_rate NUMERIC(5,4) DEFAULT 0,
+    control_pnl NUMERIC(12,2) DEFAULT 0,
+
+    -- Variant group results
+    variant_trades INTEGER DEFAULT 0,
+    variant_win_rate NUMERIC(5,4) DEFAULT 0,
+    variant_pnl NUMERIC(12,2) DEFAULT 0,
+
+    -- Test outcome
+    status TEXT NOT NULL DEFAULT 'RUNNING',  -- RUNNING, COMPLETED, STOPPED
+    winner TEXT,  -- CONTROL, VARIANT, NULL
+    confidence NUMERIC(5,4) DEFAULT 0,
+
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index for quick lookups
+CREATE INDEX IF NOT EXISTS idx_solomon_ab_tests_bot ON solomon_ab_tests(bot_name);
+CREATE INDEX IF NOT EXISTS idx_solomon_ab_tests_status ON solomon_ab_tests(status);
 """
 
 
@@ -1204,6 +1238,24 @@ class SolomonFeedbackLoop:
         if ORACLE_AVAILABLE:
             result = auto_train(force=True)
             if result.get('success'):
+                # Save version for model update tracking
+                self.save_version(
+                    bot_name=bot_name,
+                    version_type=VersionType.MODEL,
+                    artifact_name="oracle_model",
+                    artifact_data={
+                        'training_metrics': result.get('training_metrics', {}),
+                        'model_version': result.get('model_version', 'unknown'),
+                        'trained_at': datetime.now(CENTRAL_TZ).isoformat()
+                    },
+                    metadata={
+                        'proposal_id': proposal_id,
+                        'triggered_by': 'proposal_approval'
+                    },
+                    performance_metrics=result.get('training_metrics', {}),
+                    approved_by="PROPOSAL_SYSTEM"
+                )
+
                 self.log_action(
                     bot_name=bot_name,
                     action_type=ActionType.MODEL_RETRAIN,
@@ -1224,6 +1276,13 @@ class SolomonFeedbackLoop:
             conn = get_connection()
             cursor = conn.cursor()
 
+            # Get current config before updating (for version tracking)
+            cursor.execute("""
+                SELECT value FROM autonomous_config WHERE key = %s
+            """, (f"{bot_name.lower()}_parameters",))
+            current_row = cursor.fetchone()
+            current_config = json.loads(current_row[0]) if current_row and current_row[0] else {}
+
             # Store parameters in bot config table
             if isinstance(proposed_value, str):
                 proposed_value = json.loads(proposed_value)
@@ -1236,6 +1295,20 @@ class SolomonFeedbackLoop:
 
             conn.commit()
             conn.close()
+
+            # Save version for tracking
+            self.save_version(
+                bot_name=bot_name,
+                version_type=VersionType.PARAMETERS,
+                artifact_name="parameters",
+                artifact_data=proposed_value,
+                metadata={
+                    'proposal_id': proposal_id,
+                    'previous_config': current_config,
+                    'applied_at': datetime.now(CENTRAL_TZ).isoformat()
+                },
+                approved_by="PROPOSAL_SYSTEM"
+            )
 
             self.log_action(
                 bot_name=bot_name,
@@ -1254,12 +1327,64 @@ class SolomonFeedbackLoop:
 
     def _apply_strategy_adjustment(self, bot_name: str, proposed_value: Any, proposal_id: str) -> bool:
         """Apply a strategy adjustment from a proposal"""
-        # Similar to parameter change but for strategy-level settings
-        return self._apply_parameter_change(bot_name, proposed_value, proposal_id)
+        if not DB_AVAILABLE:
+            return False
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            if isinstance(proposed_value, str):
+                proposed_value = json.loads(proposed_value)
+
+            # Get current strategy config
+            cursor.execute("""
+                SELECT value FROM autonomous_config WHERE key = %s
+            """, (f"{bot_name.lower()}_strategy",))
+            current_row = cursor.fetchone()
+            current_strategy = json.loads(current_row[0]) if current_row and current_row[0] else {}
+
+            cursor.execute("""
+                INSERT INTO autonomous_config (key, value, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            """, (f"{bot_name.lower()}_strategy", json.dumps(proposed_value)))
+
+            conn.commit()
+            conn.close()
+
+            # Save version with STRATEGY type
+            self.save_version(
+                bot_name=bot_name,
+                version_type=VersionType.STRATEGY,
+                artifact_name="strategy",
+                artifact_data=proposed_value,
+                metadata={
+                    'proposal_id': proposal_id,
+                    'previous_strategy': current_strategy,
+                    'applied_at': datetime.now(CENTRAL_TZ).isoformat()
+                },
+                approved_by="PROPOSAL_SYSTEM"
+            )
+
+            self.log_action(
+                bot_name=bot_name,
+                action_type=ActionType.PARAM_UPDATE,
+                description=f"Strategy adjusted via proposal {proposal_id}",
+                reason="Approved proposal",
+                after_state=proposed_value,
+                proposal_id=proposal_id
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to apply strategy adjustment: {e}")
+            return False
 
     def _apply_risk_limit_change(self, bot_name: str, proposed_value: Any, proposal_id: str) -> bool:
         """Apply a risk limit change from a proposal"""
-        # Update circuit breaker limits
+        # Risk limits are stored as parameters
         return self._apply_parameter_change(bot_name, proposed_value, proposal_id)
 
     def get_pending_proposals(self, bot_name: str = None) -> List[Dict]:

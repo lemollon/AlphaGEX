@@ -863,11 +863,117 @@ class RegimePerformanceTracker:
 # =============================================================================
 
 class ABTestingFramework:
-    """Framework for A/B testing bot configurations"""
+    """Framework for A/B testing bot configurations with database persistence"""
 
     def __init__(self, solomon):
         self.solomon = solomon
         self._active_tests: Dict[str, ABTest] = {}
+        # Load existing tests from database on initialization
+        self._load_from_database()
+
+    def _load_from_database(self) -> None:
+        """Load active A/B tests from database into memory cache"""
+        if not DB_AVAILABLE:
+            return
+
+        try:
+            import json
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT test_id, bot_name, created_at,
+                       control_config, variant_config, control_allocation,
+                       control_trades, variant_trades,
+                       control_win_rate, variant_win_rate,
+                       control_pnl, variant_pnl,
+                       status, winner, confidence
+                FROM solomon_ab_tests
+                WHERE status IN ('RUNNING', 'COMPLETED')
+                ORDER BY created_at DESC
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+
+            for row in rows:
+                test_id = row[0]
+                self._active_tests[test_id] = ABTest(
+                    test_id=row[0],
+                    bot_name=row[1],
+                    created_at=row[2].isoformat() if hasattr(row[2], 'isoformat') else str(row[2]),
+                    control_config=row[3] if isinstance(row[3], dict) else json.loads(row[3] or '{}'),
+                    variant_config=row[4] if isinstance(row[4], dict) else json.loads(row[4] or '{}'),
+                    control_allocation=float(row[5] or 0.5),
+                    control_trades=int(row[6] or 0),
+                    variant_trades=int(row[7] or 0),
+                    control_win_rate=float(row[8] or 0),
+                    variant_win_rate=float(row[9] or 0),
+                    control_pnl=float(row[10] or 0),
+                    variant_pnl=float(row[11] or 0),
+                    status=row[12] or 'RUNNING',
+                    winner=row[13],
+                    confidence=float(row[14] or 0)
+                )
+
+            logger.info(f"Loaded {len(self._active_tests)} A/B tests from database")
+
+        except Exception as e:
+            logger.warning(f"Failed to load A/B tests from database (table may not exist): {e}")
+
+    def _save_to_database(self, test: ABTest) -> bool:
+        """Save or update A/B test in database"""
+        if not DB_AVAILABLE:
+            return False
+
+        try:
+            import json
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO solomon_ab_tests (
+                    test_id, bot_name, created_at,
+                    control_config, variant_config, control_allocation,
+                    control_trades, variant_trades,
+                    control_win_rate, variant_win_rate,
+                    control_pnl, variant_pnl,
+                    status, winner, confidence,
+                    updated_at
+                ) VALUES (
+                    %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s,
+                    %s, %s, %s,
+                    NOW()
+                )
+                ON CONFLICT (test_id) DO UPDATE SET
+                    control_trades = EXCLUDED.control_trades,
+                    variant_trades = EXCLUDED.variant_trades,
+                    control_win_rate = EXCLUDED.control_win_rate,
+                    variant_win_rate = EXCLUDED.variant_win_rate,
+                    control_pnl = EXCLUDED.control_pnl,
+                    variant_pnl = EXCLUDED.variant_pnl,
+                    status = EXCLUDED.status,
+                    winner = EXCLUDED.winner,
+                    confidence = EXCLUDED.confidence,
+                    updated_at = NOW()
+            """, (
+                test.test_id, test.bot_name, test.created_at,
+                json.dumps(test.control_config), json.dumps(test.variant_config), test.control_allocation,
+                test.control_trades, test.variant_trades,
+                test.control_win_rate, test.variant_win_rate,
+                test.control_pnl, test.variant_pnl,
+                test.status, test.winner, test.confidence
+            ))
+
+            conn.commit()
+            conn.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save A/B test to database: {e}")
+            return False
 
     def create_test(
         self,
@@ -891,6 +997,8 @@ class ABTestingFramework:
         )
 
         self._active_tests[test_id] = test
+        # Persist to database
+        self._save_to_database(test)
 
         logger.info(f"Created A/B test {test_id} for {bot_name}")
         return test_id
@@ -923,6 +1031,9 @@ class ABTestingFramework:
                     (test.variant_win_rate * (test.variant_trades - 1) + 1)
                     / test.variant_trades
                 )
+
+        # Persist updated results to database
+        self._save_to_database(test)
 
     def evaluate_test(self, test_id: str) -> Dict:
         """Evaluate A/B test results"""
@@ -985,7 +1096,21 @@ class ABTestingFramework:
             test.status = 'COMPLETED'
             test.confidence = confidence
 
+            # Persist completion status to database
+            self._save_to_database(test)
+
         return result
+
+    def stop_test(self, test_id: str) -> bool:
+        """Stop an A/B test early"""
+        if test_id not in self._active_tests:
+            return False
+
+        test = self._active_tests[test_id]
+        test.status = 'STOPPED'
+        self._save_to_database(test)
+        logger.info(f"Stopped A/B test {test_id}")
+        return True
 
     def get_active_tests(self, bot_name: str = None) -> List[Dict]:
         """Get active A/B tests"""
@@ -995,6 +1120,18 @@ class ABTestingFramework:
             tests = [t for t in tests if t.bot_name == bot_name]
 
         return [t.to_dict() for t in tests if t.status == 'RUNNING']
+
+    def get_all_tests(self, bot_name: str = None, include_completed: bool = True) -> List[Dict]:
+        """Get all A/B tests (including completed)"""
+        tests = list(self._active_tests.values())
+
+        if bot_name:
+            tests = [t for t in tests if t.bot_name == bot_name]
+
+        if not include_completed:
+            tests = [t for t in tests if t.status == 'RUNNING']
+
+        return [t.to_dict() for t in tests]
 
 
 # =============================================================================
