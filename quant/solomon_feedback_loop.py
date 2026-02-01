@@ -1716,6 +1716,7 @@ class SolomonFeedbackLoop:
 
             # Query closed positions from the bot's actual table
             # Table name is from whitelisted BOT_TABLES dict (safe)
+            # Use COALESCE to handle legacy data with NULL close_time
             cursor.execute(f"""
                 SELECT
                     COUNT(*) as total_trades,
@@ -1725,7 +1726,7 @@ class SolomonFeedbackLoop:
                     AVG(realized_pnl) as avg_pnl
                 FROM {table}
                 WHERE status = 'closed'
-                    AND close_time > NOW() - INTERVAL '30 days'
+                    AND COALESCE(close_time, open_time) > NOW() - INTERVAL '30 days'
             """)
 
             row = cursor.fetchone()
@@ -1858,17 +1859,18 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             # Get daily P&L for sparkline data
+            # Use COALESCE to handle legacy data with NULL close_time
             cursor.execute(f"""
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     COALESCE(SUM(realized_pnl), 0) as total_pnl,
                     COALESCE(AVG(realized_pnl), 0) as avg_pnl
                 FROM {table_name}
                 WHERE status = 'closed'
-                AND close_time > NOW() - INTERVAL '{days} days'
-                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                AND COALESCE(close_time, open_time) > NOW() - INTERVAL '{days} days'
+                GROUP BY DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date DESC
             """)
 
@@ -1922,11 +1924,12 @@ class SolomonFeedbackLoop:
                 return None
 
             # Compare last 7 days vs previous 7 days using bot's actual positions table
+            # Use COALESCE to handle legacy data with NULL close_time
             cursor.execute(f"""
                 WITH period_stats AS (
                     SELECT
                         CASE
-                            WHEN close_time > NOW() - INTERVAL '7 days' THEN 'recent'
+                            WHEN COALESCE(close_time, open_time) > NOW() - INTERVAL '7 days' THEN 'recent'
                             ELSE 'previous'
                         END as period,
                         COUNT(*) as trades,
@@ -1934,10 +1937,10 @@ class SolomonFeedbackLoop:
                         SUM(realized_pnl) as total_pnl
                     FROM {table}
                     WHERE status = 'closed'
-                        AND close_time > NOW() - INTERVAL '14 days'
+                        AND COALESCE(close_time, open_time) > NOW() - INTERVAL '14 days'
                     GROUP BY
                         CASE
-                            WHEN close_time > NOW() - INTERVAL '7 days' THEN 'recent'
+                            WHEN COALESCE(close_time, open_time) > NOW() - INTERVAL '7 days' THEN 'recent'
                             ELSE 'previous'
                         END
                 )
