@@ -214,11 +214,13 @@ class SolomonTestSuite:
                 else:
                     fail(f"Trade counts wrong: expected 2/2, got {row[2]}/{row[3]}")
 
-                # Verify P&L
-                if abs(row[4] - 30.0) < 0.01 and abs(row[5] - 100.0) < 0.01:
+                # Verify P&L (convert Decimal to float for comparison)
+                control_pnl = float(row[4]) if row[4] else 0.0
+                variant_pnl = float(row[5]) if row[5] else 0.0
+                if abs(control_pnl - 30.0) < 0.01 and abs(variant_pnl - 100.0) < 0.01:
                     ok("P&L values match expected")
                 else:
-                    warn(f"P&L values: expected $30/$100, got ${row[4]}/${row[5]}")
+                    warn(f"P&L values: expected $30/$100, got ${control_pnl}/${variant_pnl}")
 
                 self.record("A/B Test Persistence", True, test_id)
             else:
