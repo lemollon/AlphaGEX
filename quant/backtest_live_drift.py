@@ -258,7 +258,7 @@ class BacktestLiveDriftDetector:
                     ) as pnl_stddev
                 FROM {table_name}
                 WHERE UPPER(status) = 'CLOSED'
-                AND COALESCE(close_time, open_time) > NOW() - INTERVAL '%s days'
+                AND close_time::timestamptz > NOW() - INTERVAL '%s days'
             """, (lookback_days,))
 
             row = cursor.fetchone()
