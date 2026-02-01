@@ -2099,11 +2099,12 @@ class OracleAdvisor:
             dir_score += 0.05
 
         # =========================================================================
-        # SOLOMON ADVISORY - Historical Performance Feedback
-        # Solomon provides data-driven adjustments based on past performance.
-        # These are SUGGESTIONS - Oracle still makes the final decision.
+        # SOLOMON ADVISORY - Historical Performance Feedback (INFORMATION ONLY)
+        # Solomon provides informational context based on past performance.
+        # This data is for DISPLAY ONLY - it does NOT affect Oracle's scores.
+        # Oracle is the sole decision authority for all trading decisions.
         # =========================================================================
-        solomon_size_multiplier = 1.0
+        solomon_info = []  # Collect Solomon insights for display
 
         if SOLOMON_AVAILABLE:
             try:
@@ -2131,48 +2132,43 @@ class OracleAdvisor:
                 )
 
                 if solomon_advisory.data_quality != "NONE":
-                    # Apply time-of-day adjustment
-                    if solomon_advisory.time_of_day_adjustment != 0:
-                        ic_score += solomon_advisory.time_of_day_adjustment
-                        dir_score += solomon_advisory.time_of_day_adjustment
-                        if solomon_advisory.time_of_day_adjustment < 0:
-                            reasoning_parts.append(
-                                f"SOLOMON: Hour {current_hour} has poor historical performance "
-                                f"({solomon_advisory.hour_win_rate:.0f}% win rate)"
-                            )
-                        else:
-                            reasoning_parts.append(
-                                f"SOLOMON: Hour {current_hour} is historically strong"
-                            )
+                    # Time-of-day info (DISPLAY ONLY - no score adjustment)
+                    if solomon_advisory.hour_win_rate > 0:
+                        hour_quality = "strong" if solomon_advisory.hour_win_rate >= 60 else "weak" if solomon_advisory.hour_win_rate < 45 else "average"
+                        solomon_info.append(
+                            f"Hour {current_hour}: {solomon_advisory.hour_win_rate:.0f}% historical win rate ({hour_quality})"
+                        )
 
-                    # Apply regime-based adjustment
-                    if solomon_advisory.regime_adjustment != 0:
+                    # Regime performance info (DISPLAY ONLY - no score adjustment)
+                    if solomon_advisory.regime_recommendation != "NEUTRAL":
                         if solomon_advisory.regime_recommendation == "IC_PREFERRED":
-                            ic_score += abs(solomon_advisory.regime_adjustment)
-                            reasoning_parts.append(
-                                f"SOLOMON: IC historically performs well in {market_regime} regime"
+                            solomon_info.append(
+                                f"IC historically performs well in {market_regime} regime "
+                                f"({solomon_advisory.regime_ic_win_rate:.0f}% win rate)"
                             )
                         elif solomon_advisory.regime_recommendation == "DIR_PREFERRED":
-                            dir_score += abs(solomon_advisory.regime_adjustment)
-                            reasoning_parts.append(
-                                f"SOLOMON: Directional historically performs well in {market_regime} regime"
+                            solomon_info.append(
+                                f"Directional historically performs well in {market_regime} regime "
+                                f"({solomon_advisory.regime_dir_win_rate:.0f}% win rate)"
                             )
 
-                    # Apply correlation-based size reduction
+                    # Correlation risk info (DISPLAY ONLY - no size adjustment)
                     if solomon_advisory.correlation_risk in ["MEDIUM", "HIGH"]:
-                        reduction = solomon_advisory.size_reduction_pct / 100
-                        solomon_size_multiplier *= (1.0 - reduction)
-                        reasoning_parts.append(
-                            f"SOLOMON: Correlated bots active - reduce size by {solomon_advisory.size_reduction_pct:.0f}%"
+                        solomon_info.append(
+                            f"Correlation alert: {len(solomon_advisory.correlated_bots_active)} correlated bots active "
+                            f"({solomon_advisory.correlation_risk} risk)"
                         )
 
-                    # Apply Friday/weekend adjustment
-                    if is_friday and solomon_advisory.friday_size_adjustment < 1.0:
-                        solomon_size_multiplier *= solomon_advisory.friday_size_adjustment
-                        reasoning_parts.append(
-                            f"SOLOMON: Weekend risk {solomon_advisory.weekend_risk_level} - "
-                            f"reduce Friday positions to {solomon_advisory.friday_size_adjustment*100:.0f}%"
+                    # Weekend risk info (DISPLAY ONLY - no size adjustment)
+                    if is_friday and solomon_advisory.weekend_risk_level != "NORMAL":
+                        solomon_info.append(
+                            f"Weekend gap prediction: {solomon_advisory.weekend_gap_prediction} "
+                            f"(risk level: {solomon_advisory.weekend_risk_level})"
                         )
+
+                    # Add all Solomon info to reasoning as informational context
+                    if solomon_info:
+                        reasoning_parts.append(f"SOLOMON INFO: {' | '.join(solomon_info)}")
 
             except Exception as e:
                 self.live_log.log("SOLOMON_STRATEGY_ERR", f"Solomon advisory failed: {e}")
@@ -2196,8 +2192,8 @@ class OracleAdvisor:
         else:
             size_multiplier = 1.0
 
-        # Apply Solomon's size adjustment (correlation risk, weekend risk)
-        size_multiplier *= solomon_size_multiplier
+        # NOTE: Solomon is information-only and does NOT affect sizing
+        # Oracle is the sole authority for all trading decisions
 
         # Determine strategy
         if vix_regime == VIXRegime.EXTREME and gex_regime != GEXRegime.NEGATIVE:
