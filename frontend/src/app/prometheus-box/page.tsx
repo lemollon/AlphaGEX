@@ -2606,8 +2606,103 @@ export default function PrometheusBoxDashboard() {
                           </div>
                         </div>
                       ) : (
-                        <div className="text-center py-8 text-gray-400">
-                          <p>No equity history yet. Data appears after positions close.</p>
+                        <div className="py-12">
+                          {/* Empty State Chart Placeholder */}
+                          <div className="bg-black/30 rounded-lg p-6 mb-6">
+                            <div className="h-48 relative flex items-center justify-center">
+                              {/* Faded placeholder chart lines */}
+                              <svg className="w-full h-full absolute" viewBox="0 0 400 150" preserveAspectRatio="none">
+                                {/* Grid lines */}
+                                <line x1="0" y1="37.5" x2="400" y2="37.5" stroke="#374151" strokeWidth="0.5" strokeDasharray="4,4" strokeOpacity="0.5" />
+                                <line x1="0" y1="75" x2="400" y2="75" stroke="#374151" strokeWidth="0.5" strokeDasharray="4,4" strokeOpacity="0.5" />
+                                <line x1="0" y1="112.5" x2="400" y2="112.5" stroke="#374151" strokeWidth="0.5" strokeDasharray="4,4" strokeOpacity="0.5" />
+                                {/* Placeholder growth line */}
+                                <polyline
+                                  fill="none"
+                                  stroke="#22c55e"
+                                  strokeWidth="2"
+                                  strokeDasharray="8,4"
+                                  strokeOpacity="0.3"
+                                  points="0,120 50,110 100,105 150,95 200,85 250,75 300,60 350,50 400,40"
+                                />
+                                <polygon
+                                  fill="url(#emptyGradient)"
+                                  fillOpacity="0.1"
+                                  points="0,150 0,120 50,110 100,105 150,95 200,85 250,75 300,60 350,50 400,40 400,150"
+                                />
+                                <defs>
+                                  <linearGradient id="emptyGradient" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
+                                    <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
+                                  </linearGradient>
+                                </defs>
+                              </svg>
+                              {/* Centered icon and text */}
+                              <div className="relative z-10 text-center">
+                                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-emerald-900/30 border border-emerald-700/50 flex items-center justify-center">
+                                  <svg className="w-8 h-8 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                                  </svg>
+                                </div>
+                                <h4 className="text-lg font-medium text-gray-300 mb-1">No Equity History Yet</h4>
+                                <p className="text-sm text-gray-500">Your equity curve will appear here after IC trades close</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* What You'll See */}
+                          <div className="grid grid-cols-3 gap-4 mb-6">
+                            <div className="bg-black/20 rounded-lg p-4 border border-gray-800/50">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-6 h-6 rounded bg-green-900/50 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                  </svg>
+                                </div>
+                                <span className="text-sm font-medium text-gray-300">Daily P&L</span>
+                              </div>
+                              <p className="text-xs text-gray-500">Track your daily IC returns minus borrowing costs</p>
+                            </div>
+                            <div className="bg-black/20 rounded-lg p-4 border border-gray-800/50">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-6 h-6 rounded bg-blue-900/50 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                                  </svg>
+                                </div>
+                                <span className="text-sm font-medium text-gray-300">Cumulative Growth</span>
+                              </div>
+                              <p className="text-xs text-gray-500">See your total equity growth over time</p>
+                            </div>
+                            <div className="bg-black/20 rounded-lg p-4 border border-gray-800/50">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-6 h-6 rounded bg-purple-900/50 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                  </svg>
+                                </div>
+                                <span className="text-sm font-medium text-gray-300">Trade History</span>
+                              </div>
+                              <p className="text-xs text-gray-500">Full breakdown of each day&apos;s activity</p>
+                            </div>
+                          </div>
+
+                          {/* Getting Started */}
+                          <div className="bg-gradient-to-r from-emerald-900/20 to-transparent rounded-lg p-4 border border-emerald-800/30">
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 rounded-full bg-emerald-900/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <span className="text-emerald-400 text-sm">💡</span>
+                              </div>
+                              <div>
+                                <h5 className="text-sm font-medium text-emerald-400 mb-1">How to Get Started</h5>
+                                <ol className="text-xs text-gray-400 space-y-1">
+                                  <li>1. Open a box spread position in the <span className="text-emerald-400">Box Spreads</span> tab to borrow capital</li>
+                                  <li>2. PROMETHEUS will automatically deploy capital to IC trades when conditions are favorable</li>
+                                  <li>3. Once trades close, your equity curve will update showing net profit after borrowing costs</li>
+                                </ol>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </>
@@ -2726,8 +2821,95 @@ export default function PrometheusBoxDashboard() {
                           </div>
                         </div>
                       ) : (
-                        <div className="text-center py-8 text-gray-400">
-                          <p>No intraday snapshots yet. Data appears during market hours.</p>
+                        <div className="py-12">
+                          {/* Empty State Chart Placeholder */}
+                          <div className="bg-black/30 rounded-lg p-6 mb-6">
+                            <div className="h-48 relative flex items-center justify-center">
+                              {/* Faded placeholder real-time chart */}
+                              <svg className="w-full h-full absolute" viewBox="0 0 400 150" preserveAspectRatio="none">
+                                {/* Grid lines */}
+                                <line x1="0" y1="75" x2="400" y2="75" stroke="#6b7280" strokeWidth="1" strokeDasharray="4,4" strokeOpacity="0.3" />
+                                {/* Time markers */}
+                                <line x1="100" y1="0" x2="100" y2="150" stroke="#374151" strokeWidth="0.5" strokeOpacity="0.3" />
+                                <line x1="200" y1="0" x2="200" y2="150" stroke="#374151" strokeWidth="0.5" strokeOpacity="0.3" />
+                                <line x1="300" y1="0" x2="300" y2="150" stroke="#374151" strokeWidth="0.5" strokeOpacity="0.3" />
+                                {/* Placeholder intraday movement */}
+                                <polyline
+                                  fill="none"
+                                  stroke="#3b82f6"
+                                  strokeWidth="2"
+                                  strokeDasharray="6,3"
+                                  strokeOpacity="0.3"
+                                  points="0,75 30,70 60,78 90,65 120,72 150,68 180,60 210,65 240,55 270,62 300,50 330,58 360,45 400,52"
+                                />
+                              </svg>
+                              {/* Centered icon and text */}
+                              <div className="relative z-10 text-center">
+                                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-blue-900/30 border border-blue-700/50 flex items-center justify-center">
+                                  <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                </div>
+                                <h4 className="text-lg font-medium text-gray-300 mb-1">No Intraday Data Yet</h4>
+                                <p className="text-sm text-gray-500">Real-time snapshots appear during market hours (8:30 AM - 3:00 PM CT)</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* What Intraday Shows */}
+                          <div className="grid grid-cols-3 gap-4 mb-6">
+                            <div className="bg-black/20 rounded-lg p-4 border border-gray-800/50">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-6 h-6 rounded bg-blue-900/50 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                  </svg>
+                                </div>
+                                <span className="text-sm font-medium text-gray-300">Live Updates</span>
+                              </div>
+                              <p className="text-xs text-gray-500">Snapshots taken every 5 minutes during market hours</p>
+                            </div>
+                            <div className="bg-black/20 rounded-lg p-4 border border-gray-800/50">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-6 h-6 rounded bg-yellow-900/50 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                  </svg>
+                                </div>
+                                <span className="text-sm font-medium text-gray-300">Unrealized P&L</span>
+                              </div>
+                              <p className="text-xs text-gray-500">Mark-to-market value of open positions</p>
+                            </div>
+                            <div className="bg-black/20 rounded-lg p-4 border border-gray-800/50">
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-6 h-6 rounded bg-cyan-900/50 flex items-center justify-center">
+                                  <svg className="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                  </svg>
+                                </div>
+                                <span className="text-sm font-medium text-gray-300">Position Tracking</span>
+                              </div>
+                              <p className="text-xs text-gray-500">Monitor IC trades as they develop</p>
+                            </div>
+                          </div>
+
+                          {/* Market Hours Info */}
+                          <div className="bg-gradient-to-r from-blue-900/20 to-transparent rounded-lg p-4 border border-blue-800/30">
+                            <div className="flex items-start gap-3">
+                              <div className="w-8 h-8 rounded-full bg-blue-900/50 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                              </div>
+                              <div>
+                                <h5 className="text-sm font-medium text-blue-400 mb-1">Market Hours Only</h5>
+                                <p className="text-xs text-gray-400">
+                                  Intraday snapshots are captured during market hours: <span className="text-blue-400">8:30 AM - 3:00 PM CT</span>.
+                                  Check back during trading hours to see real-time equity updates.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </>
