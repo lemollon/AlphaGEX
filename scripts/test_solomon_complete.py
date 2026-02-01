@@ -73,12 +73,7 @@ class SolomonTestSuite:
     def test_1_database_connection(self):
         print(f"\n{BOLD}TEST 1: DATABASE CONNECTION{RESET}")
         try:
-            from database_adapter import get_connection, DB_AVAILABLE
-
-            if not DB_AVAILABLE:
-                fail("DB_AVAILABLE is False - check DATABASE_URL")
-                self.record("Database Connection", False, "DB_AVAILABLE is False")
-                return
+            from database_adapter import get_connection
 
             conn = get_connection()
             if conn is None:
@@ -219,11 +214,13 @@ class SolomonTestSuite:
                 else:
                     fail(f"Trade counts wrong: expected 2/2, got {row[2]}/{row[3]}")
 
-                # Verify P&L
-                if abs(row[4] - 30.0) < 0.01 and abs(row[5] - 100.0) < 0.01:
+                # Verify P&L (convert Decimal to float for comparison)
+                control_pnl = float(row[4]) if row[4] else 0.0
+                variant_pnl = float(row[5]) if row[5] else 0.0
+                if abs(control_pnl - 30.0) < 0.01 and abs(variant_pnl - 100.0) < 0.01:
                     ok("P&L values match expected")
                 else:
-                    warn(f"P&L values: expected $30/$100, got ${row[4]}/${row[5]}")
+                    warn(f"P&L values: expected $30/$100, got ${control_pnl}/${variant_pnl}")
 
                 self.record("A/B Test Persistence", True, test_id)
             else:
@@ -255,7 +252,7 @@ class SolomonTestSuite:
 
             self.solomon.log_action(
                 bot_name="TEST_BOT",
-                action_type=ActionType.SYSTEM_CHECK,
+                action_type=ActionType.HEALTH_CHECK,
                 description=test_desc,
                 reason="Automated verification test",
             )
