@@ -108,6 +108,15 @@ except ImportError:
     get_trend_tracker = None
     logger.info("Price trend tracker not available - NEUTRAL regime will use legacy logic")
 
+# Solomon Feedback Loop - Advisory data for Oracle
+SOLOMON_AVAILABLE = False
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_AVAILABLE = True
+except ImportError:
+    get_solomon_enhanced = None
+    print("Info: Solomon enhanced features not available")
+
 # Context manager for safe database connections (prevents connection leaks)
 from contextlib import contextmanager
 
@@ -398,6 +407,51 @@ class ClaudeAnalysis:
     hallucination_risk: str = "LOW"  # LOW, MEDIUM, HIGH
     data_citations: List[str] = None  # List of data points Claude cited
     hallucination_warnings: List[str] = None  # Specific warnings about potential hallucinations
+
+
+@dataclass
+class SolomonAdvisory:
+    """
+    Advisory data from Solomon Feedback Loop.
+
+    These are SUGGESTIONS to Oracle - Oracle remains the final decision maker.
+    Solomon provides historical performance data to help Oracle make better decisions.
+    """
+    # Time-of-day analysis
+    is_optimal_hour: bool = True  # Is this hour historically good for this bot?
+    hour_win_rate: float = 0.0  # Historical win rate for this hour
+    hour_avg_pnl: float = 0.0  # Historical average P&L for this hour
+    best_hour: Optional[int] = None  # Best performing hour (0-23)
+    worst_hour: Optional[int] = None  # Worst performing hour (0-23)
+    time_of_day_adjustment: float = 0.0  # Score adjustment (-0.2 to +0.1)
+
+    # Regime performance analysis
+    regime_ic_win_rate: float = 0.0  # IC win rate in current regime
+    regime_dir_win_rate: float = 0.0  # Directional win rate in current regime
+    regime_recommendation: str = "NEUTRAL"  # IC_PREFERRED, DIR_PREFERRED, NEUTRAL
+    regime_adjustment: float = 0.0  # Score adjustment based on regime history
+
+    # Cross-bot correlation
+    correlated_bots_active: List[str] = field(default_factory=list)  # Other bots with positions
+    correlation_risk: str = "LOW"  # LOW, MEDIUM, HIGH
+    size_reduction_pct: float = 0.0  # Suggested size reduction due to correlation
+
+    # Weekend pre-check (for Friday trading)
+    weekend_gap_prediction: str = "NEUTRAL"  # GAP_UP, GAP_DOWN, NEUTRAL
+    weekend_risk_level: str = "NORMAL"  # LOW, NORMAL, HIGH, EXTREME
+    friday_size_adjustment: float = 1.0  # Multiplier for Friday positions
+
+    # Active proposals for this bot
+    pending_proposal: bool = False
+    proposal_summary: Optional[str] = None
+
+    # Overall Solomon confidence
+    data_quality: str = "GOOD"  # GOOD, LIMITED, NONE
+    solomon_confidence: float = 0.5  # How confident Solomon is in its advice
+
+    def get_combined_adjustment(self) -> float:
+        """Get combined score adjustment from all Solomon factors"""
+        return self.time_of_day_adjustment + self.regime_adjustment
 
 
 # =============================================================================
@@ -1475,6 +1529,169 @@ class OracleAdvisor:
         return self.claude is not None and self.claude.is_enabled
 
     # =========================================================================
+    # SOLOMON ADVISORY - Feedback Loop Intelligence
+    # Solomon provides historical performance data as SUGGESTIONS to Oracle.
+    # Oracle remains the final decision maker ("Oracle is god").
+    # =========================================================================
+
+    def get_solomon_advisory(
+        self,
+        bot_name: str,
+        current_hour: Optional[int] = None,
+        market_regime: Optional[str] = None,
+        is_friday: bool = False
+    ) -> SolomonAdvisory:
+        """
+        Get Solomon's advisory data for Oracle decision-making.
+
+        This data INFORMS Oracle's decisions but does NOT override them.
+        Oracle uses this historical performance data to adjust its scores.
+
+        Args:
+            bot_name: The bot requesting advice (ARES, ATHENA, TITAN, etc.)
+            current_hour: Current trading hour (0-23, CT timezone)
+            market_regime: Current market regime (BULLISH, BEARISH, NEUTRAL)
+            is_friday: Whether it's Friday (for weekend pre-check)
+
+        Returns:
+            SolomonAdvisory with all relevant performance data
+        """
+        advisory = SolomonAdvisory()
+
+        if not SOLOMON_AVAILABLE:
+            advisory.data_quality = "NONE"
+            advisory.solomon_confidence = 0.0
+            return advisory
+
+        try:
+            solomon = get_solomon_enhanced()
+            if solomon is None:
+                advisory.data_quality = "NONE"
+                return advisory
+
+            # 1. TIME-OF-DAY ANALYSIS
+            if current_hour is not None:
+                try:
+                    time_analysis = solomon.time_analyzer.analyze(bot_name, days=30)
+                    if time_analysis:
+                        # Find current hour performance
+                        for hour_data in time_analysis:
+                            if hour_data.hour == current_hour:
+                                advisory.hour_win_rate = hour_data.win_rate
+                                advisory.hour_avg_pnl = hour_data.avg_pnl
+                                advisory.is_optimal_hour = not hour_data.worst_performance
+                                break
+
+                        # Find best/worst hours
+                        for hour_data in time_analysis:
+                            if hour_data.best_performance:
+                                advisory.best_hour = hour_data.hour
+                            if hour_data.worst_performance:
+                                advisory.worst_hour = hour_data.hour
+
+                        # Calculate time adjustment
+                        # Penalize trading during worst hours, slight boost for best hours
+                        if advisory.worst_hour == current_hour:
+                            advisory.time_of_day_adjustment = -0.15  # Significant penalty
+                        elif advisory.best_hour == current_hour:
+                            advisory.time_of_day_adjustment = 0.05  # Small boost
+                        elif advisory.hour_win_rate < 40:
+                            advisory.time_of_day_adjustment = -0.10  # Poor historical hour
+                except Exception as e:
+                    self.live_log.log("SOLOMON_TIME_ERR", f"Time analysis failed: {e}")
+
+            # 2. REGIME PERFORMANCE ANALYSIS
+            if market_regime:
+                try:
+                    regime_perf = solomon.regime_tracker.analyze_regime_performance(bot_name, days=90)
+                    if regime_perf:
+                        for rp in regime_perf:
+                            if rp.regime and rp.regime.upper() == market_regime.upper():
+                                # Check if this is an IC or directional bot
+                                is_ic_bot = bot_name.upper() in ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
+                                if is_ic_bot:
+                                    advisory.regime_ic_win_rate = rp.win_rate
+                                else:
+                                    advisory.regime_dir_win_rate = rp.win_rate
+
+                                # Adjust based on regime-specific performance
+                                if rp.win_rate > 70:
+                                    advisory.regime_adjustment = 0.10  # Strong performance in this regime
+                                    advisory.regime_recommendation = "IC_PREFERRED" if is_ic_bot else "DIR_PREFERRED"
+                                elif rp.win_rate < 40:
+                                    advisory.regime_adjustment = -0.15  # Poor performance in this regime
+                                    advisory.regime_recommendation = "DIR_PREFERRED" if is_ic_bot else "IC_PREFERRED"
+                                break
+                except Exception as e:
+                    self.live_log.log("SOLOMON_REGIME_ERR", f"Regime analysis failed: {e}")
+
+            # 3. CROSS-BOT CORRELATION (check for concentration risk)
+            try:
+                correlations = solomon.cross_bot_analyzer.get_all_correlations(days=30)
+                if correlations:
+                    high_correlation_bots = []
+                    for corr in correlations:
+                        if corr.bot_a == bot_name or corr.bot_b == bot_name:
+                            if abs(corr.correlation) > 0.7:  # High correlation threshold
+                                other_bot = corr.bot_b if corr.bot_a == bot_name else corr.bot_a
+                                high_correlation_bots.append(other_bot)
+
+                    if high_correlation_bots:
+                        advisory.correlated_bots_active = high_correlation_bots
+                        advisory.correlation_risk = "HIGH" if len(high_correlation_bots) >= 2 else "MEDIUM"
+                        advisory.size_reduction_pct = min(30, len(high_correlation_bots) * 15)  # 15% per correlated bot
+            except Exception as e:
+                self.live_log.log("SOLOMON_CORR_ERR", f"Correlation analysis failed: {e}")
+
+            # 4. WEEKEND PRE-CHECK (Friday only)
+            if is_friday:
+                try:
+                    weekend_check = solomon.weekend_prechecker.analyze()
+                    if weekend_check:
+                        advisory.weekend_gap_prediction = weekend_check.get('prediction', 'NEUTRAL')
+                        advisory.weekend_risk_level = weekend_check.get('risk_level', 'NORMAL')
+                        # Reduce Friday position sizes based on weekend risk
+                        if advisory.weekend_risk_level == 'HIGH':
+                            advisory.friday_size_adjustment = 0.5
+                        elif advisory.weekend_risk_level == 'EXTREME':
+                            advisory.friday_size_adjustment = 0.25
+                except Exception as e:
+                    self.live_log.log("SOLOMON_WEEKEND_ERR", f"Weekend pre-check failed: {e}")
+
+            # 5. CHECK FOR PENDING PROPOSALS
+            try:
+                proposals = solomon.proposals
+                if proposals:
+                    for p in proposals:
+                        if p.get('bot_name') == bot_name and p.get('status') == 'pending':
+                            advisory.pending_proposal = True
+                            advisory.proposal_summary = p.get('description', 'Pending proposal')[:100]
+                            break
+            except Exception as e:
+                pass  # Non-critical
+
+            # Set overall data quality
+            advisory.data_quality = "GOOD"
+            advisory.solomon_confidence = 0.7
+
+            # Log the advisory
+            self.live_log.log("SOLOMON_ADVISORY", f"Advisory for {bot_name}", {
+                "time_adjustment": advisory.time_of_day_adjustment,
+                "regime_adjustment": advisory.regime_adjustment,
+                "combined_adjustment": advisory.get_combined_adjustment(),
+                "is_optimal_hour": advisory.is_optimal_hour,
+                "correlation_risk": advisory.correlation_risk
+            })
+
+            return advisory
+
+        except Exception as e:
+            self.live_log.log("SOLOMON_ERR", f"Failed to get Solomon advisory: {e}")
+            advisory.data_quality = "NONE"
+            advisory.solomon_confidence = 0.0
+            return advisory
+
+    # =========================================================================
     # MODEL STALENESS DETECTION & AUTO-RELOAD (Issue #1 fix)
     # Ensures bots always use the most recent model version
     # =========================================================================
@@ -1882,6 +2099,85 @@ class OracleAdvisor:
             dir_score += 0.05
 
         # =========================================================================
+        # SOLOMON ADVISORY - Historical Performance Feedback
+        # Solomon provides data-driven adjustments based on past performance.
+        # These are SUGGESTIONS - Oracle still makes the final decision.
+        # =========================================================================
+        solomon_size_multiplier = 1.0
+
+        if SOLOMON_AVAILABLE:
+            try:
+                # Get current hour (Central Time)
+                from datetime import datetime
+                import pytz
+                ct_tz = pytz.timezone('America/Chicago')
+                current_hour = datetime.now(ct_tz).hour
+                is_friday = context.day_of_week == 4
+
+                # Determine market regime string from GEX
+                if gex_regime == GEXRegime.POSITIVE:
+                    market_regime = "BULLISH"
+                elif gex_regime == GEXRegime.NEGATIVE:
+                    market_regime = "BEARISH"
+                else:
+                    market_regime = "NEUTRAL"
+
+                # Get Solomon's advisory (informational only)
+                solomon_advisory = self.get_solomon_advisory(
+                    bot_name="STRATEGY",  # Generic for strategy-level advice
+                    current_hour=current_hour,
+                    market_regime=market_regime,
+                    is_friday=is_friday
+                )
+
+                if solomon_advisory.data_quality != "NONE":
+                    # Apply time-of-day adjustment
+                    if solomon_advisory.time_of_day_adjustment != 0:
+                        ic_score += solomon_advisory.time_of_day_adjustment
+                        dir_score += solomon_advisory.time_of_day_adjustment
+                        if solomon_advisory.time_of_day_adjustment < 0:
+                            reasoning_parts.append(
+                                f"SOLOMON: Hour {current_hour} has poor historical performance "
+                                f"({solomon_advisory.hour_win_rate:.0f}% win rate)"
+                            )
+                        else:
+                            reasoning_parts.append(
+                                f"SOLOMON: Hour {current_hour} is historically strong"
+                            )
+
+                    # Apply regime-based adjustment
+                    if solomon_advisory.regime_adjustment != 0:
+                        if solomon_advisory.regime_recommendation == "IC_PREFERRED":
+                            ic_score += abs(solomon_advisory.regime_adjustment)
+                            reasoning_parts.append(
+                                f"SOLOMON: IC historically performs well in {market_regime} regime"
+                            )
+                        elif solomon_advisory.regime_recommendation == "DIR_PREFERRED":
+                            dir_score += abs(solomon_advisory.regime_adjustment)
+                            reasoning_parts.append(
+                                f"SOLOMON: Directional historically performs well in {market_regime} regime"
+                            )
+
+                    # Apply correlation-based size reduction
+                    if solomon_advisory.correlation_risk in ["MEDIUM", "HIGH"]:
+                        reduction = solomon_advisory.size_reduction_pct / 100
+                        solomon_size_multiplier *= (1.0 - reduction)
+                        reasoning_parts.append(
+                            f"SOLOMON: Correlated bots active - reduce size by {solomon_advisory.size_reduction_pct:.0f}%"
+                        )
+
+                    # Apply Friday/weekend adjustment
+                    if is_friday and solomon_advisory.friday_size_adjustment < 1.0:
+                        solomon_size_multiplier *= solomon_advisory.friday_size_adjustment
+                        reasoning_parts.append(
+                            f"SOLOMON: Weekend risk {solomon_advisory.weekend_risk_level} - "
+                            f"reduce Friday positions to {solomon_advisory.friday_size_adjustment*100:.0f}%"
+                        )
+
+            except Exception as e:
+                self.live_log.log("SOLOMON_STRATEGY_ERR", f"Solomon advisory failed: {e}")
+
+        # =========================================================================
         # DETERMINE RECOMMENDATION
         # =========================================================================
 
@@ -1899,6 +2195,9 @@ class OracleAdvisor:
             size_multiplier = 0.75
         else:
             size_multiplier = 1.0
+
+        # Apply Solomon's size adjustment (correlation risk, weekend risk)
+        size_multiplier *= solomon_size_multiplier
 
         # Determine strategy
         if vix_regime == VIXRegime.EXTREME and gex_regime != GEXRegime.NEGATIVE:
