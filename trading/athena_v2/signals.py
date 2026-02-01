@@ -251,6 +251,12 @@ class SignalGenerator:
                 gex_regime = GEXRegime.NEUTRAL
 
             # Build context for Oracle
+            # CRITICAL: Include day_of_week for Friday filter
+            from datetime import datetime
+            import pytz
+            ct = pytz.timezone('America/Chicago')
+            now_ct = datetime.now(ct)
+
             context = OracleMarketContext(
                 spot_price=gex_data['spot_price'],
                 vix=gex_data['vix'],
@@ -259,6 +265,7 @@ class SignalGenerator:
                 gex_regime=gex_regime,
                 gex_net=gex_data.get('net_gex', 0),
                 gex_flip_point=gex_data.get('flip_point', 0),
+                day_of_week=now_ct.weekday(),  # 0=Monday, 4=Friday
             )
 
             # Call ATHENA-specific advice method
