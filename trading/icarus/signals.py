@@ -178,15 +178,36 @@ class SignalGenerator:
                 except Exception:
                     pass
 
+            # Extract flip point and walls for calculations
+            flip_point = gex.get('flip_point', gex.get('gamma_flip', 0))
+            call_wall = gex.get('call_wall', gex.get('major_call_wall', 0))
+            put_wall = gex.get('put_wall', gex.get('major_put_wall', 0))
+
+            # Calculate derived fields for Oracle ML model
+            gex_normalized = gex.get('gex_normalized', 0)
+            distance_to_flip_pct = 0.0
+            if flip_point > 0 and spot > 0:
+                distance_to_flip_pct = (spot - flip_point) / spot * 100
+            between_walls = put_wall <= spot <= call_wall if (put_wall > 0 and call_wall > 0) else True
+
+            # Calculate expected move from VIX (annualized vol -> daily)
+            import math
+            expected_move_pct = (vix / 100 / math.sqrt(252)) * 100  # Daily expected move %
+
             return {
                 'spot_price': spot,
-                'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
-                'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
+                'call_wall': call_wall,
+                'put_wall': put_wall,
                 'gex_regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
                 'net_gex': gex.get('net_gex', 0),
-                'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
+                'flip_point': flip_point,
                 'vix': vix,
                 'timestamp': datetime.now(CENTRAL_TZ),
+                # Additional fields for Oracle ML model
+                'gex_normalized': gex_normalized,
+                'distance_to_flip_pct': distance_to_flip_pct,
+                'between_walls': between_walls,
+                'expected_move_pct': expected_move_pct,
                 # Raw Kronos data for audit
                 'kronos_raw': gex,
             }
@@ -255,7 +276,7 @@ class SignalGenerator:
                 gex_regime = GEXRegime.NEUTRAL
 
             # Build context for Oracle
-            # CRITICAL: Include day_of_week for Friday filter
+            # CRITICAL: Include ALL fields for proper ML predictions
             from datetime import datetime
             import pytz
             ct = pytz.timezone('America/Chicago')
@@ -270,6 +291,11 @@ class SignalGenerator:
                 gex_net=gex_data.get('net_gex', 0),
                 gex_flip_point=gex_data.get('flip_point', 0),
                 day_of_week=now_ct.weekday(),  # 0=Monday, 4=Friday
+                # Additional ML model features (root cause fix)
+                gex_normalized=gex_data.get('gex_normalized', 0),
+                gex_distance_to_flip_pct=gex_data.get('distance_to_flip_pct', 0),
+                gex_between_walls=gex_data.get('between_walls', True),
+                expected_move_pct=gex_data.get('expected_move_pct', 1.0),
             )
 
             # Call ATHENA-specific advice method (ICARUS uses same model)
