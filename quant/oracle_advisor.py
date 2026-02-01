@@ -2766,7 +2766,7 @@ class OracleAdvisor:
             bot_name=BotName.ARES,
             advice=advice,
             win_probability=base_pred['win_probability'],
-            confidence=min(100, base_pred['win_probability'] * 100 * 1.2),
+            confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
             suggested_risk_pct=risk_pct,
             suggested_sd_multiplier=sd_mult,
             use_gex_walls=use_gex_walls,
@@ -2883,7 +2883,7 @@ class OracleAdvisor:
             bot_name=BotName.ATLAS,
             advice=advice,
             win_probability=base_pred['win_probability'],
-            confidence=min(100, base_pred['win_probability'] * 100 * 1.2),
+            confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
             suggested_risk_pct=risk_pct,
             suggested_sd_multiplier=1.0,
             top_factors=base_pred['top_factors'],
@@ -3008,7 +3008,7 @@ class OracleAdvisor:
             bot_name=BotName.PHOENIX,
             advice=advice,
             win_probability=base_pred['win_probability'],
-            confidence=min(100, base_pred['win_probability'] * 100 * 1.2),
+            confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
             suggested_risk_pct=risk_pct * 0.5,  # Lower risk for directional
             suggested_sd_multiplier=1.0,
             top_factors=base_pred['top_factors'],
@@ -3306,7 +3306,59 @@ class OracleAdvisor:
                 reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
                 logger.info(f"[ATHENA] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
+        # =====================================================================
+        # FLIP DISTANCE FILTER - Data showed trades far from flip point lose
+        # Winners avg 2.1% from flip, losers avg 4.8% from flip
+        # Filter: 0.5-3% = TRADE_FULL, 3-5% = TRADE_REDUCED, >5% = SKIP
+        # =====================================================================
+        flip_distance_pct = 0.0
+        flip_filter_applied = False
+        if context.gex_flip_point > 0 and context.spot_price > 0:
+            flip_distance_pct = abs(context.spot_price - context.gex_flip_point) / context.spot_price * 100
+
+            if flip_distance_pct > 5.0:
+                # Too far from flip - skip trade entirely
+                base_pred['win_probability'] = max(0.35, base_pred['win_probability'] - 0.15)
+                reasoning_parts.append(f"FLIP_FILTER: {flip_distance_pct:.1f}% from flip (>5%) - HIGH RISK")
+                flip_filter_applied = True
+                logger.info(f"[{bot_name}] Flip distance {flip_distance_pct:.1f}% > 5% - reducing win probability")
+            elif flip_distance_pct > 3.0:
+                # Moderate distance - reduce size
+                base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.08)
+                reasoning_parts.append(f"FLIP_FILTER: {flip_distance_pct:.1f}% from flip (3-5%) - REDUCED SIZE")
+                flip_filter_applied = True
+                logger.info(f"[{bot_name}] Flip distance {flip_distance_pct:.1f}% (3-5%) - trade with caution")
+            else:
+                # Sweet spot (0.5-3%) - full confidence
+                reasoning_parts.append(f"FLIP_FILTER: {flip_distance_pct:.1f}% from flip - OPTIMAL ZONE")
+                logger.info(f"[{bot_name}] Flip distance {flip_distance_pct:.1f}% - in optimal zone")
+
+        # =====================================================================
+        # FRIDAY SIZE REDUCTION - Data showed Friday has 14% WR, -$215K losses
+        # Apply TRADE_REDUCED on Fridays with 0DTE expiration risk
+        # =====================================================================
+        is_friday = context.day_of_week == 4
+        friday_risk_applied = False
+        if is_friday:
+            # Friday with 0DTE = high risk, reduce size
+            base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.05)
+            reasoning_parts.append("FRIDAY_FILTER: 0DTE + weekend gap risk - HALF SIZE")
+            friday_risk_applied = True
+            logger.info(f"[{bot_name}] Friday detected - applying size reduction")
+
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
+
+        # Apply Friday size reduction AFTER advice calculation
+        if friday_risk_applied and advice == TradingAdvice.TRADE_FULL:
+            advice = TradingAdvice.TRADE_REDUCED
+            risk_pct = risk_pct * 0.5
+            logger.info(f"[{bot_name}] Friday: Downgraded TRADE_FULL -> TRADE_REDUCED")
+
+        # Apply flip distance size reduction AFTER advice calculation
+        if flip_filter_applied and flip_distance_pct > 3.0 and advice == TradingAdvice.TRADE_FULL:
+            advice = TradingAdvice.TRADE_REDUCED
+            risk_pct = risk_pct * 0.5
+            logger.info(f"[{bot_name}] Flip distance: Downgraded TRADE_FULL -> TRADE_REDUCED")
 
         # Suggested strikes based on direction
         suggested_put = None
@@ -3334,7 +3386,7 @@ class OracleAdvisor:
             bot_name=prediction_bot_name,
             advice=advice,
             win_probability=base_pred['win_probability'],
-            confidence=min(100, direction_confidence * 100),
+            confidence=min(1.0, direction_confidence),  # FIX: Scale 0-1, not 0-100
             suggested_risk_pct=risk_pct * 0.5,  # Conservative for directional spreads
             suggested_sd_multiplier=1.0,
             use_gex_walls=use_gex_walls,
@@ -3380,6 +3432,11 @@ class OracleAdvisor:
             "suggested_call_strike": suggested_call,
             "dist_to_call_wall": dist_to_call_wall,
             "dist_to_put_wall": dist_to_put_wall,
+            # NEW: Flip distance and Friday filters for audit trail
+            "flip_distance_pct": flip_distance_pct,
+            "flip_filter_applied": flip_filter_applied,
+            "is_friday": is_friday,
+            "friday_risk_applied": friday_risk_applied,
             "reasoning": prediction.reasoning,
             "claude_validated": claude_analysis is not None,
             "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
