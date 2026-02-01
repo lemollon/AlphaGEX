@@ -892,6 +892,7 @@ async def get_realtime_status(
         for bot_name, table_name in BOT_TABLES.items():
             try:
                 # Get recent trade performance for this bot
+                # Use COALESCE to handle legacy data with NULL close_time
                 cursor.execute(f"""
                     SELECT
                         COUNT(*) as total_trades,
@@ -899,35 +900,37 @@ async def get_realtime_status(
                         SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
                         COALESCE(SUM(realized_pnl), 0) as total_pnl,
                         COALESCE(AVG(realized_pnl), 0) as avg_pnl,
-                        MAX(close_time) as last_trade_time
+                        MAX(COALESCE(close_time, open_time)) as last_trade_time
                     FROM {table_name}
                     WHERE status = 'closed'
-                      AND close_time >= NOW() - INTERVAL '{days} days'
+                      AND COALESCE(close_time, open_time) >= NOW() - INTERVAL '{days} days'
                 """)
                 row = cursor.fetchone()
                 if row and row[0] > 0:
                     bot_rows.append((bot_name, row[0], row[1], row[2], row[3], row[4], row[5]))
 
                 # Get today's performance for this bot
+                # Use COALESCE to handle legacy data with NULL close_time
                 cursor.execute(f"""
                     SELECT
                         COUNT(*) as today_trades,
                         COALESCE(SUM(realized_pnl), 0) as today_pnl
                     FROM {table_name}
                     WHERE status = 'closed'
-                      AND DATE(close_time AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                      AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = CURRENT_DATE
                 """)
                 today_row = cursor.fetchone()
                 if today_row and today_row[0] > 0:
                     today_by_bot[bot_name] = {'trades': today_row[0], 'pnl': float(today_row[1] or 0)}
 
                 # Get last 10 trades for streak calculation
+                # Use COALESCE to handle legacy data with NULL close_time
                 cursor.execute(f"""
                     SELECT realized_pnl
                     FROM {table_name}
                     WHERE status = 'closed'
-                      AND close_time >= NOW() - INTERVAL '{days} days'
-                    ORDER BY close_time DESC
+                      AND COALESCE(close_time, open_time) >= NOW() - INTERVAL '{days} days'
+                    ORDER BY COALESCE(close_time, open_time) DESC
                     LIMIT 10
                 """)
                 trades = cursor.fetchall()
