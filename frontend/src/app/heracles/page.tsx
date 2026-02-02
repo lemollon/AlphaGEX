@@ -41,10 +41,23 @@ import {
   useHERACLESStatus,
   useHERACLESClosedTrades,
   useHERACLESEquityCurve,
+  useHERACLESIntradayEquity,
   useHERACLESScanActivity,
   useHERACLESMLTrainingData,
   useHERACLESSignals,
 } from '@/lib/hooks/useMarketData'
+
+// ==============================================================================
+// TIMEFRAME OPTIONS
+// ==============================================================================
+
+const EQUITY_TIMEFRAMES = [
+  { id: 'intraday', label: 'Today', days: 0 },
+  { id: '7d', label: '7D', days: 7 },
+  { id: '14d', label: '14D', days: 14 },
+  { id: '30d', label: '30D', days: 30 },
+  { id: '90d', label: '90D', days: 90 },
+]
 
 // ==============================================================================
 // TABS
@@ -66,11 +79,17 @@ type HERACLESTabId = typeof HERACLES_TABS[number]['id']
 export default function HERACLESPage() {
   const sidebarPadding = useSidebarPadding()
   const [activeTab, setActiveTab] = useState<HERACLESTabId>('portfolio')
+  const [equityTimeframe, setEquityTimeframe] = useState('intraday')
+
+  // Get days for current timeframe
+  const selectedTimeframe = EQUITY_TIMEFRAMES.find(t => t.id === equityTimeframe) || EQUITY_TIMEFRAMES[0]
+  const isIntraday = equityTimeframe === 'intraday'
 
   // Data hooks
   const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useHERACLESStatus()
   const { data: closedTradesData } = useHERACLESClosedTrades(50)
-  const { data: equityCurveData } = useHERACLESEquityCurve(30)
+  const { data: equityCurveData } = useHERACLESEquityCurve(selectedTimeframe.days || 30)
+  const { data: intradayEquityData } = useHERACLESIntradayEquity()
   const { data: scanActivityData, mutate: mutateScanActivity } = useHERACLESScanActivity(100)
   const { data: mlTrainingData } = useHERACLESMLTrainingData()
   const { data: signalsData } = useHERACLESSignals(50)
@@ -83,7 +102,8 @@ export default function HERACLESPage() {
   const winTracker = status?.win_tracker || {}
   const paperAccount = status?.paper_account || null
   const closedTrades = closedTradesData?.trades || []
-  const equityCurve = equityCurveData?.equity_curve || []
+  const dailyEquityCurve = equityCurveData?.equity_curve || []
+  const intradayEquityCurve = intradayEquityData?.equity_curve || []
   const scans = scanActivityData?.scans || []
   const scanSummary = scanActivityData?.summary || {}
   const signals = signalsData?.signals || []
@@ -91,12 +111,15 @@ export default function HERACLESPage() {
   // Brand
   const brand = BOT_BRANDS.HERACLES
 
+  // Select appropriate equity curve based on timeframe
+  const equityCurve = isIntraday ? intradayEquityCurve : dailyEquityCurve
+
   // Format equity curve data for chart
   const equityChartData = equityCurve.map((point: any) => ({
-    date: point.date,
+    date: isIntraday ? point.snapshot_time || point.timestamp : point.date,
     equity: point.equity,
-    pnl: point.cumulative_pnl,
-    return: point.return_pct,
+    pnl: isIntraday ? point.unrealized_pnl : point.cumulative_pnl,
+    return: point.return_pct || 0,
   }))
 
   // Loading state
@@ -285,12 +308,30 @@ export default function HERACLESPage() {
               </div>
 
               {/* Equity Curve */}
-              {equityChartData.length > 0 && (
-                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
                     <TrendingUp className="h-5 w-5 text-yellow-400" />
-                    Equity Curve (30 Days)
+                    Equity Curve
                   </h3>
+                  {/* Timeframe Selector */}
+                  <div className="flex gap-1">
+                    {EQUITY_TIMEFRAMES.map((tf) => (
+                      <button
+                        key={tf.id}
+                        onClick={() => setEquityTimeframe(tf.id)}
+                        className={`px-3 py-1 text-xs rounded transition-colors ${
+                          equityTimeframe === tf.id
+                            ? 'bg-yellow-500 text-black font-semibold'
+                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                        }`}
+                      >
+                        {tf.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {equityChartData.length > 0 ? (
                   <div className="h-64">
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={equityChartData}>
@@ -298,8 +339,17 @@ export default function HERACLESPage() {
                         <XAxis
                           dataKey="date"
                           stroke="#9CA3AF"
-                          tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                          tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                          tickFormatter={(value) => {
+                            if (!value) return ''
+                            const date = new Date(value)
+                            if (isIntraday) {
+                              // Show time for intraday (e.g., "9:30 AM")
+                              return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                            }
+                            // Show date for daily (e.g., "Jan 15")
+                            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                          }}
                         />
                         <YAxis
                           stroke="#9CA3AF"
@@ -313,7 +363,18 @@ export default function HERACLESPage() {
                             border: '1px solid #374151',
                             borderRadius: '8px',
                           }}
-                          formatter={(value: number) => [`$${value.toLocaleString()}`, 'Equity']}
+                          labelFormatter={(value) => {
+                            if (!value) return ''
+                            const date = new Date(value)
+                            if (isIntraday) {
+                              return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                            }
+                            return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                          }}
+                          formatter={(value: number, name: string) => [
+                            `$${value.toLocaleString()}`,
+                            name === 'equity' ? 'Equity' : 'P&L'
+                          ]}
                         />
                         <ReferenceLine
                           y={paperAccount?.starting_capital || 100000}
@@ -325,13 +386,21 @@ export default function HERACLESPage() {
                           dataKey="equity"
                           stroke={brand.hexPrimary}
                           strokeWidth={2}
-                          dot={false}
+                          dot={equityChartData.length < 20}
                         />
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
-                </div>
-              )}
+                ) : (
+                  <div className="h-64 flex items-center justify-center text-gray-500">
+                    <div className="text-center">
+                      <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p>No equity data for {selectedTimeframe.label}</p>
+                      <p className="text-xs mt-1">Data will appear after trades are executed</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
