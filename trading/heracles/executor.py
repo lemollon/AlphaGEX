@@ -1,0 +1,560 @@
+"""
+HERACLES - Order Executor
+=========================
+
+Handles order execution via Tastytrade API for MES futures.
+
+Features:
+- Market and limit order execution
+- Position monitoring
+- Stop loss management
+- Real-time quote fetching
+"""
+
+import os
+import logging
+import requests
+from datetime import datetime
+from typing import Optional, Dict, Any, Tuple, List
+from zoneinfo import ZoneInfo
+
+from .models import (
+    FuturesPosition, FuturesSignal, TradeDirection, PositionStatus,
+    HERACLESConfig, TradingMode, MES_POINT_VALUE, CENTRAL_TZ
+)
+
+logger = logging.getLogger(__name__)
+
+# Tastytrade API endpoints
+TASTYTRADE_BASE_URL = "https://api.tastytrade.com"
+TASTYTRADE_SANDBOX_URL = "https://api.cert.tastytrade.com"
+
+
+class TastytradeExecutor:
+    """
+    Executes orders on Tastytrade for MES futures.
+
+    Handles:
+    - Authentication
+    - Order placement (market/limit)
+    - Position queries
+    - Quote fetching
+    - Account balances
+    """
+
+    def __init__(self, config: HERACLESConfig):
+        self.config = config
+        self.session_token: Optional[str] = None
+        self.token_expiry: Optional[datetime] = None
+
+        # Get credentials from environment
+        self.username = os.environ.get("TASTYTRADE_USERNAME")
+        self.password = os.environ.get("TASTYTRADE_PASSWORD")
+        self.account_id = os.environ.get("TASTYTRADE_ACCOUNT_ID") or config.account_id
+
+        # Use sandbox for paper trading
+        self.base_url = TASTYTRADE_BASE_URL
+        if config.mode == TradingMode.PAPER:
+            # Note: Tastytrade doesn't have a true sandbox for futures
+            # Paper trading is simulated in our system
+            logger.info("HERACLES running in PAPER mode - orders will be simulated")
+
+    def _ensure_session(self) -> bool:
+        """Ensure we have a valid session token"""
+        if self.session_token and self.token_expiry:
+            if datetime.now(CENTRAL_TZ) < self.token_expiry:
+                return True
+
+        return self._authenticate()
+
+    def _authenticate(self) -> bool:
+        """Authenticate with Tastytrade API"""
+        if not self.username or not self.password:
+            logger.error("TASTYTRADE_USERNAME and TASTYTRADE_PASSWORD must be set")
+            return False
+
+        try:
+            response = requests.post(
+                f"{self.base_url}/sessions",
+                json={
+                    "login": self.username,
+                    "password": self.password,
+                    "remember-me": True
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+
+            if response.status_code == 201:
+                data = response.json()
+                self.session_token = data.get("data", {}).get("session-token")
+                # Token valid for 24 hours, refresh at 23 hours
+                self.token_expiry = datetime.now(CENTRAL_TZ).replace(hour=23, minute=0)
+                logger.info("Tastytrade authentication successful")
+                return True
+            else:
+                logger.error(f"Tastytrade auth failed: {response.status_code} - {response.text[:200]}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Tastytrade auth error: {e}")
+            return False
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get authenticated headers"""
+        return {
+            "Authorization": self.session_token,
+            "Content-Type": "application/json"
+        }
+
+    # ========================================================================
+    # Quote & Market Data
+    # ========================================================================
+
+    def get_mes_quote(self, symbol: str = None) -> Optional[Dict[str, Any]]:
+        """
+        Get current MES futures quote.
+
+        Returns:
+            Dict with bid, ask, last, volume or None if failed
+        """
+        if not self._ensure_session():
+            return None
+
+        symbol = symbol or self.config.symbol
+
+        try:
+            response = requests.get(
+                f"{self.base_url}/market-data/quotes/{symbol}",
+                headers=self._get_headers(),
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json().get("data", {})
+                return {
+                    "symbol": symbol,
+                    "bid": float(data.get("bid-price", 0)),
+                    "ask": float(data.get("ask-price", 0)),
+                    "last": float(data.get("last-price", 0)),
+                    "volume": int(data.get("volume", 0)),
+                    "timestamp": datetime.now(CENTRAL_TZ).isoformat()
+                }
+            else:
+                # REST quotes may not be available for futures
+                logger.warning(f"Quote not available via REST for {symbol}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting quote for {symbol}: {e}")
+            return None
+
+    def get_account_balance(self) -> Optional[Dict[str, Any]]:
+        """Get account balance and buying power"""
+        if not self._ensure_session():
+            return None
+
+        try:
+            response = requests.get(
+                f"{self.base_url}/accounts/{self.account_id}/balances",
+                headers=self._get_headers(),
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                data = response.json().get("data", {})
+                return {
+                    "net_liquidating_value": float(data.get("net-liquidating-value", 0)),
+                    "cash_balance": float(data.get("cash-balance", 0)),
+                    "buying_power": float(data.get("derivative-buying-power", 0)),
+                    "futures_buying_power": float(data.get("futures-overnight-margin-requirement", 0)),
+                    "pending_cash": float(data.get("pending-cash", 0)),
+                }
+            else:
+                logger.error(f"Failed to get balance: {response.status_code}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting account balance: {e}")
+            return None
+
+    def get_positions(self) -> List[Dict[str, Any]]:
+        """Get all open positions in the account"""
+        if not self._ensure_session():
+            return []
+
+        try:
+            response = requests.get(
+                f"{self.base_url}/accounts/{self.account_id}/positions",
+                headers=self._get_headers(),
+                timeout=30
+            )
+
+            if response.status_code == 200:
+                positions = response.json().get("data", {}).get("items", [])
+
+                # Filter for futures positions
+                futures_positions = [
+                    p for p in positions
+                    if p.get("instrument-type") == "Future"
+                ]
+
+                return futures_positions
+            else:
+                logger.error(f"Failed to get positions: {response.status_code}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Error getting positions: {e}")
+            return []
+
+    # ========================================================================
+    # Order Execution
+    # ========================================================================
+
+    def execute_signal(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
+        """
+        Execute a trading signal.
+
+        Args:
+            signal: The signal to execute
+            position_id: Unique position identifier
+
+        Returns:
+            (success, message, order_id)
+        """
+        if self.config.mode == TradingMode.PAPER:
+            return self._simulate_execution(signal, position_id)
+
+        return self._live_execution(signal, position_id)
+
+    def _simulate_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
+        """Simulate order execution for paper trading"""
+        logger.info(
+            f"[PAPER] Simulating {signal.direction.value} order: "
+            f"{signal.contracts} contracts at {signal.entry_price:.2f}"
+        )
+
+        # Simulate execution with slight slippage
+        slippage = 0.25  # 1 tick slippage
+        if signal.direction == TradeDirection.LONG:
+            fill_price = signal.entry_price + slippage
+        else:
+            fill_price = signal.entry_price - slippage
+
+        order_id = f"PAPER-{position_id}"
+
+        return True, f"Paper order filled at {fill_price:.2f}", order_id
+
+    def _live_execution(self, signal: FuturesSignal, position_id: str) -> Tuple[bool, str, Optional[str]]:
+        """Execute a live order via Tastytrade"""
+        if not self._ensure_session():
+            return False, "Authentication failed", None
+
+        try:
+            # Build order payload
+            order_payload = {
+                "time-in-force": "Day",
+                "order-type": "Market",
+                "legs": [
+                    {
+                        "instrument-type": "Future",
+                        "symbol": self.config.symbol,
+                        "quantity": signal.contracts,
+                        "action": "Buy to Open" if signal.direction == TradeDirection.LONG else "Sell to Open"
+                    }
+                ]
+            }
+
+            response = requests.post(
+                f"{self.base_url}/accounts/{self.account_id}/orders",
+                headers=self._get_headers(),
+                json=order_payload,
+                timeout=30
+            )
+
+            if response.status_code in [200, 201]:
+                data = response.json().get("data", {})
+                order_id = data.get("order", {}).get("id")
+                status = data.get("order", {}).get("status")
+
+                logger.info(f"Order placed: {order_id}, status: {status}")
+                return True, f"Order {order_id} placed, status: {status}", order_id
+            else:
+                error_msg = response.json().get("error", {}).get("message", response.text[:200])
+                logger.error(f"Order failed: {error_msg}")
+                return False, f"Order failed: {error_msg}", None
+
+        except Exception as e:
+            logger.error(f"Error executing order: {e}")
+            return False, str(e), None
+
+    def close_position_order(
+        self,
+        position: FuturesPosition,
+        close_reason: str
+    ) -> Tuple[bool, str, float]:
+        """
+        Close an existing position.
+
+        Args:
+            position: The position to close
+            close_reason: Reason for closing
+
+        Returns:
+            (success, message, fill_price)
+        """
+        if self.config.mode == TradingMode.PAPER:
+            return self._simulate_close(position, close_reason)
+
+        return self._live_close(position, close_reason)
+
+    def _simulate_close(
+        self,
+        position: FuturesPosition,
+        close_reason: str
+    ) -> Tuple[bool, str, float]:
+        """Simulate closing a position for paper trading"""
+        # Get current quote for fill price
+        quote = self.get_mes_quote(position.symbol)
+
+        if quote:
+            if position.direction == TradeDirection.LONG:
+                fill_price = quote.get("bid", position.current_stop)
+            else:
+                fill_price = quote.get("ask", position.current_stop)
+        else:
+            # Use stop price as fill price if no quote
+            fill_price = position.current_stop
+
+        logger.info(
+            f"[PAPER] Simulating close for {position.position_id}: "
+            f"{position.direction.value} {position.contracts} contracts at {fill_price:.2f}"
+        )
+
+        return True, f"Paper close filled at {fill_price:.2f}", fill_price
+
+    def _live_close(
+        self,
+        position: FuturesPosition,
+        close_reason: str
+    ) -> Tuple[bool, str, float]:
+        """Close a live position via Tastytrade"""
+        if not self._ensure_session():
+            return False, "Authentication failed", 0.0
+
+        try:
+            # Determine closing action
+            if position.direction == TradeDirection.LONG:
+                action = "Sell to Close"
+            else:
+                action = "Buy to Close"
+
+            order_payload = {
+                "time-in-force": "Day",
+                "order-type": "Market",
+                "legs": [
+                    {
+                        "instrument-type": "Future",
+                        "symbol": position.symbol,
+                        "quantity": position.contracts,
+                        "action": action
+                    }
+                ]
+            }
+
+            response = requests.post(
+                f"{self.base_url}/accounts/{self.account_id}/orders",
+                headers=self._get_headers(),
+                json=order_payload,
+                timeout=30
+            )
+
+            if response.status_code in [200, 201]:
+                data = response.json().get("data", {})
+                order_id = data.get("order", {}).get("id")
+                fill_price = float(data.get("order", {}).get("fill-price", 0))
+
+                logger.info(f"Close order placed: {order_id}, fill: {fill_price}")
+                return True, f"Close order {order_id} filled at {fill_price}", fill_price
+            else:
+                error_msg = response.json().get("error", {}).get("message", response.text[:200])
+                logger.error(f"Close order failed: {error_msg}")
+                return False, f"Close failed: {error_msg}", 0.0
+
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            return False, str(e), 0.0
+
+    # ========================================================================
+    # Stop Order Management
+    # ========================================================================
+
+    def place_stop_order(
+        self,
+        position: FuturesPosition,
+        stop_price: float
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Place a stop loss order for a position.
+
+        For paper trading, stops are managed internally by the trader.
+        For live trading, we place a stop order with Tastytrade.
+        """
+        if self.config.mode == TradingMode.PAPER:
+            logger.info(f"[PAPER] Stop order simulated at {stop_price:.2f}")
+            return True, f"Paper stop at {stop_price:.2f}", f"STOP-{position.position_id}"
+
+        if not self._ensure_session():
+            return False, "Authentication failed", None
+
+        try:
+            # Determine stop action
+            if position.direction == TradeDirection.LONG:
+                action = "Sell to Close"
+            else:
+                action = "Buy to Close"
+
+            order_payload = {
+                "time-in-force": "GTC",  # Good Till Cancelled
+                "order-type": "Stop",
+                "stop-trigger": stop_price,
+                "legs": [
+                    {
+                        "instrument-type": "Future",
+                        "symbol": position.symbol,
+                        "quantity": position.contracts,
+                        "action": action
+                    }
+                ]
+            }
+
+            response = requests.post(
+                f"{self.base_url}/accounts/{self.account_id}/orders",
+                headers=self._get_headers(),
+                json=order_payload,
+                timeout=30
+            )
+
+            if response.status_code in [200, 201]:
+                data = response.json().get("data", {})
+                order_id = data.get("order", {}).get("id")
+                logger.info(f"Stop order placed: {order_id} at {stop_price}")
+                return True, f"Stop order {order_id} at {stop_price}", order_id
+            else:
+                error_msg = response.json().get("error", {}).get("message", response.text[:200])
+                logger.error(f"Stop order failed: {error_msg}")
+                return False, f"Stop order failed: {error_msg}", None
+
+        except Exception as e:
+            logger.error(f"Error placing stop order: {e}")
+            return False, str(e), None
+
+    def cancel_order(self, order_id: str) -> bool:
+        """Cancel an existing order"""
+        if self.config.mode == TradingMode.PAPER:
+            logger.info(f"[PAPER] Order {order_id} cancelled")
+            return True
+
+        if not self._ensure_session():
+            return False
+
+        try:
+            response = requests.delete(
+                f"{self.base_url}/accounts/{self.account_id}/orders/{order_id}",
+                headers=self._get_headers(),
+                timeout=30
+            )
+
+            if response.status_code in [200, 204]:
+                logger.info(f"Order {order_id} cancelled")
+                return True
+            else:
+                logger.error(f"Failed to cancel order {order_id}: {response.status_code}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error cancelling order {order_id}: {e}")
+            return False
+
+    # ========================================================================
+    # Utility Methods
+    # ========================================================================
+
+    def is_market_open(self) -> bool:
+        """
+        Check if futures market is open.
+
+        MES trades nearly 24 hours:
+        - Sunday 5:00 PM CT to Friday 4:00 PM CT
+        - Daily maintenance break: 4:00 PM - 5:00 PM CT
+        """
+        now = datetime.now(CENTRAL_TZ)
+        day = now.weekday()  # 0=Monday, 6=Sunday
+        hour = now.hour
+        minute = now.minute
+
+        # Saturday - closed
+        if day == 5:
+            return False
+
+        # Sunday - opens at 5 PM
+        if day == 6:
+            return hour >= 17
+
+        # Friday - closes at 4 PM
+        if day == 4 and hour >= 16:
+            return False
+
+        # Daily maintenance break 4-5 PM CT
+        if hour == 16:
+            return False
+
+        return True
+
+    def get_maintenance_break_seconds(self) -> int:
+        """Get seconds until maintenance break ends (if during break)"""
+        now = datetime.now(CENTRAL_TZ)
+
+        if now.hour == 16:
+            # In maintenance break, calculate seconds until 5 PM
+            return (60 - now.minute) * 60 - now.second
+
+        return 0
+
+    def validate_order_params(
+        self,
+        signal: FuturesSignal,
+        account_balance: float
+    ) -> Tuple[bool, str]:
+        """
+        Validate order parameters before execution.
+
+        Checks:
+        - Sufficient buying power
+        - Position size limits
+        - Market hours
+        """
+        # Check market hours
+        if not self.is_market_open():
+            return False, "Market is closed"
+
+        # Check position size
+        if signal.contracts > self.config.max_contracts:
+            return False, f"Contracts {signal.contracts} exceeds max {self.config.max_contracts}"
+
+        # Check risk per trade
+        risk_amount = signal.risk_dollars
+        max_risk = account_balance * (self.config.risk_per_trade_pct / 100)
+
+        if risk_amount > max_risk * 1.5:  # Allow 50% buffer
+            return False, f"Risk ${risk_amount:.2f} exceeds max ${max_risk:.2f}"
+
+        # Check minimum balance for MES margin (~$1,500 per contract)
+        min_margin_per_contract = 1500
+        required_margin = signal.contracts * min_margin_per_contract
+
+        if account_balance < required_margin:
+            return False, f"Insufficient margin: need ${required_margin:.2f}, have ${account_balance:.2f}"
+
+        return True, "Validation passed"

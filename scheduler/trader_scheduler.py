@@ -159,6 +159,17 @@ except ImportError:
     run_prometheus_ic_cycle = None
     print("Warning: PROMETHEUS IC Trader not available. IC trading will be disabled.")
 
+# Import HERACLES (MES Futures Scalping with GEX)
+try:
+    from trading.heracles import HERACLESTrader, HERACLESConfig, TradingMode as HERACLESTradingMode
+    HERACLES_AVAILABLE = True
+except ImportError:
+    HERACLES_AVAILABLE = False
+    HERACLESTrader = None
+    HERACLESConfig = None
+    HERACLESTradingMode = None
+    print("Warning: HERACLES not available. MES futures trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -544,6 +555,19 @@ class AutonomousTraderScheduler:
                 logger.warning(f"PROMETHEUS IC initialization failed: {e}")
                 self.prometheus_ic_trader = None
 
+        # HERACLES - MES Futures Scalping with GEX signals
+        # 24/5 trading with 1-minute scan interval
+        # PAPER mode: Simulated trades with $100k starting capital
+        self.heracles_trader = None
+        if HERACLES_AVAILABLE:
+            try:
+                config = HERACLESConfig(mode=HERACLESTradingMode.PAPER)
+                self.heracles_trader = HERACLESTrader(config=config)
+                logger.info(f"✅ HERACLES initialized (MES Futures Scalping, PAPER mode - $100k starting capital)")
+            except Exception as e:
+                logger.warning(f"HERACLES initialization failed: {e}")
+                self.heracles_trader = None
+
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
@@ -562,6 +586,7 @@ class AutonomousTraderScheduler:
         self.last_icarus_check = None
         self.last_titan_check = None
         self.last_argus_check = None
+        self.last_heracles_check = None
         self.last_error = None
         self.execution_count = 0
         self.atlas_execution_count = 0
@@ -571,6 +596,7 @@ class AutonomousTraderScheduler:
         self.icarus_execution_count = 0
         self.titan_execution_count = 0
         self.argus_execution_count = 0
+        self.heracles_execution_count = 0
 
         # Load saved state from database
         self._load_state()
@@ -2003,6 +2029,109 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in TITAN EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"=" * 80)
+
+    # ========================================================================
+    # HERACLES - MES Futures Scalping (24/5 Operation)
+    # ========================================================================
+
+    def scheduled_heracles_logic(self):
+        """
+        HERACLES MES Futures Scalping - runs every 1 minute during futures hours
+
+        HERACLES trades MES futures using GEX signals:
+        - Positive gamma = Mean reversion (fade moves)
+        - Negative gamma = Momentum (breakouts)
+        - 24/5 trading (Sun 5pm - Fri 4pm CT with 4-5pm daily break)
+        - $100k paper trading capital
+        - Bayesian win probability tracking → ML after 50 trades
+
+        CRITICAL: Logs EVERY scan for ML training data collection.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        self.heracles_execution_count += 1
+        self.last_heracles_check = now
+
+        # Check if HERACLES is available
+        if not self.heracles_trader:
+            if self.heracles_execution_count % 60 == 1:  # Log once per hour
+                logger.warning("HERACLES trader not available - futures trading disabled")
+            return
+
+        try:
+            # Run the scan cycle
+            result = self.heracles_trader.run_scan()
+
+            # Log result
+            status = result.get("status", "unknown")
+            trades = result.get("trades_executed", 0)
+            signals = result.get("signals_generated", 0)
+            closed = result.get("positions_closed", 0)
+            errors = result.get("errors", [])
+
+            if status == "market_closed":
+                if self.heracles_execution_count % 60 == 1:  # Log once per hour
+                    logger.info(f"HERACLES: Futures market closed")
+            elif status == "error":
+                logger.error(f"HERACLES scan error: {errors}")
+            elif trades > 0:
+                logger.info(f"HERACLES: Executed {trades} trade(s) from {signals} signal(s)")
+            elif closed > 0:
+                logger.info(f"HERACLES: Closed {closed} position(s)")
+            else:
+                # Normal scan - log occasionally for monitoring
+                if self.heracles_execution_count % 10 == 0:
+                    logger.debug(f"HERACLES scan #{self.heracles_execution_count}: {signals} signals, no trades")
+
+        except Exception as e:
+            logger.error(f"ERROR in HERACLES scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_heracles_eod_logic(self):
+        """
+        HERACLES End-of-Day processing - runs at 4:00 PM CT (futures close)
+
+        For futures, EOD happens at the daily maintenance break (4-5pm CT):
+        - Mark open positions to market
+        - Update daily P&L
+        - Save equity snapshot
+        - Reconcile paper balance
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"HERACLES EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.heracles_trader:
+            logger.warning("HERACLES trader not available - skipping EOD processing")
+            return
+
+        try:
+            # Get current status
+            status = self.heracles_trader.get_status()
+
+            # Log summary
+            paper_account = status.get('paper_account', {})
+            today = status.get('today', {})
+
+            logger.info(f"HERACLES EOD Summary:")
+            logger.info(f"  Paper Balance: ${paper_account.get('current_balance', 0):,.2f}")
+            logger.info(f"  Cumulative P&L: ${paper_account.get('cumulative_pnl', 0):,.2f}")
+            logger.info(f"  Return: {paper_account.get('return_pct', 0):.2f}%")
+            logger.info(f"  Today's Trades: {today.get('positions_closed', 0)}")
+            logger.info(f"  Today's P&L: ${today.get('realized_pnl', 0):,.2f}")
+
+            # Get win tracker info
+            win_tracker = status.get('win_tracker', {})
+            logger.info(f"  Win Probability: {win_tracker.get('win_probability', 0.5)*100:.1f}%")
+            logger.info(f"  Total Trades: {win_tracker.get('total_trades', 0)}")
+            logger.info(f"  Ready for ML: {win_tracker.get('should_use_ml', False)}")
+
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in HERACLES EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
@@ -3958,6 +4087,46 @@ class AutonomousTraderScheduler:
             logger.info("✅ TITAN EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ TITAN not available - aggressive SPX IC trading disabled")
+
+        # =================================================================
+        # HERACLES JOB: MES Futures Scalping - runs every 1 minute (24/5)
+        # Trades MES futures using GEX signals for mean reversion / momentum
+        # Futures trade nearly 24/5 (Sun 5pm - Fri 4pm CT with 4-5pm daily break)
+        # Jobs run on startup and every 1 min thereafter.
+        # Market hours checked inside the job.
+        # =================================================================
+        if self.heracles_trader:
+            self.scheduler.add_job(
+                self.scheduled_heracles_logic,
+                trigger=IntervalTrigger(
+                    minutes=1,
+                    timezone='America/Chicago'
+                ),
+                id='heracles_trading',
+                name='HERACLES - MES Futures Scalping (1-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ HERACLES job scheduled (every 1 min, checks futures hours internally)")
+
+            # =================================================================
+            # HERACLES EOD JOB: Daily maintenance break - runs at 4:00 PM CT
+            # Futures have a daily maintenance break from 4-5pm CT
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_heracles_eod_logic,
+                trigger=CronTrigger(
+                    hour=16,       # 4:00 PM CT - futures daily maintenance break
+                    minute=0,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='heracles_eod',
+                name='HERACLES - Daily Maintenance Break Summary',
+                replace_existing=True
+            )
+            logger.info("✅ HERACLES EOD job scheduled (4:00 PM CT daily)")
+        else:
+            logger.warning("⚠️ HERACLES not available - MES futures trading disabled")
 
         # =================================================================
         # PROMETHEUS JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT
