@@ -346,7 +346,7 @@ def test_scheduler_jobs():
             test_fail("PROMETHEUS_IC_AVAILABLE = False - IC jobs won't run")
 
         # Check scheduler has the methods
-        from scheduler.trader_scheduler import TradingScheduler
+        from scheduler.trader_scheduler import AutonomousTraderScheduler
 
         methods_to_check = [
             'scheduled_prometheus_daily_logic',
@@ -357,10 +357,10 @@ def test_scheduler_jobs():
         ]
 
         for method in methods_to_check:
-            if hasattr(TradingScheduler, method):
-                test_pass(f"TradingScheduler.{method}() exists")
+            if hasattr(AutonomousTraderScheduler, method):
+                test_pass(f"AutonomousTraderScheduler.{method}() exists")
             else:
-                test_fail(f"TradingScheduler.{method}() MISSING")
+                test_fail(f"AutonomousTraderScheduler.{method}() MISSING")
 
     except ImportError as e:
         test_fail(f"Scheduler import failed: {e}")

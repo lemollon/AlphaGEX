@@ -189,7 +189,8 @@ def test_activity(conn):
         if logs:
             ok(f"Found {len(logs)} recent log entries")
             for log in logs[:3]:
-                info(f"  [{log[2]}] {log[0]}: {log[1][:50]}...")
+                msg = (log[1] or "")[:50]
+                info(f"  [{log[2]}] {log[0]}: {msg}...")
         else:
             info("No logs yet (system hasn't run trading cycles)")
 
