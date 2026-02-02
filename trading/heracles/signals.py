@@ -64,18 +64,36 @@ class HERACLESSignalGenerator:
             FuturesSignal if conditions met, None otherwise
         """
         try:
-            # Extract GEX data
-            flip_point = gex_data.get('flip_point', current_price)
-            call_wall = gex_data.get('call_wall', current_price + 50)
-            put_wall = gex_data.get('put_wall', current_price - 50)
+            # Extract GEX data with fallbacks for invalid/missing values
+            # GEX data is already scaled to MES levels by get_gex_data_for_heracles()
+            flip_point = gex_data.get('flip_point', 0)
+            call_wall = gex_data.get('call_wall', 0)
+            put_wall = gex_data.get('put_wall', 0)
             net_gex = gex_data.get('net_gex', 0)
             gex_ratio = gex_data.get('gex_ratio', 1.0)
 
+            # Fallback to reasonable defaults if GEX data is invalid
+            # Use current_price as flip point if GEX data unavailable
+            if flip_point <= 0:
+                flip_point = current_price
+                logger.warning(f"GEX flip_point invalid, using current_price={current_price:.2f}")
+            if call_wall <= 0:
+                call_wall = current_price + 50  # 50 MES points above
+            if put_wall <= 0:
+                put_wall = current_price - 50  # 50 MES points below
+
             # For overnight, use n+1 (next day's expected levels)
             if is_overnight:
-                flip_point = gex_data.get('n1_flip_point', flip_point)
-                call_wall = gex_data.get('n1_call_wall', call_wall)
-                put_wall = gex_data.get('n1_put_wall', put_wall)
+                n1_flip = gex_data.get('n1_flip_point', 0)
+                n1_call = gex_data.get('n1_call_wall', 0)
+                n1_put = gex_data.get('n1_put_wall', 0)
+                # Only use n+1 data if valid
+                if n1_flip > 0:
+                    flip_point = n1_flip
+                if n1_call > 0:
+                    call_wall = n1_call
+                if n1_put > 0:
+                    put_wall = n1_put
 
             # Determine gamma regime
             gamma_regime = self._determine_gamma_regime(net_gex)
@@ -165,6 +183,11 @@ class HERACLESSignalGenerator:
         - Price below flip point → expect bounce → LONG
         - Further from flip point = stronger signal (more stretched)
         """
+        # Safety check for division by zero
+        if flip_point <= 0:
+            logger.warning(f"Invalid flip_point={flip_point}, cannot generate mean reversion signal")
+            return None
+
         distance_from_flip = current_price - flip_point
         distance_pct = (distance_from_flip / flip_point) * 100
 
@@ -233,6 +256,11 @@ class HERACLESSignalGenerator:
         - Price breaking below flip point → momentum down → SHORT
         - Use ATR for breakout confirmation
         """
+        # Safety check for invalid prices
+        if flip_point <= 0 or call_wall <= 0 or put_wall <= 0:
+            logger.warning(f"Invalid GEX levels: flip={flip_point}, call={call_wall}, put={put_wall}")
+            return None
+
         distance_from_flip = current_price - flip_point
 
         # Need breakout through flip point plus ATR threshold
@@ -242,12 +270,16 @@ class HERACLESSignalGenerator:
         distance_to_call_wall = call_wall - current_price
         distance_to_put_wall = current_price - put_wall
 
+        # Protect against division by zero in confidence calculation
+        call_to_flip_range = max(1.0, call_wall - flip_point)  # Min 1 point
+        flip_to_put_range = max(1.0, flip_point - put_wall)    # Min 1 point
+
         if distance_from_flip > breakout_threshold:
             # Breaking out above flip - momentum long
             direction = TradeDirection.LONG
             source = SignalSource.GEX_MOMENTUM
             # Confidence higher if more room to call wall
-            confidence = min(0.90, 0.5 + (distance_to_call_wall / (call_wall - flip_point)) * 0.4)
+            confidence = min(0.90, 0.5 + (distance_to_call_wall / call_to_flip_range) * 0.4)
             reasoning = (
                 f"NEGATIVE GAMMA momentum: Price {current_price:.2f} broke "
                 f"{breakout_threshold:.2f} pts above flip {flip_point:.2f}. "
@@ -259,7 +291,7 @@ class HERACLESSignalGenerator:
             direction = TradeDirection.SHORT
             source = SignalSource.GEX_MOMENTUM
             # Confidence higher if more room to put wall
-            confidence = min(0.90, 0.5 + (distance_to_put_wall / (flip_point - put_wall)) * 0.4)
+            confidence = min(0.90, 0.5 + (distance_to_put_wall / flip_to_put_range) * 0.4)
             reasoning = (
                 f"NEGATIVE GAMMA momentum: Price {current_price:.2f} broke "
                 f"{breakout_threshold:.2f} pts below flip {flip_point:.2f}. "
@@ -465,20 +497,31 @@ class HERACLESSignalGenerator:
         return None
 
 
-def get_gex_data_for_heracles(symbol: str = "SPY") -> Dict[str, Any]:
+def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
     """
     Fetch GEX data for HERACLES signal generation.
 
     This connects to the existing AlphaGEX GEX calculation infrastructure.
+
+    IMPORTANT: HERACLES trades MES futures which track the S&P 500 index (~5900 level).
+    We use SPX options data (also at ~5900 level) for accurate GEX levels.
+    SPX requires Tradier PRODUCTION keys (sandbox doesn't support SPX).
+
+    SPX = S&P 500 Index (~5900)
+    MES = Micro E-mini S&P 500 futures (~5900, tracks SPX directly)
+    SPY = SPDR S&P 500 ETF (~590, 1/10th of SPX)
     """
     try:
-        # Try to import and use existing GEX calculator
-        from data.gex_calculator import GEXCalculator
+        # Use TradierGEXCalculator with sandbox=False for SPX (production keys required)
+        from data.gex_calculator import TradierGEXCalculator
 
-        calculator = GEXCalculator()
+        # SPX requires production API (sandbox doesn't support index options)
+        calculator = TradierGEXCalculator(sandbox=False)
         gex_result = calculator.calculate_gex(symbol)
 
         if gex_result:
+            # SPX GEX levels are already at the correct scale for MES (~5900)
+            # No scaling needed - SPX and MES are both at S&P 500 index level
             return {
                 'flip_point': gex_result.get('flip_point', 0),
                 'call_wall': gex_result.get('call_wall', 0),
@@ -490,15 +533,19 @@ def get_gex_data_for_heracles(symbol: str = "SPY") -> Dict[str, Any]:
                 'n1_call_wall': gex_result.get('n1_call_wall'),
                 'n1_put_wall': gex_result.get('n1_put_wall'),
             }
+
+        logger.warning(f"GEX calculator returned no data for {symbol}")
+
     except Exception as e:
         logger.warning(f"Could not get GEX data from calculator: {e}")
 
-    # Try API endpoint as fallback
+    # Try API endpoint as fallback (SPX endpoint)
     try:
         import requests
         response = requests.get(f"http://localhost:8000/api/gex/{symbol}", timeout=5)
         if response.status_code == 200:
             data = response.json()
+            # SPX data is already at correct scale for MES
             return {
                 'flip_point': data.get('flip_point', 0),
                 'call_wall': data.get('call_wall', 0),
@@ -510,6 +557,7 @@ def get_gex_data_for_heracles(symbol: str = "SPY") -> Dict[str, Any]:
         logger.warning(f"Could not get GEX data from API: {e}")
 
     # Return empty data if all fails
+    logger.error(f"Failed to get GEX data for {symbol} - HERACLES signals will use fallback prices")
     return {
         'flip_point': 0,
         'call_wall': 0,
