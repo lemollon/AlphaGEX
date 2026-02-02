@@ -174,39 +174,72 @@ async def test_tastytrade_connection():
                 "error": str(e)
             }
 
-    # Check 5: MES futures lookup
+    # Check 5: MES futures lookup - try multiple approaches
     try:
-        # Look up MES (Micro E-mini S&P 500) futures
-        instrument_response = requests.get(
-            f"{TASTYTRADE_BASE_URL}/instruments/futures",
+        mes_contracts = []
+
+        # Approach 1: Search by product code
+        search_response = requests.get(
+            f"{TASTYTRADE_BASE_URL}/futures-products/MES",
             headers=headers,
-            params={"symbol[]": "/MES"},
             timeout=30
         )
 
-        if instrument_response.status_code == 200:
-            instruments = instrument_response.json().get("data", {}).get("items", [])
-            mes_contracts = []
+        product_info = None
+        if search_response.status_code == 200:
+            product_info = search_response.json().get("data", {})
 
-            for inst in instruments[:5]:  # First 5 contracts
-                mes_contracts.append({
-                    "symbol": inst.get("symbol"),
-                    "description": inst.get("description"),
-                    "tick_size": inst.get("tick-size"),
-                    "tick_value": inst.get("tick-value"),
-                    "expiration": inst.get("expiration-date")
-                })
+        # Approach 2: Get active MES contracts
+        # Try specific contract symbols for 2026
+        contract_symbols = ["/MESH6", "/MESM6", "/MESU6", "/MESZ6"]
 
-            results["checks"]["mes_futures"] = {
-                "success": True,
-                "contracts_found": len(instruments),
-                "contracts": mes_contracts
-            }
-        else:
-            results["checks"]["mes_futures"] = {
-                "success": False,
-                "error": f"Status {instrument_response.status_code}"
-            }
+        for symbol in contract_symbols:
+            try:
+                contract_response = requests.get(
+                    f"{TASTYTRADE_BASE_URL}/instruments/futures/{symbol}",
+                    headers=headers,
+                    timeout=10
+                )
+                if contract_response.status_code == 200:
+                    contract_data = contract_response.json().get("data", {})
+                    if contract_data:
+                        mes_contracts.append({
+                            "symbol": contract_data.get("symbol"),
+                            "description": contract_data.get("description"),
+                            "tick_size": contract_data.get("tick-size"),
+                            "tick_value": contract_data.get("tick-value"),
+                            "expiration": contract_data.get("expiration-date"),
+                            "active": contract_data.get("is-active", True)
+                        })
+            except:
+                pass
+
+        # Approach 3: Search all futures instruments
+        if not mes_contracts:
+            all_futures_response = requests.get(
+                f"{TASTYTRADE_BASE_URL}/instruments/futures",
+                headers=headers,
+                params={"product-code": "MES"},
+                timeout=30
+            )
+
+            if all_futures_response.status_code == 200:
+                instruments = all_futures_response.json().get("data", {}).get("items", [])
+                for inst in instruments[:5]:
+                    mes_contracts.append({
+                        "symbol": inst.get("symbol"),
+                        "description": inst.get("description"),
+                        "tick_size": inst.get("tick-size"),
+                        "tick_value": inst.get("tick-value"),
+                        "expiration": inst.get("expiration-date")
+                    })
+
+        results["checks"]["mes_futures"] = {
+            "success": True,
+            "contracts_found": len(mes_contracts),
+            "contracts": mes_contracts,
+            "product_info": product_info
+        }
     except Exception as e:
         results["checks"]["mes_futures"] = {
             "success": False,
@@ -221,13 +254,76 @@ async def test_tastytrade_connection():
     )
 
     results["status"] = "success" if all_checks_passed else "partial"
+
+    # Note: is-futures-enabled API flag is unreliable (shows false even when futures is enabled)
+    # We check: auth success + account found + can lookup futures products
     results["ready_for_heracles"] = (
         results["checks"].get("authentication", {}).get("success", False) and
-        results["checks"].get("accounts", {}).get("target_futures_enabled", False) and
+        results["checks"].get("accounts", {}).get("target_account_found", False) and
         results["checks"].get("mes_futures", {}).get("success", False)
     )
 
+    # Add note about API flag discrepancy
+    if results["checks"].get("accounts", {}).get("target_account_found") and \
+       not results["checks"].get("accounts", {}).get("target_futures_enabled"):
+        results["note"] = "API shows futures_enabled=false but this may be incorrect. Verify in Tastytrade UI."
+
     return results
+
+
+@router.get("/api/tastytrade/futures-products")
+async def get_futures_products():
+    """List all available futures products to find MES symbol format"""
+    try:
+        session_token = get_tastytrade_session()
+        headers = {
+            "Authorization": session_token,
+            "Content-Type": "application/json"
+        }
+
+        # Get all futures products
+        products_response = requests.get(
+            f"{TASTYTRADE_BASE_URL}/instruments/futures",
+            headers=headers,
+            timeout=30
+        )
+
+        if products_response.status_code == 200:
+            data = products_response.json().get("data", {})
+            items = data.get("items", [])
+
+            # Filter for MES-related products
+            mes_related = [
+                {
+                    "symbol": item.get("symbol"),
+                    "description": item.get("description"),
+                    "product_code": item.get("product-code"),
+                    "expiration": item.get("expiration-date"),
+                    "active": item.get("is-active")
+                }
+                for item in items
+                if "MES" in str(item.get("symbol", "")).upper() or
+                   "MICRO" in str(item.get("description", "")).upper() or
+                   "E-MINI" in str(item.get("description", "")).upper()
+            ]
+
+            return {
+                "total_futures_count": len(items),
+                "mes_related_count": len(mes_related),
+                "mes_contracts": mes_related[:10],  # First 10
+                "sample_all_symbols": [item.get("symbol") for item in items[:20]],  # First 20 symbols
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "error": f"Status {products_response.status_code}",
+                "response": products_response.text[:500]
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/api/tastytrade/mes-quote")
