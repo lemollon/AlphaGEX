@@ -76,14 +76,14 @@ class HERACLESTestSuite:
             # Core imports
             from trading.heracles.models import (
                 HERACLESConfig, FuturesPosition, FuturesSignal,
-                TradingMode, PositionStatus, SignalSource, Direction
+                TradingMode, PositionStatus, SignalSource, TradeDirection
             )
             success("models.py imports OK")
 
             from trading.heracles.db import HERACLESDatabase
             success("db.py imports OK")
 
-            from trading.heracles.signals import GEXFuturesSignalGenerator
+            from trading.heracles.signals import HERACLESSignalGenerator
             success("signals.py imports OK")
 
             from trading.heracles.executor import TastytradeExecutor
@@ -118,7 +118,6 @@ class HERACLESTestSuite:
                 'heracles_closed_trades': 'Trade history',
                 'heracles_equity_snapshots': 'Intraday equity curve',
                 'heracles_signals': 'Signal log',
-                'heracles_daily_stats': 'Daily statistics',
                 'heracles_paper_account': 'Paper trading balance',
                 'heracles_scan_activity': 'ML training data collection',
             }
@@ -260,11 +259,12 @@ class HERACLESTestSuite:
         section("5. Signal Generator")
 
         try:
-            from trading.heracles.signals import GEXFuturesSignalGenerator
-            from trading.heracles.models import HERACLESConfig
+            from trading.heracles.signals import HERACLESSignalGenerator
+            from trading.heracles.models import HERACLESConfig, BayesianWinTracker
 
             config = HERACLESConfig()
-            generator = GEXFuturesSignalGenerator(config)
+            win_tracker = BayesianWinTracker()
+            generator = HERACLESSignalGenerator(config, win_tracker)
 
             success("Signal generator initialized")
             info(f"  Symbol: {config.symbol}")
@@ -302,9 +302,9 @@ class HERACLESTestSuite:
             # Check win tracker
             tracker = trader.win_tracker
             success(f"Win tracker initialized")
-            info(f"  Current Win Prob: {tracker.get_win_probability():.1%}")
+            info(f"  Current Win Prob: {tracker.win_probability:.1%}")
             info(f"  Total Trades: {tracker.total_trades}")
-            info(f"  Use ML: {tracker.should_use_ml_model()}")
+            info(f"  Use ML: {tracker.should_use_ml}")
 
             self.passed += 1
             return True

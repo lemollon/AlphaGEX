@@ -81,9 +81,8 @@ def test_db() -> bool:
             'heracles_closed_trades',
             'heracles_equity_snapshots',
             'heracles_signals',
-            'heracles_daily_stats',
-            'heracles_paper_account',      # NEW - paper trading
-            'heracles_scan_activity',      # NEW - ML training data
+            'heracles_paper_account',      # Paper trading account
+            'heracles_scan_activity',      # ML training data
         ]
 
         missing = []
