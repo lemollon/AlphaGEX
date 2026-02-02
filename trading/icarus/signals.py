@@ -658,17 +658,22 @@ class SignalGenerator:
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
         prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
 
-        # DIRECTION FIX: ML is ALWAYS the authority on direction for ICARUS
-        # Oracle = god of trade/no-trade decision (TRADE vs SKIP)
-        # ML = authority on direction (BULLISH vs BEARISH)
-        # This prevents wall proximity from overriding ML predictions
-        if ml_direction in ('BULLISH', 'BEARISH'):
-            effective_direction = ml_direction
-            if oracle_direction != ml_direction and oracle_direction in ('BULLISH', 'BEARISH'):
-                logger.info(f"[ICARUS] ML DIRECTION OVERRIDE: {ml_direction} (Oracle said {oracle_direction})")
-        else:
+        # DIRECTION: Oracle is the SOLE AUTHORITY for ICARUS
+        # Oracle decides both trade/no-trade AND direction
+        # ML is backup only when Oracle direction is FLAT
+        if oracle_direction in ('BULLISH', 'BEARISH'):
             effective_direction = oracle_direction
-            logger.info(f"[ICARUS] Using Oracle direction (ML={ml_direction}): {oracle_direction}")
+            if ml_direction and ml_direction != oracle_direction:
+                logger.info(f"[ICARUS] ORACLE DIRECTION: {oracle_direction} (ML said {ml_direction} - Oracle overrides)")
+            else:
+                logger.info(f"[ICARUS] ORACLE DIRECTION: {oracle_direction}")
+        elif ml_direction in ('BULLISH', 'BEARISH'):
+            # Fallback to ML only if Oracle direction is FLAT
+            effective_direction = ml_direction
+            logger.info(f"[ICARUS] Oracle direction FLAT, using ML backup: {ml_direction}")
+        else:
+            effective_direction = "FLAT"
+            logger.info(f"[ICARUS] No clear direction from Oracle or ML")
 
         # ============================================================
         # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
@@ -822,13 +827,12 @@ class SignalGenerator:
         logger.info(f"[ICARUS] Proceeding with {prediction_source}: {effective_win_prob:.1%} win prob")
 
         # Step 4: Determine final direction
-        # ML is the SOLE authority on direction for ICARUS
-        # Oracle decides trade/no-trade, ML decides direction
-        direction = wall_direction  # wall_direction = effective_direction = ML direction (set at line 739)
-        direction_source = "ML" if ml_direction in ('BULLISH', 'BEARISH') else "ORACLE"
+        # Oracle is the SOLE AUTHORITY - wall_direction was set to effective_direction (Oracle's direction)
+        direction = wall_direction  # wall_direction = effective_direction = ORACLE direction (set at line 744)
+        direction_source = "ORACLE" if oracle_direction in ('BULLISH', 'BEARISH') else "ML_BACKUP"
         logger.info(f"[ICARUS] Final direction: {direction} (source: {direction_source})")
 
-        # Calculate confidence (no Oracle override - ML is authority)
+        # Calculate confidence
         confidence = 0.7  # Base confidence
 
         # ML can boost or reduce confidence
