@@ -105,6 +105,9 @@ class FuturesPosition:
     # Tastytrade order tracking
     order_id: str = ""
 
+    # ML training data linkage
+    scan_id: str = ""  # Links to heracles_scan_activity for outcome tracking
+
     # Status
     status: PositionStatus = PositionStatus.OPEN
     open_time: datetime = field(default_factory=lambda: datetime.now(CENTRAL_TZ))

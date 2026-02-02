@@ -106,6 +106,7 @@ class HERACLESDatabase:
                         win_probability DECIMAL(5, 4),
                         trade_reasoning TEXT,
                         order_id VARCHAR(100),
+                        scan_id VARCHAR(50),
                         status VARCHAR(20) NOT NULL DEFAULT 'open',
                         open_time TIMESTAMP WITH TIME ZONE NOT NULL,
                         close_time TIMESTAMP WITH TIME ZONE,
@@ -253,6 +254,84 @@ class HERACLESDatabase:
                     )
                 """)
 
+                # Scan activity - CRITICAL for ML training data collection
+                # Records EVERY scan with full market context for model training
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS heracles_scan_activity (
+                        id SERIAL PRIMARY KEY,
+                        scan_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        scan_id VARCHAR(50) UNIQUE,
+                        scan_number INTEGER,
+
+                        -- Outcome
+                        outcome VARCHAR(30) NOT NULL,
+                        action_taken VARCHAR(50),
+                        decision_summary TEXT,
+                        full_reasoning TEXT,
+
+                        -- Market conditions (ML features)
+                        underlying_price DECIMAL(12, 4),
+                        underlying_symbol VARCHAR(20),
+                        vix DECIMAL(6, 2),
+                        atr DECIMAL(10, 4),
+
+                        -- GEX context (ML features)
+                        gamma_regime VARCHAR(20),
+                        gex_value DECIMAL(18, 4),
+                        flip_point DECIMAL(12, 4),
+                        call_wall DECIMAL(12, 4),
+                        put_wall DECIMAL(12, 4),
+                        distance_to_flip_pct DECIMAL(8, 4),
+                        distance_to_call_wall_pct DECIMAL(8, 4),
+                        distance_to_put_wall_pct DECIMAL(8, 4),
+
+                        -- Signal data (ML features)
+                        signal_direction VARCHAR(10),
+                        signal_source VARCHAR(30),
+                        signal_confidence DECIMAL(5, 4),
+                        signal_win_probability DECIMAL(5, 4),
+                        signal_reasoning TEXT,
+
+                        -- Bayesian tracker state (ML features)
+                        bayesian_alpha DECIMAL(10, 4),
+                        bayesian_beta DECIMAL(10, 4),
+                        bayesian_win_probability DECIMAL(5, 4),
+                        positive_gamma_win_rate DECIMAL(5, 4),
+                        negative_gamma_win_rate DECIMAL(5, 4),
+
+                        -- Position sizing (ML features)
+                        contracts_calculated INTEGER,
+                        risk_amount DECIMAL(12, 2),
+                        account_balance DECIMAL(12, 2),
+
+                        -- Trading session context
+                        is_overnight_session BOOLEAN DEFAULT FALSE,
+                        session_type VARCHAR(20),
+                        day_of_week INTEGER,
+                        hour_of_day INTEGER,
+
+                        -- Execution result
+                        trade_executed BOOLEAN DEFAULT FALSE,
+                        position_id VARCHAR(50),
+                        entry_price DECIMAL(12, 4),
+                        stop_price DECIMAL(12, 4),
+
+                        -- For ML outcome tracking (filled later)
+                        trade_outcome VARCHAR(20),
+                        realized_pnl DECIMAL(12, 2),
+                        outcome_recorded_at TIMESTAMP WITH TIME ZONE,
+
+                        -- Error tracking
+                        error_message TEXT,
+                        skip_reason VARCHAR(200)
+                    )
+                """)
+
+                # Index for scan activity queries
+                c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_scan_activity_time ON heracles_scan_activity(scan_time)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_scan_activity_outcome ON heracles_scan_activity(outcome)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_scan_activity_regime ON heracles_scan_activity(gamma_regime)")
+
                 # Create indexes for performance
                 c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_positions_status ON heracles_positions(status)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_closed_trades_close_time ON heracles_closed_trades(close_time)")
@@ -282,11 +361,11 @@ class HERACLESDatabase:
                         breakeven_price, trailing_active, gamma_regime, gex_value,
                         flip_point, call_wall, put_wall, vix_at_entry, atr_at_entry,
                         signal_source, signal_confidence, win_probability, trade_reasoning,
-                        order_id, status, open_time, close_time, close_price,
+                        order_id, scan_id, status, open_time, close_time, close_price,
                         close_reason, realized_pnl, high_water_mark, max_adverse_excursion
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (position_id) DO UPDATE SET
                         current_stop = EXCLUDED.current_stop,
@@ -322,6 +401,7 @@ class HERACLESDatabase:
                     _to_python(position.win_probability),
                     position.trade_reasoning,
                     position.order_id,
+                    position.scan_id,
                     position.status.value,
                     position.open_time,
                     position.close_time,
@@ -443,6 +523,13 @@ class HERACLESDatabase:
 
                 conn.commit()
                 logger.info(f"Closed position {position_id}: P&L=${realized_pnl:.2f}, reason={close_reason}")
+
+                # Update scan activity with outcome for ML training
+                if position.scan_id:
+                    outcome = "WIN" if realized_pnl > 0 else "LOSS"
+                    self.update_scan_outcome(position.scan_id, outcome, realized_pnl)
+                    logger.info(f"Updated scan {position.scan_id} outcome: {outcome}")
+
                 return True, realized_pnl
 
         except Exception as e:
@@ -490,6 +577,7 @@ class HERACLESDatabase:
             win_probability=float(data.get('win_probability') or 0),
             trade_reasoning=data.get('trade_reasoning', ''),
             order_id=data.get('order_id', ''),
+            scan_id=data.get('scan_id', ''),
             status=PositionStatus(data['status']),
             open_time=data['open_time'],
             close_time=data.get('close_time'),
@@ -1233,5 +1321,257 @@ class HERACLESDatabase:
 
         except Exception as e:
             logger.error(f"Failed to get paper equity curve: {e}")
+
+        return data
+
+    # ========================================================================
+    # Scan Activity (ML Training Data Collection)
+    # ========================================================================
+
+    def save_scan_activity(
+        self,
+        scan_id: str,
+        outcome: str,
+        action_taken: str = "",
+        decision_summary: str = "",
+        full_reasoning: str = "",
+        underlying_price: float = 0,
+        underlying_symbol: str = "MES",
+        vix: float = 0,
+        atr: float = 0,
+        gamma_regime: str = "",
+        gex_value: float = 0,
+        flip_point: float = 0,
+        call_wall: float = 0,
+        put_wall: float = 0,
+        distance_to_flip_pct: float = 0,
+        distance_to_call_wall_pct: float = 0,
+        distance_to_put_wall_pct: float = 0,
+        signal_direction: str = "",
+        signal_source: str = "",
+        signal_confidence: float = 0,
+        signal_win_probability: float = 0,
+        signal_reasoning: str = "",
+        bayesian_alpha: float = 1.0,
+        bayesian_beta: float = 1.0,
+        bayesian_win_probability: float = 0.5,
+        positive_gamma_win_rate: float = 0,
+        negative_gamma_win_rate: float = 0,
+        contracts_calculated: int = 0,
+        risk_amount: float = 0,
+        account_balance: float = 0,
+        is_overnight_session: bool = False,
+        session_type: str = "",
+        trade_executed: bool = False,
+        position_id: str = "",
+        entry_price: float = 0,
+        stop_price: float = 0,
+        error_message: str = "",
+        skip_reason: str = ""
+    ) -> bool:
+        """
+        Save scan activity for ML training data collection.
+
+        This captures EVERY scan with full market context to enable
+        supervised learning model training for HERACLES.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                now = datetime.now(CENTRAL_TZ)
+
+                # Get scan number for today
+                c.execute("""
+                    SELECT COALESCE(MAX(scan_number), 0) + 1
+                    FROM heracles_scan_activity
+                    WHERE DATE(scan_time AT TIME ZONE 'America/Chicago') =
+                          DATE(NOW() AT TIME ZONE 'America/Chicago')
+                """)
+                scan_number = c.fetchone()[0]
+
+                c.execute("""
+                    INSERT INTO heracles_scan_activity (
+                        scan_id, scan_number, outcome, action_taken, decision_summary,
+                        full_reasoning, underlying_price, underlying_symbol, vix, atr,
+                        gamma_regime, gex_value, flip_point, call_wall, put_wall,
+                        distance_to_flip_pct, distance_to_call_wall_pct, distance_to_put_wall_pct,
+                        signal_direction, signal_source, signal_confidence, signal_win_probability,
+                        signal_reasoning, bayesian_alpha, bayesian_beta, bayesian_win_probability,
+                        positive_gamma_win_rate, negative_gamma_win_rate,
+                        contracts_calculated, risk_amount, account_balance,
+                        is_overnight_session, session_type, day_of_week, hour_of_day,
+                        trade_executed, position_id, entry_price, stop_price,
+                        error_message, skip_reason
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (scan_id) DO NOTHING
+                """, (
+                    scan_id, scan_number, outcome, action_taken, decision_summary,
+                    full_reasoning, _to_python(underlying_price), underlying_symbol,
+                    _to_python(vix), _to_python(atr),
+                    gamma_regime, _to_python(gex_value), _to_python(flip_point),
+                    _to_python(call_wall), _to_python(put_wall),
+                    _to_python(distance_to_flip_pct), _to_python(distance_to_call_wall_pct),
+                    _to_python(distance_to_put_wall_pct),
+                    signal_direction, signal_source, _to_python(signal_confidence),
+                    _to_python(signal_win_probability), signal_reasoning,
+                    _to_python(bayesian_alpha), _to_python(bayesian_beta),
+                    _to_python(bayesian_win_probability),
+                    _to_python(positive_gamma_win_rate), _to_python(negative_gamma_win_rate),
+                    contracts_calculated, _to_python(risk_amount), _to_python(account_balance),
+                    is_overnight_session, session_type, now.weekday(), now.hour,
+                    trade_executed, position_id if position_id else None,
+                    _to_python(entry_price) if entry_price else None,
+                    _to_python(stop_price) if stop_price else None,
+                    error_message if error_message else None,
+                    skip_reason if skip_reason else None
+                ))
+
+                conn.commit()
+                logger.info(f"Scan activity saved: {scan_id} - {outcome}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to save scan activity: {e}")
+            return False
+
+    def get_scan_activity(
+        self,
+        limit: int = 100,
+        outcome: Optional[str] = None,
+        gamma_regime: Optional[str] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None
+    ) -> List[Dict]:
+        """Get scan activity for analysis and display"""
+        scans = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                query = "SELECT * FROM heracles_scan_activity WHERE 1=1"
+                params = []
+
+                if outcome:
+                    query += " AND outcome = %s"
+                    params.append(outcome)
+                if gamma_regime:
+                    query += " AND gamma_regime = %s"
+                    params.append(gamma_regime)
+                if start_date:
+                    query += " AND scan_time >= %s"
+                    params.append(start_date)
+                if end_date:
+                    query += " AND scan_time <= %s"
+                    params.append(end_date)
+
+                query += " ORDER BY scan_time DESC LIMIT %s"
+                params.append(limit)
+
+                c.execute(query, params)
+                rows = c.fetchall()
+                columns = [desc[0] for desc in c.description]
+
+                for row in rows:
+                    scan = dict(zip(columns, row))
+                    # Convert datetime to string
+                    for key in ['scan_time', 'outcome_recorded_at']:
+                        if scan.get(key) and hasattr(scan[key], 'isoformat'):
+                            scan[key] = scan[key].isoformat()
+                    # Convert decimals to float
+                    for key, val in scan.items():
+                        if isinstance(val, Decimal):
+                            scan[key] = float(val)
+                    scans.append(scan)
+
+        except Exception as e:
+            logger.error(f"Failed to get scan activity: {e}")
+
+        return scans
+
+    def update_scan_outcome(self, scan_id: str, outcome: str, realized_pnl: float) -> bool:
+        """
+        Update scan activity with trade outcome for ML training.
+
+        Called when a position opened from this scan closes.
+        Links scan features to trade outcome for supervised learning.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE heracles_scan_activity
+                    SET trade_outcome = %s,
+                        realized_pnl = %s,
+                        outcome_recorded_at = NOW()
+                    WHERE scan_id = %s
+                """, (outcome, _to_python(realized_pnl), scan_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update scan outcome: {e}")
+            return False
+
+    def get_ml_training_data(self, min_trades: int = 50) -> List[Dict]:
+        """
+        Get scan activity data formatted for ML model training.
+
+        Returns scans that have recorded outcomes (completed trades)
+        with all features needed for supervised learning.
+        """
+        data = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        -- Features
+                        underlying_price,
+                        vix,
+                        atr,
+                        gamma_regime,
+                        gex_value,
+                        flip_point,
+                        call_wall,
+                        put_wall,
+                        distance_to_flip_pct,
+                        distance_to_call_wall_pct,
+                        distance_to_put_wall_pct,
+                        signal_direction,
+                        signal_source,
+                        signal_confidence,
+                        bayesian_win_probability,
+                        positive_gamma_win_rate,
+                        negative_gamma_win_rate,
+                        is_overnight_session,
+                        day_of_week,
+                        hour_of_day,
+                        -- Target
+                        trade_outcome,
+                        realized_pnl
+                    FROM heracles_scan_activity
+                    WHERE trade_executed = TRUE
+                      AND trade_outcome IS NOT NULL
+                    ORDER BY scan_time DESC
+                """)
+
+                rows = c.fetchall()
+                columns = [desc[0] for desc in c.description]
+
+                for row in rows:
+                    record = dict(zip(columns, row))
+                    # Convert decimals
+                    for key, val in record.items():
+                        if isinstance(val, Decimal):
+                            record[key] = float(val)
+                    data.append(record)
+
+                logger.info(f"Retrieved {len(data)} training samples for HERACLES ML")
+
+        except Exception as e:
+            logger.error(f"Failed to get ML training data: {e}")
 
         return data

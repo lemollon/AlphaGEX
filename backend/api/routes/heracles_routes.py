@@ -459,6 +459,99 @@ async def reset_heracles_paper_account(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# Scan Activity (ML Training Data Collection)
+# ============================================================================
+
+@router.get("/api/heracles/scan-activity")
+async def get_heracles_scan_activity(
+    limit: int = Query(100, ge=1, le=500, description="Number of scans to return"),
+    outcome: Optional[str] = Query(None, description="Filter by outcome (TRADED, NO_TRADE, SKIP, ERROR)"),
+    gamma_regime: Optional[str] = Query(None, description="Filter by gamma regime (POSITIVE, NEGATIVE, NEUTRAL)")
+):
+    """
+    Get HERACLES scan activity log.
+
+    Per STANDARDS.md Bot-Specific Requirements, this endpoint provides
+    visibility into EVERY scan the bot performs, including:
+    - Market conditions at scan time
+    - Signals generated and their parameters
+    - Decisions made and why
+    - Trade execution details
+
+    This data is critical for ML model training.
+    """
+    try:
+        trader = _get_trader()
+        scans = trader.db.get_scan_activity(
+            limit=limit,
+            outcome=outcome,
+            gamma_regime=gamma_regime
+        )
+
+        # Calculate summary statistics
+        total_scans = len(scans)
+        traded_count = len([s for s in scans if s.get('outcome') == 'TRADED'])
+        no_trade_count = len([s for s in scans if s.get('outcome') == 'NO_TRADE'])
+        skip_count = len([s for s in scans if s.get('outcome') == 'SKIP'])
+        error_count = len([s for s in scans if s.get('outcome') == 'ERROR'])
+
+        return {
+            "scans": scans,
+            "count": total_scans,
+            "summary": {
+                "traded": traded_count,
+                "no_trade": no_trade_count,
+                "skip": skip_count,
+                "error": error_count,
+                "trade_rate_pct": (traded_count / total_scans * 100) if total_scans > 0 else 0
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting scan activity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/heracles/ml-training-data")
+async def get_heracles_ml_training_data():
+    """
+    Get HERACLES ML training data.
+
+    Returns scan activity data formatted for supervised learning model training.
+    Only includes scans where:
+    1. A trade was executed
+    2. The trade outcome has been recorded (position closed)
+
+    This creates labeled data: features (market conditions) → label (win/loss)
+    """
+    try:
+        trader = _get_trader()
+        training_data = trader.db.get_ml_training_data()
+
+        # Separate wins and losses for balance check
+        wins = [t for t in training_data if t.get('trade_outcome') == 'WIN']
+        losses = [t for t in training_data if t.get('trade_outcome') == 'LOSS']
+
+        return {
+            "training_data": training_data,
+            "total_samples": len(training_data),
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate": (len(wins) / len(training_data) * 100) if training_data else 0,
+            "ready_for_training": len(training_data) >= 50,
+            "recommended_min_samples": 50,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting ML training data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/api/heracles/paper-equity-curve")
 async def get_heracles_paper_equity_curve(
     days: int = Query(30, ge=1, le=365, description="Number of days of history")

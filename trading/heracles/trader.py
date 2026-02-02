@@ -89,9 +89,14 @@ class HERACLESTrader:
         Run a single trading scan.
 
         This is called periodically (every minute) by the scheduler.
+        CRITICAL: Logs EVERY scan for ML training data collection.
         """
+        # Generate unique scan ID for ML tracking
+        scan_id = f"HERACLES-SCAN-{uuid.uuid4().hex[:12]}"
+
         scan_result = {
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+            "scan_id": scan_id,
             "status": "completed",
             "positions_checked": 0,
             "signals_generated": 0,
@@ -100,10 +105,25 @@ class HERACLESTrader:
             "errors": []
         }
 
+        # Scan context for ML data collection
+        scan_context = {
+            "scan_id": scan_id,
+            "underlying_price": 0,
+            "vix": 0,
+            "atr": 0,
+            "gex_data": {},
+            "signal": None,
+            "account_balance": 0,
+            "is_overnight": False,
+            "position_id": None,
+        }
+
         try:
             # Check market hours
             if not self.executor.is_market_open():
                 scan_result["status"] = "market_closed"
+                self._log_scan_activity(scan_id, "MARKET_CLOSED", scan_result, scan_context,
+                                       skip_reason="Futures market closed")
                 return scan_result
 
             # Get current market data
@@ -111,15 +131,22 @@ class HERACLESTrader:
             if not quote:
                 scan_result["status"] = "no_quote"
                 scan_result["errors"].append("Could not get MES quote")
+                self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
+                                       error_msg="Could not get MES quote")
                 return scan_result
 
             current_price = quote.get("last", 0)
+            scan_context["underlying_price"] = current_price
+
             if current_price <= 0:
                 scan_result["status"] = "invalid_price"
+                self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
+                                       error_msg="Invalid price <= 0")
                 return scan_result
 
             # Get GEX data
             gex_data = get_gex_data_for_heracles("SPY")
+            scan_context["gex_data"] = gex_data
 
             # Get account balance (use paper balance in paper mode)
             if self.config.mode == TradingMode.PAPER:
@@ -128,12 +155,19 @@ class HERACLESTrader:
             else:
                 balance = self.executor.get_account_balance()
                 account_balance = balance.get("net_liquidating_value", self.config.capital) if balance else self.config.capital
+            scan_context["account_balance"] = account_balance
 
             # Get VIX (from GEX data or default)
             vix = gex_data.get("vix", 15.0)
+            scan_context["vix"] = vix
 
             # Calculate ATR (simplified - would use real ATR in production)
             atr = self._estimate_atr(current_price)
+            scan_context["atr"] = atr
+
+            # Determine if overnight session
+            is_overnight = self._is_overnight_session()
+            scan_context["is_overnight"] = is_overnight
 
             # 1. Manage existing positions (check stops, trailing)
             positions = self.db.get_open_positions()
@@ -148,9 +182,6 @@ class HERACLESTrader:
             open_count = len([p for p in self.db.get_open_positions()])
 
             if open_count < self.config.max_open_positions:
-                # Determine if overnight session
-                is_overnight = self._is_overnight_session()
-
                 # Generate signal
                 signal = self.signal_generator.generate_signal(
                     current_price=current_price,
@@ -160,22 +191,40 @@ class HERACLESTrader:
                     account_balance=account_balance,
                     is_overnight=is_overnight
                 )
+                scan_context["signal"] = signal
 
                 if signal:
                     scan_result["signals_generated"] += 1
 
                     if signal.is_valid:
-                        # Execute the signal
-                        success = self._execute_signal(signal, account_balance)
+                        # Execute the signal with scan_id for ML tracking
+                        success, position_id = self._execute_signal_with_id(signal, account_balance, scan_id)
                         if success:
                             scan_result["trades_executed"] += 1
+                            scan_context["position_id"] = position_id
 
                             # Log signal
                             self.db.save_signal(signal, was_executed=True)
+
+                            # Log scan activity with trade
+                            self._log_scan_activity(scan_id, "TRADED", scan_result, scan_context,
+                                                   action=f"Opened {signal.direction.value} position")
                         else:
                             self.db.save_signal(signal, was_executed=False, skip_reason="Execution failed")
+                            self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                                   skip_reason="Execution failed")
                     else:
                         self.db.save_signal(signal, was_executed=False, skip_reason="Invalid signal")
+                        self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                               skip_reason=f"Invalid signal: {signal.reasoning[:100] if signal.reasoning else 'No reason'}")
+                else:
+                    # No signal generated
+                    self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                           skip_reason="No signal generated")
+            else:
+                # Max positions reached
+                self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
+                                       skip_reason=f"Max positions ({self.config.max_open_positions}) reached")
 
             # 3. Save equity snapshot
             self._save_equity_snapshot(account_balance, positions)
@@ -186,8 +235,102 @@ class HERACLESTrader:
             logger.error(f"Error in HERACLES scan: {e}")
             scan_result["status"] = "error"
             scan_result["errors"].append(str(e))
+            self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
+                                   error_msg=str(e))
 
         return scan_result
+
+    def _log_scan_activity(
+        self,
+        scan_id: str,
+        outcome: str,
+        result: Dict,
+        context: Dict,
+        action: str = "",
+        skip_reason: str = "",
+        error_msg: str = ""
+    ) -> None:
+        """
+        Log scan activity for ML training data collection.
+
+        This captures EVERY scan - trades, skips, and errors - with full
+        market context to enable supervised learning model training.
+        """
+        try:
+            gex_data = context.get("gex_data", {})
+            signal = context.get("signal")
+            underlying_price = context.get("underlying_price", 0)
+
+            # Calculate distances to GEX levels
+            flip_point = gex_data.get("flip_point", 0)
+            call_wall = gex_data.get("call_wall", 0)
+            put_wall = gex_data.get("put_wall", 0)
+
+            distance_to_flip_pct = 0
+            distance_to_call_wall_pct = 0
+            distance_to_put_wall_pct = 0
+
+            if underlying_price > 0:
+                if flip_point > 0:
+                    distance_to_flip_pct = ((underlying_price - flip_point) / underlying_price) * 100
+                if call_wall > 0:
+                    distance_to_call_wall_pct = ((call_wall - underlying_price) / underlying_price) * 100
+                if put_wall > 0:
+                    distance_to_put_wall_pct = ((underlying_price - put_wall) / underlying_price) * 100
+
+            # Get Bayesian tracker state
+            tracker = self.win_tracker
+            positive_gamma_total = tracker.positive_gamma_wins + tracker.positive_gamma_losses
+            negative_gamma_total = tracker.negative_gamma_wins + tracker.negative_gamma_losses
+
+            self.db.save_scan_activity(
+                scan_id=scan_id,
+                outcome=outcome,
+                action_taken=action or result.get("status", ""),
+                decision_summary=skip_reason or error_msg or f"Scan completed: {result.get('trades_executed', 0)} trades",
+                full_reasoning=signal.reasoning if signal else "",
+                underlying_price=underlying_price,
+                underlying_symbol="MES",
+                vix=context.get("vix", 0),
+                atr=context.get("atr", 0),
+                gamma_regime=gex_data.get("regime", "NEUTRAL"),
+                gex_value=gex_data.get("net_gex", 0),
+                flip_point=flip_point,
+                call_wall=call_wall,
+                put_wall=put_wall,
+                distance_to_flip_pct=distance_to_flip_pct,
+                distance_to_call_wall_pct=distance_to_call_wall_pct,
+                distance_to_put_wall_pct=distance_to_put_wall_pct,
+                signal_direction=signal.direction.value if signal else "",
+                signal_source=signal.source.value if signal else "",
+                signal_confidence=signal.confidence if signal else 0,
+                signal_win_probability=signal.win_probability if signal else 0,
+                signal_reasoning=signal.reasoning if signal else "",
+                bayesian_alpha=tracker.alpha,
+                bayesian_beta=tracker.beta,
+                bayesian_win_probability=tracker.get_win_probability(),
+                positive_gamma_win_rate=(tracker.positive_gamma_wins / positive_gamma_total * 100) if positive_gamma_total > 0 else 50,
+                negative_gamma_win_rate=(tracker.negative_gamma_wins / negative_gamma_total * 100) if negative_gamma_total > 0 else 50,
+                contracts_calculated=signal.contracts if signal else 0,
+                risk_amount=signal.risk_amount if signal and hasattr(signal, 'risk_amount') else 0,
+                account_balance=context.get("account_balance", 0),
+                is_overnight_session=context.get("is_overnight", False),
+                session_type="OVERNIGHT" if context.get("is_overnight") else "RTH",
+                trade_executed=outcome == "TRADED",
+                position_id=context.get("position_id", ""),
+                entry_price=signal.entry_price if signal else 0,
+                stop_price=signal.stop_price if signal else 0,
+                error_message=error_msg,
+                skip_reason=skip_reason
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log scan activity: {e}")
+
+    def _execute_signal_with_id(self, signal: FuturesSignal, account_balance: float, scan_id: str = "") -> Tuple[bool, str]:
+        """Execute signal and return (success, position_id) for scan tracking."""
+        position_id = f"HERACLES-{uuid.uuid4().hex[:8]}"
+        success = self._execute_signal_internal(signal, account_balance, position_id, scan_id)
+        return success, position_id if success else ""
 
     # ========================================================================
     # Position Management
@@ -333,16 +476,18 @@ class HERACLESTrader:
     # ========================================================================
 
     def _execute_signal(self, signal: FuturesSignal, account_balance: float) -> bool:
-        """Execute a trading signal"""
+        """Execute a trading signal (wrapper for backward compatibility)"""
+        position_id = f"HERACLES-{uuid.uuid4().hex[:8]}"
+        return self._execute_signal_internal(signal, account_balance, position_id)
+
+    def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "") -> bool:
+        """Execute a trading signal with specified position_id and scan_id for ML tracking"""
         try:
             # Validate order parameters
             valid, validation_msg = self.executor.validate_order_params(signal, account_balance)
             if not valid:
                 logger.warning(f"Order validation failed: {validation_msg}")
                 return False
-
-            # Generate position ID
-            position_id = f"HERACLES-{uuid.uuid4().hex[:8]}"
 
             # Execute order
             success, message, order_id = self.executor.execute_signal(signal, position_id)
@@ -375,6 +520,7 @@ class HERACLESTrader:
                 win_probability=signal.win_probability,
                 trade_reasoning=signal.reasoning,
                 order_id=order_id or "",
+                scan_id=scan_id,  # Link to scan activity for ML training
                 status=PositionStatus.OPEN,
                 open_time=datetime.now(CENTRAL_TZ)
             )
