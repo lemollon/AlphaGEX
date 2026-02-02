@@ -744,6 +744,91 @@ const fetchers = {
     }
   },
 
+  // HERACLES MES Futures Scalping Bot
+  heraclesStatus: async () => {
+    try {
+      const response = await api.get('/api/heracles/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  heraclesPositions: async () => {
+    try {
+      const response = await api.get('/api/heracles/positions')
+      return response.data
+    } catch {
+      return { success: false, data: { positions: [] } }
+    }
+  },
+  heraclesClosedTrades: async (limit: number = 50) => {
+    try {
+      const response = await api.get(`/api/heracles/closed-trades?limit=${limit}`)
+      return response.data
+    } catch {
+      return { success: false, data: { trades: [] } }
+    }
+  },
+  heraclesEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/heracles/paper-equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  heraclesIntradayEquity: async () => {
+    try {
+      const response = await api.get('/api/heracles/equity-curve/intraday')
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  heraclesConfig: async () => {
+    try {
+      const response = await api.get('/api/heracles/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  heraclesPaperAccount: async () => {
+    try {
+      const response = await api.get('/api/heracles/paper-account')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  heraclesScanActivity: async (limit?: number, outcome?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 100))
+      if (outcome) params.append('outcome', outcome)
+      const response = await api.get(`/api/heracles/scan-activity?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
+  heraclesMLTrainingData: async () => {
+    try {
+      const response = await api.get('/api/heracles/ml-training-data')
+      return response.data
+    } catch {
+      return { success: false, data: { training_data: [], total_samples: 0 } }
+    }
+  },
+  heraclesSignals: async (limit: number = 50) => {
+    try {
+      const response = await api.get(`/api/heracles/signals/recent?limit=${limit}`)
+      return response.data
+    } catch {
+      return { success: false, data: { signals: [] } }
+    }
+  },
+
   // PROMETHEUS Box Spread Synthetic Borrowing + IC Trading Bot
   prometheusStatus: async () => {
     try {
@@ -1380,6 +1465,90 @@ export function useScanActivityTitan(limit: number = 50, date?: string, options?
   return useSWR(
     `scan-activity-titan-${limit}-${date || 'all'}`,
     () => fetchers.scanActivityTitan(limit, date),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// HERACLES MES FUTURES SCALPING HOOKS
+// =============================================================================
+
+export function useHERACLESStatus(options?: SWRConfiguration) {
+  return useSWR('heracles-status', fetchers.heraclesStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useHERACLESPositions(options?: SWRConfiguration) {
+  return useSWR('heracles-positions', fetchers.heraclesPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useHERACLESClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `heracles-closed-trades-${limit}`,
+    () => fetchers.heraclesClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useHERACLESEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `heracles-equity-curve-${days}`,
+    () => fetchers.heraclesEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useHERACLESIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('heracles-intraday-equity', fetchers.heraclesIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useHERACLESConfig(options?: SWRConfiguration) {
+  return useSWR('heracles-config', fetchers.heraclesConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useHERACLESPaperAccount(options?: SWRConfiguration) {
+  return useSWR('heracles-paper-account', fetchers.heraclesPaperAccount, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useHERACLESScanActivity(limit: number = 100, outcome?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `heracles-scan-activity-${limit}-${outcome || 'all'}`,
+    () => fetchers.heraclesScanActivity(limit, outcome),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useHERACLESMLTrainingData(options?: SWRConfiguration) {
+  return useSWR('heracles-ml-training-data', fetchers.heraclesMLTrainingData, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,  // Refresh every 5 minutes
+    ...options,
+  })
+}
+
+export function useHERACLESSignals(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `heracles-signals-${limit}`,
+    () => fetchers.heraclesSignals(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
