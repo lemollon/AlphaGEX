@@ -497,68 +497,67 @@ class HERACLESSignalGenerator:
         return None
 
 
-def get_gex_data_for_heracles(symbol: str = "SPY") -> Dict[str, Any]:
+def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
     """
     Fetch GEX data for HERACLES signal generation.
 
     This connects to the existing AlphaGEX GEX calculation infrastructure.
 
-    IMPORTANT: GEX data is calculated from SPY options (~$590 price level).
-    HERACLES trades MES futures (~5900 price level, approximately 10x SPY).
-    All price-based GEX levels must be scaled to match MES price scale.
+    IMPORTANT: HERACLES trades MES futures which track the S&P 500 index (~5900 level).
+    We use SPX options data (also at ~5900 level) for accurate GEX levels.
+    SPX requires Tradier PRODUCTION keys (sandbox doesn't support SPX).
 
-    SPY ≈ S&P 500 / 10, so SPY * 10 ≈ ES/MES price.
+    SPX = S&P 500 Index (~5900)
+    MES = Micro E-mini S&P 500 futures (~5900, tracks SPX directly)
+    SPY = SPDR S&P 500 ETF (~590, 1/10th of SPX)
     """
-    # Scale factor: SPY to MES conversion (MES ≈ SPY * 10)
-    SPY_TO_MES_SCALE = 10.0
-
-    def scale_price(val):
-        """Scale SPY price levels to MES scale"""
-        if val is None or val == 0:
-            return 0
-        return val * SPY_TO_MES_SCALE
-
     try:
-        # Try to import and use existing GEX calculator
-        from data.gex_calculator import GEXCalculator
+        # Use TradierGEXCalculator with sandbox=False for SPX (production keys required)
+        from data.gex_calculator import TradierGEXCalculator
 
-        calculator = GEXCalculator()
+        # SPX requires production API (sandbox doesn't support index options)
+        calculator = TradierGEXCalculator(sandbox=False)
         gex_result = calculator.calculate_gex(symbol)
 
         if gex_result:
-            # Scale price levels from SPY to MES
+            # SPX GEX levels are already at the correct scale for MES (~5900)
+            # No scaling needed - SPX and MES are both at S&P 500 index level
             return {
-                'flip_point': scale_price(gex_result.get('flip_point', 0)),
-                'call_wall': scale_price(gex_result.get('call_wall', 0)),
-                'put_wall': scale_price(gex_result.get('put_wall', 0)),
-                'net_gex': gex_result.get('net_gex', 0),  # Not price-based, no scaling
-                'gex_ratio': gex_result.get('gex_ratio', 1.0),  # Ratio, no scaling
-                # n+1 data for overnight (if available) - also scaled
-                'n1_flip_point': scale_price(gex_result.get('n1_flip_point')),
-                'n1_call_wall': scale_price(gex_result.get('n1_call_wall')),
-                'n1_put_wall': scale_price(gex_result.get('n1_put_wall')),
+                'flip_point': gex_result.get('flip_point', 0),
+                'call_wall': gex_result.get('call_wall', 0),
+                'put_wall': gex_result.get('put_wall', 0),
+                'net_gex': gex_result.get('net_gex', 0),
+                'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                # n+1 data for overnight (if available)
+                'n1_flip_point': gex_result.get('n1_flip_point'),
+                'n1_call_wall': gex_result.get('n1_call_wall'),
+                'n1_put_wall': gex_result.get('n1_put_wall'),
             }
+
+        logger.warning(f"GEX calculator returned no data for {symbol}")
+
     except Exception as e:
         logger.warning(f"Could not get GEX data from calculator: {e}")
 
-    # Try API endpoint as fallback
+    # Try API endpoint as fallback (SPX endpoint)
     try:
         import requests
         response = requests.get(f"http://localhost:8000/api/gex/{symbol}", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            # Scale price levels from SPY to MES
+            # SPX data is already at correct scale for MES
             return {
-                'flip_point': scale_price(data.get('flip_point', 0)),
-                'call_wall': scale_price(data.get('call_wall', 0)),
-                'put_wall': scale_price(data.get('put_wall', 0)),
-                'net_gex': data.get('net_gex', 0),  # Not price-based, no scaling
-                'gex_ratio': data.get('gex_ratio', 1.0),  # Ratio, no scaling
+                'flip_point': data.get('flip_point', 0),
+                'call_wall': data.get('call_wall', 0),
+                'put_wall': data.get('put_wall', 0),
+                'net_gex': data.get('net_gex', 0),
+                'gex_ratio': data.get('gex_ratio', 1.0),
             }
     except Exception as e:
         logger.warning(f"Could not get GEX data from API: {e}")
 
     # Return empty data if all fails
+    logger.error(f"Failed to get GEX data for {symbol} - HERACLES signals will use fallback prices")
     return {
         'flip_point': 0,
         'call_wall': 0,

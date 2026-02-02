@@ -144,8 +144,9 @@ class HERACLESTrader:
                                        error_msg="Invalid price <= 0")
                 return scan_result
 
-            # Get GEX data
-            gex_data = get_gex_data_for_heracles("SPY")
+            # Get GEX data from SPX (same price level as MES futures)
+            # SPX requires Tradier production keys (sandbox doesn't support index options)
+            gex_data = get_gex_data_for_heracles("SPX")
             scan_context["gex_data"] = gex_data
 
             # Get account balance (use paper balance in paper mode)
