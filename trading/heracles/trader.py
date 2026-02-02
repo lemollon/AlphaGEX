@@ -321,7 +321,7 @@ class HERACLESTrader:
                 signal_reasoning=signal.reasoning if signal else "",
                 bayesian_alpha=tracker.alpha,
                 bayesian_beta=tracker.beta,
-                bayesian_win_probability=tracker.get_win_probability(),
+                bayesian_win_probability=tracker.win_probability,
                 positive_gamma_win_rate=(tracker.positive_gamma_wins / positive_gamma_total * 100) if positive_gamma_total > 0 else 50,
                 negative_gamma_win_rate=(tracker.negative_gamma_wins / negative_gamma_total * 100) if negative_gamma_total > 0 else 50,
                 contracts_calculated=signal.contracts if signal else 0,

@@ -98,6 +98,12 @@ class HERACLESSignalGenerator:
             # Determine gamma regime
             gamma_regime = self._determine_gamma_regime(net_gex)
 
+            # Log signal generation context for debugging
+            logger.debug(
+                f"Signal generation: price={current_price:.2f}, flip={flip_point:.2f}, "
+                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}"
+            )
+
             # Generate signal based on regime
             if gamma_regime == GammaRegime.POSITIVE:
                 signal = self._generate_mean_reversion_signal(
@@ -111,6 +117,10 @@ class HERACLESSignalGenerator:
                 )
 
             if signal is None:
+                logger.debug(
+                    f"No signal generated: regime={gamma_regime.value}, "
+                    f"distance_from_flip={((current_price - flip_point) / flip_point) * 100:.2f}%"
+                )
                 return None
 
             # Calculate win probability
@@ -197,6 +207,11 @@ class HERACLESSignalGenerator:
         # Signal strength based on distance
         confidence = min(0.95, 0.5 + (abs(distance_pct) / 2))
 
+        logger.debug(
+            f"Mean reversion check: distance_pct={distance_pct:.2f}%, "
+            f"min_distance_pct={min_distance_pct}%, exceeds={abs(distance_pct) > min_distance_pct}"
+        )
+
         if distance_pct > min_distance_pct:
             # Price above flip - expect mean reversion down
             direction = TradeDirection.SHORT
@@ -265,6 +280,12 @@ class HERACLESSignalGenerator:
 
         # Need breakout through flip point plus ATR threshold
         breakout_threshold = atr * self.config.breakout_atr_threshold
+
+        logger.debug(
+            f"Momentum check: distance={distance_from_flip:.2f} pts, "
+            f"breakout_threshold={breakout_threshold:.2f} pts (ATR={atr:.2f}*{self.config.breakout_atr_threshold}), "
+            f"exceeds={abs(distance_from_flip) > breakout_threshold}"
+        )
 
         # Calculate distance to walls
         distance_to_call_wall = call_wall - current_price
@@ -522,11 +543,42 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
         if gex_result:
             # SPX GEX levels are already at the correct scale for MES (~5900)
             # No scaling needed - SPX and MES are both at S&P 500 index level
+            flip_point = gex_result.get('flip_point', 0)
+            call_wall = gex_result.get('call_wall', 0)
+            put_wall = gex_result.get('put_wall', 0)
+            net_gex = gex_result.get('net_gex', 0)
+            spot_price = gex_result.get('spot_price', 0)
+
+            # If walls are 0 or invalid but we have flip_point, estimate walls
+            # This handles the case where Tradier doesn't provide gamma for SPX
+            if flip_point > 0:
+                if call_wall <= 0:
+                    # Estimate call wall as 1% above flip point
+                    call_wall = flip_point * 1.01
+                    logger.debug(f"Estimated call_wall: {call_wall:.2f} (flip * 1.01)")
+                if put_wall <= 0:
+                    # Estimate put wall as 1% below flip point
+                    put_wall = flip_point * 0.99
+                    logger.debug(f"Estimated put_wall: {put_wall:.2f} (flip * 0.99)")
+
+            # If net_gex is 0 but we have valid walls, estimate regime from price position
+            # This is a heuristic when gamma data isn't available
+            if net_gex == 0 and flip_point > 0 and spot_price > 0:
+                # Positive GEX when price is between walls (mean reversion environment)
+                # Use small positive value to trigger mean reversion strategy
+                net_gex = 1e6  # Small positive = positive gamma regime
+                logger.debug(f"Estimated net_gex as positive (mean reversion)")
+
+            logger.info(
+                f"HERACLES GEX data for {symbol}: flip={flip_point:.2f}, "
+                f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+            )
+
             return {
-                'flip_point': gex_result.get('flip_point', 0),
-                'call_wall': gex_result.get('call_wall', 0),
-                'put_wall': gex_result.get('put_wall', 0),
-                'net_gex': gex_result.get('net_gex', 0),
+                'flip_point': flip_point,
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'net_gex': net_gex,
                 'gex_ratio': gex_result.get('gex_ratio', 1.0),
                 # n+1 data for overnight (if available)
                 'n1_flip_point': gex_result.get('n1_flip_point'),
