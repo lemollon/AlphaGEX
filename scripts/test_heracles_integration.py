@@ -164,14 +164,19 @@ def test_signal_generation():
     print("\n" + "="*60)
     print("TEST 4: Signal Generation Logic")
     print("="*60)
-    
+
     try:
         from trading.heracles.signals import HERACLESSignalGenerator
-        from trading.heracles.models import HERACLESConfig
-        
+        from trading.heracles.models import HERACLESConfig, BayesianWinTracker, GammaRegime
+
         config = HERACLESConfig()
-        generator = HERACLESSignalGenerator(config)
-        
+        win_tracker = BayesianWinTracker()  # Fresh tracker with 50% prior
+        generator = HERACLESSignalGenerator(config, win_tracker)
+
+        print(f"   Config flip_point_proximity_pct: {config.flip_point_proximity_pct}%")
+        print(f"   Config min_win_probability: {config.min_win_probability}")
+        print(f"   Win tracker prior: {win_tracker.win_probability:.2%}")
+
         # Test with mock SPX-level data
         test_gex_data = {
             'flip_point': 5900.0,
@@ -180,10 +185,20 @@ def test_signal_generation():
             'net_gex': 1.5e9,  # Positive gamma
             'gex_ratio': 1.2,
         }
-        
-        # Price above flip point - should generate SHORT signal
-        test_price = 5930.0  # 0.5% above flip
-        
+
+        # Price above flip point - should generate SHORT signal (mean reversion)
+        test_price = 5935.0  # 0.59% above flip (exceeds 0.5% threshold)
+        distance_pct = ((test_price - test_gex_data['flip_point']) / test_gex_data['flip_point']) * 100
+
+        print(f"   Test price: {test_price}")
+        print(f"   Flip point: {test_gex_data['flip_point']}")
+        print(f"   Distance from flip: {distance_pct:.2f}%")
+        print(f"   Net GEX: {test_gex_data['net_gex']:.2e}")
+
+        # Determine expected regime
+        regime = generator._determine_gamma_regime(test_gex_data['net_gex'])
+        print(f"   Gamma Regime: {regime.value}")
+
         signal = generator.generate_signal(
             current_price=test_price,
             gex_data=test_gex_data,
@@ -192,20 +207,24 @@ def test_signal_generation():
             account_balance=100000.0,
             is_overnight=False
         )
-        
+
         if signal:
             print(f"   Direction: {signal.direction.value}")
             print(f"   Source: {signal.source.value}")
             print(f"   Confidence: {signal.confidence:.2%}")
             print(f"   Win Prob: {signal.win_probability:.2%}")
+            print(f"   Entry: {signal.entry_price}")
+            print(f"   Stop: {signal.stop_price}")
             print(f"   Contracts: {signal.contracts}")
+            print(f"   Valid: {signal.is_valid}")
+            print(f"   Reasoning: {signal.reasoning[:100]}...")
             print(f"✅ Signal generated successfully")
             return True
         else:
-            print("   No signal generated (price may be too close to flip)")
-            print("   This is OK - just means conditions weren't met")
-            return True  # Not a failure, just no signal
-            
+            print("❌ No signal generated - investigating...")
+            print(f"   Distance {distance_pct:.2f}% should exceed threshold {config.flip_point_proximity_pct}%")
+            return False
+
     except Exception as e:
         print(f"❌ Signal generation failed: {e}")
         import traceback
@@ -218,19 +237,48 @@ def test_full_scan():
     print("\n" + "="*60)
     print("TEST 5: Full HERACLES Scan")
     print("="*60)
-    
+
     try:
         from trading.heracles import run_heracles_scan
-        
+        from trading.heracles.trader import get_heracles_trader
+
+        # First check market status
+        trader = get_heracles_trader()
+        print(f"   Market Open: {trader.executor.is_market_open()}")
+        print(f"   Mode: {trader.config.mode.value}")
+        print(f"   Symbol: {trader.config.symbol}")
+
+        # Get current GEX data for diagnostics
+        from trading.heracles.signals import get_gex_data_for_heracles
+        gex_data = get_gex_data_for_heracles("SPX")
+        print(f"   GEX flip_point: {gex_data.get('flip_point', 0):.2f}")
+        print(f"   GEX net_gex: {gex_data.get('net_gex', 0):.2e}")
+
+        # Get current quote
+        quote = trader.executor.get_mes_quote()
+        if quote:
+            price = quote.get('last', quote.get('price', 0))
+            print(f"   MES Price: {price:.2f}")
+
+            # Calculate distance to flip
+            flip = gex_data.get('flip_point', 0)
+            if flip > 0 and price > 0:
+                distance_pct = ((price - flip) / flip) * 100
+                print(f"   Distance to flip: {distance_pct:.2f}%")
+                print(f"   Min distance needed: {trader.config.flip_point_proximity_pct}%")
+
+        # Run the scan
         result = run_heracles_scan()
-        
+
+        print(f"\n   Scan Result:")
         print(f"   Status: {result.get('status', 'unknown')}")
         print(f"   Signals: {result.get('signals_generated', 0)}")
         print(f"   Trades: {result.get('trades_executed', 0)}")
+        print(f"   Positions Checked: {result.get('positions_checked', 0)}")
         print(f"   Errors: {result.get('errors', [])}")
-        
+
         status = result.get('status', '')
-        if status in ['success', 'no_signal', 'market_closed']:
+        if status in ['completed', 'success', 'no_signal', 'market_closed']:
             print(f"✅ Scan completed with status: {status}")
             return True
         elif status == 'error':
@@ -239,7 +287,7 @@ def test_full_scan():
         else:
             print(f"⚠️ Unexpected status: {status}")
             return True
-            
+
     except Exception as e:
         print(f"❌ Scan failed: {e}")
         import traceback
