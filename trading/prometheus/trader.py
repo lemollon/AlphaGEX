@@ -1079,8 +1079,31 @@ class PrometheusICTrader:
             return False  # If we can't check, assume not in cooldown
 
     def _get_available_capital(self) -> float:
-        """Get capital available for IC trading from box spreads"""
-        # Get all open box spread positions
+        """
+        Get capital available for IC trading.
+
+        In PAPER mode: Uses starting_capital from config (simulated $100K)
+        In LIVE mode: Uses actual capital from box spread positions
+        """
+        # PAPER mode: Use starting_capital from config for immediate trading
+        if self.config.mode == TradingMode.PAPER:
+            total_available = self.config.starting_capital
+
+            # Subtract capital currently in use by open IC positions
+            ic_positions = self.db.get_open_ic_positions()
+            for ic in ic_positions:
+                # Use max risk (spread width * contracts * 100) as margin tied up
+                margin_used = ic.total_credit_received * 2  # Approximate margin
+                total_available -= margin_used
+
+            # Also subtract realized losses
+            performance = self.db.get_ic_performance()
+            if performance.get('total_realized_pnl', 0) < 0:
+                total_available += performance['total_realized_pnl']  # Negative, so this subtracts
+
+            return max(0, total_available)
+
+        # LIVE mode: Require actual box spread positions
         box_positions = self.db.get_open_positions()  # Box spreads
         if not box_positions:
             return 0.0
@@ -1099,14 +1122,24 @@ class PrometheusICTrader:
         return max(0, total_available)
 
     def _get_source_box_position(self) -> Optional[str]:
-        """Get the box position ID to link new IC trades to"""
-        box_positions = self.db.get_open_positions()
-        if not box_positions:
-            return None
+        """
+        Get the box position ID to link new IC trades to.
 
-        # Use the most recently opened box position
-        sorted_boxes = sorted(box_positions, key=lambda p: p.open_time, reverse=True)
-        return sorted_boxes[0].position_id
+        In PAPER mode: Returns synthetic ID if no real box positions
+        In LIVE mode: Requires actual box spread positions
+        """
+        box_positions = self.db.get_open_positions()
+
+        if box_positions:
+            # Use the most recently opened box position
+            sorted_boxes = sorted(box_positions, key=lambda p: p.open_time, reverse=True)
+            return sorted_boxes[0].position_id
+
+        # PAPER mode: Use synthetic source if no real box positions
+        if self.config.mode == TradingMode.PAPER:
+            return "PAPER_CAPITAL_100K"
+
+        return None
 
     def _generate_and_execute_signal(self) -> Dict[str, Any]:
         """Generate an IC signal and execute if approved"""
@@ -1191,18 +1224,42 @@ class PrometheusICTrader:
         total_unrealized = sum(p.unrealized_pnl for p in ic_positions)
         total_credit = sum(p.total_credit_received for p in ic_positions)
 
+        # Determine trading_active status and reason
+        in_window = self._in_trading_window()
+        in_cooldown = self._in_cooldown()
+        can_trade = self._can_open_new_position()
+        available_capital = self._get_available_capital()
+
+        # trading_active = enabled AND in trading window (can actually execute trades)
+        trading_active = self.config.enabled and in_window
+
+        # Determine inactive reason for clarity
+        inactive_reason = None
+        if not self.config.enabled:
+            inactive_reason = "IC trading is disabled in configuration"
+        elif not in_window:
+            inactive_reason = "Outside trading hours (8:30 AM - 3:00 PM CT)"
+        elif in_cooldown:
+            inactive_reason = "In cooldown period after recent trade"
+        elif available_capital <= 0:
+            inactive_reason = "No capital available from box spreads"
+        elif not can_trade:
+            inactive_reason = self._get_skip_reason()
+
         return {
             'enabled': self.config.enabled,
+            'trading_active': trading_active,
+            'inactive_reason': inactive_reason,
             'mode': self.config.mode.value,
             'ticker': self.config.ticker,
             'open_positions': len(ic_positions),
             'total_credit_outstanding': total_credit,
             'total_unrealized_pnl': total_unrealized,
             'performance': ic_performance,
-            'in_trading_window': self._in_trading_window(),
-            'in_cooldown': self._in_cooldown(),
-            'available_capital': self._get_available_capital(),
-            'can_trade': self._can_open_new_position(),
+            'in_trading_window': in_window,
+            'in_cooldown': in_cooldown,
+            'available_capital': available_capital,
+            'can_trade': can_trade,
             'daily_trades': self.db.get_daily_ic_trades_count(),
             'max_daily_trades': self.config.max_trades_per_day,
             'last_updated': datetime.now(CENTRAL_TZ).isoformat(),

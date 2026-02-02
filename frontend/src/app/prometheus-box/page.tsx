@@ -947,13 +947,21 @@ export default function PrometheusBoxDashboard() {
                   <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-bold">PROMETHEUS IC Trading</h2>
                     <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                      icStatus?.status?.enabled ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                      icStatus?.status?.trading_active ? 'bg-green-500/20 text-green-400' :
+                      icStatus?.status?.enabled ? 'bg-yellow-500/20 text-yellow-400' :
+                      'bg-red-500/20 text-red-400'
                     }`}>
-                      {icStatus?.status?.enabled ? 'ACTIVE' : 'STANDBY'}
+                      {icStatus?.status?.trading_active ? 'TRADING' :
+                       icStatus?.status?.enabled ? 'STANDBY' : 'DISABLED'}
                     </span>
                   </div>
                   <p className="text-sm text-gray-400 mb-4">
                     Trades SPX 0DTE Iron Condors using capital from box spread borrowing.
+                    {icStatus?.status?.inactive_reason && (
+                      <span className="block mt-1 text-yellow-400">
+                        ⚠️ {icStatus.status.inactive_reason}
+                      </span>
+                    )}
                   </p>
                   <div className="grid md:grid-cols-4 gap-4">
                     <div className="bg-orange-900/30 rounded-lg p-4 text-center">
