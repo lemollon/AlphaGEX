@@ -89,6 +89,7 @@ export default function AllBotReportsSummary() {
     PHOENIX: undefined,
     ATLAS: undefined,
     PROMETHEUS: undefined,
+    HERACLES: undefined,
   }
 
   // Calculate aggregate stats

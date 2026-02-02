@@ -26,6 +26,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   PHOENIX: 100000,
   ATLAS: 100000,
   PROMETHEUS: 100000,
+  HERACLES: 100000,
 }
 
 // Bot configuration with colors
@@ -36,6 +37,7 @@ const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'PEGASUS', endpoint: '/api/pegasus/equity-curve' },
   { name: 'TITAN', endpoint: '/api/titan/equity-curve' },
   { name: 'PROMETHEUS', endpoint: '/api/prometheus-box/ic/equity-curve' },
+  { name: 'HERACLES', endpoint: '/api/heracles/paper-equity-curve' },
 ]
 
 interface EquityCurvePoint {
