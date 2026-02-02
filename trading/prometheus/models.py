@@ -1041,7 +1041,7 @@ class PrometheusICConfig:
     cooldown_minutes_after_trade: int = 15  # General cooldown (used by trader)
 
     # Capital tracking (for equity curve calculations)
-    starting_capital: float = 100000.0      # Starting capital for IC trading
+    starting_capital: float = 500000.0      # Starting capital for IC trading (matches box spread capital)
     min_capital_per_trade: float = 5000.0   # Minimum capital required per trade
 
     @property
