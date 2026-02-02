@@ -910,9 +910,31 @@ class PrometheusICTrader:
 
     def __init__(self, config: Optional[PrometheusICConfig] = None):
         self.db = PrometheusDatabase(bot_name="PROMETHEUS_IC")
+
+        # Load and validate config
         self.config = config or self.db.load_ic_config()
-        self.signal_gen = PrometheusICSignalGenerator(self.config)
-        self.executor = PrometheusICExecutor(self.config, self.db)
+        if not self.config:
+            logger.warning("IC config is None, using defaults")
+            self.config = PrometheusICConfig()
+
+        # Validate critical config fields
+        if not hasattr(self.config, 'enabled'):
+            logger.error("IC config missing 'enabled' field, defaulting to True")
+            self.config.enabled = True
+        if not hasattr(self.config, 'starting_capital') or self.config.starting_capital <= 0:
+            logger.warning(f"IC config invalid starting_capital, using 500000")
+            self.config.starting_capital = 500000.0
+        if not hasattr(self.config, 'mode'):
+            logger.warning("IC config missing 'mode', defaulting to PAPER")
+            self.config.mode = TradingMode.PAPER
+
+        # Initialize components with validated config
+        try:
+            self.signal_gen = PrometheusICSignalGenerator(self.config)
+            self.executor = PrometheusICExecutor(self.config, self.db)
+        except Exception as e:
+            logger.error(f"Failed to initialize IC trader components: {e}")
+            raise RuntimeError(f"PrometheusICTrader initialization failed: {e}")
 
     def run_trading_cycle(self) -> Dict[str, Any]:
         """
@@ -1079,8 +1101,16 @@ class PrometheusICTrader:
             return False  # If we can't check, assume not in cooldown
 
     def _get_available_capital(self) -> float:
-        """Get capital available for IC trading from box spreads"""
-        # Get all open box spread positions
+        """
+        Get capital available for IC trading from box spread positions.
+
+        IC trading uses borrowed capital from box spreads.
+        In PAPER mode, auto-creates a paper box spread if none exists.
+        """
+        # Ensure we have a box spread position (creates paper one if needed)
+        self._ensure_paper_box_spread()
+
+        # Get capital from box spread positions
         box_positions = self.db.get_open_positions()  # Box spreads
         if not box_positions:
             return 0.0
@@ -1098,8 +1128,126 @@ class PrometheusICTrader:
 
         return max(0, total_available)
 
+    def _ensure_paper_box_spread(self) -> None:
+        """
+        In PAPER mode, create a synthetic box spread position if none exists.
+        This provides the borrowed capital for IC trading.
+        """
+        if self.config.mode != TradingMode.PAPER:
+            return
+
+        box_positions = self.db.get_open_positions()
+        if box_positions:
+            return  # Already have positions
+
+        # Create a synthetic paper box spread with $500K borrowed
+        logger.info("PAPER MODE: Creating synthetic box spread position for IC trading capital")
+        try:
+            from .models import BoxSpreadPosition, PositionStatus
+
+            now = datetime.now(CENTRAL_TZ)
+            expiration_date = now + timedelta(days=90)
+            expiration_str = expiration_date.strftime('%Y-%m-%d')
+
+            # $500K notional: 100 contracts * $50 strike width * 100 multiplier
+            contracts = 100
+            strike_width = 50.0
+            lower_strike = 5800.0
+            upper_strike = lower_strike + strike_width
+            entry_credit = 49.50  # Slight discount = borrowing cost
+            theoretical_value = strike_width  # $50 at expiration
+            total_credit = entry_credit * contracts * 100  # $495,000
+            total_owed = theoretical_value * contracts * 100  # $500,000
+            borrowing_cost = total_owed - total_credit  # $5,000
+            implied_rate = (borrowing_cost / total_owed) * (365.0 / 90) * 100  # ~4%
+
+            synthetic_box = BoxSpreadPosition(
+                # Position identification
+                position_id=f"PAPER_BOX_{now.strftime('%Y%m%d_%H%M%S')}",
+                ticker="SPX",
+
+                # Leg details
+                lower_strike=lower_strike,
+                upper_strike=upper_strike,
+                strike_width=strike_width,
+                expiration=expiration_str,
+                dte_at_entry=90,
+                current_dte=90,
+
+                # Leg symbols (synthetic for paper)
+                call_long_symbol=f"SPX{expiration_str.replace('-', '')}C{int(lower_strike)}",
+                call_short_symbol=f"SPX{expiration_str.replace('-', '')}C{int(upper_strike)}",
+                put_long_symbol=f"SPX{expiration_str.replace('-', '')}P{int(upper_strike)}",
+                put_short_symbol=f"SPX{expiration_str.replace('-', '')}P{int(lower_strike)}",
+
+                # Order IDs (synthetic for paper)
+                call_spread_order_id="PAPER_CALL_ORDER",
+                put_spread_order_id="PAPER_PUT_ORDER",
+
+                # Execution prices
+                contracts=contracts,
+                entry_credit=entry_credit,
+                total_credit_received=total_credit,
+                theoretical_value=theoretical_value,
+                total_owed_at_expiration=total_owed,
+
+                # Borrowing cost tracking
+                borrowing_cost=borrowing_cost,
+                implied_annual_rate=implied_rate,
+                daily_cost=borrowing_cost / 90,
+                cost_accrued_to_date=0.0,
+
+                # Comparison benchmarks
+                fed_funds_at_entry=4.38,
+                margin_rate_at_entry=8.50,
+                savings_vs_margin=(8.50 - implied_rate) * total_owed / 100,
+
+                # Capital deployment - ALL goes to PROMETHEUS IC trading
+                cash_deployed_to_ares=0.0,
+                cash_deployed_to_titan=0.0,
+                cash_deployed_to_pegasus=0.0,
+                cash_held_in_reserve=50000.0,  # 10% reserve
+                total_cash_deployed=total_credit,  # $495K available
+
+                # Returns tracking (starts at 0)
+                returns_from_ares=0.0,
+                returns_from_titan=0.0,
+                returns_from_pegasus=0.0,
+                total_ic_returns=0.0,
+                net_profit=0.0,
+
+                # Market context
+                spot_at_entry=5825.0,
+                vix_at_entry=15.0,
+
+                # Risk monitoring
+                early_assignment_risk="LOW",
+                current_margin_used=100000.0,
+                margin_cushion=150000.0,
+
+                # Status
+                status=PositionStatus.OPEN,
+                open_time=now,
+
+                # Educational
+                position_explanation="PAPER MODE: Synthetic box spread providing $500K capital for IC trading",
+                daily_briefing="Paper trading position - no real capital at risk"
+            )
+            self.db.save_position(synthetic_box)
+            logger.info(f"Created paper box spread: {synthetic_box.position_id} with ${total_credit:,.0f} capital")
+        except Exception as e:
+            logger.error(f"Failed to create paper box spread: {e}", exc_info=True)
+
     def _get_source_box_position(self) -> Optional[str]:
-        """Get the box position ID to link new IC trades to"""
+        """
+        Get the box position ID to link new IC trades to.
+
+        IC trades are always linked to a box spread position (the source of capital).
+        In PAPER mode, auto-creates a paper box spread if none exists.
+        """
+        # Ensure we have a box spread position (creates paper one if needed)
+        self._ensure_paper_box_spread()
+
         box_positions = self.db.get_open_positions()
         if not box_positions:
             return None
@@ -1191,18 +1339,42 @@ class PrometheusICTrader:
         total_unrealized = sum(p.unrealized_pnl for p in ic_positions)
         total_credit = sum(p.total_credit_received for p in ic_positions)
 
+        # Determine trading_active status and reason
+        in_window = self._in_trading_window()
+        in_cooldown = self._in_cooldown()
+        can_trade = self._can_open_new_position()
+        available_capital = self._get_available_capital()
+
+        # trading_active = enabled AND in trading window (can actually execute trades)
+        trading_active = self.config.enabled and in_window
+
+        # Determine inactive reason for clarity
+        inactive_reason = None
+        if not self.config.enabled:
+            inactive_reason = "IC trading is disabled in configuration"
+        elif not in_window:
+            inactive_reason = "Outside trading hours (8:30 AM - 3:00 PM CT)"
+        elif in_cooldown:
+            inactive_reason = "In cooldown period after recent trade"
+        elif available_capital <= 0:
+            inactive_reason = "No capital available from box spreads"
+        elif not can_trade:
+            inactive_reason = self._get_skip_reason()
+
         return {
             'enabled': self.config.enabled,
+            'trading_active': trading_active,
+            'inactive_reason': inactive_reason,
             'mode': self.config.mode.value,
             'ticker': self.config.ticker,
             'open_positions': len(ic_positions),
             'total_credit_outstanding': total_credit,
             'total_unrealized_pnl': total_unrealized,
             'performance': ic_performance,
-            'in_trading_window': self._in_trading_window(),
-            'in_cooldown': self._in_cooldown(),
-            'available_capital': self._get_available_capital(),
-            'can_trade': self._can_open_new_position(),
+            'in_trading_window': in_window,
+            'in_cooldown': in_cooldown,
+            'available_capital': available_capital,
+            'can_trade': can_trade,
             'daily_trades': self.db.get_daily_ic_trades_count(),
             'max_daily_trades': self.config.max_trades_per_day,
             'last_updated': datetime.now(CENTRAL_TZ).isoformat(),
