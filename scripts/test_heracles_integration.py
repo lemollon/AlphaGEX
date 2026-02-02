@@ -74,8 +74,10 @@ def test_mes_quote():
     print("="*60)
 
     try:
-        from trading.heracles.executor import TastytradeExecutor
+        from trading.heracles.executor import TastytradeExecutor, TASTYTRADE_SDK_AVAILABLE
         from trading.heracles.models import HERACLESConfig, TradingMode
+
+        print(f"   Tastytrade SDK Available: {TASTYTRADE_SDK_AVAILABLE}")
 
         config = HERACLESConfig(mode=TradingMode.PAPER)
         executor = TastytradeExecutor(config)
@@ -84,11 +86,19 @@ def test_mes_quote():
 
         if quote:
             price = quote.get('last', quote.get('price', 0))
-            source = quote.get('source', 'TASTYTRADE')
+            source = quote.get('source', 'UNKNOWN')
             print(f"   MES Price: {price:.2f}")
             print(f"   Source: {source}")
             print(f"   Bid: {quote.get('bid', 0):.2f}")
             print(f"   Ask: {quote.get('ask', 0):.2f}")
+
+            # Check if using real-time source
+            if source == "TASTYTRADE_DXLINK":
+                print("   🚀 Real-time quotes via Tastytrade DXLinkStreamer!")
+            elif source == "YAHOO_MES":
+                print("   ⚠️  Using Yahoo Finance (may have 15-min delay)")
+            elif source == "SPY_DERIVED":
+                print("   ⚠️  Using SPY-derived price (less accurate)")
 
             if price > 1000:  # Should be ~5900
                 print(f"✅ MES quote looks valid (price={price:.2f} from {source})")

@@ -8,13 +8,14 @@ Features:
 - Market and limit order execution
 - Position monitoring
 - Stop loss management
-- Real-time quote fetching
+- Real-time quote fetching via DXLinkStreamer (WebSocket)
 """
 
 import os
 import logging
 import requests
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,20 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Try to import tastytrade SDK for real-time streaming quotes
+try:
+    from tastytrade import Session, DXLinkStreamer
+    from tastytrade.dxfeed import Quote
+    TASTYTRADE_SDK_AVAILABLE = True
+    logger.info("Tastytrade SDK loaded - real-time futures quotes available")
+except ImportError:
+    TASTYTRADE_SDK_AVAILABLE = False
+    logger.warning("Tastytrade SDK not installed - falling back to Yahoo for quotes")
+
+# Quote cache for reducing API calls
+_quote_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
+QUOTE_CACHE_TTL_SECONDS = 5  # Cache quotes for 5 seconds
 
 # Tastytrade API endpoints
 TASTYTRADE_BASE_URL = "https://api.tastytrade.com"
@@ -115,50 +130,112 @@ class TastytradeExecutor:
         """
         Get current MES futures quote.
 
+        Priority:
+        1. Tastytrade DXLinkStreamer (real-time via WebSocket)
+        2. Yahoo Finance MES=F (may have 15-min delay)
+        3. SPY-derived price (last resort for paper trading)
+
         Returns:
             Dict with bid, ask, last, volume or None if failed
         """
         symbol = symbol or self.config.symbol
 
-        # Try Tastytrade first if credentials available
-        if self._ensure_session():
+        # Check cache first
+        cache_key = symbol
+        if cache_key in _quote_cache:
+            cached_quote, cache_time = _quote_cache[cache_key]
+            if datetime.now(CENTRAL_TZ) - cache_time < timedelta(seconds=QUOTE_CACHE_TTL_SECONDS):
+                logger.debug(f"Using cached quote for {symbol}")
+                return cached_quote
+
+        # Try Tastytrade DXLinkStreamer (real-time WebSocket streaming)
+        if TASTYTRADE_SDK_AVAILABLE and self.username and self.password:
             try:
-                # URL-encode the symbol - futures symbols like /MESH6 need encoding
-                # /MESH6 -> %2FMESH6 to avoid double-slash in URL path
-                from urllib.parse import quote
-                encoded_symbol = quote(symbol, safe='')
-
-                response = requests.get(
-                    f"{self.base_url}/market-data/quotes/{encoded_symbol}",
-                    headers=self._get_headers(),
-                    timeout=10
-                )
-
-                if response.status_code == 200:
-                    data = response.json().get("data", {})
-                    return {
-                        "symbol": symbol,
-                        "bid": float(data.get("bid-price", 0)),
-                        "ask": float(data.get("ask-price", 0)),
-                        "last": float(data.get("last-price", 0)),
-                        "volume": int(data.get("volume", 0)),
-                        "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
-                        "source": "TASTYTRADE"
-                    }
-                else:
-                    logger.warning(f"Quote not available via REST for {symbol}: {response.status_code}")
+                quote = self._get_tastytrade_streaming_quote(symbol)
+                if quote:
+                    _quote_cache[cache_key] = (quote, datetime.now(CENTRAL_TZ))
+                    return quote
             except Exception as e:
-                logger.warning(f"Error getting quote from Tastytrade: {e}")
+                logger.warning(f"DXLinkStreamer quote failed: {e}")
 
         # Fallback: Get direct MES futures quote from Yahoo Finance
         # Yahoo provides free delayed MES=F quotes (typically 15-min delay)
         mes_quote = self._get_yahoo_mes_quote()
         if mes_quote:
+            _quote_cache[cache_key] = (mes_quote, datetime.now(CENTRAL_TZ))
             return mes_quote
 
         # Last resort: Derive from SPY * 10 (not ideal but better than nothing)
         if self.config.mode == TradingMode.PAPER:
-            return self._get_spy_derived_quote(symbol)
+            spy_quote = self._get_spy_derived_quote(symbol)
+            if spy_quote:
+                _quote_cache[cache_key] = (spy_quote, datetime.now(CENTRAL_TZ))
+            return spy_quote
+
+        return None
+
+    def _get_tastytrade_streaming_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get real-time futures quote via Tastytrade DXLinkStreamer.
+
+        This uses WebSocket streaming for real-time data.
+        Note: Requires tastytrade SDK (pip install tastytrade)
+        """
+        if not TASTYTRADE_SDK_AVAILABLE:
+            return None
+
+        try:
+            # Convert symbol to DXFeed format
+            # Tastytrade uses symbols like /MESH6, DXFeed uses /MESH6
+            # For MES futures, the streamer symbol is the same as the API symbol
+            streamer_symbol = symbol
+            if not streamer_symbol.startswith('/'):
+                streamer_symbol = f'/{symbol}'
+
+            # Run async function synchronously
+            return asyncio.run(self._async_get_streaming_quote(streamer_symbol))
+
+        except Exception as e:
+            logger.warning(f"Tastytrade streaming quote error: {e}")
+            return None
+
+    async def _async_get_streaming_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Async function to get a single quote from DXLinkStreamer.
+
+        Opens a connection, subscribes to the symbol, gets one quote, and closes.
+        """
+        try:
+            # Create a session
+            session = Session(self.username, self.password)
+
+            async with DXLinkStreamer(session) as streamer:
+                # Subscribe to the futures symbol
+                await streamer.subscribe(Quote, [symbol])
+
+                # Get one quote with a timeout
+                try:
+                    quote = await asyncio.wait_for(
+                        streamer.get_event(Quote),
+                        timeout=5.0  # 5 second timeout
+                    )
+
+                    if quote and quote.bid_price and quote.ask_price:
+                        return {
+                            "symbol": symbol,
+                            "bid": float(quote.bid_price),
+                            "ask": float(quote.ask_price),
+                            "last": float(quote.bid_price + quote.ask_price) / 2,  # Mid price if no last
+                            "price": float(quote.bid_price + quote.ask_price) / 2,
+                            "volume": 0,  # DXFeed Quote doesn't include volume
+                            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+                            "source": "TASTYTRADE_DXLINK"
+                        }
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout waiting for quote on {symbol}")
+
+        except Exception as e:
+            logger.warning(f"DXLinkStreamer error: {e}")
 
         return None
 
