@@ -1,14 +1,14 @@
 'use client'
 
 import React from 'react'
-import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Activity } from 'lucide-react'
 
 // =============================================================================
 // BOT BRANDING SYSTEM
 // =============================================================================
 // Unified branding for ARES, ATHENA, and PEGASUS to ensure visual consistency
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS'
+export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES'
 
 export interface BotBrand {
   name: BotName
@@ -326,6 +326,41 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#10B981',
     hexLight: '#6EE7B7',
     hexDark: '#059669',
+  },
+  HERACLES: {
+    name: 'HERACLES',
+    fullName: 'HERACLES MES Futures Scalping',
+    description: 'MES Futures Scalping with GEX Signals',
+    strategy: 'GEX-Based MES Futures Scalping',
+    // Primary - Yellow/Gold (strength, heroic, sun-like power)
+    primaryColor: 'yellow',
+    primaryBg: 'bg-yellow-600',
+    primaryBorder: 'border-yellow-500',
+    primaryText: 'text-yellow-400',
+    // Light variants
+    lightBg: 'bg-yellow-900/20',
+    lightText: 'text-yellow-300',
+    lightBorder: 'border-yellow-700/50',
+    // Chart colors
+    chartLine: 'stroke-yellow-400',
+    chartFill: 'fill-yellow-500/20',
+    chartPositive: 'text-yellow-400',
+    chartNegative: 'text-yellow-600',
+    // Position cards
+    positionBorder: 'border-yellow-600/50',
+    positionBg: 'bg-yellow-950/30',
+    positionAccent: 'bg-yellow-500',
+    // Badges
+    badgeBg: 'bg-yellow-900/50',
+    badgeText: 'text-yellow-300',
+    // Gradient
+    icon: Activity,
+    gradientFrom: 'from-yellow-500',
+    gradientTo: 'to-yellow-900',
+    // Hex for Recharts
+    hexPrimary: '#EAB308',
+    hexLight: '#FDE047',
+    hexDark: '#CA8A04',
   },
 }
 
