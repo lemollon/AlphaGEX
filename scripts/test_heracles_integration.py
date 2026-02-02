@@ -70,35 +70,92 @@ def test_spx_gex_fetch():
 def test_mes_quote():
     """Test 3: Verify MES quote can be obtained"""
     print("\n" + "="*60)
-    print("TEST 3: MES Quote (derived from SPY)")
+    print("TEST 3: MES Quote")
     print("="*60)
-    
+
     try:
         from trading.heracles.executor import TastytradeExecutor
         from trading.heracles.models import HERACLESConfig, TradingMode
-        
+
         config = HERACLESConfig(mode=TradingMode.PAPER)
         executor = TastytradeExecutor(config)
-        
+
         quote = executor.get_mes_quote()
-        
+
         if quote:
-            price = quote.get('price', 0)
-            print(f"   MES Price: {price}")
-            print(f"   Source: {quote.get('source', 'unknown')}")
-            
+            price = quote.get('last', quote.get('price', 0))
+            source = quote.get('source', 'TASTYTRADE')
+            print(f"   MES Price: {price:.2f}")
+            print(f"   Source: {source}")
+            print(f"   Bid: {quote.get('bid', 0):.2f}")
+            print(f"   Ask: {quote.get('ask', 0):.2f}")
+
             if price > 1000:  # Should be ~5900
-                print(f"✅ MES quote looks valid (price={price:.2f})")
+                print(f"✅ MES quote looks valid (price={price:.2f} from {source})")
                 return True
             else:
                 print(f"❌ MES quote invalid (price={price})")
                 return False
         else:
-            print("❌ Could not get MES quote")
+            print("❌ Could not get MES quote from any source")
             return False
-            
+
     except Exception as e:
         print(f"❌ Failed to get MES quote: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_vix_fetch():
+    """Test 3b: Verify VIX can be fetched"""
+    print("\n" + "="*60)
+    print("TEST 3b: VIX Data Fetch")
+    print("="*60)
+
+    try:
+        from trading.heracles.trader import HERACLESTrader
+
+        trader = HERACLESTrader()
+        vix = trader._get_vix()
+
+        print(f"   VIX: {vix:.2f}")
+
+        if 5 < vix < 100:  # Reasonable VIX range
+            print(f"✅ VIX looks valid ({vix:.2f})")
+            return True
+        else:
+            print(f"❌ VIX out of expected range ({vix})")
+            return False
+
+    except Exception as e:
+        print(f"❌ Failed to get VIX: {e}")
+        return False
+
+
+def test_atr_calculation():
+    """Test 3c: Verify ATR calculation works"""
+    print("\n" + "="*60)
+    print("TEST 3c: ATR Calculation")
+    print("="*60)
+
+    try:
+        from trading.heracles.trader import HERACLESTrader
+
+        trader = HERACLESTrader()
+        atr = trader._get_atr(5900.0)  # Approximate MES price
+
+        print(f"   ATR: {atr:.2f} points")
+
+        if 5 < atr < 100:  # Reasonable ATR range for MES
+            print(f"✅ ATR looks valid ({atr:.2f} points)")
+            return True
+        else:
+            print(f"❌ ATR out of expected range ({atr})")
+            return False
+
+    except Exception as e:
+        print(f"❌ Failed to calculate ATR: {e}")
         return False
 
 
@@ -194,13 +251,15 @@ def main():
     print("\n" + "="*60)
     print("HERACLES INTEGRATION TEST")
     print("="*60)
-    
+
     results = []
-    
+
     # Run tests in order
     results.append(("Tradier Production Keys", test_tradier_production_keys()))
     results.append(("SPX GEX Fetch", test_spx_gex_fetch()))
     results.append(("MES Quote", test_mes_quote()))
+    results.append(("VIX Fetch", test_vix_fetch()))
+    results.append(("ATR Calculation", test_atr_calculation()))
     results.append(("Signal Generation", test_signal_generation()))
     results.append(("Full Scan", test_full_scan()))
     

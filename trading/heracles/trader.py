@@ -158,12 +158,12 @@ class HERACLESTrader:
                 account_balance = balance.get("net_liquidating_value", self.config.capital) if balance else self.config.capital
             scan_context["account_balance"] = account_balance
 
-            # Get VIX (from GEX data or default)
-            vix = gex_data.get("vix", 15.0)
+            # Get VIX from Tradier (more reliable than GEX data)
+            vix = self._get_vix()
             scan_context["vix"] = vix
 
-            # Calculate ATR (simplified - would use real ATR in production)
-            atr = self._estimate_atr(current_price)
+            # Calculate ATR from real data or estimate
+            atr = self._get_atr(current_price)
             scan_context["atr"] = atr
 
             # Determine if overnight session
@@ -595,18 +595,108 @@ class HERACLESTrader:
         # Overnight: 5 PM (17:00) to 8 AM (08:00)
         return hour >= 17 or hour < 8
 
-    def _estimate_atr(self, current_price: float, period: int = 14) -> float:
+    def _get_vix(self) -> float:
         """
-        Estimate ATR for position sizing.
+        Get current VIX level from Tradier production API.
 
-        In production, this would use real historical data.
-        For now, estimate based on typical MES volatility.
+        VIX is critical for position sizing and signal confidence:
+        - Low VIX (<15): Smaller moves, can trade more contracts
+        - Normal VIX (15-22): Standard positioning
+        - High VIX (>25): Wider stops, smaller size
+        """
+        try:
+            from data.tradier_data_fetcher import TradierDataFetcher
+
+            # Use production keys for VIX
+            tradier = TradierDataFetcher(sandbox=False)
+            quote = tradier.get_quote("VIX")
+
+            if quote and hasattr(quote, 'price') and quote.price > 0:
+                logger.debug(f"VIX from Tradier: {quote.price:.2f}")
+                return float(quote.price)
+
+            # Try getting from quote dict format
+            if isinstance(quote, dict) and quote.get('last', 0) > 0:
+                return float(quote['last'])
+
+        except Exception as e:
+            logger.warning(f"Could not get VIX from Tradier: {e}")
+
+        # Fallback: Try Yahoo Finance
+        try:
+            import requests
+            response = requests.get(
+                "https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX",
+                params={"interval": "1m", "range": "1d"},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=5
+            )
+            if response.status_code == 200:
+                data = response.json()
+                result = data.get("chart", {}).get("result", [])
+                if result:
+                    price = result[0].get("meta", {}).get("regularMarketPrice", 0)
+                    if price > 0:
+                        logger.debug(f"VIX from Yahoo: {price:.2f}")
+                        return float(price)
+        except Exception as e:
+            logger.warning(f"Could not get VIX from Yahoo: {e}")
+
+        # Default VIX if all sources fail
+        logger.warning("Using default VIX=16.0 (all sources failed)")
+        return 16.0
+
+    def _get_atr(self, current_price: float, period: int = 14) -> float:
+        """
+        Get ATR (Average True Range) for MES position sizing.
+
+        ATR is used for:
+        - Stop loss placement
+        - Position sizing (risk per trade / ATR = contracts)
+        - Signal strength evaluation
+        """
+        try:
+            # Try to get historical data for real ATR calculation
+            from data.unified_data_provider import get_historical_bars
+
+            # Get 20 days of daily bars for ATR calculation
+            bars = get_historical_bars("SPY", days=20, timeframe="1d")
+
+            if bars and len(bars) >= period:
+                # Calculate True Range for each bar
+                true_ranges = []
+                for i in range(1, len(bars)):
+                    high = bars[i].high * 10  # Scale to MES level
+                    low = bars[i].low * 10
+                    prev_close = bars[i-1].close * 10
+
+                    tr = max(
+                        high - low,
+                        abs(high - prev_close),
+                        abs(low - prev_close)
+                    )
+                    true_ranges.append(tr)
+
+                # Calculate ATR as simple moving average of TR
+                if len(true_ranges) >= period:
+                    atr = sum(true_ranges[-period:]) / period
+                    logger.debug(f"Calculated ATR from SPY data: {atr:.2f}")
+                    return atr
+
+        except Exception as e:
+            logger.warning(f"Could not calculate real ATR: {e}")
+
+        # Fallback: Estimate based on current price and VIX
+        return self._estimate_atr(current_price)
+
+    def _estimate_atr(self, current_price: float) -> float:
+        """
+        Estimate ATR when historical data unavailable.
+
+        MES typically has ATR of 15-30 points depending on volatility.
         """
         # MES typically moves ~0.3-0.5% per day
         # ATR is roughly 15-25 points on average
-        # Scale with VIX if available
-
-        # Base ATR estimate (0.3% of price)
         base_atr = current_price * 0.003
 
         # Typical range for MES

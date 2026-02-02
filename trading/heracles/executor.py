@@ -144,10 +144,68 @@ class TastytradeExecutor:
             except Exception as e:
                 logger.warning(f"Error getting quote from Tastytrade: {e}")
 
-        # Fallback: Use Tradier SPY quote for paper trading
-        # MES tracks S&P 500, SPY = S&P/10, so SPY * 10 ≈ MES
+        # Fallback: Get direct MES futures quote from Yahoo Finance
+        # Yahoo provides free delayed MES=F quotes (typically 15-min delay)
+        mes_quote = self._get_yahoo_mes_quote()
+        if mes_quote:
+            return mes_quote
+
+        # Last resort: Derive from SPY * 10 (not ideal but better than nothing)
         if self.config.mode == TradingMode.PAPER:
             return self._get_spy_derived_quote(symbol)
+
+        return None
+
+    def _get_yahoo_mes_quote(self) -> Optional[Dict[str, Any]]:
+        """
+        Get MES futures quote from Yahoo Finance.
+
+        Yahoo Finance provides free MES=F quotes (Micro E-mini S&P 500 futures).
+        Data may be delayed 15 minutes per exchange rules, but this is acceptable
+        for paper trading and better than deriving from SPY.
+        """
+        try:
+            # Yahoo Finance API for MES=F (Micro E-mini S&P 500)
+            yahoo_url = "https://query1.finance.yahoo.com/v8/finance/chart/MES=F"
+            params = {
+                "interval": "1m",
+                "range": "1d"
+            }
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+
+            response = requests.get(yahoo_url, params=params, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                result = data.get("chart", {}).get("result", [])
+
+                if result:
+                    meta = result[0].get("meta", {})
+                    price = meta.get("regularMarketPrice", 0)
+                    prev_close = meta.get("previousClose", price)
+
+                    if price > 0:
+                        # MES typical spread is 0.25-0.50 points
+                        spread = 0.25
+                        return {
+                            "symbol": "MES",
+                            "bid": price - spread,
+                            "ask": price + spread,
+                            "last": price,
+                            "price": price,  # Alias for convenience
+                            "prev_close": prev_close,
+                            "volume": meta.get("regularMarketVolume", 0),
+                            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+                            "source": "YAHOO_MES",
+                            "exchange": meta.get("exchangeName", "CME")
+                        }
+
+            logger.warning(f"Yahoo MES quote failed: {response.status_code}")
+
+        except Exception as e:
+            logger.warning(f"Could not get MES quote from Yahoo: {e}")
 
         return None
 
@@ -155,7 +213,7 @@ class TastytradeExecutor:
         """
         Get MES-equivalent quote by deriving from SPY price.
         SPY = S&P 500 / 10, so SPY * 10 ≈ ES/MES price.
-        Used as fallback for paper trading when Tastytrade not available.
+        Used as LAST RESORT fallback when both Tastytrade and Yahoo fail.
         """
         try:
             from data.unified_data_provider import get_quote
@@ -171,6 +229,7 @@ class TastytradeExecutor:
                     "bid": mes_price - spread,
                     "ask": mes_price + spread,
                     "last": mes_price,
+                    "price": mes_price,
                     "volume": 100000,  # Placeholder for paper trading
                     "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
                     "source": "SPY_DERIVED"  # Flag this as derived data
