@@ -284,6 +284,18 @@ class HERACLESTrader:
             positive_gamma_total = tracker.positive_gamma_wins + tracker.positive_gamma_losses
             negative_gamma_total = tracker.negative_gamma_wins + tracker.negative_gamma_losses
 
+            # Get gamma regime from signal if available, otherwise determine from net_gex
+            gamma_regime = "NEUTRAL"
+            if signal and hasattr(signal, 'gamma_regime'):
+                gamma_regime = signal.gamma_regime.value
+            else:
+                # Determine regime from net_gex if no signal
+                net_gex = gex_data.get("net_gex", 0)
+                if net_gex > 0:
+                    gamma_regime = "POSITIVE"
+                elif net_gex < 0:
+                    gamma_regime = "NEGATIVE"
+
             self.db.save_scan_activity(
                 scan_id=scan_id,
                 outcome=outcome,
@@ -294,7 +306,7 @@ class HERACLESTrader:
                 underlying_symbol="MES",
                 vix=context.get("vix", 0),
                 atr=context.get("atr", 0),
-                gamma_regime=gex_data.get("regime", "NEUTRAL"),
+                gamma_regime=gamma_regime,
                 gex_value=gex_data.get("net_gex", 0),
                 flip_point=flip_point,
                 call_wall=call_wall,
