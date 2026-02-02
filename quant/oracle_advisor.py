@@ -117,6 +117,16 @@ except ImportError:
     get_solomon_enhanced = None
     print("Info: Solomon enhanced features not available")
 
+# GEX Signal Integration - ML direction for ATHENA/ICARUS
+GEX_ML_AVAILABLE = False
+_gex_signal_generator = None
+try:
+    from quant.gex_signal_integration import GEXSignalGenerator
+    GEX_ML_AVAILABLE = True
+except ImportError:
+    GEXSignalGenerator = None
+    print("Info: GEX Signal Integration not available")
+
 # Context manager for safe database connections (prevents connection leaks)
 from contextlib import contextmanager
 
@@ -3130,8 +3140,9 @@ class OracleAdvisor:
             position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
 
         # =====================================================================
-        # NEW NEUTRAL REGIME HANDLING - Use trend tracker for direction
-        # This replaces the broken logic that always returned FLAT for NEUTRAL
+        # ML DIRECTION IS THE PRIMARY SOURCE FOR ATHENA/ICARUS
+        # Oracle uses GEX probability models (ORION) to determine direction
+        # This ensures Oracle direction matches what ML says
         # =====================================================================
         direction = "FLAT"
         direction_confidence = 0.50
@@ -3145,8 +3156,45 @@ class OracleAdvisor:
         bullish_suitability = 0.50
         bearish_suitability = 0.50
 
-        # GEX-based directional logic with NEUTRAL regime handling
-        if context.gex_regime == GEXRegime.NEGATIVE:
+        # Try to get ML direction from GEX probability models (ORION)
+        ml_direction_used = False
+        if GEX_ML_AVAILABLE and GEXSignalGenerator is not None:
+            try:
+                global _gex_signal_generator
+                if _gex_signal_generator is None:
+                    _gex_signal_generator = GEXSignalGenerator()
+
+                ml_signal = _gex_signal_generator.get_combined_signal(
+                    ticker="SPY",
+                    spot_price=context.spot_price,
+                    call_wall=context.gex_call_wall,
+                    put_wall=context.gex_put_wall,
+                    vix=context.vix,
+                )
+
+                if ml_signal and ml_signal.get('direction') in ('BULLISH', 'BEARISH'):
+                    direction = ml_signal['direction']
+                    direction_confidence = ml_signal.get('confidence', 0.60)
+                    ml_direction_used = True
+                    wall_filter_passed = True  # ML bypasses wall filter
+                    neutral_derived_direction = direction
+                    neutral_confidence = direction_confidence
+                    reasoning_parts.append(f"ML DIRECTION: {direction} (confidence: {direction_confidence:.0%})")
+                    logger.info(f"[{bot_name}] ORACLE USING ML DIRECTION: {direction} @ {direction_confidence:.0%}")
+
+                    # Set suitability based on ML direction
+                    if direction == "BULLISH":
+                        bullish_suitability = direction_confidence
+                        bearish_suitability = 1.0 - direction_confidence
+                    else:
+                        bearish_suitability = direction_confidence
+                        bullish_suitability = 1.0 - direction_confidence
+                    ic_suitability = 0.30  # Directional trade preferred
+            except Exception as e:
+                logger.warning(f"[{bot_name}] ML direction error: {e}, using GEX fallback")
+
+        # GEX-based directional logic ONLY if ML direction not available
+        if not ml_direction_used and context.gex_regime == GEXRegime.NEGATIVE:
             # Negative GEX = trending market, directional opportunity
             if context.gex_distance_to_flip_pct < -1:
                 direction = "BEARISH"
@@ -3157,7 +3205,7 @@ class OracleAdvisor:
                 direction_confidence = 0.55
                 reasoning_parts.append("Price above flip in negative GEX = squeeze potential")
 
-        elif context.gex_regime == GEXRegime.POSITIVE:
+        elif not ml_direction_used and context.gex_regime == GEXRegime.POSITIVE:
             # Positive GEX = mean reversion, use wall proximity
             if dist_to_put_wall < wall_filter_pct and dist_to_put_wall > 0:
                 direction = "BULLISH"
@@ -3168,7 +3216,7 @@ class OracleAdvisor:
                 direction_confidence = 0.65
                 reasoning_parts.append(f"POSITIVE GEX near call wall resistance ({dist_to_call_wall:.1f}%)")
 
-        elif context.gex_regime == GEXRegime.NEUTRAL:
+        elif not ml_direction_used and context.gex_regime == GEXRegime.NEUTRAL:
             # =====================================================================
             # NEUTRAL REGIME - The key fix! Use trend + wall proximity
             # =====================================================================
