@@ -87,6 +87,7 @@ export default function MultiBotEquityCurve({
     PEGASUS: true,
     TITAN: true,
     PROMETHEUS: true,
+    HERACLES: true,
     PHOENIX: false,
     ATLAS: false,
   })
@@ -123,8 +124,13 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
+  const { data: heraclesData, isLoading: heraclesLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[6].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading
+  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -134,6 +140,7 @@ export default function MultiBotEquityCurve({
     PEGASUS: pegasusData,
     TITAN: titanData,
     PROMETHEUS: prometheusData,
+    HERACLES: heraclesData,
     PHOENIX: undefined,
     ATLAS: undefined,
   }
@@ -181,7 +188,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, showPercentage])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -192,6 +199,7 @@ export default function MultiBotEquityCurve({
       PEGASUS: null,
       TITAN: null,
       PROMETHEUS: null,
+      HERACLES: null,
       PHOENIX: null,
       ATLAS: null,
     }
@@ -210,7 +218,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {
