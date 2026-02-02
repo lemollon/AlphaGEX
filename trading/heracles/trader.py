@@ -322,8 +322,9 @@ class HERACLESTrader:
                 bayesian_alpha=tracker.alpha,
                 bayesian_beta=tracker.beta,
                 bayesian_win_probability=tracker.win_probability,
-                positive_gamma_win_rate=(tracker.positive_gamma_wins / positive_gamma_total * 100) if positive_gamma_total > 0 else 50,
-                negative_gamma_win_rate=(tracker.negative_gamma_wins / negative_gamma_total * 100) if negative_gamma_total > 0 else 50,
+                # Win rates must be 0-1 range for DECIMAL(5,4) fields
+                positive_gamma_win_rate=(tracker.positive_gamma_wins / positive_gamma_total) if positive_gamma_total > 0 else 0.50,
+                negative_gamma_win_rate=(tracker.negative_gamma_wins / negative_gamma_total) if negative_gamma_total > 0 else 0.50,
                 contracts_calculated=signal.contracts if signal else 0,
                 risk_amount=signal.risk_amount if signal and hasattr(signal, 'risk_amount') else 0,
                 account_balance=context.get("account_balance", 0),
