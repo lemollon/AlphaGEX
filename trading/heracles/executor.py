@@ -118,36 +118,67 @@ class TastytradeExecutor:
         Returns:
             Dict with bid, ask, last, volume or None if failed
         """
-        if not self._ensure_session():
-            return None
-
         symbol = symbol or self.config.symbol
 
-        try:
-            response = requests.get(
-                f"{self.base_url}/market-data/quotes/{symbol}",
-                headers=self._get_headers(),
-                timeout=10
-            )
+        # Try Tastytrade first if credentials available
+        if self._ensure_session():
+            try:
+                response = requests.get(
+                    f"{self.base_url}/market-data/quotes/{symbol}",
+                    headers=self._get_headers(),
+                    timeout=10
+                )
 
-            if response.status_code == 200:
-                data = response.json().get("data", {})
+                if response.status_code == 200:
+                    data = response.json().get("data", {})
+                    return {
+                        "symbol": symbol,
+                        "bid": float(data.get("bid-price", 0)),
+                        "ask": float(data.get("ask-price", 0)),
+                        "last": float(data.get("last-price", 0)),
+                        "volume": int(data.get("volume", 0)),
+                        "timestamp": datetime.now(CENTRAL_TZ).isoformat()
+                    }
+                else:
+                    logger.warning(f"Quote not available via REST for {symbol}")
+            except Exception as e:
+                logger.warning(f"Error getting quote from Tastytrade: {e}")
+
+        # Fallback: Use Tradier SPY quote for paper trading
+        # MES tracks S&P 500, SPY = S&P/10, so SPY * 10 ≈ MES
+        if self.config.mode == TradingMode.PAPER:
+            return self._get_spy_derived_quote(symbol)
+
+        return None
+
+    def _get_spy_derived_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """
+        Get MES-equivalent quote by deriving from SPY price.
+        SPY = S&P 500 / 10, so SPY * 10 ≈ ES/MES price.
+        Used as fallback for paper trading when Tastytrade not available.
+        """
+        try:
+            from data.unified_data_provider import get_quote
+            spy_quote = get_quote("SPY")
+
+            if spy_quote and spy_quote.price > 0:
+                # SPY * 10 gives approximate ES/MES level
+                mes_price = spy_quote.price * 10
+                # Approximate bid/ask spread for MES (typically 0.25-0.50 points)
+                spread = 0.25
                 return {
                     "symbol": symbol,
-                    "bid": float(data.get("bid-price", 0)),
-                    "ask": float(data.get("ask-price", 0)),
-                    "last": float(data.get("last-price", 0)),
-                    "volume": int(data.get("volume", 0)),
-                    "timestamp": datetime.now(CENTRAL_TZ).isoformat()
+                    "bid": mes_price - spread,
+                    "ask": mes_price + spread,
+                    "last": mes_price,
+                    "volume": 100000,  # Placeholder for paper trading
+                    "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+                    "source": "SPY_DERIVED"  # Flag this as derived data
                 }
-            else:
-                # REST quotes may not be available for futures
-                logger.warning(f"Quote not available via REST for {symbol}")
-                return None
-
         except Exception as e:
-            logger.error(f"Error getting quote for {symbol}: {e}")
-            return None
+            logger.warning(f"Could not derive MES quote from SPY: {e}")
+
+        return None
 
     def get_account_balance(self) -> Optional[Dict[str, Any]]:
         """Get account balance and buying power"""
