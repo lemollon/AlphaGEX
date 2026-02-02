@@ -16,6 +16,9 @@ plotly>=5.17.0
 # Financial Data
 yfinance>=0.2.52  # REQUIRED: Used for VIX data fetching (free, no API key needed)
 
+# Tastytrade SDK for HERACLES futures trading (DXLinkStreamer for real-time quotes)
+tastytrade>=11.0.0
+
 # Date/Time
 pytz>=2023.3
 
