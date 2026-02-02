@@ -653,11 +653,27 @@ class SignalGenerator:
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
         oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
 
-        # Determine which source to use
+        # Determine which source to use for WIN PROBABILITY
         use_ml_prediction = ml_signal is not None and ml_win_prob > 0
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
-        effective_direction = ml_direction if use_ml_prediction else oracle_direction
         prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
+
+        # DIRECTION: Oracle is the SOLE AUTHORITY for ICARUS
+        # Oracle decides both trade/no-trade AND direction
+        # ML is backup only when Oracle direction is FLAT
+        if oracle_direction in ('BULLISH', 'BEARISH'):
+            effective_direction = oracle_direction
+            if ml_direction and ml_direction != oracle_direction:
+                logger.info(f"[ICARUS] ORACLE DIRECTION: {oracle_direction} (ML said {ml_direction} - Oracle overrides)")
+            else:
+                logger.info(f"[ICARUS] ORACLE DIRECTION: {oracle_direction}")
+        elif ml_direction in ('BULLISH', 'BEARISH'):
+            # Fallback to ML only if Oracle direction is FLAT
+            effective_direction = ml_direction
+            logger.info(f"[ICARUS] Oracle direction FLAT, using ML backup: {ml_direction}")
+        else:
+            effective_direction = "FLAT"
+            logger.info(f"[ICARUS] No clear direction from Oracle or ML")
 
         # ============================================================
         # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
@@ -811,31 +827,13 @@ class SignalGenerator:
         logger.info(f"[ICARUS] Proceeding with {prediction_source}: {effective_win_prob:.1%} win prob")
 
         # Step 4: Determine final direction
-        direction = wall_direction
-        direction_source = "WALL"
-
-        # Check if Oracle should override wall direction
-        # RAISED from 85%/60% to 90%/70% - GEX walls are PRIMARY, Oracle override should be rare
-        oracle_override_threshold = 0.90
-        oracle_win_prob_threshold = 0.70
-
-        if oracle and oracle_direction != 'FLAT':
-            if oracle_confidence >= oracle_override_threshold and oracle_win_prob >= oracle_win_prob_threshold:
-                if oracle_direction != wall_direction:
-                    logger.info(f"[ICARUS ORACLE OVERRIDE] Oracle overriding wall direction!")
-                    logger.info(f"  Wall Direction: {wall_direction}")
-                    logger.info(f"  Oracle Direction: {oracle_direction}")
-                    logger.info(f"  Oracle Confidence: {oracle_confidence:.0%} (threshold: {oracle_override_threshold:.0%})")
-                    logger.info(f"  Oracle Win Prob: {oracle_win_prob:.0%} (threshold: {oracle_win_prob_threshold:.0%})")
-                    direction = oracle_direction
-                    direction_source = "ORACLE_OVERRIDE"
+        # Oracle is the SOLE AUTHORITY - wall_direction was set to effective_direction (Oracle's direction)
+        direction = wall_direction  # wall_direction = effective_direction = ORACLE direction (set at line 744)
+        direction_source = "ORACLE" if oracle_direction in ('BULLISH', 'BEARISH') else "ML_BACKUP"
+        logger.info(f"[ICARUS] Final direction: {direction} (source: {direction_source})")
 
         # Calculate confidence
-        if direction_source == "ORACLE_OVERRIDE":
-            confidence = 0.75 + (oracle_confidence - oracle_override_threshold) * 0.5
-            confidence = min(0.95, confidence)
-        else:
-            confidence = 0.7  # Base confidence from wall proximity
+        confidence = 0.7  # Base confidence
 
         # ML can boost or reduce confidence
         if ml_signal:
