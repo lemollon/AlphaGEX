@@ -202,11 +202,17 @@ class TastytradeExecutor:
 
         try:
             # Convert symbol to DXFeed format
-            # Tastytrade uses symbols like /MESH6, DXFeed uses /MESH6
-            # For MES futures, the streamer symbol is the same as the API symbol
-            streamer_symbol = symbol
-            if not streamer_symbol.startswith('/'):
-                streamer_symbol = f'/{symbol}'
+            # Config uses /MESH6 (contract month) but DXFeed needs /MES:XCME (root + exchange)
+            # /MESH6, /MESM6, /MESU6, /MESZ6 all map to /MES:XCME for real-time quotes
+            if symbol.startswith('/MES'):
+                streamer_symbol = '/MES:XCME'
+            elif symbol.startswith('MES'):
+                streamer_symbol = '/MES:XCME'
+            else:
+                # For other symbols, add / prefix if needed
+                streamer_symbol = symbol if symbol.startswith('/') else f'/{symbol}'
+
+            logger.debug(f"Converting {symbol} to DXFeed symbol: {streamer_symbol}")
 
             # Run async function synchronously
             return asyncio.run(self._async_get_streaming_quote(streamer_symbol))
