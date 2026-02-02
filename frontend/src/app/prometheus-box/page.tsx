@@ -3328,29 +3328,37 @@ export default function PrometheusBoxDashboard() {
                 {/* Table of Contents */}
                 <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
                   <h2 className="text-xl font-bold mb-4 text-orange-400">Quick Navigation</h2>
-                  <div className="grid md:grid-cols-3 gap-4 text-sm">
+                  <div className="grid md:grid-cols-4 gap-4 text-sm">
                     <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
                       <div className="font-medium text-blue-400 mb-2">Part 1: Box Spreads</div>
                       <ul className="text-gray-400 space-y-1">
-                        <li>Pre-Market Startup</li>
-                        <li>Daily Position Check</li>
-                        <li>Roll Decision Logic</li>
+                        <li>1. Pre-Market Startup</li>
+                        <li>2. Box Spread Lifecycle</li>
+                        <li>9. MTM Calculation</li>
+                        <li>10. Roll Execution</li>
                       </ul>
                     </div>
                     <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
                       <div className="font-medium text-orange-400 mb-2">Part 2: IC Trading</div>
                       <ul className="text-gray-400 space-y-1">
-                        <li>Oracle Approval Flow</li>
-                        <li>PEGASUS Trading Rules</li>
-                        <li>Position Management</li>
+                        <li>3. IC Trading Cycle</li>
+                        <li>4. Oracle Scan Activity</li>
+                        <li>11. IC Exit Flow</li>
+                      </ul>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
+                      <div className="font-medium text-yellow-400 mb-2">Part 3: Analytics</div>
+                      <ul className="text-gray-400 space-y-1">
+                        <li>5. Daily P&L Breakdown</li>
+                        <li>6. Risk Alerts</li>
+                        <li>7. Complete Data Flow</li>
                       </ul>
                     </div>
                     <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
                       <div className="font-medium text-green-400 mb-2">Reference</div>
                       <ul className="text-gray-400 space-y-1">
-                        <li>Daily Timeline</li>
-                        <li>Data Flow Diagram</li>
-                        <li>Key Thresholds</li>
+                        <li>8. Daily Timeline</li>
+                        <li>Key Config Values</li>
                       </ul>
                     </div>
                   </div>
@@ -3364,7 +3372,7 @@ export default function PrometheusBoxDashboard() {
                   </h2>
 
                   {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-green-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    PROMETHEUS PRE-MARKET STARTUP                             │
@@ -3439,7 +3447,7 @@ export default function PrometheusBoxDashboard() {
                   </h2>
 
                   {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-cyan-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                     BOX SPREAD POSITION LIFECYCLE                            │
@@ -3525,7 +3533,7 @@ export default function PrometheusBoxDashboard() {
                   </h2>
 
                   {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-orange-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    PROMETHEUS IC TRADING CYCLE                               │
@@ -3648,7 +3656,7 @@ export default function PrometheusBoxDashboard() {
                   </h2>
 
                   {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-green-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  PROMETHEUS IC - ORACLE SCAN ACTIVITY LOG                                   │
@@ -3698,7 +3706,7 @@ export default function PrometheusBoxDashboard() {
                   </h2>
 
                   {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-yellow-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  PROMETHEUS - DAILY P&L BREAKDOWN (Last 14 Days)                            │
@@ -3740,7 +3748,7 @@ export default function PrometheusBoxDashboard() {
                   </h2>
 
                   {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-red-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  🚨 PROMETHEUS RISK ALERTS                                                  │
@@ -3780,7 +3788,7 @@ export default function PrometheusBoxDashboard() {
                   </h2>
 
                   {/* ASCII Wireframe */}
-                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6">
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-indigo-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    PROMETHEUS COMPLETE DATA FLOW                            │
@@ -3910,6 +3918,295 @@ export default function PrometheusBoxDashboard() {
                         </tr>
                       </tbody>
                     </table>
+                  </div>
+                </div>
+
+                {/* PART 9: MTM CALCULATION FLOW */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-cyan-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-cyan-600 rounded-lg flex items-center justify-center text-xl">9</span>
+                    <span className="text-cyan-400">Mark-to-Market (MTM) Calculation</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
+                    <pre className="text-cyan-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    BOX SPREAD MTM CALCULATION                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  STEP 1: FETCH CURRENT PRICES (Tradier Production API)                      │
+│  ═══════════════════════════════════════════════════════                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  For each leg of the box spread:                                    │    │
+│  │                                                                     │    │
+│  │  Long Call (K1):   Bid/Ask → Mid Price                             │    │
+│  │  Short Call (K2):  Bid/Ask → Mid Price                             │    │
+│  │  Long Put (K2):    Bid/Ask → Mid Price                             │    │
+│  │  Short Put (K1):   Bid/Ask → Mid Price                             │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                              │                                              │
+│                              ▼                                              │
+│  STEP 2: CALCULATE CURRENT BOX VALUE                                        │
+│  ═══════════════════════════════════════════════════════                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                                                                     │    │
+│  │  Box Value = (Long Call - Short Call) + (Long Put - Short Put)     │    │
+│  │            = Bull Call Spread + Bear Put Spread                    │    │
+│  │                                                                     │    │
+│  │  Example:                                                          │    │
+│  │  Long Call 6000:  $52.30    Short Call 6050: $28.40               │    │
+│  │  Long Put 6050:   $31.20    Short Put 6000:  $18.50               │    │
+│  │                                                                     │    │
+│  │  Box Value = (52.30 - 28.40) + (31.20 - 18.50) = $36.60/contract  │    │
+│  │  10 contracts × $36.60 × 100 = $36,600 current value              │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                              │                                              │
+│                              ▼                                              │
+│  STEP 3: CALCULATE UNREALIZED P&L                                           │
+│  ═══════════════════════════════════════════════════════                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                                                                     │    │
+│  │  Entry Credit:     $49,250  (what we received when opening)        │    │
+│  │  Current Value:    $36,600  (cost to close now)                    │    │
+│  │  Interest Accrued: $1,250   (time cost so far)                     │    │
+│  │                                                                     │    │
+│  │  Unrealized P&L = Entry Credit - Current Value - Interest Accrued  │    │
+│  │                 = $49,250 - $36,600 - $1,250                       │    │
+│  │                 = $11,400 profit (if closed now)                   │    │
+│  │                                                                     │    │
+│  │  Note: Box approaches strike width ($50,000) at expiration        │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+
+                  {/* Explanation */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="bg-cyan-900/20 rounded-lg p-4 border border-cyan-600/30">
+                      <h4 className="font-bold text-cyan-400 mb-2">Why MTM Matters</h4>
+                      <ul className="text-sm text-gray-300 space-y-2">
+                        <li>• Shows real-time position value</li>
+                        <li>• Helps decide early exit vs hold to expiration</li>
+                        <li>• Tracks borrowing cost efficiency</li>
+                        <li>• Alerts if position moves against us</li>
+                      </ul>
+                    </div>
+                    <div className="bg-purple-900/20 rounded-lg p-4 border border-purple-600/30">
+                      <h4 className="font-bold text-purple-400 mb-2">Update Frequency</h4>
+                      <ul className="text-sm text-gray-300 space-y-2">
+                        <li><span className="text-yellow-400">Dashboard:</span> Every 30 seconds</li>
+                        <li><span className="text-yellow-400">Database:</span> Every 5 minutes</li>
+                        <li><span className="text-yellow-400">Equity Snapshot:</span> Hourly</li>
+                        <li><span className="text-yellow-400">EOD Reconciliation:</span> 3:15 PM CT</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PART 10: BOX ROLL EXECUTION */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-pink-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-pink-600 rounded-lg flex items-center justify-center text-xl">10</span>
+                    <span className="text-pink-400">Box Spread Roll Execution</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
+                    <pre className="text-pink-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    BOX SPREAD ROLL PROCESS                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  TRIGGER: DTE ≤ 30 days on existing position                               │
+│                                                                             │
+│  ┌─────────────────┐                                                        │
+│  │  CHECK CURRENT  │                                                        │
+│  │  POSITION       │                                                        │
+│  │                 │                                                        │
+│  │  DTE: 28 days   │─── DTE > 30? ──▶ NO ROLL NEEDED                       │
+│  │  Strikes: 6000/ │                                                        │
+│  │           6050  │                                                        │
+│  └────────┬────────┘                                                        │
+│           │                                                                 │
+│          YES (DTE ≤ 30)                                                     │
+│           │                                                                 │
+│           ▼                                                                 │
+│  ┌─────────────────┐     ┌─────────────────────────────────────────────┐    │
+│  │  FIND NEW       │     │  NEW EXPIRATION CRITERIA:                   │    │
+│  │  EXPIRATION     │────▶│                                             │    │
+│  │                 │     │  • Target DTE: 90-365 days                  │    │
+│  └─────────────────┘     │  • Same strike width (50 pts)               │    │
+│                          │  • Liquid expiration (monthly preferred)    │    │
+│                          │  • Check implied rate vs Fed Funds          │    │
+│                          └─────────────────────────────────────────────┘    │
+│                                        │                                    │
+│                                        ▼                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  RATE COMPARISON                                                    │    │
+│  │                                                                     │    │
+│  │  Current Fed Funds:     4.50%                                      │    │
+│  │  Margin Rate:           7.25%                                      │    │
+│  │  New Box Implied Rate:  4.85%                                      │    │
+│  │                                                                     │    │
+│  │  ✓ Box Rate < Margin Rate? YES → PROCEED WITH ROLL                 │    │
+│  │  ✗ Box Rate ≥ Margin Rate? → ALERT, CONSIDER ALTERNATIVES          │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                        │                                    │
+│                                        ▼                                    │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  EXECUTE ROLL (Two-Step Process)                                    │    │
+│  │                                                                     │    │
+│  │  STEP 1: Close old box (4-leg order)                               │    │
+│  │  ────────────────────────────────────                               │    │
+│  │  • Sell to close Long Call K1                                      │    │
+│  │  • Buy to close Short Call K2                                      │    │
+│  │  • Sell to close Long Put K2                                       │    │
+│  │  • Buy to close Short Put K1                                       │    │
+│  │  • DEBIT: ~$49,800 (close to strike width near expiry)             │    │
+│  │                                                                     │    │
+│  │  STEP 2: Open new box (4-leg order)                                │    │
+│  │  ────────────────────────────────────                               │    │
+│  │  • Buy to open Long Call K1 (new strikes)                          │    │
+│  │  • Sell to open Short Call K2                                      │    │
+│  │  • Buy to open Long Put K2                                         │    │
+│  │  • Sell to open Short Put K1                                       │    │
+│  │  • CREDIT: ~$49,250 (new borrowed amount)                          │    │
+│  │                                                                     │    │
+│  │  NET ROLL COST: ~$550 (represents interest paid)                   │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+
+                  {/* Explanation */}
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="bg-pink-900/20 rounded-lg p-4 border border-pink-600/30">
+                      <h4 className="font-bold text-pink-400 mb-2">Roll Timing Strategy</h4>
+                      <ul className="text-sm text-gray-300 space-y-2">
+                        <li>• Roll at 30 DTE for optimal liquidity</li>
+                        <li>• Avoid rolling during high VIX spikes</li>
+                        <li>• Best execution: 10:00 AM - 2:00 PM CT</li>
+                        <li>• Never roll on expiration day</li>
+                      </ul>
+                    </div>
+                    <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-600/30">
+                      <h4 className="font-bold text-blue-400 mb-2">Roll Cost Tracking</h4>
+                      <ul className="text-sm text-gray-300 space-y-2">
+                        <li><span className="text-yellow-400">Debit to close:</span> Near strike width</li>
+                        <li><span className="text-yellow-400">Credit to open:</span> Discounted by rate</li>
+                        <li><span className="text-yellow-400">Net cost:</span> ≈ Accrued interest</li>
+                        <li><span className="text-yellow-400">Logged:</span> prometheus_roll_history</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PART 11: IC POSITION EXIT FLOW */}
+                <div className="bg-gray-800 rounded-xl p-6 border border-lime-500/30">
+                  <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
+                    <span className="w-10 h-10 bg-lime-600 rounded-lg flex items-center justify-center text-xl">11</span>
+                    <span className="text-lime-400">IC Position Exit Flow</span>
+                  </h2>
+
+                  {/* ASCII Wireframe */}
+                  <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
+                    <pre className="text-lime-400 whitespace-pre">{`
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    IC POSITION EXIT DECISION TREE                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  MONITORING LOOP (Every 1-2 Minutes)                                        │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  FETCH CURRENT IC VALUE                                             │    │
+│  │                                                                     │    │
+│  │  Entry Credit:    $2.00/contract                                   │    │
+│  │  Current Value:   $X.XX/contract (cost to close)                   │    │
+│  │  P&L %:           ((Entry - Current) / Entry) × 100                │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                              │                                              │
+│                              ▼                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                      EXIT DECISION CHECKS                           │    │
+│  │                                                                     │    │
+│  │  ┌─────────────────┐                                               │    │
+│  │  │ PROFIT TARGET   │  Current ≤ 50% of Entry?                      │    │
+│  │  │ (50% of credit) │  $2.00 entry → exit at ≤ $1.00               │    │
+│  │  └────────┬────────┘                                               │    │
+│  │           │ YES ──────────────────────────────▶ ✅ CLOSE: PROFIT   │    │
+│  │           │ NO                                                      │    │
+│  │           ▼                                                         │    │
+│  │  ┌─────────────────┐                                               │    │
+│  │  │ STOP LOSS       │  Current ≥ 200% of Entry?                     │    │
+│  │  │ (200% of credit)│  $2.00 entry → exit at ≥ $4.00               │    │
+│  │  └────────┬────────┘                                               │    │
+│  │           │ YES ──────────────────────────────▶ ❌ CLOSE: STOP     │    │
+│  │           │ NO                                                      │    │
+│  │           ▼                                                         │    │
+│  │  ┌─────────────────┐                                               │    │
+│  │  │ FORCE EXIT      │  Time ≥ 2:50 PM CT?                           │    │
+│  │  │ (10 min to close)│  (Must exit before 3:00 PM)                  │    │
+│  │  └────────┬────────┘                                               │    │
+│  │           │ YES ──────────────────────────────▶ 🕐 CLOSE: TIME     │    │
+│  │           │ NO                                                      │    │
+│  │           ▼                                                         │    │
+│  │  ┌─────────────────┐                                               │    │
+│  │  │ EXPIRATION      │  Is this 0DTE at 3:00 PM?                     │    │
+│  │  │ (SPX auto-settle)│  SPX is cash-settled                         │    │
+│  │  └────────┬────────┘                                               │    │
+│  │           │ YES ──────────────────────────────▶ 📋 SETTLE: EXPIRY  │    │
+│  │           │ NO                                                      │    │
+│  │           ▼                                                         │    │
+│  │       CONTINUE HOLDING                                              │    │
+│  │       (Check again in 1-2 min)                                      │    │
+│  │                                                                     │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+│  EXIT EXECUTION:                                                            │
+│  ═══════════════                                                            │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │  4-leg closing order:                                               │    │
+│  │  • Buy to close Short Put                                          │    │
+│  │  • Sell to close Long Put                                          │    │
+│  │  • Buy to close Short Call                                         │    │
+│  │  • Sell to close Long Call                                         │    │
+│  │                                                                     │    │
+│  │  Order Type: MARKET (for stops/force) or LIMIT (for profit)        │    │
+│  │  Record: Close time, P&L, reason → prometheus_ic_closed            │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+`}</pre>
+                  </div>
+
+                  {/* Exit Statistics Reference */}
+                  <div className="bg-lime-900/20 rounded-lg p-4 border border-lime-600/30">
+                    <h4 className="font-bold text-lime-400 mb-3">Exit Statistics (Expected Distribution)</h4>
+                    <div className="grid md:grid-cols-4 gap-4 text-sm">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-green-400">~60%</div>
+                        <div className="text-gray-400">Profit Target</div>
+                        <div className="text-xs text-gray-500">Best outcome</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-yellow-400">~20%</div>
+                        <div className="text-gray-400">Expiration</div>
+                        <div className="text-xs text-gray-500">Full premium kept</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-orange-400">~10%</div>
+                        <div className="text-gray-400">Time Exit</div>
+                        <div className="text-xs text-gray-500">Partial profit</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-red-400">~10%</div>
+                        <div className="text-gray-400">Stop Loss</div>
+                        <div className="text-xs text-gray-500">Managed risk</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
