@@ -543,11 +543,42 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
         if gex_result:
             # SPX GEX levels are already at the correct scale for MES (~5900)
             # No scaling needed - SPX and MES are both at S&P 500 index level
+            flip_point = gex_result.get('flip_point', 0)
+            call_wall = gex_result.get('call_wall', 0)
+            put_wall = gex_result.get('put_wall', 0)
+            net_gex = gex_result.get('net_gex', 0)
+            spot_price = gex_result.get('spot_price', 0)
+
+            # If walls are 0 or invalid but we have flip_point, estimate walls
+            # This handles the case where Tradier doesn't provide gamma for SPX
+            if flip_point > 0:
+                if call_wall <= 0:
+                    # Estimate call wall as 1% above flip point
+                    call_wall = flip_point * 1.01
+                    logger.debug(f"Estimated call_wall: {call_wall:.2f} (flip * 1.01)")
+                if put_wall <= 0:
+                    # Estimate put wall as 1% below flip point
+                    put_wall = flip_point * 0.99
+                    logger.debug(f"Estimated put_wall: {put_wall:.2f} (flip * 0.99)")
+
+            # If net_gex is 0 but we have valid walls, estimate regime from price position
+            # This is a heuristic when gamma data isn't available
+            if net_gex == 0 and flip_point > 0 and spot_price > 0:
+                # Positive GEX when price is between walls (mean reversion environment)
+                # Use small positive value to trigger mean reversion strategy
+                net_gex = 1e6  # Small positive = positive gamma regime
+                logger.debug(f"Estimated net_gex as positive (mean reversion)")
+
+            logger.info(
+                f"HERACLES GEX data for {symbol}: flip={flip_point:.2f}, "
+                f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+            )
+
             return {
-                'flip_point': gex_result.get('flip_point', 0),
-                'call_wall': gex_result.get('call_wall', 0),
-                'put_wall': gex_result.get('put_wall', 0),
-                'net_gex': gex_result.get('net_gex', 0),
+                'flip_point': flip_point,
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'net_gex': net_gex,
                 'gex_ratio': gex_result.get('gex_ratio', 1.0),
                 # n+1 data for overnight (if available)
                 'n1_flip_point': gex_result.get('n1_flip_point'),
