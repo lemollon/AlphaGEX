@@ -2,6 +2,10 @@
 """
 Test Tastytrade SDK Installation and DXLinkStreamer
 Verifies real-time futures quotes are working for HERACLES
+
+Supports both:
+- OAuth authentication (PREFERRED - works with 2FA)
+- Password authentication (legacy - does NOT work with 2FA)
 """
 
 import os
@@ -33,29 +37,55 @@ except ImportError as e:
     print(f"   ❌ Import failed: {e}")
     sys.exit(1)
 
-# Step 3: Check credentials
+# Step 3: Check credentials (OAuth preferred, password fallback)
 print("\n3. Checking Tastytrade credentials...")
+
+# OAuth credentials (PREFERRED - works with 2FA)
+client_secret = os.environ.get("TASTYTRADE_CLIENT_SECRET")
+refresh_token = os.environ.get("TASTYTRADE_REFRESH_TOKEN")
+
+# Legacy credentials (does NOT work with 2FA)
 username = os.environ.get("TASTYTRADE_USERNAME")
 password = os.environ.get("TASTYTRADE_PASSWORD")
 
-if not username:
-    print("   ❌ TASTYTRADE_USERNAME not set")
+auth_method = None
+if client_secret and refresh_token:
+    auth_method = "OAUTH"
+    print("   ✅ OAuth credentials found (PREFERRED - 2FA compatible)")
+    print(f"      Client Secret: {client_secret[:8]}***")
+    print(f"      Refresh Token: {refresh_token[:8]}***")
+elif username and password:
+    auth_method = "PASSWORD"
+    print("   ⚠️  Using password auth (may fail with 2FA)")
+    print(f"      Username: {username[:3]}***")
+    print(f"      Password: {'*' * 8}")
+else:
+    print("   ❌ No credentials found!")
+    print("\n   For OAuth (RECOMMENDED):")
+    print("      TASTYTRADE_CLIENT_SECRET=your_client_secret")
+    print("      TASTYTRADE_REFRESH_TOKEN=your_refresh_token")
+    print("\n   For password (legacy, no 2FA):")
+    print("      TASTYTRADE_USERNAME=your_username")
+    print("      TASTYTRADE_PASSWORD=your_password")
     sys.exit(1)
-if not password:
-    print("   ❌ TASTYTRADE_PASSWORD not set")
-    sys.exit(1)
-
-print(f"   ✅ Username: {username[:3]}***")
-print(f"   ✅ Password: {'*' * 8}")
 
 # Step 4: Test authentication
-print("\n4. Testing Tastytrade authentication...")
+print(f"\n4. Testing Tastytrade authentication ({auth_method})...")
 try:
-    session = Session(username, password)
+    if auth_method == "OAUTH":
+        session = Session(client_secret, refresh_token)
+    else:
+        session = Session(username, password)
     print("   ✅ Authentication successful!")
-    print(f"   ✅ Session token obtained")
+    print(f"   ✅ Session created via {auth_method}")
 except Exception as e:
     print(f"   ❌ Authentication failed: {e}")
+    if auth_method == "PASSWORD":
+        print("\n   ⚠️  Password auth may fail with 2FA enabled.")
+        print("   Consider switching to OAuth:")
+        print("   1. Go to my.tastytrade.com → OAuth Applications")
+        print("   2. Create an app and get client_secret")
+        print("   3. Click 'Create Grant' for refresh_token")
     sys.exit(1)
 
 # Step 5: Test DXLinkStreamer for MES futures quote

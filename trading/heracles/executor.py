@@ -50,10 +50,10 @@ class TastytradeExecutor:
     Executes orders on Tastytrade for MES futures.
 
     Handles:
-    - Authentication
+    - Authentication (OAuth preferred, username/password fallback)
     - Order placement (market/limit)
     - Position queries
-    - Quote fetching
+    - Quote fetching via DXLinkStreamer
     - Account balances
     """
 
@@ -62,10 +62,26 @@ class TastytradeExecutor:
         self.session_token: Optional[str] = None
         self.token_expiry: Optional[datetime] = None
 
-        # Get credentials from environment
+        # OAuth credentials (PREFERRED - works with 2FA)
+        self.client_secret = os.environ.get("TASTYTRADE_CLIENT_SECRET")
+        self.refresh_token = os.environ.get("TASTYTRADE_REFRESH_TOKEN")
+
+        # Legacy credentials (fallback - does NOT work with 2FA)
         self.username = os.environ.get("TASTYTRADE_USERNAME")
         self.password = os.environ.get("TASTYTRADE_PASSWORD")
+
         self.account_id = os.environ.get("TASTYTRADE_ACCOUNT_ID") or config.account_id
+
+        # Determine auth method
+        if self.client_secret and self.refresh_token:
+            self.auth_method = "OAUTH"
+            logger.info("Tastytrade: Using OAuth authentication (2FA compatible)")
+        elif self.username and self.password:
+            self.auth_method = "PASSWORD"
+            logger.warning("Tastytrade: Using password auth (may fail with 2FA enabled)")
+        else:
+            self.auth_method = None
+            logger.warning("Tastytrade: No credentials configured - will use Yahoo fallback")
 
         # Use sandbox for paper trading
         self.base_url = TASTYTRADE_BASE_URL
@@ -149,7 +165,7 @@ class TastytradeExecutor:
                 return cached_quote
 
         # Try Tastytrade DXLinkStreamer (real-time WebSocket streaming)
-        if TASTYTRADE_SDK_AVAILABLE and self.username and self.password:
+        if TASTYTRADE_SDK_AVAILABLE and self.auth_method:
             try:
                 quote = self._get_tastytrade_streaming_quote(symbol)
                 if quote:
@@ -186,11 +202,17 @@ class TastytradeExecutor:
 
         try:
             # Convert symbol to DXFeed format
-            # Tastytrade uses symbols like /MESH6, DXFeed uses /MESH6
-            # For MES futures, the streamer symbol is the same as the API symbol
-            streamer_symbol = symbol
-            if not streamer_symbol.startswith('/'):
-                streamer_symbol = f'/{symbol}'
+            # Config uses /MESH6 (contract month) but DXFeed needs /MES:XCME (root + exchange)
+            # /MESH6, /MESM6, /MESU6, /MESZ6 all map to /MES:XCME for real-time quotes
+            if symbol.startswith('/MES'):
+                streamer_symbol = '/MES:XCME'
+            elif symbol.startswith('MES'):
+                streamer_symbol = '/MES:XCME'
+            else:
+                # For other symbols, add / prefix if needed
+                streamer_symbol = symbol if symbol.startswith('/') else f'/{symbol}'
+
+            logger.debug(f"Converting {symbol} to DXFeed symbol: {streamer_symbol}")
 
             # Run async function synchronously
             return asyncio.run(self._async_get_streaming_quote(streamer_symbol))
@@ -204,10 +226,18 @@ class TastytradeExecutor:
         Async function to get a single quote from DXLinkStreamer.
 
         Opens a connection, subscribes to the symbol, gets one quote, and closes.
+        Supports both OAuth (preferred) and password authentication.
         """
         try:
-            # Create a session
-            session = Session(self.username, self.password)
+            # Create a session based on auth method
+            if self.auth_method == "OAUTH":
+                # OAuth: use client_secret and refresh_token (works with 2FA)
+                session = Session(self.client_secret, self.refresh_token)
+                logger.debug("Created Tastytrade session via OAuth")
+            else:
+                # Password auth (legacy, doesn't work with 2FA)
+                session = Session(self.username, self.password)
+                logger.debug("Created Tastytrade session via password")
 
             async with DXLinkStreamer(session) as streamer:
                 # Subscribe to the futures symbol
