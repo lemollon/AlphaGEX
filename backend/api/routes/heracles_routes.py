@@ -495,6 +495,7 @@ async def get_heracles_scan_activity(
         no_trade_count = len([s for s in scans if s.get('outcome') == 'NO_TRADE'])
         skip_count = len([s for s in scans if s.get('outcome') == 'SKIP'])
         error_count = len([s for s in scans if s.get('outcome') == 'ERROR'])
+        market_closed_count = len([s for s in scans if s.get('outcome') == 'MARKET_CLOSED'])
 
         return {
             "scans": scans,
@@ -504,6 +505,7 @@ async def get_heracles_scan_activity(
                 "no_trade": no_trade_count,
                 "skip": skip_count,
                 "error": error_count,
+                "market_closed": market_closed_count,
                 "trade_rate_pct": (traded_count / total_scans * 100) if total_scans > 0 else 0
             },
             "timestamp": datetime.now().isoformat()
