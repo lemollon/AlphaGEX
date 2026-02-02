@@ -2,17 +2,19 @@
 
 import React from 'react'
 import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Activity } from 'lucide-react'
+import { BOT_DISPLAY_NAMES, getBotDisplayName } from '@/lib/botDisplayNames'
 
 // =============================================================================
 // BOT BRANDING SYSTEM
 // =============================================================================
-// Unified branding for ARES, ATHENA, and PEGASUS to ensure visual consistency
+// Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
 export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES'
 
 export interface BotBrand {
   name: BotName
-  fullName: string
+  displayName: string  // Biblical name (Fruit of the Spirit)
+  fullName: string     // Full display name with strategy
   description: string
   strategy: string
   // Primary brand colors
@@ -49,7 +51,8 @@ export interface BotBrand {
 export const BOT_BRANDS: Record<BotName, BotBrand> = {
   ARES: {
     name: 'ARES',
-    fullName: 'ARES Iron Condor',
+    displayName: BOT_DISPLAY_NAMES.ARES,  // SELF-CONTROL
+    fullName: `${BOT_DISPLAY_NAMES.ARES} Iron Condor`,
     description: 'Paper Trading with Real Market Data',
     strategy: '0DTE Iron Condor Strategy',
     // Primary - Amber/Gold (professional, not aggressive red)
@@ -84,7 +87,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   ATHENA: {
     name: 'ATHENA',
-    fullName: 'ATHENA Directional',
+    displayName: BOT_DISPLAY_NAMES.ATHENA,  // FAITHFULNESS
+    fullName: `${BOT_DISPLAY_NAMES.ATHENA} Directional`,
     description: 'GEX-Based Directional Spreads',
     strategy: 'Directional Spread Trading',
     // Primary - Cyan/Teal (wisdom, strategy)
@@ -119,7 +123,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   ICARUS: {
     name: 'ICARUS',
-    fullName: 'ICARUS Aggressive Directional',
+    displayName: BOT_DISPLAY_NAMES.ICARUS,  // LOVE
+    fullName: `${BOT_DISPLAY_NAMES.ICARUS} Aggressive Directional`,
     description: 'Aggressive GEX-Based Directional Spreads',
     strategy: 'Aggressive Directional Spread Trading',
     // Primary - Orange (bold, aggressive, flying toward the sun)
@@ -154,7 +159,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   PEGASUS: {
     name: 'PEGASUS',
-    fullName: 'PEGASUS SPX Iron Condor',
+    displayName: BOT_DISPLAY_NAMES.PEGASUS,  // PATIENCE
+    fullName: `${BOT_DISPLAY_NAMES.PEGASUS} SPX Iron Condor`,
     description: 'SPX Iron Condor Trading with Oracle Intelligence',
     strategy: 'SPX Iron Condor Strategy',
     // Primary - Blue/Indigo (protection, stability, SPX)
@@ -189,7 +195,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   TITAN: {
     name: 'TITAN',
-    fullName: 'TITAN Aggressive SPX Iron Condor',
+    displayName: BOT_DISPLAY_NAMES.TITAN,  // GOODNESS
+    fullName: `${BOT_DISPLAY_NAMES.TITAN} Aggressive SPX Iron Condor`,
     description: 'Aggressive Daily SPX Iron Condor Trading',
     strategy: 'Aggressive SPX Iron Condor Strategy',
     // Primary - Violet/Purple (powerful, aggressive, primordial)
@@ -224,7 +231,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   PHOENIX: {
     name: 'PHOENIX',
-    fullName: 'PHOENIX Momentum',
+    displayName: BOT_DISPLAY_NAMES.PHOENIX,  // JOY
+    fullName: `${BOT_DISPLAY_NAMES.PHOENIX} Momentum`,
     description: 'Momentum Continuation with GEX-Confirmed Bias',
     strategy: 'Momentum Continuation Strategy',
     // Primary - Rose/Red (phoenix rising from flames)
@@ -259,7 +267,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   ATLAS: {
     name: 'ATLAS',
-    fullName: 'ATLAS Mean-Reversion',
+    displayName: BOT_DISPLAY_NAMES.ATLAS,  // PEACE
+    fullName: `${BOT_DISPLAY_NAMES.ATLAS} Mean-Reversion`,
     description: 'Mean-Reversion Trading at Key GEX Levels',
     strategy: 'Mean-Reversion Strategy',
     // Primary - Indigo/Deep Blue (strength, stability, holding the world)
@@ -294,7 +303,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   PROMETHEUS: {
     name: 'PROMETHEUS',
-    fullName: 'PROMETHEUS Box Spread + IC',
+    displayName: BOT_DISPLAY_NAMES.PROMETHEUS,  // KINDNESS
+    fullName: `${BOT_DISPLAY_NAMES.PROMETHEUS} Box Spread + IC`,
     description: 'Synthetic Borrowing via Box Spreads + Iron Condor Trading',
     strategy: 'Box Spread Synthetic Borrowing + IC Strategy',
     // Primary - Emerald/Green (wealth, growth, fire-bringer)
@@ -329,7 +339,8 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   HERACLES: {
     name: 'HERACLES',
-    fullName: 'HERACLES MES Futures Scalping',
+    displayName: BOT_DISPLAY_NAMES.HERACLES,  // MEEKNESS
+    fullName: `${BOT_DISPLAY_NAMES.HERACLES} MES Futures Scalping`,
     description: 'MES Futures Scalping with GEX Signals',
     strategy: 'GEX-Based MES Futures Scalping',
     // Primary - Yellow/Gold (strength, heroic, sun-like power)
