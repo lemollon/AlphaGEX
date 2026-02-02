@@ -1080,30 +1080,15 @@ class PrometheusICTrader:
 
     def _get_available_capital(self) -> float:
         """
-        Get capital available for IC trading.
+        Get capital available for IC trading from box spread positions.
 
-        In PAPER mode: Uses starting_capital from config (simulated $100K)
-        In LIVE mode: Uses actual capital from box spread positions
+        IC trading uses borrowed capital from box spreads.
+        In PAPER mode, auto-creates a paper box spread if none exists.
         """
-        # PAPER mode: Use starting_capital from config for immediate trading
-        if self.config.mode == TradingMode.PAPER:
-            total_available = self.config.starting_capital
+        # Ensure we have a box spread position (creates paper one if needed)
+        self._ensure_paper_box_spread()
 
-            # Subtract capital currently in use by open IC positions
-            ic_positions = self.db.get_open_ic_positions()
-            for ic in ic_positions:
-                # Use max risk (spread width * contracts * 100) as margin tied up
-                margin_used = ic.total_credit_received * 2  # Approximate margin
-                total_available -= margin_used
-
-            # Also subtract realized losses
-            performance = self.db.get_ic_performance()
-            if performance.get('total_realized_pnl', 0) < 0:
-                total_available += performance['total_realized_pnl']  # Negative, so this subtracts
-
-            return max(0, total_available)
-
-        # LIVE mode: Require actual box spread positions
+        # Get capital from box spread positions
         box_positions = self.db.get_open_positions()  # Box spreads
         if not box_positions:
             return 0.0
@@ -1121,25 +1106,63 @@ class PrometheusICTrader:
 
         return max(0, total_available)
 
+    def _ensure_paper_box_spread(self) -> None:
+        """
+        In PAPER mode, create a synthetic box spread position if none exists.
+        This provides the borrowed capital for IC trading.
+        """
+        if self.config.mode != TradingMode.PAPER:
+            return
+
+        box_positions = self.db.get_open_positions()
+        if box_positions:
+            return  # Already have positions
+
+        # Create a synthetic paper box spread with $500K borrowed
+        logger.info("PAPER MODE: Creating synthetic box spread position for IC trading capital")
+        try:
+            from .models import BoxSpreadPosition, BoxSpreadStatus
+            from datetime import datetime, timedelta
+
+            now = datetime.now(CENTRAL_TZ)
+            synthetic_box = BoxSpreadPosition(
+                position_id=f"PAPER_BOX_{now.strftime('%Y%m%d')}",
+                ticker="SPX",
+                lower_strike=5800.0,
+                upper_strike=5850.0,
+                expiration_date=(now + timedelta(days=90)).date(),
+                contracts=100,  # 100 contracts * $50 width = $500K notional
+                entry_price=49.50,  # Slight discount for implied rate
+                current_price=49.50,
+                total_credit_received=495000.0,  # $495K received (borrowing $500K)
+                total_cash_deployed=500000.0,  # $500K available for IC trading
+                implied_rate=4.0,  # 4% implied borrowing rate
+                status=BoxSpreadStatus.ACTIVE,
+                open_time=now,
+                mode="PAPER"
+            )
+            self.db.save_position(synthetic_box)
+            logger.info(f"Created paper box spread: {synthetic_box.position_id} with $500K capital")
+        except Exception as e:
+            logger.error(f"Failed to create paper box spread: {e}")
+
     def _get_source_box_position(self) -> Optional[str]:
         """
         Get the box position ID to link new IC trades to.
 
-        In PAPER mode: Returns synthetic ID if no real box positions
-        In LIVE mode: Requires actual box spread positions
+        IC trades are always linked to a box spread position (the source of capital).
+        In PAPER mode, auto-creates a paper box spread if none exists.
         """
+        # Ensure we have a box spread position (creates paper one if needed)
+        self._ensure_paper_box_spread()
+
         box_positions = self.db.get_open_positions()
+        if not box_positions:
+            return None
 
-        if box_positions:
-            # Use the most recently opened box position
-            sorted_boxes = sorted(box_positions, key=lambda p: p.open_time, reverse=True)
-            return sorted_boxes[0].position_id
-
-        # PAPER mode: Use synthetic source if no real box positions
-        if self.config.mode == TradingMode.PAPER:
-            return "PAPER_CAPITAL_100K"
-
-        return None
+        # Use the most recently opened box position
+        sorted_boxes = sorted(box_positions, key=lambda p: p.open_time, reverse=True)
+        return sorted_boxes[0].position_id
 
     def _generate_and_execute_signal(self) -> Dict[str, Any]:
         """Generate an IC signal and execute if approved"""
