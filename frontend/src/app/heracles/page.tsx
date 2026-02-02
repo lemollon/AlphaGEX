@@ -4,17 +4,31 @@ import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
 import {
-  ChartBarIcon,
-  ArrowTrendingUpIcon,
-  ArrowTrendingDownIcon,
-  CurrencyDollarIcon,
-  ClockIcon,
-  BoltIcon,
-  ChartPieIcon,
-  Cog6ToothIcon,
-  ExclamationTriangleIcon,
-  CheckCircleIcon,
-} from '@heroicons/react/24/outline'
+  BarChart3,
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  Clock,
+  Zap,
+  PieChart,
+  Settings,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Eye,
+  GraduationCap,
+  RefreshCw,
+} from 'lucide-react'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from 'recharts'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://alphagex-api.onrender.com'
 
@@ -56,8 +70,21 @@ interface WinTracker {
   should_use_ml: boolean
 }
 
+interface ScanActivity {
+  scan_id: string
+  scan_time: string
+  outcome: string
+  gamma_regime: string
+  underlying_price: number
+  signal_direction: string
+  signal_win_probability: number
+  trade_executed: boolean
+  skip_reason: string
+  decision_summary: string
+}
+
 export default function HERACLESPage() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'history' | 'signals'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'history' | 'signals' | 'scans'>('overview')
 
   // Fetch data
   const { data: status, error: statusError, isLoading: statusLoading } = useSWR(
@@ -76,10 +103,21 @@ export default function HERACLESPage() {
     fetcher
   )
 
+  const { data: scanActivity, mutate: mutateScanActivity } = useSWR(
+    activeTab === 'scans' ? `${API_URL}/api/heracles/scan-activity?limit=100` : null,
+    fetcher
+  )
+
   const { data: equityCurve } = useSWR(
-    `${API_URL}/api/heracles/equity-curve?days=30`,
+    `${API_URL}/api/heracles/paper-equity-curve?days=30`,
     fetcher,
     { refreshInterval: 60000 }
+  )
+
+  const { data: mlTrainingData } = useSWR(
+    `${API_URL}/api/heracles/ml-training-data`,
+    fetcher,
+    { refreshInterval: 300000 }  // Every 5 minutes
   )
 
   if (statusError) {
@@ -88,7 +126,7 @@ export default function HERACLESPage() {
         <div className="max-w-7xl mx-auto">
           <div className="bg-red-900/50 border border-red-500 rounded-lg p-6">
             <h2 className="text-xl font-bold text-red-400 flex items-center gap-2">
-              <ExclamationTriangleIcon className="h-6 w-6" />
+              <AlertTriangle className="h-6 w-6" />
               HERACLES Not Available
             </h2>
             <p className="text-red-300 mt-2">
@@ -112,6 +150,14 @@ export default function HERACLESPage() {
   const todayStats = status?.today || {}
   const paperAccount = status?.paper_account || null
 
+  // Format equity curve data for chart
+  const equityChartData = equityCurve?.equity_curve?.map((point: any) => ({
+    date: point.date,
+    equity: point.equity,
+    pnl: point.cumulative_pnl,
+    return: point.return_pct,
+  })) || []
+
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       {/* Header */}
@@ -120,7 +166,7 @@ export default function HERACLESPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="p-3 bg-orange-600 rounded-lg">
-                <BoltIcon className="h-8 w-8 text-white" />
+                <Zap className="h-8 w-8 text-white" />
               </div>
               <div>
                 <h1 className="text-3xl font-bold">HERACLES</h1>
@@ -152,10 +198,11 @@ export default function HERACLESPage() {
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex space-x-8">
             {[
-              { id: 'overview', label: 'Overview', icon: ChartBarIcon },
-              { id: 'positions', label: 'Positions', icon: CurrencyDollarIcon },
-              { id: 'history', label: 'Trade History', icon: ClockIcon },
-              { id: 'signals', label: 'Signals', icon: BoltIcon },
+              { id: 'overview', label: 'Overview', icon: BarChart3 },
+              { id: 'positions', label: 'Positions', icon: DollarSign },
+              { id: 'history', label: 'Trade History', icon: Clock },
+              { id: 'signals', label: 'Signals', icon: Zap },
+              { id: 'scans', label: 'Scan Activity', icon: Eye },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -182,7 +229,7 @@ export default function HERACLESPage() {
             {paperAccount && (
               <div className="bg-gradient-to-r from-orange-900/50 to-amber-900/50 rounded-lg p-6 border border-orange-500/30">
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <CurrencyDollarIcon className="h-5 w-5 text-orange-400" />
+                  <DollarSign className="h-5 w-5 text-orange-400" />
                   Paper Trading Account
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -248,36 +295,140 @@ export default function HERACLESPage() {
               </div>
             )}
 
+            {/* Equity Curve Chart */}
+            {equityChartData.length > 0 && (
+              <div className="bg-gray-800 rounded-lg p-6">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5 text-orange-400" />
+                  Equity Curve (30 Days)
+                </h3>
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={equityChartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis
+                        dataKey="date"
+                        stroke="#9CA3AF"
+                        tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                        tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      />
+                      <YAxis
+                        stroke="#9CA3AF"
+                        tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                        tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                        domain={['dataMin - 1000', 'dataMax + 1000']}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: '#1F2937',
+                          border: '1px solid #374151',
+                          borderRadius: '8px',
+                        }}
+                        formatter={(value: number, name: string) => [
+                          name === 'equity' ? `$${value.toLocaleString()}` : `${value.toFixed(2)}%`,
+                          name === 'equity' ? 'Equity' : 'Return'
+                        ]}
+                      />
+                      <ReferenceLine
+                        y={paperAccount?.starting_capital || 100000}
+                        stroke="#EF4444"
+                        strokeDasharray="5 5"
+                        label={{ value: 'Starting Capital', fill: '#EF4444', fontSize: 10 }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="equity"
+                        stroke="#F97316"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard
                 title="Total P&L"
                 value={`$${(performance.total_pnl || 0).toFixed(2)}`}
                 positive={(performance.total_pnl || 0) >= 0}
-                icon={CurrencyDollarIcon}
+                icon={DollarSign}
               />
               <StatCard
                 title="Win Rate"
                 value={`${(performance.win_rate || 0).toFixed(1)}%`}
                 positive={(performance.win_rate || 0) >= 50}
-                icon={ChartPieIcon}
+                icon={PieChart}
               />
               <StatCard
                 title="Total Trades"
                 value={performance.total_trades || 0}
-                icon={ChartBarIcon}
+                icon={BarChart3}
               />
               <StatCard
                 title="Open Positions"
                 value={positions.length}
-                icon={BoltIcon}
+                icon={Zap}
               />
+            </div>
+
+            {/* ML Training Status */}
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <GraduationCap className="h-5 w-5 text-orange-400" />
+                ML Training Status
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <div className="text-sm text-gray-400">Training Samples</div>
+                  <div className="text-2xl font-bold text-white mt-1">
+                    {mlTrainingData?.total_samples || 0}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Need 50 for ML
+                  </div>
+                </div>
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <div className="text-sm text-gray-400">Win/Loss Samples</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-green-400 text-lg font-bold">{mlTrainingData?.wins || 0}W</span>
+                    <span className="text-gray-500">/</span>
+                    <span className="text-red-400 text-lg font-bold">{mlTrainingData?.losses || 0}L</span>
+                  </div>
+                </div>
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <div className="text-sm text-gray-400">Sample Win Rate</div>
+                  <div className="text-2xl font-bold text-orange-400 mt-1">
+                    {(mlTrainingData?.win_rate || 0).toFixed(1)}%
+                  </div>
+                </div>
+                <div className="bg-gray-700/50 rounded-lg p-4">
+                  <div className="text-sm text-gray-400">Ready for Training</div>
+                  <div className={`text-2xl font-bold mt-1 flex items-center gap-2 ${
+                    mlTrainingData?.ready_for_training ? 'text-green-400' : 'text-yellow-400'
+                  }`}>
+                    {mlTrainingData?.ready_for_training ? (
+                      <>
+                        <CheckCircle className="h-6 w-6" />
+                        Yes
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="h-6 w-6" />
+                        {50 - (mlTrainingData?.total_samples || 0)} more
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Win Probability Tracker */}
             <div className="bg-gray-800 rounded-lg p-6">
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <ChartPieIcon className="h-5 w-5 text-orange-400" />
+                <PieChart className="h-5 w-5 text-orange-400" />
                 Bayesian Win Probability Tracker
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -319,12 +470,12 @@ export default function HERACLESPage() {
             {/* Configuration */}
             <div className="bg-gray-800 rounded-lg p-6">
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                <Cog6ToothIcon className="h-5 w-5 text-orange-400" />
+                <Settings className="h-5 w-5 text-orange-400" />
                 Configuration
               </h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <ConfigItem label="Symbol" value={status?.symbol || '/MESH6'} />
-                <ConfigItem label="Capital" value={`$${(config.capital || 10000).toLocaleString()}`} />
+                <ConfigItem label="Capital" value={`$${(paperAccount?.starting_capital || config.capital || 100000).toLocaleString()}`} />
                 <ConfigItem label="Risk/Trade" value={`${config.risk_per_trade_pct || 1}%`} />
                 <ConfigItem label="Max Contracts" value={config.max_contracts || 5} />
                 <ConfigItem label="Initial Stop" value={`${config.initial_stop_points || 3} pts`} />
@@ -373,7 +524,7 @@ export default function HERACLESPage() {
 
             {positions.length === 0 ? (
               <div className="bg-gray-800 rounded-lg p-8 text-center">
-                <BoltIcon className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+                <Zap className="h-12 w-12 text-gray-600 mx-auto mb-4" />
                 <p className="text-gray-400">No open positions</p>
                 <p className="text-gray-500 text-sm mt-2">
                   HERACLES will open positions when GEX signals meet criteria
@@ -391,8 +542,8 @@ export default function HERACLESPage() {
                             : 'bg-red-900/50 text-red-400'
                         }`}>
                           {position.direction === 'LONG'
-                            ? <ArrowTrendingUpIcon className="h-6 w-6" />
-                            : <ArrowTrendingDownIcon className="h-6 w-6" />
+                            ? <TrendingUp className="h-6 w-6" />
+                            : <TrendingDown className="h-6 w-6" />
                           }
                         </div>
                         <div>
@@ -445,7 +596,7 @@ export default function HERACLESPage() {
 
             {!closedTrades?.trades?.length ? (
               <div className="bg-gray-800 rounded-lg p-8 text-center">
-                <ClockIcon className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+                <Clock className="h-12 w-12 text-gray-600 mx-auto mb-4" />
                 <p className="text-gray-400">No trade history yet</p>
               </div>
             ) : (
@@ -515,7 +666,7 @@ export default function HERACLESPage() {
 
             {!signals?.signals?.length ? (
               <div className="bg-gray-800 rounded-lg p-8 text-center">
-                <BoltIcon className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+                <Zap className="h-12 w-12 text-gray-600 mx-auto mb-4" />
                 <p className="text-gray-400">No signals yet</p>
               </div>
             ) : (
@@ -546,7 +697,7 @@ export default function HERACLESPage() {
                       <div className="flex items-center gap-2">
                         {signal.was_executed ? (
                           <span className="flex items-center gap-1 text-green-400 text-sm">
-                            <CheckCircleIcon className="h-4 w-4" />
+                            <CheckCircle className="h-4 w-4" />
                             Executed
                           </span>
                         ) : (
@@ -568,6 +719,131 @@ export default function HERACLESPage() {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'scans' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold">Scan Activity (ML Training Data)</h2>
+              <button
+                onClick={() => mutateScanActivity()}
+                className="flex items-center gap-2 px-4 py-2 bg-orange-600 rounded-lg hover:bg-orange-700 transition-colors"
+              >
+                <RefreshCw className="h-5 w-5" />
+                Refresh
+              </button>
+            </div>
+
+            {/* Scan Summary */}
+            {scanActivity?.summary && (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <div className="bg-gray-800 rounded-lg p-4 text-center">
+                  <div className="text-sm text-gray-400">Total Scans</div>
+                  <div className="text-2xl font-bold mt-1">{scanActivity.count}</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 text-center">
+                  <div className="text-sm text-gray-400">Traded</div>
+                  <div className="text-2xl font-bold mt-1 text-green-400">{scanActivity.summary.traded}</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 text-center">
+                  <div className="text-sm text-gray-400">No Trade</div>
+                  <div className="text-2xl font-bold mt-1 text-yellow-400">{scanActivity.summary.no_trade}</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 text-center">
+                  <div className="text-sm text-gray-400">Skipped</div>
+                  <div className="text-2xl font-bold mt-1 text-gray-400">{scanActivity.summary.skip}</div>
+                </div>
+                <div className="bg-gray-800 rounded-lg p-4 text-center">
+                  <div className="text-sm text-gray-400">Trade Rate</div>
+                  <div className="text-2xl font-bold mt-1 text-orange-400">
+                    {scanActivity.summary.trade_rate_pct?.toFixed(1)}%
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Scan List */}
+            {!scanActivity?.scans?.length ? (
+              <div className="bg-gray-800 rounded-lg p-8 text-center">
+                <Eye className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+                <p className="text-gray-400">No scan activity yet</p>
+                <p className="text-gray-500 text-sm mt-2">
+                  Scans will appear here once HERACLES starts running
+                </p>
+              </div>
+            ) : (
+              <div className="bg-gray-800 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-700">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-gray-400">Time</th>
+                      <th className="px-4 py-3 text-left text-gray-400">Outcome</th>
+                      <th className="px-4 py-3 text-left text-gray-400">Regime</th>
+                      <th className="px-4 py-3 text-right text-gray-400">Price</th>
+                      <th className="px-4 py-3 text-left text-gray-400">Signal</th>
+                      <th className="px-4 py-3 text-right text-gray-400">Win Prob</th>
+                      <th className="px-4 py-3 text-left text-gray-400">Decision</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700">
+                    {scanActivity.scans.slice(0, 50).map((scan: ScanActivity) => (
+                      <tr key={scan.scan_id} className="hover:bg-gray-700/50">
+                        <td className="px-4 py-3 font-mono text-xs">
+                          {new Date(scan.scan_time).toLocaleTimeString()}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded text-xs ${
+                            scan.outcome === 'TRADED' ? 'bg-green-900/50 text-green-400' :
+                            scan.outcome === 'NO_TRADE' ? 'bg-yellow-900/50 text-yellow-400' :
+                            scan.outcome === 'SKIP' ? 'bg-gray-700 text-gray-400' :
+                            scan.outcome === 'MARKET_CLOSED' ? 'bg-blue-900/50 text-blue-400' :
+                            'bg-red-900/50 text-red-400'
+                          }`}>
+                            {scan.outcome}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {scan.gamma_regime && (
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              scan.gamma_regime === 'POSITIVE'
+                                ? 'bg-blue-900/50 text-blue-400'
+                                : scan.gamma_regime === 'NEGATIVE'
+                                ? 'bg-purple-900/50 text-purple-400'
+                                : 'bg-gray-700 text-gray-400'
+                            }`}>
+                              {scan.gamma_regime}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono">
+                          {scan.underlying_price?.toFixed(2) || '-'}
+                        </td>
+                        <td className="px-4 py-3">
+                          {scan.signal_direction && (
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              scan.signal_direction === 'LONG'
+                                ? 'bg-green-900/50 text-green-400'
+                                : 'bg-red-900/50 text-red-400'
+                            }`}>
+                              {scan.signal_direction}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {scan.signal_win_probability
+                            ? `${(scan.signal_win_probability * 100).toFixed(0)}%`
+                            : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-gray-400 truncate max-w-xs" title={scan.decision_summary}>
+                          {scan.decision_summary || scan.skip_reason || '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
