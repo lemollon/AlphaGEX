@@ -237,7 +237,7 @@ class HERACLESConfig:
     capital: float = 100000.0  # Paper trading capital ($100k starting)
     risk_per_trade_pct: float = 1.0  # Risk 1% per trade
     max_contracts: int = 5  # Maximum contracts per trade
-    max_open_positions: int = 2  # Max concurrent positions
+    max_open_positions: int = 5  # Max concurrent positions (increased from 2)
 
     # MES contract settings
     symbol: str = "/MESH6"  # Current front month (March 2026)
