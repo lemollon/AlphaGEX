@@ -910,9 +910,31 @@ class PrometheusICTrader:
 
     def __init__(self, config: Optional[PrometheusICConfig] = None):
         self.db = PrometheusDatabase(bot_name="PROMETHEUS_IC")
+
+        # Load and validate config
         self.config = config or self.db.load_ic_config()
-        self.signal_gen = PrometheusICSignalGenerator(self.config)
-        self.executor = PrometheusICExecutor(self.config, self.db)
+        if not self.config:
+            logger.warning("IC config is None, using defaults")
+            self.config = PrometheusICConfig()
+
+        # Validate critical config fields
+        if not hasattr(self.config, 'enabled'):
+            logger.error("IC config missing 'enabled' field, defaulting to True")
+            self.config.enabled = True
+        if not hasattr(self.config, 'starting_capital') or self.config.starting_capital <= 0:
+            logger.warning(f"IC config invalid starting_capital, using 500000")
+            self.config.starting_capital = 500000.0
+        if not hasattr(self.config, 'mode'):
+            logger.warning("IC config missing 'mode', defaulting to PAPER")
+            self.config.mode = TradingMode.PAPER
+
+        # Initialize components with validated config
+        try:
+            self.signal_gen = PrometheusICSignalGenerator(self.config)
+            self.executor = PrometheusICExecutor(self.config, self.db)
+        except Exception as e:
+            logger.error(f"Failed to initialize IC trader components: {e}")
+            raise RuntimeError(f"PrometheusICTrader initialization failed: {e}")
 
     def run_trading_cycle(self) -> Dict[str, Any]:
         """
@@ -1121,30 +1143,100 @@ class PrometheusICTrader:
         # Create a synthetic paper box spread with $500K borrowed
         logger.info("PAPER MODE: Creating synthetic box spread position for IC trading capital")
         try:
-            from .models import BoxSpreadPosition, BoxSpreadStatus
-            from datetime import datetime, timedelta
+            from .models import BoxSpreadPosition, PositionStatus
 
             now = datetime.now(CENTRAL_TZ)
+            expiration_date = now + timedelta(days=90)
+            expiration_str = expiration_date.strftime('%Y-%m-%d')
+
+            # $500K notional: 100 contracts * $50 strike width * 100 multiplier
+            contracts = 100
+            strike_width = 50.0
+            lower_strike = 5800.0
+            upper_strike = lower_strike + strike_width
+            entry_credit = 49.50  # Slight discount = borrowing cost
+            theoretical_value = strike_width  # $50 at expiration
+            total_credit = entry_credit * contracts * 100  # $495,000
+            total_owed = theoretical_value * contracts * 100  # $500,000
+            borrowing_cost = total_owed - total_credit  # $5,000
+            implied_rate = (borrowing_cost / total_owed) * (365.0 / 90) * 100  # ~4%
+
             synthetic_box = BoxSpreadPosition(
-                position_id=f"PAPER_BOX_{now.strftime('%Y%m%d')}",
+                # Position identification
+                position_id=f"PAPER_BOX_{now.strftime('%Y%m%d_%H%M%S')}",
                 ticker="SPX",
-                lower_strike=5800.0,
-                upper_strike=5850.0,
-                expiration_date=(now + timedelta(days=90)).date(),
-                contracts=100,  # 100 contracts * $50 width = $500K notional
-                entry_price=49.50,  # Slight discount for implied rate
-                current_price=49.50,
-                total_credit_received=495000.0,  # $495K received (borrowing $500K)
-                total_cash_deployed=500000.0,  # $500K available for IC trading
-                implied_rate=4.0,  # 4% implied borrowing rate
-                status=BoxSpreadStatus.ACTIVE,
+
+                # Leg details
+                lower_strike=lower_strike,
+                upper_strike=upper_strike,
+                strike_width=strike_width,
+                expiration=expiration_str,
+                dte_at_entry=90,
+                current_dte=90,
+
+                # Leg symbols (synthetic for paper)
+                call_long_symbol=f"SPX{expiration_str.replace('-', '')}C{int(lower_strike)}",
+                call_short_symbol=f"SPX{expiration_str.replace('-', '')}C{int(upper_strike)}",
+                put_long_symbol=f"SPX{expiration_str.replace('-', '')}P{int(upper_strike)}",
+                put_short_symbol=f"SPX{expiration_str.replace('-', '')}P{int(lower_strike)}",
+
+                # Order IDs (synthetic for paper)
+                call_spread_order_id="PAPER_CALL_ORDER",
+                put_spread_order_id="PAPER_PUT_ORDER",
+
+                # Execution prices
+                contracts=contracts,
+                entry_credit=entry_credit,
+                total_credit_received=total_credit,
+                theoretical_value=theoretical_value,
+                total_owed_at_expiration=total_owed,
+
+                # Borrowing cost tracking
+                borrowing_cost=borrowing_cost,
+                implied_annual_rate=implied_rate,
+                daily_cost=borrowing_cost / 90,
+                cost_accrued_to_date=0.0,
+
+                # Comparison benchmarks
+                fed_funds_at_entry=4.38,
+                margin_rate_at_entry=8.50,
+                savings_vs_margin=(8.50 - implied_rate) * total_owed / 100,
+
+                # Capital deployment - ALL goes to PROMETHEUS IC trading
+                cash_deployed_to_ares=0.0,
+                cash_deployed_to_titan=0.0,
+                cash_deployed_to_pegasus=0.0,
+                cash_held_in_reserve=50000.0,  # 10% reserve
+                total_cash_deployed=total_credit,  # $495K available
+
+                # Returns tracking (starts at 0)
+                returns_from_ares=0.0,
+                returns_from_titan=0.0,
+                returns_from_pegasus=0.0,
+                total_ic_returns=0.0,
+                net_profit=0.0,
+
+                # Market context
+                spot_at_entry=5825.0,
+                vix_at_entry=15.0,
+
+                # Risk monitoring
+                early_assignment_risk="LOW",
+                current_margin_used=100000.0,
+                margin_cushion=150000.0,
+
+                # Status
+                status=PositionStatus.OPEN,
                 open_time=now,
-                mode="PAPER"
+
+                # Educational
+                position_explanation="PAPER MODE: Synthetic box spread providing $500K capital for IC trading",
+                daily_briefing="Paper trading position - no real capital at risk"
             )
             self.db.save_position(synthetic_box)
-            logger.info(f"Created paper box spread: {synthetic_box.position_id} with $500K capital")
+            logger.info(f"Created paper box spread: {synthetic_box.position_id} with ${total_credit:,.0f} capital")
         except Exception as e:
-            logger.error(f"Failed to create paper box spread: {e}")
+            logger.error(f"Failed to create paper box spread: {e}", exc_info=True)
 
     def _get_source_box_position(self) -> Optional[str]:
         """
