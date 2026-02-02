@@ -110,6 +110,7 @@ export default function HERACLESPage() {
   const config = status?.config || {}
   const winTracker: WinTracker = status?.win_tracker || {}
   const todayStats = status?.today || {}
+  const paperAccount = status?.paper_account || null
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -177,6 +178,76 @@ export default function HERACLESPage() {
       <div className="max-w-7xl mx-auto p-6">
         {activeTab === 'overview' && (
           <div className="space-y-6">
+            {/* Paper Trading Account */}
+            {paperAccount && (
+              <div className="bg-gradient-to-r from-orange-900/50 to-amber-900/50 rounded-lg p-6 border border-orange-500/30">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <CurrencyDollarIcon className="h-5 w-5 text-orange-400" />
+                  Paper Trading Account
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <div className="text-sm text-gray-400">Starting Capital</div>
+                    <div className="text-2xl font-bold text-white mt-1">
+                      ${(paperAccount.starting_capital || 100000).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <div className="text-sm text-gray-400">Current Balance</div>
+                    <div className={`text-2xl font-bold mt-1 ${
+                      (paperAccount.current_balance || 0) >= (paperAccount.starting_capital || 100000)
+                        ? 'text-green-400'
+                        : 'text-red-400'
+                    }`}>
+                      ${(paperAccount.current_balance || 100000).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <div className="text-sm text-gray-400">Cumulative P&L</div>
+                    <div className={`text-2xl font-bold mt-1 ${
+                      (paperAccount.cumulative_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      ${(paperAccount.cumulative_pnl || 0) >= 0 ? '+' : ''}{(paperAccount.cumulative_pnl || 0).toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <div className="text-sm text-gray-400">Return</div>
+                    <div className={`text-2xl font-bold mt-1 ${
+                      (paperAccount.return_pct || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                    }`}>
+                      {(paperAccount.return_pct || 0) >= 0 ? '+' : ''}{(paperAccount.return_pct || 0).toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-400">Margin Used</div>
+                    <div className="text-lg font-semibold text-yellow-400 mt-1">
+                      ${(paperAccount.margin_used || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-400">Margin Available</div>
+                    <div className="text-lg font-semibold text-blue-400 mt-1">
+                      ${(paperAccount.margin_available || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-400">High Water Mark</div>
+                    <div className="text-lg font-semibold text-green-400 mt-1">
+                      ${(paperAccount.high_water_mark || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-400">Max Drawdown</div>
+                    <div className="text-lg font-semibold text-red-400 mt-1">
+                      ${(paperAccount.max_drawdown || 0).toLocaleString()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard

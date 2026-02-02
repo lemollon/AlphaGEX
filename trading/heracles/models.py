@@ -231,7 +231,7 @@ class HERACLESConfig:
     - 24/5 operation with n+1 GEX for overnight
     """
     # Risk limits
-    capital: float = 10000.0  # Paper trading capital
+    capital: float = 100000.0  # Paper trading capital ($100k starting)
     risk_per_trade_pct: float = 1.0  # Risk 1% per trade
     max_contracts: int = 5  # Maximum contracts per trade
     max_open_positions: int = 2  # Max concurrent positions

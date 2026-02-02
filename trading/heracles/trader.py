@@ -65,6 +65,16 @@ class HERACLESTrader:
         self.daily_trades: int = 0
         self.daily_pnl: float = 0.0
 
+        # Initialize paper trading account if in paper mode
+        if self.config.mode == TradingMode.PAPER:
+            self.db.initialize_paper_account(self.config.capital)
+            paper_account = self.db.get_paper_account()
+            if paper_account:
+                logger.info(
+                    f"HERACLES Paper Account: ${paper_account['current_balance']:,.2f} "
+                    f"(started: ${paper_account['starting_capital']:,.2f})"
+                )
+
         logger.info(
             f"HERACLES initialized: mode={self.config.mode.value}, "
             f"symbol={self.config.symbol}, capital=${self.config.capital:,.2f}"
@@ -111,9 +121,13 @@ class HERACLESTrader:
             # Get GEX data
             gex_data = get_gex_data_for_heracles("SPY")
 
-            # Get account balance
-            balance = self.executor.get_account_balance()
-            account_balance = balance.get("net_liquidating_value", self.config.capital) if balance else self.config.capital
+            # Get account balance (use paper balance in paper mode)
+            if self.config.mode == TradingMode.PAPER:
+                paper_account = self.db.get_paper_account()
+                account_balance = paper_account.get('current_balance', self.config.capital) if paper_account else self.config.capital
+            else:
+                balance = self.executor.get_account_balance()
+                account_balance = balance.get("net_liquidating_value", self.config.capital) if balance else self.config.capital
 
             # Get VIX (from GEX data or default)
             vix = gex_data.get("vix", 15.0)
@@ -269,6 +283,21 @@ class HERACLESTrader:
                     self.win_tracker.update(won, position.gamma_regime)
                     self.db.save_win_tracker(self.win_tracker)
 
+                    # Update paper trading balance if in paper mode
+                    if self.config.mode == TradingMode.PAPER:
+                        # Calculate margin released (approximate MES margin per contract)
+                        margin_per_contract = 1500.0  # Approx MES margin requirement
+                        margin_released = -position.contracts * margin_per_contract
+                        success, updated_account = self.db.update_paper_balance(
+                            realized_pnl=realized_pnl,
+                            margin_change=margin_released
+                        )
+                        if success:
+                            logger.info(
+                                f"Paper balance updated: ${updated_account['current_balance']:,.2f} "
+                                f"(P&L: ${realized_pnl:+.2f}, Return: {updated_account['return_pct']:.2f}%)"
+                            )
+
                     # Update daily stats
                     self.daily_pnl += realized_pnl
                     self.daily_trades += 1
@@ -352,6 +381,21 @@ class HERACLESTrader:
 
             # Save to database
             self.db.save_position(position)
+
+            # Update paper trading margin if in paper mode
+            if self.config.mode == TradingMode.PAPER:
+                # Calculate margin required (approximate MES margin per contract)
+                margin_per_contract = 1500.0  # Approx MES margin requirement
+                margin_required = signal.contracts * margin_per_contract
+                success, updated_account = self.db.update_paper_balance(
+                    realized_pnl=0,  # No P&L yet, just margin allocation
+                    margin_change=margin_required
+                )
+                if success:
+                    logger.info(
+                        f"Paper margin allocated: ${margin_required:,.2f} for {signal.contracts} contracts "
+                        f"(Available: ${updated_account['margin_available']:,.2f})"
+                    )
 
             # Log
             self.db.log(
@@ -452,7 +496,12 @@ class HERACLESTrader:
         stats = self.db.get_performance_stats()
         summary = self.db.get_daily_summary()
 
-        return {
+        # Get paper account info if in paper mode
+        paper_account = None
+        if config.mode == TradingMode.PAPER:
+            paper_account = self.db.get_paper_account()
+
+        status_dict = {
             "bot_name": "HERACLES",
             "status": "active" if self.executor.is_market_open() else "market_closed",
             "mode": config.mode.value,
@@ -478,9 +527,36 @@ class HERACLESTrader:
             "market_open": self.executor.is_market_open()
         }
 
+        # Add paper account info if available
+        if paper_account:
+            status_dict["paper_account"] = {
+                "starting_capital": paper_account.get('starting_capital', 0),
+                "current_balance": paper_account.get('current_balance', 0),
+                "cumulative_pnl": paper_account.get('cumulative_pnl', 0),
+                "total_trades": paper_account.get('total_trades', 0),
+                "margin_used": paper_account.get('margin_used', 0),
+                "margin_available": paper_account.get('margin_available', 0),
+                "high_water_mark": paper_account.get('high_water_mark', 0),
+                "max_drawdown": paper_account.get('max_drawdown', 0),
+                "return_pct": (paper_account.get('cumulative_pnl', 0) / paper_account.get('starting_capital', 100000)) * 100
+            }
+
+        return status_dict
+
     def get_equity_curve(self, days: int = 30) -> List[Dict]:
         """Get equity curve data"""
+        # Use paper equity curve for paper mode (calculates from trades)
+        if self.config.mode == TradingMode.PAPER:
+            return self.db.get_paper_equity_curve(days)
         return self.db.get_equity_curve(days)
+
+    def get_paper_account(self) -> Optional[Dict]:
+        """Get paper trading account status"""
+        return self.db.get_paper_account()
+
+    def reset_paper_account(self, starting_capital: float = 100000.0) -> bool:
+        """Reset paper trading account with new starting capital"""
+        return self.db.reset_paper_account(starting_capital)
 
     def get_intraday_equity(self) -> List[Dict]:
         """Get today's equity curve"""

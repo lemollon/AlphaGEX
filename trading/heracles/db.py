@@ -235,6 +235,24 @@ class HERACLESDatabase:
                     )
                 """)
 
+                # Paper trading account - tracks virtual balance for simulation
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS heracles_paper_account (
+                        id SERIAL PRIMARY KEY,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        starting_capital DECIMAL(12, 2) NOT NULL DEFAULT 100000.00,
+                        current_balance DECIMAL(12, 2) NOT NULL DEFAULT 100000.00,
+                        cumulative_pnl DECIMAL(12, 2) DEFAULT 0.00,
+                        total_trades INTEGER DEFAULT 0,
+                        margin_used DECIMAL(12, 2) DEFAULT 0.00,
+                        margin_available DECIMAL(12, 2) DEFAULT 100000.00,
+                        high_water_mark DECIMAL(12, 2) DEFAULT 100000.00,
+                        max_drawdown DECIMAL(12, 2) DEFAULT 0.00,
+                        is_active BOOLEAN DEFAULT TRUE
+                    )
+                """)
+
                 # Create indexes for performance
                 c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_positions_status ON heracles_positions(status)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_closed_trades_close_time ON heracles_closed_trades(close_time)")
@@ -980,3 +998,240 @@ class HERACLESDatabase:
             logger.error(f"Failed to get daily summary: {e}")
 
         return summary
+
+    # ========================================================================
+    # Paper Trading Account
+    # ========================================================================
+
+    def initialize_paper_account(self, starting_capital: float = 100000.0) -> bool:
+        """
+        Initialize paper trading account with starting capital.
+
+        This creates a virtual account for paper trading simulation.
+        Only creates if no active account exists.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Check if active account exists
+                c.execute("SELECT id FROM heracles_paper_account WHERE is_active = TRUE")
+                existing = c.fetchone()
+
+                if existing:
+                    logger.info(f"Paper account already exists (id={existing[0]})")
+                    return True
+
+                # Create new paper account
+                c.execute("""
+                    INSERT INTO heracles_paper_account (
+                        starting_capital, current_balance, cumulative_pnl,
+                        margin_available, high_water_mark
+                    ) VALUES (%s, %s, 0, %s, %s)
+                """, (starting_capital, starting_capital, starting_capital, starting_capital))
+
+                conn.commit()
+                logger.info(f"Paper trading account initialized with ${starting_capital:,.2f}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize paper account: {e}")
+            return False
+
+    def get_paper_account(self) -> Optional[Dict]:
+        """Get current paper trading account state"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT * FROM heracles_paper_account
+                    WHERE is_active = TRUE
+                    ORDER BY id DESC LIMIT 1
+                """)
+
+                row = c.fetchone()
+                if row:
+                    columns = [desc[0] for desc in c.description]
+                    account = dict(zip(columns, row))
+
+                    # Convert datetimes and decimals
+                    for key in ['created_at', 'updated_at']:
+                        if account.get(key) and hasattr(account[key], 'isoformat'):
+                            account[key] = account[key].isoformat()
+                    for key in ['starting_capital', 'current_balance', 'cumulative_pnl',
+                               'margin_used', 'margin_available', 'high_water_mark', 'max_drawdown']:
+                        if account.get(key) is not None:
+                            account[key] = float(account[key])
+
+                    return account
+
+        except Exception as e:
+            logger.error(f"Failed to get paper account: {e}")
+
+        return None
+
+    def update_paper_balance(self, realized_pnl: float, margin_change: float = 0) -> Tuple[bool, Dict]:
+        """
+        Update paper trading balance after a trade.
+
+        Args:
+            realized_pnl: P&L from the trade (positive or negative)
+            margin_change: Change in margin used (positive = opening, negative = closing)
+
+        Returns:
+            (success, updated_account_dict)
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Get current account
+                c.execute("""
+                    SELECT id, current_balance, cumulative_pnl, total_trades,
+                           margin_used, high_water_mark, max_drawdown, starting_capital
+                    FROM heracles_paper_account
+                    WHERE is_active = TRUE
+                    ORDER BY id DESC LIMIT 1
+                """)
+
+                row = c.fetchone()
+                if not row:
+                    logger.error("No active paper account found")
+                    return False, {}
+
+                account_id = row[0]
+                current_balance = float(row[1])
+                cumulative_pnl = float(row[2])
+                total_trades = int(row[3])
+                margin_used = float(row[4])
+                high_water_mark = float(row[5])
+                max_drawdown = float(row[6])
+                starting_capital = float(row[7])
+
+                # Update values
+                new_balance = current_balance + realized_pnl
+                new_cumulative_pnl = cumulative_pnl + realized_pnl
+                new_margin_used = max(0, margin_used + margin_change)
+                new_margin_available = new_balance - new_margin_used
+                new_total_trades = total_trades + (1 if realized_pnl != 0 else 0)
+
+                # Update high water mark and max drawdown
+                new_high_water_mark = max(high_water_mark, new_balance)
+                current_drawdown = new_high_water_mark - new_balance
+                new_max_drawdown = max(max_drawdown, current_drawdown)
+
+                # Update database
+                c.execute("""
+                    UPDATE heracles_paper_account
+                    SET current_balance = %s,
+                        cumulative_pnl = %s,
+                        total_trades = %s,
+                        margin_used = %s,
+                        margin_available = %s,
+                        high_water_mark = %s,
+                        max_drawdown = %s,
+                        updated_at = NOW()
+                    WHERE id = %s
+                """, (
+                    new_balance, new_cumulative_pnl, new_total_trades,
+                    new_margin_used, new_margin_available,
+                    new_high_water_mark, new_max_drawdown, account_id
+                ))
+
+                conn.commit()
+
+                return True, {
+                    'current_balance': new_balance,
+                    'cumulative_pnl': new_cumulative_pnl,
+                    'total_trades': new_total_trades,
+                    'margin_used': new_margin_used,
+                    'margin_available': new_margin_available,
+                    'high_water_mark': new_high_water_mark,
+                    'max_drawdown': new_max_drawdown,
+                    'starting_capital': starting_capital,
+                    'return_pct': (new_cumulative_pnl / starting_capital) * 100
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to update paper balance: {e}")
+            return False, {}
+
+    def reset_paper_account(self, starting_capital: float = 100000.0) -> bool:
+        """Reset paper trading account (for fresh start)"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Deactivate existing accounts
+                c.execute("UPDATE heracles_paper_account SET is_active = FALSE")
+
+                # Create new account
+                c.execute("""
+                    INSERT INTO heracles_paper_account (
+                        starting_capital, current_balance, cumulative_pnl,
+                        margin_available, high_water_mark
+                    ) VALUES (%s, %s, 0, %s, %s)
+                """, (starting_capital, starting_capital, starting_capital, starting_capital))
+
+                conn.commit()
+                logger.info(f"Paper trading account reset with ${starting_capital:,.2f}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to reset paper account: {e}")
+            return False
+
+    def get_paper_equity_curve(self, days: int = 30) -> List[Dict]:
+        """
+        Get paper trading equity curve using closed trades for cumulative P&L.
+
+        This calculates equity as: starting_capital + cumulative_realized_pnl + unrealized_pnl
+        """
+        data = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Get starting capital
+                account = self.get_paper_account()
+                starting_capital = account.get('starting_capital', 100000.0) if account else 100000.0
+
+                # Get daily cumulative P&L from closed trades
+                c.execute("""
+                    WITH daily_pnl AS (
+                        SELECT
+                            DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                            SUM(realized_pnl) as daily_realized_pnl,
+                            COUNT(*) as trades
+                        FROM heracles_closed_trades
+                        WHERE close_time >= NOW() - INTERVAL '%s days'
+                        GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                        ORDER BY trade_date
+                    )
+                    SELECT
+                        trade_date,
+                        daily_realized_pnl,
+                        trades,
+                        SUM(daily_realized_pnl) OVER (ORDER BY trade_date) as cumulative_pnl
+                    FROM daily_pnl
+                """, (days,))
+
+                rows = c.fetchall()
+
+                for row in rows:
+                    trade_date, daily_pnl, trades, cumulative_pnl = row
+                    equity = starting_capital + float(cumulative_pnl or 0)
+
+                    data.append({
+                        'date': trade_date.isoformat() if trade_date else None,
+                        'daily_pnl': float(daily_pnl or 0),
+                        'cumulative_pnl': float(cumulative_pnl or 0),
+                        'equity': equity,
+                        'trades': trades,
+                        'return_pct': (float(cumulative_pnl or 0) / starting_capital) * 100
+                    })
+
+        except Exception as e:
+            logger.error(f"Failed to get paper equity curve: {e}")
+
+        return data

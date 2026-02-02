@@ -352,3 +352,148 @@ async def get_heracles_market_status():
     except Exception as e:
         logger.error(f"Error getting market status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Paper Trading Account Endpoints
+# ============================================================================
+
+@router.get("/api/heracles/paper-account")
+async def get_heracles_paper_account():
+    """
+    Get HERACLES paper trading account status.
+
+    Returns current balance, cumulative P&L, margin usage,
+    and performance metrics for the virtual paper trading account.
+    """
+    try:
+        trader = _get_trader()
+        paper_account = trader.get_paper_account()
+
+        if not paper_account:
+            return {
+                "exists": False,
+                "message": "No paper trading account initialized. Call POST /api/heracles/paper-account/initialize to create one.",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        return {
+            "exists": True,
+            "account": paper_account,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting paper account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/heracles/paper-account/initialize")
+async def initialize_heracles_paper_account(
+    starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for paper trading")
+):
+    """
+    Initialize HERACLES paper trading account.
+
+    Creates a new paper trading account with the specified starting capital.
+    Default is $100,000.
+    """
+    try:
+        trader = _get_trader()
+        success = trader.db.initialize_paper_account(starting_capital)
+
+        if success:
+            paper_account = trader.get_paper_account()
+            return {
+                "success": True,
+                "message": f"Paper trading account initialized with ${starting_capital:,.2f}",
+                "account": paper_account,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to initialize paper account",
+                "timestamp": datetime.now().isoformat()
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error initializing paper account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/heracles/paper-account/reset")
+async def reset_heracles_paper_account(
+    starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for new account")
+):
+    """
+    Reset HERACLES paper trading account.
+
+    Deactivates current account and creates a fresh one.
+    WARNING: This will lose all paper trading history.
+    """
+    try:
+        trader = _get_trader()
+        success = trader.reset_paper_account(starting_capital)
+
+        if success:
+            paper_account = trader.get_paper_account()
+            return {
+                "success": True,
+                "message": f"Paper trading account reset with ${starting_capital:,.2f}",
+                "account": paper_account,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to reset paper account",
+                "timestamp": datetime.now().isoformat()
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting paper account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/heracles/paper-equity-curve")
+async def get_heracles_paper_equity_curve(
+    days: int = Query(30, ge=1, le=365, description="Number of days of history")
+):
+    """
+    Get HERACLES paper trading equity curve.
+
+    Shows daily equity progression calculated from cumulative P&L of closed trades.
+    Equity = Starting Capital + Cumulative Realized P&L
+    """
+    try:
+        trader = _get_trader()
+        curve = trader.db.get_paper_equity_curve(days=days)
+
+        # If no trades yet, return starting point
+        if not curve:
+            paper_account = trader.get_paper_account()
+            starting_capital = paper_account.get('starting_capital', 100000.0) if paper_account else 100000.0
+            curve = [{
+                'date': datetime.now().date().isoformat(),
+                'daily_pnl': 0.0,
+                'cumulative_pnl': 0.0,
+                'equity': starting_capital,
+                'trades': 0,
+                'return_pct': 0.0
+            }]
+
+        return {
+            "equity_curve": curve,
+            "points": len(curve),
+            "days": days,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting paper equity curve: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
