@@ -33,6 +33,7 @@ from . import pegasus_routes
 from . import daily_manna_routes
 from . import bot_reports_routes
 from . import tastytrade_routes
+from . import heracles_routes
 
 __all__ = [
     'vix_routes',
@@ -65,4 +66,5 @@ __all__ = [
     'daily_manna_routes',
     'bot_reports_routes',
     'tastytrade_routes',
+    'heracles_routes',
 ]
