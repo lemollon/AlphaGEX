@@ -123,8 +123,13 @@ class TastytradeExecutor:
         # Try Tastytrade first if credentials available
         if self._ensure_session():
             try:
+                # URL-encode the symbol - futures symbols like /MESH6 need encoding
+                # /MESH6 -> %2FMESH6 to avoid double-slash in URL path
+                from urllib.parse import quote
+                encoded_symbol = quote(symbol, safe='')
+
                 response = requests.get(
-                    f"{self.base_url}/market-data/quotes/{symbol}",
+                    f"{self.base_url}/market-data/quotes/{encoded_symbol}",
                     headers=self._get_headers(),
                     timeout=10
                 )
@@ -137,10 +142,11 @@ class TastytradeExecutor:
                         "ask": float(data.get("ask-price", 0)),
                         "last": float(data.get("last-price", 0)),
                         "volume": int(data.get("volume", 0)),
-                        "timestamp": datetime.now(CENTRAL_TZ).isoformat()
+                        "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+                        "source": "TASTYTRADE"
                     }
                 else:
-                    logger.warning(f"Quote not available via REST for {symbol}")
+                    logger.warning(f"Quote not available via REST for {symbol}: {response.status_code}")
             except Exception as e:
                 logger.warning(f"Error getting quote from Tastytrade: {e}")
 
