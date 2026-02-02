@@ -596,6 +596,7 @@ interface StatCardProps {
   icon?: React.ReactNode
   color?: 'green' | 'red' | 'yellow' | 'blue' | 'gray' | 'orange'
   className?: string
+  trend?: 'up' | 'down'
 }
 
 export function StatCard({
@@ -606,6 +607,7 @@ export function StatCard({
   icon,
   color = 'gray',
   className = '',
+  trend,
 }: StatCardProps) {
   const colorClasses = {
     green: 'text-green-400',
@@ -622,7 +624,16 @@ export function StatCard({
         <span className="text-xs text-gray-500 uppercase tracking-wide">{label}</span>
         {icon && <span className={colorClasses[color]}>{icon}</span>}
       </div>
-      <div className={`text-2xl font-bold ${colorClasses[color]}`}>{value}</div>
+      <div className={`text-2xl font-bold ${colorClasses[color]} flex items-center gap-2`}>
+        {value}
+        {trend && !change && (
+          trend === 'up' ? (
+            <TrendingUp className="w-4 h-4 text-green-400" />
+          ) : (
+            <TrendingDown className="w-4 h-4 text-red-400" />
+          )
+        )}
+      </div>
       {change !== undefined && (
         <div className="flex items-center gap-1 mt-1">
           {change >= 0 ? (
