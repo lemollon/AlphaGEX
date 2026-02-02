@@ -98,6 +98,12 @@ class HERACLESSignalGenerator:
             # Determine gamma regime
             gamma_regime = self._determine_gamma_regime(net_gex)
 
+            # Log signal generation context for debugging
+            logger.debug(
+                f"Signal generation: price={current_price:.2f}, flip={flip_point:.2f}, "
+                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}"
+            )
+
             # Generate signal based on regime
             if gamma_regime == GammaRegime.POSITIVE:
                 signal = self._generate_mean_reversion_signal(
@@ -111,6 +117,10 @@ class HERACLESSignalGenerator:
                 )
 
             if signal is None:
+                logger.debug(
+                    f"No signal generated: regime={gamma_regime.value}, "
+                    f"distance_from_flip={((current_price - flip_point) / flip_point) * 100:.2f}%"
+                )
                 return None
 
             # Calculate win probability
@@ -197,6 +207,11 @@ class HERACLESSignalGenerator:
         # Signal strength based on distance
         confidence = min(0.95, 0.5 + (abs(distance_pct) / 2))
 
+        logger.debug(
+            f"Mean reversion check: distance_pct={distance_pct:.2f}%, "
+            f"min_distance_pct={min_distance_pct}%, exceeds={abs(distance_pct) > min_distance_pct}"
+        )
+
         if distance_pct > min_distance_pct:
             # Price above flip - expect mean reversion down
             direction = TradeDirection.SHORT
@@ -265,6 +280,12 @@ class HERACLESSignalGenerator:
 
         # Need breakout through flip point plus ATR threshold
         breakout_threshold = atr * self.config.breakout_atr_threshold
+
+        logger.debug(
+            f"Momentum check: distance={distance_from_flip:.2f} pts, "
+            f"breakout_threshold={breakout_threshold:.2f} pts (ATR={atr:.2f}*{self.config.breakout_atr_threshold}), "
+            f"exceeds={abs(distance_from_flip) > breakout_threshold}"
+        )
 
         # Calculate distance to walls
         distance_to_call_wall = call_wall - current_price
