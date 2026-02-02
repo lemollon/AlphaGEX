@@ -1011,20 +1011,20 @@ class PrometheusICConfig:
     short_call_delta: float = 0.10  # ~10 delta for short call
     spread_width: float = 25.0      # $25 wide spreads on SPX
 
-    # Position sizing
-    max_positions: int = 3          # Max simultaneous IC positions
+    # Position sizing - AGGRESSIVE like PEGASUS
+    max_positions: int = 5          # Max simultaneous IC positions (same as PEGASUS)
     max_capital_per_trade_pct: float = 10.0  # Max 10% of borrowed capital per trade
-    max_daily_trades: int = 5       # Max trades per day
+    max_daily_trades: int = 0       # NO LIMIT - aggressive trading (0 = unlimited)
 
     # Risk management
     stop_loss_pct: float = 200.0    # Close if loss = 200% of credit
     profit_target_pct: float = 50.0 # Close if profit = 50% of credit
     time_stop_dte: int = 0          # Close at expiration
 
-    # Oracle integration
+    # Oracle integration - AGGRESSIVE thresholds like PEGASUS
     require_oracle_approval: bool = True
-    min_oracle_confidence: float = 0.6
-    min_win_probability: float = 0.50
+    min_oracle_confidence: float = 0.3   # Lowered to match PEGASUS min_ic_suitability
+    min_win_probability: float = 0.42    # Lowered to match PEGASUS (42%)
 
     # VIX filters
     min_vix: float = 12.0         # Don't trade if VIX too low (thin premiums)
@@ -1035,10 +1035,10 @@ class PrometheusICConfig:
     entry_end: str = "14:30"      # 2:30 PM CT (stop new trades before close)
     exit_by: str = "15:00"        # Exit all by 3:00 PM CT
 
-    # Cooldown
-    cooldown_after_loss_minutes: int = 30  # Wait after a loss
-    cooldown_after_win_minutes: int = 15   # Brief pause after win
-    cooldown_minutes_after_trade: int = 15  # General cooldown (used by trader)
+    # Cooldown - MINIMAL for aggressive trading
+    cooldown_after_loss_minutes: int = 5   # Brief pause after loss (was 30)
+    cooldown_after_win_minutes: int = 0    # No pause after win (was 15)
+    cooldown_minutes_after_trade: int = 5  # Minimal cooldown (was 15)
 
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)
@@ -1067,7 +1067,7 @@ class PrometheusICConfig:
             'sizing': {
                 'max_positions': self.max_positions,
                 'max_capital_per_trade_pct': self.max_capital_per_trade_pct,
-                'max_daily_trades': self.max_daily_trades,
+                'max_daily_trades': 'unlimited' if self.max_daily_trades == 0 else self.max_daily_trades,
             },
             'risk': {
                 'stop_loss_pct': self.stop_loss_pct,

@@ -1026,10 +1026,11 @@ class PrometheusICTrader:
         if len(open_positions) >= self.config.max_positions:
             return False
 
-        # Check daily limit
-        daily_trades = self.db.get_daily_ic_trades_count()
-        if daily_trades >= self.config.max_trades_per_day:
-            return False
+        # Check daily limit (0 = unlimited)
+        if self.config.max_trades_per_day > 0:
+            daily_trades = self.db.get_daily_ic_trades_count()
+            if daily_trades >= self.config.max_trades_per_day:
+                return False
 
         # Check cooldown
         if self._in_cooldown():
@@ -1048,9 +1049,11 @@ class PrometheusICTrader:
         if len(open_positions) >= self.config.max_positions:
             return f"At max positions ({self.config.max_positions})"
 
-        daily_trades = self.db.get_daily_ic_trades_count()
-        if daily_trades >= self.config.max_trades_per_day:
-            return f"Daily trade limit reached ({self.config.max_trades_per_day})"
+        # Check daily limit (0 = unlimited)
+        if self.config.max_trades_per_day > 0:
+            daily_trades = self.db.get_daily_ic_trades_count()
+            if daily_trades >= self.config.max_trades_per_day:
+                return f"Daily trade limit reached ({self.config.max_trades_per_day})"
 
         if self._in_cooldown():
             return "In cooldown period after recent trade"
@@ -1376,7 +1379,7 @@ class PrometheusICTrader:
             'available_capital': available_capital,
             'can_trade': can_trade,
             'daily_trades': self.db.get_daily_ic_trades_count(),
-            'max_daily_trades': self.config.max_trades_per_day,
+            'max_daily_trades': 'unlimited' if self.config.max_trades_per_day == 0 else self.config.max_trades_per_day,
             'last_updated': datetime.now(CENTRAL_TZ).isoformat(),
         }
 
