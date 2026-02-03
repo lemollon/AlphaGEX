@@ -1399,17 +1399,35 @@ async def get_ic_performance():
 
 
 @router.get("/ic/equity-curve")
-async def get_ic_equity_curve(limit: int = Query(100, ge=1, le=500)):
-    """Get IC trading equity curve data"""
+async def get_ic_equity_curve(
+    limit: int = Query(100, ge=1, le=500),
+    days: int = Query(None, ge=0, le=365, description="Filter to last N days. 0=today, None=all history")
+):
+    """
+    Get IC trading equity curve data.
+
+    Supports timeframe filtering for chart display:
+    - days=0: Today only (intraday)
+    - days=7: Last 7 days
+    - days=30: Last 30 days
+    - days=90: Last 90 days
+    - days=None: All history (default)
+    """
     if not PrometheusICTrader:
         raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
 
     try:
         trader = PrometheusICTrader()
-        curve = trader.get_equity_curve(limit)
+        # Get starting capital for response
+        ic_config = trader.db.load_ic_config()
+        starting_capital = ic_config.starting_capital
+
+        curve = trader.db.get_ic_equity_curve(limit=limit, days=days)
         return {
             "available": True,
             "count": len(curve),
+            "days": days,
+            "starting_capital": starting_capital,
             "data": curve,
         }
     except Exception as e:

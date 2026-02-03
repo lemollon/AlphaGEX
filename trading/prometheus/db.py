@@ -2484,7 +2484,7 @@ class PrometheusDatabase:
             logger.error(f"Error getting IC performance: {e}")
             return {}
 
-    def get_ic_equity_curve(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_ic_equity_curve(self, limit: int = 100, days: int = None) -> List[Dict[str, Any]]:
         """
         Get IC trading equity curve data.
 
@@ -2493,6 +2493,11 @@ class PrometheusDatabase:
         - Calculate running total across all trades
         - Only limit the OUTPUT, not the SQL query
         - Include equity (starting capital + cumulative)
+
+        Args:
+            limit: Maximum number of records to return (applied to output, not SQL)
+            days: If provided, filter to trades within last N days.
+                  0 = today only (intraday), None = all history
         """
         try:
             conn = self._get_connection()
@@ -2500,6 +2505,7 @@ class PrometheusDatabase:
 
             # CRITICAL: No LIMIT in SQL - query ALL closed trades
             # Then filter output only (per STANDARDS.md)
+            # Date filtering happens AFTER cumulative calculation for accuracy
             cursor.execute("""
                 SELECT
                     close_time,
@@ -2520,16 +2526,35 @@ class PrometheusDatabase:
             cumulative_pnl = 0
             equity_curve = []
 
-            # Calculate cumulative across ALL trades
+            # Calculate date cutoff if days parameter provided
+            date_cutoff = None
+            if days is not None:
+                if days == 0:
+                    # Today only - use start of today in Central Time
+                    today = datetime.now(CENTRAL_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+                    date_cutoff = today
+                else:
+                    date_cutoff = datetime.now(CENTRAL_TZ) - timedelta(days=days)
+
+            # Calculate cumulative across ALL trades for accuracy
+            # But only include trades within date range in output
             for row in rows:
-                cumulative_pnl += float(row[1] or 0)
-                equity_curve.append({
-                    'time': row[0].isoformat() if row[0] else None,
-                    'trade_pnl': float(row[1] or 0),
-                    'cumulative_pnl': cumulative_pnl,
-                    'equity': starting_capital + cumulative_pnl,
-                    'position_id': row[2],
-                })
+                trade_time = row[0]
+                trade_pnl = float(row[1] or 0)
+
+                # Always add to cumulative (for accuracy)
+                cumulative_pnl += trade_pnl
+
+                # Only include in output if within date range
+                if date_cutoff is None or (trade_time and trade_time >= date_cutoff):
+                    equity_curve.append({
+                        'time': trade_time.isoformat() if trade_time else None,
+                        'date': trade_time.strftime('%Y-%m-%d') if trade_time else None,
+                        'trade_pnl': trade_pnl,
+                        'cumulative_pnl': cumulative_pnl,
+                        'equity': starting_capital + cumulative_pnl,
+                        'position_id': row[2],
+                    })
 
             # Limit OUTPUT only (return most recent points)
             return equity_curve[-limit:] if len(equity_curve) > limit else equity_curve
