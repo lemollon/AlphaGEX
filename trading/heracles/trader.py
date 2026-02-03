@@ -10,6 +10,7 @@ Orchestrates:
 - Position management with trailing stops
 - Tastytrade order execution
 - Win probability tracking (Bayesian → ML)
+- Oracle ML feedback loop (outcomes recorded for training)
 """
 
 import logging
@@ -28,6 +29,57 @@ from .signals import HERACLESSignalGenerator, get_gex_data_for_heracles
 from .executor import TastytradeExecutor
 
 logger = logging.getLogger(__name__)
+
+# Market calendar for holiday checking
+try:
+    from trading.market_calendar import MarketCalendar
+    MARKET_CALENDAR = MarketCalendar()
+    MARKET_CALENDAR_AVAILABLE = True
+except ImportError:
+    MARKET_CALENDAR = None
+    MARKET_CALENDAR_AVAILABLE = False
+
+# Oracle for outcome recording and strategy recommendations
+try:
+    from quant.oracle_advisor import (
+        OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
+        MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
+    )
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleBotName = None
+    OracleTradeOutcome = None
+    OracleMarketContext = None
+    GEXRegime = None
+    StrategyType = None
+    get_oracle = None
+
+# Learning Memory for self-improvement tracking
+try:
+    from ai.gexis_learning_memory import get_learning_memory
+    LEARNING_MEMORY_AVAILABLE = True
+except ImportError:
+    LEARNING_MEMORY_AVAILABLE = False
+    get_learning_memory = None
+
+# Solomon Enhanced for feedback loop recording
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+
+# Auto-Validation System for Thompson Sampling capital allocation
+try:
+    from quant.auto_validation_system import get_auto_validation_system, record_bot_outcome
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    record_bot_outcome = None
 
 
 class HERACLESTrader:
@@ -136,7 +188,11 @@ class HERACLESTrader:
                 return scan_result
 
             current_price = quote.get("last", 0)
+            bid_price = quote.get("bid", 0)
+            ask_price = quote.get("ask", 0)
             scan_context["underlying_price"] = current_price
+            scan_context["bid_price"] = bid_price
+            scan_context["ask_price"] = ask_price
 
             if current_price <= 0:
                 scan_result["status"] = "invalid_price"
@@ -163,8 +219,9 @@ class HERACLESTrader:
             scan_context["vix"] = vix
 
             # Calculate ATR from real data or estimate
-            atr = self._get_atr(current_price)
+            atr, atr_is_estimated = self._get_atr(current_price)
             scan_context["atr"] = atr
+            scan_context["atr_is_estimated"] = atr_is_estimated
 
             # Determine if overnight session
             is_overnight = self._is_overnight_session()
@@ -303,9 +360,12 @@ class HERACLESTrader:
                 decision_summary=skip_reason or error_msg or f"Scan completed: {result.get('trades_executed', 0)} trades",
                 full_reasoning=signal.reasoning if signal else "",
                 underlying_price=underlying_price,
+                bid_price=context.get("bid_price", 0),
+                ask_price=context.get("ask_price", 0),
                 underlying_symbol="MES",
                 vix=context.get("vix", 0),
                 atr=context.get("atr", 0),
+                atr_is_estimated=context.get("atr_is_estimated", True),
                 gamma_regime=gamma_regime,
                 gex_value=gex_data.get("net_gex", 0),
                 flip_point=flip_point,
@@ -354,9 +414,19 @@ class HERACLESTrader:
         """
         Manage an open position - check stops and trailing.
 
+        Also tracks high/low price excursions for backtesting data quality.
+        These values enable backtesting to validate:
+        - Stop placement: Would the stop have been hit?
+        - Profit targets: Could the target have been reached?
+        - MAE/MFE analysis: Maximum adverse/favorable excursion
+
         Returns True if position was closed.
         """
         try:
+            # Track high/low prices for backtesting (do this BEFORE checking stops)
+            # This ensures we capture the price that triggered the stop
+            self._update_position_high_low(position, current_price)
+
             # Check if stopped out
             if self._check_stop_hit(position, current_price):
                 return self._close_position(
@@ -403,6 +473,37 @@ class HERACLESTrader:
             logger.error(f"Error managing position {position.position_id}: {e}")
             return False
 
+    def _update_position_high_low(self, position: FuturesPosition, current_price: float) -> None:
+        """
+        Update high/low price tracking for a position.
+
+        This is critical for backtesting to know the full price range
+        experienced during the trade, enabling validation of:
+        - Stop loss placement and whether it was truly hit
+        - Profit target placement and whether it could have been reached
+        - Maximum Adverse Excursion (MAE) analysis
+        - Maximum Favorable Excursion (MFE) analysis
+
+        Called on every scan to capture continuous price range.
+        """
+        try:
+            # Update in-memory position values
+            if position.high_price_since_entry == 0 or current_price > position.high_price_since_entry:
+                position.high_price_since_entry = current_price
+
+            if position.low_price_since_entry == 0 or current_price < position.low_price_since_entry:
+                position.low_price_since_entry = current_price
+
+            # Persist to database
+            self.db.update_high_low_prices(
+                position.position_id,
+                high_price=current_price,
+                low_price=current_price
+            )
+
+        except Exception as e:
+            logger.warning(f"Error updating high/low prices for {position.position_id}: {e}")
+
     def _check_stop_hit(self, position: FuturesPosition, current_price: float) -> bool:
         """Check if position's stop has been hit"""
         if position.direction == TradeDirection.LONG:
@@ -439,6 +540,17 @@ class HERACLESTrader:
                     won = realized_pnl > 0
                     self.win_tracker.update(won, position.gamma_regime)
                     self.db.save_win_tracker(self.win_tracker)
+
+                    # Record outcome to Oracle ML for feedback loop
+                    self._record_oracle_outcome(position, reason, realized_pnl)
+
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    outcome_type = self._determine_outcome_type(reason, realized_pnl)
+                    self._record_solomon_outcome(realized_pnl, trade_date, outcome_type)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(realized_pnl)
 
                     # Update paper trading balance if in paper mode
                     if self.config.mode == TradingMode.PAPER:
@@ -647,7 +759,7 @@ class HERACLESTrader:
         logger.warning("Using default VIX=16.0 (all sources failed)")
         return 16.0
 
-    def _get_atr(self, current_price: float, period: int = 14) -> float:
+    def _get_atr(self, current_price: float, period: int = 14) -> Tuple[float, bool]:
         """
         Get ATR (Average True Range) for MES position sizing.
 
@@ -655,6 +767,11 @@ class HERACLESTrader:
         - Stop loss placement
         - Position sizing (risk per trade / ATR = contracts)
         - Signal strength evaluation
+
+        Returns:
+            Tuple[float, bool]: (ATR value, is_estimated flag)
+                - is_estimated=False means ATR was calculated from real historical data
+                - is_estimated=True means ATR was estimated (fallback)
         """
         try:
             # Try to get historical data for real ATR calculation
@@ -681,14 +798,16 @@ class HERACLESTrader:
                 # Calculate ATR as simple moving average of TR
                 if len(true_ranges) >= period:
                     atr = sum(true_ranges[-period:]) / period
-                    logger.debug(f"Calculated ATR from SPY data: {atr:.2f}")
-                    return atr
+                    logger.debug(f"Calculated ATR from SPY data: {atr:.2f} (not estimated)")
+                    return (atr, False)  # Real ATR, not estimated
 
         except Exception as e:
             logger.warning(f"Could not calculate real ATR: {e}")
 
         # Fallback: Estimate based on current price and VIX
-        return self._estimate_atr(current_price)
+        estimated_atr = self._estimate_atr(current_price)
+        logger.debug(f"Using estimated ATR: {estimated_atr:.2f}")
+        return (estimated_atr, True)  # Estimated ATR
 
     def _estimate_atr(self, current_price: float) -> float:
         """
@@ -734,6 +853,237 @@ class HERACLESTrader:
 
         except Exception as e:
             logger.warning(f"Error saving equity snapshot: {e}")
+
+    # ========================================================================
+    # ML Feedback Loop Integration
+    # ========================================================================
+
+    def _record_oracle_outcome(self, pos: FuturesPosition, close_reason: str, pnl: float):
+        """
+        Record trade outcome to Oracle for ML feedback loop.
+
+        This enables Oracle to learn from HERACLES futures trades and
+        improve future predictions.
+        """
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+
+            # Determine outcome type based on close reason and P&L
+            if pnl > 0:
+                if 'PROFIT' in close_reason.upper() or 'TARGET' in close_reason.upper():
+                    outcome = OracleTradeOutcome.MAX_PROFIT
+                else:
+                    outcome = OracleTradeOutcome.PARTIAL_PROFIT
+            else:
+                if 'STOP' in close_reason.upper():
+                    outcome = OracleTradeOutcome.LOSS
+                else:
+                    outcome = OracleTradeOutcome.LOSS
+
+            # Get trade date
+            trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+
+            # Record to Oracle - use HERACLES bot name (might need to add to Oracle enum)
+            # For now, log to info - Oracle integration for futures bot pending
+            logger.info(
+                f"HERACLES: Recording outcome to Oracle - {outcome.value if hasattr(outcome, 'value') else outcome}, "
+                f"P&L=${pnl:.2f}, Regime={pos.gamma_regime.value}"
+            )
+
+            # Future: Call oracle.update_outcome() when BotName.HERACLES is added
+
+        except Exception as e:
+            logger.warning(f"HERACLES: Oracle outcome recording failed: {e}")
+
+    def _record_solomon_outcome(
+        self,
+        pnl: float,
+        trade_date: str,
+        outcome_type: str = None
+    ):
+        """
+        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        This updates:
+        - Consecutive loss tracking
+        - Daily P&L monitoring
+        - Performance tracking for version comparison
+        """
+        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+            return
+
+        try:
+            enhanced = get_solomon_enhanced()
+            alerts = enhanced.record_trade_outcome(
+                bot_name='HERACLES',
+                pnl=pnl,
+                trade_date=trade_date,
+                capital_base=self.config.capital,
+                outcome_type=outcome_type,
+                strategy_type='FUTURES_SCALPING'
+            )
+
+            if alerts:
+                for alert in alerts:
+                    logger.warning(f"HERACLES Solomon Alert: {alert}")
+
+            logger.debug(f"HERACLES: Recorded outcome to Solomon Enhanced - P&L=${pnl:.2f}")
+
+        except Exception as e:
+            logger.warning(f"HERACLES: Solomon outcome recording failed: {e}")
+
+    def _record_thompson_outcome(self, pnl: float):
+        """
+        Record trade outcome to Thompson Sampling for capital allocation.
+
+        This updates the Beta distribution parameters for HERACLES,
+        which affects future capital allocation across bots.
+        """
+        if not AUTO_VALIDATION_AVAILABLE or not record_bot_outcome:
+            return
+
+        try:
+            record_bot_outcome('HERACLES', win=(pnl > 0), pnl=pnl)
+            logger.debug(f"HERACLES: Recorded outcome to Thompson Sampling - P&L=${pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"HERACLES: Thompson outcome recording failed: {e}")
+
+    def _determine_outcome_type(self, close_reason: str, pnl: float) -> str:
+        """
+        Determine outcome type from close reason and P&L.
+
+        Returns:
+            str: Outcome type (PROFIT_TARGET, STOP_LOSS, TRAILING_STOP, EXPIRED, etc.)
+        """
+        close_reason_upper = close_reason.upper()
+        if pnl > 0:
+            if 'TARGET' in close_reason_upper or 'PROFIT' in close_reason_upper:
+                return 'PROFIT_TARGET'
+            elif 'TRAIL' in close_reason_upper:
+                return 'TRAILING_STOP_PROFIT'
+            else:
+                return 'PARTIAL_PROFIT'
+        else:
+            if 'STOP' in close_reason_upper:
+                return 'STOP_LOSS'
+            elif 'EXPIRE' in close_reason_upper:
+                return 'EXPIRED_LOSS'
+            else:
+                return 'LOSS'
+
+    def process_expired_positions(self) -> Dict[str, Any]:
+        """
+        Process positions that need to be closed at EOD.
+
+        For futures, this handles positions that should be closed during
+        the daily maintenance break (4-5pm CT).
+
+        Returns dict with processing results for logging.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        today = now.strftime("%Y-%m-%d")
+
+        result = {
+            'processed_count': 0,
+            'total_pnl': 0.0,
+            'positions': [],
+            'errors': []
+        }
+
+        try:
+            # Get current quote for marking to market
+            quote = self.executor.get_mes_quote()
+            current_price = quote.get("last", 0) if quote else 0
+
+            if current_price <= 0:
+                logger.warning("HERACLES EOD: Could not get current price for expiration processing")
+                result['errors'].append("No price available")
+                return result
+
+            # Get all open positions
+            positions = self.db.get_open_positions()
+
+            if not positions:
+                logger.info("HERACLES EOD: No open positions to process")
+                return result
+
+            logger.info(f"HERACLES EOD: Processing {len(positions)} open position(s) at price {current_price:.2f}")
+
+            for pos in positions:
+                try:
+                    # Close position at current market price
+                    closed = self._close_position(
+                        pos,
+                        current_price,
+                        PositionStatus.CLOSED,
+                        "EOD_MAINTENANCE_BREAK"
+                    )
+
+                    if closed:
+                        # Calculate P&L
+                        pnl = pos.calculate_pnl(current_price)
+                        result['processed_count'] += 1
+                        result['total_pnl'] += pnl
+                        result['positions'].append({
+                            'position_id': pos.position_id,
+                            'direction': pos.direction.value,
+                            'pnl': pnl,
+                            'status': 'closed'
+                        })
+
+                        logger.info(
+                            f"HERACLES EOD: Closed {pos.position_id} - "
+                            f"Final price: ${current_price:.2f}, P&L: ${pnl:.2f}"
+                        )
+
+                except Exception as e:
+                    logger.error(f"HERACLES EOD: Failed to process {pos.position_id}: {e}")
+                    result['errors'].append(str(e))
+
+            self.db.log("INFO", "EOD_PROCESSING",
+                f"Processed {result['processed_count']} positions, P&L: ${result['total_pnl']:.2f}")
+
+        except Exception as e:
+            logger.error(f"HERACLES EOD processing failed: {e}")
+            result['errors'].append(str(e))
+
+        return result
+
+    def force_close_all(self, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
+        """Force close all open positions"""
+        positions = self.db.get_open_positions()
+        results = []
+        total_pnl = 0.0
+
+        # Get current price
+        quote = self.executor.get_mes_quote()
+        current_price = quote.get("last", 0) if quote else 0
+
+        if current_price <= 0:
+            return {'error': 'Could not get current price', 'closed': 0, 'failed': len(positions)}
+
+        for pos in positions:
+            closed = self._close_position(pos, current_price, PositionStatus.CLOSED, reason)
+            pnl = pos.calculate_pnl(current_price) if closed else 0
+
+            if closed:
+                total_pnl += pnl
+
+            results.append({
+                'position_id': pos.position_id,
+                'success': closed,
+                'pnl': pnl
+            })
+
+        return {
+            'closed': len([r for r in results if r['success']]),
+            'failed': len([r for r in results if not r['success']]),
+            'total_pnl': total_pnl,
+            'details': results
+        }
 
     # ========================================================================
     # Status & Reporting

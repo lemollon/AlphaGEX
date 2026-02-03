@@ -115,6 +115,8 @@ class HERACLESDatabase:
                         realized_pnl DECIMAL(12, 2),
                         high_water_mark DECIMAL(12, 4),
                         max_adverse_excursion DECIMAL(12, 4),
+                        high_price_since_entry DECIMAL(12, 4),
+                        low_price_since_entry DECIMAL(12, 4),
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                     )
@@ -142,6 +144,8 @@ class HERACLESDatabase:
                         open_time TIMESTAMP WITH TIME ZONE NOT NULL,
                         close_time TIMESTAMP WITH TIME ZONE NOT NULL,
                         hold_duration_minutes INTEGER,
+                        high_price_since_entry DECIMAL(12, 4),
+                        low_price_since_entry DECIMAL(12, 4),
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                     )
                 """)
@@ -271,9 +275,12 @@ class HERACLESDatabase:
 
                         -- Market conditions (ML features)
                         underlying_price DECIMAL(12, 4),
+                        bid_price DECIMAL(12, 4),
+                        ask_price DECIMAL(12, 4),
                         underlying_symbol VARCHAR(20),
                         vix DECIMAL(6, 2),
                         atr DECIMAL(10, 4),
+                        atr_is_estimated BOOLEAN DEFAULT FALSE,
 
                         -- GEX context (ML features)
                         gamma_regime VARCHAR(20),
@@ -354,6 +361,10 @@ class HERACLESDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
 
+                # Initialize high/low prices to entry price if not set
+                high_price = position.high_price_since_entry if position.high_price_since_entry > 0 else position.entry_price
+                low_price = position.low_price_since_entry if position.low_price_since_entry > 0 else position.entry_price
+
                 c.execute("""
                     INSERT INTO heracles_positions (
                         position_id, symbol, direction, contracts,
@@ -362,10 +373,11 @@ class HERACLESDatabase:
                         flip_point, call_wall, put_wall, vix_at_entry, atr_at_entry,
                         signal_source, signal_confidence, win_probability, trade_reasoning,
                         order_id, scan_id, status, open_time, close_time, close_price,
-                        close_reason, realized_pnl, high_water_mark, max_adverse_excursion
+                        close_reason, realized_pnl, high_water_mark, max_adverse_excursion,
+                        high_price_since_entry, low_price_since_entry
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (position_id) DO UPDATE SET
                         current_stop = EXCLUDED.current_stop,
@@ -410,6 +422,8 @@ class HERACLESDatabase:
                     _to_python(position.realized_pnl),
                     _to_python(position.high_water_mark),
                     _to_python(position.max_adverse_excursion),
+                    _to_python(high_price),
+                    _to_python(low_price),
                 ))
 
                 conn.commit()
@@ -507,8 +521,9 @@ class HERACLESDatabase:
                         entry_price, exit_price, realized_pnl, gamma_regime,
                         signal_source, signal_confidence, win_probability,
                         vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
-                        open_time, close_time, hold_duration_minutes
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        open_time, close_time, hold_duration_minutes,
+                        high_price_since_entry, low_price_since_entry
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (position_id) DO NOTHING
                 """, (
                     position_id, position.symbol, position.direction.value,
@@ -518,7 +533,9 @@ class HERACLESDatabase:
                     _to_python(position.signal_confidence), _to_python(position.win_probability),
                     _to_python(position.vix_at_entry), _to_python(position.atr_at_entry),
                     close_reason, position.trade_reasoning,
-                    position.open_time, now, hold_duration
+                    position.open_time, now, hold_duration,
+                    _to_python(position.high_price_since_entry) if position.high_price_since_entry > 0 else None,
+                    _to_python(position.low_price_since_entry) if position.low_price_since_entry > 0 else None
                 ))
 
                 conn.commit()
@@ -550,6 +567,169 @@ class HERACLESDatabase:
                 return True
         except Exception as e:
             logger.error(f"Failed to update stop for {position_id}: {e}")
+            return False
+
+    def update_high_low_prices(
+        self,
+        position_id: str,
+        high_price: Optional[float] = None,
+        low_price: Optional[float] = None
+    ) -> bool:
+        """
+        Update high/low price excursions for a position.
+
+        This tracks the highest and lowest prices reached since entry,
+        which is essential for backtesting to validate:
+        - Stop placement: Would the stop have been hit?
+        - Profit targets: Could the target have been reached?
+        - MAE/MFE analysis: Maximum adverse/favorable excursion
+
+        Args:
+            position_id: Position to update
+            high_price: New high price (only updates if higher than existing)
+            low_price: New low price (only updates if lower than existing)
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Build dynamic update based on which values are provided
+                updates = []
+                params = []
+
+                if high_price is not None:
+                    # Only update if new high is greater than current high
+                    updates.append("""
+                        high_price_since_entry = CASE
+                            WHEN high_price_since_entry IS NULL OR %s > high_price_since_entry
+                            THEN %s
+                            ELSE high_price_since_entry
+                        END
+                    """)
+                    params.extend([_to_python(high_price), _to_python(high_price)])
+
+                if low_price is not None:
+                    # Only update if new low is less than current low
+                    updates.append("""
+                        low_price_since_entry = CASE
+                            WHEN low_price_since_entry IS NULL OR %s < low_price_since_entry
+                            THEN %s
+                            ELSE low_price_since_entry
+                        END
+                    """)
+                    params.extend([_to_python(low_price), _to_python(low_price)])
+
+                if not updates:
+                    return True  # Nothing to update
+
+                updates.append("updated_at = NOW()")
+                params.append(position_id)
+
+                sql = f"""
+                    UPDATE heracles_positions
+                    SET {', '.join(updates)}
+                    WHERE position_id = %s
+                """
+                c.execute(sql, params)
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to update high/low prices for {position_id}: {e}")
+            return False
+
+    def get_position_count(self) -> int:
+        """Get count of open positions"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM heracles_positions WHERE status = 'open'")
+                result = c.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Failed to get position count: {e}")
+            return 0
+
+    def get_trades_today_count(self) -> int:
+        """Get count of trades executed today"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                c.execute("""
+                    SELECT COUNT(*) FROM heracles_closed_trades
+                    WHERE DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                """, (today,))
+                result = c.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Failed to get trades today count: {e}")
+            return 0
+
+    def expire_position(
+        self,
+        position_id: str,
+        realized_pnl: float,
+        close_price: float
+    ) -> bool:
+        """
+        Mark a position as expired (EOD processing).
+
+        Different from close_position in that:
+        - Reason is always 'EXPIRED' or 'EOD_MAINTENANCE'
+        - Status is set to 'expired' instead of 'closed'
+        """
+        try:
+            position = self.get_position_by_id(position_id)
+            if not position:
+                return False
+
+            with db_connection() as conn:
+                c = conn.cursor()
+                now = datetime.now(CENTRAL_TZ)
+
+                # Update position
+                c.execute("""
+                    UPDATE heracles_positions
+                    SET status = 'expired', close_time = %s, close_price = %s,
+                        close_reason = 'EOD_EXPIRED', realized_pnl = %s, updated_at = NOW()
+                    WHERE position_id = %s
+                """, (now, _to_python(close_price), _to_python(realized_pnl), position_id))
+
+                # Insert into closed trades
+                hold_duration = int((now - position.open_time).total_seconds() / 60) if position.open_time else 0
+
+                c.execute("""
+                    INSERT INTO heracles_closed_trades (
+                        position_id, symbol, direction, contracts,
+                        entry_price, exit_price, realized_pnl, gamma_regime,
+                        signal_source, signal_confidence, win_probability,
+                        vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
+                        open_time, close_time, hold_duration_minutes
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (position_id) DO NOTHING
+                """, (
+                    position_id, position.symbol, position.direction.value,
+                    position.contracts, _to_python(position.entry_price),
+                    _to_python(close_price), _to_python(realized_pnl),
+                    position.gamma_regime.value, position.signal_source.value,
+                    _to_python(position.signal_confidence), _to_python(position.win_probability),
+                    _to_python(position.vix_at_entry), _to_python(position.atr_at_entry),
+                    'EOD_EXPIRED', position.trade_reasoning,
+                    position.open_time, now, hold_duration
+                ))
+
+                conn.commit()
+                logger.info(f"Expired position {position_id}: P&L=${realized_pnl:.2f}")
+
+                # Update scan activity with outcome for ML training
+                if position.scan_id:
+                    outcome = "WIN" if realized_pnl > 0 else "LOSS"
+                    self.update_scan_outcome(position.scan_id, outcome, realized_pnl)
+
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to expire position {position_id}: {e}")
             return False
 
     def _row_to_position(self, data: Dict) -> FuturesPosition:
@@ -586,6 +766,8 @@ class HERACLESDatabase:
             realized_pnl=float(data.get('realized_pnl') or 0),
             high_water_mark=float(data.get('high_water_mark') or 0),
             max_adverse_excursion=float(data.get('max_adverse_excursion') or 0),
+            high_price_since_entry=float(data.get('high_price_since_entry') or 0),
+            low_price_since_entry=float(data.get('low_price_since_entry') or 0),
         )
 
     # ========================================================================
@@ -1336,9 +1518,12 @@ class HERACLESDatabase:
         decision_summary: str = "",
         full_reasoning: str = "",
         underlying_price: float = 0,
+        bid_price: float = 0,
+        ask_price: float = 0,
         underlying_symbol: str = "MES",
         vix: float = 0,
         atr: float = 0,
+        atr_is_estimated: bool = False,
         gamma_regime: str = "",
         gex_value: float = 0,
         flip_point: float = 0,
@@ -1392,7 +1577,8 @@ class HERACLESDatabase:
                 c.execute("""
                     INSERT INTO heracles_scan_activity (
                         scan_id, scan_number, outcome, action_taken, decision_summary,
-                        full_reasoning, underlying_price, underlying_symbol, vix, atr,
+                        full_reasoning, underlying_price, bid_price, ask_price,
+                        underlying_symbol, vix, atr, atr_is_estimated,
                         gamma_regime, gex_value, flip_point, call_wall, put_wall,
                         distance_to_flip_pct, distance_to_call_wall_pct, distance_to_put_wall_pct,
                         signal_direction, signal_source, signal_confidence, signal_win_probability,
@@ -1405,13 +1591,14 @@ class HERACLESDatabase:
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (scan_id) DO NOTHING
                 """, (
                     scan_id, scan_number, outcome, action_taken, decision_summary,
-                    full_reasoning, _to_python(underlying_price), underlying_symbol,
-                    _to_python(vix), _to_python(atr),
+                    full_reasoning, _to_python(underlying_price),
+                    _to_python(bid_price), _to_python(ask_price), underlying_symbol,
+                    _to_python(vix), _to_python(atr), atr_is_estimated,
                     gamma_regime, _to_python(gex_value), _to_python(flip_point),
                     _to_python(call_wall), _to_python(put_wall),
                     _to_python(distance_to_flip_pct), _to_python(distance_to_call_wall_pct),

@@ -495,6 +495,7 @@ async def get_heracles_scan_activity(
         no_trade_count = len([s for s in scans if s.get('outcome') == 'NO_TRADE'])
         skip_count = len([s for s in scans if s.get('outcome') == 'SKIP'])
         error_count = len([s for s in scans if s.get('outcome') == 'ERROR'])
+        market_closed_count = len([s for s in scans if s.get('outcome') == 'MARKET_CLOSED'])
 
         return {
             "scans": scans,
@@ -504,6 +505,7 @@ async def get_heracles_scan_activity(
                 "no_trade": no_trade_count,
                 "skip": skip_count,
                 "error": error_count,
+                "market_closed": market_closed_count,
                 "trade_rate_pct": (traded_count / total_scans * 100) if total_scans > 0 else 0
             },
             "timestamp": datetime.now().isoformat()
@@ -589,4 +591,173 @@ async def get_heracles_paper_equity_curve(
         raise
     except Exception as e:
         logger.error(f"Error getting paper equity curve: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Trading Control Endpoints
+# ============================================================================
+
+@router.post("/api/heracles/run-cycle")
+async def run_heracles_cycle():
+    """
+    Manually trigger a HERACLES trading cycle.
+
+    Runs a full trading scan, checking for signals and managing positions.
+    Equivalent to /scan but named for consistency with other bots.
+    """
+    try:
+        if run_heracles_scan is None:
+            raise HTTPException(
+                status_code=503,
+                detail="HERACLES module not available"
+            )
+
+        result = run_heracles_scan()
+        return {
+            "success": True,
+            "action": "run_cycle",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error running HERACLES cycle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/heracles/force-close-all")
+async def force_close_all_heracles_positions(
+    reason: str = Query("MANUAL_CLOSE", description="Reason for force close")
+):
+    """
+    Force close all open HERACLES positions.
+
+    Immediately closes all open positions at current market price.
+    Use with caution - this is an emergency action.
+    """
+    try:
+        trader = _get_trader()
+        result = trader.force_close_all(reason=reason)
+        return {
+            "success": True,
+            "action": "force_close_all",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error force closing HERACLES positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/heracles/process-expired")
+async def process_expired_heracles_positions():
+    """
+    Manually trigger EOD position processing.
+
+    Closes any open positions at current market price.
+    Normally called automatically by scheduler at 4:00 PM CT.
+    """
+    try:
+        trader = _get_trader()
+        result = trader.process_expired_positions()
+        return {
+            "success": True,
+            "action": "process_expired",
+            "result": result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing expired positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Diagnostics Endpoint
+# ============================================================================
+
+@router.get("/api/heracles/diagnostics")
+async def get_heracles_diagnostics():
+    """
+    Get comprehensive HERACLES system diagnostics.
+
+    Includes:
+    - Bot status and configuration
+    - Execution capability
+    - Database connectivity
+    - Market connectivity
+    - Position health
+    - Performance metrics
+    """
+    try:
+        trader = _get_trader()
+        status = trader.get_status()
+
+        # Check execution capability
+        execution_status = {}
+        try:
+            execution_status = {
+                "can_connect": trader.executor.session is not None if hasattr(trader.executor, 'session') else False,
+                "auth_method": trader.executor.auth_method if hasattr(trader.executor, 'auth_method') else "UNKNOWN",
+                "market_open": trader.executor.is_market_open() if hasattr(trader.executor, 'is_market_open') else False
+            }
+        except Exception as e:
+            execution_status = {"error": str(e)}
+
+        # Check database connectivity
+        db_status = {}
+        try:
+            position_count = trader.db.get_position_count()
+            trades_today = trader.db.get_trades_today_count()
+            db_status = {
+                "connected": True,
+                "position_count": position_count,
+                "trades_today": trades_today
+            }
+        except Exception as e:
+            db_status = {"connected": False, "error": str(e)}
+
+        # Get current quote
+        quote_status = {}
+        try:
+            quote = trader.executor.get_mes_quote()
+            if quote:
+                quote_status = {
+                    "available": True,
+                    "last": quote.get("last", 0),
+                    "bid": quote.get("bid", 0),
+                    "ask": quote.get("ask", 0)
+                }
+            else:
+                quote_status = {"available": False, "error": "No quote returned"}
+        except Exception as e:
+            quote_status = {"available": False, "error": str(e)}
+
+        return {
+            "bot_name": "HERACLES",
+            "mode": status.get("mode", "UNKNOWN"),
+            "status": status.get("status", "UNKNOWN"),
+            "execution": execution_status,
+            "database": db_status,
+            "market_data": quote_status,
+            "config": status.get("config", {}),
+            "performance": status.get("performance", {}),
+            "win_tracker": status.get("win_tracker", {}),
+            "positions": {
+                "open_count": len(status.get("positions", {}).get("positions", [])),
+                "positions": status.get("positions", {}).get("positions", [])
+            },
+            "paper_account": status.get("paper_account", {}),
+            "last_scan": status.get("last_scan"),
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting HERACLES diagnostics: {e}")
         raise HTTPException(status_code=500, detail=str(e))

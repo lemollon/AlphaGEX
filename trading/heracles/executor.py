@@ -761,3 +761,22 @@ class TastytradeExecutor:
             return False, f"Insufficient margin: need ${required_margin:.2f}, have ${account_balance:.2f}"
 
         return True, "Validation passed"
+
+    def get_execution_status(self) -> Dict[str, Any]:
+        """
+        Get current execution capability status.
+
+        Returns dict with:
+        - can_execute: Whether orders can be executed
+        - auth_method: Authentication method being used
+        - session_active: Whether session is authenticated
+        - market_open: Whether futures market is open
+        - init_error: Any initialization error message
+        """
+        return {
+            "can_execute": self.session is not None,
+            "auth_method": self.auth_method,
+            "session_active": self.session is not None,
+            "market_open": self.is_market_open(),
+            "init_error": None if self.session else "No active session - check credentials"
+        }

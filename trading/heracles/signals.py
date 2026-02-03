@@ -376,12 +376,12 @@ class HERACLESSignalGenerator:
         """
         Set stop loss levels based on config.
 
-        Uses ATR-adjusted stops if ATR is available, otherwise fixed points.
+        For scalping, use FIXED tight stops (3 points = $15 per contract).
+        ATR-based stops are too wide for MES scalping.
         """
-        # Use larger of ATR-based or fixed stop
-        atr_stop = atr * self.config.atr_multiplier if atr > 0 else 0
-        fixed_stop = self.config.initial_stop_points
-        stop_distance = max(atr_stop, fixed_stop)
+        # Use fixed stop for scalping - tight stops are essential
+        # ATR-based stops were causing 42-point stops (way too wide)
+        stop_distance = self.config.initial_stop_points  # 3 points = $15
 
         if signal.direction == TradeDirection.LONG:
             signal.stop_price = signal.entry_price - stop_distance
