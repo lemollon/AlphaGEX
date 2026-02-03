@@ -2369,13 +2369,19 @@ export default function PrometheusBoxDashboard() {
                   )}
                 </div>
 
-                {/* IC Equity Curve - HERACLES-style with timeframe toggles */}
-                <div className="bg-gray-800 rounded-lg p-6">
+                {/* IC TRADING Equity Curve - SHORT-TERM AGGRESSIVE (like PEGASUS) */}
+                <div className="bg-gray-800 rounded-lg p-6 border-l-4 border-green-500">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold flex items-center gap-2">
-                      <span className="text-2xl">📈</span>
-                      Equity Curve ({selectedIcTimeframe.label})
-                    </h3>
+                    <div>
+                      <h3 className="text-lg font-bold flex items-center gap-2">
+                        <span className="text-2xl">⚡</span>
+                        IC Trading Returns ({selectedIcTimeframe.label})
+                        <span className="text-xs bg-green-600 text-white px-2 py-0.5 rounded ml-2">SHORT-TERM</span>
+                      </h3>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Aggressive 0DTE Iron Condors • {icPerformance?.closed_trades?.total || 0} trades • {((icPerformance?.closed_trades?.win_rate || 0) * 100).toFixed(0)}% win rate
+                      </p>
+                    </div>
                     {/* Timeframe Selector - matching HERACLES */}
                     <div className="flex gap-1">
                       {IC_EQUITY_TIMEFRAMES.map((tf) => (
@@ -2384,7 +2390,7 @@ export default function PrometheusBoxDashboard() {
                           onClick={() => setIcEquityTimeframe(tf.id)}
                           className={`px-3 py-1 text-xs rounded transition-colors ${
                             icEquityTimeframe === tf.id
-                              ? 'bg-orange-500 text-black font-semibold'
+                              ? 'bg-green-500 text-black font-semibold'
                               : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                           }`}
                         >
@@ -2510,11 +2516,11 @@ export default function PrometheusBoxDashboard() {
                                 stroke="#EF4444"
                                 strokeDasharray="5 5"
                               />
-                              {/* Equity line (orange for PROMETHEUS/JUBILEE brand) */}
+                              {/* Equity line (GREEN for IC Trading - aggressive short-term) */}
                               <Line
                                 type="monotone"
                                 dataKey="equity"
-                                stroke="#F97316"
+                                stroke="#22C55E"
                                 strokeWidth={2}
                                 dot={chartData.length < 20}
                               />
@@ -2525,7 +2531,7 @@ export default function PrometheusBoxDashboard() {
                     ) : (
                       <div className="h-64 flex items-center justify-center">
                         <div className="text-center text-gray-400">
-                          <span className="text-4xl mb-2 block">📊</span>
+                          <span className="text-4xl mb-2 block">⚡</span>
                           <p>No equity data for {selectedIcTimeframe.label}</p>
                           <p className="text-xs mt-1">{isIcIntraday ? 'Snapshots appear during market hours' : 'Data will appear after IC trades are executed'}</p>
                         </div>
@@ -2670,14 +2676,49 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* Box Spread Equity Curve - matching HERACLES style with 5 timeframe buttons */}
-                <div className="bg-gray-800 rounded-lg p-6">
+                {/* BOX SPREAD Equity Curve - LONG-TERM CAPITAL (Synthetic Borrowing) */}
+                <div className="bg-gray-800 rounded-lg p-6 border-l-4 border-blue-500">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold flex items-center gap-2">
-                      <span className="text-xl">📈</span>
-                      Equity Curve ({selectedBoxTimeframe.label})
-                    </h3>
-                    {/* Timeframe Selector - matching HERACLES */}
+                    <div>
+                      <h3 className="text-lg font-bold flex items-center gap-2">
+                        <span className="text-2xl">🏦</span>
+                        Borrowed Capital ({selectedBoxTimeframe.label})
+                        <span className="text-xs bg-blue-600 text-white px-2 py-0.5 rounded ml-2">LONG-TERM</span>
+                      </h3>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {positions?.count || 0} box spread position{positions?.count !== 1 ? 's' : ''} •
+                        {positions?.positions?.[0] ? (
+                          <span className={`ml-1 ${positions.positions[0].current_dte <= 30 ? 'text-yellow-400 font-semibold' : 'text-gray-400'}`}>
+                            {positions.positions[0].current_dte <= 30 ? '⚠️ ' : ''}
+                            {positions.positions[0].current_dte} DTE to roll
+                          </span>
+                        ) : (
+                          <span className="ml-1 text-gray-500">No active positions</span>
+                        )}
+                      </p>
+                    </div>
+                    {/* Roll Countdown Badge - prominent display */}
+                    {positions?.positions?.[0] && (
+                      <div className={`text-center px-4 py-2 rounded-lg ${
+                        positions.positions[0].current_dte <= 7 ? 'bg-red-900/50 border border-red-500' :
+                        positions.positions[0].current_dte <= 30 ? 'bg-yellow-900/50 border border-yellow-500' :
+                        'bg-blue-900/30 border border-blue-500/30'
+                      }`}>
+                        <div className="text-xs text-gray-400">Roll In</div>
+                        <div className={`text-2xl font-bold ${
+                          positions.positions[0].current_dte <= 7 ? 'text-red-400' :
+                          positions.positions[0].current_dte <= 30 ? 'text-yellow-400' :
+                          'text-blue-400'
+                        }`}>
+                          {positions.positions[0].current_dte}
+                        </div>
+                        <div className="text-xs text-gray-400">days</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Timeframe Selector */}
+                  <div className="flex justify-end mb-4">
                     <div className="flex bg-gray-700 rounded-lg p-1 gap-1">
                       {EQUITY_TIMEFRAMES.map((tf) => (
                         <button
@@ -2685,7 +2726,7 @@ export default function PrometheusBoxDashboard() {
                           onClick={() => setBoxEquityTimeframe(tf.id)}
                           className={`px-3 py-1 text-xs rounded transition-colors ${
                             boxEquityTimeframe === tf.id
-                              ? 'bg-orange-500 text-black font-semibold'
+                              ? 'bg-blue-500 text-black font-semibold'
                               : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
                           }`}
                         >
@@ -2810,13 +2851,14 @@ export default function PrometheusBoxDashboard() {
                                 strokeDasharray="5 5"
                                 strokeWidth={1}
                               />
+                              {/* Equity line (BLUE for Box Spread - long-term capital) */}
                               <Line
                                 type="monotone"
                                 dataKey="equity"
-                                stroke="#F97316"
+                                stroke="#3B82F6"
                                 strokeWidth={2}
                                 dot={false}
-                                activeDot={{ r: 4, fill: '#F97316' }}
+                                activeDot={{ r: 4, fill: '#3B82F6' }}
                               />
                             </LineChart>
                           </ResponsiveContainer>
@@ -2825,9 +2867,9 @@ export default function PrometheusBoxDashboard() {
                     ) : (
                       <div className="h-64 flex items-center justify-center">
                         <div className="text-center text-gray-400">
-                          <span className="text-4xl mb-2 block">📊</span>
+                          <span className="text-4xl mb-2 block">🏦</span>
                           <p>No equity data for {selectedBoxTimeframe.label}</p>
-                          <p className="text-xs mt-1">{isBoxIntraday ? 'Snapshots appear during market hours' : 'Data will appear after positions close'}</p>
+                          <p className="text-xs mt-1">{isBoxIntraday ? 'Snapshots appear during market hours' : 'Data will appear after box spreads close'}</p>
                         </div>
                       </div>
                     )
