@@ -1369,18 +1369,42 @@ class PrometheusICSignalGenerator:
         """
         Calculate position size based on available capital and risk limits.
 
-        PROMETHEUS uses conservative sizing since it's trading with borrowed capital.
+        JUBILEE/PROMETHEUS uses AGGRESSIVE sizing with borrowed capital.
+        Position size is determined by:
+        1. Available capital × max_capital_per_trade_pct = max risk
+        2. max risk ÷ max loss per contract = calculated contracts
+        3. Apply configurable max_contracts limit (safety ceiling)
         """
+        # Guard against invalid inputs
+        if available_capital <= 0:
+            logger.warning("PROMETHEUS IC: No available capital for position sizing")
+            return 1
+        if max_loss_per_contract <= 0:
+            logger.warning("PROMETHEUS IC: Invalid max_loss_per_contract (<=0)")
+            return 1
+
         # Max capital at risk per trade
         max_risk = available_capital * (self.config.max_capital_per_trade_pct / 100)
 
         # Contracts based on max loss
-        contracts = int(max_risk / max_loss_per_contract)
+        calculated_contracts = int(max_risk / max_loss_per_contract)
 
-        # Apply limits
-        contracts = max(1, min(contracts, 10))  # 1-10 contracts
+        # Apply configurable max (safety ceiling to prevent data-error blowups)
+        final_contracts = max(1, min(calculated_contracts, self.config.max_contracts))
 
-        return contracts
+        # Log position sizing math for transparency
+        logger.info(
+            f"PROMETHEUS IC Position Sizing: "
+            f"available_capital=${available_capital:,.0f}, "
+            f"max_risk_pct={self.config.max_capital_per_trade_pct}%, "
+            f"max_risk=${max_risk:,.0f}, "
+            f"max_loss_per_contract=${max_loss_per_contract:,.0f}, "
+            f"calculated_contracts={calculated_contracts}, "
+            f"max_contracts_config={self.config.max_contracts}, "
+            f"final_contracts={final_contracts}"
+        )
+
+        return final_contracts
 
     def generate_signal(
         self,

@@ -3,6 +3,27 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import Navigation from '@/components/Navigation'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from 'recharts'
+
+// ==============================================================================
+// IC EQUITY TIMEFRAME OPTIONS (matching HERACLES)
+// ==============================================================================
+const IC_EQUITY_TIMEFRAMES = [
+  { id: 'intraday', label: 'Today', days: 0 },
+  { id: '7d', label: '7D', days: 7 },
+  { id: '14d', label: '14D', days: 14 },
+  { id: '30d', label: '30D', days: 30 },
+  { id: '90d', label: '90D', days: 90 },
+]
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
@@ -58,6 +79,11 @@ interface Position {
 export default function PrometheusBoxDashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'ic-trading' | 'analytics' | 'education' | 'howItWorks'>('overview')
   const [equityView, setEquityView] = useState<'historical' | 'intraday'>('historical')
+  const [icEquityTimeframe, setIcEquityTimeframe] = useState('intraday')
+
+  // Get selected IC equity timeframe config
+  const selectedIcTimeframe = IC_EQUITY_TIMEFRAMES.find(t => t.id === icEquityTimeframe) || IC_EQUITY_TIMEFRAMES[0]
+  const isIcIntraday = icEquityTimeframe === 'intraday'
 
   // Data fetching - Box Spread
   const { data: status, error: statusError } = useSWR('/api/prometheus-box/status', fetcher, { refreshInterval: 30000 })
@@ -73,7 +99,11 @@ export default function PrometheusBoxDashboard() {
   const { data: icPositions } = useSWR('/api/prometheus-box/ic/positions', fetcher, { refreshInterval: 15000 })
   const { data: icPerformance } = useSWR('/api/prometheus-box/ic/performance', fetcher, { refreshInterval: 30000 })
   const { data: icClosedTrades } = useSWR('/api/prometheus-box/ic/closed-trades?limit=20', fetcher, { refreshInterval: 60000 })
-  const { data: icEquityCurve } = useSWR('/api/prometheus-box/ic/equity-curve', fetcher, { refreshInterval: 60000 })
+  // IC Equity Curve - fetch based on selected timeframe (days parameter)
+  const icEquityCurveUrl = isIcIntraday
+    ? '/api/prometheus-box/ic/equity-curve?days=0'
+    : `/api/prometheus-box/ic/equity-curve?days=${selectedIcTimeframe.days}`
+  const { data: icEquityCurve, isLoading: icEquityCurveLoading } = useSWR(icEquityCurveUrl, fetcher, { refreshInterval: 30000 })
   const { data: icIntradayEquity } = useSWR('/api/prometheus-box/ic/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
   const { data: icLogs } = useSWR('/api/prometheus-box/ic/logs?limit=50', fetcher, { refreshInterval: 30000 })
   const { data: icSignals } = useSWR('/api/prometheus-box/ic/signals/recent?limit=20', fetcher, { refreshInterval: 30000 })
@@ -2315,69 +2345,145 @@ export default function PrometheusBoxDashboard() {
                   )}
                 </div>
 
-                {/* IC Intraday Equity - per STANDARDS.md */}
+                {/* IC Equity Curve - HERACLES-style with timeframe toggles */}
                 <div className="bg-gray-800 rounded-lg p-6">
-                  <h3 className="text-lg font-bold mb-4">IC Intraday Equity ({icIntradayEquity?.date || 'Today'})</h3>
-                  {icIntradayEquity?.snapshots?.length > 0 ? (
-                    <div className="space-y-4">
-                      <div className="grid md:grid-cols-4 gap-4">
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Market Open</div>
-                          <div className="text-lg font-bold text-blue-400">
-                            {formatCurrency(icIntradayEquity.snapshots[0]?.total_equity || 0)}
-                          </div>
-                        </div>
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Current</div>
-                          <div className="text-lg font-bold">
-                            {formatCurrency(icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0)}
-                          </div>
-                        </div>
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Day Change</div>
-                          <div className={`text-lg font-bold ${
-                            (icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0) -
-                            (icIntradayEquity.snapshots[0]?.total_equity || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {formatCurrency(
-                              (icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0) -
-                              (icIntradayEquity.snapshots[0]?.total_equity || 0)
-                            )}
-                          </div>
-                        </div>
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Snapshots</div>
-                          <div className="text-lg font-bold text-blue-400">{icIntradayEquity.count || 0}</div>
-                        </div>
-                      </div>
-                      <div className="overflow-x-auto max-h-40">
-                        <table className="w-full text-xs">
-                          <thead className="sticky top-0 bg-gray-800">
-                            <tr className="text-gray-400 border-b border-gray-700">
-                              <th className="text-left py-1 px-2">Time</th>
-                              <th className="text-right py-1 px-2">Equity</th>
-                              <th className="text-right py-1 px-2">Unrealized</th>
-                              <th className="text-right py-1 px-2">Positions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {icIntradayEquity.snapshots.slice(-10).map((snap: any, idx: number) => (
-                              <tr key={idx} className="border-b border-gray-700/30">
-                                <td className="py-1 px-2">{new Date(snap.time).toLocaleTimeString()}</td>
-                                <td className="py-1 px-2 text-right">{formatCurrency(snap.total_equity)}</td>
-                                <td className={`py-1 px-2 text-right ${snap.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  {formatCurrency(snap.unrealized_pnl)}
-                                </td>
-                                <td className="py-1 px-2 text-right">{snap.open_positions}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold flex items-center gap-2">
+                      <span className="text-2xl">📈</span>
+                      Equity Curve ({selectedIcTimeframe.label})
+                    </h3>
+                    {/* Timeframe Selector - matching HERACLES */}
+                    <div className="flex gap-1">
+                      {IC_EQUITY_TIMEFRAMES.map((tf) => (
+                        <button
+                          key={tf.id}
+                          onClick={() => setIcEquityTimeframe(tf.id)}
+                          className={`px-3 py-1 text-xs rounded transition-colors ${
+                            icEquityTimeframe === tf.id
+                              ? 'bg-orange-500 text-black font-semibold'
+                              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                          }`}
+                        >
+                          {tf.label}
+                        </button>
+                      ))}
                     </div>
+                  </div>
+
+                  {/* Loading state */}
+                  {icEquityCurveLoading ? (
+                    <div className="h-64 flex items-center justify-center">
+                      <div className="text-gray-400 animate-pulse">Loading equity data...</div>
+                    </div>
+                  ) : icEquityCurve?.data?.length > 0 ? (
+                    <>
+                      {/* Summary Stats */}
+                      <div className="grid md:grid-cols-4 gap-4 mb-4">
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Starting Capital</div>
+                          <div className="text-lg font-bold text-blue-400">
+                            {formatCurrency(icEquityCurve.starting_capital || 500000)}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Current Equity</div>
+                          <div className={`text-lg font-bold ${
+                            (icEquityCurve.data[icEquityCurve.data.length - 1]?.equity || 0) >= (icEquityCurve.starting_capital || 500000)
+                              ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {formatCurrency(icEquityCurve.data[icEquityCurve.data.length - 1]?.equity || 0)}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Cumulative P&L</div>
+                          <div className={`text-lg font-bold ${
+                            (icEquityCurve.data[icEquityCurve.data.length - 1]?.cumulative_pnl || 0) >= 0
+                              ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {formatCurrency(icEquityCurve.data[icEquityCurve.data.length - 1]?.cumulative_pnl || 0)}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Trades in Period</div>
+                          <div className="text-lg font-bold text-orange-400">{icEquityCurve.count || 0}</div>
+                        </div>
+                      </div>
+
+                      {/* Recharts LineChart - matching HERACLES style */}
+                      <div className="h-64">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={icEquityCurve.data.map((point: any) => ({
+                            time: point.time,
+                            date: point.date,
+                            equity: point.equity,
+                            pnl: point.cumulative_pnl,
+                          }))}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                            <XAxis
+                              dataKey="time"
+                              stroke="#9CA3AF"
+                              tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                              tickFormatter={(value) => {
+                                if (!value) return ''
+                                const date = new Date(value)
+                                if (isIcIntraday) {
+                                  // Show time for intraday (e.g., "9:30 AM")
+                                  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                                }
+                                // Show date for daily (e.g., "Jan 15")
+                                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                              }}
+                            />
+                            <YAxis
+                              stroke="#9CA3AF"
+                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                              tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                              domain={['dataMin - 1000', 'dataMax + 1000']}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: '#1F2937',
+                                border: '1px solid #374151',
+                                borderRadius: '8px',
+                              }}
+                              labelFormatter={(value) => {
+                                if (!value) return ''
+                                const date = new Date(value)
+                                if (isIcIntraday) {
+                                  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                                }
+                                return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                              }}
+                              formatter={(value: number, name: string) => [
+                                `$${value.toLocaleString()}`,
+                                name === 'equity' ? 'Equity' : 'P&L'
+                              ]}
+                            />
+                            {/* Reference line at starting capital (red dashed) */}
+                            <ReferenceLine
+                              y={icEquityCurve.starting_capital || 500000}
+                              stroke="#EF4444"
+                              strokeDasharray="5 5"
+                            />
+                            {/* Equity line (orange for PROMETHEUS/JUBILEE brand) */}
+                            <Line
+                              type="monotone"
+                              dataKey="equity"
+                              stroke="#F97316"
+                              strokeWidth={2}
+                              dot={icEquityCurve.data.length < 20}
+                            />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </>
                   ) : (
-                    <div className="p-4 text-center text-gray-400 text-sm">
-                      <p>No intraday snapshots yet. Data appears during market hours.</p>
+                    <div className="h-64 flex items-center justify-center">
+                      <div className="text-center text-gray-400">
+                        <span className="text-4xl mb-2 block">📊</span>
+                        <p>No equity data for {selectedIcTimeframe.label}</p>
+                        <p className="text-xs mt-1">Data will appear after IC trades are executed</p>
+                      </div>
                     </div>
                   )}
                 </div>

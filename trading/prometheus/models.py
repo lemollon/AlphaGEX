@@ -1015,6 +1015,7 @@ class PrometheusICConfig:
     max_positions: int = 5          # Max simultaneous IC positions (same as PEGASUS)
     max_capital_per_trade_pct: float = 10.0  # Max 10% of borrowed capital per trade
     max_daily_trades: int = 0       # NO LIMIT - aggressive trading (0 = unlimited)
+    max_contracts: int = 50         # Max contracts per IC trade (raised from hardcoded 10)
 
     # Risk management
     stop_loss_pct: float = 200.0    # Close if loss = 200% of credit
@@ -1068,6 +1069,7 @@ class PrometheusICConfig:
                 'max_positions': self.max_positions,
                 'max_capital_per_trade_pct': self.max_capital_per_trade_pct,
                 'max_daily_trades': 'unlimited' if self.max_daily_trades == 0 else self.max_daily_trades,
+                'max_contracts': self.max_contracts,
             },
             'risk': {
                 'stop_loss_pct': self.stop_loss_pct,
@@ -1123,6 +1125,7 @@ class PrometheusICConfig:
             config.max_positions = data['sizing'].get('max_positions', 3)
             config.max_capital_per_trade_pct = data['sizing'].get('max_capital_per_trade_pct', 10.0)
             config.max_daily_trades = data['sizing'].get('max_daily_trades', 5)
+            config.max_contracts = data['sizing'].get('max_contracts', 50)
 
         if 'risk' in data:
             config.stop_loss_pct = data['risk'].get('stop_loss_pct', 200.0)
