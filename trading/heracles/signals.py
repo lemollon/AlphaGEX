@@ -73,15 +73,31 @@ class HERACLESSignalGenerator:
             net_gex = gex_data.get('net_gex') or 0
             gex_ratio = gex_data.get('gex_ratio') or 1.0
 
-            # Fallback to reasonable defaults if GEX data is invalid
-            # Use current_price as flip point if GEX data unavailable
+            # Fallback to synthetic GEX levels if data is invalid
+            # CRITICAL: If flip_point = current_price, distance = 0, and NO signals can be generated
+            # We must offset the flip_point to allow signal generation
+            gex_is_synthetic = False
             if flip_point <= 0:
-                flip_point = current_price
-                logger.warning(f"GEX flip_point invalid, using current_price={current_price:.2f}")
+                # When GEX data unavailable, create synthetic levels that allow trading
+                # Offset flip_point by 1% below current price (assumes slight bullish bias from historical data)
+                # This allows mean reversion SHORT signals when price is above flip_point
+                # and mean reversion LONG signals when price is below flip_point
+                synthetic_offset_pct = 0.01  # 1% offset
+                flip_point = current_price * (1 - synthetic_offset_pct)
+                gex_is_synthetic = True
+                logger.warning(
+                    f"GEX flip_point unavailable - using SYNTHETIC flip_point={flip_point:.2f} "
+                    f"({synthetic_offset_pct*100:.1f}% below current_price={current_price:.2f}). "
+                    f"Signal quality may be reduced. Check SPX GEX data source."
+                )
             if call_wall <= 0:
                 call_wall = current_price + 50  # 50 MES points above
+                if gex_is_synthetic:
+                    logger.debug(f"Using synthetic call_wall={call_wall:.2f}")
             if put_wall <= 0:
                 put_wall = current_price - 50  # 50 MES points below
+                if gex_is_synthetic:
+                    logger.debug(f"Using synthetic put_wall={put_wall:.2f}")
 
             # For overnight, use n+1 (next day's expected levels)
             if is_overnight:
