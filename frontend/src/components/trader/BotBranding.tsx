@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Activity } from 'lucide-react'
-import { BOT_DISPLAY_NAMES, getBotDisplayName } from '@/lib/botDisplayNames'
+import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/botDisplayNames'
 
 // =============================================================================
 // BOT BRANDING SYSTEM
@@ -802,6 +802,7 @@ export function BotPageHeader({
 }: PageHeaderProps) {
   const brand = BOT_BRANDS[botName]
   const Icon = brand.icon
+  const scripture = getBotScripture(botName)
 
   return (
     <div className={`bg-gradient-to-r ${brand.gradientFrom} ${brand.gradientTo} rounded-xl p-6 mb-6`}>
@@ -813,6 +814,17 @@ export function BotPageHeader({
           <div>
             <h1 className="text-2xl font-bold text-white">{brand.fullName}</h1>
             <p className="text-white/70">{brand.strategy}</p>
+            {/* Scripture Reference */}
+            {scripture && (
+              <div className="mt-2 max-w-xl">
+                <p className="text-white/60 text-sm italic">
+                  {scripture.verse}
+                </p>
+                <p className="text-white/40 text-xs mt-1">
+                  — {scripture.reference}
+                </p>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-4">
