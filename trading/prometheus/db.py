@@ -2506,14 +2506,14 @@ class PrometheusDatabase:
             # CRITICAL: No LIMIT in SQL - query ALL closed trades
             # Then filter output only (per STANDARDS.md)
             # Date filtering happens AFTER cumulative calculation for accuracy
+            # Use COALESCE to handle legacy records where close_time might be NULL
             cursor.execute("""
                 SELECT
-                    close_time,
+                    COALESCE(close_time, open_time, created_at) as effective_close_time,
                     realized_pnl,
                     position_id
                 FROM prometheus_ic_closed_trades
-                WHERE close_time IS NOT NULL
-                ORDER BY close_time ASC
+                ORDER BY COALESCE(close_time, open_time, created_at) ASC
             """)
 
             rows = cursor.fetchall()
