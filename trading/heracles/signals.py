@@ -447,10 +447,18 @@ class HERACLESSignalGenerator:
         """
         Generate momentum signal for negative gamma.
 
-        Logic:
-        - Price breaking above flip point → momentum up → LONG
-        - Price breaking below flip point → momentum down → SHORT
-        - Use ATR for breakout confirmation
+        ENHANCED LOGIC - Negative gamma amplifies moves in BOTH directions:
+
+        1. BREAKOUT SIGNALS (price beyond flip):
+           - Price above flip + momentum → LONG (continuation)
+           - Price below flip + momentum → SHORT (continuation)
+
+        2. WALL BOUNCE SIGNALS (bidirectional opportunity):
+           - Price near PUT WALL (support) → LONG even if below flip
+           - Price near CALL WALL (resistance) → SHORT even if above flip
+
+        In negative gamma, strong moves can happen from walls towards flip.
+        This captures bullish opportunities below flip and bearish opportunities above flip.
         """
         # Safety check for invalid prices
         if flip_point <= 0 or call_wall <= 0 or put_wall <= 0:
@@ -459,28 +467,39 @@ class HERACLESSignalGenerator:
 
         distance_from_flip = current_price - flip_point
 
-        # Need breakout through flip point plus ATR threshold
+        # Breakout threshold for flip-based signals
         breakout_threshold = atr * self.config.breakout_atr_threshold
 
-        logger.debug(
-            f"Momentum check: distance={distance_from_flip:.2f} pts, "
-            f"breakout_threshold={breakout_threshold:.2f} pts (ATR={atr:.2f}*{self.config.breakout_atr_threshold}), "
-            f"exceeds={abs(distance_from_flip) > breakout_threshold}"
-        )
+        # Wall proximity threshold - within 1.5 ATR of wall is "near"
+        wall_proximity_threshold = atr * 1.5
 
         # Calculate distance to walls
         distance_to_call_wall = call_wall - current_price
         distance_to_put_wall = current_price - put_wall
 
-        # Protect against division by zero in confidence calculation
+        # Calculate ranges for confidence
         call_to_flip_range = max(1.0, call_wall - flip_point)  # Min 1 point
         flip_to_put_range = max(1.0, flip_point - put_wall)    # Min 1 point
+        total_range = call_to_flip_range + flip_to_put_range
 
+        logger.debug(
+            f"Momentum check: distance_from_flip={distance_from_flip:.2f} pts, "
+            f"distance_to_put={distance_to_put_wall:.2f}, distance_to_call={distance_to_call_wall:.2f}, "
+            f"wall_proximity_threshold={wall_proximity_threshold:.2f} pts"
+        )
+
+        direction = None
+        source = None
+        confidence = 0.0
+        reasoning = ""
+
+        # =====================================================================
+        # PRIORITY 1: Classic breakout signals (price has broken through flip)
+        # =====================================================================
         if distance_from_flip > breakout_threshold:
-            # Breaking out above flip - momentum long
+            # Above flip - momentum LONG (continuation)
             direction = TradeDirection.LONG
             source = SignalSource.GEX_MOMENTUM
-            # Confidence higher if more room to call wall
             confidence = min(0.90, 0.5 + (distance_to_call_wall / call_to_flip_range) * 0.4)
             reasoning = (
                 f"NEGATIVE GAMMA momentum: Price {current_price:.2f} broke "
@@ -489,10 +508,9 @@ class HERACLESSignalGenerator:
             )
 
         elif distance_from_flip < -breakout_threshold:
-            # Breaking out below flip - momentum short
+            # Below flip - momentum SHORT (continuation)
             direction = TradeDirection.SHORT
             source = SignalSource.GEX_MOMENTUM
-            # Confidence higher if more room to put wall
             confidence = min(0.90, 0.5 + (distance_to_put_wall / flip_to_put_range) * 0.4)
             reasoning = (
                 f"NEGATIVE GAMMA momentum: Price {current_price:.2f} broke "
@@ -500,8 +518,60 @@ class HERACLESSignalGenerator:
                 f"Momentum continuation expected. Target put wall at {put_wall:.2f}."
             )
 
+        # =====================================================================
+        # PRIORITY 2: Wall bounce signals (bidirectional momentum opportunity)
+        # These allow LONG below flip and SHORT above flip
+        # =====================================================================
+        elif distance_to_put_wall < wall_proximity_threshold and distance_to_put_wall > 0:
+            # Near PUT WALL (support) - LONG targeting flip
+            # This captures bullish opportunity BELOW the flip point
+            direction = TradeDirection.LONG
+            source = SignalSource.GEX_WALL_BOUNCE
+            # Confidence based on how much room to flip and VIX
+            room_to_flip = abs(distance_from_flip)
+            confidence = min(0.80, 0.55 + (room_to_flip / flip_to_put_range) * 0.25)
+            # Reduce confidence in very high VIX (wall may break)
+            if vix > 25:
+                confidence *= 0.9
+            reasoning = (
+                f"NEGATIVE GAMMA wall bounce: Price {current_price:.2f} near put wall "
+                f"{put_wall:.2f} (dist={distance_to_put_wall:.2f}). "
+                f"Bullish momentum opportunity - targeting flip {flip_point:.2f}. "
+                f"In neg gamma, strong moves happen from walls."
+            )
+            logger.info(
+                f"Wall bounce LONG below flip: price={current_price:.2f}, "
+                f"flip={flip_point:.2f}, put_wall={put_wall:.2f}, conf={confidence:.2%}"
+            )
+
+        elif distance_to_call_wall < wall_proximity_threshold and distance_to_call_wall > 0:
+            # Near CALL WALL (resistance) - SHORT targeting flip
+            # This captures bearish opportunity ABOVE the flip point
+            direction = TradeDirection.SHORT
+            source = SignalSource.GEX_WALL_BOUNCE
+            # Confidence based on how much room to flip
+            room_to_flip = abs(distance_from_flip)
+            confidence = min(0.80, 0.55 + (room_to_flip / call_to_flip_range) * 0.25)
+            # Reduce confidence in very high VIX (wall may break)
+            if vix > 25:
+                confidence *= 0.9
+            reasoning = (
+                f"NEGATIVE GAMMA wall bounce: Price {current_price:.2f} near call wall "
+                f"{call_wall:.2f} (dist={distance_to_call_wall:.2f}). "
+                f"Bearish momentum opportunity - targeting flip {flip_point:.2f}. "
+                f"In neg gamma, strong moves happen from walls."
+            )
+            logger.info(
+                f"Wall bounce SHORT above flip: price={current_price:.2f}, "
+                f"flip={flip_point:.2f}, call_wall={call_wall:.2f}, conf={confidence:.2%}"
+            )
+
         else:
-            # No clear breakout - no trade
+            # No clear signal - price in no-man's land (between walls, near flip)
+            logger.debug(
+                f"No momentum signal: price in neutral zone. "
+                f"dist_from_flip={distance_from_flip:.2f}, not near walls"
+            )
             return None
 
         return FuturesSignal(
