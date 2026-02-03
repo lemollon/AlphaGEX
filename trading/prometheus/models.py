@@ -1009,7 +1009,7 @@ class PrometheusICConfig:
     # Strike selection (delta-based)
     short_put_delta: float = 0.10   # ~10 delta for short put
     short_call_delta: float = 0.10  # ~10 delta for short call
-    spread_width: float = 25.0      # $25 wide spreads on SPX
+    spread_width: float = 10.0      # $10 wide spreads on SPX (matches PEGASUS)
 
     # Position sizing - AGGRESSIVE like PEGASUS
     max_positions: int = 5          # Max simultaneous IC positions (same as PEGASUS)
@@ -1119,13 +1119,13 @@ class PrometheusICConfig:
         if 'strikes' in data:
             config.short_put_delta = data['strikes'].get('short_put_delta', 0.10)
             config.short_call_delta = data['strikes'].get('short_call_delta', 0.10)
-            config.spread_width = data['strikes'].get('spread_width', 25.0)
+            config.spread_width = data['strikes'].get('spread_width', 10.0)  # Match PEGASUS
 
         if 'sizing' in data:
-            config.max_positions = data['sizing'].get('max_positions', 3)
+            config.max_positions = data['sizing'].get('max_positions', 5)  # 5 simultaneous positions
             config.max_capital_per_trade_pct = data['sizing'].get('max_capital_per_trade_pct', 10.0)
-            config.max_daily_trades = data['sizing'].get('max_daily_trades', 5)
-            config.max_contracts = data['sizing'].get('max_contracts', 50)
+            config.max_daily_trades = data['sizing'].get('max_daily_trades', 0)  # 0 = UNLIMITED (aggressive)
+            config.max_contracts = data['sizing'].get('max_contracts', 50)  # 50 contracts max (aggressive)
 
         if 'risk' in data:
             config.stop_loss_pct = data['risk'].get('stop_loss_pct', 200.0)

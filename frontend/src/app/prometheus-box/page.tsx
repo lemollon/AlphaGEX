@@ -99,12 +99,19 @@ export default function PrometheusBoxDashboard() {
   const { data: icPositions } = useSWR('/api/prometheus-box/ic/positions', fetcher, { refreshInterval: 15000 })
   const { data: icPerformance } = useSWR('/api/prometheus-box/ic/performance', fetcher, { refreshInterval: 30000 })
   const { data: icClosedTrades } = useSWR('/api/prometheus-box/ic/closed-trades?limit=20', fetcher, { refreshInterval: 60000 })
-  // IC Equity Curve - fetch based on selected timeframe (days parameter)
-  const icEquityCurveUrl = isIcIntraday
-    ? '/api/prometheus-box/ic/equity-curve?days=0'
-    : `/api/prometheus-box/ic/equity-curve?days=${selectedIcTimeframe.days}`
-  const { data: icEquityCurve, isLoading: icEquityCurveLoading } = useSWR(icEquityCurveUrl, fetcher, { refreshInterval: 30000 })
-  const { data: icIntradayEquity } = useSWR('/api/prometheus-box/ic/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
+  // IC Equity Curve - fetch based on selected timeframe
+  // For "Today", use intraday snapshots endpoint; otherwise use historical with days parameter
+  const icEquityCurveUrl = `/api/prometheus-box/ic/equity-curve?days=${selectedIcTimeframe.days}`
+  const { data: icEquityCurve, isLoading: icEquityCurveLoading } = useSWR(
+    isIcIntraday ? null : icEquityCurveUrl, // Don't fetch historical for intraday
+    fetcher,
+    { refreshInterval: 30000 }
+  )
+  const { data: icIntradayEquity, isLoading: icIntradayLoading } = useSWR(
+    '/api/prometheus-box/ic/equity-curve/intraday',
+    fetcher,
+    { refreshInterval: 15000 }  // Faster refresh for intraday
+  )
   const { data: icLogs } = useSWR('/api/prometheus-box/ic/logs?limit=50', fetcher, { refreshInterval: 30000 })
   const { data: icSignals } = useSWR('/api/prometheus-box/ic/signals/recent?limit=20', fetcher, { refreshInterval: 30000 })
   const { data: combinedPerformance } = useSWR('/api/prometheus-box/combined/performance', fetcher, { refreshInterval: 60000 })
@@ -2371,121 +2378,143 @@ export default function PrometheusBoxDashboard() {
                   </div>
 
                   {/* Loading state */}
-                  {icEquityCurveLoading ? (
+                  {(isIcIntraday ? icIntradayLoading : icEquityCurveLoading) ? (
                     <div className="h-64 flex items-center justify-center">
                       <div className="text-gray-400 animate-pulse">Loading equity data...</div>
                     </div>
-                  ) : icEquityCurve?.data?.length > 0 ? (
-                    <>
-                      {/* Summary Stats */}
-                      <div className="grid md:grid-cols-4 gap-4 mb-4">
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Starting Capital</div>
-                          <div className="text-lg font-bold text-blue-400">
-                            {formatCurrency(icEquityCurve.starting_capital || 500000)}
-                          </div>
-                        </div>
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Current Equity</div>
-                          <div className={`text-lg font-bold ${
-                            (icEquityCurve.data[icEquityCurve.data.length - 1]?.equity || 0) >= (icEquityCurve.starting_capital || 500000)
-                              ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {formatCurrency(icEquityCurve.data[icEquityCurve.data.length - 1]?.equity || 0)}
-                          </div>
-                        </div>
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Cumulative P&L</div>
-                          <div className={`text-lg font-bold ${
-                            (icEquityCurve.data[icEquityCurve.data.length - 1]?.cumulative_pnl || 0) >= 0
-                              ? 'text-green-400' : 'text-red-400'
-                          }`}>
-                            {formatCurrency(icEquityCurve.data[icEquityCurve.data.length - 1]?.cumulative_pnl || 0)}
-                          </div>
-                        </div>
-                        <div className="bg-gray-700/50 rounded-lg p-3">
-                          <div className="text-xs text-gray-400">Trades in Period</div>
-                          <div className="text-lg font-bold text-orange-400">{icEquityCurve.count || 0}</div>
-                        </div>
-                      </div>
+                  ) : (() => {
+                    // Select data source based on timeframe
+                    const chartData = isIcIntraday
+                      ? (icIntradayEquity?.snapshots || []).map((snap: any) => ({
+                          time: snap.time,
+                          equity: snap.total_equity,
+                          pnl: snap.unrealized_pnl || 0,
+                        }))
+                      : (icEquityCurve?.data || []).map((point: any) => ({
+                          time: point.time,
+                          equity: point.equity,
+                          pnl: point.cumulative_pnl,
+                        }))
 
-                      {/* Recharts LineChart - matching HERACLES style */}
-                      <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <LineChart data={icEquityCurve.data.map((point: any) => ({
-                            time: point.time,
-                            date: point.date,
-                            equity: point.equity,
-                            pnl: point.cumulative_pnl,
-                          }))}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                            <XAxis
-                              dataKey="time"
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                              tickFormatter={(value) => {
-                                if (!value) return ''
-                                const date = new Date(value)
-                                if (isIcIntraday) {
-                                  // Show time for intraday (e.g., "9:30 AM")
-                                  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-                                }
-                                // Show date for daily (e.g., "Jan 15")
-                                return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                              }}
-                            />
-                            <YAxis
-                              stroke="#9CA3AF"
-                              tick={{ fill: '#9CA3AF', fontSize: 12 }}
-                              tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                              domain={['dataMin - 1000', 'dataMax + 1000']}
-                            />
-                            <Tooltip
-                              contentStyle={{
-                                backgroundColor: '#1F2937',
-                                border: '1px solid #374151',
-                                borderRadius: '8px',
-                              }}
-                              labelFormatter={(value) => {
-                                if (!value) return ''
-                                const date = new Date(value)
-                                if (isIcIntraday) {
-                                  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
-                                }
-                                return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                              }}
-                              formatter={(value: number, name: string) => [
-                                `$${value.toLocaleString()}`,
-                                name === 'equity' ? 'Equity' : 'P&L'
-                              ]}
-                            />
-                            {/* Reference line at starting capital (red dashed) */}
-                            <ReferenceLine
-                              y={icEquityCurve.starting_capital || 500000}
-                              stroke="#EF4444"
-                              strokeDasharray="5 5"
-                            />
-                            {/* Equity line (orange for PROMETHEUS/JUBILEE brand) */}
-                            <Line
-                              type="monotone"
-                              dataKey="equity"
-                              stroke="#F97316"
-                              strokeWidth={2}
-                              dot={icEquityCurve.data.length < 20}
-                            />
-                          </LineChart>
-                        </ResponsiveContainer>
+                    const startingCapital = isIcIntraday
+                      ? (icIntradayEquity?.snapshots?.[0]?.starting_capital || 500000)
+                      : (icEquityCurve?.starting_capital || 500000)
+
+                    const currentEquity = chartData.length > 0
+                      ? chartData[chartData.length - 1]?.equity || startingCapital
+                      : startingCapital
+
+                    const currentPnl = chartData.length > 0
+                      ? chartData[chartData.length - 1]?.pnl || 0
+                      : 0
+
+                    const dataCount = isIcIntraday
+                      ? (icIntradayEquity?.count || chartData.length)
+                      : (icEquityCurve?.count || chartData.length)
+
+                    return chartData.length > 0 ? (
+                      <>
+                        {/* Summary Stats */}
+                        <div className="grid md:grid-cols-4 gap-4 mb-4">
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">Starting Capital</div>
+                            <div className="text-lg font-bold text-blue-400">
+                              {formatCurrency(startingCapital)}
+                            </div>
+                          </div>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">Current Equity</div>
+                            <div className={`text-lg font-bold ${
+                              currentEquity >= startingCapital ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {formatCurrency(currentEquity)}
+                            </div>
+                          </div>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">{isIcIntraday ? 'Unrealized P&L' : 'Cumulative P&L'}</div>
+                            <div className={`text-lg font-bold ${
+                              currentPnl >= 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {formatCurrency(currentPnl)}
+                            </div>
+                          </div>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">{isIcIntraday ? 'Snapshots' : 'Trades'}</div>
+                            <div className="text-lg font-bold text-orange-400">{dataCount}</div>
+                          </div>
+                        </div>
+
+                        {/* Recharts LineChart - matching HERACLES style */}
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                              <XAxis
+                                dataKey="time"
+                                stroke="#9CA3AF"
+                                tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                                tickFormatter={(value) => {
+                                  if (!value) return ''
+                                  const date = new Date(value)
+                                  if (isIcIntraday) {
+                                    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                                  }
+                                  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                }}
+                              />
+                              <YAxis
+                                stroke="#9CA3AF"
+                                tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                                tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                                domain={['dataMin - 1000', 'dataMax + 1000']}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: '#1F2937',
+                                  border: '1px solid #374151',
+                                  borderRadius: '8px',
+                                }}
+                                labelFormatter={(value) => {
+                                  if (!value) return ''
+                                  const date = new Date(value)
+                                  if (isIcIntraday) {
+                                    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                                  }
+                                  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                                }}
+                                formatter={(value: number, name: string) => [
+                                  `$${value.toLocaleString()}`,
+                                  name === 'equity' ? 'Equity' : 'P&L'
+                                ]}
+                              />
+                              {/* Reference line at starting capital (red dashed) */}
+                              <ReferenceLine
+                                y={startingCapital}
+                                stroke="#EF4444"
+                                strokeDasharray="5 5"
+                              />
+                              {/* Equity line (orange for PROMETHEUS/JUBILEE brand) */}
+                              <Line
+                                type="monotone"
+                                dataKey="equity"
+                                stroke="#F97316"
+                                strokeWidth={2}
+                                dot={chartData.length < 20}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="h-64 flex items-center justify-center">
+                        <div className="text-center text-gray-400">
+                          <span className="text-4xl mb-2 block">📊</span>
+                          <p>No equity data for {selectedIcTimeframe.label}</p>
+                          <p className="text-xs mt-1">{isIcIntraday ? 'Snapshots appear during market hours' : 'Data will appear after IC trades are executed'}</p>
+                        </div>
                       </div>
-                    </>
-                  ) : (
-                    <div className="h-64 flex items-center justify-center">
-                      <div className="text-center text-gray-400">
-                        <span className="text-4xl mb-2 block">📊</span>
-                        <p>No equity data for {selectedIcTimeframe.label}</p>
-                        <p className="text-xs mt-1">Data will appear after IC trades are executed</p>
-                      </div>
-                    </div>
-                  )}
+                    )
+                  })()}
                 </div>
 
                 {/* IC Signals (Scan Activity) - per STANDARDS.md */}
