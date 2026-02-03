@@ -1391,7 +1391,7 @@ class PrometheusDatabase:
         config = self.load_config()
         return config.capital
 
-    def get_equity_curve(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_equity_curve(self, limit: int = 100, days: int = None) -> List[Dict[str, Any]]:
         """
         Get historical equity curve data.
 
@@ -1399,6 +1399,12 @@ class PrometheusDatabase:
         - Query ALL closed trades (no LIMIT in SQL) to ensure accurate cumulative P&L
         - Calculate running total across all trades
         - Only limit the OUTPUT, not the SQL query
+        - Date filtering happens AFTER cumulative calculation for accuracy
+
+        Args:
+            limit: Maximum number of records to return (applied to output, not SQL)
+            days: If provided, filter to trades within last N days.
+                  0 = today only, None = all history
         """
         try:
             conn = self._get_connection()
@@ -1406,14 +1412,15 @@ class PrometheusDatabase:
 
             # CRITICAL: No LIMIT in SQL - query ALL closed positions
             # Then filter output only (per STANDARDS.md)
+            # Use COALESCE to handle legacy records where close_time might be NULL
             cursor.execute("""
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(COALESCE(close_time, open_time, created_at) AT TIME ZONE 'America/Chicago') as trade_date,
                     SUM(net_profit) as daily_profit,
                     COUNT(*) as positions_closed
                 FROM prometheus_positions
-                WHERE status = 'closed' AND close_time IS NOT NULL
-                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                WHERE status = 'closed'
+                GROUP BY DATE(COALESCE(close_time, open_time, created_at) AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date ASC
             """)
 
@@ -1424,16 +1431,34 @@ class PrometheusDatabase:
             cumulative_pnl = 0
             equity_curve = []
 
-            # Calculate cumulative across ALL trades
+            # Calculate date cutoff if days parameter provided
+            date_cutoff = None
+            if days is not None:
+                if days == 0:
+                    # Today only - use start of today in Central Time
+                    today = datetime.now(CENTRAL_TZ).date()
+                    date_cutoff = today
+                else:
+                    date_cutoff = (datetime.now(CENTRAL_TZ) - timedelta(days=days)).date()
+
+            # Calculate cumulative across ALL trades for accuracy
+            # But only include trades within date range in output
             for row in rows:
-                cumulative_pnl += float(row[1] or 0)
-                equity_curve.append({
-                    'date': row[0].isoformat() if row[0] else None,
-                    'daily_profit': float(row[1] or 0),
-                    'cumulative_pnl': cumulative_pnl,
-                    'equity': starting_capital + cumulative_pnl,
-                    'positions_closed': row[2],
-                })
+                trade_date = row[0]
+                daily_profit = float(row[1] or 0)
+
+                # Always add to cumulative (for accuracy)
+                cumulative_pnl += daily_profit
+
+                # Only include in output if within date range
+                if date_cutoff is None or (trade_date and trade_date >= date_cutoff):
+                    equity_curve.append({
+                        'date': trade_date.isoformat() if trade_date else None,
+                        'daily_profit': daily_profit,
+                        'cumulative_pnl': cumulative_pnl,
+                        'equity': starting_capital + cumulative_pnl,
+                        'positions_closed': row[2],
+                    })
 
             # Limit OUTPUT only (return most recent points)
             return equity_curve[-limit:] if len(equity_curve) > limit else equity_curve
@@ -2506,14 +2531,14 @@ class PrometheusDatabase:
             # CRITICAL: No LIMIT in SQL - query ALL closed trades
             # Then filter output only (per STANDARDS.md)
             # Date filtering happens AFTER cumulative calculation for accuracy
+            # Use COALESCE to handle legacy records where close_time might be NULL
             cursor.execute("""
                 SELECT
-                    close_time,
+                    COALESCE(close_time, open_time, created_at) as effective_close_time,
                     realized_pnl,
                     position_id
                 FROM prometheus_ic_closed_trades
-                WHERE close_time IS NOT NULL
-                ORDER BY close_time ASC
+                ORDER BY COALESCE(close_time, open_time, created_at) ASC
             """)
 
             rows = cursor.fetchall()

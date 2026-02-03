@@ -15,15 +15,18 @@ import {
 } from 'recharts'
 
 // ==============================================================================
-// IC EQUITY TIMEFRAME OPTIONS (matching HERACLES)
+// EQUITY TIMEFRAME OPTIONS (matching HERACLES)
 // ==============================================================================
-const IC_EQUITY_TIMEFRAMES = [
+const EQUITY_TIMEFRAMES = [
   { id: 'intraday', label: 'Today', days: 0 },
   { id: '7d', label: '7D', days: 7 },
   { id: '14d', label: '14D', days: 14 },
   { id: '30d', label: '30D', days: 30 },
   { id: '90d', label: '90D', days: 90 },
 ]
+
+// Alias for IC trading (same options)
+const IC_EQUITY_TIMEFRAMES = EQUITY_TIMEFRAMES
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
 
@@ -78,8 +81,12 @@ interface Position {
 
 export default function PrometheusBoxDashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'ic-trading' | 'analytics' | 'education' | 'howItWorks'>('overview')
-  const [equityView, setEquityView] = useState<'historical' | 'intraday'>('historical')
+  const [boxEquityTimeframe, setBoxEquityTimeframe] = useState('intraday')
   const [icEquityTimeframe, setIcEquityTimeframe] = useState('intraday')
+
+  // Get selected Box Spread equity timeframe config
+  const selectedBoxTimeframe = EQUITY_TIMEFRAMES.find(t => t.id === boxEquityTimeframe) || EQUITY_TIMEFRAMES[0]
+  const isBoxIntraday = boxEquityTimeframe === 'intraday'
 
   // Get selected IC equity timeframe config
   const selectedIcTimeframe = IC_EQUITY_TIMEFRAMES.find(t => t.id === icEquityTimeframe) || IC_EQUITY_TIMEFRAMES[0]
@@ -90,8 +97,18 @@ export default function PrometheusBoxDashboard() {
   const { data: positions } = useSWR('/api/prometheus-box/positions', fetcher, { refreshInterval: 30000 })
   const { data: rateAnalysis } = useSWR('/api/prometheus-box/analytics/rates', fetcher, { refreshInterval: 60000 })
   const { data: capitalFlow } = useSWR('/api/prometheus-box/analytics/capital-flow', fetcher, { refreshInterval: 30000 })
-  const { data: equityCurve } = useSWR('/api/prometheus-box/equity-curve', fetcher, { refreshInterval: 60000 })
-  const { data: intradayEquity } = useSWR('/api/prometheus-box/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
+  // Box Spread Equity Curve - fetch based on selected timeframe (matching HERACLES pattern)
+  const boxEquityCurveUrl = `/api/prometheus-box/equity-curve?days=${selectedBoxTimeframe.days}`
+  const { data: equityCurve, isLoading: boxEquityCurveLoading } = useSWR(
+    isBoxIntraday ? null : boxEquityCurveUrl, // Don't fetch historical for intraday
+    fetcher,
+    { refreshInterval: 30000 }
+  )
+  const { data: intradayEquity, isLoading: boxIntradayLoading } = useSWR(
+    '/api/prometheus-box/equity-curve/intraday',
+    fetcher,
+    { refreshInterval: 15000 }  // Faster refresh for intraday
+  )
   const { data: interestRates } = useSWR('/api/prometheus-box/analytics/interest-rates', fetcher, { refreshInterval: 300000 })
 
   // IC Trading data - All required endpoints per STANDARDS.md
@@ -2653,228 +2670,168 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* Equity Curve - Historical & Intraday */}
+                {/* Box Spread Equity Curve - matching HERACLES style with 5 timeframe buttons */}
                 <div className="bg-gray-800 rounded-lg p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-bold">Equity Curve</h2>
-                    <div className="flex bg-gray-700 rounded-lg p-1">
-                      <button
-                        onClick={() => setEquityView('historical')}
-                        className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
-                          equityView === 'historical' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        Historical
-                      </button>
-                      <button
-                        onClick={() => setEquityView('intraday')}
-                        className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
-                          equityView === 'intraday' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        Intraday
-                      </button>
+                    <h3 className="text-lg font-bold flex items-center gap-2">
+                      <span className="text-xl">📈</span>
+                      Equity Curve ({selectedBoxTimeframe.label})
+                    </h3>
+                    {/* Timeframe Selector - matching HERACLES */}
+                    <div className="flex bg-gray-700 rounded-lg p-1 gap-1">
+                      {EQUITY_TIMEFRAMES.map((tf) => (
+                        <button
+                          key={tf.id}
+                          onClick={() => setBoxEquityTimeframe(tf.id)}
+                          className={`px-3 py-1 text-xs rounded transition-colors ${
+                            boxEquityTimeframe === tf.id
+                              ? 'bg-orange-500 text-black font-semibold'
+                              : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                          }`}
+                        >
+                          {tf.label}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
-                  {/* Historical View */}
-                  {equityView === 'historical' && (
-                    <>
-                      {equityCurve?.equity_curve && equityCurve.equity_curve.length > 0 ? (
-                        <div>
-                          <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
-                            <span>Starting: {formatCurrency(equityCurve.starting_capital)}</span>
-                            <span>Current: {formatCurrency(equityCurve.equity_curve[equityCurve.equity_curve.length - 1]?.equity || equityCurve.starting_capital)}</span>
-                          </div>
-                          <div className="bg-black/30 rounded-lg p-4 mb-4">
-                            <div className="h-48 relative">
-                              {(() => {
-                                const data = equityCurve.equity_curve.slice(-30)
-                                if (data.length < 2) return <div className="text-center text-gray-500 pt-20">Insufficient data</div>
-                                const values = data.map((d: any) => d.equity)
-                                const min = Math.min(...values)
-                                const max = Math.max(...values)
-                                const range = max - min || 1
-                                return (
-                                  <svg className="w-full h-full" viewBox="0 0 400 150" preserveAspectRatio="none">
-                                    <line x1="0" y1="75" x2="400" y2="75" stroke="#374151" strokeWidth="0.5" />
-                                    <polyline fill="none" stroke="#22c55e" strokeWidth="2"
-                                      points={data.map((d: any, i: number) => {
-                                        const x = (i / (data.length - 1)) * 400
-                                        const y = 150 - ((d.equity - min) / range) * 140 - 5
-                                        return `${x},${y}`
-                                      }).join(' ')}
-                                    />
-                                    <polygon fill="url(#equityGradHist)" points={`0,150 ${data.map((d: any, i: number) => {
-                                      const x = (i / (data.length - 1)) * 400
-                                      const y = 150 - ((d.equity - min) / range) * 140 - 5
-                                      return `${x},${y}`
-                                    }).join(' ')} 400,150`} />
-                                    <defs>
-                                      <linearGradient id="equityGradHist" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
-                                        <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
-                                      </linearGradient>
-                                    </defs>
-                                  </svg>
-                                )
-                              })()}
-                            </div>
-                          </div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="text-left text-gray-400 border-b border-gray-700">
-                                  <th className="pb-2">Date</th>
-                                  <th className="pb-2 text-right">Daily P&L</th>
-                                  <th className="pb-2 text-right">Cumulative</th>
-                                  <th className="pb-2 text-right">Equity</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {equityCurve.equity_curve.slice(-10).map((point: any, idx: number) => (
-                                  <tr key={idx} className="border-b border-gray-700/50">
-                                    <td className="py-2">{point.date}</td>
-                                    <td className={`py-2 text-right ${point.daily_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                      {formatCurrency(point.daily_profit)}
-                                    </td>
-                                    <td className={`py-2 text-right ${point.cumulative_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                      {formatCurrency(point.cumulative_pnl)}
-                                    </td>
-                                    <td className="py-2 text-right font-medium">{formatCurrency(point.equity)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-center py-8 text-gray-400">
-                          <p>No equity history yet. Data appears after positions close.</p>
-                        </div>
-                      )}
-                    </>
-                  )}
+                  {/* Loading state */}
+                  {(isBoxIntraday ? boxIntradayLoading : boxEquityCurveLoading) ? (
+                    <div className="h-64 flex items-center justify-center">
+                      <div className="text-gray-400 animate-pulse">Loading equity data...</div>
+                    </div>
+                  ) : (() => {
+                    // Select data source based on timeframe
+                    const chartData = isBoxIntraday
+                      ? (intradayEquity?.snapshots || []).map((snap: any) => ({
+                          time: snap.snapshot_time,
+                          equity: snap.total_equity,
+                          pnl: snap.unrealized_pnl || 0,
+                        }))
+                      : (equityCurve?.equity_curve || []).map((point: any) => ({
+                          time: point.date,
+                          equity: point.equity,
+                          pnl: point.cumulative_pnl,
+                        }))
 
-                  {/* Intraday View */}
-                  {equityView === 'intraday' && (
-                    <>
-                      {intradayEquity?.snapshots && intradayEquity.snapshots.length > 0 ? (
-                        <div>
-                          <div className="flex justify-between items-center text-sm text-gray-400 mb-4">
-                            <span>Market Open: {formatCurrency(intradayEquity.snapshots[0]?.total_equity || 0)}</span>
-                            <span>Current: {formatCurrency(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity || 0)}</span>
-                          </div>
-                          <div className="bg-black/30 rounded-lg p-4 mb-4">
-                            <div className="h-48 relative">
-                              {(() => {
-                                const data = intradayEquity.snapshots
-                                if (data.length < 2) return <div className="text-center text-gray-500 pt-20">Insufficient data</div>
-                                const values = data.map((d: any) => d.total_equity)
-                                const min = Math.min(...values)
-                                const max = Math.max(...values)
-                                const range = max - min || 1
-                                const openValue = data[0]?.total_equity || 0
-                                const currentValue = data[data.length - 1]?.total_equity || 0
-                                const isPositive = currentValue >= openValue
-                                return (
-                                  <svg className="w-full h-full" viewBox="0 0 400 150" preserveAspectRatio="none">
-                                    {/* Zero line at opening value */}
-                                    <line
-                                      x1="0"
-                                      y1={150 - ((openValue - min) / range) * 140 - 5}
-                                      x2="400"
-                                      y2={150 - ((openValue - min) / range) * 140 - 5}
-                                      stroke="#6b7280"
-                                      strokeWidth="1"
-                                      strokeDasharray="4,4"
-                                    />
-                                    <polyline fill="none" stroke={isPositive ? '#22c55e' : '#ef4444'} strokeWidth="2"
-                                      points={data.map((d: any, i: number) => {
-                                        const x = (i / (data.length - 1)) * 400
-                                        const y = 150 - ((d.total_equity - min) / range) * 140 - 5
-                                        return `${x},${y}`
-                                      }).join(' ')}
-                                    />
-                                    <polygon fill={`url(#equityGradIntra${isPositive ? 'Up' : 'Down'})`} points={`0,150 ${data.map((d: any, i: number) => {
-                                      const x = (i / (data.length - 1)) * 400
-                                      const y = 150 - ((d.total_equity - min) / range) * 140 - 5
-                                      return `${x},${y}`
-                                    }).join(' ')} 400,150`} />
-                                    <defs>
-                                      <linearGradient id="equityGradIntraUp" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3" />
-                                        <stop offset="100%" stopColor="#22c55e" stopOpacity="0" />
-                                      </linearGradient>
-                                      <linearGradient id="equityGradIntraDown" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.3" />
-                                        <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
-                                      </linearGradient>
-                                    </defs>
-                                  </svg>
-                                )
-                              })()}
+                    const startingCapital = equityCurve?.starting_capital || 500000
+
+                    const currentEquity = chartData.length > 0
+                      ? chartData[chartData.length - 1]?.equity || startingCapital
+                      : startingCapital
+
+                    const currentPnl = chartData.length > 0
+                      ? chartData[chartData.length - 1]?.pnl || 0
+                      : 0
+
+                    const dataCount = isBoxIntraday
+                      ? (intradayEquity?.snapshots?.length || 0)
+                      : (equityCurve?.count || chartData.length)
+
+                    return chartData.length > 0 ? (
+                      <>
+                        {/* Summary Stats */}
+                        <div className="grid md:grid-cols-4 gap-4 mb-4">
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">Starting Capital</div>
+                            <div className="text-lg font-bold text-blue-400">
+                              {formatCurrency(startingCapital)}
                             </div>
                           </div>
-                          {/* Intraday Change Summary */}
-                          <div className="grid grid-cols-3 gap-4 mb-4">
-                            <div className="bg-black/30 rounded-lg p-3 text-center">
-                              <div className="text-xs text-gray-400">Day&apos;s Change</div>
-                              <div className={`text-lg font-bold ${
-                                (intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity || 0) -
-                                (intradayEquity.snapshots[0]?.total_equity || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                              }`}>
-                                {formatCurrency(
-                                  (intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.total_equity || 0) -
-                                  (intradayEquity.snapshots[0]?.total_equity || 0)
-                                )}
-                              </div>
-                            </div>
-                            <div className="bg-black/30 rounded-lg p-3 text-center">
-                              <div className="text-xs text-gray-400">Unrealized P&L</div>
-                              <div className={`text-lg font-bold ${
-                                (intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                              }`}>
-                                {formatCurrency(intradayEquity.snapshots[intradayEquity.snapshots.length - 1]?.unrealized_pnl || 0)}
-                              </div>
-                            </div>
-                            <div className="bg-black/30 rounded-lg p-3 text-center">
-                              <div className="text-xs text-gray-400">Snapshots</div>
-                              <div className="text-lg font-bold text-blue-400">{intradayEquity.snapshots.length}</div>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">Current Equity</div>
+                            <div className={`text-lg font-bold ${
+                              currentEquity >= startingCapital ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {formatCurrency(currentEquity)}
                             </div>
                           </div>
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                              <thead>
-                                <tr className="text-left text-gray-400 border-b border-gray-700">
-                                  <th className="pb-2">Time</th>
-                                  <th className="pb-2 text-right">Equity</th>
-                                  <th className="pb-2 text-right">Unrealized P&L</th>
-                                  <th className="pb-2 text-right">Source</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {intradayEquity.snapshots.slice(-10).map((snap: any, idx: number) => (
-                                  <tr key={idx} className="border-b border-gray-700/50">
-                                    <td className="py-2">{new Date(snap.snapshot_time).toLocaleTimeString()}</td>
-                                    <td className="py-2 text-right font-medium">{formatCurrency(snap.total_equity)}</td>
-                                    <td className={`py-2 text-right ${snap.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                      {formatCurrency(snap.unrealized_pnl)}
-                                    </td>
-                                    <td className="py-2 text-right text-xs text-gray-500">{snap.quote_source || 'calculated'}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">{isBoxIntraday ? 'Unrealized P&L' : 'Cumulative P&L'}</div>
+                            <div className={`text-lg font-bold ${
+                              currentPnl >= 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {formatCurrency(currentPnl)}
+                            </div>
+                          </div>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">{isBoxIntraday ? 'Snapshots' : 'Days'}</div>
+                            <div className="text-lg font-bold text-orange-400">{dataCount}</div>
                           </div>
                         </div>
-                      ) : (
-                        <div className="text-center py-8 text-gray-400">
-                          <p>No intraday snapshots yet. Data appears during market hours.</p>
+
+                        {/* Recharts LineChart - matching HERACLES style */}
+                        <div className="h-64">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                              <XAxis
+                                dataKey="time"
+                                stroke="#9CA3AF"
+                                tick={{ fill: '#9CA3AF', fontSize: 11 }}
+                                tickFormatter={(value) => {
+                                  if (!value) return ''
+                                  const date = new Date(value)
+                                  if (isBoxIntraday) {
+                                    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                                  }
+                                  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                                }}
+                              />
+                              <YAxis
+                                stroke="#9CA3AF"
+                                tick={{ fill: '#9CA3AF', fontSize: 12 }}
+                                tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
+                                domain={['dataMin - 1000', 'dataMax + 1000']}
+                              />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: '#1F2937',
+                                  border: '1px solid #374151',
+                                  borderRadius: '8px',
+                                }}
+                                labelFormatter={(value) => {
+                                  if (!value) return ''
+                                  const date = new Date(value)
+                                  if (isBoxIntraday) {
+                                    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+                                  }
+                                  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                                }}
+                                formatter={(value: number, name: string) => {
+                                  if (name === 'equity') return [formatCurrency(value), 'Equity']
+                                  return [formatCurrency(value), name]
+                                }}
+                              />
+                              {/* Reference line at starting capital */}
+                              <ReferenceLine
+                                y={startingCapital}
+                                stroke="#EF4444"
+                                strokeDasharray="5 5"
+                                strokeWidth={1}
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="equity"
+                                stroke="#F97316"
+                                strokeWidth={2}
+                                dot={false}
+                                activeDot={{ r: 4, fill: '#F97316' }}
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
                         </div>
-                      )}
-                    </>
-                  )}
+                      </>
+                    ) : (
+                      <div className="h-64 flex items-center justify-center">
+                        <div className="text-center text-gray-400">
+                          <span className="text-4xl mb-2 block">📊</span>
+                          <p>No equity data for {selectedBoxTimeframe.label}</p>
+                          <p className="text-xs mt-1">{isBoxIntraday ? 'Snapshots appear during market hours' : 'Data will appear after positions close'}</p>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
 
                 {/* Interest Rates */}
