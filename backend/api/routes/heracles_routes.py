@@ -954,6 +954,43 @@ async def revoke_heracles_ml_approval():
         }
 
 
+@router.post("/api/heracles/ml/reject")
+async def reject_heracles_ml_model():
+    """
+    Reject the newly trained ML model.
+
+    This completely removes the trained model and reverts to Bayesian.
+    Different from revoke:
+    - Revoke: Turns off ML but keeps model (can re-approve later)
+    - Reject: Clears the model entirely (must retrain to use ML again)
+
+    Use this when you train a model but decide not to use it.
+    """
+    try:
+        from trading.heracles.signals import reject_ml_model, is_ml_approved
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        success = reject_ml_model()
+        advisor = get_heracles_ml_advisor()
+
+        return {
+            "success": success,
+            "message": "ML model rejected and cleared - using Bayesian probability estimation" if success else "Failed to reject ML model",
+            "ml_approved": is_ml_approved(),
+            "model_trained": advisor.is_trained if advisor else False,
+            "probability_source": "BAYESIAN",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error rejecting ML model: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.get("/api/heracles/ml/approval-status")
 async def get_heracles_ml_approval_status():
     """

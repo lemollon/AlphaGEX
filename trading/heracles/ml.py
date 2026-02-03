@@ -148,6 +148,48 @@ class HERACLESMLAdvisor:
         # Try to load existing model from database
         self._load_model()
 
+    def clear_model(self) -> bool:
+        """
+        Clear the trained model and reset to untrained state.
+
+        Used when user rejects a newly trained model.
+        Also removes the model from the database.
+        """
+        try:
+            self.model = None
+            self.calibrated_model = None
+            self.scaler = None
+            self.is_trained = False
+            self.training_metrics = None
+            self.model_version = "0.0.0"
+
+            # Try to delete from database
+            try:
+                from quant.model_persistence import delete_model_from_db
+                delete_model_from_db(self.MODEL_NAME)
+                logger.info("Deleted HERACLES ML model from database")
+            except ImportError:
+                # delete_model_from_db may not exist, try direct SQL
+                try:
+                    from database_adapter import DatabaseAdapter
+                    db = DatabaseAdapter()
+                    db.execute(
+                        "DELETE FROM ml_models WHERE name = %s",
+                        (self.MODEL_NAME,)
+                    )
+                    logger.info("Deleted HERACLES ML model from database (direct SQL)")
+                except Exception as e:
+                    logger.warning(f"Could not delete model from database: {e}")
+            except Exception as e:
+                logger.warning(f"Could not delete model from database: {e}")
+
+            logger.info("HERACLES ML model cleared successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to clear HERACLES ML model: {e}")
+            return False
+
     def _load_model(self) -> bool:
         """Load pre-trained model from database"""
         try:

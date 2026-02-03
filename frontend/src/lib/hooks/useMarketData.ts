@@ -876,6 +876,14 @@ const fetchers = {
       return { success: false, error: error?.message || 'Revoke failed' }
     }
   },
+  heraclesMLReject: async () => {
+    try {
+      const response = await api.post('/api/heracles/ml/reject')
+      return response.data
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Reject failed' }
+    }
+  },
   heraclesABTestStatus: async () => {
     try {
       const response = await api.get('/api/heracles/ab-test/status')
@@ -1669,6 +1677,10 @@ export async function approveHERACLESML() {
 
 export async function revokeHERACLESML() {
   return fetchers.heraclesMLRevoke()
+}
+
+export async function rejectHERACLESML() {
+  return fetchers.heraclesMLReject()
 }
 
 // A/B Test hooks and functions
