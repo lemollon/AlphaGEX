@@ -229,7 +229,7 @@ export default function SmartStrategyPicker() {
                     View Exact Setup
                   </a>
                   <button
-                    onClick={() => window.location.href = '/autonomous'}
+                    onClick={() => window.location.href = '/trader'}
                     className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-semibold text-sm text-center"
                   >
                     Open Position

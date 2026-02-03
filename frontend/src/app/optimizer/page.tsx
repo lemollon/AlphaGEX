@@ -213,11 +213,11 @@ export default function StrategyOptimizer() {
                 Use GEXIS for trade analysis, strategy recommendations, and optimization insights.
               </p>
               <a
-                href="/gexis"
+                href="/gexis-commands"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
               >
                 <Brain className="w-5 h-5" />
-                Open GEXIS AI Assistant
+                Open GEXIS Commands
               </a>
             </div>
           </div>

@@ -503,7 +503,7 @@ export default function PsychologyTrapDetection() {
                     </p>
                   </div>
                   <button
-                    onClick={() => window.open('/autonomous', '_blank')}
+                    onClick={() => window.open('/trader', '_blank')}
                     className="px-8 py-4 bg-white text-purple-600 hover:bg-gray-100 rounded-lg font-bold text-lg flex items-center gap-3 shadow-lg transition-all hover:scale-105"
                   >
                     <PlayCircle className="w-6 h-6" />

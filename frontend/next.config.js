@@ -6,6 +6,30 @@ const gitCommit = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'local'
 
 const nextConfig = {
   reactStrictMode: true,
+  async redirects() {
+    return [
+      {
+        source: '/prometheus',
+        destination: '/prometheus-box',
+        permanent: true,
+      },
+      {
+        source: '/gexis',
+        destination: '/gexis-commands',
+        permanent: true,
+      },
+      {
+        source: '/ai',
+        destination: '/ai-copilot',
+        permanent: true,
+      },
+      {
+        source: '/autonomous',
+        destination: '/trader',
+        permanent: true,
+      },
+    ]
+  },
   env: {
     // No localhost fallbacks - these MUST be set in production
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
