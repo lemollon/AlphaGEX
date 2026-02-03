@@ -345,6 +345,34 @@ class HERACLESDatabase:
                 c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_equity_snapshots_time ON heracles_equity_snapshots(snapshot_time)")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_heracles_signals_time ON heracles_signals(signal_time)")
 
+                # ================================================================
+                # ADD MISSING COLUMNS TO EXISTING TABLES
+                # These ALTER TABLE statements add columns that may be missing
+                # from tables created before these columns were added to the schema
+                # ================================================================
+
+                # Add bid/ask and ATR estimation columns to scan_activity
+                c.execute("""
+                    ALTER TABLE heracles_scan_activity
+                    ADD COLUMN IF NOT EXISTS bid_price DECIMAL(12, 4),
+                    ADD COLUMN IF NOT EXISTS ask_price DECIMAL(12, 4),
+                    ADD COLUMN IF NOT EXISTS atr_is_estimated BOOLEAN DEFAULT FALSE
+                """)
+
+                # Add high/low price tracking columns to positions
+                c.execute("""
+                    ALTER TABLE heracles_positions
+                    ADD COLUMN IF NOT EXISTS high_price_since_entry DECIMAL(12, 4),
+                    ADD COLUMN IF NOT EXISTS low_price_since_entry DECIMAL(12, 4)
+                """)
+
+                # Add high/low price tracking columns to closed_trades
+                c.execute("""
+                    ALTER TABLE heracles_closed_trades
+                    ADD COLUMN IF NOT EXISTS high_price_since_entry DECIMAL(12, 4),
+                    ADD COLUMN IF NOT EXISTS low_price_since_entry DECIMAL(12, 4)
+                """)
+
                 conn.commit()
                 logger.info("HERACLES database tables ensured")
 
