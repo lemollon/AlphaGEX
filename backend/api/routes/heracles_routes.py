@@ -731,20 +731,63 @@ async def get_heracles_diagnostics():
                     "available": True,
                     "last": quote.get("last", 0),
                     "bid": quote.get("bid", 0),
-                    "ask": quote.get("ask", 0)
+                    "ask": quote.get("ask", 0),
+                    "source": quote.get("source", "UNKNOWN")
                 }
             else:
                 quote_status = {"available": False, "error": "No quote returned"}
         except Exception as e:
             quote_status = {"available": False, "error": str(e)}
 
+        # Check GEX data availability (CRITICAL for signal generation)
+        gex_status = {}
+        try:
+            from trading.heracles.signals import get_gex_data_for_heracles
+            gex_data = get_gex_data_for_heracles("SPX")
+            flip_point = gex_data.get("flip_point", 0)
+            net_gex = gex_data.get("net_gex", 0)
+            current_price = quote_status.get("last", 0) if quote_status.get("available") else 0
+
+            # Check if GEX data is valid (flip_point should be different from current_price)
+            if flip_point > 0 and current_price > 0:
+                # Check if flip_point is NOT just set to current_price (which indicates fallback)
+                is_synthetic = abs(flip_point - current_price) < 1  # Within 1 point = likely fallback
+                gex_status = {
+                    "available": not is_synthetic,
+                    "is_synthetic": is_synthetic,
+                    "flip_point": flip_point,
+                    "call_wall": gex_data.get("call_wall", 0),
+                    "put_wall": gex_data.get("put_wall", 0),
+                    "net_gex": net_gex,
+                    "source": "SPX_TRADIER_PRODUCTION" if not is_synthetic else "SYNTHETIC_FALLBACK",
+                    "warning": None if not is_synthetic else "GEX data unavailable - using synthetic levels. Check Tradier production API keys."
+                }
+            else:
+                gex_status = {
+                    "available": False,
+                    "is_synthetic": True,
+                    "flip_point": 0,
+                    "net_gex": 0,
+                    "source": "UNAVAILABLE",
+                    "warning": "SPX GEX data unavailable. HERACLES requires Tradier PRODUCTION API keys for SPX options (sandbox doesn't support SPX). Signals will use synthetic flip_point."
+                }
+        except Exception as e:
+            gex_status = {
+                "available": False,
+                "is_synthetic": True,
+                "error": str(e),
+                "warning": f"GEX data fetch failed: {e}. Check Tradier production API configuration."
+            }
+
         return {
             "bot_name": "HERACLES",
+            "display_name": "VALOR",  # User-facing name
             "mode": status.get("mode", "UNKNOWN"),
             "status": status.get("status", "UNKNOWN"),
             "execution": execution_status,
             "database": db_status,
             "market_data": quote_status,
+            "gex_data": gex_status,  # CRITICAL: Shows if GEX data is available for signal generation
             "config": status.get("config", {}),
             "performance": status.get("performance", {}),
             "win_tracker": status.get("win_tracker", {}),
