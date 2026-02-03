@@ -685,7 +685,10 @@ class HERACLESTrader:
                 order_id=order_id or "",
                 scan_id=scan_id,  # Link to scan activity for ML training
                 status=PositionStatus.OPEN,
-                open_time=datetime.now(CENTRAL_TZ)
+                open_time=datetime.now(CENTRAL_TZ),
+                # A/B Test tracking - copy from signal
+                stop_type=signal.stop_type,
+                stop_points_used=signal.stop_points_used
             )
 
             # Save to database
