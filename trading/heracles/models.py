@@ -249,9 +249,11 @@ class HERACLESConfig:
     tick_size: float = MES_TICK_SIZE  # 0.25 points
 
     # Stop loss settings (in points)
-    initial_stop_points: float = 3.0  # Initial stop: 3 points = $15
-    breakeven_activation_points: float = 2.0  # Move to BE at +2 points = $10
-    trailing_stop_points: float = 1.0  # Trail by 1 point = $5
+    # TUNED: Tighter stops based on analysis showing losers > winners (0.92:1 R/R)
+    initial_stop_points: float = 2.5  # Initial stop: 2.5 points = $12.50 (was 3.0)
+    breakeven_activation_points: float = 1.5  # Move to BE at +1.5 points = $7.50 (was 2.0)
+    trailing_stop_points: float = 0.75  # Trail by 0.75 point = $3.75 (was 1.0)
+    # profit_target_points: float = 6.0  # PENDING: Run test_profit_targets.py to validate
 
     # Position sizing
     position_sizing_method: str = "FIXED_FRACTIONAL_ATR"  # Method for sizing
