@@ -1294,6 +1294,57 @@ async def update_ic_config(request: ICConfigUpdateRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/ic/config/reset-aggressive")
+async def reset_ic_config_aggressive():
+    """
+    Reset IC config to AGGRESSIVE defaults (matching PEGASUS).
+
+    This overwrites the stored config with:
+    - spread_width: $10 (was $25)
+    - max_contracts: 50 (was 10)
+    - max_daily_trades: 0 (unlimited)
+    - max_positions: 5
+    - max_capital_per_trade_pct: 10%
+
+    Use this when trades are showing 1 contract instead of expected 50.
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        from trading.prometheus.models import PrometheusICConfig
+
+        # Create fresh config with aggressive defaults
+        aggressive_config = PrometheusICConfig()
+
+        # Explicitly set aggressive values to ensure they're not overridden
+        aggressive_config.spread_width = 10.0      # Match PEGASUS
+        aggressive_config.max_contracts = 50       # Raised from 10
+        aggressive_config.max_daily_trades = 0     # UNLIMITED
+        aggressive_config.max_positions = 5        # Same as PEGASUS
+        aggressive_config.max_capital_per_trade_pct = 10.0
+
+        # Save to database
+        trader = PrometheusICTrader()
+        trader.db.save_ic_config(aggressive_config)
+
+        return {
+            "success": True,
+            "message": "IC config reset to AGGRESSIVE defaults",
+            "config": {
+                "spread_width": aggressive_config.spread_width,
+                "max_contracts": aggressive_config.max_contracts,
+                "max_daily_trades": "UNLIMITED" if aggressive_config.max_daily_trades == 0 else aggressive_config.max_daily_trades,
+                "max_positions": aggressive_config.max_positions,
+                "max_capital_per_trade_pct": aggressive_config.max_capital_per_trade_pct,
+            },
+            "expected_sizing": "With $500K capital @ 10% risk and $10 spreads: ~50 contracts per trade"
+        }
+    except Exception as e:
+        logger.error(f"Error resetting IC config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ========== IC Positions ==========
 
 @router.get("/ic/positions")
