@@ -631,18 +631,30 @@ async def get_performance():
 
 
 @router.get("/equity-curve")
-async def get_equity_curve(limit: int = Query(100, ge=1, le=500)):
+async def get_equity_curve(
+    limit: int = Query(100, ge=1, le=500),
+    days: int = Query(None, ge=0, le=365, description="Filter to last N days. 0=today, None=all history")
+):
     """
     Get historical equity curve data.
+
+    Supports timeframe filtering for chart display (matching HERACLES):
+    - days=0: Today only (intraday)
+    - days=7: Last 7 days
+    - days=30: Last 30 days
+    - days=90: Last 90 days
+    - days=None: All history (default)
     """
     if not PrometheusTrader:
         raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
 
     try:
         trader = PrometheusTrader()
-        curve = trader.db.get_equity_curve(limit)
+        curve = trader.db.get_equity_curve(limit=limit, days=days)
         return {
             "equity_curve": curve,
+            "count": len(curve),
+            "days": days,
             "starting_capital": trader.db.get_starting_capital(),
         }
     except Exception as e:
