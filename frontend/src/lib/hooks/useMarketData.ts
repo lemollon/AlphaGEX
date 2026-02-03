@@ -944,7 +944,7 @@ const fetchers = {
   },
   prometheusLivePnL: async () => {
     try {
-      const response = await api.get('/api/prometheus-box/combined-performance')
+      const response = await api.get('/api/prometheus-box/combined/performance')
       return response.data
     } catch {
       return { success: false, data: null }
