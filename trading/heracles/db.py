@@ -552,6 +552,101 @@ class HERACLESDatabase:
             logger.error(f"Failed to update stop for {position_id}: {e}")
             return False
 
+    def get_position_count(self) -> int:
+        """Get count of open positions"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM heracles_positions WHERE status = 'open'")
+                result = c.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Failed to get position count: {e}")
+            return 0
+
+    def get_trades_today_count(self) -> int:
+        """Get count of trades executed today"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                c.execute("""
+                    SELECT COUNT(*) FROM heracles_closed_trades
+                    WHERE DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                """, (today,))
+                result = c.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Failed to get trades today count: {e}")
+            return 0
+
+    def expire_position(
+        self,
+        position_id: str,
+        realized_pnl: float,
+        close_price: float
+    ) -> bool:
+        """
+        Mark a position as expired (EOD processing).
+
+        Different from close_position in that:
+        - Reason is always 'EXPIRED' or 'EOD_MAINTENANCE'
+        - Status is set to 'expired' instead of 'closed'
+        """
+        try:
+            position = self.get_position_by_id(position_id)
+            if not position:
+                return False
+
+            with db_connection() as conn:
+                c = conn.cursor()
+                now = datetime.now(CENTRAL_TZ)
+
+                # Update position
+                c.execute("""
+                    UPDATE heracles_positions
+                    SET status = 'expired', close_time = %s, close_price = %s,
+                        close_reason = 'EOD_EXPIRED', realized_pnl = %s, updated_at = NOW()
+                    WHERE position_id = %s
+                """, (now, _to_python(close_price), _to_python(realized_pnl), position_id))
+
+                # Insert into closed trades
+                hold_duration = int((now - position.open_time).total_seconds() / 60) if position.open_time else 0
+
+                c.execute("""
+                    INSERT INTO heracles_closed_trades (
+                        position_id, symbol, direction, contracts,
+                        entry_price, exit_price, realized_pnl, gamma_regime,
+                        signal_source, signal_confidence, win_probability,
+                        vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
+                        open_time, close_time, hold_duration_minutes
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (position_id) DO NOTHING
+                """, (
+                    position_id, position.symbol, position.direction.value,
+                    position.contracts, _to_python(position.entry_price),
+                    _to_python(close_price), _to_python(realized_pnl),
+                    position.gamma_regime.value, position.signal_source.value,
+                    _to_python(position.signal_confidence), _to_python(position.win_probability),
+                    _to_python(position.vix_at_entry), _to_python(position.atr_at_entry),
+                    'EOD_EXPIRED', position.trade_reasoning,
+                    position.open_time, now, hold_duration
+                ))
+
+                conn.commit()
+                logger.info(f"Expired position {position_id}: P&L=${realized_pnl:.2f}")
+
+                # Update scan activity with outcome for ML training
+                if position.scan_id:
+                    outcome = "WIN" if realized_pnl > 0 else "LOSS"
+                    self.update_scan_outcome(position.scan_id, outcome, realized_pnl)
+
+                return True
+
+        except Exception as e:
+            logger.error(f"Failed to expire position {position_id}: {e}")
+            return False
+
     def _row_to_position(self, data: Dict) -> FuturesPosition:
         """Convert database row to FuturesPosition"""
         return FuturesPosition(

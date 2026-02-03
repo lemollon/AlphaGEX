@@ -2093,10 +2093,11 @@ class AutonomousTraderScheduler:
         HERACLES End-of-Day processing - runs at 4:00 PM CT (futures close)
 
         For futures, EOD happens at the daily maintenance break (4-5pm CT):
-        - Mark open positions to market
+        - Close any open positions at current price
+        - Mark positions to market
         - Update daily P&L
         - Save equity snapshot
-        - Reconcile paper balance
+        - Record outcomes for ML feedback loop
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -2108,7 +2109,20 @@ class AutonomousTraderScheduler:
             return
 
         try:
-            # Get current status
+            # Process any expired positions (close them at current market price)
+            eod_result = self.heracles_trader.process_expired_positions()
+
+            if eod_result.get('processed_count', 0) > 0:
+                logger.info(f"HERACLES EOD: Processed {eod_result['processed_count']} position(s)")
+                logger.info(f"  EOD P&L: ${eod_result['total_pnl']:,.2f}")
+                for pos in eod_result.get('positions', []):
+                    logger.info(f"  - {pos['position_id']}: ${pos['pnl']:,.2f}")
+
+            if eod_result.get('errors'):
+                for error in eod_result['errors']:
+                    logger.error(f"  EOD Error: {error}")
+
+            # Get current status after EOD processing
             status = self.heracles_trader.get_status()
 
             # Log summary
