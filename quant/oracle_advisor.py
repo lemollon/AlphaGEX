@@ -119,12 +119,12 @@ except ImportError:
 
 # GEX Signal Integration - ML direction for ATHENA/ICARUS
 GEX_ML_AVAILABLE = False
-_gex_signal_generator = None
+_gex_signal_integration = None
 try:
-    from quant.gex_signal_integration import GEXSignalGenerator
+    from quant.gex_signal_integration import GEXSignalIntegration
     GEX_ML_AVAILABLE = True
 except ImportError:
-    GEXSignalGenerator = None
+    GEXSignalIntegration = None
     print("Info: GEX Signal Integration not available")
 
 # Context manager for safe database connections (prevents connection leaks)
@@ -3158,13 +3158,13 @@ class OracleAdvisor:
 
         # Try to get ML direction from GEX probability models (ORION)
         ml_direction_used = False
-        if GEX_ML_AVAILABLE and GEXSignalGenerator is not None:
+        if GEX_ML_AVAILABLE and GEXSignalIntegration is not None:
             try:
-                global _gex_signal_generator
-                if _gex_signal_generator is None:
-                    _gex_signal_generator = GEXSignalGenerator()
+                global _gex_signal_integration
+                if _gex_signal_integration is None:
+                    _gex_signal_integration = GEXSignalIntegration()
 
-                ml_signal = _gex_signal_generator.get_combined_signal(
+                ml_signal = _gex_signal_integration.get_combined_signal(
                     ticker="SPY",
                     spot_price=context.spot_price,
                     call_wall=context.gex_call_wall,
