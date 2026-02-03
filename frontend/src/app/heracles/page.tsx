@@ -324,7 +324,7 @@ export default function HERACLESPage() {
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-lg font-semibold flex items-center gap-2">
                     <TrendingUp className="h-5 w-5 text-yellow-400" />
-                    Equity Curve
+                    Equity Curve ({selectedTimeframe.label})
                   </h3>
                   {/* Timeframe Selector */}
                   <div className="flex gap-1">
