@@ -9,9 +9,18 @@ Strategy Logic:
 - NEGATIVE GAMMA: Momentum - trade breakouts, price tends to accelerate away from flip point
 
 Uses n+1 GEX data for overnight trading (forward-looking levels).
+
+ML Approval Workflow:
+- ML model must be explicitly approved before it's used for predictions
+- Use /api/heracles/ml/approve to activate ML after reviewing training results
+
+A/B Test for Dynamic Stops:
+- When enabled, 50% of trades use fixed stops, 50% use dynamic stops
+- Allows comparison of stop strategies on real trades
 """
 
 import logging
+import random
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from zoneinfo import ZoneInfo
@@ -24,6 +33,11 @@ from .models import (
 # ML Advisor - loaded lazily to avoid circular imports
 _ml_advisor = None
 _ml_load_attempted = False
+
+# Cache for config values to avoid repeated DB lookups
+_config_cache = {}
+_config_cache_time = None
+CONFIG_CACHE_TTL_SECONDS = 60
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +62,124 @@ def _get_ml_advisor():
         _ml_advisor = None
 
     return _ml_advisor
+
+
+def _get_config_value(key: str, default: Any = None) -> Any:
+    """Get a config value from the database with caching."""
+    global _config_cache, _config_cache_time
+
+    now = datetime.now()
+
+    # Check if cache is stale
+    if _config_cache_time is None or (now - _config_cache_time).total_seconds() > CONFIG_CACHE_TTL_SECONDS:
+        _config_cache = {}
+        _config_cache_time = now
+
+    # Return cached value if available
+    if key in _config_cache:
+        return _config_cache[key]
+
+    # Fetch from database
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT config_value FROM heracles_config WHERE config_key = %s",
+            (key,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            value = row[0]
+            # Try to parse as boolean
+            if value and value.lower() in ('true', 'false'):
+                value = value.lower() == 'true'
+            _config_cache[key] = value
+            return value
+    except Exception as e:
+        logger.warning(f"Failed to get config value {key}: {e}")
+
+    return default
+
+
+def _set_config_value(key: str, value: Any) -> bool:
+    """Set a config value in the database."""
+    global _config_cache
+
+    try:
+        from database_adapter import get_connection
+        import json
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Convert value to string for storage
+        if isinstance(value, bool):
+            str_value = 'true' if value else 'false'
+        elif isinstance(value, (dict, list)):
+            str_value = json.dumps(value)
+        else:
+            str_value = str(value)
+
+        cursor.execute("""
+            INSERT INTO heracles_config (config_key, config_value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (config_key) DO UPDATE SET
+                config_value = EXCLUDED.config_value,
+                updated_at = NOW()
+        """, (key, str_value))
+
+        conn.commit()
+        conn.close()
+
+        # Update cache
+        _config_cache[key] = value
+        return True
+    except Exception as e:
+        logger.error(f"Failed to set config value {key}: {e}")
+        return False
+
+
+def is_ml_approved() -> bool:
+    """Check if ML model has been approved for use."""
+    return _get_config_value('ml_approved', False) == True or _get_config_value('ml_approved', 'false') == 'true'
+
+
+def approve_ml_model() -> bool:
+    """Approve the ML model for use in signal generation."""
+    return _set_config_value('ml_approved', True)
+
+
+def revoke_ml_approval() -> bool:
+    """Revoke ML model approval (revert to Bayesian)."""
+    return _set_config_value('ml_approved', False)
+
+
+def is_ab_test_enabled() -> bool:
+    """Check if A/B test for dynamic stops is enabled."""
+    return _get_config_value('ab_test_stops_enabled', False) == True or _get_config_value('ab_test_stops_enabled', 'false') == 'true'
+
+
+def enable_ab_test() -> bool:
+    """Enable A/B test for dynamic vs fixed stops."""
+    return _set_config_value('ab_test_stops_enabled', True)
+
+
+def disable_ab_test() -> bool:
+    """Disable A/B test (use dynamic stops only)."""
+    return _set_config_value('ab_test_stops_enabled', False)
+
+
+def get_ab_assignment() -> str:
+    """
+    Get A/B test assignment for current trade.
+
+    Returns 'FIXED' or 'DYNAMIC' with 50% probability each.
+    Only called when A/B test is enabled.
+    """
+    return 'FIXED' if random.random() < 0.5 else 'DYNAMIC'
 
 
 class HERACLESSignalGenerator:
@@ -180,13 +312,18 @@ class HERACLESSignalGenerator:
                 account_balance, atr, current_price
             )
 
-            # Set stop and breakeven prices
-            signal = self._set_stop_levels(signal, atr)
+            # Set stop and breakeven prices (with A/B test support)
+            signal, stop_type, stop_points = self._set_stop_levels(signal, atr)
+
+            # Store stop info on signal for tracking (used by trader to save to DB)
+            signal.stop_type = stop_type
+            signal.stop_points_used = stop_points
 
             logger.info(
                 f"Generated {signal.direction.value} signal: "
                 f"price={current_price:.2f}, regime={gamma_regime.value}, "
-                f"win_prob={signal.win_probability:.2%}, contracts={signal.contracts}"
+                f"win_prob={signal.win_probability:.2%}, contracts={signal.contracts}, "
+                f"stop_type={stop_type}, stop_pts={stop_points:.2f}"
             )
 
             return signal
@@ -390,19 +527,22 @@ class HERACLESSignalGenerator:
         is_overnight: bool = False
     ) -> float:
         """
-        Calculate win probability using ML (if available) or Bayesian fallback.
+        Calculate win probability using ML (if approved and trained) or Bayesian fallback.
 
-        ML Prediction (when trained):
+        ML Prediction (when trained AND approved):
         - Uses XGBoost model trained on historical trade outcomes
         - Features: VIX, ATR, gamma regime, distance to levels, time factors
+        - REQUIRES explicit approval via /api/heracles/ml/approve
 
-        Bayesian Fallback (before ML training):
+        Bayesian Fallback (before ML training or approval):
         - Starts with prior, updates based on regime-specific win rate
         - Blends with signal confidence
         """
-        # Try ML prediction first (if model is trained)
+        # Try ML prediction first (if model is trained AND approved)
         ml_advisor = _get_ml_advisor()
-        if ml_advisor is not None and ml_advisor.model is not None:
+        ml_approved = is_ml_approved()
+
+        if ml_advisor is not None and ml_advisor.model is not None and ml_approved:
             try:
                 # Build feature dict for ML prediction
                 # Must match FEATURE_COLS in ml.py exactly
@@ -447,8 +587,10 @@ class HERACLESSignalGenerator:
 
             except Exception as e:
                 logger.warning(f"ML prediction failed, falling back to Bayesian: {e}")
+        elif ml_advisor is not None and ml_advisor.model is not None and not ml_approved:
+            logger.debug("ML model trained but not approved - using Bayesian fallback")
 
-        # Bayesian fallback (when ML not available)
+        # Bayesian fallback (when ML not available or not approved)
         return self._calculate_bayesian_probability(gamma_regime, signal)
 
     def _calculate_bayesian_probability(
@@ -480,9 +622,16 @@ class HERACLESSignalGenerator:
 
         return round(blended_prob, 4)
 
-    def _set_stop_levels(self, signal: FuturesSignal, atr: float) -> FuturesSignal:
+    def _set_stop_levels(self, signal: FuturesSignal, atr: float) -> Tuple[FuturesSignal, str, float]:
         """
-        Set DYNAMIC stop loss levels based on market conditions.
+        Set stop loss levels based on A/B test assignment or dynamic by default.
+
+        A/B Test Mode (when enabled):
+        - 50% trades use FIXED stop (base config value unchanged)
+        - 50% trades use DYNAMIC stop (VIX/ATR/regime adjusted)
+
+        Default Mode (A/B disabled):
+        - All trades use DYNAMIC stops
 
         Dynamic Stop Logic:
         1. Base stop from config (default 2.5 points)
@@ -490,22 +639,39 @@ class HERACLESSignalGenerator:
         3. ATR adjustment: scale based on current volatility vs average
         4. Regime adjustment: tighter for positive gamma (mean reversion)
 
-        This replaces the fixed stop approach to adapt to market conditions.
+        Returns:
+            Tuple of (signal, stop_type, stop_points_used)
+            stop_type is 'FIXED' or 'DYNAMIC'
+            stop_points_used is the actual stop distance in points
         """
-        # Calculate dynamic stop distance
-        stop_distance = self._calculate_dynamic_stop(
-            base_stop=self.config.initial_stop_points,
-            vix=signal.vix,
-            atr=atr,
-            gamma_regime=signal.gamma_regime
-        )
+        base_stop = self.config.initial_stop_points
 
-        # Log the dynamic stop calculation
-        logger.debug(
-            f"Dynamic stop: base={self.config.initial_stop_points:.2f}, "
-            f"vix={signal.vix:.1f}, atr={atr:.2f}, regime={signal.gamma_regime.value}, "
-            f"final={stop_distance:.2f} pts"
-        )
+        # Determine stop type based on A/B test status
+        if is_ab_test_enabled():
+            stop_type = get_ab_assignment()
+        else:
+            # Default to dynamic when A/B test is disabled
+            stop_type = 'DYNAMIC'
+
+        # Calculate stop distance based on assignment
+        if stop_type == 'FIXED':
+            stop_distance = base_stop
+            logger.info(
+                f"A/B Test: FIXED stop selected - using base stop of {base_stop:.2f} pts"
+            )
+        else:
+            # Calculate dynamic stop distance
+            stop_distance = self._calculate_dynamic_stop(
+                base_stop=base_stop,
+                vix=signal.vix,
+                atr=atr,
+                gamma_regime=signal.gamma_regime
+            )
+            logger.info(
+                f"{'A/B Test: ' if is_ab_test_enabled() else ''}DYNAMIC stop: "
+                f"base={base_stop:.2f}, vix={signal.vix:.1f}, atr={atr:.2f}, "
+                f"regime={signal.gamma_regime.value}, final={stop_distance:.2f} pts"
+            )
 
         if signal.direction == TradeDirection.LONG:
             signal.stop_price = signal.entry_price - stop_distance
@@ -514,7 +680,7 @@ class HERACLESSignalGenerator:
             signal.stop_price = signal.entry_price + stop_distance
             signal.target_price = signal.entry_price - self.config.profit_target_points
 
-        return signal
+        return signal, stop_type, stop_distance
 
     def _calculate_dynamic_stop(
         self,

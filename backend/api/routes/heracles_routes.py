@@ -799,6 +799,243 @@ async def get_heracles_ml_feature_importance():
         }
 
 
+@router.post("/api/heracles/ml/approve")
+async def approve_heracles_ml_model():
+    """
+    Approve the ML model for use in signal generation.
+
+    After training, the ML model is NOT automatically used.
+    You must explicitly approve it after reviewing the training results.
+    This activates the ML model for win probability predictions.
+    """
+    try:
+        from trading.heracles.signals import approve_ml_model, is_ml_approved
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        # Check if model is trained first
+        advisor = get_heracles_ml_advisor()
+        if not advisor.is_trained:
+            return {
+                "success": False,
+                "error": "No ML model trained. Train the model first before approving.",
+                "ml_approved": False,
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Approve the model
+        success = approve_ml_model()
+
+        return {
+            "success": success,
+            "message": "ML model approved and now active for win probability predictions" if success else "Failed to approve ML model",
+            "ml_approved": is_ml_approved(),
+            "model_version": advisor.model_version,
+            "accuracy": advisor.training_metrics.accuracy if advisor.training_metrics else None,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error approving ML model: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.post("/api/heracles/ml/revoke")
+async def revoke_heracles_ml_approval():
+    """
+    Revoke ML model approval.
+
+    Switches back to Bayesian probability estimation.
+    Use this if the ML model is underperforming.
+    """
+    try:
+        from trading.heracles.signals import revoke_ml_approval, is_ml_approved
+
+        success = revoke_ml_approval()
+
+        return {
+            "success": success,
+            "message": "ML model revoked - using Bayesian probability estimation" if success else "Failed to revoke ML approval",
+            "ml_approved": is_ml_approved(),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error revoking ML approval: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ml/approval-status")
+async def get_heracles_ml_approval_status():
+    """
+    Get ML model approval status.
+
+    Shows whether the ML model is approved and active,
+    or if Bayesian fallback is being used.
+    """
+    try:
+        from trading.heracles.signals import is_ml_approved
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+        ml_approved = is_ml_approved()
+
+        return {
+            "ml_approved": ml_approved,
+            "model_trained": advisor.is_trained,
+            "model_version": advisor.model_version if advisor.is_trained else None,
+            "probability_source": "ML" if (ml_approved and advisor.is_trained) else "BAYESIAN",
+            "accuracy": advisor.training_metrics.accuracy if advisor.training_metrics else None,
+            "message": (
+                "ML model is approved and active" if (ml_approved and advisor.is_trained) else
+                "ML model trained but awaiting approval" if (advisor.is_trained and not ml_approved) else
+                "No ML model trained - using Bayesian estimation"
+            ),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting ML approval status: {e}")
+        return {
+            "ml_approved": False,
+            "model_trained": False,
+            "probability_source": "BAYESIAN",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================================
+# A/B Test Endpoints
+# ============================================================================
+
+@router.post("/api/heracles/ab-test/enable")
+async def enable_heracles_ab_test():
+    """
+    Enable A/B test for stop loss comparison.
+
+    When enabled:
+    - 50% of trades will use FIXED stops (base config value)
+    - 50% of trades will use DYNAMIC stops (VIX/ATR/regime adjusted)
+
+    This allows you to compare stop strategies on real trades.
+    Need 100+ trades for meaningful comparison.
+    """
+    try:
+        from trading.heracles.signals import enable_ab_test, is_ab_test_enabled
+
+        success = enable_ab_test()
+
+        return {
+            "success": success,
+            "ab_test_enabled": is_ab_test_enabled(),
+            "message": "A/B test enabled - 50% fixed / 50% dynamic stops" if success else "Failed to enable A/B test",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error enabling A/B test: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.post("/api/heracles/ab-test/disable")
+async def disable_heracles_ab_test():
+    """
+    Disable A/B test.
+
+    All trades will use DYNAMIC stops (default behavior).
+    """
+    try:
+        from trading.heracles.signals import disable_ab_test, is_ab_test_enabled
+
+        success = disable_ab_test()
+
+        return {
+            "success": success,
+            "ab_test_enabled": is_ab_test_enabled(),
+            "message": "A/B test disabled - all trades use DYNAMIC stops" if success else "Failed to disable A/B test",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error disabling A/B test: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ab-test/status")
+async def get_heracles_ab_test_status():
+    """
+    Get A/B test status and settings.
+    """
+    try:
+        from trading.heracles.signals import is_ab_test_enabled
+
+        return {
+            "ab_test_enabled": is_ab_test_enabled(),
+            "description": "When enabled, 50% trades use FIXED stops, 50% use DYNAMIC stops",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting A/B test status: {e}")
+        return {
+            "ab_test_enabled": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ab-test/results")
+async def get_heracles_ab_test_results():
+    """
+    Get A/B test results comparing FIXED vs DYNAMIC stops.
+
+    Returns performance statistics for both groups:
+    - Win rate, total P&L, average P&L
+    - Recommendation based on results
+    - Confidence level (based on sample size)
+
+    Need 100+ trades for meaningful comparison.
+    """
+    try:
+        trader = _get_trader()
+        results = trader.db.get_ab_test_results()
+
+        from trading.heracles.signals import is_ab_test_enabled
+
+        return {
+            "ab_test_enabled": is_ab_test_enabled(),
+            "results": results,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting A/B test results: {e}")
+        return {
+            "ab_test_enabled": False,
+            "results": None,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.get("/api/heracles/paper-equity-curve")
 async def get_heracles_paper_equity_curve(
     days: int = Query(30, ge=1, le=365, description="Number of days of history")
