@@ -45,6 +45,7 @@ import {
   useHERACLESScanActivity,
   useHERACLESMLTrainingData,
   useHERACLESSignals,
+  useUnifiedBotSummary,
 } from '@/lib/hooks/useMarketData'
 
 // ==============================================================================
@@ -94,10 +95,21 @@ export default function HERACLESPage() {
   const { data: mlTrainingData } = useHERACLESMLTrainingData()
   const { data: signalsData } = useHERACLESSignals(50)
 
+  // Unified metrics for consistent data (single source of truth)
+  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('HERACLES')
+  const unifiedMetrics = unifiedData?.data
+
   // Extract data
   const status = statusData || {}
   const positions = status?.positions?.positions || []
   const performance = status?.performance || {}
+
+  // SINGLE SOURCE OF TRUTH for starting capital
+  // Priority: unified metrics -> paper account -> config -> default
+  const startingCapital = unifiedMetrics?.starting_capital ??
+    status?.paper_account?.starting_capital ??
+    status?.config?.capital ??
+    100000
   const config = status?.config || {}
   const winTracker = status?.win_tracker || {}
   const paperAccount = status?.paper_account || null
@@ -218,16 +230,16 @@ export default function HERACLESPage() {
                   <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
                     <div className="text-sm text-gray-400">Starting Capital</div>
                     <div className="text-2xl font-bold text-white mt-1">
-                      ${(paperAccount.starting_capital || 100000).toLocaleString()}
+                      ${startingCapital.toLocaleString()}
                     </div>
                   </div>
                   <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
                     <div className="text-sm text-gray-400">Current Balance</div>
                     <div className={`text-2xl font-bold mt-1 ${
-                      (paperAccount.current_balance || 0) >= (paperAccount.starting_capital || 100000)
+                      (paperAccount.current_balance || 0) >= startingCapital
                         ? 'text-green-400' : 'text-red-400'
                     }`}>
-                      ${(paperAccount.current_balance || 100000).toLocaleString()}
+                      ${(paperAccount?.current_balance || startingCapital).toLocaleString()}
                     </div>
                   </div>
                   <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
@@ -377,7 +389,7 @@ export default function HERACLESPage() {
                           ]}
                         />
                         <ReferenceLine
-                          y={paperAccount?.starting_capital || 100000}
+                          y={startingCapital}
                           stroke="#EF4444"
                           strokeDasharray="5 5"
                         />
@@ -707,7 +719,7 @@ export default function HERACLESPage() {
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <ConfigItem label="Symbol" value={status?.symbol || '/MESH6'} />
-                  <ConfigItem label="Capital" value={`$${(paperAccount?.starting_capital || config.capital || 100000).toLocaleString()}`} />
+                  <ConfigItem label="Capital" value={`$${startingCapital.toLocaleString()}`} />
                   <ConfigItem label="Risk/Trade" value={`${config.risk_per_trade_pct || 1}%`} />
                   <ConfigItem label="Max Contracts" value={config.max_contracts || 5} />
                   <ConfigItem label="Initial Stop" value={`${config.initial_stop_points || 3} pts`} />

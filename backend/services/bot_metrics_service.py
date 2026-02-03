@@ -43,6 +43,7 @@ class BotName(Enum):
     ICARUS = "ICARUS"
     TITAN = "TITAN"
     PEGASUS = "PEGASUS"
+    HERACLES = "HERACLES"
 
 
 @dataclass
@@ -160,6 +161,7 @@ class BotMetricsService:
         BotName.ICARUS: 100000,
         BotName.TITAN: 200000,
         BotName.PEGASUS: 200000,
+        BotName.HERACLES: 100000,  # MES Futures paper trading
     }
 
     # Database table mappings
@@ -188,6 +190,12 @@ class BotMetricsService:
             'positions': 'pegasus_positions',
             'snapshots': 'pegasus_equity_snapshots',
             'config_key': 'pegasus_starting_capital',
+        },
+        BotName.HERACLES: {
+            'positions': 'heracles_positions',
+            'closed_trades': 'heracles_closed_trades',  # HERACLES uses separate closed trades table
+            'snapshots': 'heracles_equity_snapshots',
+            'config_key': 'heracles_starting_capital',
         },
     }
 
@@ -399,42 +407,79 @@ class BotMetricsService:
             try:
                 cursor = conn.cursor()
 
-                # Get aggregate stats from database (excluding unrealized - we calculate that with MTM)
-                # CRITICAL: Include 'partial_close' status - these are positions where one leg closed
-                # but the other failed. They have realized_pnl and must be counted in metrics.
-                # NOTE: Cast to timestamptz explicitly for psycopg2 compatibility
-                cursor.execute(f"""
-                    SELECT
-                        COUNT(*) FILTER (WHERE status = 'open') as open_count,
-                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close')) as closed_count,
-                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0) as wins,
-                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close') AND realized_pnl <= 0) as losses,
-                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_realized,
-                        COALESCE(SUM(CASE
-                            WHEN status IN ('closed', 'expired', 'partial_close')
-                            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
-                            THEN realized_pnl ELSE 0 END), 0) as today_realized
-                    FROM {positions_table}
-                """, (today,))
+                # HERACLES uses separate tables for positions and closed trades
+                if bot == BotName.HERACLES:
+                    # Query open positions from heracles_positions
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM heracles_positions WHERE status = 'open'
+                    """)
+                    open_row = cursor.fetchone()
+                    open_count = int(open_row[0] or 0) if open_row else 0
 
-                row = cursor.fetchone()
-                if row:
-                    open_count = int(row[0] or 0)
-                    closed_count = int(row[1] or 0)
-                    winning_trades = int(row[2] or 0)
-                    losing_trades = int(row[3] or 0)
-                    total_realized = float(row[4] or 0)
-                    today_realized = float(row[5] or 0)
+                    # Query closed trades from heracles_closed_trades
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) as closed_count,
+                            COUNT(*) FILTER (WHERE realized_pnl > 0) as wins,
+                            COUNT(*) FILTER (WHERE realized_pnl <= 0) as losses,
+                            COALESCE(SUM(realized_pnl), 0) as total_realized,
+                            COALESCE(SUM(CASE
+                                WHEN DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                                THEN realized_pnl ELSE 0 END), 0) as today_realized
+                        FROM heracles_closed_trades
+                    """, (today,))
+                    row = cursor.fetchone()
+                    if row:
+                        closed_count = int(row[0] or 0)
+                        winning_trades = int(row[1] or 0)
+                        losing_trades = int(row[2] or 0)
+                        total_realized = float(row[3] or 0)
+                        today_realized = float(row[4] or 0)
 
-                    # DEBUG: Log query results for visibility
                     logger.info(
-                        f"get_metrics_summary({bot.value}): "
-                        f"table={positions_table}, open={open_count}, closed={closed_count}, "
+                        f"get_metrics_summary(HERACLES): "
+                        f"open={open_count}, closed={closed_count}, "
                         f"wins={winning_trades}, losses={losing_trades}, "
                         f"total_realized=${total_realized:.2f}, today_realized=${today_realized:.2f}"
                     )
                 else:
-                    logger.warning(f"get_metrics_summary({bot.value}): Query returned no rows from {positions_table}")
+                    # Standard bots use single positions table with status column
+                    # Get aggregate stats from database (excluding unrealized - we calculate that with MTM)
+                    # CRITICAL: Include 'partial_close' status - these are positions where one leg closed
+                    # but the other failed. They have realized_pnl and must be counted in metrics.
+                    # NOTE: Cast to timestamptz explicitly for psycopg2 compatibility
+                    cursor.execute(f"""
+                        SELECT
+                            COUNT(*) FILTER (WHERE status = 'open') as open_count,
+                            COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close')) as closed_count,
+                            COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0) as wins,
+                            COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close') AND realized_pnl <= 0) as losses,
+                            COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_realized,
+                            COALESCE(SUM(CASE
+                                WHEN status IN ('closed', 'expired', 'partial_close')
+                                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                                THEN realized_pnl ELSE 0 END), 0) as today_realized
+                        FROM {positions_table}
+                    """, (today,))
+
+                    row = cursor.fetchone()
+                    if row:
+                        open_count = int(row[0] or 0)
+                        closed_count = int(row[1] or 0)
+                        winning_trades = int(row[2] or 0)
+                        losing_trades = int(row[3] or 0)
+                        total_realized = float(row[4] or 0)
+                        today_realized = float(row[5] or 0)
+
+                        # DEBUG: Log query results for visibility
+                        logger.info(
+                            f"get_metrics_summary({bot.value}): "
+                            f"table={positions_table}, open={open_count}, closed={closed_count}, "
+                            f"wins={winning_trades}, losses={losing_trades}, "
+                            f"total_realized=${total_realized:.2f}, today_realized=${today_realized:.2f}"
+                        )
+                    else:
+                        logger.warning(f"get_metrics_summary({bot.value}): Query returned no rows from {positions_table}")
 
                 total_trades = closed_count
 
@@ -507,14 +552,24 @@ class BotMetricsService:
                                 except Exception as pos_err:
                                     logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
 
+                        # HERACLES: Futures bot - unrealized calculated differently
+                        # For now, just log that we need live price to calculate unrealized
+                        elif bot == BotName.HERACLES:
+                            logger.debug(f"HERACLES unrealized P&L requires live futures quote - skipping in unified metrics")
+                            # Note: HERACLES calculates unrealized P&L directly in its status endpoint
+                            # using live Tastytrade quotes. For unified metrics, we use 0 as placeholder.
+                            pass
+
                     except Exception as mtm_err:
                         logger.warning(f"MTM calculation failed for {bot.value}: {mtm_err}")
 
                 # Calculate high water mark from equity snapshots
                 snapshots_table = tables['snapshots']
                 try:
+                    # HERACLES uses 'account_balance' column, others use 'balance'
+                    balance_col = 'account_balance' if bot == BotName.HERACLES else 'balance'
                     cursor.execute(f"""
-                        SELECT MAX(balance) FROM {snapshots_table}
+                        SELECT MAX({balance_col}) FROM {snapshots_table}
                     """)
                     hwm_row = cursor.fetchone()
                     if hwm_row and hwm_row[0]:
