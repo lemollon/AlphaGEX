@@ -44,6 +44,9 @@ import {
   useHERACLESIntradayEquity,
   useHERACLESScanActivity,
   useHERACLESMLTrainingData,
+  useHERACLESMLStatus,
+  useHERACLESMLFeatureImportance,
+  trainHERACLESML,
   useHERACLESSignals,
   useUnifiedBotSummary,
 } from '@/lib/hooks/useMarketData'
@@ -81,6 +84,8 @@ export default function HERACLESPage() {
   const sidebarPadding = useSidebarPadding()
   const [activeTab, setActiveTab] = useState<HERACLESTabId>('portfolio')
   const [equityTimeframe, setEquityTimeframe] = useState('intraday')
+  const [isTraining, setIsTraining] = useState(false)
+  const [trainingResult, setTrainingResult] = useState<any>(null)
 
   // Get days for current timeframe
   const selectedTimeframe = EQUITY_TIMEFRAMES.find(t => t.id === equityTimeframe) || EQUITY_TIMEFRAMES[0]
@@ -93,7 +98,28 @@ export default function HERACLESPage() {
   const { data: intradayEquityData } = useHERACLESIntradayEquity()
   const { data: scanActivityData, mutate: mutateScanActivity } = useHERACLESScanActivity(100)
   const { data: mlTrainingData } = useHERACLESMLTrainingData()
+  const { data: mlStatus, mutate: refreshMLStatus } = useHERACLESMLStatus()
+  const { data: featureImportance, mutate: refreshFeatureImportance } = useHERACLESMLFeatureImportance()
   const { data: signalsData } = useHERACLESSignals(50)
+
+  // ML Training handler
+  const handleTrainML = async () => {
+    setIsTraining(true)
+    setTrainingResult(null)
+    try {
+      const result = await trainHERACLESML(50)
+      setTrainingResult(result)
+      if (result.success) {
+        // Refresh ML status and feature importance
+        refreshMLStatus()
+        refreshFeatureImportance()
+      }
+    } catch (error: any) {
+      setTrainingResult({ success: false, error: error.message || 'Training failed' })
+    } finally {
+      setIsTraining(false)
+    }
+  }
 
   // Unified metrics for consistent data (single source of truth)
   const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('HERACLES')
@@ -483,10 +509,38 @@ export default function HERACLESPage() {
 
               {/* ML Training Status */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <GraduationCap className="h-5 w-5 text-yellow-400" />
-                  ML Training Data Status
-                </h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold flex items-center gap-2">
+                    <GraduationCap className="h-5 w-5 text-yellow-400" />
+                    ML Training Data Status
+                  </h3>
+                  {/* Train Button */}
+                  <button
+                    onClick={handleTrainML}
+                    disabled={isTraining || !mlTrainingData?.ready_for_training}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                      isTraining
+                        ? 'bg-yellow-600/50 text-yellow-300 cursor-wait'
+                        : mlTrainingData?.ready_for_training
+                          ? 'bg-yellow-600 hover:bg-yellow-500 text-black'
+                          : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    {isTraining ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        Training...
+                      </>
+                    ) : (
+                      <>
+                        <GraduationCap className="h-4 w-4" />
+                        Train Model
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Training Data Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-gray-900/50 rounded-lg p-4">
                     <div className="text-sm text-gray-400">Training Samples</div>
@@ -522,7 +576,122 @@ export default function HERACLESPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* Training Results (shown after training) */}
+                {trainingResult && (
+                  <div className={`mt-4 p-4 rounded-lg border ${
+                    trainingResult.success
+                      ? 'bg-green-900/20 border-green-500/50'
+                      : 'bg-red-900/20 border-red-500/50'
+                  }`}>
+                    {trainingResult.success ? (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2 text-green-400 font-semibold">
+                          <CheckCircle className="h-5 w-5" />
+                          Model Trained Successfully
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-400">Accuracy:</span>
+                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.accuracy || 0) * 100).toFixed(1)}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Precision:</span>
+                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.precision || 0) * 100).toFixed(1)}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Recall:</span>
+                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.recall || 0) * 100).toFixed(1)}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">F1 Score:</span>
+                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.f1_score || 0) * 100).toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          Trained on {trainingResult.training_samples} samples • Model saved to database
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 text-red-400">
+                        <AlertTriangle className="h-5 w-5" />
+                        Training Failed: {trainingResult.error}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Model Status */}
+                {mlStatus && (
+                  <div className="mt-4 p-4 bg-gray-900/30 rounded-lg border border-gray-700">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-3 h-3 rounded-full ${mlStatus.model_trained ? 'bg-green-500' : 'bg-gray-500'}`} />
+                        <span className="font-medium">
+                          {mlStatus.model_trained ? 'ML Model Active' : 'ML Model Not Trained'}
+                        </span>
+                      </div>
+                      {mlStatus.model_trained && mlStatus.last_trained && (
+                        <span className="text-sm text-gray-400">
+                          Last trained: {new Date(mlStatus.last_trained).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                    {mlStatus.model_trained && (
+                      <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+                        <div>
+                          <span className="text-gray-400">Model Accuracy:</span>
+                          <span className="ml-2 text-yellow-400 font-mono">{((mlStatus.accuracy || 0) * 100).toFixed(1)}%</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Training Samples:</span>
+                          <span className="ml-2 text-white font-mono">{mlStatus.training_samples || 0}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">Win Rate Boost:</span>
+                          <span className="ml-2 text-green-400 font-mono">
+                            {mlStatus.accuracy && mlStatus.baseline_win_rate
+                              ? `+${(((mlStatus.accuracy || 0) - (mlStatus.baseline_win_rate || 0.5)) * 100).toFixed(1)}%`
+                              : 'N/A'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {/* Feature Importance (shown when model is trained) */}
+              {featureImportance && featureImportance.features && featureImportance.features.length > 0 && (
+                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
+                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <PieChart className="h-5 w-5 text-yellow-400" />
+                    ML Feature Importance
+                  </h3>
+                  <div className="space-y-2">
+                    {featureImportance.features.slice(0, 10).map((feature: { name: string; importance: number }, idx: number) => (
+                      <div key={feature.name} className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500 w-4">{idx + 1}</span>
+                        <span className="text-sm text-gray-300 w-48 truncate" title={feature.name}>
+                          {feature.name.replace(/_/g, ' ')}
+                        </span>
+                        <div className="flex-1 h-4 bg-gray-800 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-yellow-600 to-yellow-400 rounded-full"
+                            style={{ width: `${(feature.importance * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-gray-400 w-12 text-right font-mono">
+                          {(feature.importance * 100).toFixed(1)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-4">
+                    Features ranked by their contribution to predicting trade outcomes. Higher importance = more predictive power.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

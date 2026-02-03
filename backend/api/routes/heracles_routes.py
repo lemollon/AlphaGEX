@@ -554,6 +554,182 @@ async def get_heracles_ml_training_data():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# ML Model Training Endpoints
+# ============================================================================
+
+@router.post("/api/heracles/ml/train")
+async def train_heracles_ml_model(min_samples: int = 50):
+    """
+    Train the HERACLES ML model from scan_activity data.
+
+    Trains an XGBoost classifier to predict trade win probability,
+    replacing the Bayesian estimator with ML-enhanced predictions.
+
+    Requires at least 50 samples (trades with recorded outcomes).
+    """
+    try:
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+
+        # Get current data count first
+        training_df = advisor.get_training_data()
+        if training_df is None or len(training_df) < min_samples:
+            sample_count = len(training_df) if training_df is not None else 0
+            return {
+                "success": False,
+                "error": f"Insufficient training data. Have {sample_count} samples, need {min_samples}.",
+                "samples_available": sample_count,
+                "samples_required": min_samples
+            }
+
+        # Train the model
+        metrics = advisor.train(min_samples=min_samples)
+
+        if not metrics:
+            return {
+                "success": False,
+                "error": "Training failed - check logs for details"
+            }
+
+        return {
+            "success": True,
+            "message": f"HERACLES ML trained on {metrics.total_samples} trades",
+            "metrics": {
+                "accuracy": round(metrics.accuracy, 4),
+                "precision": round(metrics.precision, 4),
+                "recall": round(metrics.recall, 4),
+                "f1_score": round(metrics.f1_score, 4),
+                "auc_roc": round(metrics.auc_roc, 4),
+                "brier_score": round(metrics.brier_score, 4),
+                "win_rate_actual": round(metrics.win_rate_actual, 4),
+                "win_rate_predicted": round(metrics.win_rate_predicted, 4),
+                "positive_gamma_accuracy": round(metrics.positive_gamma_accuracy, 4) if metrics.positive_gamma_accuracy else None,
+                "negative_gamma_accuracy": round(metrics.negative_gamma_accuracy, 4) if metrics.negative_gamma_accuracy else None,
+            },
+            "samples": {
+                "total": metrics.total_samples,
+                "wins": metrics.wins,
+                "losses": metrics.losses
+            },
+            "model_version": metrics.model_version,
+            "training_date": metrics.training_date,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    except ImportError as e:
+        logger.error(f"ML libraries not available: {e}")
+        return {
+            "success": False,
+            "error": f"ML libraries not available: {e}. Install with: pip install xgboost scikit-learn"
+        }
+    except Exception as e:
+        logger.error(f"Error training HERACLES ML: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/api/heracles/ml/status")
+async def get_heracles_ml_status():
+    """
+    Get HERACLES ML model status.
+
+    Shows whether model is trained, accuracy metrics, and training info.
+    """
+    try:
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+        status = advisor.get_status()
+
+        # Also get training data availability
+        training_df = advisor.get_training_data()
+        samples_available = len(training_df) if training_df is not None else 0
+
+        return {
+            "model_trained": status['is_trained'],
+            "model_version": status['model_version'],
+            "training_date": status['training_date'],
+            "accuracy": status['accuracy'],
+            "auc_roc": status['auc_roc'],
+            "samples_trained_on": status['samples'],
+            "win_rate": status['win_rate'],
+            "samples_available": samples_available,
+            "ready_for_training": samples_available >= 50,
+            "can_retrain": samples_available >= 50,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        return {
+            "model_trained": False,
+            "error": "ML module not available",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting ML status: {e}")
+        return {
+            "model_trained": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ml/feature-importance")
+async def get_heracles_ml_feature_importance():
+    """
+    Get HERACLES ML feature importance rankings.
+
+    Shows which features have the most impact on win probability prediction.
+    """
+    try:
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+
+        if not advisor.is_trained:
+            return {
+                "success": True,
+                "model_trained": False,
+                "features": [],
+                "message": "Train the model first to see feature importance"
+            }
+
+        features = advisor.get_feature_importance()
+
+        return {
+            "success": True,
+            "model_trained": True,
+            "features": features,
+            "model_version": advisor.model_version,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        return {
+            "success": False,
+            "model_trained": False,
+            "features": [],
+            "error": "ML module not available"
+        }
+    except Exception as e:
+        logger.error(f"Error getting feature importance: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @router.get("/api/heracles/paper-equity-curve")
 async def get_heracles_paper_equity_curve(
     days: int = Query(30, ge=1, le=365, description="Number of days of history")

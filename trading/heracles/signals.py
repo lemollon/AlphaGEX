@@ -21,7 +21,33 @@ from .models import (
     HERACLESConfig, BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ
 )
 
+# ML Advisor - loaded lazily to avoid circular imports
+_ml_advisor = None
+_ml_load_attempted = False
+
 logger = logging.getLogger(__name__)
+
+
+def _get_ml_advisor():
+    """Lazy-load the ML advisor singleton."""
+    global _ml_advisor, _ml_load_attempted
+
+    if _ml_load_attempted:
+        return _ml_advisor
+
+    _ml_load_attempted = True
+    try:
+        from .ml import HERACLESMLAdvisor
+        _ml_advisor = HERACLESMLAdvisor()
+        if _ml_advisor.model is not None:
+            logger.info("HERACLES ML Advisor loaded successfully from database")
+        else:
+            logger.info("HERACLES ML Advisor initialized but no model trained yet")
+    except Exception as e:
+        logger.warning(f"Could not load HERACLES ML Advisor: {e}")
+        _ml_advisor = None
+
+    return _ml_advisor
 
 
 class HERACLESSignalGenerator:
@@ -141,8 +167,8 @@ class HERACLESSignalGenerator:
                 )
                 return None
 
-            # Calculate win probability
-            signal.win_probability = self._calculate_win_probability(gamma_regime, signal)
+            # Calculate win probability (uses ML if trained, otherwise Bayesian)
+            signal.win_probability = self._calculate_win_probability(gamma_regime, signal, is_overnight)
 
             # Check minimum probability threshold
             if signal.win_probability < self.config.min_win_probability:
@@ -360,15 +386,79 @@ class HERACLESSignalGenerator:
     def _calculate_win_probability(
         self,
         gamma_regime: GammaRegime,
+        signal: FuturesSignal,
+        is_overnight: bool = False
+    ) -> float:
+        """
+        Calculate win probability using ML (if available) or Bayesian fallback.
+
+        ML Prediction (when trained):
+        - Uses XGBoost model trained on historical trade outcomes
+        - Features: VIX, ATR, gamma regime, distance to levels, time factors
+
+        Bayesian Fallback (before ML training):
+        - Starts with prior, updates based on regime-specific win rate
+        - Blends with signal confidence
+        """
+        # Try ML prediction first (if model is trained)
+        ml_advisor = _get_ml_advisor()
+        if ml_advisor is not None and ml_advisor.model is not None:
+            try:
+                # Build feature dict for ML prediction
+                # Must match FEATURE_COLS in ml.py exactly
+                distance_to_flip_pct = 0
+                if signal.flip_point and signal.flip_point > 0:
+                    distance_to_flip_pct = ((signal.current_price - signal.flip_point) / signal.flip_point) * 100
+
+                distance_to_call_wall_pct = 0
+                if signal.call_wall and signal.call_wall > 0:
+                    distance_to_call_wall_pct = ((signal.call_wall - signal.current_price) / signal.current_price) * 100
+
+                distance_to_put_wall_pct = 0
+                if signal.put_wall and signal.put_wall > 0:
+                    distance_to_put_wall_pct = ((signal.current_price - signal.put_wall) / signal.current_price) * 100
+
+                now = datetime.now(CENTRAL_TZ)
+
+                features = {
+                    'vix': signal.vix or 18.0,
+                    'atr': signal.atr or 5.0,
+                    'gamma_regime_encoded': 1 if gamma_regime == GammaRegime.POSITIVE else (
+                        -1 if gamma_regime == GammaRegime.NEGATIVE else 0
+                    ),
+                    'distance_to_flip_pct': distance_to_flip_pct,
+                    'distance_to_call_wall_pct': distance_to_call_wall_pct,
+                    'distance_to_put_wall_pct': distance_to_put_wall_pct,
+                    'day_of_week': now.weekday(),
+                    'hour_of_day': now.hour,
+                    'is_overnight': 1 if is_overnight else 0,
+                    'positive_gamma_win_rate': self.win_tracker.get_regime_probability(GammaRegime.POSITIVE),
+                    'negative_gamma_win_rate': self.win_tracker.get_regime_probability(GammaRegime.NEGATIVE),
+                    'signal_confidence': signal.confidence,
+                }
+
+                ml_result = ml_advisor.predict(features)
+                if ml_result and 'win_probability' in ml_result:
+                    ml_prob = ml_result['win_probability']
+                    logger.debug(
+                        f"ML win probability: {ml_prob:.2%} (confidence: {ml_result.get('confidence', 'N/A')})"
+                    )
+                    return round(ml_prob, 4)
+
+            except Exception as e:
+                logger.warning(f"ML prediction failed, falling back to Bayesian: {e}")
+
+        # Bayesian fallback (when ML not available)
+        return self._calculate_bayesian_probability(gamma_regime, signal)
+
+    def _calculate_bayesian_probability(
+        self,
+        gamma_regime: GammaRegime,
         signal: FuturesSignal
     ) -> float:
         """
         Calculate win probability using Bayesian + confidence blend.
-
-        Starts with Bayesian prior, updates based on:
-        - Historical regime-specific win rate
-        - Signal confidence
-        - VIX conditions
+        Used as fallback when ML model is not trained.
         """
         # Get regime-specific Bayesian probability
         bayesian_prob = self.win_tracker.get_regime_probability(gamma_regime)
