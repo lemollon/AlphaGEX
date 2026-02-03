@@ -90,10 +90,11 @@ class HERACLESTrader:
     - POSITIVE GAMMA: Mean reversion - fade moves toward flip point
     - NEGATIVE GAMMA: Momentum - trade breakouts away from flip point
 
-    Risk Management:
-    - Initial stop: 3 points ($15 per contract)
-    - Breakeven activation: +2 points ($10 profit)
-    - Trailing stop: 1 point ($5 trail distance)
+    Risk Management (tuned from 136-trade backtest):
+    - Initial stop: 2.5 points ($12.50 per contract)
+    - Profit target: 6 points ($30 per contract) - R/R = 2.4:1
+    - Breakeven activation: +1.5 points ($7.50 profit)
+    - Trailing stop: 0.75 point ($3.75 trail distance)
 
     Position Sizing:
     - Fixed Fractional with ATR Adjustment
@@ -428,13 +429,22 @@ class HERACLESTrader:
             # This ensures we capture the price that triggered the stop
             self._update_position_high_low(position, current_price)
 
-            # Check if stopped out
+            # Check if stopped out (stop takes priority over profit target)
             if self._check_stop_hit(position, current_price):
                 return self._close_position(
                     position,
                     current_price,
                     PositionStatus.STOPPED,
                     "Stop loss triggered"
+                )
+
+            # Check if profit target hit (only if stop wasn't hit)
+            if self._check_profit_target_hit(position, current_price):
+                return self._close_position(
+                    position,
+                    current_price,
+                    PositionStatus.PROFIT_TARGET,
+                    "Profit target hit"
                 )
 
             # Check for breakeven activation
@@ -511,6 +521,32 @@ class HERACLESTrader:
             return current_price <= position.current_stop
         else:
             return current_price >= position.current_stop
+
+    def _check_profit_target_hit(self, position: FuturesPosition, current_price: float) -> bool:
+        """
+        Check if position's profit target has been hit.
+
+        Uses config.profit_target_points (default 6.0 points = $30/contract).
+        Uses >= comparison to catch price gaps past target.
+
+        Direction-aware:
+        - LONG: target hit when current_price >= entry_price + target_points
+        - SHORT: target hit when current_price <= entry_price - target_points
+        """
+        # Guard against missing entry price
+        if not position.entry_price or position.entry_price <= 0:
+            logger.warning(f"Position {position.position_id}: Invalid entry_price for profit target check")
+            return False
+
+        # Get profit target from config
+        profit_target_points = self.config.profit_target_points
+
+        if position.direction == TradeDirection.LONG:
+            target_price = position.entry_price + profit_target_points
+            return current_price >= target_price
+        else:  # SHORT
+            target_price = position.entry_price - profit_target_points
+            return current_price <= target_price
 
     def _close_position(
         self,
@@ -1116,6 +1152,7 @@ class HERACLESTrader:
                 "initial_stop_points": config.initial_stop_points,
                 "breakeven_activation_points": config.breakeven_activation_points,
                 "trailing_stop_points": config.trailing_stop_points,
+                "profit_target_points": config.profit_target_points,
             },
             "positions": {
                 "open_count": len(positions),

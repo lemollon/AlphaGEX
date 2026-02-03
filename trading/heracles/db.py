@@ -986,6 +986,7 @@ class HERACLESDatabase:
                     'initial_stop_points': config.initial_stop_points,
                     'breakeven_activation_points': config.breakeven_activation_points,
                     'trailing_stop_points': config.trailing_stop_points,
+                    'profit_target_points': config.profit_target_points,
                     'min_win_probability': config.min_win_probability,
                     'mode': config.mode.value,
                     'account_id': config.account_id,
