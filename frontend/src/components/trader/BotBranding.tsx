@@ -816,9 +816,14 @@ export function BotPageHeader({
             <p className="text-white/70">{brand.strategy}</p>
             {/* Scripture Reference */}
             {scripture && (
-              <p className="text-white/50 text-xs mt-1 italic">
-                {scripture.reference} — {scripture.why.split('.')[0]}.
-              </p>
+              <div className="mt-2 max-w-xl">
+                <p className="text-white/60 text-sm italic">
+                  {scripture.verse}
+                </p>
+                <p className="text-white/40 text-xs mt-1">
+                  — {scripture.reference}
+                </p>
+              </div>
             )}
           </div>
         </div>
