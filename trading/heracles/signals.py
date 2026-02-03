@@ -482,23 +482,133 @@ class HERACLESSignalGenerator:
 
     def _set_stop_levels(self, signal: FuturesSignal, atr: float) -> FuturesSignal:
         """
-        Set stop loss levels based on config.
+        Set DYNAMIC stop loss levels based on market conditions.
 
-        For scalping, use FIXED tight stops (3 points = $15 per contract).
-        ATR-based stops are too wide for MES scalping.
+        Dynamic Stop Logic:
+        1. Base stop from config (default 2.5 points)
+        2. VIX adjustment: widen when VIX > 20, tighten when VIX < 15
+        3. ATR adjustment: scale based on current volatility vs average
+        4. Regime adjustment: tighter for positive gamma (mean reversion)
+
+        This replaces the fixed stop approach to adapt to market conditions.
         """
-        # Use fixed stop for scalping - tight stops are essential
-        # ATR-based stops were causing 42-point stops (way too wide)
-        stop_distance = self.config.initial_stop_points  # 3 points = $15
+        # Calculate dynamic stop distance
+        stop_distance = self._calculate_dynamic_stop(
+            base_stop=self.config.initial_stop_points,
+            vix=signal.vix,
+            atr=atr,
+            gamma_regime=signal.gamma_regime
+        )
+
+        # Log the dynamic stop calculation
+        logger.debug(
+            f"Dynamic stop: base={self.config.initial_stop_points:.2f}, "
+            f"vix={signal.vix:.1f}, atr={atr:.2f}, regime={signal.gamma_regime.value}, "
+            f"final={stop_distance:.2f} pts"
+        )
 
         if signal.direction == TradeDirection.LONG:
             signal.stop_price = signal.entry_price - stop_distance
-            signal.target_price = signal.entry_price + (stop_distance * 2)  # 2:1 R:R
+            signal.target_price = signal.entry_price + self.config.profit_target_points
         else:
             signal.stop_price = signal.entry_price + stop_distance
-            signal.target_price = signal.entry_price - (stop_distance * 2)
+            signal.target_price = signal.entry_price - self.config.profit_target_points
 
         return signal
+
+    def _calculate_dynamic_stop(
+        self,
+        base_stop: float,
+        vix: float,
+        atr: float,
+        gamma_regime: GammaRegime
+    ) -> float:
+        """
+        Calculate dynamic stop distance based on market conditions.
+
+        Args:
+            base_stop: Base stop distance from config (default 2.5 pts)
+            vix: Current VIX level
+            atr: Current ATR in points
+            gamma_regime: Current gamma regime
+
+        Returns:
+            Adjusted stop distance in points
+
+        Logic:
+        1. VIX ADJUSTMENT (primary factor):
+           - VIX < 15: Tighten stop by 20% (calm markets, less room needed)
+           - VIX 15-20: Use base stop (normal conditions)
+           - VIX 20-25: Widen stop by 20% (elevated volatility)
+           - VIX 25-30: Widen stop by 40%
+           - VIX > 30: Widen stop by 60% (high volatility, need more room)
+
+        2. ATR ADJUSTMENT (secondary factor):
+           - ATR < 3 pts: Tighten by 15% (low intraday vol)
+           - ATR 3-5 pts: No adjustment (normal)
+           - ATR 5-8 pts: Widen by 15%
+           - ATR > 8 pts: Widen by 30% (high intraday vol)
+
+        3. REGIME ADJUSTMENT (tertiary factor):
+           - POSITIVE gamma: Tighten by 10% (mean reversion = tighter stops)
+           - NEGATIVE gamma: Widen by 10% (momentum = more room for swings)
+           - NEUTRAL: No adjustment
+
+        Final stop = base_stop * vix_mult * atr_mult * regime_mult
+        Capped between 1.5 and 6 points to maintain profitability.
+        """
+        # 1. VIX Adjustment
+        if vix <= 0:
+            vix_multiplier = 1.0  # Default if VIX unavailable
+        elif vix < 15:
+            vix_multiplier = 0.80  # Calm markets - tighten 20%
+        elif vix < 20:
+            vix_multiplier = 1.0   # Normal - use base
+        elif vix < 25:
+            vix_multiplier = 1.20  # Elevated - widen 20%
+        elif vix < 30:
+            vix_multiplier = 1.40  # High - widen 40%
+        else:
+            vix_multiplier = 1.60  # Very high - widen 60%
+
+        # 2. ATR Adjustment
+        if atr <= 0:
+            atr_multiplier = 1.0  # Default if ATR unavailable
+        elif atr < 3:
+            atr_multiplier = 0.85  # Low intraday vol - tighten 15%
+        elif atr < 5:
+            atr_multiplier = 1.0   # Normal
+        elif atr < 8:
+            atr_multiplier = 1.15  # Higher vol - widen 15%
+        else:
+            atr_multiplier = 1.30  # High vol - widen 30%
+
+        # 3. Regime Adjustment
+        if gamma_regime == GammaRegime.POSITIVE:
+            regime_multiplier = 0.90  # Mean reversion - tighter (10% tighter)
+        elif gamma_regime == GammaRegime.NEGATIVE:
+            regime_multiplier = 1.10  # Momentum - more room (10% wider)
+        else:
+            regime_multiplier = 1.0   # Neutral - no adjustment
+
+        # Calculate final stop
+        dynamic_stop = base_stop * vix_multiplier * atr_multiplier * regime_multiplier
+
+        # Cap between 1.5 and 6 points for profitability
+        # Too tight (<1.5) = stopped out by noise
+        # Too wide (>6) = risk/reward deteriorates
+        MIN_STOP = 1.5
+        MAX_STOP = 6.0
+
+        capped_stop = max(MIN_STOP, min(MAX_STOP, dynamic_stop))
+
+        if capped_stop != dynamic_stop:
+            logger.debug(
+                f"Dynamic stop capped: calculated={dynamic_stop:.2f}, "
+                f"capped={capped_stop:.2f} (range {MIN_STOP}-{MAX_STOP})"
+            )
+
+        return round(capped_stop, 2)
 
     def check_wall_bounce(
         self,

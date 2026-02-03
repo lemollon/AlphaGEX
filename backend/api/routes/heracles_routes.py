@@ -955,6 +955,53 @@ async def get_heracles_diagnostics():
                 "warning": f"GEX data fetch failed: {e}. Check Tradier production API configuration."
             }
 
+        # Calculate dynamic stop for current conditions
+        dynamic_stop_info = {}
+        try:
+            from trading.heracles.signals import HERACLESSignalGenerator
+            from trading.heracles.models import GammaRegime
+
+            # Get current market data
+            vix = 18.0  # Default
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                fetcher = TradierDataFetcher()
+                vix_quote = fetcher.get_quote("VIX")
+                if vix_quote and vix_quote.get("last"):
+                    vix = vix_quote["last"]
+            except Exception:
+                pass
+
+            atr = 4.0  # Default estimate
+            current_price = quote_status.get("last", 6000)
+
+            # Determine gamma regime
+            net_gex = gex_status.get("net_gex", 0)
+            if net_gex > 0:
+                gamma_regime = GammaRegime.POSITIVE
+            elif net_gex < 0:
+                gamma_regime = GammaRegime.NEGATIVE
+            else:
+                gamma_regime = GammaRegime.NEUTRAL
+
+            # Calculate dynamic stop
+            signal_gen = trader.signal_generator
+            base_stop = trader.config.initial_stop_points
+            dynamic_stop = signal_gen._calculate_dynamic_stop(base_stop, vix, atr, gamma_regime)
+
+            dynamic_stop_info = {
+                "enabled": True,
+                "base_stop_pts": base_stop,
+                "current_dynamic_stop_pts": dynamic_stop,
+                "current_vix": vix,
+                "current_atr": atr,
+                "gamma_regime": gamma_regime.value,
+                "stop_dollar_value": dynamic_stop * 5.0,  # $5 per point
+                "explanation": f"Base {base_stop}pt adjusted for VIX={vix:.1f}, ATR={atr:.1f}, {gamma_regime.value} gamma → {dynamic_stop}pt (${dynamic_stop*5:.2f})"
+            }
+        except Exception as e:
+            dynamic_stop_info = {"enabled": False, "error": str(e)}
+
         return {
             "bot_name": "HERACLES",
             "display_name": "VALOR",  # User-facing name
@@ -964,6 +1011,7 @@ async def get_heracles_diagnostics():
             "database": db_status,
             "market_data": quote_status,
             "gex_data": gex_status,  # CRITICAL: Shows if GEX data is available for signal generation
+            "dynamic_stop": dynamic_stop_info,  # Dynamic stop loss calculation for current conditions
             "config": status.get("config", {}),
             "performance": status.get("performance", {}),
             "win_tracker": status.get("win_tracker", {}),
