@@ -636,11 +636,27 @@ async def train_heracles_ml_model(min_samples: int = 50):
     replacing the Bayesian estimator with ML-enhanced predictions.
 
     Requires at least 50 samples (trades with recorded outcomes).
+    Returns comparison with previous model if one exists.
     """
     try:
         from trading.heracles.ml import get_heracles_ml_advisor
 
         advisor = get_heracles_ml_advisor()
+
+        # Capture previous model metrics for comparison
+        previous_metrics = None
+        if advisor.is_trained and advisor.training_metrics:
+            prev = advisor.training_metrics
+            previous_metrics = {
+                "accuracy": round(prev.accuracy, 4),
+                "precision": round(prev.precision, 4),
+                "recall": round(prev.recall, 4),
+                "f1_score": round(prev.f1_score, 4),
+                "auc_roc": round(prev.auc_roc, 4),
+                "brier_score": round(prev.brier_score, 4),
+                "training_samples": prev.total_samples,
+                "training_date": prev.training_date,
+            }
 
         # Get current data count first
         training_df = advisor.get_training_data()
@@ -660,6 +676,70 @@ async def train_heracles_ml_model(min_samples: int = 50):
             return {
                 "success": False,
                 "error": "Training failed - check logs for details"
+            }
+
+        # Build comparison analysis
+        comparison = None
+        improvement_reasons = []
+        is_improvement = False
+
+        if previous_metrics:
+            acc_change = metrics.accuracy - previous_metrics["accuracy"]
+            auc_change = metrics.auc_roc - previous_metrics["auc_roc"]
+            precision_change = metrics.precision - previous_metrics["precision"]
+            sample_change = metrics.total_samples - previous_metrics["training_samples"]
+
+            comparison = {
+                "previous": previous_metrics,
+                "changes": {
+                    "accuracy": round(acc_change, 4),
+                    "auc_roc": round(auc_change, 4),
+                    "precision": round(precision_change, 4),
+                    "samples_added": sample_change,
+                }
+            }
+
+            # Determine if this is an improvement
+            if acc_change > 0.01:  # >1% improvement
+                improvement_reasons.append(f"Accuracy improved by {acc_change*100:.1f}%")
+            if auc_change > 0.01:
+                improvement_reasons.append(f"AUC-ROC improved by {auc_change:.3f}")
+            if precision_change > 0.01:
+                improvement_reasons.append(f"Precision improved by {precision_change*100:.1f}%")
+            if sample_change > 10:
+                improvement_reasons.append(f"Trained on {sample_change} more samples")
+
+            # Check for regressions
+            regressions = []
+            if acc_change < -0.02:
+                regressions.append(f"Accuracy dropped by {abs(acc_change)*100:.1f}%")
+            if auc_change < -0.02:
+                regressions.append(f"AUC-ROC dropped by {abs(auc_change):.3f}")
+
+            is_improvement = len(improvement_reasons) > 0 and len(regressions) == 0
+
+            comparison["is_improvement"] = is_improvement
+            comparison["improvement_reasons"] = improvement_reasons
+            comparison["regressions"] = regressions
+            comparison["recommendation"] = (
+                "APPROVE: New model shows improvement" if is_improvement else
+                "REVIEW: Check if regressions are acceptable" if regressions else
+                "APPROVE: Model retrained with more data"
+            )
+        else:
+            # First model - always recommend approval if metrics are reasonable
+            is_improvement = metrics.accuracy > 0.55  # Better than random
+            improvement_reasons = [
+                f"First ML model trained with {metrics.total_samples} samples",
+                f"Accuracy: {metrics.accuracy*100:.1f}% (above 55% threshold)" if metrics.accuracy > 0.55 else f"Accuracy: {metrics.accuracy*100:.1f}%",
+                f"AUC-ROC: {metrics.auc_roc:.3f}" + (" (good discrimination)" if metrics.auc_roc > 0.6 else ""),
+            ]
+            comparison = {
+                "previous": None,
+                "is_improvement": is_improvement,
+                "improvement_reasons": improvement_reasons,
+                "regressions": [],
+                "recommendation": "APPROVE: First ML model shows promising results" if is_improvement else "REVIEW: Model accuracy is below 55% threshold"
             }
 
         return {
@@ -682,6 +762,8 @@ async def train_heracles_ml_model(min_samples: int = 50):
                 "wins": metrics.wins,
                 "losses": metrics.losses
             },
+            "comparison": comparison,
+            "training_samples": metrics.total_samples,
             "model_version": metrics.model_version,
             "training_date": metrics.training_date,
             "timestamp": datetime.now().isoformat()

@@ -102,10 +102,10 @@ export default function HERACLESPage() {
 
   // Data hooks
   const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useHERACLESStatus()
-  const { data: closedTradesData } = useHERACLESClosedTrades(50)
+  const { data: closedTradesData } = useHERACLESClosedTrades(1000)
   const { data: equityCurveData } = useHERACLESEquityCurve(selectedTimeframe.days || 30)
   const { data: intradayEquityData } = useHERACLESIntradayEquity()
-  const { data: scanActivityData, mutate: mutateScanActivity } = useHERACLESScanActivity(100)
+  const { data: scanActivityData, mutate: mutateScanActivity } = useHERACLESScanActivity(1000)
   const { data: mlTrainingData } = useHERACLESMLTrainingData()
   const { data: mlStatus, mutate: refreshMLStatus } = useHERACLESMLStatus()
   const { data: featureImportance, mutate: refreshFeatureImportance } = useHERACLESMLFeatureImportance()
@@ -293,6 +293,65 @@ export default function HERACLESPage() {
               </div>
             </div>
           </div>
+
+          {/* ML Status Banner - Shows when ML is active or awaiting approval */}
+          {mlStatus?.model_trained && (
+            <div className={`rounded-lg p-4 border ${
+              mlApprovalStatus?.ml_approved
+                ? 'bg-green-900/30 border-green-500/50'
+                : 'bg-yellow-900/30 border-yellow-500/50'
+            }`}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-3 h-3 rounded-full ${
+                    mlApprovalStatus?.ml_approved ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
+                  }`} />
+                  <div>
+                    <h3 className={`font-semibold ${
+                      mlApprovalStatus?.ml_approved ? 'text-green-400' : 'text-yellow-400'
+                    }`}>
+                      {mlApprovalStatus?.ml_approved
+                        ? 'ML Model ACTIVE - Using ML Predictions'
+                        : 'ML Model Trained - Awaiting Approval'}
+                    </h3>
+                    <p className="text-gray-300 text-sm">
+                      {mlApprovalStatus?.ml_approved
+                        ? `Win probability calculated via XGBoost ML (${((mlStatus.accuracy || 0) * 100).toFixed(1)}% accuracy)`
+                        : `Currently using Bayesian fallback. Approve to use ML (${((mlStatus.accuracy || 0) * 100).toFixed(1)}% accuracy)`}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    mlApprovalStatus?.probability_source === 'ML'
+                      ? 'bg-green-600/50 text-green-200'
+                      : 'bg-blue-600/50 text-blue-200'
+                  }`}>
+                    Source: {mlApprovalStatus?.probability_source || 'BAYESIAN'}
+                  </span>
+                  {!mlApprovalStatus?.ml_approved && (
+                    <button
+                      onClick={handleApproveML}
+                      disabled={isApproving}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
+                    >
+                      {isApproving ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          Approving...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="h-4 w-4" />
+                          Approve ML
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Tab Navigation */}
           <div className="flex gap-2 border-b border-gray-800 overflow-x-auto pb-px">
@@ -654,11 +713,126 @@ export default function HERACLESPage() {
                       : 'bg-red-900/20 border-red-500/50'
                   }`}>
                     {trainingResult.success ? (
-                      <div className="space-y-3">
-                        <div className="flex items-center gap-2 text-green-400 font-semibold">
-                          <CheckCircle className="h-5 w-5" />
-                          Model Trained Successfully
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-green-400 font-semibold">
+                            <CheckCircle className="h-5 w-5" />
+                            Model Trained Successfully
+                          </div>
+                          {/* Immediate Approve Button after training */}
+                          {!mlApprovalStatus?.ml_approved && (
+                            <button
+                              onClick={handleApproveML}
+                              disabled={isApproving}
+                              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold transition-colors disabled:opacity-50 animate-pulse"
+                            >
+                              {isApproving ? (
+                                <>
+                                  <RefreshCw className="h-4 w-4 animate-spin" />
+                                  Approving...
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircle className="h-4 w-4" />
+                                  Approve & Activate ML
+                                </>
+                              )}
+                            </button>
+                          )}
                         </div>
+
+                        {/* New vs Previous Comparison */}
+                        {trainingResult.comparison && (
+                          <div className={`p-3 rounded-lg border ${
+                            trainingResult.comparison.is_improvement
+                              ? 'bg-green-900/30 border-green-600/50'
+                              : trainingResult.comparison.regressions?.length > 0
+                                ? 'bg-yellow-900/30 border-yellow-600/50'
+                                : 'bg-blue-900/30 border-blue-600/50'
+                          }`}>
+                            <div className="flex items-center gap-2 mb-2">
+                              {trainingResult.comparison.is_improvement ? (
+                                <TrendingUp className="h-4 w-4 text-green-400" />
+                              ) : trainingResult.comparison.regressions?.length > 0 ? (
+                                <AlertTriangle className="h-4 w-4 text-yellow-400" />
+                              ) : (
+                                <Eye className="h-4 w-4 text-blue-400" />
+                              )}
+                              <span className={`font-medium ${
+                                trainingResult.comparison.is_improvement ? 'text-green-400' :
+                                trainingResult.comparison.regressions?.length > 0 ? 'text-yellow-400' : 'text-blue-400'
+                              }`}>
+                                {trainingResult.comparison.recommendation}
+                              </span>
+                            </div>
+
+                            {/* Improvement Reasons */}
+                            {trainingResult.comparison.improvement_reasons?.length > 0 && (
+                              <ul className="text-sm text-gray-300 space-y-1 ml-6">
+                                {trainingResult.comparison.improvement_reasons.map((reason: string, i: number) => (
+                                  <li key={i} className="flex items-center gap-2">
+                                    <CheckCircle className="h-3 w-3 text-green-500" />
+                                    {reason}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+
+                            {/* Regressions */}
+                            {trainingResult.comparison.regressions?.length > 0 && (
+                              <ul className="text-sm text-yellow-300 space-y-1 ml-6 mt-2">
+                                {trainingResult.comparison.regressions.map((regression: string, i: number) => (
+                                  <li key={i} className="flex items-center gap-2">
+                                    <AlertTriangle className="h-3 w-3 text-yellow-500" />
+                                    {regression}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+
+                            {/* Previous vs New comparison table */}
+                            {trainingResult.comparison.previous && (
+                              <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                                <div className="text-gray-500">Metric</div>
+                                <div className="text-gray-500">Previous</div>
+                                <div className="text-gray-500">New</div>
+
+                                <div className="text-gray-400">Accuracy</div>
+                                <div className="text-gray-300">{(trainingResult.comparison.previous.accuracy * 100).toFixed(1)}%</div>
+                                <div className={trainingResult.comparison.changes?.accuracy > 0 ? 'text-green-400' : trainingResult.comparison.changes?.accuracy < 0 ? 'text-red-400' : 'text-white'}>
+                                  {((trainingResult.metrics?.accuracy || 0) * 100).toFixed(1)}%
+                                  {trainingResult.comparison.changes?.accuracy !== 0 && (
+                                    <span className="ml-1">
+                                      ({trainingResult.comparison.changes?.accuracy > 0 ? '+' : ''}{(trainingResult.comparison.changes?.accuracy * 100).toFixed(1)}%)
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="text-gray-400">AUC-ROC</div>
+                                <div className="text-gray-300">{trainingResult.comparison.previous.auc_roc.toFixed(3)}</div>
+                                <div className={trainingResult.comparison.changes?.auc_roc > 0 ? 'text-green-400' : trainingResult.comparison.changes?.auc_roc < 0 ? 'text-red-400' : 'text-white'}>
+                                  {(trainingResult.metrics?.auc_roc || 0).toFixed(3)}
+                                  {trainingResult.comparison.changes?.auc_roc !== 0 && (
+                                    <span className="ml-1">
+                                      ({trainingResult.comparison.changes?.auc_roc > 0 ? '+' : ''}{trainingResult.comparison.changes?.auc_roc.toFixed(3)})
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="text-gray-400">Samples</div>
+                                <div className="text-gray-300">{trainingResult.comparison.previous.training_samples}</div>
+                                <div className="text-white">
+                                  {trainingResult.training_samples}
+                                  {trainingResult.comparison.changes?.samples_added > 0 && (
+                                    <span className="ml-1 text-green-400">(+{trainingResult.comparison.changes?.samples_added})</span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Core metrics */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                           <div>
                             <span className="text-gray-400">Accuracy:</span>
@@ -678,7 +852,7 @@ export default function HERACLESPage() {
                           </div>
                         </div>
                         <div className="text-xs text-gray-400">
-                          Trained on {trainingResult.training_samples} samples • Model saved to database
+                          Trained on {trainingResult.training_samples} samples - Model saved to database
                         </div>
                       </div>
                     ) : (
