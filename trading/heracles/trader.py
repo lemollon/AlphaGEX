@@ -778,7 +778,7 @@ class HERACLESTrader:
             from data.unified_data_provider import get_historical_bars
 
             # Get 20 days of daily bars for ATR calculation
-            bars = get_historical_bars("SPY", days=20, timeframe="1d")
+            bars = get_historical_bars("SPY", days=20, interval="day")
 
             if bars and len(bars) >= period:
                 # Calculate True Range for each bar
