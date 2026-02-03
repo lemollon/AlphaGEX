@@ -1406,14 +1406,15 @@ class PrometheusDatabase:
 
             # CRITICAL: No LIMIT in SQL - query ALL closed positions
             # Then filter output only (per STANDARDS.md)
+            # Use COALESCE to handle legacy records where close_time might be NULL
             cursor.execute("""
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(COALESCE(close_time, open_time, created_at) AT TIME ZONE 'America/Chicago') as trade_date,
                     SUM(net_profit) as daily_profit,
                     COUNT(*) as positions_closed
                 FROM prometheus_positions
-                WHERE status = 'closed' AND close_time IS NOT NULL
-                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                WHERE status = 'closed'
+                GROUP BY DATE(COALESCE(close_time, open_time, created_at) AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date ASC
             """)
 
