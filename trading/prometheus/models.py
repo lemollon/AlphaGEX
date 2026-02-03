@@ -1122,10 +1122,10 @@ class PrometheusICConfig:
             config.spread_width = data['strikes'].get('spread_width', 25.0)
 
         if 'sizing' in data:
-            config.max_positions = data['sizing'].get('max_positions', 3)
+            config.max_positions = data['sizing'].get('max_positions', 5)  # 5 simultaneous positions
             config.max_capital_per_trade_pct = data['sizing'].get('max_capital_per_trade_pct', 10.0)
-            config.max_daily_trades = data['sizing'].get('max_daily_trades', 5)
-            config.max_contracts = data['sizing'].get('max_contracts', 50)
+            config.max_daily_trades = data['sizing'].get('max_daily_trades', 0)  # 0 = UNLIMITED (aggressive)
+            config.max_contracts = data['sizing'].get('max_contracts', 50)  # 50 contracts max (aggressive)
 
         if 'risk' in data:
             config.stop_loss_pct = data['risk'].get('stop_loss_pct', 200.0)
