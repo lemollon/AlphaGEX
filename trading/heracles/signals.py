@@ -66,11 +66,12 @@ class HERACLESSignalGenerator:
         try:
             # Extract GEX data with fallbacks for invalid/missing values
             # GEX data is already scaled to MES levels by get_gex_data_for_heracles()
-            flip_point = gex_data.get('flip_point', 0)
-            call_wall = gex_data.get('call_wall', 0)
-            put_wall = gex_data.get('put_wall', 0)
-            net_gex = gex_data.get('net_gex', 0)
-            gex_ratio = gex_data.get('gex_ratio', 1.0)
+            # Use 'or' to handle None values (key exists but value is None)
+            flip_point = gex_data.get('flip_point') or 0
+            call_wall = gex_data.get('call_wall') or 0
+            put_wall = gex_data.get('put_wall') or 0
+            net_gex = gex_data.get('net_gex') or 0
+            gex_ratio = gex_data.get('gex_ratio') or 1.0
 
             # Fallback to reasonable defaults if GEX data is invalid
             # Use current_price as flip point if GEX data unavailable
@@ -84,9 +85,10 @@ class HERACLESSignalGenerator:
 
             # For overnight, use n+1 (next day's expected levels)
             if is_overnight:
-                n1_flip = gex_data.get('n1_flip_point', 0)
-                n1_call = gex_data.get('n1_call_wall', 0)
-                n1_put = gex_data.get('n1_put_wall', 0)
+                # Use 'or 0' to handle None values (key exists but value is None)
+                n1_flip = gex_data.get('n1_flip_point') or 0
+                n1_call = gex_data.get('n1_call_wall') or 0
+                n1_put = gex_data.get('n1_put_wall') or 0
                 # Only use n+1 data if valid
                 if n1_flip > 0:
                     flip_point = n1_flip
@@ -405,10 +407,10 @@ class HERACLESSignalGenerator:
         Walls act as support/resistance. Trading bounces off walls
         can be profitable in both gamma regimes.
         """
-        call_wall = gex_data.get('call_wall', current_price + 100)
-        put_wall = gex_data.get('put_wall', current_price - 100)
-        flip_point = gex_data.get('flip_point', current_price)
-        net_gex = gex_data.get('net_gex', 0)
+        call_wall = gex_data.get('call_wall') or (current_price + 100)
+        put_wall = gex_data.get('put_wall') or (current_price - 100)
+        flip_point = gex_data.get('flip_point') or current_price
+        net_gex = gex_data.get('net_gex') or 0
 
         gamma_regime = self._determine_gamma_regime(net_gex)
 
@@ -469,11 +471,11 @@ class HERACLESSignalGenerator:
 
         Flip point crossings can signal regime changes and directional moves.
         """
-        flip_point = gex_data.get('flip_point', current_price)
-        prev_price = gex_data.get('prev_price', current_price)
-        call_wall = gex_data.get('call_wall', current_price + 50)
-        put_wall = gex_data.get('put_wall', current_price - 50)
-        net_gex = gex_data.get('net_gex', 0)
+        flip_point = gex_data.get('flip_point') or current_price
+        prev_price = gex_data.get('prev_price') or current_price
+        call_wall = gex_data.get('call_wall') or (current_price + 50)
+        put_wall = gex_data.get('put_wall') or (current_price - 50)
+        net_gex = gex_data.get('net_gex') or 0
 
         gamma_regime = self._determine_gamma_regime(net_gex)
 
