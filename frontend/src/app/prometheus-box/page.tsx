@@ -1508,7 +1508,7 @@ export default function PrometheusBoxDashboard() {
                       </div>
 
                       {/* RISK ALERTS SECTION */}
-                      {reconciliation.risk_alerts?.count > 0 && (
+                      {reconciliation.risk_alerts?.alerts?.length > 0 && (
                         <div className={`mt-6 rounded-lg p-4 border ${
                           reconciliation.risk_alerts.has_critical ? 'bg-red-900/30 border-red-600/50' :
                           reconciliation.risk_alerts.has_warnings ? 'bg-yellow-900/30 border-yellow-600/50' :
