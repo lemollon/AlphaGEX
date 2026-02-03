@@ -909,6 +909,7 @@ export default function HERACLESPage() {
                     </div>
                   )}
                 </div>
+              </div>
 
               {/* Feature Importance (shown when model is trained) */}
               {featureImportance && featureImportance.features && featureImportance.features.length > 0 && (
