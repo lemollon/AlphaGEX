@@ -1108,7 +1108,8 @@ export default function SystemProcessesPage() {
   const contentRef = useRef<HTMLDivElement>(null);
 
   // WebSocket for real-time updates
-  const { isConnected, lastMessage } = useWebSocket('ws://localhost:8000/ws/system');
+  const wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000';
+  const { isConnected, lastMessage } = useWebSocket(`${wsBaseUrl}/ws/system`);
 
   // Update statuses from WebSocket
   useEffect(() => {
