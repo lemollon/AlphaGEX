@@ -1111,13 +1111,25 @@ async def get_sage_status():
         training_metrics = None
         if hasattr(advisor, 'training_metrics') and advisor.training_metrics:
             tm = advisor.training_metrics
+            # Helper to sanitize float values (NaN/Infinity -> None for JSON)
+            def safe_float(val):
+                if val is None:
+                    return None
+                try:
+                    import math
+                    if math.isnan(val) or math.isinf(val):
+                        return None
+                    return float(val)
+                except (TypeError, ValueError):
+                    return None
+
             training_metrics = {
-                "accuracy": tm.accuracy if hasattr(tm, 'accuracy') else None,
-                "precision": tm.precision if hasattr(tm, 'precision') else None,
-                "recall": tm.recall if hasattr(tm, 'recall') else None,
-                "f1": tm.f1 if hasattr(tm, 'f1') else None,
-                "auc_roc": tm.auc_roc if hasattr(tm, 'auc_roc') else None,
-                "brier_score": tm.brier_score if hasattr(tm, 'brier_score') else None
+                "accuracy": safe_float(tm.accuracy if hasattr(tm, 'accuracy') else None),
+                "precision": safe_float(tm.precision if hasattr(tm, 'precision') else None),
+                "recall": safe_float(tm.recall if hasattr(tm, 'recall') else None),
+                "f1": safe_float(tm.f1 if hasattr(tm, 'f1') else None),
+                "auc_roc": safe_float(tm.auc_roc if hasattr(tm, 'auc_roc') else None),
+                "brier_score": safe_float(tm.brier_score if hasattr(tm, 'brier_score') else None)
             }
 
         # Count training data from outcomes table
