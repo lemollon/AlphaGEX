@@ -188,7 +188,11 @@ class HERACLESTrader:
                 return scan_result
 
             current_price = quote.get("last", 0)
+            bid_price = quote.get("bid", 0)
+            ask_price = quote.get("ask", 0)
             scan_context["underlying_price"] = current_price
+            scan_context["bid_price"] = bid_price
+            scan_context["ask_price"] = ask_price
 
             if current_price <= 0:
                 scan_result["status"] = "invalid_price"
@@ -215,8 +219,9 @@ class HERACLESTrader:
             scan_context["vix"] = vix
 
             # Calculate ATR from real data or estimate
-            atr = self._get_atr(current_price)
+            atr, atr_is_estimated = self._get_atr(current_price)
             scan_context["atr"] = atr
+            scan_context["atr_is_estimated"] = atr_is_estimated
 
             # Determine if overnight session
             is_overnight = self._is_overnight_session()
@@ -355,9 +360,12 @@ class HERACLESTrader:
                 decision_summary=skip_reason or error_msg or f"Scan completed: {result.get('trades_executed', 0)} trades",
                 full_reasoning=signal.reasoning if signal else "",
                 underlying_price=underlying_price,
+                bid_price=context.get("bid_price", 0),
+                ask_price=context.get("ask_price", 0),
                 underlying_symbol="MES",
                 vix=context.get("vix", 0),
                 atr=context.get("atr", 0),
+                atr_is_estimated=context.get("atr_is_estimated", True),
                 gamma_regime=gamma_regime,
                 gex_value=gex_data.get("net_gex", 0),
                 flip_point=flip_point,
@@ -406,9 +414,19 @@ class HERACLESTrader:
         """
         Manage an open position - check stops and trailing.
 
+        Also tracks high/low price excursions for backtesting data quality.
+        These values enable backtesting to validate:
+        - Stop placement: Would the stop have been hit?
+        - Profit targets: Could the target have been reached?
+        - MAE/MFE analysis: Maximum adverse/favorable excursion
+
         Returns True if position was closed.
         """
         try:
+            # Track high/low prices for backtesting (do this BEFORE checking stops)
+            # This ensures we capture the price that triggered the stop
+            self._update_position_high_low(position, current_price)
+
             # Check if stopped out
             if self._check_stop_hit(position, current_price):
                 return self._close_position(
@@ -454,6 +472,37 @@ class HERACLESTrader:
         except Exception as e:
             logger.error(f"Error managing position {position.position_id}: {e}")
             return False
+
+    def _update_position_high_low(self, position: FuturesPosition, current_price: float) -> None:
+        """
+        Update high/low price tracking for a position.
+
+        This is critical for backtesting to know the full price range
+        experienced during the trade, enabling validation of:
+        - Stop loss placement and whether it was truly hit
+        - Profit target placement and whether it could have been reached
+        - Maximum Adverse Excursion (MAE) analysis
+        - Maximum Favorable Excursion (MFE) analysis
+
+        Called on every scan to capture continuous price range.
+        """
+        try:
+            # Update in-memory position values
+            if position.high_price_since_entry == 0 or current_price > position.high_price_since_entry:
+                position.high_price_since_entry = current_price
+
+            if position.low_price_since_entry == 0 or current_price < position.low_price_since_entry:
+                position.low_price_since_entry = current_price
+
+            # Persist to database
+            self.db.update_high_low_prices(
+                position.position_id,
+                high_price=current_price,
+                low_price=current_price
+            )
+
+        except Exception as e:
+            logger.warning(f"Error updating high/low prices for {position.position_id}: {e}")
 
     def _check_stop_hit(self, position: FuturesPosition, current_price: float) -> bool:
         """Check if position's stop has been hit"""
@@ -710,7 +759,7 @@ class HERACLESTrader:
         logger.warning("Using default VIX=16.0 (all sources failed)")
         return 16.0
 
-    def _get_atr(self, current_price: float, period: int = 14) -> float:
+    def _get_atr(self, current_price: float, period: int = 14) -> Tuple[float, bool]:
         """
         Get ATR (Average True Range) for MES position sizing.
 
@@ -718,6 +767,11 @@ class HERACLESTrader:
         - Stop loss placement
         - Position sizing (risk per trade / ATR = contracts)
         - Signal strength evaluation
+
+        Returns:
+            Tuple[float, bool]: (ATR value, is_estimated flag)
+                - is_estimated=False means ATR was calculated from real historical data
+                - is_estimated=True means ATR was estimated (fallback)
         """
         try:
             # Try to get historical data for real ATR calculation
@@ -744,14 +798,16 @@ class HERACLESTrader:
                 # Calculate ATR as simple moving average of TR
                 if len(true_ranges) >= period:
                     atr = sum(true_ranges[-period:]) / period
-                    logger.debug(f"Calculated ATR from SPY data: {atr:.2f}")
-                    return atr
+                    logger.debug(f"Calculated ATR from SPY data: {atr:.2f} (not estimated)")
+                    return (atr, False)  # Real ATR, not estimated
 
         except Exception as e:
             logger.warning(f"Could not calculate real ATR: {e}")
 
         # Fallback: Estimate based on current price and VIX
-        return self._estimate_atr(current_price)
+        estimated_atr = self._estimate_atr(current_price)
+        logger.debug(f"Using estimated ATR: {estimated_atr:.2f}")
+        return (estimated_atr, True)  # Estimated ATR
 
     def _estimate_atr(self, current_price: float) -> float:
         """

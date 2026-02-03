@@ -117,8 +117,10 @@ class FuturesPosition:
     realized_pnl: float = 0.0
 
     # Running metrics
-    high_water_mark: float = 0.0  # Highest profit reached
-    max_adverse_excursion: float = 0.0  # Largest drawdown
+    high_water_mark: float = 0.0  # Highest profit reached (in dollars)
+    max_adverse_excursion: float = 0.0  # Largest drawdown (in dollars)
+    high_price_since_entry: float = 0.0  # Highest price since entry (for backtesting)
+    low_price_since_entry: float = 0.0  # Lowest price since entry (for backtesting)
 
     @property
     def current_pnl_points(self) -> float:
@@ -219,6 +221,8 @@ class FuturesPosition:
             'realized_pnl': self.realized_pnl,
             'high_water_mark': self.high_water_mark,
             'max_adverse_excursion': self.max_adverse_excursion,
+            'high_price_since_entry': self.high_price_since_entry,
+            'low_price_since_entry': self.low_price_since_entry,
         }
 
 
