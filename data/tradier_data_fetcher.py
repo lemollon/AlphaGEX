@@ -196,8 +196,8 @@ class TradierDataFetcher:
         self.min_request_interval = 0.1  # 100ms between requests
 
         logger.info(f"Tradier client initialized - Mode: {'SANDBOX' if self.sandbox else 'PRODUCTION'}")
-        if not self.sandbox:
-            logger.warning("⚠️ LIVE TRADING MODE - Real money at risk!")
+        # Note: Production API is required for index options (SPX) data even when paper trading
+        # This warning only applies when actually executing trades, not for data fetching
 
     def _rate_limit(self):
         """Simple rate limiting"""

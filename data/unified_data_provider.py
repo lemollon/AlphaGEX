@@ -633,6 +633,21 @@ def get_vix() -> float:
     return get_data_provider().get_vix()
 
 
+def get_historical_bars(symbol: str, days: int = 30, interval: str = 'day') -> List[HistoricalBar]:
+    """
+    Quick historical bars lookup.
+
+    Args:
+        symbol: Stock symbol (e.g., 'SPY')
+        days: Number of days of history
+        interval: 'day', '1min', '5min', '15min'
+
+    Returns:
+        List of HistoricalBar objects
+    """
+    return get_data_provider().get_historical_bars(symbol, days, interval)
+
+
 # ==================== TEST ====================
 
 if __name__ == '__main__':

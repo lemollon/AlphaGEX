@@ -83,6 +83,18 @@ services:
       # Anthropic API for Claude AI explanations
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Tastytrade API for HERACLES futures trading (REQUIRED for MES scalping)
+      - key: TASTYTRADE_USERNAME
+        sync: false
+      - key: TASTYTRADE_PASSWORD
+        sync: false
+      - key: TASTYTRADE_ACCOUNT_ID
+        sync: false
+      # OAuth method (PREFERRED - works with 2FA enabled)
+      - key: TASTYTRADE_CLIENT_SECRET
+        sync: false
+      - key: TASTYTRADE_REFRESH_TOKEN
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: alphagex-db
