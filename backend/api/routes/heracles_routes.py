@@ -98,17 +98,55 @@ async def get_heracles_positions():
 
 @router.get("/api/heracles/closed-trades")
 async def get_heracles_closed_trades(
-    limit: int = Query(50, ge=1, le=500, description="Number of trades to return")
+    limit: int = Query(1000, ge=1, le=10000, description="Number of trades to return (default: 1000 to show all daily trades)"),
+    today_only: bool = Query(False, description="If true, only return today's trades")
 ):
     """
     Get HERACLES closed trade history.
+
+    By default returns up to 1000 trades (enough for all daily trades).
+    Use today_only=true to filter to just today's trades.
     """
     try:
         trader = _get_trader()
         trades = trader.get_closed_trades(limit=limit)
+
+        # Filter to today only if requested
+        if today_only:
+            from zoneinfo import ZoneInfo
+            today = datetime.now(ZoneInfo("America/Chicago")).date()
+            trades = [
+                t for t in trades
+                if t.get('close_time') and datetime.fromisoformat(t['close_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date() == today
+            ]
+
+        # Calculate daily summary
+        today_trades = []
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/Chicago")).date()
+        for t in trades:
+            try:
+                if t.get('close_time'):
+                    trade_date = datetime.fromisoformat(t['close_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date()
+                    if trade_date == today:
+                        today_trades.append(t)
+            except Exception:
+                pass
+
+        today_pnl = sum(float(t.get('realized_pnl', 0) or 0) for t in today_trades)
+        today_wins = sum(1 for t in today_trades if float(t.get('realized_pnl', 0) or 0) > 0)
+        today_losses = len(today_trades) - today_wins
+
         return {
             "trades": trades,
             "count": len(trades),
+            "today_summary": {
+                "trades_today": len(today_trades),
+                "wins_today": today_wins,
+                "losses_today": today_losses,
+                "pnl_today": today_pnl,
+                "win_rate_today": (today_wins / len(today_trades) * 100) if today_trades else 0
+            },
             "timestamp": datetime.now().isoformat()
         }
     except HTTPException:
@@ -465,9 +503,10 @@ async def reset_heracles_paper_account(
 
 @router.get("/api/heracles/scan-activity")
 async def get_heracles_scan_activity(
-    limit: int = Query(100, ge=1, le=500, description="Number of scans to return"),
+    limit: int = Query(1000, ge=1, le=10000, description="Number of scans to return (default: 1000 to show all daily activity)"),
     outcome: Optional[str] = Query(None, description="Filter by outcome (TRADED, NO_TRADE, SKIP, ERROR)"),
-    gamma_regime: Optional[str] = Query(None, description="Filter by gamma regime (POSITIVE, NEGATIVE, NEUTRAL)")
+    gamma_regime: Optional[str] = Query(None, description="Filter by gamma regime (POSITIVE, NEGATIVE, NEUTRAL)"),
+    today_only: bool = Query(False, description="If true, only return today's scans")
 ):
     """
     Get HERACLES scan activity log.
@@ -479,6 +518,7 @@ async def get_heracles_scan_activity(
     - Decisions made and why
     - Trade execution details
 
+    By default returns up to 1000 scans (enough for all daily activity).
     This data is critical for ML model training.
     """
     try:
@@ -489,6 +529,15 @@ async def get_heracles_scan_activity(
             gamma_regime=gamma_regime
         )
 
+        # Filter to today only if requested
+        if today_only:
+            from zoneinfo import ZoneInfo
+            today = datetime.now(ZoneInfo("America/Chicago")).date()
+            scans = [
+                s for s in scans
+                if s.get('scan_time') and datetime.fromisoformat(s['scan_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date() == today
+            ]
+
         # Calculate summary statistics
         total_scans = len(scans)
         traded_count = len([s for s in scans if s.get('outcome') == 'TRADED'])
@@ -496,6 +545,21 @@ async def get_heracles_scan_activity(
         skip_count = len([s for s in scans if s.get('outcome') == 'SKIP'])
         error_count = len([s for s in scans if s.get('outcome') == 'ERROR'])
         market_closed_count = len([s for s in scans if s.get('outcome') == 'MARKET_CLOSED'])
+
+        # Calculate today's stats
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/Chicago")).date()
+        today_scans = []
+        for s in scans:
+            try:
+                if s.get('scan_time'):
+                    scan_date = datetime.fromisoformat(s['scan_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date()
+                    if scan_date == today:
+                        today_scans.append(s)
+            except Exception:
+                pass
+
+        today_traded = len([s for s in today_scans if s.get('outcome') == 'TRADED'])
 
         return {
             "scans": scans,
@@ -507,6 +571,11 @@ async def get_heracles_scan_activity(
                 "error": error_count,
                 "market_closed": market_closed_count,
                 "trade_rate_pct": (traded_count / total_scans * 100) if total_scans > 0 else 0
+            },
+            "today_summary": {
+                "scans_today": len(today_scans),
+                "traded_today": today_traded,
+                "trade_rate_today_pct": (today_traded / len(today_scans) * 100) if today_scans else 0
             },
             "timestamp": datetime.now().isoformat()
         }
