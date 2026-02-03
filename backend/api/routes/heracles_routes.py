@@ -98,17 +98,55 @@ async def get_heracles_positions():
 
 @router.get("/api/heracles/closed-trades")
 async def get_heracles_closed_trades(
-    limit: int = Query(50, ge=1, le=500, description="Number of trades to return")
+    limit: int = Query(1000, ge=1, le=10000, description="Number of trades to return (default: 1000 to show all daily trades)"),
+    today_only: bool = Query(False, description="If true, only return today's trades")
 ):
     """
     Get HERACLES closed trade history.
+
+    By default returns up to 1000 trades (enough for all daily trades).
+    Use today_only=true to filter to just today's trades.
     """
     try:
         trader = _get_trader()
         trades = trader.get_closed_trades(limit=limit)
+
+        # Filter to today only if requested
+        if today_only:
+            from zoneinfo import ZoneInfo
+            today = datetime.now(ZoneInfo("America/Chicago")).date()
+            trades = [
+                t for t in trades
+                if t.get('close_time') and datetime.fromisoformat(t['close_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date() == today
+            ]
+
+        # Calculate daily summary
+        today_trades = []
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/Chicago")).date()
+        for t in trades:
+            try:
+                if t.get('close_time'):
+                    trade_date = datetime.fromisoformat(t['close_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date()
+                    if trade_date == today:
+                        today_trades.append(t)
+            except Exception:
+                pass
+
+        today_pnl = sum(float(t.get('realized_pnl', 0) or 0) for t in today_trades)
+        today_wins = sum(1 for t in today_trades if float(t.get('realized_pnl', 0) or 0) > 0)
+        today_losses = len(today_trades) - today_wins
+
         return {
             "trades": trades,
             "count": len(trades),
+            "today_summary": {
+                "trades_today": len(today_trades),
+                "wins_today": today_wins,
+                "losses_today": today_losses,
+                "pnl_today": today_pnl,
+                "win_rate_today": (today_wins / len(today_trades) * 100) if today_trades else 0
+            },
             "timestamp": datetime.now().isoformat()
         }
     except HTTPException:
@@ -465,9 +503,10 @@ async def reset_heracles_paper_account(
 
 @router.get("/api/heracles/scan-activity")
 async def get_heracles_scan_activity(
-    limit: int = Query(100, ge=1, le=500, description="Number of scans to return"),
+    limit: int = Query(1000, ge=1, le=10000, description="Number of scans to return (default: 1000 to show all daily activity)"),
     outcome: Optional[str] = Query(None, description="Filter by outcome (TRADED, NO_TRADE, SKIP, ERROR)"),
-    gamma_regime: Optional[str] = Query(None, description="Filter by gamma regime (POSITIVE, NEGATIVE, NEUTRAL)")
+    gamma_regime: Optional[str] = Query(None, description="Filter by gamma regime (POSITIVE, NEGATIVE, NEUTRAL)"),
+    today_only: bool = Query(False, description="If true, only return today's scans")
 ):
     """
     Get HERACLES scan activity log.
@@ -479,6 +518,7 @@ async def get_heracles_scan_activity(
     - Decisions made and why
     - Trade execution details
 
+    By default returns up to 1000 scans (enough for all daily activity).
     This data is critical for ML model training.
     """
     try:
@@ -489,6 +529,15 @@ async def get_heracles_scan_activity(
             gamma_regime=gamma_regime
         )
 
+        # Filter to today only if requested
+        if today_only:
+            from zoneinfo import ZoneInfo
+            today = datetime.now(ZoneInfo("America/Chicago")).date()
+            scans = [
+                s for s in scans
+                if s.get('scan_time') and datetime.fromisoformat(s['scan_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date() == today
+            ]
+
         # Calculate summary statistics
         total_scans = len(scans)
         traded_count = len([s for s in scans if s.get('outcome') == 'TRADED'])
@@ -496,6 +545,21 @@ async def get_heracles_scan_activity(
         skip_count = len([s for s in scans if s.get('outcome') == 'SKIP'])
         error_count = len([s for s in scans if s.get('outcome') == 'ERROR'])
         market_closed_count = len([s for s in scans if s.get('outcome') == 'MARKET_CLOSED'])
+
+        # Calculate today's stats
+        from zoneinfo import ZoneInfo
+        today = datetime.now(ZoneInfo("America/Chicago")).date()
+        today_scans = []
+        for s in scans:
+            try:
+                if s.get('scan_time'):
+                    scan_date = datetime.fromisoformat(s['scan_time'].replace('Z', '+00:00')).astimezone(ZoneInfo("America/Chicago")).date()
+                    if scan_date == today:
+                        today_scans.append(s)
+            except Exception:
+                pass
+
+        today_traded = len([s for s in today_scans if s.get('outcome') == 'TRADED'])
 
         return {
             "scans": scans,
@@ -507,6 +571,11 @@ async def get_heracles_scan_activity(
                 "error": error_count,
                 "market_closed": market_closed_count,
                 "trade_rate_pct": (traded_count / total_scans * 100) if total_scans > 0 else 0
+            },
+            "today_summary": {
+                "scans_today": len(today_scans),
+                "traded_today": today_traded,
+                "trade_rate_today_pct": (today_traded / len(today_scans) * 100) if today_scans else 0
             },
             "timestamp": datetime.now().isoformat()
         }
@@ -552,6 +621,419 @@ async def get_heracles_ml_training_data():
     except Exception as e:
         logger.error(f"Error getting ML training data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ML Model Training Endpoints
+# ============================================================================
+
+@router.post("/api/heracles/ml/train")
+async def train_heracles_ml_model(min_samples: int = 50):
+    """
+    Train the HERACLES ML model from scan_activity data.
+
+    Trains an XGBoost classifier to predict trade win probability,
+    replacing the Bayesian estimator with ML-enhanced predictions.
+
+    Requires at least 50 samples (trades with recorded outcomes).
+    """
+    try:
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+
+        # Get current data count first
+        training_df = advisor.get_training_data()
+        if training_df is None or len(training_df) < min_samples:
+            sample_count = len(training_df) if training_df is not None else 0
+            return {
+                "success": False,
+                "error": f"Insufficient training data. Have {sample_count} samples, need {min_samples}.",
+                "samples_available": sample_count,
+                "samples_required": min_samples
+            }
+
+        # Train the model
+        metrics = advisor.train(min_samples=min_samples)
+
+        if not metrics:
+            return {
+                "success": False,
+                "error": "Training failed - check logs for details"
+            }
+
+        return {
+            "success": True,
+            "message": f"HERACLES ML trained on {metrics.total_samples} trades",
+            "metrics": {
+                "accuracy": round(metrics.accuracy, 4),
+                "precision": round(metrics.precision, 4),
+                "recall": round(metrics.recall, 4),
+                "f1_score": round(metrics.f1_score, 4),
+                "auc_roc": round(metrics.auc_roc, 4),
+                "brier_score": round(metrics.brier_score, 4),
+                "win_rate_actual": round(metrics.win_rate_actual, 4),
+                "win_rate_predicted": round(metrics.win_rate_predicted, 4),
+                "positive_gamma_accuracy": round(metrics.positive_gamma_accuracy, 4) if metrics.positive_gamma_accuracy else None,
+                "negative_gamma_accuracy": round(metrics.negative_gamma_accuracy, 4) if metrics.negative_gamma_accuracy else None,
+            },
+            "samples": {
+                "total": metrics.total_samples,
+                "wins": metrics.wins,
+                "losses": metrics.losses
+            },
+            "model_version": metrics.model_version,
+            "training_date": metrics.training_date,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+    except ImportError as e:
+        logger.error(f"ML libraries not available: {e}")
+        return {
+            "success": False,
+            "error": f"ML libraries not available: {e}. Install with: pip install xgboost scikit-learn"
+        }
+    except Exception as e:
+        logger.error(f"Error training HERACLES ML: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/api/heracles/ml/status")
+async def get_heracles_ml_status():
+    """
+    Get HERACLES ML model status.
+
+    Shows whether model is trained, accuracy metrics, and training info.
+    """
+    try:
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+        status = advisor.get_status()
+
+        # Also get training data availability
+        training_df = advisor.get_training_data()
+        samples_available = len(training_df) if training_df is not None else 0
+
+        return {
+            "model_trained": status['is_trained'],
+            "model_version": status['model_version'],
+            "training_date": status['training_date'],
+            "accuracy": status['accuracy'],
+            "auc_roc": status['auc_roc'],
+            "samples_trained_on": status['samples'],
+            "win_rate": status['win_rate'],
+            "samples_available": samples_available,
+            "ready_for_training": samples_available >= 50,
+            "can_retrain": samples_available >= 50,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        return {
+            "model_trained": False,
+            "error": "ML module not available",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting ML status: {e}")
+        return {
+            "model_trained": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ml/feature-importance")
+async def get_heracles_ml_feature_importance():
+    """
+    Get HERACLES ML feature importance rankings.
+
+    Shows which features have the most impact on win probability prediction.
+    """
+    try:
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+
+        if not advisor.is_trained:
+            return {
+                "success": True,
+                "model_trained": False,
+                "features": [],
+                "message": "Train the model first to see feature importance"
+            }
+
+        features = advisor.get_feature_importance()
+
+        return {
+            "success": True,
+            "model_trained": True,
+            "features": features,
+            "model_version": advisor.model_version,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        return {
+            "success": False,
+            "model_trained": False,
+            "features": [],
+            "error": "ML module not available"
+        }
+    except Exception as e:
+        logger.error(f"Error getting feature importance: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/api/heracles/ml/approve")
+async def approve_heracles_ml_model():
+    """
+    Approve the ML model for use in signal generation.
+
+    After training, the ML model is NOT automatically used.
+    You must explicitly approve it after reviewing the training results.
+    This activates the ML model for win probability predictions.
+    """
+    try:
+        from trading.heracles.signals import approve_ml_model, is_ml_approved
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        # Check if model is trained first
+        advisor = get_heracles_ml_advisor()
+        if not advisor.is_trained:
+            return {
+                "success": False,
+                "error": "No ML model trained. Train the model first before approving.",
+                "ml_approved": False,
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Approve the model
+        success = approve_ml_model()
+
+        return {
+            "success": success,
+            "message": "ML model approved and now active for win probability predictions" if success else "Failed to approve ML model",
+            "ml_approved": is_ml_approved(),
+            "model_version": advisor.model_version,
+            "accuracy": advisor.training_metrics.accuracy if advisor.training_metrics else None,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error approving ML model: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.post("/api/heracles/ml/revoke")
+async def revoke_heracles_ml_approval():
+    """
+    Revoke ML model approval.
+
+    Switches back to Bayesian probability estimation.
+    Use this if the ML model is underperforming.
+    """
+    try:
+        from trading.heracles.signals import revoke_ml_approval, is_ml_approved
+
+        success = revoke_ml_approval()
+
+        return {
+            "success": success,
+            "message": "ML model revoked - using Bayesian probability estimation" if success else "Failed to revoke ML approval",
+            "ml_approved": is_ml_approved(),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error revoking ML approval: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ml/approval-status")
+async def get_heracles_ml_approval_status():
+    """
+    Get ML model approval status.
+
+    Shows whether the ML model is approved and active,
+    or if Bayesian fallback is being used.
+    """
+    try:
+        from trading.heracles.signals import is_ml_approved
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        advisor = get_heracles_ml_advisor()
+        ml_approved = is_ml_approved()
+
+        return {
+            "ml_approved": ml_approved,
+            "model_trained": advisor.is_trained,
+            "model_version": advisor.model_version if advisor.is_trained else None,
+            "probability_source": "ML" if (ml_approved and advisor.is_trained) else "BAYESIAN",
+            "accuracy": advisor.training_metrics.accuracy if advisor.training_metrics else None,
+            "message": (
+                "ML model is approved and active" if (ml_approved and advisor.is_trained) else
+                "ML model trained but awaiting approval" if (advisor.is_trained and not ml_approved) else
+                "No ML model trained - using Bayesian estimation"
+            ),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting ML approval status: {e}")
+        return {
+            "ml_approved": False,
+            "model_trained": False,
+            "probability_source": "BAYESIAN",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+# ============================================================================
+# A/B Test Endpoints
+# ============================================================================
+
+@router.post("/api/heracles/ab-test/enable")
+async def enable_heracles_ab_test():
+    """
+    Enable A/B test for stop loss comparison.
+
+    When enabled:
+    - 50% of trades will use FIXED stops (base config value)
+    - 50% of trades will use DYNAMIC stops (VIX/ATR/regime adjusted)
+
+    This allows you to compare stop strategies on real trades.
+    Need 100+ trades for meaningful comparison.
+    """
+    try:
+        from trading.heracles.signals import enable_ab_test, is_ab_test_enabled
+
+        success = enable_ab_test()
+
+        return {
+            "success": success,
+            "ab_test_enabled": is_ab_test_enabled(),
+            "message": "A/B test enabled - 50% fixed / 50% dynamic stops" if success else "Failed to enable A/B test",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error enabling A/B test: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.post("/api/heracles/ab-test/disable")
+async def disable_heracles_ab_test():
+    """
+    Disable A/B test.
+
+    All trades will use DYNAMIC stops (default behavior).
+    """
+    try:
+        from trading.heracles.signals import disable_ab_test, is_ab_test_enabled
+
+        success = disable_ab_test()
+
+        return {
+            "success": success,
+            "ab_test_enabled": is_ab_test_enabled(),
+            "message": "A/B test disabled - all trades use DYNAMIC stops" if success else "Failed to disable A/B test",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error disabling A/B test: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ab-test/status")
+async def get_heracles_ab_test_status():
+    """
+    Get A/B test status and settings.
+    """
+    try:
+        from trading.heracles.signals import is_ab_test_enabled
+
+        return {
+            "ab_test_enabled": is_ab_test_enabled(),
+            "description": "When enabled, 50% trades use FIXED stops, 50% use DYNAMIC stops",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting A/B test status: {e}")
+        return {
+            "ab_test_enabled": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/api/heracles/ab-test/results")
+async def get_heracles_ab_test_results():
+    """
+    Get A/B test results comparing FIXED vs DYNAMIC stops.
+
+    Returns performance statistics for both groups:
+    - Win rate, total P&L, average P&L
+    - Recommendation based on results
+    - Confidence level (based on sample size)
+
+    Need 100+ trades for meaningful comparison.
+    """
+    try:
+        trader = _get_trader()
+        results = trader.db.get_ab_test_results()
+
+        from trading.heracles.signals import is_ab_test_enabled
+
+        return {
+            "ab_test_enabled": is_ab_test_enabled(),
+            "results": results,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting A/B test results: {e}")
+        return {
+            "ab_test_enabled": False,
+            "results": None,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @router.get("/api/heracles/paper-equity-curve")
@@ -779,6 +1261,53 @@ async def get_heracles_diagnostics():
                 "warning": f"GEX data fetch failed: {e}. Check Tradier production API configuration."
             }
 
+        # Calculate dynamic stop for current conditions
+        dynamic_stop_info = {}
+        try:
+            from trading.heracles.signals import HERACLESSignalGenerator
+            from trading.heracles.models import GammaRegime
+
+            # Get current market data
+            vix = 18.0  # Default
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                fetcher = TradierDataFetcher()
+                vix_quote = fetcher.get_quote("VIX")
+                if vix_quote and vix_quote.get("last"):
+                    vix = vix_quote["last"]
+            except Exception:
+                pass
+
+            atr = 4.0  # Default estimate
+            current_price = quote_status.get("last", 6000)
+
+            # Determine gamma regime
+            net_gex = gex_status.get("net_gex", 0)
+            if net_gex > 0:
+                gamma_regime = GammaRegime.POSITIVE
+            elif net_gex < 0:
+                gamma_regime = GammaRegime.NEGATIVE
+            else:
+                gamma_regime = GammaRegime.NEUTRAL
+
+            # Calculate dynamic stop
+            signal_gen = trader.signal_generator
+            base_stop = trader.config.initial_stop_points
+            dynamic_stop = signal_gen._calculate_dynamic_stop(base_stop, vix, atr, gamma_regime)
+
+            dynamic_stop_info = {
+                "enabled": True,
+                "base_stop_pts": base_stop,
+                "current_dynamic_stop_pts": dynamic_stop,
+                "current_vix": vix,
+                "current_atr": atr,
+                "gamma_regime": gamma_regime.value,
+                "stop_dollar_value": dynamic_stop * 5.0,  # $5 per point
+                "explanation": f"Base {base_stop}pt adjusted for VIX={vix:.1f}, ATR={atr:.1f}, {gamma_regime.value} gamma → {dynamic_stop}pt (${dynamic_stop*5:.2f})"
+            }
+        except Exception as e:
+            dynamic_stop_info = {"enabled": False, "error": str(e)}
+
         return {
             "bot_name": "HERACLES",
             "display_name": "VALOR",  # User-facing name
@@ -788,6 +1317,7 @@ async def get_heracles_diagnostics():
             "database": db_status,
             "market_data": quote_status,
             "gex_data": gex_status,  # CRITICAL: Shows if GEX data is available for signal generation
+            "dynamic_stop": dynamic_stop_info,  # Dynamic stop loss calculation for current conditions
             "config": status.get("config", {}),
             "performance": status.get("performance", {}),
             "win_tracker": status.get("win_tracker", {}),

@@ -373,6 +373,27 @@ class HERACLESDatabase:
                     ADD COLUMN IF NOT EXISTS low_price_since_entry DECIMAL(12, 4)
                 """)
 
+                # Add A/B test columns for dynamic stop tracking
+                c.execute("""
+                    ALTER TABLE heracles_closed_trades
+                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS stop_points_used DECIMAL(6, 2)
+                """)
+
+                # Add A/B test columns to positions
+                c.execute("""
+                    ALTER TABLE heracles_positions
+                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS stop_points_used DECIMAL(6, 2)
+                """)
+
+                # Add A/B test columns to scan activity for ML training
+                c.execute("""
+                    ALTER TABLE heracles_scan_activity
+                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS stop_points_used DECIMAL(6, 2)
+                """)
+
                 conn.commit()
                 logger.info("HERACLES database tables ensured")
 
@@ -402,10 +423,10 @@ class HERACLESDatabase:
                         signal_source, signal_confidence, win_probability, trade_reasoning,
                         order_id, scan_id, status, open_time, close_time, close_price,
                         close_reason, realized_pnl, high_water_mark, max_adverse_excursion,
-                        high_price_since_entry, low_price_since_entry
+                        high_price_since_entry, low_price_since_entry, stop_type, stop_points_used
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (position_id) DO UPDATE SET
                         current_stop = EXCLUDED.current_stop,
@@ -452,6 +473,8 @@ class HERACLESDatabase:
                     _to_python(position.max_adverse_excursion),
                     _to_python(high_price),
                     _to_python(low_price),
+                    position.stop_type,
+                    _to_python(position.stop_points_used),
                 ))
 
                 conn.commit()
@@ -550,8 +573,9 @@ class HERACLESDatabase:
                         signal_source, signal_confidence, win_probability,
                         vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
                         open_time, close_time, hold_duration_minutes,
-                        high_price_since_entry, low_price_since_entry
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        high_price_since_entry, low_price_since_entry,
+                        stop_type, stop_points_used
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (position_id) DO NOTHING
                 """, (
                     position_id, position.symbol, position.direction.value,
@@ -563,7 +587,9 @@ class HERACLESDatabase:
                     close_reason, position.trade_reasoning,
                     position.open_time, now, hold_duration,
                     _to_python(position.high_price_since_entry) if position.high_price_since_entry > 0 else None,
-                    _to_python(position.low_price_since_entry) if position.low_price_since_entry > 0 else None
+                    _to_python(position.low_price_since_entry) if position.low_price_since_entry > 0 else None,
+                    position.stop_type,
+                    _to_python(position.stop_points_used)
                 ))
 
                 conn.commit()
@@ -786,6 +812,8 @@ class HERACLESDatabase:
             trade_reasoning=data.get('trade_reasoning', ''),
             order_id=data.get('order_id', ''),
             scan_id=data.get('scan_id', ''),
+            stop_type=data.get('stop_type', 'DYNAMIC'),
+            stop_points_used=float(data.get('stop_points_used') or 0),
             status=PositionStatus(data['status']),
             open_time=data['open_time'],
             close_time=data.get('close_time'),
@@ -1798,3 +1826,107 @@ class HERACLESDatabase:
             logger.error(f"Failed to get ML training data: {e}")
 
         return data
+
+    # ========================================================================
+    # A/B Test Results
+    # ========================================================================
+
+    def get_ab_test_results(self) -> Dict[str, Any]:
+        """
+        Get A/B test comparison between FIXED and DYNAMIC stops.
+
+        Returns comprehensive statistics for both groups to determine
+        which stop strategy performs better.
+        """
+        results = {
+            'fixed': {
+                'trades': 0, 'wins': 0, 'losses': 0, 'win_rate': 0.0,
+                'total_pnl': 0.0, 'avg_pnl': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0
+            },
+            'dynamic': {
+                'trades': 0, 'wins': 0, 'losses': 0, 'win_rate': 0.0,
+                'total_pnl': 0.0, 'avg_pnl': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0
+            },
+            'summary': {
+                'total_ab_trades': 0,
+                'recommended_stop': None,
+                'confidence': 'LOW',
+                'message': ''
+            }
+        }
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Get stats by stop_type
+                for stop_type in ['FIXED', 'DYNAMIC']:
+                    c.execute("""
+                        SELECT
+                            COUNT(*) as trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
+                            SUM(realized_pnl) as total_pnl,
+                            AVG(realized_pnl) as avg_pnl,
+                            AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END) as avg_win,
+                            AVG(CASE WHEN realized_pnl < 0 THEN realized_pnl END) as avg_loss,
+                            AVG(stop_points_used) as avg_stop_pts
+                        FROM heracles_closed_trades
+                        WHERE stop_type = %s
+                    """, (stop_type,))
+
+                    row = c.fetchone()
+                    if row and row[0] > 0:
+                        key = stop_type.lower()
+                        results[key] = {
+                            'trades': row[0] or 0,
+                            'wins': row[1] or 0,
+                            'losses': row[2] or 0,
+                            'win_rate': ((row[1] or 0) / row[0] * 100) if row[0] > 0 else 0,
+                            'total_pnl': float(row[3] or 0),
+                            'avg_pnl': float(row[4] or 0),
+                            'avg_win': float(row[5] or 0),
+                            'avg_loss': float(row[6] or 0),
+                            'avg_stop_pts': float(row[7] or 0),
+                        }
+
+                # Calculate summary
+                total_trades = results['fixed']['trades'] + results['dynamic']['trades']
+                results['summary']['total_ab_trades'] = total_trades
+
+                if total_trades >= 100:
+                    # Enough data for comparison
+                    fixed_pnl = results['fixed']['total_pnl']
+                    dynamic_pnl = results['dynamic']['total_pnl']
+                    fixed_win_rate = results['fixed']['win_rate']
+                    dynamic_win_rate = results['dynamic']['win_rate']
+
+                    # Determine winner based on P&L first, then win rate
+                    if fixed_pnl > dynamic_pnl + 50:  # $50 margin
+                        results['summary']['recommended_stop'] = 'FIXED'
+                        results['summary']['message'] = f"FIXED stops outperform by ${fixed_pnl - dynamic_pnl:.2f}"
+                    elif dynamic_pnl > fixed_pnl + 50:
+                        results['summary']['recommended_stop'] = 'DYNAMIC'
+                        results['summary']['message'] = f"DYNAMIC stops outperform by ${dynamic_pnl - fixed_pnl:.2f}"
+                    else:
+                        results['summary']['recommended_stop'] = 'INCONCLUSIVE'
+                        results['summary']['message'] = "Results too close to determine winner"
+
+                    # Confidence based on sample size
+                    if total_trades >= 200:
+                        results['summary']['confidence'] = 'HIGH'
+                    elif total_trades >= 100:
+                        results['summary']['confidence'] = 'MEDIUM'
+                    else:
+                        results['summary']['confidence'] = 'LOW'
+
+                elif total_trades > 0:
+                    results['summary']['message'] = f"Need 100+ trades for A/B comparison (have {total_trades})"
+                else:
+                    results['summary']['message'] = "No A/B test data yet. Enable A/B test to start collecting data."
+
+        except Exception as e:
+            logger.error(f"Failed to get A/B test results: {e}")
+            results['summary']['message'] = f"Error: {e}"
+
+        return results

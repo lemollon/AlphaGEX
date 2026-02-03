@@ -828,6 +828,86 @@ const fetchers = {
       return { success: false, data: { signals: [] } }
     }
   },
+  heraclesMLStatus: async () => {
+    try {
+      const response = await api.get('/api/heracles/ml/status')
+      return response.data
+    } catch {
+      return { model_trained: false, error: 'Failed to fetch ML status' }
+    }
+  },
+  heraclesMLTrain: async (minSamples: number = 50) => {
+    try {
+      const response = await api.post(`/api/heracles/ml/train?min_samples=${minSamples}`)
+      return response.data
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Training failed' }
+    }
+  },
+  heraclesMLFeatureImportance: async () => {
+    try {
+      const response = await api.get('/api/heracles/ml/feature-importance')
+      return response.data
+    } catch {
+      return { success: false, features: [] }
+    }
+  },
+  heraclesMLApprovalStatus: async () => {
+    try {
+      const response = await api.get('/api/heracles/ml/approval-status')
+      return response.data
+    } catch {
+      return { ml_approved: false, model_trained: false, probability_source: 'BAYESIAN' }
+    }
+  },
+  heraclesMLApprove: async () => {
+    try {
+      const response = await api.post('/api/heracles/ml/approve')
+      return response.data
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Approval failed' }
+    }
+  },
+  heraclesMLRevoke: async () => {
+    try {
+      const response = await api.post('/api/heracles/ml/revoke')
+      return response.data
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Revoke failed' }
+    }
+  },
+  heraclesABTestStatus: async () => {
+    try {
+      const response = await api.get('/api/heracles/ab-test/status')
+      return response.data
+    } catch {
+      return { ab_test_enabled: false }
+    }
+  },
+  heraclesABTestEnable: async () => {
+    try {
+      const response = await api.post('/api/heracles/ab-test/enable')
+      return response.data
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Failed to enable A/B test' }
+    }
+  },
+  heraclesABTestDisable: async () => {
+    try {
+      const response = await api.post('/api/heracles/ab-test/disable')
+      return response.data
+    } catch (error: any) {
+      return { success: false, error: error?.message || 'Failed to disable A/B test' }
+    }
+  },
+  heraclesABTestResults: async () => {
+    try {
+      const response = await api.get('/api/heracles/ab-test/results')
+      return response.data
+    } catch {
+      return { ab_test_enabled: false, results: null }
+    }
+  },
 
   // PROMETHEUS Box Spread Synthetic Borrowing + IC Trading Bot
   prometheusStatus: async () => {
@@ -1551,6 +1631,69 @@ export function useHERACLESSignals(limit: number = 50, options?: SWRConfiguratio
     () => fetchers.heraclesSignals(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
+}
+
+export function useHERACLESMLStatus(options?: SWRConfiguration) {
+  return useSWR('heracles-ml-status', fetchers.heraclesMLStatus, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,  // Refresh every minute
+    ...options,
+  })
+}
+
+export function useHERACLESMLFeatureImportance(options?: SWRConfiguration) {
+  return useSWR('heracles-ml-feature-importance', fetchers.heraclesMLFeatureImportance, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,  // Refresh every 5 minutes
+    ...options,
+  })
+}
+
+// Training function (not a hook - called imperatively)
+export async function trainHERACLESML(minSamples: number = 50) {
+  return fetchers.heraclesMLTrain(minSamples)
+}
+
+// ML Approval hooks and functions
+export function useHERACLESMLApprovalStatus(options?: SWRConfiguration) {
+  return useSWR('heracles-ml-approval-status', fetchers.heraclesMLApprovalStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,  // Refresh every 30 seconds
+    ...options,
+  })
+}
+
+export async function approveHERACLESML() {
+  return fetchers.heraclesMLApprove()
+}
+
+export async function revokeHERACLESML() {
+  return fetchers.heraclesMLRevoke()
+}
+
+// A/B Test hooks and functions
+export function useHERACLESABTestStatus(options?: SWRConfiguration) {
+  return useSWR('heracles-ab-test-status', fetchers.heraclesABTestStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useHERACLESABTestResults(options?: SWRConfiguration) {
+  return useSWR('heracles-ab-test-results', fetchers.heraclesABTestResults, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,  // Refresh every minute
+    ...options,
+  })
+}
+
+export async function enableHERACLESABTest() {
+  return fetchers.heraclesABTestEnable()
+}
+
+export async function disableHERACLESABTest() {
+  return fetchers.heraclesABTestDisable()
 }
 
 // =============================================================================

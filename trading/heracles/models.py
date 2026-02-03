@@ -109,6 +109,10 @@ class FuturesPosition:
     # ML training data linkage
     scan_id: str = ""  # Links to heracles_scan_activity for outcome tracking
 
+    # A/B Test tracking for stop types
+    stop_type: str = "DYNAMIC"  # 'FIXED' or 'DYNAMIC' (for A/B test tracking)
+    stop_points_used: float = 0.0  # Actual stop distance in points
+
     # Status
     status: PositionStatus = PositionStatus.OPEN
     open_time: datetime = field(default_factory=lambda: datetime.now(CENTRAL_TZ))
@@ -413,6 +417,10 @@ class FuturesSignal:
 
     # Win probability
     win_probability: float = 0.0
+
+    # A/B Test tracking for stop types
+    stop_type: str = "DYNAMIC"  # 'FIXED' or 'DYNAMIC'
+    stop_points_used: float = 0.0  # Actual stop distance in points
 
     # Reasoning
     reasoning: str = ""
