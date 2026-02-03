@@ -907,14 +907,17 @@ class HERACLESDatabase:
         return data
 
     def get_intraday_equity(self) -> List[Dict]:
-        """Get today's equity snapshots"""
+        """Get today's equity snapshots with equity field for frontend compatibility"""
         data = []
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+                # Include equity as alias for account_balance + unrealized_pnl
+                # Frontend expects 'equity' field for chart rendering
                 c.execute("""
                     SELECT snapshot_time, account_balance, unrealized_pnl,
-                           realized_pnl_today, open_positions, trades_today
+                           realized_pnl_today, open_positions, trades_today,
+                           (account_balance + COALESCE(unrealized_pnl, 0)) as equity
                     FROM heracles_equity_snapshots
                     WHERE DATE(snapshot_time AT TIME ZONE 'America/Chicago') =
                           DATE(NOW() AT TIME ZONE 'America/Chicago')
@@ -928,6 +931,10 @@ class HERACLESDatabase:
                     point = dict(zip(columns, row))
                     if point.get('snapshot_time') and hasattr(point['snapshot_time'], 'isoformat'):
                         point['snapshot_time'] = point['snapshot_time'].isoformat()
+                    # Convert Decimal to float for JSON serialization
+                    for key in ['account_balance', 'unrealized_pnl', 'realized_pnl_today', 'equity']:
+                        if point.get(key) is not None:
+                            point[key] = float(point[key])
                     data.append(point)
 
         except Exception as e:

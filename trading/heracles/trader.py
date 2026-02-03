@@ -284,8 +284,9 @@ class HERACLESTrader:
                 self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
                                        skip_reason=f"Max positions ({self.config.max_open_positions}) reached")
 
-            # 3. Save equity snapshot
-            self._save_equity_snapshot(account_balance, positions)
+            # 3. Save equity snapshot with CURRENT positions (refresh to include any new positions)
+            current_positions = self.db.get_open_positions()
+            self._save_equity_snapshot(account_balance, current_positions)
 
             self.last_scan_time = datetime.now(CENTRAL_TZ)
 
