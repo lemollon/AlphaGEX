@@ -51,7 +51,7 @@ export interface BotBrand {
 export const BOT_BRANDS: Record<BotName, BotBrand> = {
   ARES: {
     name: 'ARES',
-    displayName: BOT_DISPLAY_NAMES.ARES,  // SELF-CONTROL
+    displayName: BOT_DISPLAY_NAMES.ARES,  // FORTRESS - Psalm 18:2
     fullName: `${BOT_DISPLAY_NAMES.ARES} Iron Condor`,
     description: 'Paper Trading with Real Market Data',
     strategy: '0DTE Iron Condor Strategy',
@@ -87,7 +87,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   ATHENA: {
     name: 'ATHENA',
-    displayName: BOT_DISPLAY_NAMES.ATHENA,  // FAITHFULNESS
+    displayName: BOT_DISPLAY_NAMES.ATHENA,  // SOLOMON - 1 Kings 4:29
     fullName: `${BOT_DISPLAY_NAMES.ATHENA} Directional`,
     description: 'GEX-Based Directional Spreads',
     strategy: 'Directional Spread Trading',
@@ -123,7 +123,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   ICARUS: {
     name: 'ICARUS',
-    displayName: BOT_DISPLAY_NAMES.ICARUS,  // LOVE
+    displayName: BOT_DISPLAY_NAMES.ICARUS,  // GIDEON - Judges 6:14
     fullName: `${BOT_DISPLAY_NAMES.ICARUS} Aggressive Directional`,
     description: 'Aggressive GEX-Based Directional Spreads',
     strategy: 'Aggressive Directional Spread Trading',
@@ -159,7 +159,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   PEGASUS: {
     name: 'PEGASUS',
-    displayName: BOT_DISPLAY_NAMES.PEGASUS,  // PATIENCE
+    displayName: BOT_DISPLAY_NAMES.PEGASUS,  // ANCHOR - Hebrews 6:19
     fullName: `${BOT_DISPLAY_NAMES.PEGASUS} SPX Iron Condor`,
     description: 'SPX Iron Condor Trading with Oracle Intelligence',
     strategy: 'SPX Iron Condor Strategy',
@@ -195,7 +195,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   TITAN: {
     name: 'TITAN',
-    displayName: BOT_DISPLAY_NAMES.TITAN,  // GOODNESS
+    displayName: BOT_DISPLAY_NAMES.TITAN,  // SAMSON - Judges 16:28
     fullName: `${BOT_DISPLAY_NAMES.TITAN} Aggressive SPX Iron Condor`,
     description: 'Aggressive Daily SPX Iron Condor Trading',
     strategy: 'Aggressive SPX Iron Condor Strategy',
@@ -231,7 +231,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   PHOENIX: {
     name: 'PHOENIX',
-    displayName: BOT_DISPLAY_NAMES.PHOENIX,  // JOY
+    displayName: BOT_DISPLAY_NAMES.PHOENIX,  // LAZARUS - John 11:43-44
     fullName: `${BOT_DISPLAY_NAMES.PHOENIX} Momentum`,
     description: 'Momentum Continuation with GEX-Confirmed Bias',
     strategy: 'Momentum Continuation Strategy',
@@ -267,7 +267,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   ATLAS: {
     name: 'ATLAS',
-    displayName: BOT_DISPLAY_NAMES.ATLAS,  // PEACE
+    displayName: BOT_DISPLAY_NAMES.ATLAS,  // CORNERSTONE - Psalm 118:22
     fullName: `${BOT_DISPLAY_NAMES.ATLAS} Mean-Reversion`,
     description: 'Mean-Reversion Trading at Key GEX Levels',
     strategy: 'Mean-Reversion Strategy',
@@ -303,7 +303,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   PROMETHEUS: {
     name: 'PROMETHEUS',
-    displayName: BOT_DISPLAY_NAMES.PROMETHEUS,  // KINDNESS
+    displayName: BOT_DISPLAY_NAMES.PROMETHEUS,  // JUBILEE - Leviticus 25:10
     fullName: `${BOT_DISPLAY_NAMES.PROMETHEUS} Box Spread + IC`,
     description: 'Synthetic Borrowing via Box Spreads + Iron Condor Trading',
     strategy: 'Box Spread Synthetic Borrowing + IC Strategy',
@@ -339,7 +339,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
   },
   HERACLES: {
     name: 'HERACLES',
-    displayName: BOT_DISPLAY_NAMES.HERACLES,  // MEEKNESS
+    displayName: BOT_DISPLAY_NAMES.HERACLES,  // VALOR - Joshua 1:9
     fullName: `${BOT_DISPLAY_NAMES.HERACLES} MES Futures Scalping`,
     description: 'MES Futures Scalping with GEX Signals',
     strategy: 'GEX-Based MES Futures Scalping',
