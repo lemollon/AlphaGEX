@@ -300,6 +300,70 @@ class HERACLESTrader:
 
         return scan_result
 
+    def monitor_positions(self) -> Dict[str, Any]:
+        """
+        Lightweight position monitor - checks stops/targets only.
+
+        This is designed to be called MORE FREQUENTLY than run_scan()
+        (e.g., every 15-30 seconds) to reduce stop slippage caused by
+        the 1-minute scan interval.
+
+        Does NOT:
+        - Generate new signals
+        - Log to scan_activity table
+        - Check for new trade opportunities
+
+        ONLY:
+        - Gets current price
+        - Checks all open positions against stops/targets
+        - Closes positions if stop/target hit
+        """
+        result = {
+            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+            "positions_checked": 0,
+            "positions_closed": 0,
+            "status": "completed",
+            "errors": []
+        }
+
+        try:
+            # Check market hours - no point monitoring if market is closed
+            if not self.executor.is_market_open():
+                result["status"] = "market_closed"
+                return result
+
+            # Get current price only (no GEX, no VIX - just price)
+            quote = self.executor.get_mes_quote()
+            if not quote:
+                result["status"] = "no_quote"
+                return result
+
+            current_price = quote.get("last", 0)
+            if current_price <= 0:
+                result["status"] = "invalid_price"
+                return result
+
+            # Get open positions
+            positions = self.db.get_open_positions()
+            result["positions_checked"] = len(positions)
+
+            if not positions:
+                return result
+
+            # Check each position
+            for position in positions:
+                closed = self._manage_position(position, current_price)
+                if closed:
+                    result["positions_closed"] += 1
+                    logger.info(f"MONITOR: Position {position.position_id} closed at {current_price}")
+
+        except Exception as e:
+            logger.warning(f"Position monitor error: {e}")
+            result["status"] = "error"
+            result["errors"].append(str(e))
+
+        return result
+
     def _log_scan_activity(
         self,
         scan_id: str,
