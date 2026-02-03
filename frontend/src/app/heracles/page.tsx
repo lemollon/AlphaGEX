@@ -12,6 +12,7 @@ import {
   Settings,
   AlertTriangle,
   CheckCircle,
+  XCircle,
   Eye,
   GraduationCap,
   RefreshCw,
@@ -52,6 +53,7 @@ import {
   trainHERACLESML,
   approveHERACLESML,
   revokeHERACLESML,
+  rejectHERACLESML,
   enableHERACLESABTest,
   disableHERACLESABTest,
   useHERACLESSignals,
@@ -94,6 +96,7 @@ export default function HERACLESPage() {
   const [isTraining, setIsTraining] = useState(false)
   const [trainingResult, setTrainingResult] = useState<any>(null)
   const [isApproving, setIsApproving] = useState(false)
+  const [isRejecting, setIsRejecting] = useState(false)
   const [isTogglingABTest, setIsTogglingABTest] = useState(false)
 
   // Get days for current timeframe
@@ -163,6 +166,23 @@ export default function HERACLESPage() {
       console.error('Failed to revoke ML:', error)
     } finally {
       setIsApproving(false)
+    }
+  }
+
+  // ML Reject handler (completely discard newly trained model)
+  const handleRejectML = async () => {
+    setIsRejecting(true)
+    try {
+      const result = await rejectHERACLESML()
+      if (result.success) {
+        setTrainingResult(null)  // Clear training result UI
+        refreshApprovalStatus()
+        refreshMLStatus()
+      }
+    } catch (error) {
+      console.error('Failed to reject ML:', error)
+    } finally {
+      setIsRejecting(false)
     }
   }
 
@@ -719,25 +739,44 @@ export default function HERACLESPage() {
                             <CheckCircle className="h-5 w-5" />
                             Model Trained Successfully
                           </div>
-                          {/* Immediate Approve Button after training */}
+                          {/* Approve/Deny Buttons after training */}
                           {!mlApprovalStatus?.ml_approved && (
-                            <button
-                              onClick={handleApproveML}
-                              disabled={isApproving}
-                              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold transition-colors disabled:opacity-50 animate-pulse"
-                            >
-                              {isApproving ? (
-                                <>
-                                  <RefreshCw className="h-4 w-4 animate-spin" />
-                                  Approving...
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCircle className="h-4 w-4" />
-                                  Approve & Activate ML
-                                </>
-                              )}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={handleRejectML}
+                                disabled={isRejecting || isApproving}
+                                className="flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
+                              >
+                                {isRejecting ? (
+                                  <>
+                                    <RefreshCw className="h-4 w-4 animate-spin" />
+                                    Rejecting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <XCircle className="h-4 w-4" />
+                                    Reject Model
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                onClick={handleApproveML}
+                                disabled={isApproving || isRejecting}
+                                className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold transition-colors disabled:opacity-50 animate-pulse"
+                              >
+                                {isApproving ? (
+                                  <>
+                                    <RefreshCw className="h-4 w-4 animate-spin" />
+                                    Approving...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="h-4 w-4" />
+                                    Approve & Activate ML
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           )}
                         </div>
 

@@ -157,6 +157,33 @@ def revoke_ml_approval() -> bool:
     return _set_config_value('ml_approved', False)
 
 
+def reject_ml_model() -> bool:
+    """
+    Reject a newly trained ML model.
+
+    This is different from revoke_ml_approval:
+    - revoke: Turns off ML but keeps the model (can re-approve later)
+    - reject: Completely clears the model (must retrain to use ML)
+
+    Use this when user decides not to use a newly trained model.
+    """
+    try:
+        from trading.heracles.ml import get_heracles_ml_advisor
+
+        # First revoke approval
+        revoke_ml_approval()
+
+        # Then clear the model entirely
+        advisor = get_heracles_ml_advisor()
+        if advisor:
+            return advisor.clear_model()
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to reject ML model: {e}")
+        return False
+
+
 def is_ab_test_enabled() -> bool:
     """Check if A/B test for dynamic stops is enabled."""
     return _get_config_value('ab_test_stops_enabled', False) == True or _get_config_value('ab_test_stops_enabled', 'false') == 'true'

@@ -2088,6 +2088,30 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in HERACLES scan: {str(e)}")
             logger.error(traceback.format_exc())
 
+    def scheduled_heracles_position_monitor(self):
+        """
+        HERACLES Position Monitor - runs every 15 seconds during futures hours
+
+        Fast position checking to reduce stop slippage. The main scan runs
+        every 1 minute for signal generation, but stops can be overshot by
+        several points in that time. This monitor checks more frequently.
+
+        Does NOT generate new signals - only checks existing positions.
+        """
+        if not self.heracles_trader:
+            return
+
+        try:
+            result = self.heracles_trader.monitor_positions()
+
+            # Only log if something happened (reduced log spam)
+            if result.get("positions_closed", 0) > 0:
+                logger.info(f"HERACLES MONITOR: Closed {result['positions_closed']} position(s)")
+
+        except Exception as e:
+            # Don't spam logs for every 15-second check failure
+            pass
+
     def scheduled_heracles_eod_logic(self):
         """
         HERACLES End-of-Day processing - runs at 4:00 PM CT (futures close)
@@ -4121,6 +4145,23 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ HERACLES job scheduled (every 1 min, checks futures hours internally)")
+
+            # =================================================================
+            # HERACLES POSITION MONITOR: Fast stop/target checking (every 15 sec)
+            # Reduces stop slippage by checking positions more frequently
+            # Does NOT generate new signals - only monitors existing positions
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_heracles_position_monitor,
+                trigger=IntervalTrigger(
+                    seconds=15,
+                    timezone='America/Chicago'
+                ),
+                id='heracles_position_monitor',
+                name='HERACLES - Position Monitor (15-sec intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ HERACLES position monitor scheduled (every 15 sec)")
 
             # =================================================================
             # HERACLES EOD JOB: Daily maintenance break - runs at 4:00 PM CT
