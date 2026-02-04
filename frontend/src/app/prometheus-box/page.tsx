@@ -220,74 +220,108 @@ export default function PrometheusBoxDashboard() {
             scanIntervalMinutes={5}
           />
 
-          {/* Quick Stats - RECONCILED NUMBERS WITH CLEAR MATH */}
-          {/* THE FORMULA: Net P&L = (IC Realized + IC Unrealized) - Borrowing Cost Accrued */}
+          {/* ═══════════════════════════════════════════════════════════════════════
+              P&L SUMMARY - Single source of truth, always visible above tabs
+              ═══════════════════════════════════════════════════════════════════════ */}
           <div className="bg-[#0a0a0a] rounded-xl border border-emerald-500/30 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-medium text-gray-400">PROMETHEUS P&L Summary</h3>
-              <span className="text-xs text-gray-500">Formula: Net = IC P&L − Borrowing Cost</span>
+            {/* Header row with status badge */}
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-medium text-white">PROMETHEUS P&L Summary</h3>
+                <p className="text-xs text-gray-500 mt-0.5">IC Trading Profit − Borrowing Cost = Net Profit</p>
+              </div>
+              {/* Cost Efficiency Badge with explanation */}
+              <div className={`px-3 py-1.5 rounded-full text-xs font-medium ${
+                costEfficiency >= 1.5 ? 'bg-green-900/50 text-green-400 border border-green-600/50' :
+                costEfficiency >= 1 ? 'bg-green-900/30 text-green-400 border border-green-700/50' :
+                costEfficiency >= 0.8 ? 'bg-yellow-900/30 text-yellow-400 border border-yellow-700/50' :
+                'bg-red-900/30 text-red-400 border border-red-700/50'
+              }`}>
+                {costEfficiency.toFixed(1)}x efficiency
+                <span className="ml-1 opacity-75">
+                  {costEfficiency >= 1.5 ? '• Highly Profitable' :
+                   costEfficiency >= 1 ? '• Covering Costs' :
+                   costEfficiency >= 0.8 ? '• Near Break-Even' :
+                   '• Below Break-Even'}
+                </span>
+              </div>
             </div>
+
+            {/* Main metrics - clear labels with explanatory subtitles */}
             <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-              {/* A: Total Borrowed (for context) */}
+              {/* 1: Capital Borrowed */}
               <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
                 <div className="text-xs text-blue-400/70 mb-1">Capital Borrowed</div>
                 <div className="text-lg font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
                 <div className="text-xs text-gray-500">{positions?.positions?.length || 0} box spread{(positions?.positions?.length || 0) !== 1 ? 's' : ''}</div>
               </div>
 
-              {/* B: IC Realized P&L */}
+              {/* 2: Closed IC Trades - renamed from "IC Realized" */}
               <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
-                <div className="text-xs text-gray-400 mb-1">IC Realized</div>
+                <div className="text-xs text-gray-400 mb-1">Closed IC Trades</div>
                 <div className={`text-lg font-bold ${icRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {icRealizedPnL >= 0 ? '+' : ''}{formatCurrency(icRealizedPnL)}
                 </div>
-                <div className="text-xs text-gray-500">{icPerformance?.performance?.closed_trades?.total || 0} closed trades</div>
+                <div className="text-xs text-gray-500">{icPerformance?.performance?.closed_trades?.total || 0} trades completed</div>
               </div>
 
-              {/* C: IC Unrealized P&L */}
+              {/* 3: Open IC Positions - renamed from "IC Unrealized" */}
               <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
-                <div className="text-xs text-gray-400 mb-1">IC Unrealized</div>
+                <div className="text-xs text-gray-400 mb-1">Open IC Positions</div>
                 <div className={`text-lg font-bold ${icUnrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {icUnrealizedPnL >= 0 ? '+' : ''}{formatCurrency(icUnrealizedPnL)}
                 </div>
-                <div className="text-xs text-gray-500">{icPositions?.count || 0} open position{(icPositions?.count || 0) !== 1 ? 's' : ''}</div>
+                <div className="text-xs text-gray-500">{icPositions?.count || 0} position{(icPositions?.count || 0) !== 1 ? 's' : ''} open now</div>
               </div>
 
-              {/* D: Total IC P&L (B + C) */}
+              {/* 4: Total IC Profit - sum of closed + open */}
               <div className="bg-emerald-900/20 rounded-lg p-3 border border-emerald-600/30">
-                <div className="text-xs text-emerald-400/70 mb-1">Total IC P&L</div>
+                <div className="text-xs text-emerald-400/70 mb-1">Total IC Profit</div>
                 <div className={`text-lg font-bold ${totalICReturns >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   {totalICReturns >= 0 ? '+' : ''}{formatCurrency(totalICReturns)}
                 </div>
-                <div className="text-xs text-gray-500">realized + unrealized</div>
+                <div className="text-xs text-gray-500">closed + open combined</div>
               </div>
 
-              {/* E: Borrowing Cost Accrued */}
+              {/* 5: Borrowing Cost Accrued - clearer name */}
               <div className="bg-red-900/20 rounded-lg p-3 border border-red-700/30">
-                <div className="text-xs text-red-400/70 mb-1">Cost Accrued</div>
+                <div className="text-xs text-red-400/70 mb-1">Borrowing Cost</div>
                 <div className="text-lg font-bold text-red-400">−{formatCurrency(totalCostAccrued)}</div>
-                <div className="text-xs text-gray-500">{formatCurrency(totalCostRemaining)} remaining</div>
+                <div className="text-xs text-gray-500">accrued to date</div>
               </div>
 
-              {/* F: NET PROFIT (D - E) */}
+              {/* 6: NET PROFIT - the bottom line */}
               <div className={`rounded-lg p-3 border-2 ${netPnL >= 0 ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50'}`}>
                 <div className="text-xs text-gray-300 mb-1 font-medium">NET PROFIT</div>
                 <div className={`text-xl font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL)}
                 </div>
-                <div className="text-xs text-gray-400">{costEfficiency.toFixed(1)}x efficiency</div>
+                <div className="text-xs text-gray-400">
+                  {netPnL >= 0 ? 'earning above costs' : 'below break-even'}
+                </div>
               </div>
             </div>
 
-            {/* Math verification line */}
-            <div className="mt-3 pt-3 border-t border-gray-700/50 text-xs text-gray-500 flex items-center justify-center gap-2">
-              <span className={totalICReturns >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCurrency(totalICReturns)}</span>
-              <span>−</span>
-              <span className="text-red-400">{formatCurrency(totalCostAccrued)}</span>
-              <span>=</span>
-              <span className={`font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(netPnL)}</span>
-              <span className="text-gray-600">|</span>
-              <span>{costEfficiency >= 1 ? '✅ Profitable' : '⚠️ Below break-even'}</span>
+            {/* Visual equation showing how the numbers add up */}
+            <div className="mt-4 pt-3 border-t border-gray-700/50">
+              <div className="flex items-center justify-center gap-3 text-sm flex-wrap">
+                <div className="flex items-center gap-1 bg-gray-800/50 px-2 py-1 rounded">
+                  <span className="text-gray-500 text-xs">IC Profit:</span>
+                  <span className={`font-mono font-bold ${totalICReturns >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {formatCurrency(totalICReturns)}
+                  </span>
+                </div>
+                <span className="text-gray-500 text-lg font-bold">−</span>
+                <div className="flex items-center gap-1 bg-gray-800/50 px-2 py-1 rounded">
+                  <span className="text-gray-500 text-xs">Cost:</span>
+                  <span className="font-mono font-bold text-red-400">{formatCurrency(totalCostAccrued)}</span>
+                </div>
+                <span className="text-gray-500 text-lg font-bold">=</span>
+                <div className={`flex items-center gap-1 px-3 py-1 rounded font-bold ${netPnL >= 0 ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
+                  <span className="text-xs opacity-75">Net:</span>
+                  <span className="font-mono text-lg">{netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL)}</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -334,33 +368,42 @@ export default function PrometheusBoxDashboard() {
             {/* Overview Tab */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
-                {/* Quick Explainer for Newcomers */}
+                {/* Quick Explainer for Newcomers - Always visible, collapsible for returning users */}
                 <div className="bg-emerald-900/20 rounded-lg p-4 border border-emerald-600/30">
-                  <details className="group">
+                  <details className="group" open>
                     <summary className="flex items-center justify-between cursor-pointer text-emerald-400 font-medium">
-                      <span>📚 New to PROMETHEUS? Click to understand how the math works</span>
-                      <span className="text-xs text-gray-500 group-open:hidden">(click to expand)</span>
+                      <span>How PROMETHEUS Makes Money</span>
+                      <span className="text-xs text-gray-500">(click to collapse)</span>
                     </summary>
-                    <div className="mt-3 pt-3 border-t border-emerald-700/30 text-sm text-gray-300 space-y-2">
-                      <p><strong className="text-emerald-400">PROMETHEUS</strong> uses box spreads to borrow money cheaply, then trades Iron Condors (ICs) to earn more than the borrowing cost.</p>
-                      <div className="bg-black/30 rounded p-3 font-mono text-xs">
-                        <div className="text-gray-400 mb-1">THE KEY FORMULA:</div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-emerald-400">Net Profit</span>
-                          <span>=</span>
-                          <span className="text-green-400">IC Trading P&L</span>
-                          <span>−</span>
-                          <span className="text-red-400">Borrowing Cost (accrued so far)</span>
+                    <div className="mt-3 pt-3 border-t border-emerald-700/30 text-sm text-gray-300">
+                      {/* Simple 3-step explanation */}
+                      <div className="grid md:grid-cols-3 gap-4 mb-4">
+                        <div className="bg-black/30 rounded-lg p-3">
+                          <div className="text-blue-400 font-bold text-xs mb-1">1. BORROW CHEAP</div>
+                          <p className="text-xs text-gray-400">Sell box spreads to borrow cash at ~4-5% interest (cheaper than margin loans at 8-12%)</p>
+                        </div>
+                        <div className="bg-black/30 rounded-lg p-3">
+                          <div className="text-emerald-400 font-bold text-xs mb-1">2. TRADE ICs</div>
+                          <p className="text-xs text-gray-400">Use borrowed capital to trade Iron Condors, which generate premium income when markets stay within a range</p>
+                        </div>
+                        <div className="bg-black/30 rounded-lg p-3">
+                          <div className="text-green-400 font-bold text-xs mb-1">3. PROFIT IF IC &gt; COST</div>
+                          <p className="text-xs text-gray-400">If IC trading profit exceeds borrowing cost, you keep the difference. Goal: earn more than you pay.</p>
                         </div>
                       </div>
-                      <ul className="list-disc list-inside space-y-1 text-xs text-gray-400">
-                        <li><strong className="text-blue-400">Capital Borrowed</strong>: Cash received from selling box spreads</li>
-                        <li><strong className="text-green-400">IC Realized P&L</strong>: Profit/loss from closed Iron Condor trades</li>
-                        <li><strong className="text-green-400">IC Unrealized P&L</strong>: Profit/loss from open IC positions (not yet closed)</li>
-                        <li><strong className="text-emerald-400">Total IC P&L</strong>: Realized + Unrealized IC trading P&L</li>
-                        <li><strong className="text-red-400">Cost Accrued</strong>: Interest cost that has built up so far (time × daily rate)</li>
-                        <li><strong className="text-yellow-400">Cost Efficiency</strong>: If &gt; 1.0x, you&apos;re profitable. If &lt; 1.0x, IC returns don&apos;t cover costs yet.</li>
-                      </ul>
+
+                      {/* Terminology guide */}
+                      <div className="text-xs text-gray-400 space-y-1">
+                        <p className="font-medium text-gray-300 mb-2">What the numbers mean:</p>
+                        <div className="grid md:grid-cols-2 gap-x-6 gap-y-1">
+                          <p><span className="text-blue-400 font-medium">Capital Borrowed</span> = Cash from box spreads (your &quot;loan&quot;)</p>
+                          <p><span className="text-gray-300 font-medium">Closed IC Trades</span> = Profit from ICs that have finished</p>
+                          <p><span className="text-gray-300 font-medium">Open IC Positions</span> = Current value of ICs still running</p>
+                          <p><span className="text-emerald-400 font-medium">Total IC Profit</span> = Closed + Open (all IC earnings)</p>
+                          <p><span className="text-red-400 font-medium">Borrowing Cost</span> = Interest accrued so far</p>
+                          <p><span className="text-yellow-400 font-medium">Efficiency 1.0x</span> = Break-even. Above = profit, below = loss</p>
+                        </div>
+                      </div>
                     </div>
                   </details>
                 </div>
