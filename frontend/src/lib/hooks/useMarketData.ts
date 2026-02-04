@@ -786,6 +786,10 @@ const fetchers = {
     const response = await api.get('/api/heracles/ml-training-data')
     return response.data
   },
+  heraclesMLTrainingDataStats: async () => {
+    const response = await api.get('/api/heracles/ml/training-data-stats')
+    return response.data
+  },
   heraclesSignals: async (limit: number = 50) => {
     const response = await api.get(`/api/heracles/signals/recent?limit=${limit}`)
     return response.data
@@ -1577,6 +1581,14 @@ export function useHERACLESMLTrainingData(options?: SWRConfiguration) {
   return useSWR('heracles-ml-training-data', fetchers.heraclesMLTrainingData, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,  // Refresh every 5 minutes
+    ...options,
+  })
+}
+
+export function useHERACLESMLTrainingDataStats(options?: SWRConfiguration) {
+  return useSWR('heracles-ml-training-data-stats', fetchers.heraclesMLTrainingDataStats, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,  // Refresh every minute
     ...options,
   })
 }

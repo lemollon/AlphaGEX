@@ -45,6 +45,7 @@ import {
   useHERACLESIntradayEquity,
   useHERACLESScanActivity,
   useHERACLESMLTrainingData,
+  useHERACLESMLTrainingDataStats,
   useHERACLESMLStatus,
   useHERACLESMLFeatureImportance,
   useHERACLESMLApprovalStatus,
@@ -111,6 +112,7 @@ export default function HERACLESPage() {
   const { data: intradayEquityData } = useHERACLESIntradayEquity()
   const { data: scanActivityData, mutate: mutateScanActivity } = useHERACLESScanActivity(1000)
   const { data: mlTrainingData } = useHERACLESMLTrainingData()
+  const { data: mlTrainingDataStats, mutate: refreshTrainingStats } = useHERACLESMLTrainingDataStats()
   const { data: mlStatus, mutate: refreshMLStatus } = useHERACLESMLStatus()
   const { data: featureImportance, mutate: refreshFeatureImportance } = useHERACLESMLFeatureImportance()
   const { data: mlApprovalStatus, mutate: refreshApprovalStatus } = useHERACLESMLApprovalStatus()
@@ -126,10 +128,11 @@ export default function HERACLESPage() {
       const result = await trainHERACLESML(50)
       setTrainingResult(result)
       if (result.success) {
-        // Refresh ML status and feature importance
+        // Refresh ML status, feature importance, training stats, and approval status
         refreshMLStatus()
         refreshFeatureImportance()
         refreshApprovalStatus()
+        refreshTrainingStats()
       }
     } catch (error: any) {
       setTrainingResult({ success: false, error: error.message || 'Training failed' })
@@ -666,11 +669,11 @@ export default function HERACLESPage() {
                   {/* Train Button */}
                   <button
                     onClick={handleTrainML}
-                    disabled={isTraining || !mlTrainingData?.ready_for_training}
+                    disabled={isTraining || !mlTrainingDataStats?.ready_for_ml_training}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
                       isTraining
                         ? 'bg-yellow-600/50 text-yellow-300 cursor-wait'
-                        : mlTrainingData?.ready_for_training
+                        : mlTrainingDataStats?.ready_for_ml_training
                           ? 'bg-yellow-600 hover:bg-yellow-500 text-black'
                           : 'bg-gray-700 text-gray-400 cursor-not-allowed'
                     }`}
@@ -689,38 +692,91 @@ export default function HERACLESPage() {
                   </button>
                 </div>
 
+                {/* Parameter Version Warning Banner */}
+                {mlTrainingDataStats && (
+                  <div className={`mb-4 p-4 rounded-lg border ${
+                    mlTrainingDataStats.ready_for_ml_training
+                      ? 'bg-green-900/20 border-green-500/50'
+                      : 'bg-yellow-900/20 border-yellow-500/50'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertTriangle className={`h-5 w-5 ${
+                        mlTrainingDataStats.ready_for_ml_training ? 'text-green-400' : 'text-yellow-400'
+                      }`} />
+                      <span className={`font-semibold ${
+                        mlTrainingDataStats.ready_for_ml_training ? 'text-green-400' : 'text-yellow-400'
+                      }`}>
+                        Parameter Version {mlTrainingDataStats.parameter_version}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-300 mb-3">
+                      {mlTrainingDataStats.parameter_description}
+                    </p>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div className="bg-red-900/30 rounded-lg p-3 border border-red-500/30">
+                        <div className="text-red-400 font-medium">Old Parameters (Garbage Data)</div>
+                        <div className="text-xl font-bold text-red-300 mt-1">
+                          {mlTrainingDataStats.old_parameter_trades?.count || 0} trades
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          Win Rate: {mlTrainingDataStats.old_parameter_trades?.win_rate || 0}%
+                          <span className="text-red-400 ml-2">(asymmetric risk/reward)</span>
+                        </div>
+                      </div>
+                      <div className="bg-green-900/30 rounded-lg p-3 border border-green-500/30">
+                        <div className="text-green-400 font-medium">New Parameters (Quality Data)</div>
+                        <div className="text-xl font-bold text-green-300 mt-1">
+                          {mlTrainingDataStats.new_parameter_trades?.count || 0} trades
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {mlTrainingDataStats.ready_for_ml_training ? (
+                            <span className="text-green-400">Ready for ML training!</span>
+                          ) : (
+                            <span className="text-yellow-400">
+                              Need {mlTrainingDataStats.trades_needed_for_ml} more trades
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      ML will ONLY train on new parameter trades. Old data had big losses/small wins.
+                    </p>
+                  </div>
+                )}
+
                 {/* Training Data Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Training Samples</div>
+                    <div className="text-sm text-gray-400">New Param Trades</div>
                     <div className="text-2xl font-bold text-white mt-1">
-                      {mlTrainingData?.total_samples || 0}
+                      {mlTrainingDataStats?.new_parameter_trades?.count || 0}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">Need 50 for ML</div>
                   </div>
                   <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Win/Loss Samples</div>
+                    <div className="text-sm text-gray-400">Win/Loss (New)</div>
                     <div className="flex items-center gap-2 mt-1">
-                      <span className="text-green-400 text-lg font-bold">{mlTrainingData?.wins || 0}W</span>
+                      <span className="text-green-400 text-lg font-bold">{mlTrainingDataStats?.new_parameter_trades?.wins || 0}W</span>
                       <span className="text-gray-500">/</span>
-                      <span className="text-red-400 text-lg font-bold">{mlTrainingData?.losses || 0}L</span>
+                      <span className="text-red-400 text-lg font-bold">{mlTrainingDataStats?.new_parameter_trades?.losses || 0}L</span>
                     </div>
                   </div>
                   <div className="bg-gray-900/50 rounded-lg p-4">
-                    <div className="text-sm text-gray-400">Sample Win Rate</div>
+                    <div className="text-sm text-gray-400">New Win Rate</div>
                     <div className="text-2xl font-bold text-yellow-400 mt-1">
-                      {(mlTrainingData?.win_rate || 0).toFixed(1)}%
+                      {(mlTrainingDataStats?.new_parameter_trades?.win_rate || 0).toFixed(1)}%
                     </div>
                   </div>
                   <div className="bg-gray-900/50 rounded-lg p-4">
                     <div className="text-sm text-gray-400">Ready for Training</div>
                     <div className={`text-xl font-bold mt-1 flex items-center gap-2 ${
-                      mlTrainingData?.ready_for_training ? 'text-green-400' : 'text-yellow-400'
+                      mlTrainingDataStats?.ready_for_ml_training ? 'text-green-400' : 'text-yellow-400'
                     }`}>
-                      {mlTrainingData?.ready_for_training ? (
+                      {mlTrainingDataStats?.ready_for_ml_training ? (
                         <><CheckCircle className="h-5 w-5" /> Yes</>
                       ) : (
-                        <><RefreshCw className="h-5 w-5" /> {50 - (mlTrainingData?.total_samples || 0)} more</>
+                        <><RefreshCw className="h-5 w-5" /> {mlTrainingDataStats?.trades_needed_for_ml || 50} more</>
                       )}
                     </div>
                   </div>
