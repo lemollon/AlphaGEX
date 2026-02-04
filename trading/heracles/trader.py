@@ -635,7 +635,25 @@ class HERACLESTrader:
             max_profit_pts = position.entry_price - high_water_price if high_water_price > 0 else profit_pts
 
         # ================================================================
-        # CHECK EMERGENCY STOP (catastrophic loss protection)
+        # CHECK MAX UNREALIZED LOSS (intermediate safety net)
+        # This triggers BEFORE emergency stop to cap losses at 8pts instead of 15pts
+        # ================================================================
+        max_loss_pts = self.config.max_unrealized_loss_pts  # 8.0 pts default
+
+        if -profit_pts >= max_loss_pts:
+            logger.warning(
+                f"Position {position.position_id}: MAX LOSS RULE triggered at {current_price:.2f} "
+                f"(entry={position.entry_price:.2f}, loss={-profit_pts:.1f} pts >= {max_loss_pts:.1f} pts limit)"
+            )
+            return self._close_position(
+                position,
+                current_price,
+                PositionStatus.STOPPED,
+                f"Max unrealized loss rule (-{-profit_pts:.1f} pts exceeded {max_loss_pts:.1f} pts limit)"
+            )
+
+        # ================================================================
+        # CHECK EMERGENCY STOP (catastrophic loss protection - backup to max loss)
         # ================================================================
         emergency_stop_price = (position.entry_price - emergency_stop_pts if is_long
                                else position.entry_price + emergency_stop_pts)
