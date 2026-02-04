@@ -391,10 +391,13 @@ def get_direction_tracker() -> DirectionTracker:
     """Get the global direction tracker singleton."""
     global _direction_tracker
     if _direction_tracker is None:
+        # TUNED: Based on backtest results (DT_COOL2_NOWIN = $8,147.50 vs baseline -$2,525)
+        # - cooldown_scans=2: Pause direction for 2 scans after loss (fast recovery)
+        # - win_streak_caution=100: Effectively disabled (caused missed wins in testing)
         _direction_tracker = DirectionTracker(
-            cooldown_scans=3,      # Pause direction for 3 scans after loss
-            win_streak_caution=4,  # Reduce confidence after 4 consecutive wins
-            memory_size=10         # Track last 10 trades per direction
+            cooldown_scans=2,       # Pause direction for 2 scans after loss (winning param)
+            win_streak_caution=100, # Effectively disabled - don't reduce confidence after wins
+            memory_size=10          # Track last 10 trades per direction
         )
     return _direction_tracker
 
@@ -938,26 +941,48 @@ class HERACLESSignalGenerator:
 
     def _set_stop_levels(self, signal: FuturesSignal, atr: float) -> Tuple[FuturesSignal, str, float]:
         """
-        Set stop loss levels based on A/B test assignment or dynamic by default.
+        Set stop loss levels based on strategy mode.
 
-        A/B Test Mode (when enabled):
+        NO-LOSS TRAILING MODE (default - backtest winner):
+        - Uses emergency stop only (15 pts) for initial position
+        - No tight stop until position is profitable
+        - Trailing logic handled by trader._manage_position_no_loss_trailing()
+
+        A/B Test Mode (when enabled and no-loss trailing disabled):
         - 50% trades use FIXED stop (base config value unchanged)
         - 50% trades use DYNAMIC stop (VIX/ATR/regime adjusted)
 
-        Default Mode (A/B disabled):
-        - All trades use DYNAMIC stops
-
-        Dynamic Stop Logic:
-        1. Base stop from config (default 2.5 points)
-        2. VIX adjustment: widen when VIX > 20, tighten when VIX < 15
-        3. ATR adjustment: scale based on current volatility vs average
-        4. Regime adjustment: tighter for positive gamma (mean reversion)
-
         Returns:
             Tuple of (signal, stop_type, stop_points_used)
-            stop_type is 'FIXED' or 'DYNAMIC'
+            stop_type is 'NO_LOSS_TRAIL', 'FIXED', or 'DYNAMIC'
             stop_points_used is the actual stop distance in points
         """
+        # ================================================================
+        # NO-LOSS TRAILING MODE (backtest winner: $18,005 P&L, 88% win rate)
+        # ================================================================
+        if self.config.use_no_loss_trailing:
+            # Set initial stop to emergency stop (very wide - only for catastrophic moves)
+            stop_distance = self.config.no_loss_emergency_stop  # 15.0 pts default
+            stop_type = 'NO_LOSS_TRAIL'
+
+            if signal.direction == TradeDirection.LONG:
+                signal.stop_price = signal.entry_price - stop_distance
+                # No profit target in no-loss trailing - let winners run
+                signal.target_price = signal.entry_price + 100  # Effectively no target
+            else:
+                signal.stop_price = signal.entry_price + stop_distance
+                signal.target_price = signal.entry_price - 100
+
+            logger.info(
+                f"NO-LOSS TRAILING: Emergency stop at {stop_distance:.1f} pts | "
+                f"Trail activates at +{self.config.no_loss_activation_pts:.1f} pts profit | "
+                f"Trail distance: {self.config.no_loss_trail_distance:.1f} pts"
+            )
+            return signal, stop_type, stop_distance
+
+        # ================================================================
+        # ORIGINAL LOGIC (fallback when no-loss trailing disabled)
+        # ================================================================
         base_stop = self.config.initial_stop_points
 
         # Determine stop type based on A/B test status

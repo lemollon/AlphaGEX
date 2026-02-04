@@ -261,6 +261,14 @@ class HERACLESConfig:
     trailing_stop_points: float = 0.75  # Trail by 0.75 point = $3.75
     profit_target_points: float = 6.0  # Profit target: 6 points = $30
 
+    # NO-LOSS TRAILING STRATEGY (NL_ACT3_TRAIL2 from backtest: $18,005 P&L, 88% win rate)
+    # This strategy: No tight stop until profitable, then trail to lock in gains
+    # Key insight: Avoid small stop-outs that would have turned into winners
+    use_no_loss_trailing: bool = True  # Enable no-loss trailing mode
+    no_loss_activation_pts: float = 3.0  # Points profit before trailing activates
+    no_loss_trail_distance: float = 2.0  # How far behind price to trail
+    no_loss_emergency_stop: float = 15.0  # Emergency stop for catastrophic moves only
+
     # Position sizing
     position_sizing_method: str = "FIXED_FRACTIONAL_ATR"  # Method for sizing
     atr_period: int = 14  # ATR calculation period

@@ -508,11 +508,17 @@ class HERACLESTrader:
         """
         Manage an open position - check stops and trailing.
 
+        NO-LOSS TRAILING STRATEGY (when enabled):
+        1. No tight stop initially - only emergency stop (15 pts) for catastrophic moves
+        2. Track high water mark price
+        3. Once profitable by activation_pts (3 pts), set trailing stop at breakeven
+        4. Continue trailing the stop as price moves favorably (trail_distance = 2 pts)
+        5. Exit when trailing stop is hit
+
+        This avoids small stop-outs that would have turned into winners.
+        Backtest result: NL_ACT3_TRAIL2 = $18,005 P&L, 88% win rate vs baseline -$2,525
+
         Also tracks high/low price excursions for backtesting data quality.
-        These values enable backtesting to validate:
-        - Stop placement: Would the stop have been hit?
-        - Profit targets: Could the target have been reached?
-        - MAE/MFE analysis: Maximum adverse/favorable excursion
 
         Returns True if position was closed.
         """
@@ -520,6 +526,16 @@ class HERACLESTrader:
             # Track high/low prices for backtesting (do this BEFORE checking stops)
             # This ensures we capture the price that triggered the stop
             self._update_position_high_low(position, current_price)
+
+            # ================================================================
+            # NO-LOSS TRAILING STRATEGY
+            # ================================================================
+            if self.config.use_no_loss_trailing:
+                return self._manage_position_no_loss_trailing(position, current_price)
+
+            # ================================================================
+            # ORIGINAL STRATEGY (fallback when no-loss trailing disabled)
+            # ================================================================
 
             # Check if stopped out (stop takes priority over profit target)
             if self._check_stop_hit(position, current_price):
@@ -575,6 +591,149 @@ class HERACLESTrader:
         except Exception as e:
             logger.error(f"Error managing position {position.position_id}: {e}")
             return False
+
+    def _manage_position_no_loss_trailing(self, position: FuturesPosition, current_price: float) -> bool:
+        """
+        NO-LOSS TRAILING POSITION MANAGEMENT
+
+        Strategy from backtest (NL_ACT3_TRAIL2 = $18,005 P&L, 88% win rate):
+        1. No tight stop initially - only emergency stop for catastrophic moves
+        2. Wait for price to profit by activation_pts (3 pts)
+        3. Once activated, set trailing stop at breakeven (entry price)
+        4. As price continues in our favor, trail the stop to lock in profits
+        5. Exit when trailing stop is hit
+
+        Key insight: Many trades that hit tight stops would have been winners
+        if given more room. This strategy lets winners run while limiting
+        catastrophic losses.
+
+        Returns True if position was closed.
+        """
+        is_long = position.direction == TradeDirection.LONG
+
+        # Get config values
+        activation_pts = self.config.no_loss_activation_pts  # 3.0 pts
+        trail_distance = self.config.no_loss_trail_distance  # 2.0 pts
+        emergency_stop_pts = self.config.no_loss_emergency_stop  # 15.0 pts
+
+        # Calculate profit in points
+        if is_long:
+            profit_pts = current_price - position.entry_price
+            high_water_price = position.high_price_since_entry
+            max_profit_pts = high_water_price - position.entry_price if high_water_price > 0 else profit_pts
+        else:
+            profit_pts = position.entry_price - current_price
+            high_water_price = position.low_price_since_entry  # For shorts, low is best
+            max_profit_pts = position.entry_price - high_water_price if high_water_price > 0 else profit_pts
+
+        # ================================================================
+        # CHECK EMERGENCY STOP (catastrophic loss protection)
+        # ================================================================
+        emergency_stop_price = (position.entry_price - emergency_stop_pts if is_long
+                               else position.entry_price + emergency_stop_pts)
+
+        if is_long and current_price <= emergency_stop_price:
+            logger.warning(
+                f"Position {position.position_id}: EMERGENCY STOP hit at {current_price:.2f} "
+                f"(entry={position.entry_price:.2f}, emergency={emergency_stop_price:.2f})"
+            )
+            return self._close_position(
+                position,
+                current_price,
+                PositionStatus.STOPPED,
+                f"Emergency stop triggered (-{emergency_stop_pts:.1f} pts)"
+            )
+
+        if not is_long and current_price >= emergency_stop_price:
+            logger.warning(
+                f"Position {position.position_id}: EMERGENCY STOP hit at {current_price:.2f} "
+                f"(entry={position.entry_price:.2f}, emergency={emergency_stop_price:.2f})"
+            )
+            return self._close_position(
+                position,
+                current_price,
+                PositionStatus.STOPPED,
+                f"Emergency stop triggered (-{emergency_stop_pts:.1f} pts)"
+            )
+
+        # ================================================================
+        # CHECK TRAILING STOP (if active)
+        # ================================================================
+        if position.trailing_active and position.current_stop > 0:
+            if is_long and current_price <= position.current_stop:
+                exit_pnl_pts = position.current_stop - position.entry_price
+                logger.info(
+                    f"Position {position.position_id}: TRAIL STOP hit at {position.current_stop:.2f} "
+                    f"(locked in +{exit_pnl_pts:.1f} pts profit)"
+                )
+                return self._close_position(
+                    position,
+                    position.current_stop,  # Use stop price for P&L calc
+                    PositionStatus.TRAILED,
+                    f"No-loss trailing stop hit (+{exit_pnl_pts:.1f} pts)"
+                )
+
+            if not is_long and current_price >= position.current_stop:
+                exit_pnl_pts = position.entry_price - position.current_stop
+                logger.info(
+                    f"Position {position.position_id}: TRAIL STOP hit at {position.current_stop:.2f} "
+                    f"(locked in +{exit_pnl_pts:.1f} pts profit)"
+                )
+                return self._close_position(
+                    position,
+                    position.current_stop,
+                    PositionStatus.TRAILED,
+                    f"No-loss trailing stop hit (+{exit_pnl_pts:.1f} pts)"
+                )
+
+        # ================================================================
+        # ACTIVATE TRAILING (once profitable enough)
+        # ================================================================
+        if not position.trailing_active and max_profit_pts >= activation_pts:
+            # Set trailing stop at breakeven initially
+            position.trailing_active = True
+            position.current_stop = position.entry_price
+            self.db.update_stop(position.position_id, position.entry_price, trailing_active=True)
+            logger.info(
+                f"Position {position.position_id}: NO-LOSS TRAIL ACTIVATED at +{max_profit_pts:.1f} pts | "
+                f"Stop set to breakeven ({position.entry_price:.2f})"
+            )
+
+        # ================================================================
+        # UPDATE TRAILING STOP (ratchet up as price improves)
+        # ================================================================
+        if position.trailing_active:
+            if is_long:
+                # Trail below high water mark
+                new_stop = high_water_price - trail_distance
+                if new_stop > position.current_stop and new_stop > position.entry_price:
+                    position.current_stop = new_stop
+                    self.db.update_stop(position.position_id, new_stop, trailing_active=True)
+                    locked_profit = new_stop - position.entry_price
+                    logger.info(
+                        f"Position {position.position_id}: Trail raised to {new_stop:.2f} "
+                        f"(locking +{locked_profit:.1f} pts, high water={high_water_price:.2f})"
+                    )
+            else:
+                # Trail above low water mark (for shorts)
+                new_stop = high_water_price + trail_distance
+                if new_stop < position.current_stop and new_stop < position.entry_price:
+                    position.current_stop = new_stop
+                    self.db.update_stop(position.position_id, new_stop, trailing_active=True)
+                    locked_profit = position.entry_price - new_stop
+                    logger.info(
+                        f"Position {position.position_id}: Trail lowered to {new_stop:.2f} "
+                        f"(locking +{locked_profit:.1f} pts, low water={high_water_price:.2f})"
+                    )
+
+        # Update P&L tracking
+        pnl = position.calculate_pnl(current_price)
+        if pnl > position.high_water_mark:
+            position.high_water_mark = pnl
+        if pnl < 0 and abs(pnl) > position.max_adverse_excursion:
+            position.max_adverse_excursion = abs(pnl)
+
+        return False
 
     def _update_position_high_low(self, position: FuturesPosition, current_price: float) -> None:
         """
