@@ -506,6 +506,18 @@ class HERACLESSignalGenerator:
                 f"net_gex={net_gex:.2e}, regime={gamma_regime.value}"
             )
 
+            # ================================================================
+            # GAMMA REGIME FILTER - Skip if regime not allowed
+            # ================================================================
+            if self.config.allowed_gamma_regime:
+                allowed = self.config.allowed_gamma_regime.upper()
+                if allowed == "POSITIVE" and gamma_regime != GammaRegime.POSITIVE:
+                    logger.info(f"Signal SKIPPED: Regime filter requires POSITIVE, got {gamma_regime.value}")
+                    return None
+                elif allowed == "NEGATIVE" and gamma_regime != GammaRegime.NEGATIVE:
+                    logger.info(f"Signal SKIPPED: Regime filter requires NEGATIVE, got {gamma_regime.value}")
+                    return None
+
             # Generate signal based on regime
             if gamma_regime == GammaRegime.POSITIVE:
                 signal = self._generate_mean_reversion_signal(
@@ -559,8 +571,8 @@ class HERACLESSignalGenerator:
                 account_balance, atr, current_price
             )
 
-            # Set stop and breakeven prices (with A/B test support)
-            signal, stop_type, stop_points = self._set_stop_levels(signal, atr)
+            # Set stop and breakeven prices (with overnight hybrid and A/B test support)
+            signal, stop_type, stop_points = self._set_stop_levels(signal, atr, is_overnight)
 
             # Store stop info on signal for tracking (used by trader to save to DB)
             signal.stop_type = stop_type
@@ -939,14 +951,18 @@ class HERACLESSignalGenerator:
 
         return round(blended_prob, 4)
 
-    def _set_stop_levels(self, signal: FuturesSignal, atr: float) -> Tuple[FuturesSignal, str, float]:
+    def _set_stop_levels(self, signal: FuturesSignal, atr: float, is_overnight: bool = False) -> Tuple[FuturesSignal, str, float]:
         """
-        Set stop loss levels based on strategy mode.
+        Set stop loss levels based on strategy mode and session.
 
         NO-LOSS TRAILING MODE (default - backtest winner):
-        - Uses emergency stop only (15 pts) for initial position
+        - Uses emergency stop only (15 pts RTH, 10 pts overnight) for initial position
         - No tight stop until position is profitable
         - Trailing logic handled by trader._manage_position_no_loss_trailing()
+
+        OVERNIGHT HYBRID MODE (when enabled):
+        - Uses tighter stops and smaller targets during overnight session (5 PM - 4 AM CT)
+        - Better suited for lower liquidity overnight conditions
 
         A/B Test Mode (when enabled and no-loss trailing disabled):
         - 50% trades use FIXED stop (base config value unchanged)
@@ -954,16 +970,22 @@ class HERACLESSignalGenerator:
 
         Returns:
             Tuple of (signal, stop_type, stop_points_used)
-            stop_type is 'NO_LOSS_TRAIL', 'FIXED', or 'DYNAMIC'
+            stop_type is 'NO_LOSS_TRAIL', 'NO_LOSS_TRAIL_OVERNIGHT', 'FIXED', 'DYNAMIC', etc.
             stop_points_used is the actual stop distance in points
         """
         # ================================================================
         # NO-LOSS TRAILING MODE (backtest winner: $18,005 P&L, 88% win rate)
         # ================================================================
         if self.config.use_no_loss_trailing:
-            # Set initial stop to emergency stop (very wide - only for catastrophic moves)
-            stop_distance = self.config.no_loss_emergency_stop  # 15.0 pts default
-            stop_type = 'NO_LOSS_TRAIL'
+            # Determine emergency stop based on session (overnight vs RTH)
+            if is_overnight and self.config.use_overnight_hybrid:
+                stop_distance = self.config.overnight_emergency_stop  # 10.0 pts for overnight
+                stop_type = 'NO_LOSS_TRAIL_OVERNIGHT'
+                session_label = "OVERNIGHT"
+            else:
+                stop_distance = self.config.no_loss_emergency_stop  # 15.0 pts default
+                stop_type = 'NO_LOSS_TRAIL'
+                session_label = "RTH"
 
             if signal.direction == TradeDirection.LONG:
                 signal.stop_price = signal.entry_price - stop_distance
@@ -974,7 +996,7 @@ class HERACLESSignalGenerator:
                 signal.target_price = signal.entry_price - 100
 
             logger.info(
-                f"NO-LOSS TRAILING: Emergency stop at {stop_distance:.1f} pts | "
+                f"NO-LOSS TRAILING ({session_label}): Emergency stop at {stop_distance:.1f} pts | "
                 f"Trail activates at +{self.config.no_loss_activation_pts:.1f} pts profit | "
                 f"Trail distance: {self.config.no_loss_trail_distance:.1f} pts"
             )
@@ -983,22 +1005,35 @@ class HERACLESSignalGenerator:
         # ================================================================
         # ORIGINAL LOGIC (fallback when no-loss trailing disabled)
         # ================================================================
-        base_stop = self.config.initial_stop_points
+
+        # OVERNIGHT HYBRID: Use different base stop/target for overnight sessions
+        if is_overnight and self.config.use_overnight_hybrid:
+            base_stop = self.config.overnight_stop_points  # 1.5 pts overnight
+            base_target = self.config.overnight_target_points  # 3.0 pts overnight
+            session_label = "OVERNIGHT"
+        else:
+            base_stop = self.config.initial_stop_points  # 2.5 pts RTH
+            base_target = self.config.profit_target_points  # 6.0 pts RTH
+            session_label = "RTH"
 
         # Determine stop type based on A/B test status
         if is_ab_test_enabled():
             stop_type = get_ab_assignment()
         else:
             # Default to FIXED stops - dynamic stops were causing larger losses than wins
-            # Fixed stop = base 2.5 points = $12.50/contract max loss
-            # Dynamic could expand to 6 points = $30/contract max loss
+            # Fixed stop = base 2.5 points RTH, 1.5 points overnight
             stop_type = 'FIXED'
 
+        # Append session info to stop type for tracking
+        if is_overnight and self.config.use_overnight_hybrid:
+            stop_type = f"{stop_type}_OVERNIGHT"
+
         # Calculate stop distance based on assignment
-        if stop_type == 'FIXED':
+        if 'FIXED' in stop_type:
             stop_distance = base_stop
             logger.info(
-                f"{'A/B Test: ' if is_ab_test_enabled() else ''}FIXED stop: {base_stop:.2f} pts (${base_stop * 5:.2f}/contract)"
+                f"{'A/B Test: ' if is_ab_test_enabled() else ''}{session_label} FIXED stop: "
+                f"{base_stop:.2f} pts (${base_stop * 5:.2f}/contract), target: {base_target:.2f} pts"
             )
         else:
             # Calculate dynamic stop distance
@@ -1009,17 +1044,17 @@ class HERACLESSignalGenerator:
                 gamma_regime=signal.gamma_regime
             )
             logger.info(
-                f"{'A/B Test: ' if is_ab_test_enabled() else ''}DYNAMIC stop: "
+                f"{'A/B Test: ' if is_ab_test_enabled() else ''}{session_label} DYNAMIC stop: "
                 f"base={base_stop:.2f}, vix={signal.vix:.1f}, atr={atr:.2f}, "
-                f"regime={signal.gamma_regime.value}, final={stop_distance:.2f} pts"
+                f"regime={signal.gamma_regime.value}, final={stop_distance:.2f} pts, target: {base_target:.2f} pts"
             )
 
         if signal.direction == TradeDirection.LONG:
             signal.stop_price = signal.entry_price - stop_distance
-            signal.target_price = signal.entry_price + self.config.profit_target_points
+            signal.target_price = signal.entry_price + base_target
         else:
             signal.stop_price = signal.entry_price + stop_distance
-            signal.target_price = signal.entry_price - self.config.profit_target_points
+            signal.target_price = signal.entry_price - base_target
 
         return signal, stop_type, stop_distance
 

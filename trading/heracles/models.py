@@ -269,6 +269,21 @@ class HERACLESConfig:
     no_loss_trail_distance: float = 2.0  # How far behind price to trail
     no_loss_emergency_stop: float = 15.0  # Emergency stop for catastrophic moves only
 
+    # OVERNIGHT HYBRID STRATEGY - Different parameters for overnight vs RTH
+    # Overnight = 5 PM - 4 AM CT (lower liquidity, different price behavior)
+    # RTH = 4 AM - 5 PM CT (regular trading hours with better liquidity)
+    # Backtest shows tighter stops/smaller targets work better overnight
+    use_overnight_hybrid: bool = True  # Enable different params for overnight
+    overnight_stop_points: float = 1.5  # Tighter stop for overnight (vs 2.5 RTH)
+    overnight_target_points: float = 3.0  # Smaller target for overnight (vs 6.0 RTH)
+    # When use_no_loss_trailing is True, these affect the emergency stop only:
+    overnight_emergency_stop: float = 10.0  # Tighter emergency stop overnight
+
+    # GAMMA REGIME FILTER - Optionally restrict to specific gamma regime
+    # Backtest showed POSITIVE_GAMMA only = $2,387.50 profit (more consistent)
+    # Options: None (all regimes), "POSITIVE", "NEGATIVE"
+    allowed_gamma_regime: str = ""  # Empty = all regimes allowed
+
     # Position sizing
     position_sizing_method: str = "FIXED_FRACTIONAL_ATR"  # Method for sizing
     atr_period: int = 14  # ATR calculation period
