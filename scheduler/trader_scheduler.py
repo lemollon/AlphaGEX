@@ -2104,13 +2104,23 @@ class AutonomousTraderScheduler:
         try:
             result = self.heracles_trader.monitor_positions()
 
-            # Only log if something happened (reduced log spam)
+            # Log closed positions
             if result.get("positions_closed", 0) > 0:
                 logger.info(f"HERACLES MONITOR: Closed {result['positions_closed']} position(s)")
 
+            # Log status if not normal (helps debug issues)
+            status = result.get("status", "")
+            if status and status not in ["completed", "market_closed"]:
+                logger.warning(f"HERACLES MONITOR: Status={status}, checked={result.get('positions_checked', 0)}")
+
         except Exception as e:
-            # Don't spam logs for every 15-second check failure
-            pass
+            # Log errors (but not every 15 seconds - use a counter)
+            if not hasattr(self, '_monitor_error_count'):
+                self._monitor_error_count = 0
+            self._monitor_error_count += 1
+            # Log every 4th error (once per minute) to avoid spam
+            if self._monitor_error_count % 4 == 1:
+                logger.error(f"HERACLES MONITOR ERROR: {e}")
 
     def scheduled_heracles_eod_logic(self):
         """
