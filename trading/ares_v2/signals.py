@@ -597,12 +597,9 @@ class SignalGenerator:
         """
         Estimate credits for the Iron Condor (FALLBACK when Tradier unavailable).
 
-        BUG FIX: Added realistic market variance to prevent identical credits.
+        NOTE: This is a rough estimate. Real trading should use get_real_credits()
+        which fetches actual bid/ask from Tradier API.
         """
-        import random
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
         # Distance from spot to strikes (normalized)
         put_dist = (spot_price - put_short) / expected_move
         call_dist = (call_short - spot_price) / expected_move
@@ -619,20 +616,6 @@ class SignalGenerator:
         # Cap at reasonable values
         put_credit = max(0.02, min(put_credit, spread_width * 0.4))
         call_credit = max(0.02, min(call_credit, spread_width * 0.4))
-
-        # BUG FIX: Add realistic market variance (±12%) to prevent identical credits
-        ct_now = datetime.now(ZoneInfo("America/Chicago"))
-        time_seed = int(ct_now.timestamp() / 60)
-        random.seed(time_seed + int(spot_price * 100))
-
-        put_variance = 1.0 + (random.random() - 0.5) * 0.24
-        call_variance = 1.0 + (random.random() - 0.5) * 0.24
-
-        put_credit = put_credit * put_variance
-        call_credit = call_credit * call_variance
-
-        put_credit = max(0.02, min(put_credit, spread_width * 0.42))
-        call_credit = max(0.02, min(call_credit, spread_width * 0.42))
 
         total_credit = put_credit + call_credit
         max_profit = total_credit * 100  # Per contract
