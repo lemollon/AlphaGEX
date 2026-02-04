@@ -1011,35 +1011,36 @@ class PrometheusICConfig:
     short_call_delta: float = 0.10  # ~10 delta for short call
     spread_width: float = 10.0      # $10 wide spreads on SPX (matches PEGASUS)
 
-    # Position sizing - AGGRESSIVE like PEGASUS
+    # Position sizing - MATCH PEGASUS exactly
     max_positions: int = 5          # Max simultaneous IC positions (same as PEGASUS)
     max_capital_per_trade_pct: float = 10.0  # Max 10% of borrowed capital per trade
-    max_daily_trades: int = 0       # NO LIMIT - aggressive trading (0 = unlimited)
-    max_contracts: int = 50         # Max contracts per IC trade (raised from hardcoded 10)
+    max_daily_trades: int = 10      # Limit daily trades (PEGASUS-like pacing, was unlimited)
+    max_contracts: int = 100        # Max contracts per IC trade (match PEGASUS)
 
     # Risk management
     stop_loss_pct: float = 200.0    # Close if loss = 200% of credit
     profit_target_pct: float = 50.0 # Close if profit = 50% of credit
     time_stop_dte: int = 0          # Close at expiration
 
-    # Oracle integration - AGGRESSIVE thresholds like PEGASUS
+    # Oracle integration - EXACT SAME thresholds as PEGASUS
+    # Uses get_pegasus_advice() - same Oracle endpoint as PEGASUS
     require_oracle_approval: bool = True
-    min_oracle_confidence: float = 0.3   # Lowered to match PEGASUS min_ic_suitability
-    min_win_probability: float = 0.42    # Lowered to match PEGASUS (42%)
+    min_oracle_confidence: float = 0.3   # Same as PEGASUS min_ic_suitability
+    min_win_probability: float = 0.42    # Same as PEGASUS (42%)
 
     # VIX filters
     min_vix: float = 12.0         # Don't trade if VIX too low (thin premiums)
     max_vix: float = 35.0         # Don't trade if VIX too high (too risky)
 
-    # Trading window
-    entry_start: str = "08:35"    # 8:35 AM CT
-    entry_end: str = "14:30"      # 2:30 PM CT (stop new trades before close)
-    exit_by: str = "15:00"        # Exit all by 3:00 PM CT
+    # Trading window - MATCH PEGASUS exactly
+    entry_start: str = "08:30"    # 8:30 AM CT (same as PEGASUS)
+    entry_end: str = "14:45"      # 2:45 PM CT (same as PEGASUS - stop 15 min before close)
+    exit_by: str = "14:50"        # 2:50 PM CT (same as PEGASUS force_exit)
 
-    # Cooldown - MINIMAL for aggressive trading
-    cooldown_after_loss_minutes: int = 5   # Brief pause after loss (was 30)
-    cooldown_after_win_minutes: int = 0    # No pause after win (was 15)
-    cooldown_minutes_after_trade: int = 5  # Minimal cooldown (was 15)
+    # Cooldown - MATCH PEGASUS pacing (no aggressive pyramiding)
+    cooldown_after_loss_minutes: int = 5   # Brief pause after loss
+    cooldown_after_win_minutes: int = 5    # SAME pause after win (prevents pyramiding)
+    cooldown_minutes_after_trade: int = 5  # Standard cooldown between trades
 
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)
@@ -1068,7 +1069,7 @@ class PrometheusICConfig:
             'sizing': {
                 'max_positions': self.max_positions,
                 'max_capital_per_trade_pct': self.max_capital_per_trade_pct,
-                'max_daily_trades': 'unlimited' if self.max_daily_trades == 0 else self.max_daily_trades,
+                'max_daily_trades': self.max_daily_trades,  # Now limited like PEGASUS
                 'max_contracts': self.max_contracts,
             },
             'risk': {
@@ -1124,8 +1125,8 @@ class PrometheusICConfig:
         if 'sizing' in data:
             config.max_positions = data['sizing'].get('max_positions', 5)  # 5 simultaneous positions
             config.max_capital_per_trade_pct = data['sizing'].get('max_capital_per_trade_pct', 10.0)
-            config.max_daily_trades = data['sizing'].get('max_daily_trades', 0)  # 0 = UNLIMITED (aggressive)
-            config.max_contracts = data['sizing'].get('max_contracts', 50)  # 50 contracts max (aggressive)
+            config.max_daily_trades = data['sizing'].get('max_daily_trades', 10)  # 10 trades/day (PEGASUS pacing)
+            config.max_contracts = data['sizing'].get('max_contracts', 100)  # 100 contracts max (match PEGASUS)
 
         if 'risk' in data:
             config.stop_loss_pct = data['risk'].get('stop_loss_pct', 200.0)
