@@ -739,7 +739,7 @@ export default function HERACLESPage() {
                             <CheckCircle className="h-5 w-5" />
                             Model Trained Successfully
                           </div>
-                          {/* Approve/Deny Buttons after training */}
+                          {/* Approve/Reject Buttons after training */}
                           {!mlApprovalStatus?.ml_approved && (
                             <div className="flex items-center gap-2">
                               <button
@@ -969,23 +969,42 @@ export default function HERACLESPage() {
                               )}
                             </button>
                           ) : (
-                            <button
-                              onClick={handleApproveML}
-                              disabled={isApproving}
-                              className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                            >
-                              {isApproving ? (
-                                <>
-                                  <RefreshCw className="h-4 w-4 animate-spin" />
-                                  Approving...
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCircle className="h-4 w-4" />
-                                  Approve ML Model
-                                </>
-                              )}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={handleRejectML}
+                                disabled={isRejecting || isApproving}
+                                className="flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                              >
+                                {isRejecting ? (
+                                  <>
+                                    <RefreshCw className="h-4 w-4 animate-spin" />
+                                    Rejecting...
+                                  </>
+                                ) : (
+                                  <>
+                                    <XCircle className="h-4 w-4" />
+                                    Reject Model
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                onClick={handleApproveML}
+                                disabled={isApproving || isRejecting}
+                                className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                              >
+                                {isApproving ? (
+                                  <>
+                                    <RefreshCw className="h-4 w-4 animate-spin" />
+                                    Approving...
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle className="h-4 w-4" />
+                                    Approve ML Model
+                                  </>
+                                )}
+                              </button>
+                            </div>
                           )}
                           <span className="text-sm text-gray-400">
                             {mlApprovalStatus?.ml_approved

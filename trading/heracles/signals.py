@@ -747,14 +747,16 @@ class HERACLESSignalGenerator:
         if is_ab_test_enabled():
             stop_type = get_ab_assignment()
         else:
-            # Default to dynamic when A/B test is disabled
-            stop_type = 'DYNAMIC'
+            # Default to FIXED stops - dynamic stops were causing larger losses than wins
+            # Fixed stop = base 2.5 points = $12.50/contract max loss
+            # Dynamic could expand to 6 points = $30/contract max loss
+            stop_type = 'FIXED'
 
         # Calculate stop distance based on assignment
         if stop_type == 'FIXED':
             stop_distance = base_stop
             logger.info(
-                f"A/B Test: FIXED stop selected - using base stop of {base_stop:.2f} pts"
+                f"{'A/B Test: ' if is_ab_test_enabled() else ''}FIXED stop: {base_stop:.2f} pts (${base_stop * 5:.2f}/contract)"
             )
         else:
             # Calculate dynamic stop distance
