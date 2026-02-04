@@ -493,6 +493,227 @@ def rule_weekday_filter(scan: Dict, allowed_days: List[int] = [0, 1, 2, 3, 4]) -
 
 
 # ============================================================================
+# DIRECTION TRACKER SIMULATOR - Tests nimble direction switching
+# ============================================================================
+
+class DirectionTrackerSimulator:
+    """
+    Simulates direction tracking with loss cooldown and win streak caution.
+
+    This tests the pattern where:
+    - After a LOSS in one direction, pause that direction for N scans
+    - After N consecutive WINS in same direction, reduce confidence (may skip)
+    - Boost opposite direction after a loss
+    """
+
+    def __init__(self, cooldown_scans: int = 3, win_streak_caution: int = 4):
+        self.cooldown_scans = cooldown_scans
+        self.win_streak_caution = win_streak_caution
+        self.reset()
+
+    def reset(self):
+        """Reset tracker state"""
+        self.long_cooldown_until = 0
+        self.short_cooldown_until = 0
+        self.long_consecutive_wins = 0
+        self.short_consecutive_wins = 0
+        self.last_direction = None
+        self.last_result = None
+        self.scan_idx = 0
+
+    def record_outcome(self, direction: str, is_win: bool, scan_idx: int):
+        """Record a trade outcome"""
+        self.scan_idx = scan_idx
+        dir_upper = direction.upper() if direction else ''
+
+        if dir_upper == 'LONG':
+            if is_win:
+                self.long_consecutive_wins += 1
+                self.short_consecutive_wins = 0
+            else:
+                self.long_consecutive_wins = 0
+                self.long_cooldown_until = scan_idx + self.cooldown_scans
+
+        elif dir_upper == 'SHORT':
+            if is_win:
+                self.short_consecutive_wins += 1
+                self.long_consecutive_wins = 0
+            else:
+                self.short_consecutive_wins = 0
+                self.short_cooldown_until = scan_idx + self.cooldown_scans
+
+        self.last_direction = dir_upper
+        self.last_result = 'WIN' if is_win else 'LOSS'
+
+    def should_skip(self, direction: str, scan_idx: int) -> Tuple[bool, str]:
+        """Check if direction should be skipped"""
+        dir_upper = direction.upper() if direction else ''
+
+        # Check cooldown
+        if dir_upper == 'LONG' and scan_idx < self.long_cooldown_until:
+            return True, "LONG in cooldown"
+        if dir_upper == 'SHORT' and scan_idx < self.short_cooldown_until:
+            return True, "SHORT in cooldown"
+
+        # Check win streak caution (skip after too many consecutive wins)
+        if dir_upper == 'LONG' and self.long_consecutive_wins >= self.win_streak_caution:
+            return True, "LONG win streak exhausted"
+        if dir_upper == 'SHORT' and self.short_consecutive_wins >= self.win_streak_caution:
+            return True, "SHORT win streak exhausted"
+
+        return False, ""
+
+
+def run_direction_tracker_simulation(
+    scans: List[Dict],
+    config: Dict,
+    cooldown_scans: int = 3,
+    win_streak_caution: int = 4,
+    name: str = "DIRECTION_TRACKER"
+) -> Dict[str, Any]:
+    """
+    Run simulation with direction tracker (loss cooldown + win streak caution).
+
+    This simulates the nimble direction switching pattern.
+    """
+    tracker = DirectionTrackerSimulator(cooldown_scans, win_streak_caution)
+    positions = []
+    closed_trades = []
+    skipped_scans = []
+
+    stop_pts = config['stop_points']
+    target_pts = config['target_points']
+    point_value = config['point_value']
+    max_positions = config['max_positions']
+
+    for idx, scan in enumerate(scans):
+        # Skip if no signal
+        if not scan['signal_direction']:
+            continue
+        if scan['price'] is None:
+            continue
+
+        direction = scan['signal_direction'].upper() if scan['signal_direction'] else ''
+
+        # Check direction tracker
+        should_skip, skip_reason = tracker.should_skip(direction, idx)
+        if should_skip:
+            skipped_scans.append((scan, skip_reason))
+            continue
+
+        # Check position limits
+        if len(positions) >= max_positions:
+            skipped_scans.append((scan, "max positions"))
+            continue
+
+        # Simulate entry
+        entry_price = scan['price']
+
+        if direction == 'LONG':
+            stop_price = entry_price - stop_pts
+            target_price = entry_price + target_pts
+        else:
+            stop_price = entry_price + stop_pts
+            target_price = entry_price - target_pts
+
+        position = {
+            'entry_idx': idx,
+            'direction': direction,
+            'entry_price': entry_price,
+            'stop_price': stop_price,
+            'target_price': target_price,
+            'scan': scan,
+        }
+
+        # Check if we have actual outcome
+        if scan['trade_executed'] and scan['actual_pnl'] is not None:
+            pnl = scan['actual_pnl']
+            is_win = pnl > 0
+        else:
+            # Simulate by looking at future scans
+            pnl, outcome = simulate_outcome(scans, idx, position, config)
+            is_win = pnl > 0
+
+        position['pnl'] = pnl
+        position['is_win'] = is_win
+        closed_trades.append(position)
+
+        # Record to tracker
+        tracker.record_outcome(direction, is_win, idx)
+
+    # Calculate stats
+    if not closed_trades:
+        return {
+            'name': name,
+            'trades_taken': 0,
+            'trades_skipped': len(skipped_scans),
+            'pnl': 0,
+            'wins': 0,
+            'losses': 0,
+            'win_rate': 0,
+            'profit_factor': 0,
+            'skip_reasons': {}
+        }
+
+    wins = [t for t in closed_trades if t['pnl'] > 0]
+    losses = [t for t in closed_trades if t['pnl'] < 0]
+
+    total_pnl = sum(t['pnl'] for t in closed_trades)
+    total_wins = sum(t['pnl'] for t in wins)
+    total_losses = sum(t['pnl'] for t in losses)
+
+    profit_factor = abs(total_wins / total_losses) if total_losses != 0 else float('inf')
+
+    # Count skip reasons
+    skip_reasons = {}
+    for _, reason in skipped_scans:
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+
+    return {
+        'name': name,
+        'trades_taken': len(closed_trades),
+        'trades_skipped': len(skipped_scans),
+        'pnl': total_pnl,
+        'wins': len(wins),
+        'losses': len(losses),
+        'win_rate': len(wins) / len(closed_trades) * 100 if closed_trades else 0,
+        'profit_factor': profit_factor,
+        'skip_reasons': skip_reasons,
+    }
+
+
+def simulate_outcome(scans: List[Dict], entry_idx: int, position: Dict, config: Dict) -> Tuple[float, str]:
+    """Simulate position outcome by looking at future prices"""
+    entry_price = position['entry_price']
+    stop_price = position['stop_price']
+    target_price = position['target_price']
+    direction = position['direction']
+    is_long = direction == 'LONG'
+
+    max_lookahead = 100
+
+    for i in range(entry_idx + 1, min(entry_idx + max_lookahead, len(scans))):
+        future_price = scans[i]['price']
+        if future_price is None:
+            continue
+
+        # Check target
+        if is_long and future_price >= target_price:
+            return config['target_points'] * config['point_value'], 'WIN_TARGET'
+        if not is_long and future_price <= target_price:
+            return config['target_points'] * config['point_value'], 'WIN_TARGET'
+
+        # Check stop
+        if is_long and future_price <= stop_price:
+            return -config['stop_points'] * config['point_value'], 'LOSS_STOP'
+        if not is_long and future_price >= stop_price:
+            return -config['stop_points'] * config['point_value'], 'LOSS_STOP'
+
+    # Timeout - close at last price
+    return 0, 'TIMEOUT'
+
+
+# ============================================================================
 # RUN SIMULATIONS
 # ============================================================================
 
@@ -543,12 +764,46 @@ combined_strategies = [
 
 all_strategies = strategies + combined_strategies
 
-print(f"\nTesting {len(all_strategies)} strategies...")
+print(f"\nTesting {len(all_strategies)} rule-based strategies...")
 
 for name, rule in all_strategies:
     result = sim.run(rule, name)
     results.append(result)
     print(f"  {name}: {result['trades_taken']} trades, ${result['pnl']:.2f}")
+
+# ============================================================================
+# DIRECTION TRACKER SIMULATIONS - Test nimble direction switching
+# ============================================================================
+
+print("\n" + "-" * 70)
+print("DIRECTION TRACKER STRATEGIES (Loss Cooldown + Win Streak Caution)")
+print("-" * 70)
+
+# Test different cooldown and win streak parameters
+direction_tracker_configs = [
+    (2, 3, "DT_COOL2_WIN3"),   # 2 scan cooldown, 3 win streak caution
+    (3, 4, "DT_COOL3_WIN4"),   # 3 scan cooldown, 4 win streak caution (default)
+    (3, 5, "DT_COOL3_WIN5"),   # 3 scan cooldown, 5 win streak caution
+    (4, 4, "DT_COOL4_WIN4"),   # 4 scan cooldown, 4 win streak caution
+    (5, 5, "DT_COOL5_WIN5"),   # 5 scan cooldown, 5 win streak caution
+    (2, 0, "DT_COOL2_NOWIN"),  # 2 scan cooldown, no win streak (set high)
+    (0, 4, "DT_NOCOOL_WIN4"),  # No cooldown, 4 win streak caution (set 0)
+]
+
+for cooldown, win_streak, name in direction_tracker_configs:
+    # Set 0 to very high to effectively disable
+    actual_cooldown = cooldown if cooldown > 0 else 0
+    actual_win_streak = win_streak if win_streak > 0 else 100
+
+    result = run_direction_tracker_simulation(
+        test_scans, CONFIG,
+        cooldown_scans=actual_cooldown,
+        win_streak_caution=actual_win_streak,
+        name=name
+    )
+    results.append(result)
+    skip_info = f" (skips: {result.get('skip_reasons', {})})" if result.get('skip_reasons') else ""
+    print(f"  {name}: {result['trades_taken']} trades, ${result['pnl']:.2f}{skip_info}")
 
 # ============================================================================
 # RESULTS

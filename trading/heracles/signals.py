@@ -209,6 +209,202 @@ def get_ab_assignment() -> str:
     return 'FIXED' if random.random() < 0.5 else 'DYNAMIC'
 
 
+# ============================================================================
+# DIRECTION TRACKER - Makes bot nimble at detecting direction changes
+# ============================================================================
+
+class DirectionTracker:
+    """
+    Tracks recent trade results by direction to adapt to market changes.
+
+    Problem: Bot catches trends well but doesn't adapt when direction reverses.
+    Solution: Track recent trades and adjust signals based on what's working.
+
+    Features:
+    1. Loss Cooldown: After a loss, pause that direction for N scans
+    2. Win Streak Caution: After N consecutive wins in same direction, reduce confidence
+    3. Opposite Boost: After a loss, boost confidence in opposite direction
+    4. Recent Win Rate: Track win rate by direction over recent trades
+    """
+
+    def __init__(self, cooldown_scans: int = 3, win_streak_caution: int = 4, memory_size: int = 10):
+        """
+        Args:
+            cooldown_scans: Number of scans to pause a direction after loss
+            win_streak_caution: After this many consecutive wins, reduce confidence
+            memory_size: How many recent trades to track per direction
+        """
+        self.cooldown_scans = cooldown_scans
+        self.win_streak_caution = win_streak_caution
+        self.memory_size = memory_size
+
+        # Track recent trades by direction
+        self.long_trades = []  # List of (is_win, scan_number)
+        self.short_trades = []
+
+        # Cooldown tracking
+        self.long_cooldown_until = 0  # Scan number when cooldown ends
+        self.short_cooldown_until = 0
+
+        # Current scan number (updated by signal generator)
+        self.current_scan = 0
+
+        # Consecutive wins in same direction
+        self.long_consecutive_wins = 0
+        self.short_consecutive_wins = 0
+
+        # Last trade direction and result (for quick flip detection)
+        self.last_direction = None
+        self.last_result = None  # 'WIN' or 'LOSS'
+
+    def record_trade(self, direction: str, is_win: bool, scan_number: int) -> None:
+        """Record a completed trade outcome."""
+        self.current_scan = scan_number
+        dir_upper = direction.upper()
+
+        if dir_upper == 'LONG':
+            self.long_trades.append((is_win, scan_number))
+            if len(self.long_trades) > self.memory_size:
+                self.long_trades.pop(0)
+
+            if is_win:
+                self.long_consecutive_wins += 1
+                self.short_consecutive_wins = 0  # Reset opposite
+            else:
+                self.long_consecutive_wins = 0
+                # Apply cooldown to LONG direction after loss
+                self.long_cooldown_until = scan_number + self.cooldown_scans
+                logger.info(f"DIRECTION TRACKER: LONG loss - cooldown until scan {self.long_cooldown_until}")
+
+        elif dir_upper == 'SHORT':
+            self.short_trades.append((is_win, scan_number))
+            if len(self.short_trades) > self.memory_size:
+                self.short_trades.pop(0)
+
+            if is_win:
+                self.short_consecutive_wins += 1
+                self.long_consecutive_wins = 0  # Reset opposite
+            else:
+                self.short_consecutive_wins = 0
+                # Apply cooldown to SHORT direction after loss
+                self.short_cooldown_until = scan_number + self.cooldown_scans
+                logger.info(f"DIRECTION TRACKER: SHORT loss - cooldown until scan {self.short_cooldown_until}")
+
+        self.last_direction = dir_upper
+        self.last_result = 'WIN' if is_win else 'LOSS'
+
+    def update_scan(self, scan_number: int) -> None:
+        """Update current scan number."""
+        self.current_scan = scan_number
+
+    def is_direction_cooled_down(self, direction: str) -> bool:
+        """Check if a direction is in cooldown (blocked after recent loss)."""
+        dir_upper = direction.upper()
+        if dir_upper == 'LONG':
+            return self.current_scan < self.long_cooldown_until
+        elif dir_upper == 'SHORT':
+            return self.current_scan < self.short_cooldown_until
+        return False
+
+    def get_confidence_adjustment(self, direction: str) -> float:
+        """
+        Get confidence multiplier based on recent performance.
+
+        Returns:
+            Multiplier (0.5-1.2): <1.0 = reduce confidence, >1.0 = boost confidence
+        """
+        dir_upper = direction.upper()
+
+        # Check for win streak caution
+        if dir_upper == 'LONG' and self.long_consecutive_wins >= self.win_streak_caution:
+            logger.info(f"DIRECTION TRACKER: LONG win streak ({self.long_consecutive_wins}) - reducing confidence")
+            return 0.8  # Reduce confidence, trend may be exhausted
+
+        if dir_upper == 'SHORT' and self.short_consecutive_wins >= self.win_streak_caution:
+            logger.info(f"DIRECTION TRACKER: SHORT win streak ({self.short_consecutive_wins}) - reducing confidence")
+            return 0.8
+
+        # Boost opposite direction after a loss
+        if self.last_result == 'LOSS' and self.last_direction:
+            opposite = 'SHORT' if self.last_direction == 'LONG' else 'LONG'
+            if dir_upper == opposite:
+                logger.info(f"DIRECTION TRACKER: Boosting {dir_upper} after {self.last_direction} loss")
+                return 1.15  # Boost opposite direction
+
+        return 1.0  # No adjustment
+
+    def get_recent_win_rate(self, direction: str) -> Optional[float]:
+        """Get recent win rate for a direction (or None if insufficient data)."""
+        dir_upper = direction.upper()
+        trades = self.long_trades if dir_upper == 'LONG' else self.short_trades
+
+        if len(trades) < 3:  # Need at least 3 trades
+            return None
+
+        wins = sum(1 for is_win, _ in trades if is_win)
+        return wins / len(trades)
+
+    def should_skip_direction(self, direction: str) -> Tuple[bool, str]:
+        """
+        Check if a direction should be skipped.
+
+        Returns:
+            (should_skip, reason)
+        """
+        dir_upper = direction.upper()
+
+        # Check cooldown
+        if self.is_direction_cooled_down(dir_upper):
+            remaining = (self.long_cooldown_until if dir_upper == 'LONG'
+                        else self.short_cooldown_until) - self.current_scan
+            return True, f"{dir_upper} in cooldown ({remaining} scans remaining after loss)"
+
+        # Check if direction has very poor recent performance
+        win_rate = self.get_recent_win_rate(dir_upper)
+        if win_rate is not None and win_rate < 0.25:  # Less than 25% win rate
+            return True, f"{dir_upper} has poor recent win rate ({win_rate:.0%})"
+
+        return False, ""
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get tracker status for logging/debugging."""
+        return {
+            'current_scan': self.current_scan,
+            'long_cooldown_until': self.long_cooldown_until,
+            'short_cooldown_until': self.short_cooldown_until,
+            'long_consecutive_wins': self.long_consecutive_wins,
+            'short_consecutive_wins': self.short_consecutive_wins,
+            'long_recent_trades': len(self.long_trades),
+            'short_recent_trades': len(self.short_trades),
+            'long_win_rate': self.get_recent_win_rate('LONG'),
+            'short_win_rate': self.get_recent_win_rate('SHORT'),
+            'last_direction': self.last_direction,
+            'last_result': self.last_result,
+        }
+
+
+# Global direction tracker instance (singleton)
+_direction_tracker = None
+
+
+def get_direction_tracker() -> DirectionTracker:
+    """Get the global direction tracker singleton."""
+    global _direction_tracker
+    if _direction_tracker is None:
+        _direction_tracker = DirectionTracker(
+            cooldown_scans=3,      # Pause direction for 3 scans after loss
+            win_streak_caution=4,  # Reduce confidence after 4 consecutive wins
+            memory_size=10         # Track last 10 trades per direction
+        )
+    return _direction_tracker
+
+
+def record_trade_outcome(direction: str, is_win: bool, scan_number: int) -> None:
+    """Record a trade outcome to the direction tracker."""
+    tracker = get_direction_tracker()
+    tracker.record_trade(direction, is_win, scan_number)
+
+
 class HERACLESSignalGenerator:
     """
     Generates trading signals based on GEX analysis.
@@ -325,6 +521,27 @@ class HERACLESSignalGenerator:
                     f"distance_from_flip={((current_price - flip_point) / flip_point) * 100:.2f}%"
                 )
                 return None
+
+            # ================================================================
+            # DIRECTION TRACKER - Makes bot nimble at detecting reversals
+            # ================================================================
+            direction_tracker = get_direction_tracker()
+
+            # Check if this direction should be skipped (cooldown after loss, poor recent performance)
+            should_skip, skip_reason = direction_tracker.should_skip_direction(signal.direction.value)
+            if should_skip:
+                logger.info(f"Signal SKIPPED by direction tracker: {skip_reason}")
+                return None
+
+            # Apply confidence adjustment based on recent performance
+            confidence_adj = direction_tracker.get_confidence_adjustment(signal.direction.value)
+            if confidence_adj != 1.0:
+                original_confidence = signal.confidence
+                signal.confidence = min(0.95, max(0.3, signal.confidence * confidence_adj))
+                logger.info(
+                    f"Direction tracker adjusted confidence: {original_confidence:.2%} -> {signal.confidence:.2%} "
+                    f"(multiplier: {confidence_adj:.2f})"
+                )
 
             # Calculate win probability (uses ML if trained, otherwise Bayesian)
             signal.win_probability = self._calculate_win_probability(gamma_regime, signal, is_overnight)

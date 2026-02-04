@@ -117,6 +117,7 @@ class HERACLESTrader:
         self.last_scan_time: Optional[datetime] = None
         self.daily_trades: int = 0
         self.daily_pnl: float = 0.0
+        self._scan_count: int = 0  # Track scan number for direction tracker
 
         # Initialize paper trading account if in paper mode
         if self.config.mode == TradingMode.PAPER:
@@ -146,6 +147,12 @@ class HERACLESTrader:
         """
         # Generate unique scan ID for ML tracking
         scan_id = f"HERACLES-SCAN-{uuid.uuid4().hex[:12]}"
+
+        # Increment scan counter and update direction tracker
+        self._scan_count += 1
+        from .signals import get_direction_tracker
+        direction_tracker = get_direction_tracker()
+        direction_tracker.update_scan(self._scan_count)
 
         scan_result = {
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
@@ -662,6 +669,19 @@ class HERACLESTrader:
                     won = realized_pnl > 0
                     self.win_tracker.update(won, position.gamma_regime)
                     self.db.save_win_tracker(self.win_tracker)
+
+                    # Update direction tracker (for nimble direction switching)
+                    from .signals import record_trade_outcome, get_direction_tracker
+                    direction_tracker = get_direction_tracker()
+                    record_trade_outcome(
+                        direction=position.direction.value,
+                        is_win=won,
+                        scan_number=direction_tracker.current_scan
+                    )
+                    logger.info(
+                        f"Direction tracker updated: {position.direction.value} {'WIN' if won else 'LOSS'}, "
+                        f"status={direction_tracker.get_status()}"
+                    )
 
                     # Record outcome to Oracle ML for feedback loop
                     self._record_oracle_outcome(position, reason, realized_pnl)
