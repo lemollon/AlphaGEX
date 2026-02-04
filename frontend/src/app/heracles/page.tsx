@@ -96,6 +96,7 @@ export default function HERACLESPage() {
   const [isTraining, setIsTraining] = useState(false)
   const [trainingResult, setTrainingResult] = useState<any>(null)
   const [isApproving, setIsApproving] = useState(false)
+  const [isRevoking, setIsRevoking] = useState(false)  // BUG FIX: Separate state for revoke to avoid race condition
   const [isRejecting, setIsRejecting] = useState(false)
   const [isTogglingABTest, setIsTogglingABTest] = useState(false)
 
@@ -153,9 +154,9 @@ export default function HERACLESPage() {
     }
   }
 
-  // ML Revoke handler
+  // ML Revoke handler - Uses separate isRevoking state to avoid race condition with Approve
   const handleRevokeML = async () => {
-    setIsApproving(true)
+    setIsRevoking(true)
     try {
       const result = await revokeHERACLESML()
       if (result.success) {
@@ -165,7 +166,7 @@ export default function HERACLESPage() {
     } catch (error) {
       console.error('Failed to revoke ML:', error)
     } finally {
-      setIsApproving(false)
+      setIsRevoking(false)
     }
   }
 
@@ -953,10 +954,10 @@ export default function HERACLESPage() {
                           {mlApprovalStatus?.ml_approved ? (
                             <button
                               onClick={handleRevokeML}
-                              disabled={isApproving}
+                              disabled={isRevoking}
                               className="flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
                             >
-                              {isApproving ? (
+                              {isRevoking ? (
                                 <>
                                   <RefreshCw className="h-4 w-4 animate-spin" />
                                   Revoking...

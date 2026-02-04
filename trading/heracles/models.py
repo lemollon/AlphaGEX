@@ -330,6 +330,21 @@ class HERACLESConfig:
     # Tastytrade settings
     account_id: str = ""
 
+    def __post_init__(self):
+        """
+        Post-initialization hook to auto-update contract symbol.
+
+        BUG FIX: Contract symbol was hardcoded as /MESH6 and required manual
+        updates quarterly. This now automatically uses the current front month.
+        """
+        # Auto-update symbol to current front month if using default MES contract
+        # Only update if symbol looks like a hardcoded MES contract (e.g., /MESH6, /MESM5)
+        if self.symbol.startswith("/MES") and len(self.symbol) == 6:
+            current_front_month = self.get_front_month_symbol()
+            if self.symbol != current_front_month:
+                # Symbol is stale, auto-update to current front month
+                self.symbol = current_front_month
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'HERACLESConfig':
         """Create config from dictionary (e.g., from DB)"""

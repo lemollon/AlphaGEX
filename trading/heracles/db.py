@@ -1635,7 +1635,8 @@ class HERACLESDatabase:
                     'high_water_mark': new_high_water_mark,
                     'max_drawdown': new_max_drawdown,
                     'starting_capital': starting_capital,
-                    'return_pct': (new_cumulative_pnl / starting_capital) * 100
+                    # BUG FIX: Protect against division by zero
+                    'return_pct': (new_cumulative_pnl / starting_capital) * 100 if starting_capital and starting_capital > 0 else 0.0
                 }
 
         except Exception as e:
@@ -1777,7 +1778,8 @@ class HERACLESDatabase:
                         'cumulative_pnl': float(cumulative_pnl or 0),
                         'equity': equity,
                         'trades': trades,
-                        'return_pct': (float(cumulative_pnl or 0) / starting_capital) * 100
+                        # BUG FIX: Protect against division by zero
+                        'return_pct': (float(cumulative_pnl or 0) / starting_capital) * 100 if starting_capital and starting_capital > 0 else 0.0
                     })
 
         except Exception as e:
