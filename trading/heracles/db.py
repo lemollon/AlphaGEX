@@ -159,6 +159,28 @@ class HERACLESDatabase:
                     )
                 """)
 
+                # Add missing columns to heracles_closed_trades if they don't exist
+                # (for databases created before these columns were added)
+                migration_columns = [
+                    ("loss_analysis", "TEXT"),
+                    ("mfe_points", "DECIMAL(10, 4)"),
+                    ("mae_points", "DECIMAL(10, 4)"),
+                    ("was_profitable_before_loss", "BOOLEAN DEFAULT FALSE"),
+                    ("initial_stop_price", "DECIMAL(12, 4)"),
+                    ("is_overnight_session", "BOOLEAN DEFAULT FALSE"),
+                    ("stop_type", "VARCHAR(50)"),
+                    ("stop_points_used", "DECIMAL(10, 4)"),
+                ]
+                for col_name, col_type in migration_columns:
+                    try:
+                        c.execute(f"""
+                            ALTER TABLE heracles_closed_trades
+                            ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                        """)
+                    except Exception as e:
+                        # Column might already exist, ignore
+                        logger.debug(f"Column migration for {col_name}: {e}")
+
                 # Signals history
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS heracles_signals (
