@@ -1466,16 +1466,19 @@ class HERACLESTrader:
 
         # Add paper account info if available
         if paper_account:
+            starting_cap = paper_account.get('starting_capital', 100000) or 100000  # Ensure non-zero
+            cumulative_pnl = paper_account.get('cumulative_pnl', 0)
             status_dict["paper_account"] = {
                 "starting_capital": paper_account.get('starting_capital', 0),
                 "current_balance": paper_account.get('current_balance', 0),
-                "cumulative_pnl": paper_account.get('cumulative_pnl', 0),
+                "cumulative_pnl": cumulative_pnl,
                 "total_trades": paper_account.get('total_trades', 0),
                 "margin_used": paper_account.get('margin_used', 0),
                 "margin_available": paper_account.get('margin_available', 0),
                 "high_water_mark": paper_account.get('high_water_mark', 0),
                 "max_drawdown": paper_account.get('max_drawdown', 0),
-                "return_pct": (paper_account.get('cumulative_pnl', 0) / paper_account.get('starting_capital', 100000)) * 100
+                # BUG FIX: Protect against division by zero
+                "return_pct": (cumulative_pnl / starting_cap) * 100 if starting_cap > 0 else 0.0
             }
 
         return status_dict
