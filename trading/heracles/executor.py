@@ -495,7 +495,8 @@ class TastytradeExecutor:
     def close_position_order(
         self,
         position: FuturesPosition,
-        close_reason: str
+        close_reason: str,
+        intended_close_price: float = 0.0
     ) -> Tuple[bool, str, float]:
         """
         Close an existing position.
@@ -503,37 +504,59 @@ class TastytradeExecutor:
         Args:
             position: The position to close
             close_reason: Reason for closing
+            intended_close_price: For PAPER stop orders, this is the stop price we want to fill at.
+                                  This simulates exchange-level stop orders that fill at the stop price,
+                                  not the current market price (which could be much worse).
 
         Returns:
             (success, message, fill_price)
         """
         if self.config.mode == TradingMode.PAPER:
-            return self._simulate_close(position, close_reason)
+            return self._simulate_close(position, close_reason, intended_close_price)
 
         return self._live_close(position, close_reason)
 
     def _simulate_close(
         self,
         position: FuturesPosition,
-        close_reason: str
+        close_reason: str,
+        intended_close_price: float = 0.0
     ) -> Tuple[bool, str, float]:
-        """Simulate closing a position for paper trading"""
-        # Get current quote for fill price
-        quote = self.get_mes_quote(position.symbol)
+        """
+        Simulate closing a position for paper trading.
 
-        if quote:
-            if position.direction == TradeDirection.LONG:
-                fill_price = quote.get("bid", position.current_stop)
-            else:
-                fill_price = quote.get("ask", position.current_stop)
+        PAPER STOP ORDER FIX:
+        If intended_close_price is provided (> 0), use that as the fill price.
+        This simulates an exchange-level stop order that would fill at the stop price,
+        not the current market price (which could gap past the stop).
+
+        Without this fix, a stop at 6910 could "fill" at 6920 if that's where the
+        market is when we detect the stop was hit (due to 15-second polling delay).
+        """
+        # If intended close price is provided (stop order simulation), use it
+        if intended_close_price > 0:
+            fill_price = intended_close_price
+            logger.info(
+                f"[PAPER STOP] Simulating stop fill for {position.position_id}: "
+                f"{position.direction.value} {position.contracts} contracts at STOP PRICE {fill_price:.2f}"
+            )
         else:
-            # Use stop price as fill price if no quote
-            fill_price = position.current_stop
+            # Market order simulation - use current quote
+            quote = self.get_mes_quote(position.symbol)
 
-        logger.info(
-            f"[PAPER] Simulating close for {position.position_id}: "
-            f"{position.direction.value} {position.contracts} contracts at {fill_price:.2f}"
-        )
+            if quote:
+                if position.direction == TradeDirection.LONG:
+                    fill_price = quote.get("bid", position.current_stop)
+                else:
+                    fill_price = quote.get("ask", position.current_stop)
+            else:
+                # Use stop price as fill price if no quote
+                fill_price = position.current_stop
+
+            logger.info(
+                f"[PAPER MARKET] Simulating close for {position.position_id}: "
+                f"{position.direction.value} {position.contracts} contracts at {fill_price:.2f}"
+            )
 
         return True, f"Paper close filled at {fill_price:.2f}", fill_price
 

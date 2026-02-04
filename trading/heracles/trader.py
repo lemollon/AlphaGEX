@@ -655,47 +655,60 @@ class HERACLESTrader:
         # ================================================================
         # CHECK MAX UNREALIZED LOSS (intermediate safety net)
         # This triggers BEFORE emergency stop to cap losses at 5pts instead of 15pts
+        # PAPER TRADING FIX: Exit at the STOP PRICE, not current price!
+        # This simulates a properly executed stop order on the exchange.
         # ================================================================
         max_loss_pts = self.config.max_unrealized_loss_pts  # 5.0 pts default
 
         if -profit_pts >= max_loss_pts:
+            # Calculate the simulated stop price (where the stop SHOULD have triggered)
+            if is_long:
+                simulated_stop_price = position.entry_price - max_loss_pts
+            else:
+                simulated_stop_price = position.entry_price + max_loss_pts
+
             logger.warning(
-                f"Position {position.position_id}: MAX LOSS RULE triggered at {current_price:.2f} "
-                f"(entry={position.entry_price:.2f}, loss={-profit_pts:.1f} pts >= {max_loss_pts:.1f} pts limit)"
+                f"Position {position.position_id}: MAX LOSS RULE triggered "
+                f"(current={current_price:.2f}, entry={position.entry_price:.2f}, "
+                f"loss={-profit_pts:.1f} pts >= {max_loss_pts:.1f} pts limit) "
+                f"-> Exiting at simulated stop price {simulated_stop_price:.2f}"
             )
             return self._close_position(
                 position,
-                current_price,
+                simulated_stop_price,  # Use stop price, not current price!
                 PositionStatus.STOPPED,
-                f"Max unrealized loss rule (-{-profit_pts:.1f} pts exceeded {max_loss_pts:.1f} pts limit)"
+                f"Max unrealized loss rule (-{max_loss_pts:.1f} pts)"
             )
 
         # ================================================================
         # CHECK EMERGENCY STOP (catastrophic loss protection - backup to max loss)
+        # PAPER TRADING FIX: Exit at emergency_stop_price, not current_price!
         # ================================================================
         emergency_stop_price = (position.entry_price - emergency_stop_pts if is_long
                                else position.entry_price + emergency_stop_pts)
 
         if is_long and current_price <= emergency_stop_price:
             logger.warning(
-                f"Position {position.position_id}: EMERGENCY STOP hit at {current_price:.2f} "
-                f"(entry={position.entry_price:.2f}, emergency={emergency_stop_price:.2f})"
+                f"Position {position.position_id}: EMERGENCY STOP hit "
+                f"(current={current_price:.2f}, entry={position.entry_price:.2f}, "
+                f"emergency={emergency_stop_price:.2f}) -> Exiting at stop price"
             )
             return self._close_position(
                 position,
-                current_price,
+                emergency_stop_price,  # Use stop price, not current price!
                 PositionStatus.STOPPED,
                 f"Emergency stop triggered (-{emergency_stop_pts:.1f} pts)"
             )
 
         if not is_long and current_price >= emergency_stop_price:
             logger.warning(
-                f"Position {position.position_id}: EMERGENCY STOP hit at {current_price:.2f} "
-                f"(entry={position.entry_price:.2f}, emergency={emergency_stop_price:.2f})"
+                f"Position {position.position_id}: EMERGENCY STOP hit "
+                f"(current={current_price:.2f}, entry={position.entry_price:.2f}, "
+                f"emergency={emergency_stop_price:.2f}) -> Exiting at stop price"
             )
             return self._close_position(
                 position,
-                current_price,
+                emergency_stop_price,  # Use stop price, not current price!
                 PositionStatus.STOPPED,
                 f"Emergency stop triggered (-{emergency_stop_pts:.1f} pts)"
             )
@@ -850,13 +863,21 @@ class HERACLESTrader:
         status: PositionStatus,
         reason: str
     ) -> bool:
-        """Close a position"""
+        """
+        Close a position at the specified close_price.
+
+        PAPER TRADING STOP ORDER FIX:
+        For stop orders, close_price is the STOP PRICE where we should fill,
+        not the current market price. This simulates exchange-level stop orders.
+        """
         try:
-            # Execute close order
-            success, message, fill_price = self.executor.close_position_order(position, reason)
+            # Execute close order - pass intended close_price for stop order simulation
+            success, message, fill_price = self.executor.close_position_order(
+                position, reason, intended_close_price=close_price
+            )
 
             if success:
-                # Use fill price if available, otherwise use provided close_price
+                # Use fill price from executor (should match our intended price for stops)
                 actual_close_price = fill_price if fill_price > 0 else close_price
 
                 # Update database
