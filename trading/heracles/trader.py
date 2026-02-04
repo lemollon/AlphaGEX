@@ -635,10 +635,28 @@ class HERACLESTrader:
             max_profit_pts = position.entry_price - high_water_price if high_water_price > 0 else profit_pts
 
         # ================================================================
-        # CHECK MAX UNREALIZED LOSS (intermediate safety net)
-        # This triggers BEFORE emergency stop to cap losses at 8pts instead of 15pts
+        # CHECK PROFIT TARGET (take profits instead of relying only on trail)
+        # This ensures we don't let winners turn into losers
         # ================================================================
-        max_loss_pts = self.config.max_unrealized_loss_pts  # 8.0 pts default
+        profit_target_pts = getattr(self.config, 'no_loss_profit_target_pts', 4.0)  # Default 4 pts
+
+        if profit_pts >= profit_target_pts:
+            logger.info(
+                f"Position {position.position_id}: PROFIT TARGET HIT at {current_price:.2f} "
+                f"(entry={position.entry_price:.2f}, profit={profit_pts:.1f} pts >= {profit_target_pts:.1f} pts target)"
+            )
+            return self._close_position(
+                position,
+                current_price,
+                PositionStatus.PROFIT_TARGET,
+                f"No-loss trailing profit target hit (+{profit_pts:.1f} pts)"
+            )
+
+        # ================================================================
+        # CHECK MAX UNREALIZED LOSS (intermediate safety net)
+        # This triggers BEFORE emergency stop to cap losses at 5pts instead of 15pts
+        # ================================================================
+        max_loss_pts = self.config.max_unrealized_loss_pts  # 5.0 pts default
 
         if -profit_pts >= max_loss_pts:
             logger.warning(

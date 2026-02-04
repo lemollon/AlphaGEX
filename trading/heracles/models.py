@@ -265,20 +265,22 @@ class HERACLESConfig:
     # This strategy: No tight stop until profitable, then trail to lock in gains
     # Key insight: Avoid small stop-outs that would have turned into winners
     use_no_loss_trailing: bool = True  # Enable no-loss trailing mode
-    no_loss_activation_pts: float = 1.5  # Points profit before trailing activates
-    # TUNED: Lowered from 3.0 to 1.5 because real data shows avg MFE is only 0.63 pts
-    # At 3.0, trailing NEVER activated (95%+ of losing trades never reached +3 pts)
-    # At 1.5, trailing can activate for trades that show initial promise
-    no_loss_trail_distance: float = 2.0  # How far behind price to trail
+    no_loss_activation_pts: float = 0.75  # Points profit before trailing activates
+    # TUNED: Lowered from 1.5 to 0.75 because real data shows avg MFE is only 0.63 pts
+    # At 1.5, trailing rarely activated - most trades never reached +1.5 pts
+    # At 0.75, trailing activates for trades showing even modest initial promise
+    no_loss_trail_distance: float = 1.5  # How far behind price to trail (was 2.0)
     no_loss_emergency_stop: float = 15.0  # Emergency stop for catastrophic moves only
+    no_loss_profit_target_pts: float = 4.0  # Take profit target (new - don't just rely on trail)
 
     # MAX UNREALIZED LOSS RULE - Safety net between normal trading and emergency stop
-    # Problem: With emergency stop at 15pts, losses were averaging $104 vs wins at $33
-    # Solution: Exit if unrealized loss exceeds this threshold (intermediate safety net)
+    # Problem: At 8pts ($40/contract) losses were too large vs wins (asymmetric risk/reward)
+    # Solution: Tighter max loss to balance risk/reward ratio
     # This is NOT a tighter stop - it's a safety valve before catastrophic loss
-    max_unrealized_loss_pts: float = 8.0  # Exit if down 8 pts ($40/contract)
-    # At 8 pts: Loss capped at $40/contract vs $75 at emergency stop
-    # Still allows room for normal volatility but prevents $300+ losses
+    max_unrealized_loss_pts: float = 5.0  # Exit if down 5 pts ($25/contract)
+    # TUNED: Lowered from 8.0 to 5.0 for better risk/reward balance
+    # At 5 pts: Loss capped at $25/contract - closer to typical win size
+    # This improves win/loss ratio from needing 3+ wins per loss to ~2 wins per loss
 
     # OVERNIGHT HYBRID STRATEGY - Different parameters for overnight vs RTH
     # Overnight = 5 PM - 4 AM CT (lower liquidity, different price behavior)
