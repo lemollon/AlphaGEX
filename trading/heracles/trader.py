@@ -240,13 +240,6 @@ class HERACLESTrader:
             # 2. Check for new signals (if room for more positions)
             open_count = len([p for p in self.db.get_open_positions()])
 
-            # Skip new trades during overnight if disabled (too choppy)
-            if is_overnight and not self.config.trade_overnight:
-                scan_result["status"] = "overnight_skipped"
-                self._log_scan_activity(scan_id, "OVERNIGHT_SKIP", scan_result, scan_context,
-                                       skip_reason="Overnight trading disabled - market too choppy")
-                return scan_result
-
             if open_count < self.config.max_open_positions:
                 # Generate signal
                 signal = self.signal_generator.generate_signal(

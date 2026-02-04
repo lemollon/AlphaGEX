@@ -204,6 +204,156 @@ def simulate_streak_breaker(trades: List[Dict], max_consecutive_losses: int, pau
     }
 
 
+def simulate_hedged_pairs(trades: List[Dict], stop_pts: float = 2.5, target_pts: float = 6.0) -> Dict[str, Any]:
+    """
+    Simulate opening LONG and SHORT at the same time (hedged).
+
+    For each trade entry, we simulate opening both directions:
+    - LONG: wins if price goes up by target_pts before down by stop_pts
+    - SHORT: wins if price goes down by target_pts before up by stop_pts
+
+    Since we don't have tick data, we estimate based on actual trade outcomes:
+    - If original LONG won → LONG hits target, SHORT hits stop
+    - If original LONG lost → Check if it was stopped or other reason
+    """
+    pairs = []
+    point_value = 5.0  # $5 per point for MES
+
+    for t in trades:
+        entry = t['entry']
+        exit_price = t['exit']
+        direction = t['direction']
+
+        # Calculate the actual move
+        if direction in ['LONG', 'long', 'Long']:
+            actual_move = exit_price - entry  # Positive = good for long
+        else:
+            actual_move = entry - exit_price  # Positive = good for short
+
+        # Simulate the hedge pair
+        # We need to estimate what would have happened to the opposite trade
+
+        # If the original trade won (hit target ~+6 pts)
+        if t['pnl'] > 0:
+            # Original direction hit target
+            # Opposite direction would have been stopped out (price moved against it)
+            winning_pnl = target_pts * point_value  # +$30
+            losing_pnl = -stop_pts * point_value    # -$12.50
+            pair_pnl = winning_pnl + losing_pnl     # +$17.50
+            pair_outcome = 'WIN'
+
+        # If the original trade lost (hit stop ~-2.5 pts)
+        elif t['pnl'] < 0:
+            # Original direction hit stop
+            # But what happened to the opposite direction?
+            # If price moved enough to stop one side, the other side should have profited
+
+            # Check if it was a small loss (just hit stop) or large loss (slippage)
+            expected_loss = -stop_pts * point_value
+            actual_loss = t['pnl']
+
+            if actual_loss >= expected_loss * 0.8:  # Within 20% of expected stop loss
+                # Clean stop - opposite direction should have profited
+                # But may not have hit full target yet
+                # Estimate: opposite gained what original lost
+                opposite_gain = abs(actual_loss)  # Mirror the move
+                if opposite_gain >= target_pts * point_value:
+                    opposite_gain = target_pts * point_value  # Cap at target
+                pair_pnl = actual_loss + opposite_gain
+                pair_outcome = 'HEDGE_PROFIT' if pair_pnl > 0 else 'HEDGE_LOSS'
+            else:
+                # Large slippage loss - volatile move
+                # Opposite probably hit target before we got stopped
+                winning_pnl = target_pts * point_value  # +$30
+                pair_pnl = actual_loss + winning_pnl
+                pair_outcome = 'WIN' if pair_pnl > 0 else 'VOLATILE_LOSS'
+        else:
+            # Breakeven - rare
+            pair_pnl = 0
+            pair_outcome = 'BREAKEVEN'
+
+        pairs.append({
+            'original_trade': t,
+            'pair_pnl': pair_pnl,
+            'outcome': pair_outcome
+        })
+
+    total_pnl = sum(p['pair_pnl'] for p in pairs)
+    wins = sum(1 for p in pairs if p['pair_pnl'] > 0)
+
+    return {
+        'trades_taken': len(pairs) * 2,  # Each pair is 2 trades
+        'pairs': len(pairs),
+        'trades_skipped': 0,
+        'pnl': total_pnl,
+        'wins': wins,
+        'losses': len(pairs) - wins,
+        'avg_pair_pnl': total_pnl / len(pairs) if pairs else 0,
+        'outcomes': {
+            'WIN': sum(1 for p in pairs if p['outcome'] == 'WIN'),
+            'HEDGE_PROFIT': sum(1 for p in pairs if p['outcome'] == 'HEDGE_PROFIT'),
+            'HEDGE_LOSS': sum(1 for p in pairs if p['outcome'] == 'HEDGE_LOSS'),
+            'VOLATILE_LOSS': sum(1 for p in pairs if p['outcome'] == 'VOLATILE_LOSS'),
+            'BREAKEVEN': sum(1 for p in pairs if p['outcome'] == 'BREAKEVEN'),
+        }
+    }
+
+
+def simulate_hedged_selective(trades: List[Dict], min_confidence: float = 0.6) -> Dict[str, Any]:
+    """
+    Only hedge on high-confidence signals.
+    For lower confidence, take directional trade only.
+
+    Since we don't have confidence in historical data, we simulate based on regime:
+    - POSITIVE gamma (mean reversion) = higher confidence = directional only
+    - NEGATIVE gamma (momentum) = lower confidence = hedge
+    """
+    point_value = 5.0
+    stop_pts = 2.5
+    target_pts = 6.0
+
+    results = []
+
+    for t in trades:
+        regime = t['regime']
+
+        # Decide: hedge or directional?
+        if 'NEGATIVE' in regime.upper():
+            # Lower confidence in momentum - HEDGE
+            if t['pnl'] > 0:
+                # Original won, opposite stopped
+                pair_pnl = (target_pts - stop_pts) * point_value  # +$17.50
+            else:
+                # Original stopped, opposite should have gained
+                pair_pnl = t['pnl'] + abs(t['pnl'])  # Roughly breakeven or small profit
+                if pair_pnl < -stop_pts * point_value:
+                    pair_pnl = -stop_pts * point_value  # Cap loss
+            trade_type = 'HEDGED'
+        else:
+            # Higher confidence - DIRECTIONAL only
+            pair_pnl = t['pnl']
+            trade_type = 'DIRECTIONAL'
+
+        results.append({
+            'pnl': pair_pnl,
+            'type': trade_type
+        })
+
+    total_pnl = sum(r['pnl'] for r in results)
+    hedged_count = sum(1 for r in results if r['type'] == 'HEDGED')
+    directional_count = len(results) - hedged_count
+
+    return {
+        'trades_taken': len(results) + hedged_count,  # Hedged = 2 trades
+        'trades_skipped': 0,
+        'pnl': total_pnl,
+        'wins': sum(1 for r in results if r['pnl'] > 0),
+        'losses': sum(1 for r in results if r['pnl'] < 0),
+        'hedged_trades': hedged_count,
+        'directional_trades': directional_count
+    }
+
+
 def simulate_combined(trades: List[Dict], max_same_dir: int, allowed_regimes: List[str],
                       start_hour: int, end_hour: int) -> Dict[str, Any]:
     """Combine multiple filters"""
@@ -292,6 +442,12 @@ strategies['COMBINED_SAFE'] = simulate_combined(all_trades, 2, ['POSITIVE', 'Gam
 
 # 11. Combined: Max 1 same dir + all regimes + extended hours
 strategies['COMBINED_CAUTIOUS'] = simulate_combined(all_trades, 1, ['POSITIVE', 'NEGATIVE', 'NEUTRAL', 'GammaRegime.POSITIVE', 'GammaRegime.NEGATIVE', 'GammaRegime.NEUTRAL'], 8, 20)
+
+# 12. Hedged: Open LONG and SHORT simultaneously
+strategies['HEDGED_ALL'] = simulate_hedged_pairs(all_trades)
+
+# 13. Hedged Selective: Hedge only in NEGATIVE gamma, directional in POSITIVE
+strategies['HEDGED_SELECTIVE'] = simulate_hedged_selective(all_trades)
 
 # Print results
 print("\n{:<20} {:>8} {:>8} {:>10} {:>8} {:>10}".format(
