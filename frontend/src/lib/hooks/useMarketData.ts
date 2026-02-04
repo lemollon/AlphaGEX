@@ -745,96 +745,54 @@ const fetchers = {
   },
 
   // HERACLES MES Futures Scalping Bot
+  // Note: Fetchers throw errors instead of returning fallback values
+  // This allows SWR to properly handle retries and error states
   heraclesStatus: async () => {
-    try {
-      const response = await api.get('/api/heracles/status')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
+    const response = await api.get('/api/heracles/status')
+    return response.data
   },
   heraclesPositions: async () => {
-    try {
-      const response = await api.get('/api/heracles/positions')
-      return response.data
-    } catch {
-      return { success: false, data: { positions: [] } }
-    }
+    const response = await api.get('/api/heracles/positions')
+    return response.data
   },
   heraclesClosedTrades: async (limit: number = 50) => {
-    try {
-      const response = await api.get(`/api/heracles/closed-trades?limit=${limit}`)
-      return response.data
-    } catch {
-      return { success: false, data: { trades: [] } }
-    }
+    const response = await api.get(`/api/heracles/closed-trades?limit=${limit}`)
+    return response.data
   },
   heraclesEquityCurve: async (days: number = 30) => {
-    try {
-      const response = await api.get(`/api/heracles/paper-equity-curve?days=${days}`)
-      return response.data
-    } catch {
-      return { success: false, data: { equity_curve: [] } }
-    }
+    const response = await api.get(`/api/heracles/paper-equity-curve?days=${days}`)
+    return response.data
   },
   heraclesIntradayEquity: async () => {
-    try {
-      const response = await api.get('/api/heracles/equity-curve/intraday')
-      return response.data
-    } catch {
-      return { success: false, data: { equity_curve: [] } }
-    }
+    const response = await api.get('/api/heracles/equity-curve/intraday')
+    return response.data
   },
   heraclesConfig: async () => {
-    try {
-      const response = await api.get('/api/heracles/config')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
+    const response = await api.get('/api/heracles/config')
+    return response.data
   },
   heraclesPaperAccount: async () => {
-    try {
-      const response = await api.get('/api/heracles/paper-account')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
+    const response = await api.get('/api/heracles/paper-account')
+    return response.data
   },
   heraclesScanActivity: async (limit?: number, outcome?: string) => {
-    try {
-      const params = new URLSearchParams()
-      params.append('limit', String(limit || 100))
-      if (outcome) params.append('outcome', outcome)
-      const response = await api.get(`/api/heracles/scan-activity?${params}`)
-      return response.data
-    } catch {
-      return { success: false, data: { scans: [] } }
-    }
+    const params = new URLSearchParams()
+    params.append('limit', String(limit || 100))
+    if (outcome) params.append('outcome', outcome)
+    const response = await api.get(`/api/heracles/scan-activity?${params}`)
+    return response.data
   },
   heraclesMLTrainingData: async () => {
-    try {
-      const response = await api.get('/api/heracles/ml-training-data')
-      return response.data
-    } catch {
-      return { success: false, data: { training_data: [], total_samples: 0 } }
-    }
+    const response = await api.get('/api/heracles/ml-training-data')
+    return response.data
   },
   heraclesSignals: async (limit: number = 50) => {
-    try {
-      const response = await api.get(`/api/heracles/signals/recent?limit=${limit}`)
-      return response.data
-    } catch {
-      return { success: false, data: { signals: [] } }
-    }
+    const response = await api.get(`/api/heracles/signals/recent?limit=${limit}`)
+    return response.data
   },
   heraclesMLStatus: async () => {
-    try {
-      const response = await api.get('/api/heracles/ml/status')
-      return response.data
-    } catch {
-      return { model_trained: false, error: 'Failed to fetch ML status' }
-    }
+    const response = await api.get('/api/heracles/ml/status')
+    return response.data
   },
   heraclesMLTrain: async (minSamples: number = 50) => {
     try {
@@ -845,20 +803,12 @@ const fetchers = {
     }
   },
   heraclesMLFeatureImportance: async () => {
-    try {
-      const response = await api.get('/api/heracles/ml/feature-importance')
-      return response.data
-    } catch {
-      return { success: false, features: [] }
-    }
+    const response = await api.get('/api/heracles/ml/feature-importance')
+    return response.data
   },
   heraclesMLApprovalStatus: async () => {
-    try {
-      const response = await api.get('/api/heracles/ml/approval-status')
-      return response.data
-    } catch {
-      return { ml_approved: false, model_trained: false, probability_source: 'BAYESIAN' }
-    }
+    const response = await api.get('/api/heracles/ml/approval-status')
+    return response.data
   },
   heraclesMLApprove: async () => {
     try {
@@ -885,12 +835,8 @@ const fetchers = {
     }
   },
   heraclesABTestStatus: async () => {
-    try {
-      const response = await api.get('/api/heracles/ab-test/status')
-      return response.data
-    } catch {
-      return { ab_test_enabled: false }
-    }
+    const response = await api.get('/api/heracles/ab-test/status')
+    return response.data
   },
   heraclesABTestEnable: async () => {
     try {
@@ -909,12 +855,8 @@ const fetchers = {
     }
   },
   heraclesABTestResults: async () => {
-    try {
-      const response = await api.get('/api/heracles/ab-test/results')
-      return response.data
-    } catch {
-      return { ab_test_enabled: false, results: null }
-    }
+    const response = await api.get('/api/heracles/ab-test/results')
+    return response.data
   },
 
   // PROMETHEUS Box Spread Synthetic Borrowing + IC Trading Bot
@@ -1564,7 +1506,9 @@ export function useScanActivityTitan(limit: number = 50, date?: string, options?
 export function useHERACLESStatus(options?: SWRConfiguration) {
   return useSWR('heracles-status', fetchers.heraclesStatus, {
     ...swrConfig,
-    refreshInterval: 30 * 1000,
+    refreshInterval: 15 * 1000,  // 15 seconds for real-time position updates
+    dedupingInterval: 5000,      // Allow refreshes within 5 seconds
+    keepPreviousData: false,     // Don't show stale data - show loading state instead
     ...options,
   })
 }
@@ -1572,6 +1516,8 @@ export function useHERACLESStatus(options?: SWRConfiguration) {
 export function useHERACLESPositions(options?: SWRConfiguration) {
   return useSWR('heracles-positions', fetchers.heraclesPositions, {
     ...swrConfig,
+    dedupingInterval: 5000,
+    keepPreviousData: false,
     refreshInterval: 30 * 1000,
     ...options,
   })
@@ -1612,7 +1558,9 @@ export function useHERACLESConfig(options?: SWRConfiguration) {
 export function useHERACLESPaperAccount(options?: SWRConfiguration) {
   return useSWR('heracles-paper-account', fetchers.heraclesPaperAccount, {
     ...swrConfig,
-    refreshInterval: 30 * 1000,
+    refreshInterval: 15 * 1000,  // 15 seconds for real-time balance updates
+    dedupingInterval: 5000,
+    keepPreviousData: false,
     ...options,
   })
 }
