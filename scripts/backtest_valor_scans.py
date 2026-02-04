@@ -17,7 +17,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database_adapter import DatabaseAdapter
+from database_adapter import get_connection
 from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import List, Dict, Any, Callable, Optional, Tuple
@@ -61,11 +61,12 @@ print("VALOR (HERACLES) SCAN-BASED BACKTESTER")
 print("=" * 70)
 print("\nUsing REAL scan activity data from heracles_scan_activity")
 
-db = DatabaseAdapter()
+conn = get_connection()
+cursor = conn.cursor()
 
 # Get all scan activity with full context
 print("\nLoading scan data...")
-scans = db.fetchall("""
+cursor.execute("""
     SELECT
         scan_id,
         scan_time,
@@ -120,6 +121,8 @@ scans = db.fetchall("""
     FROM heracles_scan_activity
     ORDER BY scan_time ASC
 """)
+scans = cursor.fetchall()
+conn.close()
 
 if not scans:
     print("No scan activity found")
