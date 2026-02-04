@@ -1446,6 +1446,12 @@ class HERACLESTrader:
                 "breakeven_activation_points": config.breakeven_activation_points,
                 "trailing_stop_points": config.trailing_stop_points,
                 "profit_target_points": config.profit_target_points,
+                # No-Loss Trailing Strategy params
+                "use_no_loss_trailing": config.use_no_loss_trailing,
+                "no_loss_activation_pts": config.no_loss_activation_pts,
+                "no_loss_trail_distance": config.no_loss_trail_distance,
+                "no_loss_emergency_stop": config.no_loss_emergency_stop,
+                "max_unrealized_loss_pts": config.max_unrealized_loss_pts,
             },
             "positions": {
                 "open_count": len(positions),
