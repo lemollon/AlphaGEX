@@ -343,6 +343,11 @@ class HERACLESConfig:
     # No daily loss limit as requested
     max_daily_loss: float = 0.0  # 0 = no limit
 
+    # LOSS STREAK PROTECTION - Pause trading after consecutive losses
+    # Prevents bleeding during adverse market conditions
+    max_consecutive_losses: int = 3  # Pause after this many losses in a row
+    loss_streak_pause_minutes: int = 5  # How long to pause (minutes)
+
     # Mode
     mode: TradingMode = TradingMode.PAPER
 
