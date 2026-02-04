@@ -358,14 +358,14 @@ export default function PrometheusBoxDashboard() {
 
           {/* Tab Navigation */}
           <div className="bg-[#0a0a0a] rounded-xl border border-gray-800 overflow-hidden">
-            <div className="flex gap-1 p-1 bg-gray-900/50 border-b border-gray-800">
+            <div className="flex gap-1 p-1 bg-gray-900/50 border-b border-gray-800 overflow-x-auto">
               {[
-                { key: 'overview', label: 'Overview' },
-                { key: 'positions', label: 'Box Spreads' },
-                { key: 'ic-trading', label: 'IC Trading' },
-                { key: 'analytics', label: 'Analytics' },
-                { key: 'education', label: 'Education' },
-                { key: 'howItWorks', label: 'How It Works' },
+                { key: 'overview', label: '📋 Overview' },
+                { key: 'positions', label: '🏦 Box Spreads (Long-Term Borrowing)' },
+                { key: 'ic-trading', label: '⚡ Iron Condors (Daily Income)' },
+                { key: 'analytics', label: '📊 Performance' },
+                { key: 'education', label: '📚 Education' },
+                { key: 'howItWorks', label: '❓ How It Works' },
               ].map((tab) => (
                 <button
                   key={tab.key}
@@ -781,13 +781,33 @@ export default function PrometheusBoxDashboard() {
                                     <div className="text-xl font-bold text-white">{pos.contracts}</div>
                                   </div>
                                 </div>
+                                {/* Box Spread = 4 Legs (Synthetic Loan) */}
                                 <div className="mt-4 pt-4 border-t border-gray-700">
-                                  <div className="text-xs text-gray-500 mb-2">Strike Range</div>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-2xl font-bold text-blue-400">${pos.lower_strike}</span>
-                                    <span className="text-gray-500">→</span>
-                                    <span className="text-2xl font-bold text-purple-400">${pos.upper_strike}</span>
-                                    <span className="ml-2 text-sm text-gray-400">({pos.strike_width}pt width)</span>
+                                  <div className="text-xs text-gray-500 mb-2">Box Spread Structure (4 Legs)</div>
+                                  <div className="grid grid-cols-2 gap-2 text-sm">
+                                    {/* Call Spread (Bull Call) */}
+                                    <div className="bg-green-900/20 rounded p-2 border border-green-700/30">
+                                      <div className="text-xs text-green-400 font-medium mb-1">CALL SPREAD</div>
+                                      <div className="flex justify-between">
+                                        <span className="text-green-400">+LONG {pos.lower_strike}C</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-red-400">−SHORT {pos.upper_strike}C</span>
+                                      </div>
+                                    </div>
+                                    {/* Put Spread (Bull Put) */}
+                                    <div className="bg-purple-900/20 rounded p-2 border border-purple-700/30">
+                                      <div className="text-xs text-purple-400 font-medium mb-1">PUT SPREAD</div>
+                                      <div className="flex justify-between">
+                                        <span className="text-red-400">−SHORT {pos.lower_strike}P</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-green-400">+LONG {pos.upper_strike}P</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="mt-2 text-center text-xs text-gray-500">
+                                    {pos.ticker} {pos.lower_strike}/{pos.upper_strike} • {pos.strike_width}pt width • {pos.contracts} contracts
                                   </div>
                                 </div>
                               </div>
@@ -1304,12 +1324,23 @@ export default function PrometheusBoxDashboard() {
 
                         {reconciliation.box_spreads.positions.map((pos: any) => (
                           <div key={pos.position_id} className="bg-black/40 rounded-lg p-5 mb-4 border border-blue-700/30">
-                            {/* Position Header */}
+                            {/* Position Header with 4-Leg Display */}
                             <div className="flex justify-between items-start mb-4 pb-3 border-b border-gray-700">
                               <div>
-                                <div className="text-lg font-bold text-white">
-                                  {pos.ticker} {pos.lower_strike}/{pos.upper_strike}
+                                <div className="text-lg font-bold text-white mb-2">
+                                  {pos.ticker} Box Spread
                                   <span className="text-gray-400 font-normal ml-2">(${pos.strike_width} width)</span>
+                                </div>
+                                {/* 4 Legs of Box Spread */}
+                                <div className="flex gap-4 text-xs mb-2">
+                                  <div className="bg-green-900/20 px-2 py-1 rounded border border-green-700/30">
+                                    <span className="text-green-400">+LONG {pos.lower_strike}C</span>
+                                    <span className="text-red-400 ml-2">−SHORT {pos.upper_strike}C</span>
+                                  </div>
+                                  <div className="bg-purple-900/20 px-2 py-1 rounded border border-purple-700/30">
+                                    <span className="text-red-400">−SHORT {pos.lower_strike}P</span>
+                                    <span className="text-green-400 ml-2">+LONG {pos.upper_strike}P</span>
+                                  </div>
                                 </div>
                                 <div className="text-sm text-gray-400">
                                   Expiration: {pos.expiration} ({pos.current_dte} DTE remaining)
@@ -2151,8 +2182,15 @@ export default function PrometheusBoxDashboard() {
                                 <div className="text-xs text-gray-400">{pos.contracts} contracts</div>
                               </td>
                               <td className="px-4 py-3">
-                                <div>{pos.ticker}</div>
-                                <div className="text-sm text-gray-400">{pos.lower_strike}/{pos.upper_strike}</div>
+                                <div className="font-medium">{pos.ticker} Box</div>
+                                <div className="text-xs text-gray-400">
+                                  <span className="text-green-400">+{pos.lower_strike}C</span>
+                                  <span className="text-red-400 ml-1">−{pos.upper_strike}C</span>
+                                </div>
+                                <div className="text-xs text-gray-400">
+                                  <span className="text-red-400">−{pos.lower_strike}P</span>
+                                  <span className="text-green-400 ml-1">+{pos.upper_strike}P</span>
+                                </div>
                               </td>
                               <td className="px-4 py-3">
                                 <div>{pos.expiration}</div>
