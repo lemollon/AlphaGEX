@@ -481,10 +481,14 @@ class SignalGenerator:
     ) -> Dict[str, float]:
         """Calculate SPX strikes with $5 rounding - CLOSER strikes for TITAN
 
+        FIX (Feb 2026): Now validates Oracle/GEX strikes against minimum SD distance.
+        TITAN is aggressive (0.8 SD) but must still enforce minimum distance.
+        Previously had NO validation on GEX walls - could accept 0.1 SD strikes!
+
         Priority:
-        1. Oracle suggested strikes (if provided and valid)
-        2. GEX walls (if available)
-        3. SD-based strikes (fallback) - uses 0.8 SD (vs PEGASUS 1.0)
+        1. Oracle suggested strikes (if provided AND >= 0.8 SD away)
+        2. GEX walls (if available AND >= 0.8 SD away)
+        3. SD-based strikes (fallback) - uses 0.8 SD
         """
         sd = self.config.sd_multiplier  # 0.8 for TITAN (closer to spot)
         width = self.config.spread_width  # $12 for TITAN
@@ -492,32 +496,60 @@ class SignalGenerator:
         def round_to_5(x):
             return round(x / 5) * 5
 
+        # Ensure minimum expected move (0.5% of spot)
+        min_expected_move = spot * 0.005
+        effective_em = max(expected_move, min_expected_move)
+
+        # FIX: Calculate MINIMUM strike distances using SD, NOT percentage!
+        # TITAN is aggressive but must still have minimum protection.
+        # Use 0.8 SD as minimum (same as TITAN's target SD).
+        min_sd_for_external = max(sd, 0.8)  # At least 0.8 SD
+        min_put_short = spot - (min_sd_for_external * effective_em)
+        min_call_short = spot + (min_sd_for_external * effective_em)
+
+        # Helper to validate strike is at least min SD away from spot
+        def is_valid_sd_distance(put_strike: float, call_strike: float) -> tuple:
+            """Validate strikes are at least 0.8 SD from spot for TITAN."""
+            put_sd = (spot - put_strike) / effective_em if effective_em > 0 else 0
+            call_sd = (call_strike - spot) / effective_em if effective_em > 0 else 0
+            is_valid = put_strike <= min_put_short and call_strike >= min_call_short
+            return is_valid, put_sd, call_sd
+
         use_oracle = False
         use_gex = False
+        put_short = 0
+        call_short = 0
 
-        # Priority 1: Oracle suggested strikes
+        # Priority 1: Oracle suggested strikes (ONLY if >= 0.8 SD away)
         if oracle_put_strike and oracle_call_strike:
-            put_dist = (spot - oracle_put_strike) / spot
-            call_dist = (oracle_call_strike - spot) / spot
-            # Slightly wider tolerance for TITAN
-            if 0.003 <= put_dist <= 0.06 and 0.003 <= call_dist <= 0.06:
+            is_valid, put_sd, call_sd = is_valid_sd_distance(oracle_put_strike, oracle_call_strike)
+            if is_valid:
                 put_short = round_to_5(oracle_put_strike)
                 call_short = round_to_5(oracle_call_strike)
                 use_oracle = True
+                logger.info(f"[TITAN STRIKES] Using Oracle: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
+            else:
+                logger.warning(f"[TITAN STRIKES] Oracle TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 2: GEX walls
+        # Priority 2: GEX walls (ONLY if >= 0.8 SD away)
         if not use_oracle and call_wall > 0 and put_wall > 0:
-            put_short = round_to_5(put_wall)
-            call_short = round_to_5(call_wall)
-            use_gex = True
+            is_valid, put_sd, call_sd = is_valid_sd_distance(put_wall, call_wall)
+            if is_valid:
+                put_short = round_to_5(put_wall)
+                call_short = round_to_5(call_wall)
+                use_gex = True
+                logger.info(f"[TITAN STRIKES] Using GEX walls: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
+            else:
+                logger.warning(f"[TITAN STRIKES] GEX walls TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 3: SD-based fallback (0.8 SD for TITAN = closer strikes)
+        # Priority 3: SD-based fallback (0.8 SD for TITAN)
         if not use_oracle and not use_gex:
-            # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
-            min_expected_move = spot * 0.005
-            effective_em = max(expected_move, min_expected_move)
             put_short = round_to_5(spot - sd * effective_em)
             call_short = round_to_5(spot + sd * effective_em)
+
+            put_sd_actual = (spot - put_short) / effective_em if effective_em > 0 else 0
+            call_sd_actual = (call_short - spot) / effective_em if effective_em > 0 else 0
+            logger.info(f"[TITAN STRIKES] Using SD-based ({sd:.1f} SD): Put ${put_short} ({put_sd_actual:.1f} SD), Call ${call_short} ({call_sd_actual:.1f} SD)")
 
         put_long = put_short - width
         call_long = call_short + width
