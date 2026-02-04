@@ -258,48 +258,84 @@ class HERACLESMLAdvisor:
             logger.error(f"Failed to save HERACLES ML model to database: {e}")
             return False
 
-    def get_training_data(self) -> Optional[pd.DataFrame]:
+    def get_training_data(self, use_new_params_only: bool = True) -> Optional[pd.DataFrame]:
         """
         Fetch training data from heracles_scan_activity.
 
         Only includes:
         - Scans that resulted in trades (trade_executed = true)
         - Trades with recorded outcomes (trade_outcome IS NOT NULL)
+        - If use_new_params_only=True, only trades AFTER PARAMETER_VERSION_DATE
+
+        Args:
+            use_new_params_only: If True, only return trades after parameter version date.
+                                 This ensures ML trains on quality data with balanced risk/reward.
         """
         if not DB_AVAILABLE or not ML_AVAILABLE:
             return None
 
         try:
+            from .models import PARAMETER_VERSION_DATE
             conn = get_connection()
 
-            query = """
-                SELECT
-                    scan_time,
-                    vix,
-                    atr,
-                    gamma_regime,
-                    distance_to_flip_pct,
-                    distance_to_call_wall_pct,
-                    distance_to_put_wall_pct,
-                    day_of_week,
-                    hour_of_day,
-                    is_overnight_session,
-                    positive_gamma_win_rate,
-                    negative_gamma_win_rate,
-                    signal_confidence,
-                    trade_outcome,
-                    realized_pnl
-                FROM heracles_scan_activity
-                WHERE trade_executed = true
-                  AND trade_outcome IS NOT NULL
-                ORDER BY scan_time ASC
-            """
+            # Build query with optional date filter
+            if use_new_params_only:
+                query = f"""
+                    SELECT
+                        scan_time,
+                        vix,
+                        atr,
+                        gamma_regime,
+                        distance_to_flip_pct,
+                        distance_to_call_wall_pct,
+                        distance_to_put_wall_pct,
+                        day_of_week,
+                        hour_of_day,
+                        is_overnight_session,
+                        positive_gamma_win_rate,
+                        negative_gamma_win_rate,
+                        signal_confidence,
+                        trade_outcome,
+                        realized_pnl
+                    FROM heracles_scan_activity
+                    WHERE trade_executed = true
+                      AND trade_outcome IS NOT NULL
+                      AND scan_time >= '{PARAMETER_VERSION_DATE}'::timestamp
+                    ORDER BY scan_time ASC
+                """
+                logger.info(f"Fetching training data ONLY after {PARAMETER_VERSION_DATE} (new parameters)")
+            else:
+                query = """
+                    SELECT
+                        scan_time,
+                        vix,
+                        atr,
+                        gamma_regime,
+                        distance_to_flip_pct,
+                        distance_to_call_wall_pct,
+                        distance_to_put_wall_pct,
+                        day_of_week,
+                        hour_of_day,
+                        is_overnight_session,
+                        positive_gamma_win_rate,
+                        negative_gamma_win_rate,
+                        signal_confidence,
+                        trade_outcome,
+                        realized_pnl
+                    FROM heracles_scan_activity
+                    WHERE trade_executed = true
+                      AND trade_outcome IS NOT NULL
+                    ORDER BY scan_time ASC
+                """
 
             df = pd.read_sql(query, conn)
             conn.close()
 
             if len(df) == 0:
-                logger.warning("No completed trades found in scan_activity")
+                if use_new_params_only:
+                    logger.warning(f"No completed trades found after {PARAMETER_VERSION_DATE} - collect more data with new parameters")
+                else:
+                    logger.warning("No completed trades found in scan_activity")
                 return None
 
             logger.info(f"Fetched {len(df)} completed trades for training")
@@ -308,6 +344,94 @@ class HERACLESMLAdvisor:
         except Exception as e:
             logger.error(f"Failed to fetch training data: {e}")
             return None
+
+    def get_training_data_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about available training data.
+
+        Returns counts of trades before/after parameter version date,
+        so users know when enough new data is available for ML training.
+        """
+        if not DB_AVAILABLE:
+            return {'error': 'Database not available'}
+
+        try:
+            from .models import PARAMETER_VERSION, PARAMETER_VERSION_DATE, PARAMETER_VERSION_DESCRIPTION
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get total trades
+            cursor.execute("""
+                SELECT COUNT(*) FROM heracles_scan_activity
+                WHERE trade_executed = true AND trade_outcome IS NOT NULL
+            """)
+            total_trades = cursor.fetchone()[0]
+
+            # Get old parameter trades (before version date)
+            cursor.execute(f"""
+                SELECT COUNT(*),
+                       SUM(CASE WHEN trade_outcome = 'WIN' THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN trade_outcome = 'LOSS' THEN 1 ELSE 0 END)
+                FROM heracles_scan_activity
+                WHERE trade_executed = true
+                  AND trade_outcome IS NOT NULL
+                  AND scan_time < '{PARAMETER_VERSION_DATE}'::timestamp
+            """)
+            old_row = cursor.fetchone()
+            old_trades = old_row[0] or 0
+            old_wins = old_row[1] or 0
+            old_losses = old_row[2] or 0
+
+            # Get new parameter trades (after version date)
+            cursor.execute(f"""
+                SELECT COUNT(*),
+                       SUM(CASE WHEN trade_outcome = 'WIN' THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN trade_outcome = 'LOSS' THEN 1 ELSE 0 END)
+                FROM heracles_scan_activity
+                WHERE trade_executed = true
+                  AND trade_outcome IS NOT NULL
+                  AND scan_time >= '{PARAMETER_VERSION_DATE}'::timestamp
+            """)
+            new_row = cursor.fetchone()
+            new_trades = new_row[0] or 0
+            new_wins = new_row[1] or 0
+            new_losses = new_row[2] or 0
+
+            conn.close()
+
+            # Calculate if ready for ML training
+            min_for_training = 50
+            ready_for_ml = new_trades >= min_for_training
+            trades_needed = max(0, min_for_training - new_trades)
+
+            return {
+                'parameter_version': PARAMETER_VERSION,
+                'parameter_version_date': PARAMETER_VERSION_DATE,
+                'parameter_description': PARAMETER_VERSION_DESCRIPTION,
+                'total_trades': total_trades,
+                'old_parameter_trades': {
+                    'count': old_trades,
+                    'wins': old_wins,
+                    'losses': old_losses,
+                    'win_rate': round(old_wins / old_trades * 100, 1) if old_trades > 0 else 0
+                },
+                'new_parameter_trades': {
+                    'count': new_trades,
+                    'wins': new_wins,
+                    'losses': new_losses,
+                    'win_rate': round(new_wins / new_trades * 100, 1) if new_trades > 0 else 0
+                },
+                'ready_for_ml_training': ready_for_ml,
+                'trades_needed_for_ml': trades_needed,
+                'recommendation': (
+                    "Ready to train ML on new parameter data!" if ready_for_ml
+                    else f"Collect {trades_needed} more trades with new parameters before training ML"
+                )
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get training data stats: {e}")
+            return {'error': str(e)}
 
     def _prepare_features(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -343,12 +467,16 @@ class HERACLESMLAdvisor:
 
         return X, y
 
-    def train(self, min_samples: int = None) -> Optional[HERACLESTrainingMetrics]:
+    def train(self, min_samples: int = None, use_new_params_only: bool = True) -> Optional[HERACLESTrainingMetrics]:
         """
         Train the ML model from scan_activity data.
 
         Args:
             min_samples: Minimum samples required (default: 50)
+            use_new_params_only: If True, only train on trades after PARAMETER_VERSION_DATE.
+                                 This ensures the model learns from quality data with
+                                 balanced risk/reward parameters. Set to False to train
+                                 on ALL historical data (not recommended).
 
         Returns:
             HERACLESTrainingMetrics if successful, None otherwise
@@ -361,8 +489,8 @@ class HERACLESMLAdvisor:
 
         min_samples = min_samples or self.min_samples_for_training
 
-        # Fetch training data
-        df = self.get_training_data()
+        # Fetch training data (filtered by parameter version if requested)
+        df = self.get_training_data(use_new_params_only=use_new_params_only)
         if df is None or len(df) < min_samples:
             sample_count = len(df) if df is not None else 0
             raise ValueError(f"Insufficient data: {sample_count} samples < {min_samples} required")
@@ -617,14 +745,29 @@ def get_heracles_ml_advisor() -> HERACLESMLAdvisor:
     return _advisor
 
 
-def train_heracles_ml(min_samples: int = 50) -> Optional[HERACLESTrainingMetrics]:
+def train_heracles_ml(min_samples: int = 50, use_new_params_only: bool = True) -> Optional[HERACLESTrainingMetrics]:
     """
     Train the HERACLES ML model.
 
     Convenience function for API/scheduler use.
+
+    Args:
+        min_samples: Minimum trades required for training (default 50)
+        use_new_params_only: Only train on trades after PARAMETER_VERSION_DATE (default True)
+                             Set to False to use ALL historical data (not recommended)
     """
     advisor = get_heracles_ml_advisor()
-    return advisor.train(min_samples=min_samples)
+    return advisor.train(min_samples=min_samples, use_new_params_only=use_new_params_only)
+
+
+def get_training_data_stats() -> Dict[str, Any]:
+    """
+    Get statistics about available training data (old vs new parameters).
+
+    Convenience function for API use.
+    """
+    advisor = get_heracles_ml_advisor()
+    return advisor.get_training_data_stats()
 
 
 def get_ml_win_probability(

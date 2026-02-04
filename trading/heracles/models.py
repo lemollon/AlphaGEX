@@ -17,6 +17,20 @@ from zoneinfo import ZoneInfo
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
+# =============================================================================
+# PARAMETER VERSION TRACKING
+# =============================================================================
+# This timestamp marks when the current risk/reward parameters were deployed.
+# ML training will ONLY use trades AFTER this date to ensure quality data.
+# Update this whenever you make significant parameter changes!
+#
+# History:
+# - v1.0 (original): activation=3.0, max_loss=8.0, no profit target
+# - v2.0 (2026-02-04): activation=0.75, max_loss=5.0, profit_target=4.0
+PARAMETER_VERSION = "2.0"
+PARAMETER_VERSION_DATE = "2026-02-04T00:00:00"  # ISO format, Central Time
+PARAMETER_VERSION_DESCRIPTION = "Rebalanced risk/reward: activation 0.75pts, max_loss 5pts, profit_target 4pts"
+
 # MES Contract Specifications
 MES_POINT_VALUE = 5.0  # $5 per index point
 MES_TICK_SIZE = 0.25   # Minimum price movement

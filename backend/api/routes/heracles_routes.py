@@ -650,17 +650,65 @@ async def get_heracles_ml_training_data():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/heracles/ml/training-data-stats")
+async def get_heracles_ml_training_data_stats():
+    """
+    Get statistics about ML training data quality.
+
+    Shows breakdown of trades BEFORE vs AFTER parameter version change.
+    ML should only be trained on NEW parameter trades to ensure
+    the model learns from quality data with balanced risk/reward.
+
+    Returns:
+    - parameter_version: Current parameter version
+    - parameter_version_date: When new parameters were deployed
+    - old_parameter_trades: Count/win_rate of trades with OLD parameters (garbage data)
+    - new_parameter_trades: Count/win_rate of trades with NEW parameters (quality data)
+    - ready_for_ml_training: True if enough new parameter trades exist
+    - trades_needed_for_ml: How many more trades needed before ML training
+    """
+    try:
+        from trading.heracles.ml import get_training_data_stats
+
+        stats = get_training_data_stats()
+
+        if 'error' in stats:
+            raise HTTPException(status_code=500, detail=stats['error'])
+
+        return {
+            **stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting ML training data stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # ML Model Training Endpoints
 # ============================================================================
 
 @router.post("/api/heracles/ml/train")
-async def train_heracles_ml_model(min_samples: int = 50):
+async def train_heracles_ml_model(
+    min_samples: int = 50,
+    use_new_params_only: bool = Query(
+        True,
+        description="Only train on trades AFTER parameter version date (recommended). "
+                    "Set to False to use all historical data (not recommended - old data has poor risk/reward)."
+    )
+):
     """
     Train the HERACLES ML model from scan_activity data.
 
     Trains an XGBoost classifier to predict trade win probability,
     replacing the Bayesian estimator with ML-enhanced predictions.
+
+    By default, only trains on trades AFTER the parameter version date.
+    This ensures the model learns from quality data with balanced risk/reward.
+    Old parameter trades had asymmetric risk/reward (big losses, small wins)
+    which produces a model that can't predict properly.
 
     Requires at least 50 samples (trades with recorded outcomes).
     Returns comparison with previous model if one exists.
@@ -685,19 +733,31 @@ async def train_heracles_ml_model(min_samples: int = 50):
                 "training_date": prev.training_date,
             }
 
-        # Get current data count first
-        training_df = advisor.get_training_data()
+        # Get current data count first (using new params filter)
+        training_df = advisor.get_training_data(use_new_params_only=use_new_params_only)
         if training_df is None or len(training_df) < min_samples:
             sample_count = len(training_df) if training_df is not None else 0
+
+            # Get stats about old vs new data for helpful error message
+            from trading.heracles.ml import get_training_data_stats
+            stats = get_training_data_stats()
+
             return {
                 "success": False,
                 "error": f"Insufficient training data. Have {sample_count} samples, need {min_samples}.",
                 "samples_available": sample_count,
-                "samples_required": min_samples
+                "samples_required": min_samples,
+                "use_new_params_only": use_new_params_only,
+                "data_breakdown": {
+                    "old_parameter_trades": stats.get('old_parameter_trades', {}).get('count', 0),
+                    "new_parameter_trades": stats.get('new_parameter_trades', {}).get('count', 0),
+                    "trades_needed": stats.get('trades_needed_for_ml', min_samples - sample_count),
+                    "recommendation": stats.get('recommendation', '')
+                }
             }
 
-        # Train the model
-        metrics = advisor.train(min_samples=min_samples)
+        # Train the model (with new params filter)
+        metrics = advisor.train(min_samples=min_samples, use_new_params_only=use_new_params_only)
 
         if not metrics:
             return {
