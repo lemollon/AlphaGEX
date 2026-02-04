@@ -119,6 +119,10 @@ class HERACLESTrader:
         self.daily_pnl: float = 0.0
         self._scan_count: int = 0  # Track scan number for direction tracker
 
+        # Loss streak tracking - pause after consecutive losses
+        self.consecutive_losses: int = 0
+        self.loss_streak_pause_until: Optional[datetime] = None
+
         # Initialize paper trading account if in paper mode
         if self.config.mode == TradingMode.PAPER:
             self.db.initialize_paper_account(self.config.capital)
@@ -246,6 +250,22 @@ class HERACLESTrader:
 
             # 2. Check for new signals (if room for more positions)
             open_count = len([p for p in self.db.get_open_positions()])
+
+            # Check loss streak pause
+            if self.loss_streak_pause_until:
+                now = datetime.now(CENTRAL_TZ)
+                if now < self.loss_streak_pause_until:
+                    remaining = (self.loss_streak_pause_until - now).total_seconds() / 60
+                    self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
+                                           skip_reason=f"Loss streak pause: {remaining:.1f} min remaining ({self.consecutive_losses} consecutive losses)")
+                    # Still manage existing positions, just skip new entries
+                    self.last_scan_time = now
+                    return scan_result
+                else:
+                    # Pause expired - reset and continue
+                    logger.info(f"Loss streak pause expired - resuming trading (was {self.consecutive_losses} losses)")
+                    self.loss_streak_pause_until = None
+                    # Keep consecutive_losses count - only reset on a win
 
             if open_count < self.config.max_open_positions:
                 # Generate signal
@@ -635,12 +655,14 @@ class HERACLESTrader:
             max_profit_pts = position.entry_price - high_water_price if high_water_price > 0 else profit_pts
 
         # ================================================================
-        # CHECK PROFIT TARGET (take profits instead of relying only on trail)
-        # This ensures we don't let winners turn into losers
+        # CHECK PROFIT TARGET (optional - set to 0 to disable and let winners run)
+        # When enabled (>0): takes profits at fixed level
+        # When disabled (0): relies on trailing stop for exits, unlimited upside
         # ================================================================
-        profit_target_pts = getattr(self.config, 'no_loss_profit_target_pts', 4.0)  # Default 4 pts
+        profit_target_pts = getattr(self.config, 'no_loss_profit_target_pts', 0.0)  # Default 0 (disabled)
 
-        if profit_pts >= profit_target_pts:
+        # Only check profit target if enabled (> 0)
+        if profit_target_pts > 0 and profit_pts >= profit_target_pts:
             logger.info(
                 f"Position {position.position_id}: PROFIT TARGET HIT at {current_price:.2f} "
                 f"(entry={position.entry_price:.2f}, profit={profit_pts:.1f} pts >= {profit_target_pts:.1f} pts target)"
@@ -893,6 +915,29 @@ class HERACLESTrader:
                     won = realized_pnl > 0
                     self.win_tracker.update(won, position.gamma_regime)
                     self.db.save_win_tracker(self.win_tracker)
+
+                    # Update loss streak tracking
+                    if won:
+                        # Reset streak on win
+                        if self.consecutive_losses > 0:
+                            logger.info(f"Loss streak reset (was {self.consecutive_losses})")
+                        self.consecutive_losses = 0
+                        self.loss_streak_pause_until = None
+                    else:
+                        # Increment streak on loss
+                        self.consecutive_losses += 1
+                        logger.warning(f"Consecutive losses: {self.consecutive_losses}")
+
+                        # Check if we need to pause
+                        max_losses = self.config.max_consecutive_losses
+                        if self.consecutive_losses >= max_losses:
+                            pause_minutes = self.config.loss_streak_pause_minutes
+                            self.loss_streak_pause_until = datetime.now(CENTRAL_TZ) + timedelta(minutes=pause_minutes)
+                            logger.warning(
+                                f"LOSS STREAK PAUSE: {self.consecutive_losses} consecutive losses - "
+                                f"pausing new entries until {self.loss_streak_pause_until.strftime('%H:%M:%S')} CT "
+                                f"({pause_minutes} min)"
+                            )
 
                     # Update direction tracker (for nimble direction switching)
                     from .signals import record_trade_outcome, get_direction_tracker
