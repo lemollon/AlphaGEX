@@ -67,10 +67,10 @@ def run_module_import_tests():
 
     # Test 3: Import scheduler
     try:
-        from scheduler.trader_scheduler import BotScheduler
-        log_result("Import BotScheduler", True)
+        from scheduler.trader_scheduler import AutonomousTraderScheduler
+        log_result("Import AutonomousTraderScheduler", True)
     except ImportError as e:
-        log_result("Import BotScheduler", False, str(e))
+        log_result("Import AutonomousTraderScheduler", False, str(e))
 
 
 def run_method_existence_tests():
@@ -110,11 +110,11 @@ def run_scheduler_integration_tests():
     print("\n=== SCHEDULER INTEGRATION TESTS ===")
 
     try:
-        from scheduler.trader_scheduler import BotScheduler
+        from scheduler.trader_scheduler import AutonomousTraderScheduler
 
         # Test 1: scheduled_heracles_position_monitor method exists
-        has_method = hasattr(BotScheduler, 'scheduled_heracles_position_monitor')
-        log_result("BotScheduler.scheduled_heracles_position_monitor() exists", has_method,
+        has_method = hasattr(AutonomousTraderScheduler, 'scheduled_heracles_position_monitor')
+        log_result("AutonomousTraderScheduler.scheduled_heracles_position_monitor() exists", has_method,
                   "Method not found" if not has_method else "")
 
         # Test 2: Check scheduler code contains 15-second interval
@@ -181,24 +181,33 @@ def run_stop_logic_tests():
     print("\n=== STOP LOSS LOGIC TESTS ===")
 
     try:
-        from trading.heracles.models import FuturesPosition, TradeDirection, PositionStatus
+        from trading.heracles.models import FuturesPosition, TradeDirection, PositionStatus, GammaRegime
         from datetime import datetime
         import pytz
 
         CENTRAL_TZ = pytz.timezone('America/Chicago')
+        MES_POINT_VALUE = 5.0  # $5 per point per contract
 
-        # Create test positions
+        # Create test positions with all required fields
         def create_test_position(direction: str, entry: float, stop: float) -> FuturesPosition:
+            contracts = 1
+            entry_value = entry * contracts * MES_POINT_VALUE
+            # Breakeven is typically entry + small buffer for commissions
+            breakeven_price = entry + 0.5 if direction == "LONG" else entry - 0.5
+
             return FuturesPosition(
                 position_id="TEST-001",
+                symbol="/MESH6",
                 direction=TradeDirection.LONG if direction == "LONG" else TradeDirection.SHORT,
                 entry_price=entry,
-                contracts=1,
+                entry_value=entry_value,
+                contracts=contracts,
                 initial_stop=stop,
                 current_stop=stop,
+                breakeven_price=breakeven_price,
                 status=PositionStatus.OPEN,
                 open_time=datetime.now(CENTRAL_TZ),
-                gamma_regime="POSITIVE"
+                gamma_regime=GammaRegime.POSITIVE
             )
 
         # Test 1: LONG stop hit (price below stop)
