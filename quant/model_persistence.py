@@ -225,6 +225,43 @@ def load_model_from_db(model_name: str, version: Optional[int] = None) -> Option
         return None
 
 
+def delete_model_from_db(model_name: str) -> bool:
+    """
+    Delete a model from the database.
+
+    Args:
+        model_name: The model identifier to delete
+
+    Returns:
+        True if deleted successfully, False otherwise
+    """
+    try:
+        conn = get_connection()
+        ensure_table(conn)
+        cursor = conn.cursor()
+
+        # Delete all versions of this model
+        cursor.execute("""
+            DELETE FROM ml_models
+            WHERE model_name = %s
+        """, (model_name,))
+
+        deleted_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        if deleted_count > 0:
+            print(f"[model_persistence] Deleted {deleted_count} version(s) of {model_name}")
+            return True
+        else:
+            print(f"[model_persistence] No model found to delete: {model_name}")
+            return True  # Still success - model doesn't exist
+
+    except Exception as e:
+        print(f"[model_persistence] Error deleting {model_name}: {e}")
+        return False
+
+
 def get_model_info(model_name: str) -> Optional[Dict]:
     """Get metadata about a stored model without loading it"""
     try:
