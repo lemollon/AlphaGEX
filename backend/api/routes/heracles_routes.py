@@ -1083,7 +1083,7 @@ async def disable_heracles_ab_test():
         return {
             "success": success,
             "ab_test_enabled": is_ab_test_enabled(),
-            "message": "A/B test disabled - all trades use DYNAMIC stops" if success else "Failed to disable A/B test",
+            "message": "A/B test disabled - all trades use FIXED stops (2.5 pts / $12.50 max loss)" if success else "Failed to disable A/B test",
             "timestamp": datetime.now().isoformat()
         }
 

@@ -117,6 +117,7 @@ class HERACLESTrader:
         self.last_scan_time: Optional[datetime] = None
         self.daily_trades: int = 0
         self.daily_pnl: float = 0.0
+        self._scan_count: int = 0  # Track scan number for direction tracker
 
         # Initialize paper trading account if in paper mode
         if self.config.mode == TradingMode.PAPER:
@@ -146,6 +147,12 @@ class HERACLESTrader:
         """
         # Generate unique scan ID for ML tracking
         scan_id = f"HERACLES-SCAN-{uuid.uuid4().hex[:12]}"
+
+        # Increment scan counter and update direction tracker
+        self._scan_count += 1
+        from .signals import get_direction_tracker
+        direction_tracker = get_direction_tracker()
+        direction_tracker.update_scan(self._scan_count)
 
         scan_result = {
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
@@ -347,15 +354,36 @@ class HERACLESTrader:
             positions = self.db.get_open_positions()
             result["positions_checked"] = len(positions)
 
+            # Periodic heartbeat log (every ~1 min = every 4th call at 15-sec intervals)
+            if not hasattr(self, '_monitor_call_count'):
+                self._monitor_call_count = 0
+            self._monitor_call_count += 1
+            if self._monitor_call_count % 4 == 1:
+                logger.info(f"MONITOR HEARTBEAT: Price={current_price:.2f}, Open positions={len(positions)}")
+
             if not positions:
                 return result
+
+            # Log monitor check with position details
+            for position in positions:
+                distance_to_stop = abs(current_price - position.current_stop)
+                distance_to_target = abs(current_price - (position.entry_price + self.config.profit_target_points if position.direction == TradeDirection.LONG else position.entry_price - self.config.profit_target_points))
+                logger.debug(
+                    f"MONITOR: {position.direction.value} @ {position.entry_price:.2f} | "
+                    f"Price: {current_price:.2f} | Stop: {position.current_stop:.2f} ({distance_to_stop:.2f} away) | "
+                    f"Target: {distance_to_target:.2f} away"
+                )
 
             # Check each position
             for position in positions:
                 closed = self._manage_position(position, current_price)
                 if closed:
                     result["positions_closed"] += 1
-                    logger.info(f"MONITOR: Position {position.position_id} closed at {current_price}")
+                    logger.info(
+                        f"MONITOR CLOSED: {position.position_id[:8]} | {position.direction.value} | "
+                        f"Entry: {position.entry_price:.2f} | Exit: {current_price:.2f} | "
+                        f"Stop was: {position.current_stop:.2f}"
+                    )
 
         except Exception as e:
             logger.warning(f"Position monitor error: {e}")
@@ -641,6 +669,19 @@ class HERACLESTrader:
                     won = realized_pnl > 0
                     self.win_tracker.update(won, position.gamma_regime)
                     self.db.save_win_tracker(self.win_tracker)
+
+                    # Update direction tracker (for nimble direction switching)
+                    from .signals import record_trade_outcome, get_direction_tracker
+                    direction_tracker = get_direction_tracker()
+                    record_trade_outcome(
+                        direction=position.direction.value,
+                        is_win=won,
+                        scan_number=direction_tracker.current_scan
+                    )
+                    logger.info(
+                        f"Direction tracker updated: {position.direction.value} {'WIN' if won else 'LOSS'}, "
+                        f"status={direction_tracker.get_status()}"
+                    )
 
                     # Record outcome to Oracle ML for feedback loop
                     self._record_oracle_outcome(position, reason, realized_pnl)

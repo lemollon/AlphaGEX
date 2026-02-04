@@ -283,7 +283,8 @@ class HERACLESConfig:
 
     # Trading hours (24/5 - futures trade nearly 24 hours)
     # Futures trade Sun 5pm CT - Fri 4pm CT with daily 4pm-5pm CT break
-    use_overnight_gex: bool = True  # Use n+1 GEX for overnight
+    trade_overnight: bool = True  # Allow overnight trading (futures trade 24/5)
+    use_overnight_gex: bool = True  # Use n+1 GEX for overnight (if trading overnight)
     avoid_news_minutes: int = 30  # Reduce size 30 min before major news
 
     # No daily loss limit as requested
