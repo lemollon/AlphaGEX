@@ -635,12 +635,14 @@ class HERACLESTrader:
             max_profit_pts = position.entry_price - high_water_price if high_water_price > 0 else profit_pts
 
         # ================================================================
-        # CHECK PROFIT TARGET (take profits instead of relying only on trail)
-        # This ensures we don't let winners turn into losers
+        # CHECK PROFIT TARGET (optional - set to 0 to disable and let winners run)
+        # When enabled (>0): takes profits at fixed level
+        # When disabled (0): relies on trailing stop for exits, unlimited upside
         # ================================================================
-        profit_target_pts = getattr(self.config, 'no_loss_profit_target_pts', 4.0)  # Default 4 pts
+        profit_target_pts = getattr(self.config, 'no_loss_profit_target_pts', 0.0)  # Default 0 (disabled)
 
-        if profit_pts >= profit_target_pts:
+        # Only check profit target if enabled (> 0)
+        if profit_target_pts > 0 and profit_pts >= profit_target_pts:
             logger.info(
                 f"Position {position.position_id}: PROFIT TARGET HIT at {current_price:.2f} "
                 f"(entry={position.entry_price:.2f}, profit={profit_pts:.1f} pts >= {profit_target_pts:.1f} pts target)"

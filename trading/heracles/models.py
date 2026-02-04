@@ -27,9 +27,10 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 # History:
 # - v1.0 (original): activation=3.0, max_loss=8.0, no profit target
 # - v2.0 (2026-02-04): activation=0.75, max_loss=5.0, profit_target=4.0
-PARAMETER_VERSION = "2.0"
+# - v2.1 (2026-02-04): REMOVED profit_target cap, let winners run with trailing stop
+PARAMETER_VERSION = "2.1"
 PARAMETER_VERSION_DATE = "2026-02-04T00:00:00"  # ISO format, Central Time
-PARAMETER_VERSION_DESCRIPTION = "Rebalanced risk/reward: activation 0.75pts, max_loss 5pts, profit_target 4pts"
+PARAMETER_VERSION_DESCRIPTION = "Let winners run: no profit cap, trail at +0.75pts, max loss 5pts"
 
 # MES Contract Specifications
 MES_POINT_VALUE = 5.0  # $5 per index point
@@ -285,7 +286,9 @@ class HERACLESConfig:
     # At 0.75, trailing activates for trades showing even modest initial promise
     no_loss_trail_distance: float = 1.5  # How far behind price to trail (was 2.0)
     no_loss_emergency_stop: float = 15.0  # Emergency stop for catastrophic moves only
-    no_loss_profit_target_pts: float = 4.0  # Take profit target (new - don't just rely on trail)
+    no_loss_profit_target_pts: float = 0.0  # DISABLED - let winners run with trailing stop
+    # Set to 0 to disable profit target cap. Winners exit via trailing stop only.
+    # This allows unlimited upside while max_loss (5pts) caps downside.
 
     # MAX UNREALIZED LOSS RULE - Safety net between normal trading and emergency stop
     # Problem: At 8pts ($40/contract) losses were too large vs wins (asymmetric risk/reward)
