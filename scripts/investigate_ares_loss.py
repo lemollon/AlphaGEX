@@ -130,9 +130,9 @@ def get_ares_trades(conn, target_date: str) -> list:
         trade = dict(zip(columns, row))
         # Convert datetime to string for JSON serialization
         if trade['open_time']:
-            trade['open_time'] = trade['open_time'].isoformat()
+            trade['open_time'] = str(trade['open_time']) if isinstance(trade['open_time'], str) else trade['open_time'].isoformat()
         if trade['close_time']:
-            trade['close_time'] = trade['close_time'].isoformat()
+            trade['close_time'] = str(trade['close_time']) if isinstance(trade['close_time'], str) else trade['close_time'].isoformat()
         if trade['expiration']:
             trade['expiration'] = str(trade['expiration'])
         trades.append(trade)
@@ -234,9 +234,9 @@ def get_pegasus_trades(conn, target_date: str) -> list:
     for row in c.fetchall():
         trade = dict(zip(columns, row))
         if trade['open_time']:
-            trade['open_time'] = trade['open_time'].isoformat()
+            trade['open_time'] = str(trade['open_time']) if isinstance(trade['open_time'], str) else trade['open_time'].isoformat()
         if trade['close_time']:
-            trade['close_time'] = trade['close_time'].isoformat()
+            trade['close_time'] = str(trade['close_time']) if isinstance(trade['close_time'], str) else trade['close_time'].isoformat()
         if trade['expiration']:
             trade['expiration'] = str(trade['expiration'])
         trades.append(trade)
