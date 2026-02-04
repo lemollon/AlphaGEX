@@ -2083,6 +2083,324 @@ def _generate_combined_signal(
     }
 
 
+# =============================================================================
+# OPTIONS FLOW DIAGNOSTICS - Trading Volatility Style
+# =============================================================================
+
+@router.get("/flow-diagnostics")
+async def get_flow_diagnostics(
+    symbol: str = Query("SPY", description="Symbol (SPY, SPX, QQQ, IWM, DIA, GLD, etc.)"),
+    expiration: Optional[str] = Query(None, description="Expiration date YYYY-MM-DD")
+):
+    """
+    Get Trading Volatility-style Options Flow Diagnostics.
+
+    Returns 6 diagnostic cards analyzing options flow:
+    1. Call vs Put Volume Pressure
+    2. Short-DTE Call Share
+    3. Call Share of Options Flow
+    4. Lotto Turnover vs Open Interest
+    5. Far-OTM Call Share
+    6. Lotto Share of Call Tape
+
+    Plus:
+    - Call Structure Classification (Hedging/Overwrite/Speculation)
+    - Skew Measures (Skew Ratio, Call Skew)
+    - Overall Rating (BULLISH/BEARISH/NEUTRAL)
+    - Net GEX estimate
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Determine expiration
+        if not expiration:
+            expiration = engine.get_0dte_expiration('today')
+
+        # Fetch raw data
+        raw_data = await fetch_gamma_data(symbol, expiration)
+
+        if raw_data.get('data_unavailable'):
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": raw_data.get('reason', 'Data unavailable'),
+                "message": raw_data.get('message', 'Unable to fetch options data')
+            }
+
+        spot_price = raw_data.get('spot_price', 0)
+        vix = raw_data.get('vix', 0)
+
+        if spot_price <= 0:
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": "Invalid spot price",
+                "message": "Cannot calculate diagnostics without valid spot price"
+            }
+
+        # Process the options chain to get strike data
+        snapshot = engine.process_options_chain(
+            raw_data,
+            spot_price,
+            vix,
+            expiration
+        )
+
+        # Calculate flow diagnostics
+        diagnostics = engine.calculate_options_flow_diagnostics(
+            strikes=snapshot.strikes,
+            spot_price=spot_price,
+            expected_move=snapshot.expected_move
+        )
+
+        # Add header metrics like Trading Volatility
+        header_metrics = {
+            'price': round(spot_price, 2),
+            'gex_flip': None,  # Will be calculated from strikes
+            '30_day_vol': round(vix, 1) if vix else None,
+            'call_structure': diagnostics['call_structure']['structure'],
+            'gex_at_expiration': diagnostics['summary']['net_gex'],
+            'net_gex': diagnostics['summary']['net_gex'],
+            'rating': diagnostics['rating']['rating'],
+            'gamma_form': snapshot.gamma_regime
+        }
+
+        # Find GEX flip point from strikes
+        if snapshot.strikes:
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                curr_gamma = strike.net_gamma
+                next_gamma = snapshot.strikes[i + 1].net_gamma if i + 1 < len(snapshot.strikes) else 0
+                if curr_gamma * next_gamma < 0:
+                    # Interpolate flip point
+                    if curr_gamma != next_gamma:
+                        ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma))
+                        header_metrics['gex_flip'] = round(strike.strike + ratio * (snapshot.strikes[i + 1].strike - strike.strike), 2)
+                    else:
+                        header_metrics['gex_flip'] = strike.strike
+                    break
+
+        # Build strike data for GEX chart (similar to Trading Volatility)
+        gex_chart_data = []
+        for s in snapshot.strikes:
+            gex_chart_data.append({
+                'strike': s.strike,
+                'net_gamma': s.net_gamma,
+                'call_gamma': s.call_gamma,
+                'put_gamma': s.put_gamma,
+                'call_volume': s.call_volume,
+                'put_volume': s.put_volume,
+                'call_iv': round(s.call_iv * 100, 1) if s.call_iv else None,
+                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None
+            })
+
+        # Calculate ±1 standard deviation bounds
+        em = snapshot.expected_move
+        upper_1sd = round(spot_price + em, 2) if em else None
+        lower_1sd = round(spot_price - em, 2) if em else None
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "expiration": expiration,
+                "timestamp": format_central_timestamp(),
+                "header_metrics": header_metrics,
+                "diagnostics": diagnostics['diagnostics'],
+                "call_structure": diagnostics['call_structure'],
+                "skew_measures": diagnostics['skew_measures'],
+                "rating": diagnostics['rating'],
+                "summary": diagnostics['summary'],
+                "chart_data": {
+                    "strikes": gex_chart_data,
+                    "price": spot_price,
+                    "upper_1sd": upper_1sd,
+                    "lower_1sd": lower_1sd,
+                    "gex_flip": header_metrics['gex_flip'],
+                    "expected_move": em
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting flow diagnostics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gex-analysis")
+async def get_gex_analysis(
+    symbol: str = Query("SPY", description="Symbol (SPY, SPX, QQQ, IWM, DIA, GLD, etc.)"),
+    expiration: Optional[str] = Query(None, description="Specific expiration YYYY-MM-DD (optional)")
+):
+    """
+    Comprehensive GEX analysis similar to Trading Volatility.
+
+    Returns:
+    - Header metrics (price, GEX flip, 30-day vol, structure, rating)
+    - Options Flow Diagnostics (6 cards)
+    - Skew Measures
+    - GEX by strike for both specific expiration and all expirations
+    - Key levels (±1σ, flip point, call/put walls)
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Determine expiration
+        target_expiration = expiration
+        if not target_expiration:
+            target_expiration = engine.get_0dte_expiration('today')
+
+        # Fetch data for specific expiration
+        raw_data = await fetch_gamma_data(symbol, target_expiration)
+
+        if raw_data.get('data_unavailable'):
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": raw_data.get('reason', 'Data unavailable'),
+                "message": raw_data.get('message', 'Unable to fetch options data'),
+                "symbol": symbol
+            }
+
+        spot_price = raw_data.get('spot_price', 0)
+        vix = raw_data.get('vix', 0)
+
+        if spot_price <= 0:
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": "Invalid spot price",
+                "message": "Cannot calculate GEX without valid spot price"
+            }
+
+        # Process the options chain
+        snapshot = engine.process_options_chain(
+            raw_data,
+            spot_price,
+            vix,
+            target_expiration
+        )
+
+        # Calculate flow diagnostics
+        diagnostics = engine.calculate_options_flow_diagnostics(
+            strikes=snapshot.strikes,
+            spot_price=spot_price,
+            expected_move=snapshot.expected_move
+        )
+
+        # Find key levels
+        flip_point = None
+        call_wall = None
+        put_wall = None
+        max_call_gamma_strike = None
+        max_put_gamma_strike = None
+        max_call_gamma = 0
+        max_put_gamma = 0
+
+        if snapshot.strikes:
+            # Find flip point
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                curr_gamma = strike.net_gamma
+                next_gamma = snapshot.strikes[i + 1].net_gamma
+                if curr_gamma * next_gamma < 0:
+                    ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma)) if curr_gamma != next_gamma else 0.5
+                    flip_point = round(strike.strike + ratio * (snapshot.strikes[i + 1].strike - strike.strike), 2)
+                    break
+
+            # Find call and put walls
+            for s in snapshot.strikes:
+                if s.strike > spot_price and abs(s.net_gamma) > max_call_gamma:
+                    max_call_gamma = abs(s.net_gamma)
+                    call_wall = s.strike
+                    max_call_gamma_strike = s
+                if s.strike < spot_price and abs(s.net_gamma) > max_put_gamma:
+                    max_put_gamma = abs(s.net_gamma)
+                    put_wall = s.strike
+                    max_put_gamma_strike = s
+
+        # Expected move bounds
+        em = snapshot.expected_move
+        upper_1sd = round(spot_price + em, 2) if em else None
+        lower_1sd = round(spot_price - em, 2) if em else None
+
+        # Build GEX chart data
+        gex_by_strike = []
+        for s in snapshot.strikes:
+            gex_by_strike.append({
+                'strike': s.strike,
+                'net_gamma': round(s.net_gamma, 4),
+                'call_gamma': round(s.call_gamma, 6),
+                'put_gamma': round(s.put_gamma, 6),
+                'call_volume': s.call_volume,
+                'put_volume': s.put_volume,
+                'total_volume': s.volume,
+                'call_iv': round(s.call_iv * 100, 1) if s.call_iv else None,
+                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "timestamp": format_central_timestamp(),
+                "expiration": target_expiration,
+
+                # Header metrics (like Trading Volatility top bar)
+                "header": {
+                    "price": round(spot_price, 2),
+                    "gex_flip": flip_point,
+                    "30_day_vol": round(vix, 1) if vix else None,
+                    "call_structure": diagnostics['call_structure']['structure'],
+                    "gex_at_expiration": diagnostics['summary']['net_gex'],
+                    "net_gex": diagnostics['summary']['net_gex'],
+                    "rating": diagnostics['rating']['rating'],
+                    "gamma_form": snapshot.gamma_regime
+                },
+
+                # Options Flow Diagnostics (6 cards)
+                "flow_diagnostics": {
+                    "cards": diagnostics['diagnostics'],
+                    "note": "Volume-based metrics stabilize later in the session as trading activity accumulates"
+                },
+
+                # Skew Measures panel
+                "skew_measures": diagnostics['skew_measures'],
+
+                # Overall rating
+                "rating": diagnostics['rating'],
+
+                # Key levels
+                "levels": {
+                    "price": round(spot_price, 2),
+                    "upper_1sd": upper_1sd,
+                    "lower_1sd": lower_1sd,
+                    "gex_flip": flip_point,
+                    "call_wall": call_wall,
+                    "put_wall": put_wall,
+                    "expected_move": round(em, 2) if em else None
+                },
+
+                # GEX chart data
+                "gex_chart": {
+                    "expiration": target_expiration,
+                    "strikes": gex_by_strike,
+                    "total_net_gamma": snapshot.total_net_gamma,
+                    "gamma_regime": snapshot.gamma_regime
+                },
+
+                # Summary stats
+                "summary": diagnostics['summary']
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting GEX analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/history")
 async def get_gamma_history(
     strike: Optional[float] = Query(None, description="Specific strike to get history for"),

@@ -2084,6 +2084,577 @@ class ArgusEngine:
             return True
         return False
 
+    # ==================== OPTIONS FLOW DIAGNOSTICS ====================
+    # Trading Volatility-style analysis
+
+    def calculate_options_flow_diagnostics(
+        self,
+        strikes: List[StrikeData],
+        spot_price: float,
+        expected_move: float = 0.0
+    ) -> Dict:
+        """
+        Calculate Trading Volatility-style Options Flow Diagnostics.
+
+        These metrics provide insight into:
+        - Volume imbalance (call vs put pressure)
+        - Position structure (hedging vs speculation)
+        - Far-OTM "lotto" activity
+        - IV skew indicators
+
+        Args:
+            strikes: List of StrikeData objects from options chain
+            spot_price: Current spot price
+            expected_move: Expected move in dollars (for OTM classification)
+
+        Returns:
+            Dict with 6 diagnostic cards + skew measures + overall rating
+        """
+        if not strikes or spot_price <= 0:
+            return self._empty_flow_diagnostics()
+
+        # Aggregate volume and OI
+        total_call_volume = 0
+        total_put_volume = 0
+        total_call_oi = 0
+        total_put_oi = 0
+
+        # Far-OTM tracking (lotto = low delta, far from ATM)
+        # Define far-OTM as > 1.5 expected moves from spot
+        otm_threshold = expected_move * 1.5 if expected_move > 0 else spot_price * 0.02
+        far_otm_call_volume = 0
+        far_otm_put_volume = 0
+        far_otm_call_oi = 0
+        far_otm_put_oi = 0
+
+        # Near-ATM tracking (within 1 expected move)
+        near_atm_call_volume = 0
+        near_atm_put_volume = 0
+
+        # Bid/ask activity for structure classification
+        total_call_bid_size = 0
+        total_call_ask_size = 0
+        total_put_bid_size = 0
+        total_put_ask_size = 0
+
+        # IV tracking for skew
+        atm_call_iv = None
+        atm_put_iv = None
+        otm_call_ivs = []  # For 25-delta region
+        otm_put_ivs = []
+
+        atm_distance = float('inf')
+
+        for s in strikes:
+            strike = s.strike
+            call_vol = s.call_volume
+            put_vol = s.put_volume
+
+            # Estimate OI from gamma if not available (gamma proportional to OI)
+            # In real data, we'd have actual OI
+            call_oi = getattr(s, 'call_oi', 0) or int(abs(s.call_gamma) * 10000)
+            put_oi = getattr(s, 'put_oi', 0) or int(abs(s.put_gamma) * 10000)
+
+            total_call_volume += call_vol
+            total_put_volume += put_vol
+            total_call_oi += call_oi
+            total_put_oi += put_oi
+
+            # Classify by moneyness
+            distance_from_spot = strike - spot_price
+
+            # Calls: far OTM if strike >> spot
+            # Puts: far OTM if strike << spot
+            is_far_otm_call = distance_from_spot > otm_threshold  # Deep OTM call
+            is_far_otm_put = distance_from_spot < -otm_threshold  # Deep OTM put
+            is_near_atm = abs(distance_from_spot) <= (expected_move if expected_move > 0 else spot_price * 0.01)
+
+            if is_far_otm_call:
+                far_otm_call_volume += call_vol
+                far_otm_call_oi += call_oi
+                if s.call_iv > 0:
+                    otm_call_ivs.append(s.call_iv)
+
+            if is_far_otm_put:
+                far_otm_put_volume += put_vol
+                far_otm_put_oi += put_oi
+                if s.put_iv > 0:
+                    otm_put_ivs.append(s.put_iv)
+
+            if is_near_atm:
+                near_atm_call_volume += call_vol
+                near_atm_put_volume += put_vol
+
+            # Track ATM strike for IV reference
+            if abs(distance_from_spot) < atm_distance:
+                atm_distance = abs(distance_from_spot)
+                atm_call_iv = s.call_iv
+                atm_put_iv = s.put_iv
+
+            # Aggregate bid/ask sizes
+            total_call_bid_size += s.call_bid_size
+            total_call_ask_size += s.call_ask_size
+            total_put_bid_size += s.put_bid_size
+            total_put_ask_size += s.put_ask_size
+
+        # Calculate diagnostic metrics
+        total_volume = total_call_volume + total_put_volume
+        total_oi = total_call_oi + total_put_oi
+
+        # 1. CALL VS PUT VOLUME PRESSURE
+        # Range: -1 (all puts) to +1 (all calls)
+        if total_volume > 0:
+            volume_pressure = (total_call_volume - total_put_volume) / total_volume
+        else:
+            volume_pressure = 0.0
+
+        # Pressure interpretation
+        if volume_pressure > 0.3:
+            pressure_label = "Strong call pressure"
+            pressure_description = "Call volume overwhelms put volume"
+        elif volume_pressure > 0.1:
+            pressure_label = "Call-leaning pressure"
+            pressure_description = "Call volume exceeds put volume"
+        elif volume_pressure < -0.3:
+            pressure_label = "Strong put pressure"
+            pressure_description = "Put volume overwhelms call volume"
+        elif volume_pressure < -0.1:
+            pressure_label = "Put-leaning pressure"
+            pressure_description = "Put volume exceeds call volume"
+        else:
+            pressure_label = "Balanced flow"
+            pressure_description = "Call and put volume roughly equal"
+
+        # 2. SHORT-DTE DOMINANCE (using near-ATM as proxy for 0DTE activity)
+        # Since we're looking at 0DTE chain, all is short-dated
+        # But we can look at ATM vs OTM distribution
+        if total_call_volume > 0:
+            near_atm_call_share = (near_atm_call_volume / total_call_volume) * 100
+        else:
+            near_atm_call_share = 0.0
+
+        if near_atm_call_share > 60:
+            dte_label = "Short-dated call dominance"
+            dte_description = "Near-term options activity is strongly call-dominated"
+        elif near_atm_call_share > 40:
+            dte_label = "Mixed ATM/OTM activity"
+            dte_description = "Activity spread across near and far strikes"
+        else:
+            dte_label = "Far-strike dominated"
+            dte_description = "Most activity is in far-from-ATM strikes"
+
+        # 3. CALL SHARE OF OPTIONS FLOW
+        if total_volume > 0:
+            call_share = (total_call_volume / total_volume) * 100
+        else:
+            call_share = 50.0
+
+        if call_share > 60:
+            flow_label = "Call-leaning flow"
+            flow_description = "Options activity tilts toward calls"
+        elif call_share < 40:
+            flow_label = "Put-leaning flow"
+            flow_description = "Options activity tilts toward puts"
+        else:
+            flow_label = "Balanced flow"
+            flow_description = "Options activity balanced between calls and puts"
+
+        # 4. LOTTO TURNOVER VS OPEN INTEREST
+        # Lotto = far OTM options (cheap, low delta, lottery tickets)
+        lotto_volume = far_otm_call_volume + far_otm_put_volume
+        lotto_oi = far_otm_call_oi + far_otm_put_oi
+
+        if lotto_oi > 0:
+            lotto_turnover = lotto_volume / lotto_oi
+        else:
+            lotto_turnover = 0.0
+
+        if lotto_turnover > 0.5:
+            lotto_label = "High lotto turnover"
+            lotto_description = "Today's lotto volume is high vs existing open interest"
+        elif lotto_turnover > 0.2:
+            lotto_label = "Moderate lotto activity"
+            lotto_description = "Average lotto activity relative to open interest"
+        else:
+            lotto_label = "Little new lotto activity"
+            lotto_description = "Today's lotto call volume is small compared to existing lotto open interest"
+
+        # 5. FAR-OTM CALL SHARE
+        if total_call_volume > 0:
+            far_otm_call_share = (far_otm_call_volume / total_call_volume) * 100
+        else:
+            far_otm_call_share = 0.0
+
+        if far_otm_call_share > 30:
+            otm_label = "Far-OTM heavy"
+            otm_description = "Significant call volume is far out-of-the-money"
+        elif far_otm_call_share < 10:
+            otm_label = "Mostly near-ATM / structured"
+            otm_description = "Most call volume is not far out-of-the-money"
+        else:
+            otm_label = "Mixed moneyness"
+            otm_description = "Moderate mix of near-ATM and far-OTM activity"
+
+        # 6. LOTTO SHARE OF CALL TAPE
+        if total_call_volume > 0:
+            lotto_call_share = (far_otm_call_volume / total_call_volume) * 100
+        else:
+            lotto_call_share = 0.0
+
+        if lotto_call_share > 30:
+            tape_label = "Lotto-heavy call tape"
+            tape_description = "A large share of call volume is concentrated in low-delta calls"
+        elif lotto_call_share > 15:
+            tape_label = "Moderate lotto activity"
+            tape_description = "Some call volume in far OTM strikes"
+        else:
+            tape_label = "Low lotto activity"
+            tape_description = "Most call volume is in higher-delta strikes"
+
+        # ==================== CALL STRUCTURE CLASSIFICATION ====================
+        call_structure = self._classify_call_structure(
+            total_call_volume=total_call_volume,
+            total_put_volume=total_put_volume,
+            total_call_bid_size=total_call_bid_size,
+            total_call_ask_size=total_call_ask_size,
+            far_otm_call_volume=far_otm_call_volume,
+            near_atm_call_volume=near_atm_call_volume,
+            total_call_oi=total_call_oi
+        )
+
+        # ==================== SKEW MEASURES ====================
+        skew_measures = self._calculate_skew_measures(
+            atm_call_iv=atm_call_iv,
+            atm_put_iv=atm_put_iv,
+            otm_call_ivs=otm_call_ivs,
+            otm_put_ivs=otm_put_ivs
+        )
+
+        # ==================== OVERALL RATING ====================
+        rating = self._calculate_flow_rating(
+            volume_pressure=volume_pressure,
+            call_share=call_share,
+            skew_ratio=skew_measures.get('skew_ratio', 1.0)
+        )
+
+        return {
+            'diagnostics': [
+                {
+                    'id': 'volume_pressure',
+                    'label': pressure_label,
+                    'metric_name': 'CALL VS PUT VOLUME PRESSURE',
+                    'metric_value': f"{volume_pressure:+.3f}",
+                    'description': pressure_description,
+                    'raw_value': round(volume_pressure, 4)
+                },
+                {
+                    'id': 'short_dte_share',
+                    'label': dte_label,
+                    'metric_name': 'SHORT-DTE CALL SHARE',
+                    'metric_value': f"{near_atm_call_share:.0f}%",
+                    'description': dte_description,
+                    'raw_value': round(near_atm_call_share, 1)
+                },
+                {
+                    'id': 'call_share',
+                    'label': flow_label,
+                    'metric_name': 'CALL SHARE OF OPTIONS FLOW',
+                    'metric_value': f"{call_share:.0f}%",
+                    'description': flow_description,
+                    'raw_value': round(call_share, 1)
+                },
+                {
+                    'id': 'lotto_turnover',
+                    'label': lotto_label,
+                    'metric_name': 'LOTTO TURNOVER VS OPEN INTEREST',
+                    'metric_value': f"{lotto_turnover:.2f}",
+                    'description': lotto_description,
+                    'raw_value': round(lotto_turnover, 3)
+                },
+                {
+                    'id': 'far_otm_share',
+                    'label': otm_label,
+                    'metric_name': 'FAR-OTM CALL SHARE',
+                    'metric_value': f"{far_otm_call_share:.0f}%",
+                    'description': otm_description,
+                    'raw_value': round(far_otm_call_share, 1)
+                },
+                {
+                    'id': 'lotto_tape_share',
+                    'label': tape_label,
+                    'metric_name': 'LOTTO SHARE OF CALL TAPE',
+                    'metric_value': f"{lotto_call_share:.0f}%",
+                    'description': tape_description,
+                    'raw_value': round(lotto_call_share, 1)
+                }
+            ],
+            'call_structure': call_structure,
+            'skew_measures': skew_measures,
+            'rating': rating,
+            'summary': {
+                'total_call_volume': total_call_volume,
+                'total_put_volume': total_put_volume,
+                'total_volume': total_volume,
+                'total_call_oi': total_call_oi,
+                'total_put_oi': total_put_oi,
+                'put_call_ratio': round(total_put_volume / total_call_volume, 3) if total_call_volume > 0 else 0,
+                'net_gex': self._estimate_net_gex(strikes, spot_price)
+            }
+        }
+
+    def _classify_call_structure(
+        self,
+        total_call_volume: int,
+        total_put_volume: int,
+        total_call_bid_size: int,
+        total_call_ask_size: int,
+        far_otm_call_volume: int,
+        near_atm_call_volume: int,
+        total_call_oi: int
+    ) -> Dict:
+        """
+        Classify the call structure as Hedging, Overwrite, or Speculation.
+
+        - Hedging: Protective puts dominate, calls used for portfolio protection
+        - Overwrite (Covered Call): Call selling dominates (ask > bid), near-ATM focus
+        - Speculation: Call buying dominates (bid > ask), far-OTM focus
+        """
+        # Call bid vs ask imbalance
+        if total_call_bid_size + total_call_ask_size > 0:
+            call_buying_pressure = (total_call_bid_size - total_call_ask_size) / (total_call_bid_size + total_call_ask_size)
+        else:
+            call_buying_pressure = 0.0
+
+        # Determine structure
+        if total_put_volume > total_call_volume * 1.3:
+            # Puts dominate - likely hedging activity
+            structure = "Hedging / Protective"
+            structure_description = "Put activity exceeds calls, suggesting portfolio protection"
+        elif call_buying_pressure < -0.2 and near_atm_call_volume > far_otm_call_volume:
+            # Sellers dominating near ATM - covered call writing
+            structure = "Hedging / Overwrite"
+            structure_description = "Call selling near ATM suggests covered call activity"
+        elif call_buying_pressure > 0.2 and far_otm_call_volume > near_atm_call_volume * 0.5:
+            # Buyers dominating far OTM - speculation
+            structure = "Speculation / Directional"
+            structure_description = "Aggressive call buying in far OTM strikes"
+        elif call_buying_pressure > 0.1:
+            # Moderate buying pressure
+            structure = "Bullish / Accumulation"
+            structure_description = "Net call buying suggests bullish positioning"
+        else:
+            # Balanced or neutral
+            structure = "Balanced / Mixed"
+            structure_description = "No clear directional bias in options flow"
+
+        return {
+            'structure': structure,
+            'description': structure_description,
+            'call_buying_pressure': round(call_buying_pressure, 3),
+            'is_hedging': 'Hedging' in structure,
+            'is_overwrite': 'Overwrite' in structure,
+            'is_speculation': 'Speculation' in structure
+        }
+
+    def _calculate_skew_measures(
+        self,
+        atm_call_iv: Optional[float],
+        atm_put_iv: Optional[float],
+        otm_call_ivs: List[float],
+        otm_put_ivs: List[float]
+    ) -> Dict:
+        """
+        Calculate IV skew measures similar to Trading Volatility.
+
+        - Skew Ratio: 25-delta put IV / 25-delta call IV
+          Values > 1 indicate stronger downside hedging demand
+          Values < 1 indicate call-side skew (bullish)
+
+        - Call Skew: Difference in delta between OTM calls and puts
+          Positive = call-side demand
+        """
+        # Skew ratio: put IV / call IV
+        # Using ATM as proxy if 25-delta not available
+        skew_ratio = 1.0
+        skew_description = "Normal skew"
+
+        if atm_put_iv and atm_call_iv and atm_call_iv > 0:
+            skew_ratio = atm_put_iv / atm_call_iv
+
+            if skew_ratio > 1.1:
+                skew_description = "Put skew (bearish hedging demand)"
+            elif skew_ratio < 0.9:
+                skew_description = "Call skew (bullish sentiment)"
+            else:
+                skew_description = "Normal skew"
+
+        # Call Skew: Average OTM call IV - Average OTM put IV
+        # Positive = calls more expensive (bullish demand)
+        call_skew = 0.0
+        call_skew_description = "Neutral"
+
+        avg_otm_call_iv = sum(otm_call_ivs) / len(otm_call_ivs) if otm_call_ivs else 0
+        avg_otm_put_iv = sum(otm_put_ivs) / len(otm_put_ivs) if otm_put_ivs else 0
+
+        if avg_otm_call_iv > 0 and avg_otm_put_iv > 0:
+            # Express as percentage points difference
+            call_skew = (avg_otm_call_iv - avg_otm_put_iv) * 100
+
+            if call_skew > 5:
+                call_skew_description = "Strong call-side demand"
+            elif call_skew > 2:
+                call_skew_description = "Moderate call-side demand"
+            elif call_skew < -5:
+                call_skew_description = "Strong put-side demand"
+            elif call_skew < -2:
+                call_skew_description = "Moderate put-side demand"
+            else:
+                call_skew_description = "Balanced IV across strikes"
+
+        return {
+            'skew_ratio': round(skew_ratio, 3),
+            'skew_ratio_description': skew_description,
+            'call_skew': round(call_skew, 2),
+            'call_skew_description': call_skew_description,
+            'atm_call_iv': round(atm_call_iv * 100, 1) if atm_call_iv else None,
+            'atm_put_iv': round(atm_put_iv * 100, 1) if atm_put_iv else None,
+            'avg_otm_call_iv': round(avg_otm_call_iv * 100, 1) if avg_otm_call_iv else None,
+            'avg_otm_put_iv': round(avg_otm_put_iv * 100, 1) if avg_otm_put_iv else None
+        }
+
+    def _calculate_flow_rating(
+        self,
+        volume_pressure: float,
+        call_share: float,
+        skew_ratio: float
+    ) -> Dict:
+        """
+        Calculate overall flow rating (BULLISH / BEARISH / NEUTRAL).
+
+        Combines:
+        - Volume pressure direction
+        - Call vs put share
+        - IV skew bias
+        """
+        bullish_score = 0
+        bearish_score = 0
+
+        # Volume pressure
+        if volume_pressure > 0.2:
+            bullish_score += 2
+        elif volume_pressure > 0.05:
+            bullish_score += 1
+        elif volume_pressure < -0.2:
+            bearish_score += 2
+        elif volume_pressure < -0.05:
+            bearish_score += 1
+
+        # Call share
+        if call_share > 60:
+            bullish_score += 1
+        elif call_share < 40:
+            bearish_score += 1
+
+        # Skew (inverted - low skew = bullish)
+        if skew_ratio < 0.95:
+            bullish_score += 1
+        elif skew_ratio > 1.05:
+            bearish_score += 1
+
+        # Determine rating
+        net_score = bullish_score - bearish_score
+
+        if net_score >= 3:
+            rating = "BULLISH"
+            confidence = "HIGH"
+        elif net_score >= 1:
+            rating = "BULLISH"
+            confidence = "MODERATE"
+        elif net_score <= -3:
+            rating = "BEARISH"
+            confidence = "HIGH"
+        elif net_score <= -1:
+            rating = "BEARISH"
+            confidence = "MODERATE"
+        else:
+            rating = "NEUTRAL"
+            confidence = "LOW"
+
+        return {
+            'rating': rating,
+            'confidence': confidence,
+            'bullish_score': bullish_score,
+            'bearish_score': bearish_score,
+            'net_score': net_score
+        }
+
+    def _estimate_net_gex(self, strikes: List[StrikeData], spot_price: float) -> float:
+        """
+        Estimate total Net GEX from all strikes.
+
+        GEX = Gamma × OI × 100 × Spot²
+        Net GEX = Call GEX - Put GEX
+
+        Positive Net GEX = market maker long gamma = mean reversion
+        Negative Net GEX = market maker short gamma = trending/volatile
+        """
+        total_gex = 0.0
+
+        for s in strikes:
+            # Estimate OI from gamma magnitude if not available
+            call_oi = getattr(s, 'call_oi', 0) or max(1, int(abs(s.call_gamma) * 10000))
+            put_oi = getattr(s, 'put_oi', 0) or max(1, int(abs(s.put_gamma) * 10000))
+
+            # GEX formula
+            call_gex = s.call_gamma * call_oi * 100 * (spot_price ** 2)
+            put_gex = s.put_gamma * put_oi * 100 * (spot_price ** 2)
+
+            # Net = Call - Put (puts have negative effect on dealer positioning)
+            total_gex += (call_gex - put_gex)
+
+        # Return in millions
+        return round(total_gex / 1e6, 2)
+
+    def _empty_flow_diagnostics(self) -> Dict:
+        """Return empty diagnostics when data unavailable."""
+        return {
+            'diagnostics': [],
+            'call_structure': {
+                'structure': 'Unknown',
+                'description': 'No data available',
+                'call_buying_pressure': 0,
+                'is_hedging': False,
+                'is_overwrite': False,
+                'is_speculation': False
+            },
+            'skew_measures': {
+                'skew_ratio': 1.0,
+                'skew_ratio_description': 'No data',
+                'call_skew': 0.0,
+                'call_skew_description': 'No data',
+                'atm_call_iv': None,
+                'atm_put_iv': None,
+                'avg_otm_call_iv': None,
+                'avg_otm_put_iv': None
+            },
+            'rating': {
+                'rating': 'NEUTRAL',
+                'confidence': 'LOW',
+                'bullish_score': 0,
+                'bearish_score': 0,
+                'net_score': 0
+            },
+            'summary': {
+                'total_call_volume': 0,
+                'total_put_volume': 0,
+                'total_volume': 0,
+                'total_call_oi': 0,
+                'total_put_oi': 0,
+                'put_call_ratio': 0,
+                'net_gex': 0
+            }
+        }
+
 
 # Singleton instance
 _argus_engine: Optional[ArgusEngine] = None
