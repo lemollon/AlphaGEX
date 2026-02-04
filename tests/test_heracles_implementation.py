@@ -432,67 +432,73 @@ class HERACLESImplementationVerifier:
         return passed, failed
 
 
-# Also provide pytest-compatible test class
-import pytest
+# Also provide pytest-compatible test class (only loads if pytest available)
+try:
+    import pytest
+    PYTEST_AVAILABLE = True
+except ImportError:
+    PYTEST_AVAILABLE = False
+    pytest = None
 
-class TestHERACLESImplementation:
-    """Pytest-compatible tests"""
+if PYTEST_AVAILABLE:
+    class TestHERACLESImplementation:
+        """Pytest-compatible tests"""
 
-    @pytest.fixture
-    def config(self):
-        from trading.heracles.models import HERACLESConfig
-        return HERACLESConfig()
+        @pytest.fixture
+        def config(self):
+            from trading.heracles.models import HERACLESConfig
+            return HERACLESConfig()
 
-    @pytest.fixture
-    def signal_generator(self, config):
-        from trading.heracles.signals import HERACLESSignalGenerator
-        from trading.heracles.models import BayesianWinTracker
-        return HERACLESSignalGenerator(config, BayesianWinTracker())
+        @pytest.fixture
+        def signal_generator(self, config):
+            from trading.heracles.signals import HERACLESSignalGenerator
+            from trading.heracles.models import BayesianWinTracker
+            return HERACLESSignalGenerator(config, BayesianWinTracker())
 
-    def test_overnight_hybrid_config_exists(self, config):
-        """Config has overnight hybrid parameters"""
-        assert hasattr(config, 'use_overnight_hybrid')
-        assert hasattr(config, 'overnight_stop_points')
-        assert hasattr(config, 'overnight_target_points')
-        assert hasattr(config, 'overnight_emergency_stop')
+        def test_overnight_hybrid_config_exists(self, config):
+            """Config has overnight hybrid parameters"""
+            assert hasattr(config, 'use_overnight_hybrid')
+            assert hasattr(config, 'overnight_stop_points')
+            assert hasattr(config, 'overnight_target_points')
+            assert hasattr(config, 'overnight_emergency_stop')
 
-    def test_overnight_hybrid_defaults(self, config):
-        """Overnight hybrid has correct default values"""
-        assert config.use_overnight_hybrid == True
-        assert config.overnight_stop_points == 1.5
-        assert config.overnight_target_points == 3.0
-        assert config.overnight_emergency_stop == 10.0
+        def test_overnight_hybrid_defaults(self, config):
+            """Overnight hybrid has correct default values"""
+            assert config.use_overnight_hybrid == True
+            assert config.overnight_stop_points == 1.5
+            assert config.overnight_target_points == 3.0
+            assert config.overnight_emergency_stop == 10.0
 
-    def test_gamma_regime_filter_config(self, config):
-        """Config has gamma regime filter parameter"""
-        assert hasattr(config, 'allowed_gamma_regime')
-        assert config.allowed_gamma_regime == ""  # Empty = all regimes
+        def test_gamma_regime_filter_config(self, config):
+            """Config has gamma regime filter parameter"""
+            assert hasattr(config, 'allowed_gamma_regime')
+            assert config.allowed_gamma_regime == ""  # Empty = all regimes
 
-    def test_signal_generator_accepts_is_overnight(self, signal_generator):
-        """Signal generator accepts is_overnight parameter"""
-        import inspect
-        sig = inspect.signature(signal_generator.generate_signal)
-        assert 'is_overnight' in sig.parameters
+        def test_signal_generator_accepts_is_overnight(self, signal_generator):
+            """Signal generator accepts is_overnight parameter"""
+            import inspect
+            sig = inspect.signature(signal_generator.generate_signal)
+            assert 'is_overnight' in sig.parameters
 
-    def test_set_stop_levels_accepts_is_overnight(self, signal_generator):
-        """_set_stop_levels accepts is_overnight parameter"""
-        import inspect
-        sig = inspect.signature(signal_generator._set_stop_levels)
-        assert 'is_overnight' in sig.parameters
+        def test_set_stop_levels_accepts_is_overnight(self, signal_generator):
+            """_set_stop_levels accepts is_overnight parameter"""
+            import inspect
+            sig = inspect.signature(signal_generator._set_stop_levels)
+            assert 'is_overnight' in sig.parameters
 
-    def test_trader_has_is_overnight_session_method(self):
-        """Trader has _is_overnight_session method"""
-        from trading.heracles.trader import HERACLESTrader
-        assert hasattr(HERACLESTrader, '_is_overnight_session')
+        def test_trader_has_is_overnight_session_method(self):
+            """Trader has _is_overnight_session method"""
+            from trading.heracles.trader import HERACLESTrader
+            assert hasattr(HERACLESTrader, '_is_overnight_session')
 
-    def test_position_management_uses_initial_stop(self):
-        """Position management derives emergency stop from stored initial_stop"""
-        from trading.heracles.trader import HERACLESTrader
-        import inspect
+        def test_position_management_uses_initial_stop(self):
+            """Position management derives emergency stop from stored initial_stop"""
+            from trading.heracles.trader import HERACLESTrader
+            import inspect
 
-        source = inspect.getsource(HERACLESTrader._manage_position_no_loss_trailing)
-        # Should reference position.initial_stop to derive emergency stop distance
-        assert 'initial_stop' in source, "Should use position.initial_stop for emergency stop"
+            source = inspect.getsource(HERACLESTrader._manage_position_no_loss_trailing)
+            # Should reference position.initial_stop to derive emergency stop distance
+            assert 'initial_stop' in source, "Should use position.initial_stop for emergency stop"
 
 
 if __name__ == '__main__':
