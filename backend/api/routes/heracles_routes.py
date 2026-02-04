@@ -497,6 +497,33 @@ async def reset_heracles_paper_account(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/heracles/cleanup-orphaned-positions")
+async def cleanup_orphaned_positions():
+    """
+    Fix orphaned positions that show as 'open' but have closed trade records.
+
+    This can happen if the position status UPDATE fails but the closed_trades INSERT
+    succeeds. This endpoint finds and fixes such inconsistencies.
+
+    Returns:
+        - orphaned_found: Number of orphaned positions found
+        - updated: Number of positions fixed
+        - errors: Number of errors during cleanup
+    """
+    try:
+        trader = _get_trader()
+        result = trader.db.cleanup_orphaned_positions()
+        return {
+            "success": True,
+            "cleanup_result": result,
+            "message": f"Cleanup complete: {result['updated']}/{result['orphaned_found']} orphaned positions fixed",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error cleaning up orphaned positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # Scan Activity (ML Training Data Collection)
 # ============================================================================

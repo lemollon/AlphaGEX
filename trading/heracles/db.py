@@ -561,16 +561,29 @@ class HERACLESDatabase:
                 c = conn.cursor()
                 now = datetime.now(CENTRAL_TZ)
 
-                # Update position
+                # Update position status to closed
                 c.execute("""
                     UPDATE heracles_positions
                     SET status = %s, close_time = %s, close_price = %s,
                         close_reason = %s, realized_pnl = %s, updated_at = NOW()
-                    WHERE position_id = %s
+                    WHERE position_id = %s AND status = 'open'
                 """, (
                     status.value, now, _to_python(close_price),
                     close_reason, _to_python(realized_pnl), position_id
                 ))
+
+                # CRITICAL: Verify the UPDATE actually affected a row
+                rows_updated = c.rowcount
+                if rows_updated == 0:
+                    logger.error(
+                        f"CRITICAL: Position {position_id} status UPDATE failed - no matching open position found! "
+                        f"This position may have already been closed or doesn't exist."
+                    )
+                    # Rollback and return failure - don't insert closed trade for non-existent position
+                    conn.rollback()
+                    return False, 0.0
+
+                logger.info(f"Position {position_id} status updated to '{status.value}' (rows affected: {rows_updated})")
 
                 # Insert into closed trades for permanent record
                 hold_duration = int((now - position.open_time).total_seconds() / 60) if position.open_time else 0
@@ -1631,6 +1644,69 @@ class HERACLESDatabase:
         except Exception as e:
             logger.error(f"Failed to reset paper account: {e}")
             return False
+
+    def cleanup_orphaned_positions(self) -> Dict[str, int]:
+        """
+        Fix orphaned positions that exist in heracles_positions as 'open'
+        but also have records in heracles_closed_trades.
+
+        This can happen if the UPDATE to positions table fails but INSERT to
+        closed_trades succeeds due to missing rowcount verification (now fixed).
+
+        Returns: dict with cleanup statistics
+        """
+        result = {"orphaned_found": 0, "updated": 0, "errors": 0}
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Find orphaned positions: status='open' but have closed_trade record
+                c.execute("""
+                    SELECT p.position_id, ct.close_time, ct.exit_price, ct.close_reason, ct.realized_pnl
+                    FROM heracles_positions p
+                    INNER JOIN heracles_closed_trades ct ON p.position_id = ct.position_id
+                    WHERE p.status = 'open'
+                """)
+
+                orphaned = c.fetchall()
+                result["orphaned_found"] = len(orphaned)
+
+                if not orphaned:
+                    logger.info("No orphaned positions found - all positions are consistent")
+                    return result
+
+                logger.warning(f"Found {len(orphaned)} orphaned positions with status='open' but have closed trade records")
+
+                # Fix each orphaned position
+                for row in orphaned:
+                    position_id, close_time, exit_price, close_reason, realized_pnl = row
+                    try:
+                        c.execute("""
+                            UPDATE heracles_positions
+                            SET status = 'closed', close_time = %s, close_price = %s,
+                                close_reason = %s, realized_pnl = %s, updated_at = NOW()
+                            WHERE position_id = %s
+                        """, (close_time, exit_price, close_reason, realized_pnl, position_id))
+
+                        if c.rowcount > 0:
+                            result["updated"] += 1
+                            logger.info(f"Fixed orphaned position {position_id}: marked as closed with P&L=${realized_pnl:.2f}")
+                        else:
+                            result["errors"] += 1
+                            logger.error(f"Failed to update orphaned position {position_id}")
+                    except Exception as e:
+                        result["errors"] += 1
+                        logger.error(f"Error fixing orphaned position {position_id}: {e}")
+
+                conn.commit()
+                logger.info(f"Cleanup complete: {result['updated']}/{result['orphaned_found']} orphaned positions fixed")
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup orphaned positions: {e}")
+            result["errors"] += 1
+
+        return result
 
     def get_paper_equity_curve(self, days: int = 30) -> List[Dict]:
         """
