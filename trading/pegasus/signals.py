@@ -80,6 +80,7 @@ class SignalGenerator:
     def __init__(self, config: PEGASUSConfig):
         self.config = config
         self._init_components()
+        self._init_tradier()
 
     def _init_components(self) -> None:
         # GEX Calculator - Use Tradier for LIVE trading data
@@ -123,6 +124,27 @@ class SignalGenerator:
                 logger.info("PEGASUS: Oracle initialized (BACKUP)")
             except Exception as e:
                 logger.warning(f"PEGASUS: Oracle init failed: {e}")
+
+    def _init_tradier(self) -> None:
+        """Initialize Tradier for real option quotes.
+
+        CRITICAL: Use production API for SPX (sandbox doesn't support SPX).
+        This enables real bid/ask quotes for accurate credit estimation.
+        """
+        self.tradier = None
+        try:
+            from data.tradier_data_fetcher import TradierDataFetcher
+            # Use production API for SPX quotes (sandbox doesn't support SPX)
+            self.tradier = TradierDataFetcher(sandbox=False)
+            # Test connectivity
+            test_quote = self.tradier.get_quote("SPX")
+            if test_quote and test_quote.get('last', 0) > 0:
+                logger.info(f"PEGASUS: Tradier production API connected (SPX=${test_quote.get('last', 0):.2f})")
+            else:
+                logger.warning("PEGASUS: Tradier connected but SPX quote unavailable")
+        except Exception as e:
+            logger.warning(f"PEGASUS: Tradier init failed, using estimated credits: {e}")
+            self.tradier = None
 
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
@@ -568,9 +590,101 @@ class SignalGenerator:
             'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'SD'),
         }
 
+    def get_real_credits(
+        self,
+        expiration: str,
+        put_short: float,
+        put_long: float,
+        call_short: float,
+        call_long: float,
+    ) -> Optional[Dict[str, float]]:
+        """
+        Get REAL option credits from Tradier production API.
+
+        This fetches actual bid/ask quotes for SPX options to get accurate
+        credit values instead of using formula estimation.
+
+        Returns:
+            Dict with put_credit, call_credit, total_credit, etc. or None if unavailable
+        """
+        if not self.tradier:
+            logger.debug("PEGASUS: Tradier not available, cannot get real credits")
+            return None
+
+        try:
+            # Build OCC symbols for each leg
+            # SPXW uses weekly format: SPXW + YYMMDD + C/P + Strike*1000 (8 digits)
+            from datetime import datetime as dt
+            exp_date = dt.strptime(expiration, '%Y-%m-%d')
+            exp_str = exp_date.strftime('%y%m%d')
+
+            def build_symbol(strike: float, opt_type: str) -> str:
+                strike_str = f"{int(strike * 1000):08d}"
+                return f"SPXW{exp_str}{opt_type}{strike_str}"
+
+            put_short_sym = build_symbol(put_short, 'P')
+            put_long_sym = build_symbol(put_long, 'P')
+            call_short_sym = build_symbol(call_short, 'C')
+            call_long_sym = build_symbol(call_long, 'C')
+
+            # Get quotes for all four legs
+            put_short_quote = self.tradier.get_option_quote(put_short_sym)
+            put_long_quote = self.tradier.get_option_quote(put_long_sym)
+            call_short_quote = self.tradier.get_option_quote(call_short_sym)
+            call_long_quote = self.tradier.get_option_quote(call_long_sym)
+
+            # Check if all quotes are valid
+            if not all([put_short_quote, put_long_quote, call_short_quote, call_long_quote]):
+                logger.warning(f"PEGASUS: Missing option quotes for {expiration}")
+                return None
+
+            # Calculate spread credits
+            # Put spread: sell short put, buy long put
+            # We receive: bid of short - ask of long
+            put_short_bid = float(put_short_quote.get('bid', 0) or 0)
+            put_long_ask = float(put_long_quote.get('ask', 0) or 0)
+            put_credit = put_short_bid - put_long_ask
+
+            # Call spread: sell short call, buy long call
+            call_short_bid = float(call_short_quote.get('bid', 0) or 0)
+            call_long_ask = float(call_long_quote.get('ask', 0) or 0)
+            call_credit = call_short_bid - call_long_ask
+
+            # Validate credits are positive (we should receive credit for IC)
+            if put_credit <= 0 or call_credit <= 0:
+                logger.warning(f"PEGASUS: Invalid credits - put=${put_credit:.2f}, call=${call_credit:.2f}")
+                # Try using mid prices as fallback
+                put_short_mid = (put_short_bid + float(put_short_quote.get('ask', 0) or 0)) / 2
+                put_long_mid = (float(put_long_quote.get('bid', 0) or 0) + put_long_ask) / 2
+                call_short_mid = (call_short_bid + float(call_short_quote.get('ask', 0) or 0)) / 2
+                call_long_mid = (float(call_long_quote.get('bid', 0) or 0) + call_long_ask) / 2
+
+                put_credit = max(0, put_short_mid - put_long_mid)
+                call_credit = max(0, call_short_mid - call_long_mid)
+
+            total = put_credit + call_credit
+            width = self.config.spread_width
+            max_profit = total * 100
+            max_loss = (width - total) * 100
+
+            logger.info(f"PEGASUS: REAL QUOTES - Put spread ${put_credit:.2f}, Call spread ${call_credit:.2f}, Total ${total:.2f}")
+
+            return {
+                'put_credit': round(put_credit, 2),
+                'call_credit': round(call_credit, 2),
+                'total_credit': round(total, 2),
+                'max_profit': round(max_profit, 2),
+                'max_loss': round(max_loss, 2),
+                'source': 'TRADIER_LIVE',
+            }
+
+        except Exception as e:
+            logger.warning(f"PEGASUS: Failed to get real credits: {e}")
+            return None
+
     def estimate_credits(self, spot: float, expected_move: float, put_short: float, call_short: float, vix: float) -> Dict[str, float]:
         """
-        Estimate SPX IC credits.
+        Estimate SPX IC credits (FALLBACK when Tradier unavailable).
 
         BUG FIX: Added realistic market variance to prevent identical credits.
         Previously, all trades had the same estimated credit, causing identical P&L
@@ -629,6 +743,7 @@ class SignalGenerator:
             'total_credit': round(total, 2),
             'max_profit': round(max_profit, 2),
             'max_loss': round(max_loss, 2),
+            'source': 'ESTIMATED',
         }
 
     def generate_signal(self, oracle_data: Optional[Dict[str, Any]] = None) -> Optional[IronCondorSignal]:
@@ -801,19 +916,8 @@ class SignalGenerator:
             oracle_call_strike=oracle_call,
         )
 
-        pricing = self.estimate_credits(
-            market['spot_price'],
-            market['expected_move'],
-            strikes['put_short'],
-            strikes['call_short'],
-            market['vix'],
-        )
-
-        if pricing['total_credit'] < self.config.min_credit:
-            logger.warning(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} (proceeding anyway)")
-
         # Calculate expiration for SPXW weekly options (next Friday)
-        # SPX weeklies expire every Friday (and some days have 0DTE)
+        # Need this early for real quote fetching
         now = datetime.now(CENTRAL_TZ)
         days_until_friday = (4 - now.weekday()) % 7  # Friday is weekday 4
         if days_until_friday == 0 and now.hour >= 15:
@@ -821,6 +925,29 @@ class SignalGenerator:
             days_until_friday = 7
         expiration_date = now + timedelta(days=days_until_friday)
         expiration = expiration_date.strftime("%Y-%m-%d")
+
+        # Try to get REAL quotes from Tradier first
+        pricing = self.get_real_credits(
+            expiration=expiration,
+            put_short=strikes['put_short'],
+            put_long=strikes['put_long'],
+            call_short=strikes['call_short'],
+            call_long=strikes['call_long'],
+        )
+
+        # Fall back to estimation if real quotes unavailable
+        if not pricing:
+            logger.info("PEGASUS: Using estimated credits (Tradier unavailable)")
+            pricing = self.estimate_credits(
+                market['spot_price'],
+                market['expected_move'],
+                strikes['put_short'],
+                strikes['call_short'],
+                market['vix'],
+            )
+
+        if pricing['total_credit'] < self.config.min_credit:
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} ({pricing.get('source', 'UNKNOWN')})")
 
         # Build detailed reasoning (FULL audit trail)
         reasoning_parts = []
