@@ -146,6 +146,15 @@ class HERACLESDatabase:
                         hold_duration_minutes INTEGER,
                         high_price_since_entry DECIMAL(12, 4),
                         low_price_since_entry DECIMAL(12, 4),
+                        stop_type VARCHAR(50),
+                        stop_points_used DECIMAL(10, 4),
+                        -- Loss analysis columns (added for debugging)
+                        loss_analysis TEXT,  -- Why did this trade lose?
+                        mfe_points DECIMAL(10, 4),  -- Max favorable excursion in points
+                        mae_points DECIMAL(10, 4),  -- Max adverse excursion in points
+                        was_profitable_before_loss BOOLEAN DEFAULT FALSE,  -- Was it a winner that reversed?
+                        initial_stop_price DECIMAL(12, 4),  -- Original stop price
+                        is_overnight_session BOOLEAN DEFAULT FALSE,  -- Overnight or RTH?
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                     )
                 """)
@@ -566,6 +575,35 @@ class HERACLESDatabase:
                 # Insert into closed trades for permanent record
                 hold_duration = int((now - position.open_time).total_seconds() / 60) if position.open_time else 0
 
+                # Calculate MFE/MAE (Max Favorable/Adverse Excursion)
+                entry = float(position.entry_price)
+                high = float(position.high_price_since_entry) if position.high_price_since_entry > 0 else entry
+                low = float(position.low_price_since_entry) if position.low_price_since_entry > 0 else entry
+
+                if position.direction.value == 'LONG':
+                    mfe_points = high - entry  # Best profit we had
+                    mae_points = entry - low   # Worst drawdown
+                else:  # SHORT
+                    mfe_points = entry - low   # Best profit we had
+                    mae_points = high - entry  # Worst drawdown
+
+                # Was it a winner that turned into a loser?
+                was_profitable_before_loss = (realized_pnl < 0 and mfe_points > 0.5)
+
+                # Determine if overnight session (5 PM - 4 AM CT)
+                is_overnight = False
+                if position.open_time:
+                    hour = position.open_time.hour
+                    is_overnight = (hour >= 17 or hour < 4)
+
+                # Generate loss analysis text
+                loss_analysis = None
+                if realized_pnl < 0:
+                    loss_analysis = self._generate_loss_analysis(
+                        position, close_price, close_reason, realized_pnl,
+                        mfe_points, mae_points, hold_duration, is_overnight
+                    )
+
                 c.execute("""
                     INSERT INTO heracles_closed_trades (
                         position_id, symbol, direction, contracts,
@@ -574,8 +612,10 @@ class HERACLESDatabase:
                         vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
                         open_time, close_time, hold_duration_minutes,
                         high_price_since_entry, low_price_since_entry,
-                        stop_type, stop_points_used
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        stop_type, stop_points_used,
+                        loss_analysis, mfe_points, mae_points,
+                        was_profitable_before_loss, initial_stop_price, is_overnight_session
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (position_id) DO NOTHING
                 """, (
                     position_id, position.symbol, position.direction.value,
@@ -589,7 +629,13 @@ class HERACLESDatabase:
                     _to_python(position.high_price_since_entry) if position.high_price_since_entry > 0 else None,
                     _to_python(position.low_price_since_entry) if position.low_price_since_entry > 0 else None,
                     position.stop_type,
-                    _to_python(position.stop_points_used)
+                    _to_python(position.stop_points_used),
+                    loss_analysis,
+                    _to_python(mfe_points),
+                    _to_python(mae_points),
+                    was_profitable_before_loss,
+                    _to_python(position.initial_stop),
+                    is_overnight
                 ))
 
                 conn.commit()
@@ -606,6 +652,77 @@ class HERACLESDatabase:
         except Exception as e:
             logger.error(f"Failed to close position {position_id}: {e}")
             return False, 0.0
+
+    def _generate_loss_analysis(
+        self,
+        position,
+        close_price: float,
+        close_reason: str,
+        realized_pnl: float,
+        mfe_points: float,
+        mae_points: float,
+        hold_duration: int,
+        is_overnight: bool
+    ) -> str:
+        """
+        Generate detailed analysis of why a trade lost.
+
+        This helps identify patterns like:
+        - Winners that turned into losers (trailing stop too wide)
+        - Emergency stop hits (catastrophic moves)
+        - Quick stop-outs (wrong direction)
+        - Overnight session issues
+        """
+        reasons = []
+
+        # Check if it was profitable before losing
+        if mfe_points > 1.0:
+            profit_had = mfe_points * 5 * position.contracts
+            reasons.append(f"REVERSAL: Was +{mfe_points:.1f}pts (${profit_had:.0f}) before reversing")
+
+        if mfe_points > 3.0:
+            reasons.append("MISSED_EXIT: Had 3+ pts profit, should have taken it")
+
+        # Check if emergency stop was hit
+        if mae_points > 10:
+            reasons.append(f"LARGE_DRAWDOWN: {mae_points:.1f}pts MAE")
+
+        if 'emergency' in close_reason.lower():
+            reasons.append("EMERGENCY_STOP: Catastrophic move against position")
+
+        # Check hold duration
+        if hold_duration and hold_duration > 120:
+            reasons.append(f"HELD_TOO_LONG: {hold_duration}min hold")
+        elif hold_duration and hold_duration < 3:
+            reasons.append(f"QUICK_STOPOUT: Only {hold_duration}min - wrong direction?")
+
+        # Check session
+        if is_overnight:
+            reasons.append("OVERNIGHT: Lower liquidity session")
+
+        # Check VIX conditions
+        vix = float(position.vix_at_entry) if position.vix_at_entry else 0
+        if vix > 25:
+            reasons.append(f"HIGH_VIX: {vix:.1f} - volatile conditions")
+
+        # Check gamma regime
+        if position.gamma_regime.value == 'NEGATIVE':
+            reasons.append("NEGATIVE_GAMMA: Momentum regime (higher risk)")
+
+        # Check stop type
+        stop_type = position.stop_type or ''
+        if 'NO_LOSS_TRAIL' in stop_type and mfe_points < 3.0:
+            reasons.append("NEVER_ACTIVATED: Trailing never activated (needed 3pt profit)")
+
+        # Calculate loss magnitude
+        loss_pts = mae_points
+        loss_per_contract = loss_pts * 5
+        reasons.append(f"LOSS_SIZE: {loss_pts:.1f}pts (${loss_per_contract:.0f}/contract)")
+
+        if not reasons:
+            reasons.append("STANDARD_STOPOUT: Normal stop loss hit")
+
+        return " | ".join(reasons)
 
     def update_stop(self, position_id: str, new_stop: float, trailing_active: bool = False) -> bool:
         """Update position stop price"""
