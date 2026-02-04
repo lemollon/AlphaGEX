@@ -165,13 +165,37 @@ export default function PrometheusBoxDashboard() {
     return `${value.toFixed(decimals)}%`
   }
 
-  // Calculate derived metrics for Analytics
-  const totalBorrowed = status?.total_borrowed || 0
-  const totalICReturns = status?.total_ic_returns || 0
-  const totalBorrowingCosts = status?.total_borrowing_costs || 0
-  const netPnL = status?.net_unrealized_pnl || 0
+  // ============================================================================
+  // SINGLE SOURCE OF TRUTH: Use reconciliation endpoint for all key metrics
+  // ============================================================================
+  // The reconciliation endpoint calculates ALL values server-side to ensure consistency.
+  // Frontend ONLY displays - no client-side math that could create mismatches.
+
+  // Box Spread metrics (from reconciliation)
+  const totalBorrowed = reconciliation?.box_spreads?.totals?.total_borrowed || status?.total_borrowed || 0
+  const totalBorrowingCostLife = reconciliation?.box_spreads?.totals?.total_borrowing_cost || 0  // Total cost over life of all boxes
+  const totalCostAccrued = reconciliation?.box_spreads?.totals?.cost_accrued_to_date || status?.total_borrowing_costs || 0  // Cost accrued so far
+  const totalCostRemaining = reconciliation?.box_spreads?.totals?.cost_remaining || 0
+
+  // IC Trading metrics (from reconciliation)
+  const icRealizedPnL = reconciliation?.net_profit_reconciliation?.income?.ic_realized_pnl || 0
+  const icUnrealizedPnL = reconciliation?.net_profit_reconciliation?.income?.ic_unrealized_pnl || 0
+  const totalICReturns = reconciliation?.net_profit_reconciliation?.income?.total_ic_returns || icRealizedPnL + icUnrealizedPnL
+
+  // THE KEY FORMULA: Net Profit = Total IC Returns - Borrowing Cost Accrued
+  const netPnL = reconciliation?.net_profit_reconciliation?.net_profit || (totalICReturns - totalCostAccrued)
+
+  // Cost Efficiency = Total IC Returns / Borrowing Cost Accrued
+  // If > 1, you're making more from ICs than you're paying in borrowing costs
+  const costEfficiency = reconciliation?.net_profit_reconciliation?.cost_efficiency || (totalCostAccrued > 0 ? (totalICReturns / totalCostAccrued) : 0)
+
+  // Capital deployment (from reconciliation)
+  const reservedCapital = reconciliation?.capital_deployment?.reserved || 0
+  const capitalInICTrades = reconciliation?.capital_deployment?.in_ic_trades || 0
+  const availableToTrade = reconciliation?.capital_deployment?.available_to_trade || 0
+
+  // Legacy metric for backwards compatibility
   const returnOnBorrowed = totalBorrowed > 0 ? (netPnL / totalBorrowed) * 100 : 0
-  const costEfficiency = totalBorrowingCosts > 0 ? (totalICReturns / totalBorrowingCosts) : 0
 
   // Handle refresh
   const handleRefresh = () => {
@@ -196,38 +220,75 @@ export default function PrometheusBoxDashboard() {
             scanIntervalMinutes={5}
           />
 
-          {/* Quick Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <StatCard
-              label="Total Borrowed"
-              value={formatCurrency(totalBorrowed)}
-              icon={<Banknote className="h-4 w-4" />}
-              color="blue"
-            />
-            <StatCard
-              label="IC Returns"
-              value={`${totalICReturns >= 0 ? '+' : ''}${formatCurrency(totalICReturns)}`}
-              icon={<TrendingUp className="h-4 w-4" />}
-              color={totalICReturns >= 0 ? 'green' : 'red'}
-            />
-            <StatCard
-              label="Borrowing Costs"
-              value={formatCurrency(totalBorrowingCosts)}
-              icon={<Receipt className="h-4 w-4" />}
-              color="red"
-            />
-            <StatCard
-              label="Net P&L"
-              value={`${netPnL >= 0 ? '+' : ''}${formatCurrency(netPnL)}`}
-              icon={<DollarSign className="h-4 w-4" />}
-              color={netPnL >= 0 ? 'green' : 'red'}
-            />
-            <StatCard
-              label="Cost Efficiency"
-              value={`${costEfficiency.toFixed(1)}x`}
-              icon={<Target className="h-4 w-4" />}
-              color={costEfficiency >= 1 ? 'green' : 'yellow'}
-            />
+          {/* Quick Stats - RECONCILED NUMBERS WITH CLEAR MATH */}
+          {/* THE FORMULA: Net P&L = (IC Realized + IC Unrealized) - Borrowing Cost Accrued */}
+          <div className="bg-[#0a0a0a] rounded-xl border border-emerald-500/30 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-gray-400">PROMETHEUS P&L Summary</h3>
+              <span className="text-xs text-gray-500">Formula: Net = IC P&L − Borrowing Cost</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+              {/* A: Total Borrowed (for context) */}
+              <div className="bg-blue-900/20 rounded-lg p-3 border border-blue-700/30">
+                <div className="text-xs text-blue-400/70 mb-1">Capital Borrowed</div>
+                <div className="text-lg font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
+                <div className="text-xs text-gray-500">{positions?.positions?.length || 0} box spread{(positions?.positions?.length || 0) !== 1 ? 's' : ''}</div>
+              </div>
+
+              {/* B: IC Realized P&L */}
+              <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+                <div className="text-xs text-gray-400 mb-1">IC Realized</div>
+                <div className={`text-lg font-bold ${icRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {icRealizedPnL >= 0 ? '+' : ''}{formatCurrency(icRealizedPnL)}
+                </div>
+                <div className="text-xs text-gray-500">{icPerformance?.performance?.closed_trades?.total || 0} closed trades</div>
+              </div>
+
+              {/* C: IC Unrealized P&L */}
+              <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+                <div className="text-xs text-gray-400 mb-1">IC Unrealized</div>
+                <div className={`text-lg font-bold ${icUnrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {icUnrealizedPnL >= 0 ? '+' : ''}{formatCurrency(icUnrealizedPnL)}
+                </div>
+                <div className="text-xs text-gray-500">{icPositions?.count || 0} open position{(icPositions?.count || 0) !== 1 ? 's' : ''}</div>
+              </div>
+
+              {/* D: Total IC P&L (B + C) */}
+              <div className="bg-emerald-900/20 rounded-lg p-3 border border-emerald-600/30">
+                <div className="text-xs text-emerald-400/70 mb-1">Total IC P&L</div>
+                <div className={`text-lg font-bold ${totalICReturns >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {totalICReturns >= 0 ? '+' : ''}{formatCurrency(totalICReturns)}
+                </div>
+                <div className="text-xs text-gray-500">realized + unrealized</div>
+              </div>
+
+              {/* E: Borrowing Cost Accrued */}
+              <div className="bg-red-900/20 rounded-lg p-3 border border-red-700/30">
+                <div className="text-xs text-red-400/70 mb-1">Cost Accrued</div>
+                <div className="text-lg font-bold text-red-400">−{formatCurrency(totalCostAccrued)}</div>
+                <div className="text-xs text-gray-500">{formatCurrency(totalCostRemaining)} remaining</div>
+              </div>
+
+              {/* F: NET PROFIT (D - E) */}
+              <div className={`rounded-lg p-3 border-2 ${netPnL >= 0 ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50'}`}>
+                <div className="text-xs text-gray-300 mb-1 font-medium">NET PROFIT</div>
+                <div className={`text-xl font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL)}
+                </div>
+                <div className="text-xs text-gray-400">{costEfficiency.toFixed(1)}x efficiency</div>
+              </div>
+            </div>
+
+            {/* Math verification line */}
+            <div className="mt-3 pt-3 border-t border-gray-700/50 text-xs text-gray-500 flex items-center justify-center gap-2">
+              <span className={totalICReturns >= 0 ? 'text-emerald-400' : 'text-red-400'}>{formatCurrency(totalICReturns)}</span>
+              <span>−</span>
+              <span className="text-red-400">{formatCurrency(totalCostAccrued)}</span>
+              <span>=</span>
+              <span className={`font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(netPnL)}</span>
+              <span className="text-gray-600">|</span>
+              <span>{costEfficiency >= 1 ? '✅ Profitable' : '⚠️ Below break-even'}</span>
+            </div>
           </div>
 
           {/* Tab Navigation */}
@@ -273,6 +334,37 @@ export default function PrometheusBoxDashboard() {
             {/* Overview Tab */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
+                {/* Quick Explainer for Newcomers */}
+                <div className="bg-emerald-900/20 rounded-lg p-4 border border-emerald-600/30">
+                  <details className="group">
+                    <summary className="flex items-center justify-between cursor-pointer text-emerald-400 font-medium">
+                      <span>📚 New to PROMETHEUS? Click to understand how the math works</span>
+                      <span className="text-xs text-gray-500 group-open:hidden">(click to expand)</span>
+                    </summary>
+                    <div className="mt-3 pt-3 border-t border-emerald-700/30 text-sm text-gray-300 space-y-2">
+                      <p><strong className="text-emerald-400">PROMETHEUS</strong> uses box spreads to borrow money cheaply, then trades Iron Condors (ICs) to earn more than the borrowing cost.</p>
+                      <div className="bg-black/30 rounded p-3 font-mono text-xs">
+                        <div className="text-gray-400 mb-1">THE KEY FORMULA:</div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-emerald-400">Net Profit</span>
+                          <span>=</span>
+                          <span className="text-green-400">IC Trading P&L</span>
+                          <span>−</span>
+                          <span className="text-red-400">Borrowing Cost (accrued so far)</span>
+                        </div>
+                      </div>
+                      <ul className="list-disc list-inside space-y-1 text-xs text-gray-400">
+                        <li><strong className="text-blue-400">Capital Borrowed</strong>: Cash received from selling box spreads</li>
+                        <li><strong className="text-green-400">IC Realized P&L</strong>: Profit/loss from closed Iron Condor trades</li>
+                        <li><strong className="text-green-400">IC Unrealized P&L</strong>: Profit/loss from open IC positions (not yet closed)</li>
+                        <li><strong className="text-emerald-400">Total IC P&L</strong>: Realized + Unrealized IC trading P&L</li>
+                        <li><strong className="text-red-400">Cost Accrued</strong>: Interest cost that has built up so far (time × daily rate)</li>
+                        <li><strong className="text-yellow-400">Cost Efficiency</strong>: If &gt; 1.0x, you&apos;re profitable. If &lt; 1.0x, IC returns don&apos;t cover costs yet.</li>
+                      </ul>
+                    </div>
+                  </details>
+                </div>
+
                 {/* THE MONEY FLOW - With REAL Numbers */}
                 <div className="bg-gradient-to-r from-gray-800 via-gray-800 to-gray-800 rounded-lg p-6 border border-orange-500/30">
                   <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -342,10 +434,10 @@ export default function PrometheusBoxDashboard() {
                           net profit (IC returns - costs)
                         </div>
                         <div className="mt-2 text-xs text-gray-400">
-                          IC: <span className="text-green-400">+{formatCurrency(totalICReturns)}</span>
+                          IC: <span className={totalICReturns >= 0 ? 'text-green-400' : 'text-red-400'}>{totalICReturns >= 0 ? '+' : ''}{formatCurrency(totalICReturns)}</span>
                         </div>
                         <div className="text-xs text-gray-500">
-                          Cost: <span className="text-red-400">-{formatCurrency(totalBorrowingCosts)}</span>
+                          Cost: <span className="text-red-400">−{formatCurrency(totalCostAccrued)}</span>
                         </div>
                       </div>
                     </div>
@@ -537,7 +629,7 @@ export default function PrometheusBoxDashboard() {
                           </div>
                           <div className="flex justify-between items-center mb-3">
                             <span className="text-gray-400">Borrowing Costs Paid</span>
-                            <span className="text-red-400 font-bold text-xl">-{formatCurrency(totalBorrowingCosts)}</span>
+                            <span className="text-red-400 font-bold text-xl">-{formatCurrency(totalCostAccrued)}</span>
                           </div>
                           <div className="border-t border-gray-600 pt-3 flex justify-between items-center">
                             <span className="text-white font-medium">Net Profit</span>
@@ -1071,7 +1163,7 @@ export default function PrometheusBoxDashboard() {
                     </div>
                     <div className="bg-gradient-to-br from-red-900/40 to-red-900/20 rounded-lg p-4 text-center border border-red-700/30">
                       <div className="text-xs text-red-300 mb-1">Borrowing Costs</div>
-                      <div className="text-2xl font-bold text-red-400">{formatCurrency(totalBorrowingCosts)}</div>
+                      <div className="text-2xl font-bold text-red-400">{formatCurrency(totalCostAccrued)}</div>
                     </div>
                     <div className={`bg-gradient-to-br ${netPnL >= 0 ? 'from-emerald-900/40 to-emerald-900/20 border-emerald-700/30' : 'from-rose-900/40 to-rose-900/20 border-rose-700/30'} rounded-lg p-4 text-center border`}>
                       <div className={`text-xs ${netPnL >= 0 ? 'text-emerald-300' : 'text-rose-300'} mb-1`}>Net Profit</div>
@@ -1929,7 +2021,7 @@ export default function PrometheusBoxDashboard() {
                     <div className="bg-gray-700/50 rounded-lg p-4">
                       <div className="text-xs text-gray-400 mb-1">Total Costs Paid</div>
                       <div className="text-2xl font-bold text-red-400">
-                        {formatCurrency(totalBorrowingCosts)}
+                        {formatCurrency(totalCostAccrued)}
                       </div>
                       <div className="text-xs text-gray-500">since inception</div>
                     </div>
@@ -2121,90 +2213,89 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* Combined Performance - The Key Metric */}
-                <div className="bg-gray-800 rounded-lg p-6 border-2 border-orange-500/30">
+                {/* Combined Performance - RECONCILED with explicit math */}
+                <div className="bg-gray-800 rounded-lg p-6 border-2 border-emerald-500/30">
                   <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                     <span>Combined Performance</span>
-                    <span className="text-sm font-normal text-gray-400">(Are IC returns &gt; borrowing costs?)</span>
+                    <span className="text-sm font-normal text-gray-400">Net Profit = IC P&L − Borrowing Cost</span>
                   </h3>
-                  <div className="grid md:grid-cols-4 gap-4 mb-4">
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Total Borrowed</div>
-                      <div className="text-xl font-bold text-blue-400">
-                        {formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowed || totalBorrowed || 0)}
+
+                  {/* THE MATH - Clear step by step */}
+                  <div className="bg-black/30 rounded-lg p-4 mb-4 border border-gray-700">
+                    <div className="text-xs text-gray-500 mb-3 font-medium">HOW THE NUMBERS ADD UP:</div>
+                    <div className="grid md:grid-cols-7 gap-2 items-center text-center">
+                      {/* IC Realized */}
+                      <div className="bg-gray-800/50 rounded p-2">
+                        <div className="text-xs text-gray-500">Realized</div>
+                        <div className={`font-bold ${icRealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {icRealizedPnL >= 0 ? '+' : ''}{formatCurrency(icRealizedPnL)}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500">{positions?.positions?.length || 0} box spreads</div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Borrowing Cost</div>
-                      <div className="text-xl font-bold text-red-400">
-                        -{formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowing_cost || totalBorrowingCosts || 0)}
+                      <div className="text-gray-500">+</div>
+                      {/* IC Unrealized */}
+                      <div className="bg-gray-800/50 rounded p-2">
+                        <div className="text-xs text-gray-500">Unrealized</div>
+                        <div className={`font-bold ${icUnrealizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {icUnrealizedPnL >= 0 ? '+' : ''}{formatCurrency(icUnrealizedPnL)}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500">
-                        {formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 365)}/day
+                      <div className="text-gray-500">−</div>
+                      {/* Borrowing Cost */}
+                      <div className="bg-red-900/30 rounded p-2">
+                        <div className="text-xs text-gray-500">Cost Accrued</div>
+                        <div className="font-bold text-red-400">{formatCurrency(totalCostAccrued)}</div>
                       </div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">IC Returns (Realized)</div>
-                      <div className="text-xl font-bold text-green-400">
-                        +{formatCurrency(combinedPerformance?.summary?.ic_trading?.total_realized_pnl || icPerformance?.performance?.closed_trades?.total_pnl || 0)}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        +{formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)} unrealized
-                      </div>
-                    </div>
-                    <div className={`rounded-lg p-4 ${
-                      (combinedPerformance?.summary?.net_profit || netPnL || 0) >= 0
-                        ? 'bg-green-500/20 border border-green-500/50'
-                        : 'bg-red-500/20 border border-red-500/50'
-                    }`}>
-                      <div className="text-xs text-gray-300 mb-1">NET PROFIT</div>
-                      <div className={`text-2xl font-bold ${(combinedPerformance?.summary?.net_profit || netPnL || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(combinedPerformance?.summary?.net_profit || netPnL || 0)}
+                      <div className="text-gray-500">=</div>
+                      {/* Net Profit */}
+                      <div className={`rounded p-2 border-2 ${netPnL >= 0 ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50'}`}>
+                        <div className="text-xs text-gray-300">Net Profit</div>
+                        <div className={`font-bold text-lg ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL)}
+                        </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Break-Even Analysis */}
-                  {totalBorrowed > 0 && (
-                    <div className="bg-black/30 rounded-lg p-4 border border-gray-600">
-                      <h4 className="text-sm font-bold text-gray-300 mb-3">📊 BREAK-EVEN ANALYSIS</h4>
-                      <div className="grid md:grid-cols-3 gap-4 text-sm">
-                        <div>
-                          <div className="text-xs text-gray-400">Monthly Break-Even</div>
-                          <div className="text-lg font-bold text-yellow-400">
-                            {formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 12)}
-                          </div>
-                          <div className="text-xs text-gray-500">IC returns needed to cover borrowing</div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-400">Actual Monthly IC Return</div>
-                          <div className={`text-lg font-bold ${(icPerformance?.performance?.today?.pnl || 0) * 30 > (totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 12 ? 'text-green-400' : 'text-red-400'}`}>
-                            {formatCurrency((icPerformance?.performance?.closed_trades?.total_pnl || 0) / Math.max(1, Math.ceil((Date.now() - new Date(positions?.positions?.[0]?.open_time || Date.now()).getTime()) / (30 * 24 * 60 * 60 * 1000))))}
-                          </div>
-                          <div className="text-xs text-gray-500">Average monthly performance</div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-gray-400">Cost Efficiency</div>
-                          <div className={`text-lg font-bold ${costEfficiency > 1 ? 'text-green-400' : 'text-red-400'}`}>
-                            {costEfficiency.toFixed(1)}x
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {costEfficiency > 1 ? `IC returns are ${costEfficiency.toFixed(1)}x borrowing costs` : 'Below break-even'}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="mt-3 pt-3 border-t border-gray-600">
-                        <div className={`text-sm font-medium ${costEfficiency > 1 ? 'text-green-400' : 'text-yellow-400'}`}>
-                          {costEfficiency > 1.5
-                            ? '✅ PROFITABLE: IC returns significantly exceed borrowing costs'
-                            : costEfficiency > 1
-                              ? '✓ PROFITABLE: IC returns exceed borrowing costs'
-                              : '⚠️ BELOW BREAK-EVEN: IC returns not covering borrowing costs yet'}
-                        </div>
-                      </div>
+                  {/* Summary cards */}
+                  <div className="grid md:grid-cols-4 gap-4 mb-4">
+                    <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-700/30">
+                      <div className="text-xs text-blue-400/70 mb-1">Capital Borrowed</div>
+                      <div className="text-xl font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
+                      <div className="text-xs text-gray-500">{positions?.positions?.length || 0} box spread{(positions?.positions?.length || 0) !== 1 ? 's' : ''}</div>
                     </div>
-                  )}
+                    <div className="bg-emerald-900/20 rounded-lg p-4 border border-emerald-600/30">
+                      <div className="text-xs text-emerald-400/70 mb-1">Total IC P&L</div>
+                      <div className={`text-xl font-bold ${totalICReturns >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {totalICReturns >= 0 ? '+' : ''}{formatCurrency(totalICReturns)}
+                      </div>
+                      <div className="text-xs text-gray-500">{icRealizedPnL >= 0 ? '+' : ''}{formatCurrency(icRealizedPnL)} realized + {icUnrealizedPnL >= 0 ? '+' : ''}{formatCurrency(icUnrealizedPnL)} unrealized</div>
+                    </div>
+                    <div className="bg-red-900/20 rounded-lg p-4 border border-red-700/30">
+                      <div className="text-xs text-red-400/70 mb-1">Cost Accrued So Far</div>
+                      <div className="text-xl font-bold text-red-400">−{formatCurrency(totalCostAccrued)}</div>
+                      <div className="text-xs text-gray-500">{formatCurrency(totalCostRemaining)} remaining to accrue</div>
+                    </div>
+                    <div className={`rounded-lg p-4 border-2 ${netPnL >= 0 ? 'bg-green-900/30 border-green-500/50' : 'bg-red-900/30 border-red-500/50'}`}>
+                      <div className="text-xs text-gray-300 mb-1 font-medium">NET PROFIT</div>
+                      <div className={`text-2xl font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL)}
+                      </div>
+                      <div className="text-xs text-gray-400">{costEfficiency.toFixed(1)}x cost efficiency</div>
+                    </div>
+                  </div>
+
+                  {/* Status indicator */}
+                  <div className={`p-3 rounded-lg text-sm ${costEfficiency >= 1 ? 'bg-green-900/30 border border-green-600/30' : 'bg-yellow-900/30 border border-yellow-600/30'}`}>
+                    <strong className={costEfficiency >= 1 ? 'text-green-400' : 'text-yellow-400'}>
+                      {costEfficiency >= 1.5 ? '✅ HIGHLY PROFITABLE' : costEfficiency >= 1 ? '✓ PROFITABLE' : '⚠️ BELOW BREAK-EVEN'}:
+                    </strong>
+                    <span className="text-gray-300 ml-2">
+                      IC P&L ({formatCurrency(totalICReturns)}) {costEfficiency >= 1 ? 'exceeds' : 'is less than'} borrowing cost ({formatCurrency(totalCostAccrued)}).
+                      {costEfficiency >= 1
+                        ? ` Net gain: ${formatCurrency(netPnL)}`
+                        : ` Need ${formatCurrency(-netPnL)} more to break even.`}
+                    </span>
+                  </div>
                 </div>
 
                 {/* IC Performance Stats */}
@@ -2676,7 +2767,7 @@ export default function PrometheusBoxDashboard() {
                     </div>
                     <div className="bg-gray-700/50 rounded-lg p-4">
                       <div className="text-xs text-gray-400 mb-1">Borrowing Costs</div>
-                      <div className="text-2xl font-bold text-red-400">{formatCurrency(totalBorrowingCosts)}</div>
+                      <div className="text-2xl font-bold text-red-400">{formatCurrency(totalCostAccrued)}</div>
                     </div>
                     <div className="bg-gray-700/50 rounded-lg p-4">
                       <div className="text-xs text-gray-400 mb-1">Net Profit</div>
@@ -3043,7 +3134,7 @@ export default function PrometheusBoxDashboard() {
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-400">Borrowing Costs:</span>
-                          <span className="text-red-400">-{formatCurrency(totalBorrowingCosts)}</span>
+                          <span className="text-red-400">-{formatCurrency(totalCostAccrued)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-400">IC Capital at Risk:</span>
