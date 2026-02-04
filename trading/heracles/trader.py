@@ -607,6 +607,9 @@ class HERACLESTrader:
         if given more room. This strategy lets winners run while limiting
         catastrophic losses.
 
+        OVERNIGHT HYBRID: Uses the stored initial_stop which was calculated
+        with overnight parameters (10 pts) vs RTH (15 pts) when position opened.
+
         Returns True if position was closed.
         """
         is_long = position.direction == TradeDirection.LONG
@@ -614,7 +617,12 @@ class HERACLESTrader:
         # Get config values
         activation_pts = self.config.no_loss_activation_pts  # 3.0 pts
         trail_distance = self.config.no_loss_trail_distance  # 2.0 pts
-        emergency_stop_pts = self.config.no_loss_emergency_stop  # 15.0 pts
+
+        # OVERNIGHT HYBRID: Use the stored initial_stop distance since it was
+        # calculated with correct overnight/RTH params when position was opened.
+        # This ensures overnight positions use tighter emergency stop (10 pts)
+        # while RTH positions use normal emergency stop (15 pts).
+        emergency_stop_pts = abs(position.entry_price - position.initial_stop)
 
         # Calculate profit in points
         if is_long:
