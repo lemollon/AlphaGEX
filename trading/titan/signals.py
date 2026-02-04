@@ -680,10 +680,6 @@ class SignalGenerator:
 
     def estimate_credits(self, spot: float, expected_move: float, put_short: float, call_short: float, vix: float) -> Dict[str, float]:
         """Estimate SPX IC credits for TITAN's wider spreads (FALLBACK when Tradier unavailable)"""
-        import random
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
         width = self.config.spread_width  # $12 for TITAN
 
         put_dist = (spot - put_short) / expected_move
@@ -696,20 +692,6 @@ class SignalGenerator:
 
         put_credit = max(0.40, min(put_credit, width * 0.40))  # Lower min, higher max
         call_credit = max(0.40, min(call_credit, width * 0.40))
-
-        # BUG FIX: Add realistic market variance (±12%) to prevent identical credits
-        ct_now = datetime.now(ZoneInfo("America/Chicago"))
-        time_seed = int(ct_now.timestamp() / 60)
-        random.seed(time_seed + int(spot * 100))
-
-        put_variance = 1.0 + (random.random() - 0.5) * 0.24
-        call_variance = 1.0 + (random.random() - 0.5) * 0.24
-
-        put_credit = put_credit * put_variance
-        call_credit = call_credit * call_variance
-
-        put_credit = max(0.35, min(put_credit, width * 0.42))
-        call_credit = max(0.35, min(call_credit, width * 0.42))
 
         total = put_credit + call_credit
         max_profit = total * 100
