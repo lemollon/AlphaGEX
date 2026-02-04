@@ -215,8 +215,10 @@ class PEGASUSConfig:
     min_win_probability: float = 0.42  # Minimum Oracle win probability to trade (42%)
 
     # Exit rules
-    use_stop_loss: bool = False
-    stop_loss_multiple: float = 2.0
+    # BUG FIX: Enable stop loss for realistic paper trading results
+    # Previously disabled, causing 97%+ win rates with no loss management
+    use_stop_loss: bool = True
+    stop_loss_multiple: float = 2.0  # Close when IC value reaches 2x credit
     profit_target_pct: float = 50.0
 
     # Trading window (CT - Central Time)
