@@ -377,11 +377,28 @@ class SignalGenerator:
         def round_call_strike(x):
             return math.ceil(x)   # Round up = further from spot for calls
 
-        # Helper to validate strike distance from spot (0.5% - 5% range)
-        def is_valid_strike_distance(put_strike: float, call_strike: float) -> bool:
-            put_dist = (spot_price - put_strike) / spot_price
-            call_dist = (call_strike - spot_price) / spot_price
-            return 0.005 <= put_dist <= 0.05 and 0.005 <= call_dist <= 0.05
+        # Ensure minimum expected move (0.5% of spot) to prevent calculation issues
+        min_expected_move = spot_price * 0.005  # 0.5% minimum
+        effective_em = max(expected_move, min_expected_move)
+
+        # FIX: Calculate MINIMUM strike distances using SD, NOT percentage!
+        # BUG: Previously used 0.5%-5% percentage validation which could accept
+        # GEX walls at 0.5% (~0.5 SD in low VIX) while SD fallback uses 1.2 SD.
+        # PEGASUS enforces 1 SD minimum - ARES should enforce 1.2 SD minimum.
+        min_sd_for_external = 1.2  # Minimum SD for Oracle/GEX strikes
+        min_put_short = spot_price - (min_sd_for_external * effective_em)  # 1.2 SD below
+        min_call_short = spot_price + (min_sd_for_external * effective_em)  # 1.2 SD above
+
+        # Helper to validate strike is at least min SD away from spot
+        def is_valid_sd_distance(put_strike: float, call_strike: float) -> tuple:
+            """
+            Validate strikes are at least 1.2 SD from spot.
+            Returns (is_valid, put_sd, call_sd) for logging.
+            """
+            put_sd = (spot_price - put_strike) / effective_em if effective_em > 0 else 0
+            call_sd = (call_strike - spot_price) / effective_em if effective_em > 0 else 0
+            is_valid = put_strike <= min_put_short and call_strike >= min_call_short
+            return is_valid, put_sd, call_sd
 
         # Determine short strikes with Oracle priority
         use_oracle = False
@@ -389,49 +406,42 @@ class SignalGenerator:
         put_short = 0
         call_short = 0
 
-        # Priority 1: Oracle suggested strikes (must be reasonable distance from spot)
+        # Priority 1: Oracle suggested strikes (ONLY if >= 1.2 SD away from spot)
         if oracle_put_strike and oracle_call_strike:
-            if is_valid_strike_distance(oracle_put_strike, oracle_call_strike):
+            is_valid, put_sd, call_sd = is_valid_sd_distance(oracle_put_strike, oracle_call_strike)
+            if is_valid:
                 put_short = round_put_strike(oracle_put_strike)
                 call_short = round_call_strike(oracle_call_strike)
                 use_oracle = True
-                logger.info(f"[ARES STRIKES] Using Oracle strikes: Put ${put_short}, Call ${call_short}")
+                logger.info(f"[ARES STRIKES] Using Oracle strikes: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
             else:
-                put_dist = (spot_price - oracle_put_strike) / spot_price * 100
-                call_dist = (oracle_call_strike - spot_price) / spot_price * 100
-                logger.warning(f"[ARES STRIKES] Oracle strikes rejected (put={put_dist:.1f}%, call={call_dist:.1f}% - need 0.5-5%)")
+                logger.warning(f"[ARES STRIKES] Oracle strikes TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 2: GEX walls (if Oracle not used and walls are valid)
+        # Priority 2: GEX walls (ONLY if >= 1.2 SD away from spot)
         if not use_oracle and call_wall > 0 and put_wall > 0:
-            # Validate GEX walls are reasonable distance from spot
-            if is_valid_strike_distance(put_wall, call_wall):
+            is_valid, put_sd, call_sd = is_valid_sd_distance(put_wall, call_wall)
+            if is_valid:
                 put_short = round_put_strike(put_wall)
                 call_short = round_call_strike(call_wall)
                 use_gex = True
-                put_dist = (spot_price - put_short) / spot_price * 100
-                call_dist = (call_short - spot_price) / spot_price * 100
-                logger.info(f"[ARES STRIKES] Using GEX walls: Put ${put_short} ({put_dist:.1f}%), Call ${call_short} ({call_dist:.1f}%)")
+                logger.info(f"[ARES STRIKES] Using GEX walls: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
             else:
-                put_dist = (spot_price - put_wall) / spot_price * 100
-                call_dist = (call_wall - spot_price) / spot_price * 100
-                logger.warning(f"[ARES STRIKES] GEX walls rejected (put={put_dist:.1f}%, call={call_dist:.1f}% - need 0.5-5%)")
+                logger.warning(f"[ARES STRIKES] GEX walls TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 3: SD-based fallback (with WIDENED multiplier for safety)
+        # Priority 3: SD-based fallback (guaranteed 1.2 SD minimum)
         if not use_oracle and not use_gex:
-            # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
-            min_expected_move = spot_price * 0.005  # 0.5% minimum
-            effective_em = max(expected_move, min_expected_move)
+            # effective_em already calculated above with 0.5% minimum
 
-            # FIX: Use 1.2 SD minimum for wider strikes (was 1.0, too tight)
+            # Use 1.2 SD minimum for wider strikes
             put_short = round_put_strike(spot_price - sd * effective_em)
             call_short = round_call_strike(spot_price + sd * effective_em)
 
-            # Calculate actual distance for logging
-            put_dist_pct = (spot_price - put_short) / spot_price * 100
-            call_dist_pct = (call_short - spot_price) / spot_price * 100
+            # Calculate actual SD for logging
+            put_sd_actual = (spot_price - put_short) / effective_em if effective_em > 0 else 0
+            call_sd_actual = (call_short - spot_price) / effective_em if effective_em > 0 else 0
 
             logger.info(f"[ARES STRIKES] Using SD-based ({sd:.1f} SD): "
-                       f"Put ${put_short} ({put_dist_pct:.1f}%), Call ${call_short} ({call_dist_pct:.1f}%)")
+                       f"Put ${put_short} ({put_sd_actual:.1f} SD), Call ${call_short} ({call_sd_actual:.1f} SD)")
 
             if expected_move < min_expected_move:
                 logger.warning(f"Expected move ${expected_move:.2f} too small, using minimum ${effective_em:.2f}")
