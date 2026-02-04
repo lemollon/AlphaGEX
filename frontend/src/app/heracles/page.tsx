@@ -739,7 +739,7 @@ export default function HERACLESPage() {
                             <CheckCircle className="h-5 w-5" />
                             Model Trained Successfully
                           </div>
-                          {/* Approve/Deny Buttons after training */}
+                          {/* Approve/Reject Buttons after training */}
                           {!mlApprovalStatus?.ml_approved && (
                             <div className="flex items-center gap-2">
                               <button
