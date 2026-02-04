@@ -714,6 +714,197 @@ def simulate_outcome(scans: List[Dict], entry_idx: int, position: Dict, config: 
 
 
 # ============================================================================
+# NO-LOSS TRAILING STRATEGY - Never take a loss, let winners run
+# ============================================================================
+
+def run_no_loss_trailing_simulation(
+    scans: List[Dict],
+    config: Dict,
+    activation_pts: float = 1.5,      # Points profit before trailing activates
+    trail_distance_pts: float = 1.0,  # How far behind to trail
+    emergency_stop_pts: float = 10.0, # Emergency stop (very wide)
+    max_hold_scans: int = 200,        # Max time to hold
+    name: str = "NO_LOSS_TRAIL"
+) -> Dict[str, Any]:
+    """
+    Simulate "never take a loss, let winners run" strategy.
+
+    Logic:
+    1. Enter trade with NO tight stop (only emergency stop far away)
+    2. Wait for price to move in our favor by activation_pts
+    3. Once activated, set trailing stop at breakeven (entry price)
+    4. As price continues in our favor, trail the stop to lock in profits
+    5. Exit when trailing stop is hit OR max hold time reached
+
+    This strategy:
+    - Avoids small stop-outs that turn into winners
+    - Lets winning trades run
+    - Only exits at breakeven or better (except emergency stop)
+    """
+    point_value = config['point_value']
+    closed_trades = []
+    skipped = 0
+
+    for idx, scan in enumerate(scans):
+        # Skip if no signal
+        if not scan['signal_direction']:
+            continue
+        if scan['price'] is None:
+            continue
+
+        direction = scan['signal_direction'].upper() if scan['signal_direction'] else ''
+        entry_price = scan['price']
+        is_long = direction == 'LONG'
+
+        # Emergency stop (very wide - only for catastrophic moves)
+        if is_long:
+            emergency_stop = entry_price - emergency_stop_pts
+        else:
+            emergency_stop = entry_price + emergency_stop_pts
+
+        # Track position through future scans
+        trailing_active = False
+        trailing_stop = None
+        high_water = entry_price if is_long else entry_price
+        exit_price = None
+        exit_reason = None
+
+        for i in range(idx + 1, min(idx + max_hold_scans, len(scans))):
+            future_price = scans[i]['price']
+            if future_price is None:
+                continue
+
+            # Update high water mark
+            if is_long:
+                if future_price > high_water:
+                    high_water = future_price
+                profit_pts = future_price - entry_price
+                max_profit_pts = high_water - entry_price
+            else:
+                if future_price < high_water:
+                    high_water = future_price
+                profit_pts = entry_price - future_price
+                max_profit_pts = entry_price - high_water
+
+            # Check emergency stop (catastrophic loss protection)
+            if is_long and future_price <= emergency_stop:
+                exit_price = emergency_stop
+                exit_reason = 'EMERGENCY_STOP'
+                break
+            if not is_long and future_price >= emergency_stop:
+                exit_price = emergency_stop
+                exit_reason = 'EMERGENCY_STOP'
+                break
+
+            # Activate trailing once we're profitable enough
+            if not trailing_active and max_profit_pts >= activation_pts:
+                trailing_active = True
+                # Set trailing stop at breakeven initially
+                trailing_stop = entry_price
+                # print(f"  Trail activated at profit {max_profit_pts:.2f} pts")
+
+            # Update trailing stop if active
+            if trailing_active:
+                if is_long:
+                    # Trail behind the high water mark
+                    new_trail = high_water - trail_distance_pts
+                    if new_trail > trailing_stop:
+                        trailing_stop = new_trail
+                    # Check if trailing stop hit
+                    if future_price <= trailing_stop:
+                        exit_price = trailing_stop
+                        exit_reason = 'TRAIL_STOP'
+                        break
+                else:
+                    # Trail above the low water mark (for shorts)
+                    new_trail = high_water + trail_distance_pts
+                    if new_trail < trailing_stop:
+                        trailing_stop = new_trail
+                    # Check if trailing stop hit
+                    if future_price >= trailing_stop:
+                        exit_price = trailing_stop
+                        exit_reason = 'TRAIL_STOP'
+                        break
+
+        # If no exit, close at last available price (timeout)
+        if exit_price is None:
+            # Find last valid price
+            for i in range(min(idx + max_hold_scans, len(scans)) - 1, idx, -1):
+                if scans[i]['price'] is not None:
+                    exit_price = scans[i]['price']
+                    exit_reason = 'TIMEOUT'
+                    break
+
+        if exit_price is None:
+            skipped += 1
+            continue
+
+        # Calculate P&L
+        if is_long:
+            pnl = (exit_price - entry_price) * point_value
+        else:
+            pnl = (entry_price - exit_price) * point_value
+
+        closed_trades.append({
+            'direction': direction,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'pnl': pnl,
+            'exit_reason': exit_reason,
+            'trailing_activated': trailing_active,
+        })
+
+    # Calculate stats
+    if not closed_trades:
+        return {
+            'name': name,
+            'trades_taken': 0,
+            'trades_skipped': skipped,
+            'pnl': 0,
+            'wins': 0,
+            'losses': 0,
+            'win_rate': 0,
+            'profit_factor': 0,
+            'exit_reasons': {},
+        }
+
+    wins = [t for t in closed_trades if t['pnl'] > 0]
+    losses = [t for t in closed_trades if t['pnl'] < 0]
+    breakeven = [t for t in closed_trades if t['pnl'] == 0]
+
+    total_pnl = sum(t['pnl'] for t in closed_trades)
+    total_wins = sum(t['pnl'] for t in wins)
+    total_losses = sum(t['pnl'] for t in losses)
+
+    profit_factor = abs(total_wins / total_losses) if total_losses != 0 else float('inf')
+
+    # Count exit reasons
+    exit_reasons = {}
+    for t in closed_trades:
+        reason = t['exit_reason']
+        exit_reasons[reason] = exit_reasons.get(reason, 0) + 1
+
+    # Count how many had trailing activated
+    trail_activated = sum(1 for t in closed_trades if t['trailing_activated'])
+
+    return {
+        'name': name,
+        'trades_taken': len(closed_trades),
+        'trades_skipped': skipped,
+        'pnl': total_pnl,
+        'wins': len(wins),
+        'losses': len(losses),
+        'breakeven': len(breakeven),
+        'win_rate': len(wins) / len(closed_trades) * 100 if closed_trades else 0,
+        'profit_factor': profit_factor,
+        'avg_win': total_wins / len(wins) if wins else 0,
+        'avg_loss': total_losses / len(losses) if losses else 0,
+        'exit_reasons': exit_reasons,
+        'trail_activated_pct': trail_activated / len(closed_trades) * 100 if closed_trades else 0,
+    }
+
+
+# ============================================================================
 # RUN SIMULATIONS
 # ============================================================================
 
@@ -804,6 +995,39 @@ for cooldown, win_streak, name in direction_tracker_configs:
     results.append(result)
     skip_info = f" (skips: {result.get('skip_reasons', {})})" if result.get('skip_reasons') else ""
     print(f"  {name}: {result['trades_taken']} trades, ${result['pnl']:.2f}{skip_info}")
+
+# ============================================================================
+# NO-LOSS TRAILING SIMULATIONS - Never take a loss, let winners run
+# ============================================================================
+
+print("\n" + "-" * 70)
+print("NO-LOSS TRAILING STRATEGIES (No stop until profitable, then trail)")
+print("-" * 70)
+
+# Test different activation and trailing parameters
+no_loss_configs = [
+    # (activation_pts, trail_distance, emergency_stop, name)
+    (1.0, 0.5, 10.0, "NL_ACT1_TRAIL0.5"),   # Quick activation, tight trail
+    (1.5, 1.0, 10.0, "NL_ACT1.5_TRAIL1"),   # Default - activate at 1.5 pts, trail 1 pt
+    (2.0, 1.0, 10.0, "NL_ACT2_TRAIL1"),     # Slower activation, normal trail
+    (2.0, 1.5, 10.0, "NL_ACT2_TRAIL1.5"),   # Slower activation, wider trail
+    (3.0, 2.0, 15.0, "NL_ACT3_TRAIL2"),     # Even slower, let it run more
+    (1.5, 0.5, 8.0, "NL_TIGHT"),            # Tight everything
+    (2.5, 2.0, 20.0, "NL_LOOSE"),           # Loose everything - max runner
+]
+
+for activation, trail, emergency, name in no_loss_configs:
+    result = run_no_loss_trailing_simulation(
+        test_scans, CONFIG,
+        activation_pts=activation,
+        trail_distance_pts=trail,
+        emergency_stop_pts=emergency,
+        name=name
+    )
+    results.append(result)
+    exit_info = f" (exits: {result.get('exit_reasons', {})})" if result.get('exit_reasons') else ""
+    trail_pct = result.get('trail_activated_pct', 0)
+    print(f"  {name}: {result['trades_taken']} trades, ${result['pnl']:.2f}, trail_activated={trail_pct:.0f}%{exit_info}")
 
 # ============================================================================
 # RESULTS
