@@ -17,7 +17,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database_adapter import DatabaseAdapter
+from database_adapter import get_connection
 from datetime import datetime, timedelta
 from collections import defaultdict
 from typing import List, Dict, Any, Callable, Optional, Tuple
@@ -61,11 +61,12 @@ print("VALOR (HERACLES) SCAN-BASED BACKTESTER")
 print("=" * 70)
 print("\nUsing REAL scan activity data from heracles_scan_activity")
 
-db = DatabaseAdapter()
+conn = get_connection()
+cursor = conn.cursor()
 
 # Get all scan activity with full context
 print("\nLoading scan data...")
-scans = db.fetchall("""
+cursor.execute("""
     SELECT
         scan_id,
         scan_time,
@@ -120,6 +121,8 @@ scans = db.fetchall("""
     FROM heracles_scan_activity
     ORDER BY scan_time ASC
 """)
+scans = cursor.fetchall()
+conn.close()
 
 if not scans:
     print("No scan activity found")
@@ -1028,6 +1031,211 @@ for activation, trail, emergency, name in no_loss_configs:
     exit_info = f" (exits: {result.get('exit_reasons', {})})" if result.get('exit_reasons') else ""
     trail_pct = result.get('trail_activated_pct', 0)
     print(f"  {name}: {result['trades_taken']} trades, ${result['pnl']:.2f}, trail_activated={trail_pct:.0f}%{exit_info}")
+
+# ============================================================================
+# OVERNIGHT HYBRID STRATEGY - Different parameters for overnight vs RTH
+# ============================================================================
+
+print("\n" + "-" * 70)
+print("OVERNIGHT HYBRID STRATEGIES (Tighter stops/smaller targets overnight)")
+print("-" * 70)
+print("Overnight = 5 PM - 4 AM CT | RTH = 4 AM - 5 PM CT")
+
+
+def is_overnight_hour(hour: int) -> bool:
+    """Check if hour is overnight (5 PM - 4 AM CT)"""
+    # Overnight: 17-23 (5 PM - midnight) and 0-3 (midnight - 4 AM)
+    return hour >= 17 or hour < 4
+
+
+def run_overnight_hybrid_simulation(
+    scans: List[Dict],
+    config: Dict,
+    # RTH parameters (normal)
+    rth_stop_pts: float = 2.5,
+    rth_target_pts: float = 6.0,
+    # Overnight parameters (tighter/smaller)
+    overnight_stop_pts: float = 1.5,
+    overnight_target_pts: float = 3.0,
+    name: str = "OVERNIGHT_HYBRID"
+) -> Dict[str, Any]:
+    """
+    Hybrid strategy: Different stop/target for overnight vs RTH.
+
+    Overnight (5 PM - 4 AM CT): Tighter stops, smaller targets
+    RTH (4 AM - 5 PM CT): Normal stops and targets
+    """
+    point_value = config['point_value']
+    max_positions = config['max_positions']
+    closed_trades = []
+    rth_trades = []
+    overnight_trades = []
+
+    for idx, scan in enumerate(scans):
+        if not scan['signal_direction']:
+            continue
+        if scan['price'] is None:
+            continue
+
+        direction = scan['signal_direction'].upper() if scan['signal_direction'] else ''
+        entry_price = scan['price']
+        is_long = direction == 'LONG'
+        hour = scan['hour']
+
+        # Determine if overnight
+        is_overnight = is_overnight_hour(hour) if hour is not None else False
+
+        # Use different parameters based on session
+        if is_overnight:
+            stop_pts = overnight_stop_pts
+            target_pts = overnight_target_pts
+        else:
+            stop_pts = rth_stop_pts
+            target_pts = rth_target_pts
+
+        if is_long:
+            stop_price = entry_price - stop_pts
+            target_price = entry_price + target_pts
+        else:
+            stop_price = entry_price + stop_pts
+            target_price = entry_price - target_pts
+
+        # Simulate outcome
+        exit_price = None
+        exit_reason = None
+
+        for i in range(idx + 1, min(idx + 100, len(scans))):
+            future_price = scans[i]['price']
+            if future_price is None:
+                continue
+
+            # Check target
+            if is_long and future_price >= target_price:
+                exit_price = target_price
+                exit_reason = 'WIN_TARGET'
+                break
+            if not is_long and future_price <= target_price:
+                exit_price = target_price
+                exit_reason = 'WIN_TARGET'
+                break
+
+            # Check stop
+            if is_long and future_price <= stop_price:
+                exit_price = stop_price
+                exit_reason = 'LOSS_STOP'
+                break
+            if not is_long and future_price >= stop_price:
+                exit_price = stop_price
+                exit_reason = 'LOSS_STOP'
+                break
+
+        if exit_price is None:
+            continue
+
+        # Calculate P&L
+        if is_long:
+            pnl = (exit_price - entry_price) * point_value
+        else:
+            pnl = (entry_price - exit_price) * point_value
+
+        trade = {
+            'direction': direction,
+            'entry_price': entry_price,
+            'exit_price': exit_price,
+            'pnl': pnl,
+            'exit_reason': exit_reason,
+            'is_overnight': is_overnight,
+            'stop_pts': stop_pts,
+            'target_pts': target_pts,
+        }
+        closed_trades.append(trade)
+
+        if is_overnight:
+            overnight_trades.append(trade)
+        else:
+            rth_trades.append(trade)
+
+    # Calculate stats
+    if not closed_trades:
+        return {
+            'name': name,
+            'trades_taken': 0,
+            'pnl': 0,
+            'wins': 0,
+            'losses': 0,
+            'win_rate': 0,
+            'profit_factor': 0,
+            'rth_trades': 0,
+            'overnight_trades': 0,
+            'rth_pnl': 0,
+            'overnight_pnl': 0,
+        }
+
+    wins = [t for t in closed_trades if t['pnl'] > 0]
+    losses = [t for t in closed_trades if t['pnl'] < 0]
+
+    total_pnl = sum(t['pnl'] for t in closed_trades)
+    total_wins = sum(t['pnl'] for t in wins)
+    total_losses = sum(t['pnl'] for t in losses)
+
+    profit_factor = abs(total_wins / total_losses) if total_losses != 0 else float('inf')
+
+    rth_pnl = sum(t['pnl'] for t in rth_trades)
+    overnight_pnl = sum(t['pnl'] for t in overnight_trades)
+
+    rth_wins = sum(1 for t in rth_trades if t['pnl'] > 0)
+    overnight_wins = sum(1 for t in overnight_trades if t['pnl'] > 0)
+
+    return {
+        'name': name,
+        'trades_taken': len(closed_trades),
+        'trades_skipped': 0,
+        'pnl': total_pnl,
+        'wins': len(wins),
+        'losses': len(losses),
+        'win_rate': len(wins) / len(closed_trades) * 100 if closed_trades else 0,
+        'profit_factor': profit_factor,
+        'rth_trades': len(rth_trades),
+        'overnight_trades': len(overnight_trades),
+        'rth_pnl': rth_pnl,
+        'overnight_pnl': overnight_pnl,
+        'rth_win_rate': rth_wins / len(rth_trades) * 100 if rth_trades else 0,
+        'overnight_win_rate': overnight_wins / len(overnight_trades) * 100 if overnight_trades else 0,
+    }
+
+
+# Test different overnight parameter combinations
+overnight_configs = [
+    # (rth_stop, rth_target, overnight_stop, overnight_target, name)
+    (2.5, 6.0, 1.5, 3.0, "OVNT_S1.5_T3"),     # Tight overnight: 1.5 stop, 3 target
+    (2.5, 6.0, 1.5, 2.5, "OVNT_S1.5_T2.5"),   # Tighter: 1.5 stop, 2.5 target
+    (2.5, 6.0, 2.0, 4.0, "OVNT_S2_T4"),       # Moderate: 2 stop, 4 target
+    (2.5, 6.0, 1.0, 2.0, "OVNT_S1_T2"),       # Very tight: 1 stop, 2 target (scalp)
+    (2.5, 6.0, 2.0, 3.0, "OVNT_S2_T3"),       # 2 stop, 3 target
+    (2.5, 6.0, 1.5, 4.0, "OVNT_S1.5_T4"),     # Tight stop, decent target
+]
+
+for rth_stop, rth_target, ovnt_stop, ovnt_target, name in overnight_configs:
+    result = run_overnight_hybrid_simulation(
+        test_scans, CONFIG,
+        rth_stop_pts=rth_stop,
+        rth_target_pts=rth_target,
+        overnight_stop_pts=ovnt_stop,
+        overnight_target_pts=ovnt_target,
+        name=name
+    )
+    results.append(result)
+
+    rth_count = result.get('rth_trades', 0)
+    ovnt_count = result.get('overnight_trades', 0)
+    rth_pnl = result.get('rth_pnl', 0)
+    ovnt_pnl = result.get('overnight_pnl', 0)
+    rth_wr = result.get('rth_win_rate', 0)
+    ovnt_wr = result.get('overnight_win_rate', 0)
+
+    print(f"  {name}: {result['trades_taken']} trades, ${result['pnl']:.2f}")
+    print(f"    RTH: {rth_count} trades, ${rth_pnl:.2f}, {rth_wr:.0f}% win")
+    print(f"    Overnight: {ovnt_count} trades, ${ovnt_pnl:.2f}, {ovnt_wr:.0f}% win")
 
 # ============================================================================
 # RESULTS
