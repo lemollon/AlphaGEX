@@ -3,6 +3,12 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
+import { DollarSign, TrendingUp, Banknote, Receipt, Target } from 'lucide-react'
+import {
+  BotPageHeader,
+  StatCard,
+} from '@/components/trader'
 import {
   LineChart,
   Line,
@@ -80,9 +86,11 @@ interface Position {
 }
 
 export default function PrometheusBoxDashboard() {
+  const sidebarPadding = useSidebarPadding()
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'ic-trading' | 'analytics' | 'education' | 'howItWorks'>('overview')
   const [boxEquityTimeframe, setBoxEquityTimeframe] = useState('intraday')
   const [icEquityTimeframe, setIcEquityTimeframe] = useState('intraday')
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Get selected Box Spread equity timeframe config
   const selectedBoxTimeframe = EQUITY_TIMEFRAMES.find(t => t.id === boxEquityTimeframe) || EQUITY_TIMEFRAMES[0]
@@ -165,82 +173,89 @@ export default function PrometheusBoxDashboard() {
   const returnOnBorrowed = totalBorrowed > 0 ? (netPnL / totalBorrowed) * 100 : 0
   const costEfficiency = totalBorrowingCosts > 0 ? (totalICReturns / totalBorrowingCosts) : 0
 
-  return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <Navigation />
+  // Handle refresh
+  const handleRefresh = () => {
+    setIsRefreshing(true)
+    // SWR will automatically revalidate, just show spinner briefly
+    setTimeout(() => setIsRefreshing(false), 1000)
+  }
 
-      {/* Header */}
-      <div className="bg-gradient-to-r from-orange-900 via-red-900 to-orange-900 p-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="flex items-center gap-4">
-            <div className="text-5xl">🔥</div>
-            <div>
-              <h1 className="text-3xl font-bold">PROMETHEUS</h1>
-              <p className="text-orange-300">Box Spread Synthetic Borrowing</p>
-            </div>
-          </div>
+  return (
+    <>
+      <Navigation />
+      <main className={`min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-7xl mx-auto space-y-6">
+
+          {/* Header - Branded */}
+          <BotPageHeader
+            botName="PROMETHEUS"
+            isActive={status?.system_status === 'active'}
+            lastHeartbeat={status?.last_update || undefined}
+            onRefresh={handleRefresh}
+            isRefreshing={isRefreshing}
+            scanIntervalMinutes={5}
+          />
 
           {/* Quick Stats */}
-          {status && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-6">
-              <div className="bg-black/30 rounded-lg p-4">
-                <div className="text-sm text-gray-400">Status</div>
-                <div className={`text-xl font-bold ${status.system_status === 'active' ? 'text-green-400' : 'text-yellow-400'}`}>
-                  {status.system_status?.toUpperCase() || 'PAPER'}
-                </div>
-              </div>
-              <div className="bg-black/30 rounded-lg p-4">
-                <div className="text-sm text-gray-400">Total Borrowed</div>
-                <div className="text-xl font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
-              </div>
-              <div className="bg-black/30 rounded-lg p-4">
-                <div className="text-sm text-gray-400">IC Returns</div>
-                <div className="text-xl font-bold text-green-400">{formatCurrency(totalICReturns)}</div>
-              </div>
-              <div className="bg-black/30 rounded-lg p-4">
-                <div className="text-sm text-gray-400">Borrowing Costs</div>
-                <div className="text-xl font-bold text-red-400">{formatCurrency(totalBorrowingCosts)}</div>
-              </div>
-              <div className="bg-black/30 rounded-lg p-4">
-                <div className="text-sm text-gray-400">Net P&L</div>
-                <div className={`text-xl font-bold ${netPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {formatCurrency(netPnL)}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Tab Navigation */}
-      <div className="bg-gray-800 border-b border-gray-700">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex gap-1">
-            {[
-              { key: 'overview', label: 'Overview' },
-              { key: 'positions', label: 'Box Spreads' },
-              { key: 'ic-trading', label: 'IC Trading' },
-              { key: 'analytics', label: 'Analytics' },
-              { key: 'education', label: 'Education' },
-              { key: 'howItWorks', label: 'How It Works' },
-            ].map((tab) => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key as any)}
-                className={`px-6 py-3 font-medium transition-colors ${
-                  activeTab === tab.key ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <StatCard
+              label="Total Borrowed"
+              value={formatCurrency(totalBorrowed)}
+              icon={<Banknote className="h-4 w-4" />}
+              color="blue"
+            />
+            <StatCard
+              label="IC Returns"
+              value={`${totalICReturns >= 0 ? '+' : ''}${formatCurrency(totalICReturns)}`}
+              icon={<TrendingUp className="h-4 w-4" />}
+              color={totalICReturns >= 0 ? 'green' : 'red'}
+            />
+            <StatCard
+              label="Borrowing Costs"
+              value={formatCurrency(totalBorrowingCosts)}
+              icon={<Receipt className="h-4 w-4" />}
+              color="red"
+            />
+            <StatCard
+              label="Net P&L"
+              value={`${netPnL >= 0 ? '+' : ''}${formatCurrency(netPnL)}`}
+              icon={<DollarSign className="h-4 w-4" />}
+              color={netPnL >= 0 ? 'green' : 'red'}
+            />
+            <StatCard
+              label="Cost Efficiency"
+              value={`${costEfficiency.toFixed(1)}x`}
+              icon={<Target className="h-4 w-4" />}
+              color={costEfficiency >= 1 ? 'green' : 'yellow'}
+            />
           </div>
-        </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto p-6">
-        {isLoading && (
+          {/* Tab Navigation */}
+          <div className="bg-[#0a0a0a] rounded-xl border border-gray-800 overflow-hidden">
+            <div className="flex gap-1 p-1 bg-gray-900/50 border-b border-gray-800">
+              {[
+                { key: 'overview', label: 'Overview' },
+                { key: 'positions', label: 'Box Spreads' },
+                { key: 'ic-trading', label: 'IC Trading' },
+                { key: 'analytics', label: 'Analytics' },
+                { key: 'education', label: 'Education' },
+                { key: 'howItWorks', label: 'How It Works' },
+              ].map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key as any)}
+                  className={`px-6 py-3 font-medium rounded-lg transition-colors ${
+                    activeTab === tab.key ? 'bg-emerald-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab Content */}
+            <div className="p-6">
+              {isLoading && (
           <div className="text-center py-12">
             <div className="animate-spin text-4xl mb-4">🔥</div>
             <p className="text-gray-400">Loading PROMETHEUS data...</p>
@@ -4433,7 +4448,10 @@ export default function PrometheusBoxDashboard() {
             )}
           </>
         )}
-      </div>
-    </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </>
   )
 }
