@@ -825,13 +825,52 @@ class HERACLESSignalGenerator:
                 f"flip={flip_point:.2f}, call_wall={call_wall:.2f}, conf={confidence:.2%}"
             )
 
+        # =====================================================================
+        # PRIORITY 3: Near flip point signals (negative gamma amplifies moves)
+        # When price is near flip in negative gamma, any directional move tends
+        # to accelerate. Trade the direction away from flip.
+        # =====================================================================
         else:
-            # No clear signal - price in no-man's land (between walls, near flip)
-            logger.debug(
-                f"No momentum signal: price in neutral zone. "
-                f"dist_from_flip={distance_from_flip:.2f}, not near walls"
-            )
-            return None
+            # Price is in the "dead zone" - near flip but not near walls
+            # In negative gamma, this is still a valid trading zone!
+            # Trade in the direction price is moving away from flip
+
+            # Use small distance threshold for near-flip signals
+            near_flip_threshold = breakout_threshold * 0.5  # Half of breakout threshold
+
+            if abs(distance_from_flip) >= near_flip_threshold:
+                # Price has some distance from flip - trade in that direction
+                if distance_from_flip > 0:
+                    # Price above flip - continue LONG momentum
+                    direction = TradeDirection.LONG
+                    confidence = min(0.70, 0.50 + abs(distance_from_flip) / breakout_threshold * 0.2)
+                    reasoning = (
+                        f"NEGATIVE GAMMA near-flip momentum: Price {current_price:.2f} is "
+                        f"{distance_from_flip:.2f} pts above flip {flip_point:.2f}. "
+                        f"In neg gamma, moves accelerate away from flip. LONG targeting {call_wall:.2f}."
+                    )
+                else:
+                    # Price below flip - continue SHORT momentum
+                    direction = TradeDirection.SHORT
+                    confidence = min(0.70, 0.50 + abs(distance_from_flip) / breakout_threshold * 0.2)
+                    reasoning = (
+                        f"NEGATIVE GAMMA near-flip momentum: Price {current_price:.2f} is "
+                        f"{abs(distance_from_flip):.2f} pts below flip {flip_point:.2f}. "
+                        f"In neg gamma, moves accelerate away from flip. SHORT targeting {put_wall:.2f}."
+                    )
+
+                source = SignalSource.GEX_MOMENTUM
+                logger.info(
+                    f"Near-flip momentum {direction.value}: price={current_price:.2f}, "
+                    f"flip={flip_point:.2f}, dist={distance_from_flip:.2f}, conf={confidence:.2%}"
+                )
+            else:
+                # Price is RIGHT at flip point - wait for direction
+                logger.debug(
+                    f"No momentum signal: price at flip point. "
+                    f"dist_from_flip={distance_from_flip:.2f}, threshold={near_flip_threshold:.2f}"
+                )
+                return None
 
         return FuturesSignal(
             direction=direction,
