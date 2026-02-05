@@ -232,6 +232,7 @@ export default function HERACLESPage() {
   const config = status?.config || {}
   const winTracker = status?.win_tracker || {}
   const paperAccount = status?.paper_account || null
+  const lossStreak = status?.loss_streak || {}
   const closedTrades = closedTradesData?.trades || []
   const dailyEquityCurve = equityCurveData?.equity_curve || []
   const intradayEquityCurve = intradayEquityData?.equity_curve || []
@@ -317,6 +318,42 @@ export default function HERACLESPage() {
               </div>
             </div>
           </div>
+
+          {/* Loss Streak Pause Banner - Shows when paused after consecutive losses */}
+          {lossStreak?.is_paused && (
+            <div className="bg-red-900/40 border border-red-500/50 rounded-lg p-4 animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 rounded-full bg-red-500 animate-ping" />
+                <div className="flex-1">
+                  <h3 className="text-red-400 font-semibold flex items-center gap-2">
+                    <span>PAUSED - Loss Streak Protection Active</span>
+                    <span className="text-white bg-red-600/50 px-2 py-0.5 rounded text-sm">
+                      {Math.ceil(lossStreak.pause_remaining_seconds / 60)}:{String(Math.floor(lossStreak.pause_remaining_seconds % 60)).padStart(2, '0')} remaining
+                    </span>
+                  </h3>
+                  <p className="text-gray-300 text-sm mt-1">
+                    {lossStreak.consecutive_losses} consecutive losses detected. New entries paused for {lossStreak.pause_minutes} minutes.
+                    Existing positions are still being managed.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Loss Streak Warning Banner - Shows when approaching pause threshold */}
+          {!lossStreak?.is_paused && lossStreak?.consecutive_losses > 0 && (
+            <div className="bg-orange-900/30 border border-orange-500/50 rounded-lg p-3">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-orange-500" />
+                <p className="text-orange-300 text-sm">
+                  <span className="font-semibold">Loss Streak: {lossStreak.consecutive_losses}</span>
+                  <span className="text-gray-400 ml-2">
+                    ({lossStreak.max_consecutive_losses - lossStreak.consecutive_losses} more before {lossStreak.pause_minutes}min pause)
+                  </span>
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* ML Status Banner - Shows when ML is active or awaiting approval */}
           {mlStatus?.model_trained && (

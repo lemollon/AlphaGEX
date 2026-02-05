@@ -1515,12 +1515,32 @@ class HERACLESTrader:
         if config.mode == TradingMode.PAPER:
             paper_account = self.db.get_paper_account()
 
+        # Calculate loss streak pause status
+        now = datetime.now(CENTRAL_TZ)
+        is_paused = False
+        pause_remaining_seconds = 0
+        pause_until_str = None
+
+        if self.loss_streak_pause_until:
+            if now < self.loss_streak_pause_until:
+                is_paused = True
+                pause_remaining_seconds = (self.loss_streak_pause_until - now).total_seconds()
+                pause_until_str = self.loss_streak_pause_until.isoformat()
+
         status_dict = {
             "bot_name": "HERACLES",
-            "status": "active" if self.executor.is_market_open() else "market_closed",
+            "status": "paused_loss_streak" if is_paused else ("active" if self.executor.is_market_open() else "market_closed"),
             "mode": config.mode.value,
             "symbol": config.symbol,
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+            "loss_streak": {
+                "consecutive_losses": self.consecutive_losses,
+                "is_paused": is_paused,
+                "pause_until": pause_until_str,
+                "pause_remaining_seconds": pause_remaining_seconds,
+                "max_consecutive_losses": config.max_consecutive_losses,
+                "pause_minutes": config.loss_streak_pause_minutes
+            },
             "config": {
                 "capital": config.capital,
                 "risk_per_trade_pct": config.risk_per_trade_pct,
