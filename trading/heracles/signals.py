@@ -1317,6 +1317,13 @@ class HERACLESSignalGenerator:
         return None
 
 
+# GEX Cache for post-options-close trading (3-4 PM CT)
+# MES futures trade until 4 PM but SPX options close at 3 PM
+# After 3 PM, we use n+1 (next day) GEX data for forward-looking levels
+_gex_cache: Dict[str, Any] = {}
+_gex_cache_time: Optional[datetime] = None
+
+
 def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
     """
     Fetch GEX data for HERACLES signal generation.
@@ -1327,10 +1334,51 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
     We use SPX options data (also at ~5900 level) for accurate GEX levels.
     SPX requires Tradier PRODUCTION keys (sandbox doesn't support SPX).
 
+    POST-OPTIONS-CLOSE HANDLING (3-4 PM CT):
+    MES futures trade until 4 PM CT, but SPX options close at 3 PM CT.
+    After 3 PM, we switch to using n+1 (next day) GEX data:
+    - n1_flip_point becomes flip_point
+    - n1_call_wall becomes call_wall
+    - n1_put_wall becomes put_wall
+    This gives forward-looking support/resistance levels for the 3-4 PM window.
+
     SPX = S&P 500 Index (~5900)
     MES = Micro E-mini S&P 500 futures (~5900, tracks SPX directly)
     SPY = SPDR S&P 500 ETF (~590, 1/10th of SPX)
     """
+    global _gex_cache, _gex_cache_time
+
+    now = datetime.now(CENTRAL_TZ)
+    hour = now.hour
+
+    # Check if we're in the post-options-close window (3-4 PM CT)
+    # SPX options close at 3 PM CT, MES futures continue until 4 PM CT
+    is_post_options_close = (hour == 15)  # 3 PM CT
+
+    # If post-options-close and we have valid cached data with n+1 levels, use n+1
+    if is_post_options_close and _gex_cache and _gex_cache_time:
+        cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
+        if cache_age_minutes < 120:  # Cache valid for 2 hours max
+            # Use n+1 (next day) GEX levels for forward-looking support/resistance
+            n1_flip = _gex_cache.get('n1_flip_point') or _gex_cache.get('flip_point', 0)
+            n1_call = _gex_cache.get('n1_call_wall') or _gex_cache.get('call_wall', 0)
+            n1_put = _gex_cache.get('n1_put_wall') or _gex_cache.get('put_wall', 0)
+
+            logger.info(
+                f"HERACLES using N+1 GEX data (options closed at 3 PM CT). "
+                f"Cache age: {cache_age_minutes:.0f} min. "
+                f"n1_flip={n1_flip:.2f}, n1_call={n1_call:.2f}, n1_put={n1_put:.2f}"
+            )
+
+            return {
+                'flip_point': n1_flip,
+                'call_wall': n1_call,
+                'put_wall': n1_put,
+                'net_gex': _gex_cache.get('net_gex', 0),  # Use current regime
+                'gex_ratio': _gex_cache.get('gex_ratio', 1.0),
+                'using_n1_data': True,  # Flag for logging/debugging
+            }
+
     try:
         # Use TradierGEXCalculator with sandbox=False for SPX (production keys required)
         from data.gex_calculator import TradierGEXCalculator
@@ -1373,7 +1421,7 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
                 f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
             )
 
-            return {
+            gex_data = {
                 'flip_point': flip_point,
                 'call_wall': call_wall,
                 'put_wall': put_wall,
@@ -1384,6 +1432,16 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
                 'n1_call_wall': gex_result.get('n1_call_wall'),
                 'n1_put_wall': gex_result.get('n1_put_wall'),
             }
+
+            # Cache valid GEX data for post-options-close trading (3-4 PM CT)
+            # Only cache if we have a valid flip_point
+            if flip_point > 0:
+                _gex_cache.clear()
+                _gex_cache.update(gex_data)
+                _gex_cache_time = now
+                logger.debug(f"GEX cache updated at {now.strftime('%H:%M:%S')}")
+
+            return gex_data
 
         logger.warning(f"GEX calculator returned no data for {symbol}")
 
