@@ -1498,45 +1498,87 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
                 'n1_put_wall': n1_put,
             }
 
+    # =========================================================================
+    # PRIMARY: TradingVolatilityAPI (best SPX GEX data with flip_point, walls)
+    # =========================================================================
     try:
-        # Use TradierGEXCalculator with sandbox=False for SPX (production keys required)
+        from core_classes_and_engines import TradingVolatilityAPI
+
+        api = TradingVolatilityAPI()
+        gex_result = api.get_net_gamma(symbol)
+
+        if gex_result and 'error' not in gex_result:
+            flip_point = float(gex_result.get('flip_point', 0))
+            call_wall = float(gex_result.get('call_wall', 0) or 0)
+            put_wall = float(gex_result.get('put_wall', 0) or 0)
+            net_gex = float(gex_result.get('net_gex', 0))
+            spot_price = float(gex_result.get('spot_price', 0))
+
+            # If walls are missing, estimate from flip_point
+            if flip_point > 0:
+                if call_wall <= 0:
+                    call_wall = flip_point * 1.01  # 1% above flip
+                    logger.debug(f"Estimated call_wall: {call_wall:.2f}")
+                if put_wall <= 0:
+                    put_wall = flip_point * 0.99  # 1% below flip
+                    logger.debug(f"Estimated put_wall: {put_wall:.2f}")
+
+            logger.info(
+                f"HERACLES GEX from TradingVolatility: flip={flip_point:.2f}, "
+                f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+            )
+
+            gex_data = {
+                'flip_point': flip_point,
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'net_gex': net_gex,
+                'gex_ratio': 1.0,
+                'data_source': 'trading_volatility_api',
+            }
+
+            # Cache valid GEX data for overnight trading
+            if flip_point > 0:
+                _gex_cache.clear()
+                _gex_cache.update(gex_data)
+                _gex_cache_time = now
+                logger.debug(f"GEX cache updated from TradingVolatility at {now.strftime('%H:%M:%S')}")
+
+                # Persist to database for overnight resilience
+                _persist_gex_cache_to_db(gex_data, now)
+
+            return gex_data
+
+        logger.warning(f"TradingVolatilityAPI returned no valid data for {symbol}")
+
+    except ImportError as e:
+        logger.warning(f"TradingVolatilityAPI not available: {e}")
+    except Exception as e:
+        logger.warning(f"TradingVolatilityAPI error: {e}")
+
+    # =========================================================================
+    # FALLBACK 1: TradierGEXCalculator (real-time calculation)
+    # =========================================================================
+    try:
         from data.gex_calculator import TradierGEXCalculator
 
-        # SPX requires production API (sandbox doesn't support index options)
         calculator = TradierGEXCalculator(sandbox=False)
         gex_result = calculator.calculate_gex(symbol)
 
         if gex_result:
-            # SPX GEX levels are already at the correct scale for MES (~5900)
-            # No scaling needed - SPX and MES are both at S&P 500 index level
             flip_point = gex_result.get('flip_point', 0)
             call_wall = gex_result.get('call_wall', 0)
             put_wall = gex_result.get('put_wall', 0)
             net_gex = gex_result.get('net_gex', 0)
-            spot_price = gex_result.get('spot_price', 0)
 
-            # If walls are 0 or invalid but we have flip_point, estimate walls
-            # This handles the case where Tradier doesn't provide gamma for SPX
             if flip_point > 0:
                 if call_wall <= 0:
-                    # Estimate call wall as 1% above flip point
                     call_wall = flip_point * 1.01
-                    logger.debug(f"Estimated call_wall: {call_wall:.2f} (flip * 1.01)")
                 if put_wall <= 0:
-                    # Estimate put wall as 1% below flip point
                     put_wall = flip_point * 0.99
-                    logger.debug(f"Estimated put_wall: {put_wall:.2f} (flip * 0.99)")
-
-            # If net_gex is 0 but we have valid walls, estimate regime from price position
-            # This is a heuristic when gamma data isn't available
-            if net_gex == 0 and flip_point > 0 and spot_price > 0:
-                # Positive GEX when price is between walls (mean reversion environment)
-                # Use small positive value to trigger mean reversion strategy
-                net_gex = 1e6  # Small positive = positive gamma regime
-                logger.debug(f"Estimated net_gex as positive (mean reversion)")
 
             logger.info(
-                f"HERACLES GEX data for {symbol}: flip={flip_point:.2f}, "
+                f"HERACLES GEX from Tradier: flip={flip_point:.2f}, "
                 f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
             )
 
@@ -1546,29 +1588,21 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
                 'put_wall': put_wall,
                 'net_gex': net_gex,
                 'gex_ratio': gex_result.get('gex_ratio', 1.0),
-                # n+1 data for overnight (if available)
-                'n1_flip_point': gex_result.get('n1_flip_point'),
-                'n1_call_wall': gex_result.get('n1_call_wall'),
-                'n1_put_wall': gex_result.get('n1_put_wall'),
+                'data_source': 'tradier_calculator',
             }
 
-            # Cache valid GEX data for post-options-close trading (3-4 PM CT)
-            # Only cache if we have a valid flip_point
             if flip_point > 0:
                 _gex_cache.clear()
                 _gex_cache.update(gex_data)
                 _gex_cache_time = now
-                logger.debug(f"GEX cache updated at {now.strftime('%H:%M:%S')}")
-
-                # Persist to database for overnight resilience (survives restarts)
                 _persist_gex_cache_to_db(gex_data, now)
 
             return gex_data
 
-        logger.warning(f"GEX calculator returned no data for {symbol}")
+        logger.warning(f"TradierGEXCalculator returned no data for {symbol}")
 
     except Exception as e:
-        logger.warning(f"Could not get GEX data from calculator: {e}")
+        logger.warning(f"TradierGEXCalculator error: {e}")
 
     # Try API endpoint as fallback (SPX endpoint)
     try:
