@@ -2317,7 +2317,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_prometheus_ic_cycle(self):
         """
-        PROMETHEUS IC Trading Cycle - runs every 10 minutes during market hours.
+        PROMETHEUS IC Trading Cycle - runs every 5 minutes during market hours (MATCHES PEGASUS).
 
         This is the main trading loop for PROMETHEUS Iron Condors that use
         borrowed capital from box spreads to generate returns.
@@ -4242,7 +4242,7 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ PROMETHEUS not available - box spread synthetic borrowing disabled")
 
         # =================================================================
-        # PROMETHEUS IC JOB: Iron Condor Trading Cycle - runs every 10 minutes
+        # PROMETHEUS IC JOB: Iron Condor Trading Cycle - runs every 5 minutes (MATCHES PEGASUS)
         # Trades SPX Iron Condors using borrowed capital from box spreads
         # This generates the returns that (should) exceed borrowing costs
         # =================================================================
@@ -4250,14 +4250,14 @@ class AutonomousTraderScheduler:
             self.scheduler.add_job(
                 self.scheduled_prometheus_ic_cycle,
                 trigger=IntervalTrigger(
-                    minutes=10,
+                    minutes=5,
                     timezone='America/Chicago'
                 ),
                 id='prometheus_ic_trading',
-                name='PROMETHEUS IC - Iron Condor Trading (10-min intervals)',
+                name='PROMETHEUS IC - Iron Condor Trading (5-min intervals, MATCHES PEGASUS)',
                 replace_existing=True
             )
-            logger.info("✅ PROMETHEUS IC job scheduled (every 10 min, checks market hours internally)")
+            logger.info("✅ PROMETHEUS IC job scheduled (every 5 min - MATCHES PEGASUS)")
 
             # PROMETHEUS IC MTM Update - runs every 30 minutes
             self.scheduler.add_job(

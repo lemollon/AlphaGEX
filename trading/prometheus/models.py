@@ -1037,10 +1037,11 @@ class PrometheusICConfig:
     entry_end: str = "14:45"      # 2:45 PM CT (same as PEGASUS - stop 15 min before close)
     exit_by: str = "14:50"        # 2:50 PM CT (same as PEGASUS force_exit)
 
-    # Cooldown - MATCH PEGASUS pacing (no aggressive pyramiding)
-    cooldown_after_loss_minutes: int = 5   # Brief pause after loss
-    cooldown_after_win_minutes: int = 5    # SAME pause after win (prevents pyramiding)
-    cooldown_minutes_after_trade: int = 5  # Standard cooldown between trades
+    # Cooldown - MATCH PEGASUS exactly (NO COOLDOWNS)
+    # PEGASUS has no cooldown logic - it trades as often as Oracle approves (every 5 min)
+    cooldown_after_loss_minutes: int = 0   # No pause after loss (like PEGASUS)
+    cooldown_after_win_minutes: int = 0    # No pause after win (like PEGASUS)
+    cooldown_minutes_after_trade: int = 0  # No cooldown between trades (like PEGASUS)
 
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)
