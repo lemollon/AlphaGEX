@@ -21,7 +21,8 @@ from zoneinfo import ZoneInfo
 
 from .models import (
     FuturesPosition, FuturesSignal, TradeDirection, PositionStatus,
-    HERACLESConfig, TradingMode, MES_POINT_VALUE, CENTRAL_TZ
+    HERACLESConfig, TradingMode, MES_POINT_VALUE, CENTRAL_TZ,
+    StraddleSignal, StraddlePosition
 )
 
 logger = logging.getLogger(__name__)
@@ -611,6 +612,162 @@ class TastytradeExecutor:
         except Exception as e:
             logger.error(f"Error closing position: {e}")
             return False, str(e), 0.0
+
+    # ========================================================================
+    # Straddle Order Execution
+    # ========================================================================
+
+    def execute_straddle_signal(
+        self,
+        signal: StraddleSignal,
+        position_id: str
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Execute a straddle signal (buy ATM call + ATM put).
+
+        Args:
+            signal: The straddle signal to execute
+            position_id: Unique position identifier
+
+        Returns:
+            (success, message, order_id)
+        """
+        if self.config.mode == TradingMode.PAPER:
+            return self._simulate_straddle_execution(signal, position_id)
+
+        return self._live_straddle_execution(signal, position_id)
+
+    def _simulate_straddle_execution(
+        self,
+        signal: StraddleSignal,
+        position_id: str
+    ) -> Tuple[bool, str, Optional[str]]:
+        """Simulate straddle order execution for paper trading"""
+        logger.info(
+            f"[PAPER STRADDLE] Simulating straddle: "
+            f"{signal.contracts} contracts @ {signal.strike_price} strike, "
+            f"total debit ${signal.total_debit:.2f}/contract"
+        )
+
+        # For paper trading, we simulate buying the straddle at the estimated premium
+        # In live trading, this would be filled at actual market prices
+        order_id = f"STRADDLE-{position_id}"
+
+        return (
+            True,
+            f"Paper straddle opened: {signal.strike_price} strike, "
+            f"${signal.total_debit:.2f} debit, {signal.contracts} contracts",
+            order_id
+        )
+
+    def _live_straddle_execution(
+        self,
+        signal: StraddleSignal,
+        position_id: str
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Execute a live straddle order via Tastytrade.
+
+        NOTE: This is a placeholder for future live trading implementation.
+        MES options have different symbology than MES futures:
+        - MES futures: /MESH6, /MESM6, etc.
+        - MES options: Need to lookup option chain, find ATM strikes
+
+        For now, returns an error for live mode.
+        """
+        # TODO: Implement live MES options trading
+        # This would require:
+        # 1. Get MES option chain from Tastytrade
+        # 2. Find ATM strike closest to current price
+        # 3. Place multi-leg order (buy call + buy put)
+        # 4. Track both legs as a single position
+
+        logger.warning(
+            "LIVE straddle execution not yet implemented - "
+            "straddles only work in PAPER mode currently"
+        )
+
+        return (
+            False,
+            "Live straddle execution not yet implemented",
+            None
+        )
+
+    def close_straddle_position(
+        self,
+        position: StraddlePosition,
+        close_reason: str,
+        current_price: float
+    ) -> Tuple[bool, str, float]:
+        """
+        Close a straddle position.
+
+        Args:
+            position: The straddle position to close
+            close_reason: Reason for closing
+            current_price: Current underlying price (for P&L calculation)
+
+        Returns:
+            (success, message, estimated_pnl)
+        """
+        if self.config.mode == TradingMode.PAPER:
+            return self._simulate_straddle_close(position, close_reason, current_price)
+
+        return self._live_straddle_close(position, close_reason, current_price)
+
+    def _simulate_straddle_close(
+        self,
+        position: StraddlePosition,
+        close_reason: str,
+        current_price: float
+    ) -> Tuple[bool, str, float]:
+        """Simulate closing a straddle position for paper trading"""
+
+        # Calculate P&L based on price movement
+        # Simplified: Straddle profit = |move| - premium paid
+        move = abs(current_price - position.entry_price)
+
+        # Estimate exit value
+        # If move > premium paid, the ITM leg has intrinsic value
+        # Simple model: exit value = max(move, 0) - time decay
+        # For simplicity, assume we capture 80% of intrinsic value on exit
+        intrinsic_capture_rate = 0.80
+
+        if move >= position.total_debit:
+            # Profitable - we captured at least the premium
+            exit_value = move * intrinsic_capture_rate
+        else:
+            # Losing - straddle expires worthless or we exit at a loss
+            # Estimate residual value based on move achieved
+            exit_value = move * 0.5  # 50% of move as residual value
+
+        # P&L per contract (in dollars)
+        pnl_per_contract = (exit_value - position.total_debit) * MES_POINT_VALUE
+        total_pnl = pnl_per_contract * position.contracts
+
+        logger.info(
+            f"[PAPER STRADDLE CLOSE] {position.position_id}: "
+            f"Entry @ {position.entry_price:.2f}, Exit @ {current_price:.2f}, "
+            f"Move: {move:.2f} pts, Premium paid: ${position.total_debit:.2f}, "
+            f"P&L: ${total_pnl:.2f} ({close_reason})"
+        )
+
+        return (
+            True,
+            f"Paper straddle closed: {move:.2f} pt move, P&L ${total_pnl:.2f}",
+            total_pnl
+        )
+
+    def _live_straddle_close(
+        self,
+        position: StraddlePosition,
+        close_reason: str,
+        current_price: float
+    ) -> Tuple[bool, str, float]:
+        """Close a live straddle position via Tastytrade"""
+        # TODO: Implement live MES options closing
+        logger.warning("LIVE straddle close not yet implemented")
+        return (False, "Live straddle close not yet implemented", 0.0)
 
     # ========================================================================
     # Stop Order Management

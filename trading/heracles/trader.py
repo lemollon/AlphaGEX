@@ -22,7 +22,8 @@ from zoneinfo import ZoneInfo
 from .models import (
     FuturesPosition, FuturesSignal, TradeDirection, GammaRegime,
     PositionStatus, SignalSource, HERACLESConfig, TradingMode,
-    BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ
+    BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ,
+    StraddleSignal, StraddlePosition
 )
 from .db import HERACLESDatabase
 from .signals import HERACLESSignalGenerator, get_gex_data_for_heracles
@@ -122,6 +123,12 @@ class HERACLESTrader:
         # Loss streak tracking - pause after consecutive losses
         self.consecutive_losses: int = 0
         self.loss_streak_pause_until: Optional[datetime] = None
+
+        # Straddle position tracking (in-memory for paper trading)
+        # Straddles are separate from futures positions
+        self._open_straddles: List[StraddlePosition] = []
+        self._straddle_daily_trades: int = 0
+        self._straddle_daily_pnl: float = 0.0
 
         # Initialize paper trading account if in paper mode
         if self.config.mode == TradingMode.PAPER:
@@ -349,13 +356,35 @@ class HERACLESTrader:
                         self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                                skip_reason=f"Invalid signal: {signal.reasoning[:100] if signal.reasoning else 'No reason'}")
                 else:
-                    # No signal generated
-                    self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                           skip_reason="No signal generated")
+                    # No signal generated - could be straddle window
+                    # Check if we should generate a straddle signal instead
+                    if self.signal_generator.is_straddle_window():
+                        straddle_result = self._handle_straddle_window(
+                            scan_id, current_price, gex_data, vix, atr, account_balance
+                        )
+                        if straddle_result.get("straddle_executed"):
+                            scan_result["trades_executed"] += 1
+                            self._log_scan_activity(
+                                scan_id, "TRADED", scan_result, scan_context,
+                                action=f"Opened STRADDLE position at {current_price:.2f}"
+                            )
+                        else:
+                            self._log_scan_activity(
+                                scan_id, "NO_TRADE", scan_result, scan_context,
+                                skip_reason=straddle_result.get("reason", "Straddle window - no trade")
+                            )
+                    else:
+                        self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                               skip_reason="No signal generated")
             else:
                 # Max positions reached
                 self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
                                        skip_reason=f"Max positions ({self.config.max_open_positions}) reached")
+
+            # 2.5. Manage open straddle positions
+            straddles_closed = self._manage_straddle_positions(current_price)
+            if straddles_closed > 0:
+                scan_result["positions_closed"] += straddles_closed
 
             # 3. Save equity snapshot with CURRENT positions (refresh to include any new positions)
             current_positions = self.db.get_open_positions()
@@ -858,6 +887,269 @@ class HERACLESTrader:
             position.max_adverse_excursion = abs(pnl)
 
         return False
+
+    # ========================================================================
+    # Straddle Position Management
+    # ========================================================================
+
+    def _handle_straddle_window(
+        self,
+        scan_id: str,
+        current_price: float,
+        gex_data: Dict[str, Any],
+        vix: float,
+        atr: float,
+        account_balance: float
+    ) -> Dict[str, Any]:
+        """
+        Handle the market open straddle window (9-11am CT in NEGATIVE gamma).
+
+        Called when generate_signal() returns None because we're in the straddle
+        window. This method:
+        1. Checks if a straddle is already open (max 1 at a time)
+        2. Generates a straddle signal if conditions met
+        3. Executes the straddle trade
+        """
+        result = {
+            "straddle_executed": False,
+            "reason": "",
+            "position_id": None
+        }
+
+        # Check if we already have an open straddle
+        if self._open_straddles:
+            result["reason"] = f"Straddle already open ({len(self._open_straddles)} position(s))"
+            logger.debug(result["reason"])
+            return result
+
+        # Generate straddle signal
+        straddle_signal = self.signal_generator.generate_straddle_signal(
+            current_price=current_price,
+            gex_data=gex_data,
+            vix=vix,
+            atr=atr,
+            account_balance=account_balance
+        )
+
+        if straddle_signal is None:
+            result["reason"] = "No straddle signal (regime not NEGATIVE or not in window)"
+            return result
+
+        if not straddle_signal.is_valid:
+            result["reason"] = f"Invalid straddle signal: {straddle_signal.reasoning[:100]}"
+            return result
+
+        # Execute the straddle
+        position_id = f"STRADDLE-{uuid.uuid4().hex[:8]}"
+        success = self._execute_straddle(straddle_signal, account_balance, position_id, scan_id)
+
+        if success:
+            result["straddle_executed"] = True
+            result["position_id"] = position_id
+            result["reason"] = f"Straddle opened: {straddle_signal.strike_price} strike"
+        else:
+            result["reason"] = "Straddle execution failed"
+
+        return result
+
+    def _execute_straddle(
+        self,
+        signal: StraddleSignal,
+        account_balance: float,
+        position_id: str,
+        scan_id: str = ""
+    ) -> bool:
+        """Execute a straddle signal"""
+        try:
+            # Execute via executor
+            success, message, order_id = self.executor.execute_straddle_signal(signal, position_id)
+
+            if not success:
+                logger.error(f"Straddle execution failed: {message}")
+                return False
+
+            # Create straddle position
+            position = StraddlePosition(
+                position_id=position_id,
+                strike_price=signal.strike_price,
+                expiration=signal.expiration,
+                contracts=signal.contracts,
+                entry_price=signal.current_price,
+                call_premium=signal.call_premium,
+                put_premium=signal.put_premium,
+                total_debit=signal.total_debit,
+                entry_time=datetime.now(CENTRAL_TZ),
+                gamma_regime=signal.gamma_regime,
+                gex_value=signal.gex_value,
+                flip_point=signal.flip_point,
+                vix_at_entry=signal.vix,
+                atr_at_entry=signal.atr,
+                profit_target_move=signal.profit_target_move,
+                time_stop_minutes=signal.time_stop_minutes,
+                status=PositionStatus.OPEN
+            )
+
+            # Add to tracking
+            self._open_straddles.append(position)
+            self._straddle_daily_trades += 1
+
+            # Update paper trading balance (debit the premium)
+            if self.config.mode == TradingMode.PAPER:
+                total_debit = signal.total_debit * signal.contracts
+                success, updated_account = self.db.update_paper_balance(
+                    realized_pnl=-total_debit,  # Debit for buying straddle
+                    margin_change=0
+                )
+                if success:
+                    logger.info(
+                        f"Paper balance updated for straddle: -${total_debit:.2f} "
+                        f"(new balance: ${updated_account['current_balance']:,.2f})"
+                    )
+
+            # Log
+            self.db.log(
+                level="INFO",
+                action="OPEN_STRADDLE",
+                message=f"Opened straddle: {signal.strike_price} strike, {signal.contracts} contracts",
+                details={
+                    "position_id": position_id,
+                    "strike_price": signal.strike_price,
+                    "total_debit": signal.total_debit,
+                    "contracts": signal.contracts,
+                    "profit_target_move": signal.profit_target_move,
+                    "reasoning": signal.reasoning
+                }
+            )
+
+            logger.info(
+                f"Opened STRADDLE {position_id}: {signal.strike_price} strike @ "
+                f"${signal.total_debit:.2f} premium, {signal.contracts} contracts, "
+                f"target move: {signal.profit_target_move} pts"
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error executing straddle: {e}")
+            return False
+
+    def _manage_straddle_positions(self, current_price: float) -> int:
+        """
+        Manage open straddle positions - check exit conditions.
+
+        Returns number of straddles closed.
+        """
+        closed_count = 0
+        now = datetime.now(CENTRAL_TZ)
+
+        # Iterate over a copy since we may modify the list
+        for position in self._open_straddles[:]:
+            # Update high/low tracking
+            if current_price > position.high_price_since_entry:
+                position.high_price_since_entry = current_price
+            if current_price < position.low_price_since_entry or position.low_price_since_entry == 0:
+                position.low_price_since_entry = current_price
+
+            # Update max move
+            move = abs(current_price - position.entry_price)
+            if move > position.max_move_achieved:
+                position.max_move_achieved = move
+
+            # Check exit conditions
+            should_exit, reason = position.should_exit(current_price, now)
+
+            if should_exit:
+                closed = self._close_straddle_position(position, current_price, reason)
+                if closed:
+                    closed_count += 1
+
+        return closed_count
+
+    def _close_straddle_position(
+        self,
+        position: StraddlePosition,
+        current_price: float,
+        reason: str
+    ) -> bool:
+        """Close a straddle position"""
+        try:
+            # Execute close via executor
+            success, message, pnl = self.executor.close_straddle_position(
+                position, reason, current_price
+            )
+
+            if not success:
+                logger.error(f"Failed to close straddle {position.position_id}: {message}")
+                return False
+
+            # Update position
+            position.status = PositionStatus.CLOSED
+            position.close_time = datetime.now(CENTRAL_TZ)
+            position.close_price = current_price
+            position.close_reason = reason
+            position.realized_pnl = pnl
+
+            # Remove from open list
+            self._open_straddles = [p for p in self._open_straddles if p.position_id != position.position_id]
+
+            # Update daily stats
+            self._straddle_daily_pnl += pnl
+
+            # Update paper trading balance
+            if self.config.mode == TradingMode.PAPER:
+                # The PnL includes getting back the premium + profit/loss
+                # So we credit: premium_paid + pnl
+                credit = (position.total_debit * position.contracts) + pnl
+                success, updated_account = self.db.update_paper_balance(
+                    realized_pnl=credit,
+                    margin_change=0
+                )
+                if success:
+                    logger.info(
+                        f"Paper balance updated for straddle close: +${credit:.2f} "
+                        f"(P&L: ${pnl:.2f}, new balance: ${updated_account['current_balance']:,.2f})"
+                    )
+
+            # Update win tracker
+            won = pnl > 0
+            self.win_tracker.update(won, position.gamma_regime)
+            self.db.save_win_tracker(self.win_tracker)
+
+            # Log
+            self.db.log(
+                level="INFO",
+                action="CLOSE_STRADDLE",
+                message=f"Closed straddle: P&L ${pnl:.2f}",
+                details={
+                    "position_id": position.position_id,
+                    "entry_price": position.entry_price,
+                    "close_price": current_price,
+                    "move": abs(current_price - position.entry_price),
+                    "pnl": pnl,
+                    "reason": reason
+                }
+            )
+
+            logger.info(
+                f"Closed STRADDLE {position.position_id}: "
+                f"Entry {position.entry_price:.2f} -> Exit {current_price:.2f}, "
+                f"Move: {abs(current_price - position.entry_price):.2f} pts, "
+                f"P&L: ${pnl:.2f} ({reason})"
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error closing straddle {position.position_id}: {e}")
+            return False
+
+    def get_open_straddles(self) -> List[StraddlePosition]:
+        """Get all open straddle positions"""
+        return self._open_straddles
+
+    # ========================================================================
+    # Position High/Low Tracking
+    # ========================================================================
 
     def _update_position_high_low(self, position: FuturesPosition, current_price: float) -> None:
         """
@@ -1596,6 +1888,13 @@ class HERACLESTrader:
             "positions": {
                 "open_count": len(positions),
                 "positions": [p.to_dict() for p in positions]
+            },
+            "straddles": {
+                "open_count": len(self._open_straddles),
+                "positions": [s.to_dict() for s in self._open_straddles],
+                "daily_trades": self._straddle_daily_trades,
+                "daily_pnl": self._straddle_daily_pnl,
+                "is_straddle_window": self.signal_generator.is_straddle_window()
             },
             "performance": stats,
             "today": summary.to_dict(),

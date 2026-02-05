@@ -12,7 +12,7 @@ Single source of truth for all position and configuration data.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from zoneinfo import ZoneInfo
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -75,6 +75,7 @@ class SignalSource(Enum):
     GEX_FLIP_POINT = "GEX_FLIP_POINT"          # Trade toward flip point
     GEX_WALL_BOUNCE = "GEX_WALL_BOUNCE"        # Bounce off call/put wall
     OVERNIGHT_N1 = "OVERNIGHT_N1"              # Overnight using n+1 GEX
+    GEX_STRADDLE = "GEX_STRADDLE"              # Market open volatility straddle
 
 
 @dataclass
@@ -519,6 +520,229 @@ class FuturesSignal:
     def risk_dollars(self) -> float:
         """Risk in dollars"""
         return self.risk_points * self.contracts * MES_POINT_VALUE
+
+
+@dataclass
+class StraddleSignal:
+    """
+    A straddle signal for MES options during market open volatility.
+
+    Used during market open (9-11am CT) in NEGATIVE gamma to capture
+    large price swings in either direction without predicting direction.
+
+    Strategy:
+    - Buy 1 ATM call + 1 ATM put (same strike, same expiration)
+    - Profit if price moves significantly in either direction
+    - Max loss = total premium paid (limited risk)
+    """
+    # Strike and expiration
+    strike_price: float  # ATM strike (closest to current price)
+    expiration: str  # e.g., "2026-02-05" (0DTE or 1DTE)
+
+    # Market context
+    current_price: float
+    gamma_regime: GammaRegime
+    gex_value: float
+    flip_point: float
+    vix: float
+    atr: float
+
+    # Premium estimates (for paper trading simulation)
+    call_premium: float = 0.0  # Estimated call premium per contract
+    put_premium: float = 0.0   # Estimated put premium per contract
+    total_debit: float = 0.0   # Total premium paid (call + put)
+
+    # Position sizing
+    contracts: int = 1  # Number of straddles
+
+    # Exit targets (in points of underlying movement)
+    profit_target_move: float = 15.0  # Exit if underlying moves 15+ pts
+    time_stop_minutes: int = 120      # Exit after 2 hours if no target hit
+
+    # Confidence and probability
+    confidence: float = 0.0
+    win_probability: float = 0.0
+
+    # Source tracking
+    source: SignalSource = SignalSource.GEX_STRADDLE
+
+    # Reasoning
+    reasoning: str = ""
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if straddle signal passes basic validation"""
+        return (
+            self.strike_price > 0 and
+            self.confidence >= 0.50 and
+            self.contracts >= 1 and
+            self.total_debit > 0
+        )
+
+    @property
+    def max_loss(self) -> float:
+        """Maximum loss = total premium paid"""
+        return self.total_debit * self.contracts
+
+    @property
+    def breakeven_up(self) -> float:
+        """Upper breakeven = strike + total premium"""
+        return self.strike_price + self.total_debit
+
+    @property
+    def breakeven_down(self) -> float:
+        """Lower breakeven = strike - total premium"""
+        return self.strike_price - self.total_debit
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for logging/storage"""
+        return {
+            'strike_price': self.strike_price,
+            'expiration': self.expiration,
+            'current_price': self.current_price,
+            'gamma_regime': self.gamma_regime.value,
+            'gex_value': self.gex_value,
+            'flip_point': self.flip_point,
+            'vix': self.vix,
+            'atr': self.atr,
+            'call_premium': self.call_premium,
+            'put_premium': self.put_premium,
+            'total_debit': self.total_debit,
+            'contracts': self.contracts,
+            'profit_target_move': self.profit_target_move,
+            'time_stop_minutes': self.time_stop_minutes,
+            'confidence': self.confidence,
+            'win_probability': self.win_probability,
+            'source': self.source.value,
+            'reasoning': self.reasoning,
+            'max_loss': self.max_loss,
+            'breakeven_up': self.breakeven_up,
+            'breakeven_down': self.breakeven_down,
+        }
+
+
+@dataclass
+class StraddlePosition:
+    """
+    Represents an open MES options straddle position.
+
+    Tracks both the call and put legs together since they're
+    managed as a single unit for entry and exit.
+    """
+    # Identity
+    position_id: str
+
+    # Straddle details
+    strike_price: float
+    expiration: str
+    contracts: int
+
+    # Entry info
+    entry_price: float  # Underlying price at entry
+    call_premium: float
+    put_premium: float
+    total_debit: float
+    entry_time: datetime = field(default_factory=lambda: datetime.now(CENTRAL_TZ))
+
+    # Market context at entry
+    gamma_regime: GammaRegime = GammaRegime.NEGATIVE
+    gex_value: float = 0.0
+    flip_point: float = 0.0
+    vix_at_entry: float = 0.0
+    atr_at_entry: float = 0.0
+
+    # Exit targets
+    profit_target_move: float = 15.0
+    time_stop_minutes: int = 120
+
+    # Status
+    status: PositionStatus = PositionStatus.OPEN
+    close_time: Optional[datetime] = None
+    close_price: float = 0.0  # Underlying price at close
+    realized_pnl: float = 0.0
+    close_reason: str = ""
+
+    # Tracking
+    high_price_since_entry: float = 0.0
+    low_price_since_entry: float = 0.0
+    max_move_achieved: float = 0.0  # Largest move from entry
+
+    @property
+    def is_open(self) -> bool:
+        return self.status == PositionStatus.OPEN
+
+    @property
+    def max_loss(self) -> float:
+        """Maximum loss = total premium paid"""
+        return self.total_debit * self.contracts
+
+    def calculate_pnl(self, current_price: float) -> float:
+        """
+        Estimate P&L based on underlying price movement.
+
+        Simplified model for paper trading:
+        - Straddle profits from movement in either direction
+        - P&L ≈ |current - entry| - time decay
+
+        For actual options, this would need Black-Scholes or real quotes.
+        """
+        move = abs(current_price - self.entry_price)
+
+        # Simplified: Profit = move - premium paid (ignoring Greeks)
+        # This is an approximation - real P&L would need option pricing
+        intrinsic_value = move * MES_POINT_VALUE * self.contracts
+        cost = self.total_debit * self.contracts
+
+        return intrinsic_value - cost
+
+    def should_exit(self, current_price: float, current_time: datetime) -> Tuple[bool, str]:
+        """
+        Check if straddle should be exited.
+
+        Returns: (should_exit, reason)
+        """
+        move = abs(current_price - self.entry_price)
+
+        # Check profit target
+        if move >= self.profit_target_move:
+            return True, f"Profit target: {move:.1f} pts move (target: {self.profit_target_move} pts)"
+
+        # Check time stop
+        elapsed_minutes = (current_time - self.entry_time).total_seconds() / 60
+        if elapsed_minutes >= self.time_stop_minutes:
+            return True, f"Time stop: {elapsed_minutes:.0f} min elapsed (limit: {self.time_stop_minutes} min)"
+
+        return False, ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'position_id': self.position_id,
+            'strike_price': self.strike_price,
+            'expiration': self.expiration,
+            'contracts': self.contracts,
+            'entry_price': self.entry_price,
+            'call_premium': self.call_premium,
+            'put_premium': self.put_premium,
+            'total_debit': self.total_debit,
+            'entry_time': self.entry_time.isoformat() if self.entry_time else None,
+            'gamma_regime': self.gamma_regime.value,
+            'gex_value': self.gex_value,
+            'flip_point': self.flip_point,
+            'vix_at_entry': self.vix_at_entry,
+            'atr_at_entry': self.atr_at_entry,
+            'profit_target_move': self.profit_target_move,
+            'time_stop_minutes': self.time_stop_minutes,
+            'status': self.status.value,
+            'close_time': self.close_time.isoformat() if self.close_time else None,
+            'close_price': self.close_price,
+            'realized_pnl': self.realized_pnl,
+            'close_reason': self.close_reason,
+            'high_price_since_entry': self.high_price_since_entry,
+            'low_price_since_entry': self.low_price_since_entry,
+            'max_move_achieved': self.max_move_achieved,
+            'max_loss': self.max_loss,
+            'is_open': self.is_open,
+        }
 
 
 @dataclass

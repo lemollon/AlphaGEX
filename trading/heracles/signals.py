@@ -27,7 +27,8 @@ from zoneinfo import ZoneInfo
 
 from .models import (
     FuturesSignal, TradeDirection, GammaRegime, SignalSource,
-    HERACLESConfig, BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ
+    HERACLESConfig, BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ,
+    StraddleSignal, StraddlePosition
 )
 
 # ML Advisor - loaded lazily to avoid circular imports
@@ -525,6 +526,20 @@ class HERACLESSignalGenerator:
                     vix, atr, net_gex, gamma_regime
                 )
             else:
+                # ================================================================
+                # STRADDLE WINDOW CHECK (9-11am CT in NEGATIVE gamma)
+                # ================================================================
+                # Backtest showed -$23,207 loss from directional trades during
+                # market open in NEGATIVE gamma. Instead of momentum signals,
+                # we use straddles to capture volatility. The trader will call
+                # generate_straddle_signal() separately for straddle entries.
+                if self._is_market_open_straddle_window():
+                    logger.info(
+                        f"STRADDLE WINDOW: 9-11am CT + NEGATIVE gamma - "
+                        f"skipping directional signal (use generate_straddle_signal() instead)"
+                    )
+                    return None
+
                 signal = self._generate_momentum_signal(
                     current_price, flip_point, call_wall, put_wall,
                     vix, atr, net_gex, gamma_regime
@@ -689,6 +704,194 @@ class HERACLESSignalGenerator:
             vix=vix,
             atr=atr,
             entry_price=current_price,
+            reasoning=reasoning
+        )
+
+    def generate_straddle_signal(
+        self,
+        current_price: float,
+        gex_data: Dict[str, Any],
+        vix: float,
+        atr: float,
+        account_balance: float
+    ) -> Optional[StraddleSignal]:
+        """
+        Generate a straddle signal for market open volatility trading.
+
+        This is called by the trader during the straddle window (9-11am CT)
+        when gamma is NEGATIVE. Returns None if conditions aren't met.
+
+        Args:
+            current_price: Current MES price
+            gex_data: GEX analysis data
+            vix: Current VIX level
+            atr: Current ATR in points
+            account_balance: Current account balance
+
+        Returns:
+            StraddleSignal if in straddle window + NEGATIVE gamma, None otherwise
+        """
+        # Check if we're in the straddle window
+        if not self._is_market_open_straddle_window():
+            logger.debug("Not in straddle window (9-11am CT)")
+            return None
+
+        # Extract GEX data
+        flip_point = gex_data.get('flip_point') or current_price
+        call_wall = gex_data.get('call_wall') or (current_price + 50)
+        put_wall = gex_data.get('put_wall') or (current_price - 50)
+        net_gex = gex_data.get('net_gex') or 0
+
+        # Determine gamma regime
+        gamma_regime = self._determine_gamma_regime(net_gex)
+
+        # Only generate straddles in NEGATIVE gamma
+        if gamma_regime != GammaRegime.NEGATIVE:
+            logger.debug(f"Straddle signal skipped: regime is {gamma_regime.value}, not NEGATIVE")
+            return None
+
+        # Generate the straddle signal
+        return self._generate_straddle_signal(
+            current_price=current_price,
+            flip_point=flip_point,
+            call_wall=call_wall,
+            put_wall=put_wall,
+            vix=vix,
+            atr=atr,
+            net_gex=net_gex,
+            gamma_regime=gamma_regime,
+            account_balance=account_balance
+        )
+
+    def is_straddle_window(self) -> bool:
+        """
+        Public method to check if we're in the straddle window.
+
+        The trader can use this to decide whether to check for straddle
+        signals or directional signals.
+        """
+        return self._is_market_open_straddle_window()
+
+    def _is_market_open_straddle_window(self) -> bool:
+        """
+        Check if we're in the market open straddle window (9-11am CT).
+
+        During this 2-hour window in NEGATIVE gamma, the bot uses straddles
+        instead of directional trades because:
+        - Backtest showed -$23,207 loss from directional trades during this window
+        - Market open has high volatility with unpredictable direction
+        - Straddles profit from movement in either direction
+
+        Returns:
+            True if current time is between 9:00am and 11:00am Central Time
+        """
+        now = datetime.now(CENTRAL_TZ)
+        hour = now.hour
+        # 9:00 AM to 10:59 AM CT (inclusive)
+        return 9 <= hour < 11
+
+    def _generate_straddle_signal(
+        self,
+        current_price: float,
+        flip_point: float,
+        call_wall: float,
+        put_wall: float,
+        vix: float,
+        atr: float,
+        net_gex: float,
+        gamma_regime: GammaRegime,
+        account_balance: float
+    ) -> Optional[StraddleSignal]:
+        """
+        Generate a straddle signal for market open volatility.
+
+        Called during 9-11am CT when gamma is NEGATIVE.
+        Instead of trying to predict direction, we buy both a call and put
+        to profit from expected high volatility.
+
+        Premium Estimation (for paper trading):
+        - ATM options on MES typically priced based on VIX and time to expiration
+        - Using simplified model: premium ≈ (VIX/100) * underlying * sqrt(DTE/365)
+        - For 0DTE: premium ≈ (VIX/100) * price * 0.05 (very rough approximation)
+        """
+        # Round to nearest 5 points for ATM strike (MES options have 5pt strikes)
+        strike_price = round(current_price / 5) * 5
+
+        # Get today's date for expiration (0DTE)
+        today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+
+        # Estimate option premiums based on VIX (simplified Black-Scholes approximation)
+        # For 0DTE ATM options, premium ≈ 0.4 * VIX (empirical approximation)
+        # MES options are $5 per point, so convert to points
+        vix_adjusted = max(15.0, vix)  # Floor VIX at 15 for premium estimation
+
+        # Simplified premium estimation: ATM straddle ≈ 0.8 * VIX (in dollars)
+        # Convert to MES points (divide by 5 since MES is $5/point)
+        call_premium_pts = (0.4 * vix_adjusted) / 5  # ~1.2 pts at VIX=15
+        put_premium_pts = (0.4 * vix_adjusted) / 5   # ~1.2 pts at VIX=15
+        total_debit_pts = call_premium_pts + put_premium_pts  # ~2.4 pts at VIX=15
+
+        # Convert to dollars for total debit
+        total_debit = total_debit_pts * MES_POINT_VALUE  # ~$12 at VIX=15
+
+        # Calculate contracts based on risk (max loss = premium paid)
+        # Risk 2% of account on straddles (higher than directional due to limited risk)
+        risk_pct = 2.0
+        risk_amount = account_balance * (risk_pct / 100)
+        contracts = max(1, min(5, int(risk_amount / total_debit)))
+
+        # Calculate profit target based on expected move
+        # In negative gamma during market open, we saw $66+ pt moves
+        # Set profit target at 15 pts (breakeven ~2.4pts premium, so ~12pts profit)
+        profit_target_move = 15.0
+
+        # Confidence based on VIX and time in window
+        now = datetime.now(CENTRAL_TZ)
+        minutes_into_window = (now.hour - 9) * 60 + now.minute
+        # Higher confidence early in the window (more time for move to develop)
+        time_factor = max(0.5, 1.0 - (minutes_into_window / 120))
+        vix_factor = min(1.0, vix / 20)  # Higher VIX = more confident in volatility
+
+        confidence = 0.55 + (0.2 * time_factor) + (0.15 * vix_factor)
+        confidence = min(0.85, confidence)
+
+        # Win probability based on historical data
+        # Backtest showed large moves during this window, so reasonable probability
+        # that move exceeds breakeven (~2.4 pts)
+        win_probability = 0.60 + (0.1 * vix_factor)  # 60-70% based on VIX
+
+        reasoning = (
+            f"MARKET OPEN STRADDLE: {now.strftime('%H:%M')} CT in NEGATIVE gamma. "
+            f"Buying ATM {strike_price} straddle for ${total_debit:.2f}/contract. "
+            f"VIX={vix:.1f}, expected move = high volatility window. "
+            f"Breakeven: {strike_price - total_debit_pts:.1f} / {strike_price + total_debit_pts:.1f}. "
+            f"Profit target: {profit_target_move} pt move."
+        )
+
+        logger.info(
+            f"Generated STRADDLE signal: strike={strike_price}, "
+            f"premium=${total_debit:.2f}, contracts={contracts}, "
+            f"target={profit_target_move}pts, confidence={confidence:.2%}"
+        )
+
+        return StraddleSignal(
+            strike_price=strike_price,
+            expiration=today,
+            current_price=current_price,
+            gamma_regime=gamma_regime,
+            gex_value=net_gex,
+            flip_point=flip_point,
+            vix=vix,
+            atr=atr,
+            call_premium=call_premium_pts * MES_POINT_VALUE,  # In dollars
+            put_premium=put_premium_pts * MES_POINT_VALUE,    # In dollars
+            total_debit=total_debit,
+            contracts=contracts,
+            profit_target_move=profit_target_move,
+            time_stop_minutes=120,  # Exit after 2 hours (end of window)
+            confidence=confidence,
+            win_probability=win_probability,
+            source=SignalSource.GEX_STRADDLE,
             reasoning=reasoning
         )
 
