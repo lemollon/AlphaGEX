@@ -1006,13 +1006,14 @@ export const apiClient = {
   getArgusDangerZoneLogs: () => api.get('/api/argus/danger-zones/log'),
   getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
   getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
-  getArgusTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number) =>
+  getArgusTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number, autoLog?: boolean) =>
     api.get('/api/argus/trade-action', {
       params: {
         symbol,
         account_size: accountSize,
         risk_per_trade_pct: riskPct,
-        spread_width: spreadWidth
+        spread_width: spreadWidth,
+        auto_log: autoLog ?? true  // Default to true (backend auto-logs signals)
       }
     }),
   // Signal tracking & performance
