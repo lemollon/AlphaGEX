@@ -1014,7 +1014,7 @@ class PrometheusICConfig:
     # Position sizing - MATCH PEGASUS exactly
     max_positions: int = 5          # Max simultaneous IC positions (same as PEGASUS)
     max_capital_per_trade_pct: float = 10.0  # Max 10% of borrowed capital per trade
-    max_daily_trades: int = 10      # Limit daily trades (PEGASUS-like pacing, was unlimited)
+    max_daily_trades: int = 0       # NO LIMIT - PEGASUS has no daily limit (0 = unlimited)
     max_contracts: int = 100        # Max contracts per IC trade (match PEGASUS)
 
     # Risk management
