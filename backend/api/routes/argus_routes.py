@@ -2083,6 +2083,324 @@ def _generate_combined_signal(
     }
 
 
+# =============================================================================
+# OPTIONS FLOW DIAGNOSTICS - Trading Volatility Style
+# =============================================================================
+
+@router.get("/flow-diagnostics")
+async def get_flow_diagnostics(
+    symbol: str = Query("SPY", description="Symbol (SPY, SPX, QQQ, IWM, DIA, GLD, etc.)"),
+    expiration: Optional[str] = Query(None, description="Expiration date YYYY-MM-DD")
+):
+    """
+    Get Trading Volatility-style Options Flow Diagnostics.
+
+    Returns 6 diagnostic cards analyzing options flow:
+    1. Call vs Put Volume Pressure
+    2. Short-DTE Call Share
+    3. Call Share of Options Flow
+    4. Lotto Turnover vs Open Interest
+    5. Far-OTM Call Share
+    6. Lotto Share of Call Tape
+
+    Plus:
+    - Call Structure Classification (Hedging/Overwrite/Speculation)
+    - Skew Measures (Skew Ratio, Call Skew)
+    - Overall Rating (BULLISH/BEARISH/NEUTRAL)
+    - Net GEX estimate
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Determine expiration
+        if not expiration:
+            expiration = engine.get_0dte_expiration('today')
+
+        # Fetch raw data
+        raw_data = await fetch_gamma_data(symbol, expiration)
+
+        if raw_data.get('data_unavailable'):
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": raw_data.get('reason', 'Data unavailable'),
+                "message": raw_data.get('message', 'Unable to fetch options data')
+            }
+
+        spot_price = raw_data.get('spot_price', 0)
+        vix = raw_data.get('vix', 0)
+
+        if spot_price <= 0:
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": "Invalid spot price",
+                "message": "Cannot calculate diagnostics without valid spot price"
+            }
+
+        # Process the options chain to get strike data
+        snapshot = engine.process_options_chain(
+            raw_data,
+            spot_price,
+            vix,
+            expiration
+        )
+
+        # Calculate flow diagnostics
+        diagnostics = engine.calculate_options_flow_diagnostics(
+            strikes=snapshot.strikes,
+            spot_price=spot_price,
+            expected_move=snapshot.expected_move
+        )
+
+        # Add header metrics like Trading Volatility
+        header_metrics = {
+            'price': round(spot_price, 2),
+            'gex_flip': None,  # Will be calculated from strikes
+            '30_day_vol': round(vix, 1) if vix else None,
+            'call_structure': diagnostics['call_structure']['structure'],
+            'gex_at_expiration': diagnostics['summary']['net_gex'],
+            'net_gex': diagnostics['summary']['net_gex'],
+            'rating': diagnostics['rating']['rating'],
+            'gamma_form': snapshot.gamma_regime
+        }
+
+        # Find GEX flip point from strikes
+        if snapshot.strikes:
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                curr_gamma = strike.net_gamma
+                next_gamma = snapshot.strikes[i + 1].net_gamma if i + 1 < len(snapshot.strikes) else 0
+                if curr_gamma * next_gamma < 0:
+                    # Interpolate flip point
+                    if curr_gamma != next_gamma:
+                        ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma))
+                        header_metrics['gex_flip'] = round(strike.strike + ratio * (snapshot.strikes[i + 1].strike - strike.strike), 2)
+                    else:
+                        header_metrics['gex_flip'] = strike.strike
+                    break
+
+        # Build strike data for GEX chart (similar to Trading Volatility)
+        gex_chart_data = []
+        for s in snapshot.strikes:
+            gex_chart_data.append({
+                'strike': s.strike,
+                'net_gamma': s.net_gamma,
+                'call_gamma': s.call_gamma,
+                'put_gamma': s.put_gamma,
+                'call_volume': s.call_volume,
+                'put_volume': s.put_volume,
+                'call_iv': round(s.call_iv * 100, 1) if s.call_iv else None,
+                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None
+            })
+
+        # Calculate ±1 standard deviation bounds
+        em = snapshot.expected_move
+        upper_1sd = round(spot_price + em, 2) if em else None
+        lower_1sd = round(spot_price - em, 2) if em else None
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "expiration": expiration,
+                "timestamp": format_central_timestamp(),
+                "header_metrics": header_metrics,
+                "diagnostics": diagnostics['diagnostics'],
+                "call_structure": diagnostics['call_structure'],
+                "skew_measures": diagnostics['skew_measures'],
+                "rating": diagnostics['rating'],
+                "summary": diagnostics['summary'],
+                "chart_data": {
+                    "strikes": gex_chart_data,
+                    "price": spot_price,
+                    "upper_1sd": upper_1sd,
+                    "lower_1sd": lower_1sd,
+                    "gex_flip": header_metrics['gex_flip'],
+                    "expected_move": em
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting flow diagnostics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gex-analysis")
+async def get_gex_analysis(
+    symbol: str = Query("SPY", description="Symbol (SPY, SPX, QQQ, IWM, DIA, GLD, etc.)"),
+    expiration: Optional[str] = Query(None, description="Specific expiration YYYY-MM-DD (optional)")
+):
+    """
+    Comprehensive GEX analysis similar to Trading Volatility.
+
+    Returns:
+    - Header metrics (price, GEX flip, 30-day vol, structure, rating)
+    - Options Flow Diagnostics (6 cards)
+    - Skew Measures
+    - GEX by strike for both specific expiration and all expirations
+    - Key levels (±1σ, flip point, call/put walls)
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Determine expiration
+        target_expiration = expiration
+        if not target_expiration:
+            target_expiration = engine.get_0dte_expiration('today')
+
+        # Fetch data for specific expiration
+        raw_data = await fetch_gamma_data(symbol, target_expiration)
+
+        if raw_data.get('data_unavailable'):
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": raw_data.get('reason', 'Data unavailable'),
+                "message": raw_data.get('message', 'Unable to fetch options data'),
+                "symbol": symbol
+            }
+
+        spot_price = raw_data.get('spot_price', 0)
+        vix = raw_data.get('vix', 0)
+
+        if spot_price <= 0:
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": "Invalid spot price",
+                "message": "Cannot calculate GEX without valid spot price"
+            }
+
+        # Process the options chain
+        snapshot = engine.process_options_chain(
+            raw_data,
+            spot_price,
+            vix,
+            target_expiration
+        )
+
+        # Calculate flow diagnostics
+        diagnostics = engine.calculate_options_flow_diagnostics(
+            strikes=snapshot.strikes,
+            spot_price=spot_price,
+            expected_move=snapshot.expected_move
+        )
+
+        # Find key levels
+        flip_point = None
+        call_wall = None
+        put_wall = None
+        max_call_gamma_strike = None
+        max_put_gamma_strike = None
+        max_call_gamma = 0
+        max_put_gamma = 0
+
+        if snapshot.strikes:
+            # Find flip point
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                curr_gamma = strike.net_gamma
+                next_gamma = snapshot.strikes[i + 1].net_gamma
+                if curr_gamma * next_gamma < 0:
+                    ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma)) if curr_gamma != next_gamma else 0.5
+                    flip_point = round(strike.strike + ratio * (snapshot.strikes[i + 1].strike - strike.strike), 2)
+                    break
+
+            # Find call and put walls
+            for s in snapshot.strikes:
+                if s.strike > spot_price and abs(s.net_gamma) > max_call_gamma:
+                    max_call_gamma = abs(s.net_gamma)
+                    call_wall = s.strike
+                    max_call_gamma_strike = s
+                if s.strike < spot_price and abs(s.net_gamma) > max_put_gamma:
+                    max_put_gamma = abs(s.net_gamma)
+                    put_wall = s.strike
+                    max_put_gamma_strike = s
+
+        # Expected move bounds
+        em = snapshot.expected_move
+        upper_1sd = round(spot_price + em, 2) if em else None
+        lower_1sd = round(spot_price - em, 2) if em else None
+
+        # Build GEX chart data
+        gex_by_strike = []
+        for s in snapshot.strikes:
+            gex_by_strike.append({
+                'strike': s.strike,
+                'net_gamma': round(s.net_gamma, 4),
+                'call_gamma': round(s.call_gamma, 6),
+                'put_gamma': round(s.put_gamma, 6),
+                'call_volume': s.call_volume,
+                'put_volume': s.put_volume,
+                'total_volume': s.volume,
+                'call_iv': round(s.call_iv * 100, 1) if s.call_iv else None,
+                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "timestamp": format_central_timestamp(),
+                "expiration": target_expiration,
+
+                # Header metrics (like Trading Volatility top bar)
+                "header": {
+                    "price": round(spot_price, 2),
+                    "gex_flip": flip_point,
+                    "30_day_vol": round(vix, 1) if vix else None,
+                    "call_structure": diagnostics['call_structure']['structure'],
+                    "gex_at_expiration": diagnostics['summary']['net_gex'],
+                    "net_gex": diagnostics['summary']['net_gex'],
+                    "rating": diagnostics['rating']['rating'],
+                    "gamma_form": snapshot.gamma_regime
+                },
+
+                # Options Flow Diagnostics (6 cards)
+                "flow_diagnostics": {
+                    "cards": diagnostics['diagnostics'],
+                    "note": "Volume-based metrics stabilize later in the session as trading activity accumulates"
+                },
+
+                # Skew Measures panel
+                "skew_measures": diagnostics['skew_measures'],
+
+                # Overall rating
+                "rating": diagnostics['rating'],
+
+                # Key levels
+                "levels": {
+                    "price": round(spot_price, 2),
+                    "upper_1sd": upper_1sd,
+                    "lower_1sd": lower_1sd,
+                    "gex_flip": flip_point,
+                    "call_wall": call_wall,
+                    "put_wall": put_wall,
+                    "expected_move": round(em, 2) if em else None
+                },
+
+                # GEX chart data
+                "gex_chart": {
+                    "expiration": target_expiration,
+                    "strikes": gex_by_strike,
+                    "total_net_gamma": snapshot.total_net_gamma,
+                    "gamma_regime": snapshot.gamma_regime
+                },
+
+                # Summary stats
+                "summary": diagnostics['summary']
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting GEX analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/history")
 async def get_gamma_history(
     strike: Optional[float] = Query(None, description="Specific strike to get history for"),
@@ -4519,7 +4837,8 @@ async def get_trade_action(
     symbol: str = Query(default="SPY"),
     account_size: float = Query(default=50000, description="Account size in dollars"),
     risk_per_trade_pct: float = Query(default=1.0, description="Max risk per trade as % of account (1-5%)"),
-    spread_width: int = Query(default=2, description="Width of spreads in dollars (1-5)")
+    spread_width: int = Query(default=2, description="Width of spreads in dollars (1-5)"),
+    auto_log: bool = Query(default=True, description="Automatically log signal for tracking (default: True)")
 ):
     """
     Generate ACTIONABLE trade recommendation with specific strikes, sizing, and reasoning.
@@ -4530,6 +4849,10 @@ async def get_trade_action(
     - Position size based on your risk tolerance
     - Entry trigger and exit rules
     - THE WHY: Reasoning behind each decision
+
+    When auto_log=True (default), the signal is automatically logged to the database
+    for performance tracking. ARGUS will track entry/exit and determine win/loss
+    automatically at market close.
 
     Example output:
     "SELL SPY 588/586 PUT SPREAD for $0.45 credit"
@@ -4878,37 +5201,49 @@ async def get_trade_action(
             spread_notation = f"{long_strike}/{short_strike}c" if "CALL" in trade_type else f"{long_strike}/{short_strike}p"
             trade_description = f"BUY {symbol} {spread_notation} @ ${abs(estimated_credit):.2f} debit"
 
+        # Build the response data
+        response_data = {
+            "action": trade_type,
+            "direction": direction,
+            "confidence": confidence,
+            "trade_description": trade_description,
+            "trade": trade_structure,
+            "why": why_parts,
+            "sizing": {
+                "contracts": contracts,
+                "max_loss": f"${actual_max_loss:.0f}",
+                "max_profit": f"${actual_max_profit:.0f}",
+                "risk_reward": f"1:{actual_max_profit/actual_max_loss:.1f}" if actual_max_loss > 0 else "N/A",
+                "account_risk_pct": f"{(actual_max_loss / account_size * 100):.1f}%"
+            },
+            "entry": entry_trigger,
+            "exit": exit_rules,
+            "market_context": {
+                "spot": spot,
+                "vix": vix,
+                "expected_move": expected_move,
+                "gamma_regime": gamma_regime,
+                "order_flow": flow_signal,
+                "flow_confidence": flow_confidence,
+                "flip_point": flip_point,
+                "call_wall": call_wall,
+                "put_wall": put_wall
+            },
+            "timestamp": format_central_timestamp()
+        }
+
+        # Auto-log signal if enabled and it's an actionable trade (not WAIT)
+        signal_id = None
+        if auto_log and trade_type and trade_type != "WAIT":
+            signal_id = _log_signal_to_db(response_data, symbol)
+            if signal_id:
+                logger.info(f"ARGUS: Auto-logged signal #{signal_id}: {trade_type} {direction}")
+
         return {
             "success": True,
-            "data": {
-                "action": trade_type,
-                "direction": direction,
-                "confidence": confidence,
-                "trade_description": trade_description,
-                "trade": trade_structure,
-                "why": why_parts,
-                "sizing": {
-                    "contracts": contracts,
-                    "max_loss": f"${actual_max_loss:.0f}",
-                    "max_profit": f"${actual_max_profit:.0f}",
-                    "risk_reward": f"1:{actual_max_profit/actual_max_loss:.1f}" if actual_max_loss > 0 else "N/A",
-                    "account_risk_pct": f"{(actual_max_loss / account_size * 100):.1f}%"
-                },
-                "entry": entry_trigger,
-                "exit": exit_rules,
-                "market_context": {
-                    "spot": spot,
-                    "vix": vix,
-                    "expected_move": expected_move,
-                    "gamma_regime": gamma_regime,
-                    "order_flow": flow_signal,
-                    "flow_confidence": flow_confidence,
-                    "flip_point": flip_point,
-                    "call_wall": call_wall,
-                    "put_wall": put_wall
-                },
-                "timestamp": format_central_timestamp()
-            }
+            "data": response_data,
+            "signal_id": signal_id,  # None if auto_log=False or WAIT action
+            "auto_logged": signal_id is not None
         }
 
     except Exception as e:
@@ -5023,25 +5358,41 @@ def _log_signal_to_db(signal_data: dict, symbol: str = "SPY") -> Optional[int]:
                 pass
 
 
-def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None):
+def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None, force_close: bool = False):
     """
     Check open signals and update their outcomes based on current price.
-    Called periodically to track simulated performance.
+
+    Called periodically (every 5 minutes during market hours) to track performance.
+    Checks for:
+    1. Profit target hit (intraday)
+    2. Stop loss hit (intraday)
+    3. Expiration at market close (0DTE)
+
+    Args:
+        symbol: Trading symbol
+        current_spot: Current price (fetched if not provided)
+        force_close: If True, close all open signals (for end of day)
+
+    Returns:
+        Dict with update counts
     """
     conn = None
     cursor = None
+    updates = {'closed': 0, 'wins': 0, 'losses': 0}
+
     try:
         conn = get_connection()
         if not conn:
-            return
+            return updates
 
         cursor = conn.cursor()
 
-        # Get open signals
+        # Get open signals (0DTE signals from today)
         cursor.execute("""
             SELECT id, action, credit_target, profit_target_price, stop_loss_price,
                    spot_at_signal, max_profit, max_loss, created_at,
-                   put_short, call_short, short_strike
+                   put_short, call_short, short_strike, long_strike,
+                   put_long, call_long
             FROM argus_trade_signals
             WHERE symbol = %s AND status = 'OPEN'
             AND created_at > NOW() - INTERVAL '1 day'
@@ -5050,7 +5401,7 @@ def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None):
         open_signals = cursor.fetchall()
 
         if not open_signals:
-            return
+            return updates
 
         # Get current spot if not provided
         if not current_spot:
@@ -5060,13 +5411,16 @@ def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None):
                 current_spot = snapshot.get('spot_price', 0) if snapshot else 0
 
         if not current_spot or current_spot <= 0:
-            return
+            return updates
 
         now = get_central_time()
         market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+        is_after_close = now >= market_close
 
         for signal in open_signals:
-            signal_id, action, credit, profit_target, stop_loss, spot_at_signal, max_profit, max_loss, created_at, put_short, call_short, short_strike = signal
+            (signal_id, action, credit, profit_target, stop_loss, spot_at_signal,
+             max_profit, max_loss, created_at, put_short, call_short, short_strike,
+             long_strike, put_long, call_long) = signal
 
             status = None
             outcome_reason = None
@@ -5075,78 +5429,157 @@ def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None):
             hit_stop = False
             expired_profit = False
 
-            # Determine reference strike for P&L calculation
-            ref_strike = put_short or call_short or short_strike or spot_at_signal
+            # Determine reference strikes for P&L calculation
+            # For credit spreads: short strike is the key level
+            # For debit spreads: we need price to move toward long strike
 
-            # For credit spreads: profit if price stays away from short strike
-            # Simplified: track if price moved favorably
+            # ================================================================
+            # INTRADAY CHECKS - Profit Target & Stop Loss
+            # ================================================================
+
             if action in ['IRON_CONDOR', 'PUT_CREDIT_SPREAD', 'CALL_CREDIT_SPREAD']:
-                # Credit received is max profit if expires OTM
-                if credit and credit > 0:
-                    # Check if market closed (0DTE expired)
-                    if now >= market_close:
-                        # Check if strikes were breached
-                        if action == 'IRON_CONDOR':
-                            # Win if price between put_short and call_short
-                            if put_short and call_short:
-                                if put_short <= current_spot <= call_short:
-                                    status = 'WIN'
-                                    outcome_reason = 'expired_otm'
-                                    actual_pnl = max_profit
-                                    expired_profit = True
-                                else:
-                                    status = 'LOSS'
-                                    outcome_reason = 'expired_itm'
-                                    actual_pnl = -max_loss
-                        elif action == 'PUT_CREDIT_SPREAD':
-                            # Win if price above put_short
-                            if ref_strike and current_spot >= ref_strike:
-                                status = 'WIN'
-                                outcome_reason = 'expired_otm'
-                                actual_pnl = max_profit
-                                expired_profit = True
-                            else:
-                                status = 'LOSS'
-                                outcome_reason = 'expired_itm'
-                                actual_pnl = -max_loss
-                        elif action == 'CALL_CREDIT_SPREAD':
-                            # Win if price below call_short
-                            if ref_strike and current_spot <= ref_strike:
-                                status = 'WIN'
-                                outcome_reason = 'expired_otm'
-                                actual_pnl = max_profit
-                                expired_profit = True
-                            else:
-                                status = 'LOSS'
-                                outcome_reason = 'expired_itm'
-                                actual_pnl = -max_loss
+                # Credit spreads - estimate current spread value based on price movement
+                # Simplified: if price moved significantly toward short strike, assume loss
+
+                if action == 'IRON_CONDOR' and put_short and call_short:
+                    # Distance to nearest short strike
+                    dist_to_put = current_spot - put_short
+                    dist_to_call = call_short - current_spot
+
+                    # If price breached a short strike, it's a loss
+                    if current_spot <= put_short or current_spot >= call_short:
+                        status = 'LOSS'
+                        outcome_reason = 'strike_breached_intraday'
+                        actual_pnl = -max_loss if max_loss else -(credit * 100 * 3)  # ~3x credit
+                        hit_stop = True
+
+                elif action == 'PUT_CREDIT_SPREAD':
+                    ref_strike = put_short or short_strike
+                    if ref_strike and current_spot < ref_strike:
+                        # Price below short put = ITM = loss
+                        status = 'LOSS'
+                        outcome_reason = 'strike_breached_intraday'
+                        actual_pnl = -max_loss if max_loss else -(credit * 100 * 3)
+                        hit_stop = True
+
+                elif action == 'CALL_CREDIT_SPREAD':
+                    ref_strike = call_short or short_strike
+                    if ref_strike and current_spot > ref_strike:
+                        # Price above short call = ITM = loss
+                        status = 'LOSS'
+                        outcome_reason = 'strike_breached_intraday'
+                        actual_pnl = -max_loss if max_loss else -(credit * 100 * 3)
+                        hit_stop = True
 
             elif action in ['CALL_DEBIT_SPREAD', 'PUT_DEBIT_SPREAD']:
-                # For debit spreads: profit if price moves in direction
-                if now >= market_close:
+                # Debit spreads - check if hit profit target or stop
+                debit_paid = abs(credit) if credit else 0
+
+                if action == 'CALL_DEBIT_SPREAD':
+                    # Need price to go UP
+                    move_pct = (current_spot - spot_at_signal) / spot_at_signal * 100 if spot_at_signal else 0
+
+                    # Profit target: typically 50-100% of debit
+                    if move_pct > 1.0:  # 1% move = ~100% gain on near-ATM debit spread
+                        status = 'WIN'
+                        outcome_reason = 'profit_target_hit'
+                        actual_pnl = max_profit if max_profit else debit_paid * 100
+                        hit_profit = True
+                    # Stop loss: typically -50% of debit
+                    elif move_pct < -0.5:  # 0.5% adverse move
+                        status = 'LOSS'
+                        outcome_reason = 'stop_loss_hit'
+                        actual_pnl = -max_loss if max_loss else -debit_paid * 100
+                        hit_stop = True
+
+                else:  # PUT_DEBIT_SPREAD
+                    # Need price to go DOWN
+                    move_pct = (spot_at_signal - current_spot) / spot_at_signal * 100 if spot_at_signal else 0
+
+                    if move_pct > 1.0:
+                        status = 'WIN'
+                        outcome_reason = 'profit_target_hit'
+                        actual_pnl = max_profit if max_profit else debit_paid * 100
+                        hit_profit = True
+                    elif move_pct < -0.5:
+                        status = 'LOSS'
+                        outcome_reason = 'stop_loss_hit'
+                        actual_pnl = -max_loss if max_loss else -debit_paid * 100
+                        hit_stop = True
+
+            # ================================================================
+            # EXPIRATION CHECK - At Market Close
+            # ================================================================
+
+            if not status and (is_after_close or force_close):
+                if action in ['IRON_CONDOR', 'PUT_CREDIT_SPREAD', 'CALL_CREDIT_SPREAD']:
+                    # Credit spreads at expiration
+                    if action == 'IRON_CONDOR' and put_short and call_short:
+                        if put_short <= current_spot <= call_short:
+                            status = 'WIN'
+                            outcome_reason = 'expired_otm'
+                            actual_pnl = max_profit if max_profit else credit * 100
+                            expired_profit = True
+                        else:
+                            status = 'LOSS'
+                            outcome_reason = 'expired_itm'
+                            actual_pnl = -max_loss if max_loss else -(credit * 100 * 3)
+
+                    elif action == 'PUT_CREDIT_SPREAD':
+                        ref_strike = put_short or short_strike
+                        if ref_strike and current_spot >= ref_strike:
+                            status = 'WIN'
+                            outcome_reason = 'expired_otm'
+                            actual_pnl = max_profit if max_profit else credit * 100
+                            expired_profit = True
+                        else:
+                            status = 'LOSS'
+                            outcome_reason = 'expired_itm'
+                            actual_pnl = -max_loss if max_loss else -(credit * 100 * 3)
+
+                    elif action == 'CALL_CREDIT_SPREAD':
+                        ref_strike = call_short or short_strike
+                        if ref_strike and current_spot <= ref_strike:
+                            status = 'WIN'
+                            outcome_reason = 'expired_otm'
+                            actual_pnl = max_profit if max_profit else credit * 100
+                            expired_profit = True
+                        else:
+                            status = 'LOSS'
+                            outcome_reason = 'expired_itm'
+                            actual_pnl = -max_loss if max_loss else -(credit * 100 * 3)
+
+                elif action in ['CALL_DEBIT_SPREAD', 'PUT_DEBIT_SPREAD']:
+                    # Debit spreads at expiration
                     if action == 'CALL_DEBIT_SPREAD':
                         if current_spot > spot_at_signal:
                             status = 'WIN'
-                            outcome_reason = 'price_moved_favorable'
-                            actual_pnl = max_profit * min(1.0, (current_spot - spot_at_signal) / spot_at_signal * 50)
+                            outcome_reason = 'expired_itm_favorable'
+                            move_pct = (current_spot - spot_at_signal) / spot_at_signal
+                            actual_pnl = (max_profit if max_profit else 100) * min(1.0, move_pct * 50)
                         else:
                             status = 'LOSS'
-                            outcome_reason = 'price_moved_unfavorable'
-                            actual_pnl = -max_loss
+                            outcome_reason = 'expired_otm'
+                            actual_pnl = -max_loss if max_loss else -100
+
                     else:  # PUT_DEBIT_SPREAD
                         if current_spot < spot_at_signal:
                             status = 'WIN'
-                            outcome_reason = 'price_moved_favorable'
-                            actual_pnl = max_profit * min(1.0, (spot_at_signal - current_spot) / spot_at_signal * 50)
+                            outcome_reason = 'expired_itm_favorable'
+                            move_pct = (spot_at_signal - current_spot) / spot_at_signal
+                            actual_pnl = (max_profit if max_profit else 100) * min(1.0, move_pct * 50)
                         else:
                             status = 'LOSS'
-                            outcome_reason = 'price_moved_unfavorable'
-                            actual_pnl = -max_loss
+                            outcome_reason = 'expired_otm'
+                            actual_pnl = -max_loss if max_loss else -100
 
-            # Update if status changed
+            # ================================================================
+            # UPDATE DATABASE
+            # ================================================================
+
             if status:
                 time_to_resolution = int((now - created_at).total_seconds() / 60) if created_at else None
-                pnl_pct = (actual_pnl / max_loss * 100) if max_loss else 0
+                pnl_pct = (actual_pnl / max_loss * 100) if max_loss and max_loss > 0 else 0
 
                 cursor.execute("""
                     UPDATE argus_trade_signals
@@ -5160,12 +5593,22 @@ def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None):
                     time_to_resolution, hit_profit, hit_stop, expired_profit, signal_id
                 ))
 
+                updates['closed'] += 1
+                if status == 'WIN':
+                    updates['wins'] += 1
+                else:
+                    updates['losses'] += 1
+
+                logger.info(f"ARGUS Signal #{signal_id}: {status} ({outcome_reason}) - P&L: ${actual_pnl:.2f}")
+
         conn.commit()
+        return updates
 
     except Exception as e:
         logger.error(f"Failed to update signal outcomes: {e}")
         if conn:
             conn.rollback()
+        return updates
     finally:
         if cursor:
             try:
@@ -5417,14 +5860,32 @@ async def get_signal_performance(
 
 
 @router.post("/signals/update-outcomes")
-async def update_signal_outcomes(symbol: str = Query(default="SPY")):
+async def update_signal_outcomes(
+    symbol: str = Query(default="SPY"),
+    force_close: bool = Query(default=False, description="Force close all open signals (for EOD)")
+):
     """
-    Manually trigger outcome updates for open signals.
-    Called periodically or at market close.
+    Update outcomes for open ARGUS signals.
+
+    Called automatically:
+    - Every 5 minutes during market hours (intraday profit/stop checks)
+    - At 3:01 PM CT (market close / 0DTE expiration)
+
+    Args:
+        symbol: Trading symbol (default SPY)
+        force_close: If True, close all open signals regardless of price (for EOD)
+
+    Returns success status and counts of closed/won/lost signals.
     """
     try:
-        _update_signal_outcomes(symbol)
-        return {"success": True, "message": "Outcomes updated"}
+        updates = _update_signal_outcomes(symbol, force_close=force_close)
+        return {
+            "success": True,
+            "message": f"Updated {updates.get('closed', 0)} signals",
+            "data": {
+                "updates": updates
+            }
+        }
     except Exception as e:
         logger.error(f"Failed to update outcomes: {e}")
         return {"success": False, "error": str(e)}

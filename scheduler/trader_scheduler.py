@@ -2453,6 +2453,27 @@ class AutonomousTraderScheduler:
 
             self.argus_execution_count += 1
             logger.info(f"ARGUS commentary #{self.argus_execution_count} completed (next in 5 min)")
+
+            # Also check and update ARGUS signal outcomes (intraday checks for profit/stop)
+            try:
+                for base_url in base_urls:
+                    try:
+                        response = requests.post(
+                            f"{base_url}/api/argus/signals/update-outcomes?symbol=SPY",
+                            timeout=30
+                        )
+                        if response.status_code == 200:
+                            outcome_result = response.json()
+                            if outcome_result.get('success'):
+                                updates = outcome_result.get('data', {}).get('updates', {})
+                                if updates.get('closed', 0) > 0:
+                                    logger.info(f"ARGUS Signals: {updates.get('wins', 0)} wins, {updates.get('losses', 0)} losses closed")
+                            break
+                    except requests.exceptions.RequestException:
+                        continue
+            except Exception as sig_err:
+                logger.debug(f"ARGUS signal outcome check skipped: {sig_err}")
+
             logger.info(f"=" * 80)
 
         except Exception as e:
@@ -2510,6 +2531,25 @@ class AutonomousTraderScheduler:
                     logger.info(f"  {status} {action.get('action')}: {action.get('description')}")
             else:
                 logger.warning("ARGUS EOD: Processing returned no result")
+
+            # Force close all open ARGUS signals at market close (0DTE expiration)
+            logger.info("ARGUS EOD: Closing all open signals (0DTE expiration)...")
+            for base_url in base_urls:
+                try:
+                    response = requests.post(
+                        f"{base_url}/api/argus/signals/update-outcomes?symbol=SPY&force_close=true",
+                        timeout=60
+                    )
+                    if response.status_code == 200:
+                        outcome_result = response.json()
+                        if outcome_result.get('success'):
+                            updates = outcome_result.get('data', {}).get('updates', {})
+                            logger.info(f"ARGUS EOD Signals: Closed {updates.get('closed', 0)} signals "
+                                       f"({updates.get('wins', 0)} wins, {updates.get('losses', 0)} losses)")
+                        break
+                except requests.exceptions.RequestException as e:
+                    logger.debug(f"ARGUS EOD: Could not reach {base_url} for signal updates: {e}")
+                    continue
 
             logger.info(f"ARGUS EOD processing completed")
             logger.info(f"=" * 80)
