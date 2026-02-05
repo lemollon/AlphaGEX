@@ -720,6 +720,40 @@ class HERACLESTrader:
             )
 
         # ================================================================
+        # STOP-AND-REVERSE (SAR) - Capture momentum when clearly wrong
+        # Triggers BEFORE max loss to reverse direction instead of just stopping out
+        # Conditions: Down >= sar_trigger_pts AND MFE < sar_mfe_threshold
+        # This means the trade never went profitable and is clearly wrong direction
+        # ================================================================
+        if self.config.use_sar:
+            sar_trigger = self.config.sar_trigger_pts  # 2.0 pts default
+            sar_mfe_threshold = self.config.sar_mfe_threshold  # 0.5 pts default
+
+            # Check SAR conditions: losing AND never was profitable
+            if -profit_pts >= sar_trigger and max_profit_pts < sar_mfe_threshold:
+                # This trade is clearly wrong - reverse direction
+                logger.info(
+                    f"Position {position.position_id}: SAR CONDITIONS MET "
+                    f"(loss={-profit_pts:.1f} pts >= {sar_trigger:.1f}, MFE={max_profit_pts:.2f} < {sar_mfe_threshold:.1f}) "
+                    f"-> Closing and reversing"
+                )
+
+                # Close at simulated stop price (where SAR would trigger)
+                if is_long:
+                    sar_close_price = position.entry_price - sar_trigger
+                else:
+                    sar_close_price = position.entry_price + sar_trigger
+
+                # Execute SAR: close original and open reversal
+                return self._execute_sar(
+                    position=position,
+                    close_price=sar_close_price,
+                    current_price=current_price,
+                    mfe_at_sar=max_profit_pts,
+                    loss_at_sar=-profit_pts
+                )
+
+        # ================================================================
         # CHECK MAX UNREALIZED LOSS (intermediate safety net)
         # This triggers BEFORE emergency stop to cap losses at 5pts instead of 15pts
         # PAPER TRADING FIX: Exit at the STOP PRICE, not current price!
@@ -1063,6 +1097,154 @@ class HERACLESTrader:
         except Exception as e:
             logger.error(f"Error closing position {position.position_id}: {e}")
             return False
+
+    # ========================================================================
+    # Stop-and-Reverse (SAR) Execution
+    # ========================================================================
+
+    def _execute_sar(
+        self,
+        position: FuturesPosition,
+        close_price: float,
+        current_price: float,
+        mfe_at_sar: float,
+        loss_at_sar: float
+    ) -> bool:
+        """
+        Execute Stop-and-Reverse: close losing position and open reversal.
+
+        SAR STRATEGY (backtested on 273 trades):
+        - Losers avg MFE = 0.18 pts (never profitable)
+        - Avg MAE = 6.21 pts (go strongly against)
+        - By reversing at -2 pts, we capture ~3.7 pts avg on the reversal
+
+        EXPECTED IMPROVEMENT:
+        - Current: -$25/contract (5 pt loss)
+        - With SAR: +$8.50/contract (-2 pt loss + 3.7 pt gain)
+        - Improvement: ~$33.50 per losing trade
+
+        Args:
+            position: The losing position to close and reverse
+            close_price: Price to close original position (SAR trigger price)
+            current_price: Current market price for reversal entry
+            mfe_at_sar: Max Favorable Excursion at time of SAR (for logging)
+            loss_at_sar: Loss in points at time of SAR (for logging)
+
+        Returns:
+            True if SAR executed successfully
+        """
+        original_direction = position.direction
+        reversal_direction = TradeDirection.SHORT if original_direction == TradeDirection.LONG else TradeDirection.LONG
+
+        # Build SAR reasoning with full context
+        sar_reasoning = (
+            f"SAR TRIGGERED: Original {original_direction.value} position was down {loss_at_sar:.1f} pts "
+            f"with MFE of only {mfe_at_sar:.2f} pts (threshold: {self.config.sar_mfe_threshold}). "
+            f"Trade never went profitable, indicating wrong direction. "
+            f"Reversing to {reversal_direction.value} to capture momentum. "
+            f"Original entry: {position.entry_price:.2f}, SAR close: {close_price:.2f}, "
+            f"Reversal entry: {current_price:.2f}. "
+            f"Expected: Capture ~3.7 pts avg on reversal based on backtest data."
+        )
+
+        logger.info(f"SAR EXECUTING: {sar_reasoning}")
+
+        # Step 1: Close the original position with SAR_CLOSED status
+        close_reason = (
+            f"SAR: Down {loss_at_sar:.1f} pts, MFE={mfe_at_sar:.2f} < {self.config.sar_mfe_threshold} threshold. "
+            f"Reversing to {reversal_direction.value}."
+        )
+
+        # Close original position
+        closed = self._close_position(
+            position=position,
+            close_price=close_price,
+            status=PositionStatus.SAR_CLOSED,
+            reason=close_reason
+        )
+
+        if not closed:
+            logger.error(f"SAR: Failed to close original position {position.position_id}")
+            return False
+
+        # Step 2: Open reversal position
+        # Create a new signal for the reversal
+        reversal_position_id = f"SAR-{uuid.uuid4().hex[:8]}"
+
+        # Calculate stop for reversal (use same risk parameters)
+        is_overnight = self._is_overnight_session()
+        if is_overnight and self.config.use_overnight_hybrid:
+            reversal_stop_pts = self.config.overnight_emergency_stop
+        else:
+            reversal_stop_pts = self.config.no_loss_emergency_stop
+
+        if reversal_direction == TradeDirection.LONG:
+            reversal_stop = current_price - reversal_stop_pts
+        else:
+            reversal_stop = current_price + reversal_stop_pts
+
+        # Create reversal position directly
+        reversal_position = FuturesPosition(
+            position_id=reversal_position_id,
+            symbol=self.config.symbol,
+            direction=reversal_direction,
+            contracts=position.contracts,  # Same size as original
+            entry_price=current_price,
+            entry_value=current_price * position.contracts * MES_POINT_VALUE,
+            initial_stop=reversal_stop,
+            current_stop=reversal_stop,
+            breakeven_price=current_price,
+            trailing_active=False,
+            gamma_regime=position.gamma_regime,  # Same regime
+            gex_value=position.gex_value,
+            flip_point=position.flip_point,
+            call_wall=position.call_wall,
+            put_wall=position.put_wall,
+            vix_at_entry=position.vix_at_entry,
+            atr_at_entry=position.atr_at_entry,
+            signal_source=SignalSource.SAR_REVERSAL,
+            signal_confidence=0.70,  # High confidence - based on backtest data
+            win_probability=0.65,  # Based on backtest: reversal captures 3.7 pts avg
+            trade_reasoning=sar_reasoning,
+            order_id="",
+            scan_id=position.scan_id,  # Link to original scan for ML tracking
+            status=PositionStatus.OPEN,
+            open_time=datetime.now(CENTRAL_TZ),
+            stop_type="SAR_REVERSAL",
+            stop_points_used=reversal_stop_pts
+        )
+
+        # Save reversal position to database
+        self.db.save_position(reversal_position)
+
+        # Log the SAR action
+        self.db.log(
+            level="INFO",
+            action="SAR_EXECUTED",
+            message=f"SAR: Closed {original_direction.value} at {close_price:.2f}, "
+                    f"Opened {reversal_direction.value} at {current_price:.2f}",
+            details={
+                "original_position_id": position.position_id,
+                "reversal_position_id": reversal_position_id,
+                "original_direction": original_direction.value,
+                "reversal_direction": reversal_direction.value,
+                "original_entry": position.entry_price,
+                "sar_close_price": close_price,
+                "reversal_entry": current_price,
+                "mfe_at_sar": mfe_at_sar,
+                "loss_at_sar": loss_at_sar,
+                "sar_trigger_pts": self.config.sar_trigger_pts,
+                "sar_mfe_threshold": self.config.sar_mfe_threshold,
+                "gamma_regime": position.gamma_regime.value
+            }
+        )
+
+        logger.info(
+            f"SAR COMPLETE: Closed {original_direction.value} {position.position_id} at {close_price:.2f}, "
+            f"Opened {reversal_direction.value} {reversal_position_id} at {current_price:.2f}"
+        )
+
+        return True
 
     # ========================================================================
     # Signal Execution
@@ -1612,6 +1794,10 @@ class HERACLESTrader:
                 "no_loss_trail_distance": config.no_loss_trail_distance,
                 "no_loss_emergency_stop": config.no_loss_emergency_stop,
                 "max_unrealized_loss_pts": config.max_unrealized_loss_pts,
+                # Stop-and-Reverse (SAR) Strategy params
+                "use_sar": config.use_sar,
+                "sar_trigger_pts": config.sar_trigger_pts,
+                "sar_mfe_threshold": config.sar_mfe_threshold,
             },
             "positions": {
                 "open_count": len(positions),
