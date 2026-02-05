@@ -216,6 +216,7 @@ class OrderExecutor:
     def __init__(self, config: ARESConfig, db=None):
         self.config = config
         self.tradier = None
+        self.tradier_2 = None  # Second sandbox account for trade mirroring
         self.tradier_init_error = None  # Track initialization error for status reporting
         self.db = db  # Optional DB reference for orphaned order tracking
 
@@ -246,6 +247,22 @@ class OrderExecutor:
                     logger.error(f"ARES OrderExecutor: Tradier init failed - {e}")
                     logger.error("ARES OrderExecutor: Trades will NOT execute until this is resolved")
 
+            # Initialize second sandbox account for trade mirroring (optional)
+            sandbox_key_2 = APIConfig.TRADIER_ARES_SANDBOX_API_KEY_2
+            sandbox_account_2 = APIConfig.TRADIER_ARES_SANDBOX_ACCOUNT_ID_2
+
+            if sandbox_key_2 and sandbox_account_2:
+                try:
+                    self.tradier_2 = TradierDataFetcher(
+                        api_key=sandbox_key_2,
+                        account_id=sandbox_account_2,
+                        sandbox=True
+                    )
+                    logger.info("ARES OrderExecutor: Second Tradier account initialized for trade mirroring")
+                    logger.info(f"ARES OrderExecutor: Account 2 ID {sandbox_account_2[:4]}...{sandbox_account_2[-4:] if len(sandbox_account_2) > 8 else ''}")
+                except Exception as e:
+                    logger.warning(f"ARES OrderExecutor: Second account init failed (trades will still execute on primary): {e}")
+
         # Position Management Agent - tracks entry conditions for exit timing
         self.position_mgmt = None
         if POSITION_MGMT_AVAILABLE:
@@ -265,9 +282,85 @@ class OrderExecutor:
         return {
             "can_execute": self.can_execute_trades,
             "tradier_initialized": self.tradier is not None,
+            "tradier_2_initialized": self.tradier_2 is not None,
             "init_error": self.tradier_init_error,
             "mode": self.config.mode.value if hasattr(self.config.mode, 'value') else str(self.config.mode),
         }
+
+    def _mirror_ic_to_second_account(
+        self,
+        signal: IronCondorSignal,
+        contracts: int,
+        limit_price: float
+    ) -> None:
+        """
+        Mirror an Iron Condor trade to the second sandbox account.
+
+        Fire and forget - no tracking, no error propagation.
+        Primary account trade has already succeeded when this is called.
+        """
+        if not self.tradier_2:
+            return
+
+        try:
+            result = self.tradier_2.place_iron_condor(
+                symbol=self.config.ticker,
+                expiration=signal.expiration,
+                put_long=signal.put_long,
+                put_short=signal.put_short,
+                call_short=signal.call_short,
+                call_long=signal.call_long,
+                quantity=contracts,
+                limit_price=round(limit_price, 2),
+            )
+            if result and result.get('order'):
+                order_id = result['order'].get('id', 'UNKNOWN')
+                logger.info(f"ARES MIRROR: IC mirrored to account 2 [Order: {order_id}]")
+            else:
+                logger.warning(f"ARES MIRROR: IC mirror to account 2 returned no order: {result}")
+        except Exception as e:
+            logger.warning(f"ARES MIRROR: IC mirror to account 2 failed (non-blocking): {e}")
+
+    def _mirror_close_to_second_account(
+        self,
+        position: IronCondorPosition,
+        put_value: float,
+        call_value: float
+    ) -> None:
+        """
+        Mirror a close order to the second sandbox account.
+
+        Fire and forget - no tracking, no error propagation.
+        """
+        if not self.tradier_2:
+            return
+
+        try:
+            # Close put spread on second account
+            self.tradier_2.place_vertical_spread(
+                symbol=position.ticker,
+                expiration=position.expiration,
+                long_strike=position.put_short_strike,
+                short_strike=position.put_long_strike,
+                option_type="put",
+                quantity=position.contracts,
+                limit_price=round(put_value, 2),
+            )
+
+            # Close call spread on second account
+            self.tradier_2.place_vertical_spread(
+                symbol=position.ticker,
+                expiration=position.expiration,
+                long_strike=position.call_short_strike,
+                short_strike=position.call_long_strike,
+                option_type="call",
+                quantity=position.contracts,
+                limit_price=round(call_value, 2),
+            )
+
+            logger.info(f"ARES MIRROR: Close mirrored to account 2 for {position.position_id}")
+        except Exception as e:
+            logger.warning(f"ARES MIRROR: Close mirror to account 2 failed (non-blocking): {e}")
 
     def _send_orphaned_order_alert(
         self,
@@ -603,6 +696,9 @@ class OrderExecutor:
                 f"x{contracts} @ ${actual_credit:.2f} [Order: {ic_order_id}]"
             )
 
+            # Mirror trade to second account (fire and forget - no tracking)
+            self._mirror_ic_to_second_account(signal, contracts, actual_credit)
+
             return position
 
         except Exception as e:
@@ -742,6 +838,9 @@ class OrderExecutor:
                 f"LIVE CLOSE: {position.position_id} "
                 f"@ ${close_price:.2f}, P&L: ${realized_pnl:.2f} [{reason}]"
             )
+
+            # Mirror close to second account (fire and forget)
+            self._mirror_close_to_second_account(position, ic_quote['put_value'], ic_quote['call_value'])
 
             return True, close_price, realized_pnl
 

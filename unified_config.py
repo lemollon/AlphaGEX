@@ -133,6 +133,11 @@ class APIConfig:
     TRADIER_SANDBOX_API_KEY: Optional[str] = os.getenv('TRADIER_SANDBOX_API_KEY')
     TRADIER_SANDBOX_ACCOUNT_ID: Optional[str] = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID')
 
+    # Tradier - ARES Second Sandbox Account (for mirroring trades to additional account)
+    # ARES will execute the same trades on BOTH sandbox accounts
+    TRADIER_ARES_SANDBOX_API_KEY_2: Optional[str] = os.getenv('TRADIER_ARES_SANDBOX_API_KEY_2')
+    TRADIER_ARES_SANDBOX_ACCOUNT_ID_2: Optional[str] = os.getenv('TRADIER_ARES_SANDBOX_ACCOUNT_ID_2')
+
     @classmethod
     def get_tradier_prod_credentials(cls) -> tuple:
         """Get production credentials, checking TRADIER_PROD_* first, then TRADIER_API_KEY"""
