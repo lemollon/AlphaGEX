@@ -1474,110 +1474,205 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
             }
 
     # =========================================================================
-    # PRIMARY: TradingVolatilityAPI (best SPX GEX data with flip_point, walls)
+    # MARKET HOURS (8 AM - 3 PM CT): Use TRADIER for real-time GEX data
+    # OVERNIGHT (3 PM - 8 AM CT): Use TradingVolatility for n+1 GEX data
     # =========================================================================
-    try:
-        from core_classes_and_engines import TradingVolatilityAPI
+    is_market_hours = 8 <= hour < 15  # 8 AM - 3 PM CT
 
-        api = TradingVolatilityAPI()
-        gex_result = api.get_net_gamma(symbol)
+    if is_market_hours:
+        # =====================================================================
+        # MARKET HOURS: TRADIER FIRST (real-time options data)
+        # =====================================================================
+        try:
+            from data.gex_calculator import TradierGEXCalculator
 
-        if gex_result and 'error' not in gex_result:
-            flip_point = float(gex_result.get('flip_point', 0))
-            call_wall = float(gex_result.get('call_wall', 0) or 0)
-            put_wall = float(gex_result.get('put_wall', 0) or 0)
-            net_gex = float(gex_result.get('net_gex', 0))
-            spot_price = float(gex_result.get('spot_price', 0))
+            calculator = TradierGEXCalculator(sandbox=False)
+            gex_result = calculator.calculate_gex(symbol)
 
-            # If walls are missing, estimate from flip_point
-            if flip_point > 0:
-                if call_wall <= 0:
-                    call_wall = flip_point * 1.01  # 1% above flip
-                    logger.debug(f"Estimated call_wall: {call_wall:.2f}")
-                if put_wall <= 0:
-                    put_wall = flip_point * 0.99  # 1% below flip
-                    logger.debug(f"Estimated put_wall: {put_wall:.2f}")
+            if gex_result:
+                flip_point = gex_result.get('flip_point', 0)
+                call_wall = gex_result.get('call_wall', 0)
+                put_wall = gex_result.get('put_wall', 0)
+                net_gex = gex_result.get('net_gex', 0)
 
-            logger.info(
-                f"HERACLES GEX from TradingVolatility: flip={flip_point:.2f}, "
-                f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
-            )
+                if flip_point > 0:
+                    if call_wall <= 0:
+                        call_wall = flip_point * 1.01
+                    if put_wall <= 0:
+                        put_wall = flip_point * 0.99
 
-            gex_data = {
-                'flip_point': flip_point,
-                'call_wall': call_wall,
-                'put_wall': put_wall,
-                'net_gex': net_gex,
-                'gex_ratio': 1.0,
-                'data_source': 'trading_volatility_api',
-            }
+                    logger.info(
+                        f"HERACLES GEX from TRADIER (market hours): flip={flip_point:.2f}, "
+                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+                    )
 
-            # Cache valid GEX data for overnight trading
-            if flip_point > 0:
-                _gex_cache.clear()
-                _gex_cache.update(gex_data)
-                _gex_cache_time = now
-                logger.debug(f"GEX cache updated from TradingVolatility at {now.strftime('%H:%M:%S')}")
+                    gex_data = {
+                        'flip_point': flip_point,
+                        'call_wall': call_wall,
+                        'put_wall': put_wall,
+                        'net_gex': net_gex,
+                        'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                        'data_source': 'tradier_calculator',
+                    }
 
-                # Persist to database for overnight resilience
-                _persist_gex_cache_to_db(gex_data, now)
+                    # Cache for potential fallback
+                    _gex_cache.clear()
+                    _gex_cache.update(gex_data)
+                    _gex_cache_time = now
+                    _persist_gex_cache_to_db(gex_data, now)
 
-            return gex_data
+                    return gex_data
 
-        logger.warning(f"TradingVolatilityAPI returned no valid data for {symbol}")
+            logger.warning(f"TradierGEXCalculator returned no valid data for {symbol}")
 
-    except ImportError as e:
-        logger.warning(f"TradingVolatilityAPI not available: {e}")
-    except Exception as e:
-        logger.warning(f"TradingVolatilityAPI error: {e}")
+        except Exception as e:
+            logger.warning(f"TradierGEXCalculator error: {e}")
 
-    # =========================================================================
-    # FALLBACK 1: TradierGEXCalculator (real-time calculation)
-    # =========================================================================
-    try:
-        from data.gex_calculator import TradierGEXCalculator
+        # Market hours fallback: TradingVolatility
+        try:
+            from core_classes_and_engines import TradingVolatilityAPI
 
-        calculator = TradierGEXCalculator(sandbox=False)
-        gex_result = calculator.calculate_gex(symbol)
+            api = TradingVolatilityAPI()
+            gex_result = api.get_net_gamma(symbol)
 
-        if gex_result:
-            flip_point = gex_result.get('flip_point', 0)
-            call_wall = gex_result.get('call_wall', 0)
-            put_wall = gex_result.get('put_wall', 0)
-            net_gex = gex_result.get('net_gex', 0)
+            if gex_result and 'error' not in gex_result:
+                flip_point = float(gex_result.get('flip_point', 0))
+                call_wall = float(gex_result.get('call_wall', 0) or 0)
+                put_wall = float(gex_result.get('put_wall', 0) or 0)
+                net_gex = float(gex_result.get('net_gex', 0))
 
-            if flip_point > 0:
-                if call_wall <= 0:
-                    call_wall = flip_point * 1.01
-                if put_wall <= 0:
-                    put_wall = flip_point * 0.99
+                if flip_point > 0:
+                    if call_wall <= 0:
+                        call_wall = flip_point * 1.01
+                    if put_wall <= 0:
+                        put_wall = flip_point * 0.99
 
-            logger.info(
-                f"HERACLES GEX from Tradier: flip={flip_point:.2f}, "
-                f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
-            )
+                    logger.info(
+                        f"HERACLES GEX from TradingVolatility (market hours fallback): flip={flip_point:.2f}, "
+                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+                    )
 
-            gex_data = {
-                'flip_point': flip_point,
-                'call_wall': call_wall,
-                'put_wall': put_wall,
-                'net_gex': net_gex,
-                'gex_ratio': gex_result.get('gex_ratio', 1.0),
-                'data_source': 'tradier_calculator',
-            }
+                    gex_data = {
+                        'flip_point': flip_point,
+                        'call_wall': call_wall,
+                        'put_wall': put_wall,
+                        'net_gex': net_gex,
+                        'gex_ratio': 1.0,
+                        'data_source': 'trading_volatility_api',
+                    }
 
-            if flip_point > 0:
-                _gex_cache.clear()
-                _gex_cache.update(gex_data)
-                _gex_cache_time = now
-                _persist_gex_cache_to_db(gex_data, now)
+                    _gex_cache.clear()
+                    _gex_cache.update(gex_data)
+                    _gex_cache_time = now
+                    _persist_gex_cache_to_db(gex_data, now)
 
-            return gex_data
+                    return gex_data
 
-        logger.warning(f"TradierGEXCalculator returned no data for {symbol}")
+            logger.warning(f"TradingVolatilityAPI returned no valid data for {symbol}")
 
-    except Exception as e:
-        logger.warning(f"TradierGEXCalculator error: {e}")
+        except ImportError as e:
+            logger.warning(f"TradingVolatilityAPI not available: {e}")
+        except Exception as e:
+            logger.warning(f"TradingVolatilityAPI error: {e}")
+
+    else:
+        # =====================================================================
+        # OVERNIGHT: TradingVolatility FIRST (for n+1 GEX data)
+        # =====================================================================
+        try:
+            from core_classes_and_engines import TradingVolatilityAPI
+
+            api = TradingVolatilityAPI()
+            gex_result = api.get_net_gamma(symbol)
+
+            if gex_result and 'error' not in gex_result:
+                flip_point = float(gex_result.get('flip_point', 0))
+                call_wall = float(gex_result.get('call_wall', 0) or 0)
+                put_wall = float(gex_result.get('put_wall', 0) or 0)
+                net_gex = float(gex_result.get('net_gex', 0))
+
+                if flip_point > 0:
+                    if call_wall <= 0:
+                        call_wall = flip_point * 1.01
+                    if put_wall <= 0:
+                        put_wall = flip_point * 0.99
+
+                    logger.info(
+                        f"HERACLES GEX from TradingVolatility (overnight): flip={flip_point:.2f}, "
+                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+                    )
+
+                    gex_data = {
+                        'flip_point': flip_point,
+                        'call_wall': call_wall,
+                        'put_wall': put_wall,
+                        'net_gex': net_gex,
+                        'gex_ratio': 1.0,
+                        'data_source': 'trading_volatility_api',
+                        # Store n+1 data for overnight use
+                        'n1_flip_point': flip_point,
+                        'n1_call_wall': call_wall,
+                        'n1_put_wall': put_wall,
+                    }
+
+                    _gex_cache.clear()
+                    _gex_cache.update(gex_data)
+                    _gex_cache_time = now
+                    _persist_gex_cache_to_db(gex_data, now)
+
+                    return gex_data
+
+            logger.warning(f"TradingVolatilityAPI returned no valid data for {symbol}")
+
+        except ImportError as e:
+            logger.warning(f"TradingVolatilityAPI not available: {e}")
+        except Exception as e:
+            logger.warning(f"TradingVolatilityAPI error: {e}")
+
+        # Overnight fallback: Tradier (if available)
+        try:
+            from data.gex_calculator import TradierGEXCalculator
+
+            calculator = TradierGEXCalculator(sandbox=False)
+            gex_result = calculator.calculate_gex(symbol)
+
+            if gex_result:
+                flip_point = gex_result.get('flip_point', 0)
+                call_wall = gex_result.get('call_wall', 0)
+                put_wall = gex_result.get('put_wall', 0)
+                net_gex = gex_result.get('net_gex', 0)
+
+                if flip_point > 0:
+                    if call_wall <= 0:
+                        call_wall = flip_point * 1.01
+                    if put_wall <= 0:
+                        put_wall = flip_point * 0.99
+
+                    logger.info(
+                        f"HERACLES GEX from Tradier (overnight fallback): flip={flip_point:.2f}, "
+                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+                    )
+
+                    gex_data = {
+                        'flip_point': flip_point,
+                        'call_wall': call_wall,
+                        'put_wall': put_wall,
+                        'net_gex': net_gex,
+                        'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                        'data_source': 'tradier_calculator',
+                    }
+
+                    _gex_cache.clear()
+                    _gex_cache.update(gex_data)
+                    _gex_cache_time = now
+                    _persist_gex_cache_to_db(gex_data, now)
+
+                    return gex_data
+
+            logger.warning(f"TradierGEXCalculator returned no valid data for {symbol}")
+
+        except Exception as e:
+            logger.warning(f"TradierGEXCalculator error: {e}")
 
     # Try API endpoint as fallback (SPX endpoint)
     try:
