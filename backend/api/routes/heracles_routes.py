@@ -539,6 +539,68 @@ async def check_heracles_data_integrity():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/heracles/diagnostics")
+async def get_heracles_diagnostics():
+    """
+    DIAGNOSTIC ENDPOINT: Get raw counts and data from all HERACLES tables.
+
+    Use this to debug data sync issues between tables.
+    """
+    try:
+        trader = _get_trader()
+
+        # Get raw counts from each table
+        diagnostics = trader.db.get_diagnostics()
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "diagnostics": diagnostics
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting diagnostics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/heracles/force-reset")
+async def force_reset_heracles():
+    """
+    EMERGENCY: Force a complete reset of all HERACLES data.
+
+    Use when data is corrupted and auto-reset didn't work.
+    """
+    try:
+        trader = _get_trader()
+
+        # Force full reset
+        success = trader.db.reset_paper_account(
+            starting_capital=trader.config.capital,
+            full_reset=True
+        )
+
+        if success:
+            # Verify the reset worked
+            integrity = trader.db.verify_data_integrity()
+            return {
+                "success": True,
+                "message": "Force reset completed",
+                "integrity_after_reset": integrity,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Force reset failed",
+                "timestamp": datetime.now().isoformat()
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in force reset: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/api/heracles/cleanup-orphaned-positions")
 async def cleanup_orphaned_positions():
     """

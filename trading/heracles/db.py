@@ -1804,6 +1804,108 @@ class HERACLESDatabase:
             result["error"] = str(e)
             return result
 
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """
+        DIAGNOSTIC: Get raw counts and sample data from all HERACLES tables.
+
+        Use this to debug data sync issues.
+        """
+        result = {
+            "tables": {},
+            "checked_at": datetime.now(CENTRAL_TZ).isoformat()
+        }
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Paper account
+                c.execute("""
+                    SELECT id, starting_capital, current_balance, cumulative_pnl,
+                           total_trades, is_active, created_at
+                    FROM heracles_paper_account
+                    ORDER BY id DESC LIMIT 5
+                """)
+                rows = c.fetchall()
+                cols = [desc[0] for desc in c.description]
+                result["tables"]["paper_account"] = {
+                    "count": len(rows),
+                    "rows": [dict(zip(cols, [str(v) if v else None for v in row])) for row in rows]
+                }
+
+                # Closed trades
+                c.execute("SELECT COUNT(*) FROM heracles_closed_trades")
+                closed_count = c.fetchone()[0]
+
+                c.execute("""
+                    SELECT position_id, direction, realized_pnl, close_reason, close_time
+                    FROM heracles_closed_trades
+                    ORDER BY close_time DESC LIMIT 10
+                """)
+                rows = c.fetchall()
+                cols = [desc[0] for desc in c.description]
+                result["tables"]["closed_trades"] = {
+                    "total_count": closed_count,
+                    "recent_10": [dict(zip(cols, [str(v) if v else None for v in row])) for row in rows]
+                }
+
+                # Sum of closed trades P&L
+                c.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM heracles_closed_trades")
+                result["tables"]["closed_trades"]["sum_pnl"] = float(c.fetchone()[0])
+
+                # Open positions
+                c.execute("SELECT COUNT(*) FROM heracles_positions WHERE status = 'open'")
+                open_count = c.fetchone()[0]
+
+                c.execute("""
+                    SELECT position_id, direction, entry_price, status, open_time
+                    FROM heracles_positions
+                    ORDER BY open_time DESC LIMIT 10
+                """)
+                rows = c.fetchall()
+                cols = [desc[0] for desc in c.description]
+                result["tables"]["positions"] = {
+                    "open_count": open_count,
+                    "recent_10": [dict(zip(cols, [str(v) if v else None for v in row])) for row in rows]
+                }
+
+                # Equity snapshots
+                c.execute("SELECT COUNT(*) FROM heracles_equity_snapshots")
+                snap_count = c.fetchone()[0]
+                result["tables"]["equity_snapshots"] = {"count": snap_count}
+
+                # Scan activity
+                c.execute("SELECT COUNT(*) FROM heracles_scan_activity")
+                scan_count = c.fetchone()[0]
+
+                c.execute("SELECT COUNT(*) FROM heracles_scan_activity WHERE outcome = 'TRADED'")
+                traded_count = c.fetchone()[0]
+
+                c.execute("SELECT COUNT(*) FROM heracles_scan_activity WHERE trade_outcome IS NOT NULL")
+                outcome_count = c.fetchone()[0]
+
+                result["tables"]["scan_activity"] = {
+                    "total_scans": scan_count,
+                    "traded_scans": traded_count,
+                    "with_outcome": outcome_count
+                }
+
+                # Integrity summary
+                paper_pnl = float(result["tables"]["paper_account"]["rows"][0]["cumulative_pnl"]) if result["tables"]["paper_account"]["rows"] else 0
+                trades_pnl = result["tables"]["closed_trades"]["sum_pnl"]
+                result["integrity"] = {
+                    "paper_account_pnl": paper_pnl,
+                    "closed_trades_pnl": trades_pnl,
+                    "discrepancy": abs(paper_pnl - trades_pnl),
+                    "is_consistent": abs(paper_pnl - trades_pnl) < 0.01
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get diagnostics: {e}")
+            result["error"] = str(e)
+
+        return result
+
     def cleanup_orphaned_positions(self) -> Dict[str, int]:
         """
         Fix orphaned positions that exist in heracles_positions as 'open'
