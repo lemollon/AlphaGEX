@@ -2214,9 +2214,21 @@ class AutonomousTraderScheduler:
                 logger.info(f"  Positions updated: {result.get('positions_updated', 0)}")
                 logger.info(f"  Roll candidates: {len(result.get('roll_candidates', []))}")
 
-                # Log any roll candidates
+                # AUTOMATICALLY EXECUTE ROLLS - Box spreads should ALWAYS stay open
+                # When DTE reaches threshold, roll to new expiration (don't let them expire)
                 for candidate in result.get('roll_candidates', []):
-                    logger.info(f"    Roll suggested: {candidate['position_id']} (DTE: {candidate['current_dte']})")
+                    position_id = candidate['position_id']
+                    current_dte = candidate['current_dte']
+                    logger.info(f"    AUTO-ROLLING: {position_id} (DTE: {current_dte})")
+
+                    try:
+                        roll_result = self.prometheus_trader.roll_position(position_id)
+                        if roll_result.get('success'):
+                            logger.info(f"    ✅ Successfully rolled {position_id} -> {roll_result.get('new_position_id')}")
+                        else:
+                            logger.warning(f"    ⚠️ Roll failed for {position_id}: {roll_result.get('error')}")
+                    except Exception as roll_error:
+                        logger.error(f"    ❌ Roll exception for {position_id}: {roll_error}")
 
                 # Log warnings from daily briefing
                 briefing = result.get('daily_briefing', {})
@@ -2227,8 +2239,30 @@ class AutonomousTraderScheduler:
                 if result.get('errors'):
                     for error in result['errors']:
                         logger.error(f"    Error: {error}")
-            else:
-                logger.info("PROMETHEUS: No positions to process")
+
+            # ALWAYS ENSURE AT LEAST ONE BOX SPREAD IS OPEN
+            # Box spreads provide the capital for IC trading - without them, IC trading stops
+            open_positions = self.prometheus_trader.get_positions()
+            if not open_positions:
+                logger.info("PROMETHEUS: No open box spreads - opening new position for IC capital")
+                try:
+                    # Generate and execute a new box spread signal
+                    signal_result = self.prometheus_trader.run_signal_scan()
+                    if signal_result.get('signal') and signal_result['signal'].is_valid:
+                        execute_result = self.prometheus_trader.execute_signal(signal_result['signal'])
+                        if execute_result.get('success'):
+                            pos = execute_result.get('position')
+                            position_id = pos.position_id if pos else 'unknown'
+                            credit = pos.total_credit_received if pos else 0
+                            logger.info(f"✅ Opened new box spread: {position_id}")
+                            logger.info(f"   Cash generated: ${credit:,.2f}")
+                        else:
+                            logger.warning(f"⚠️ Failed to open new box spread: {execute_result.get('error')}")
+                    else:
+                        reason = signal_result.get('reason', 'Unknown')
+                        logger.warning(f"⚠️ No favorable box spread opportunity: {reason}")
+                except Exception as open_error:
+                    logger.error(f"❌ Error opening new box spread: {open_error}")
 
             logger.info(f"PROMETHEUS Daily Cycle completed successfully")
             logger.info(f"=" * 80)
