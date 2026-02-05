@@ -1697,8 +1697,10 @@ class HERACLESDatabase:
                     c.execute("DELETE FROM heracles_equity_snapshots")
                     deleted_snapshots = c.rowcount
 
-                    # Clear scan activity ML training data (optional - keeps for history)
-                    # c.execute("DELETE FROM heracles_scan_activity")
+                    # Clear scan activity ML training data
+                    # CRITICAL: Must clear this too to avoid showing "TRADED" with no actual positions
+                    c.execute("DELETE FROM heracles_scan_activity")
+                    deleted_scans = c.rowcount
 
                     # Reset win tracker to default Bayesian priors
                     c.execute("""
@@ -1710,7 +1712,8 @@ class HERACLESDatabase:
                     """)
 
                     logger.warning(f"FULL RESET completed: {deleted_trades} trades, "
-                                  f"{deleted_positions} positions, {deleted_snapshots} snapshots cleared")
+                                  f"{deleted_positions} positions, {deleted_snapshots} snapshots, "
+                                  f"{deleted_scans} scans cleared")
 
                 # Deactivate existing accounts
                 c.execute("UPDATE heracles_paper_account SET is_active = FALSE")
