@@ -978,6 +978,17 @@ class HERACLESTrader:
                                 f"(P&L: ${realized_pnl:+.2f}, Return: {updated_account['return_pct']:.2f}%)"
                             )
 
+                        # CRITICAL: Verify data integrity after EVERY trade close
+                        # This catches bugs early before they cause major data loss
+                        integrity = self.db.verify_data_integrity()
+                        if not integrity.get("is_consistent", True):
+                            logger.error(
+                                f"DATA INTEGRITY CHECK FAILED after closing {position.position_id}! "
+                                f"Discrepancy: ${integrity['discrepancy']:.2f}. "
+                                f"Paper says {integrity['trade_count_account']} trades, "
+                                f"closed_trades has {integrity['trade_count_actual']}."
+                            )
+
                     # Update daily stats
                     self.daily_pnl += realized_pnl
                     self.daily_trades += 1

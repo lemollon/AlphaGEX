@@ -1667,11 +1667,50 @@ class HERACLESDatabase:
             logger.error(f"Failed to update paper balance: {e}")
             return False, {}
 
-    def reset_paper_account(self, starting_capital: float = 100000.0) -> bool:
-        """Reset paper trading account (for fresh start)"""
+    def reset_paper_account(self, starting_capital: float = 100000.0, full_reset: bool = True) -> bool:
+        """
+        Reset paper trading account (for fresh start).
+
+        Args:
+            starting_capital: Starting balance for new account
+            full_reset: If True, also clears closed_trades, positions, equity snapshots
+                       to ensure data consistency (recommended after bugs)
+        """
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+
+                if full_reset:
+                    # FULL RESET: Clear all related tables to prevent data inconsistency
+                    # This is necessary after bugs where closed_trades got out of sync
+                    logger.warning("FULL RESET: Clearing all HERACLES trading data...")
+
+                    # Clear closed trades (historical P&L data)
+                    c.execute("DELETE FROM heracles_closed_trades")
+                    deleted_trades = c.rowcount
+
+                    # Clear open positions
+                    c.execute("DELETE FROM heracles_positions")
+                    deleted_positions = c.rowcount
+
+                    # Clear equity snapshots (intraday curve data)
+                    c.execute("DELETE FROM heracles_equity_snapshots")
+                    deleted_snapshots = c.rowcount
+
+                    # Clear scan activity ML training data (optional - keeps for history)
+                    # c.execute("DELETE FROM heracles_scan_activity")
+
+                    # Reset win tracker to default Bayesian priors
+                    c.execute("""
+                        UPDATE heracles_win_tracker
+                        SET alpha = 1.0, beta = 1.0, total_trades = 0,
+                            positive_gamma_wins = 0, positive_gamma_losses = 0,
+                            negative_gamma_wins = 0, negative_gamma_losses = 0,
+                            updated_at = NOW()
+                    """)
+
+                    logger.warning(f"FULL RESET completed: {deleted_trades} trades, "
+                                  f"{deleted_positions} positions, {deleted_snapshots} snapshots cleared")
 
                 # Deactivate existing accounts
                 c.execute("UPDATE heracles_paper_account SET is_active = FALSE")
@@ -1691,6 +1730,79 @@ class HERACLESDatabase:
         except Exception as e:
             logger.error(f"Failed to reset paper account: {e}")
             return False
+
+    def verify_data_integrity(self) -> Dict[str, Any]:
+        """
+        CRITICAL: Verify data consistency between paper_account and closed_trades.
+
+        This check should be run periodically to detect bugs early before they
+        cause major data loss. Called automatically after each trade close.
+
+        Returns dict with:
+            - is_consistent: bool - True if data matches
+            - paper_pnl: float - P&L from paper_account table
+            - trades_pnl: float - Sum of P&L from closed_trades
+            - discrepancy: float - Difference (should be 0)
+            - trade_count_account: int - Trades recorded in paper_account
+            - trade_count_actual: int - Actual records in closed_trades
+        """
+        result = {
+            "is_consistent": False,
+            "paper_pnl": 0.0,
+            "trades_pnl": 0.0,
+            "discrepancy": 0.0,
+            "trade_count_account": 0,
+            "trade_count_actual": 0,
+            "checked_at": datetime.now(CENTRAL_TZ).isoformat()
+        }
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Get paper account P&L
+                c.execute("""
+                    SELECT cumulative_pnl, total_trades
+                    FROM heracles_paper_account
+                    WHERE is_active = TRUE
+                    ORDER BY id DESC LIMIT 1
+                """)
+                row = c.fetchone()
+                if row:
+                    result["paper_pnl"] = float(row[0] or 0)
+                    result["trade_count_account"] = int(row[1] or 0)
+
+                # Get actual P&L from closed trades
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+                    FROM heracles_closed_trades
+                """)
+                row = c.fetchone()
+                if row:
+                    result["trades_pnl"] = float(row[0] or 0)
+                    result["trade_count_actual"] = int(row[1] or 0)
+
+                # Calculate discrepancy
+                result["discrepancy"] = abs(result["paper_pnl"] - result["trades_pnl"])
+
+                # Allow small floating point differences (< $0.01)
+                result["is_consistent"] = result["discrepancy"] < 0.01
+
+                if not result["is_consistent"]:
+                    logger.error(
+                        f"DATA INTEGRITY FAILURE: paper_account P&L (${result['paper_pnl']:.2f}) "
+                        f"!= closed_trades sum (${result['trades_pnl']:.2f}). "
+                        f"Discrepancy: ${result['discrepancy']:.2f}. "
+                        f"Account says {result['trade_count_account']} trades, "
+                        f"but closed_trades has {result['trade_count_actual']} records."
+                    )
+
+                return result
+
+        except Exception as e:
+            logger.error(f"Failed to verify data integrity: {e}")
+            result["error"] = str(e)
+            return result
 
     def cleanup_orphaned_positions(self) -> Dict[str, int]:
         """
