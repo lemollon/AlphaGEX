@@ -1351,21 +1351,30 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
     now = datetime.now(CENTRAL_TZ)
     hour = now.hour
 
-    # Check if we're in the post-options-close window (3-4 PM CT)
-    # SPX options close at 3 PM CT, MES futures continue until 4 PM CT
-    is_post_options_close = (hour == 15)  # 3 PM CT
+    # Determine if options market is closed
+    # SPX options: ~8:30 AM - 3:00 PM CT (regular trading hours)
+    # MES futures: 5:00 PM - 4:00 PM next day (nearly 24 hours)
+    #
+    # Use n+1 (next day) GEX data when options are closed:
+    # - 3 PM - 4 PM CT: Post-close window before maintenance
+    # - 5 PM - 8 AM CT: Overnight session (next day until options open)
+    is_options_closed = (hour >= 15) or (hour < 8)  # 3 PM - 8 AM
 
-    # If post-options-close and we have valid cached data with n+1 levels, use n+1
-    if is_post_options_close and _gex_cache and _gex_cache_time:
+    # If options are closed and we have valid cached data, use n+1 levels
+    if is_options_closed and _gex_cache and _gex_cache_time:
+        # During overnight, cache can be up to 18 hours old (3 PM to 8 AM)
+        max_cache_age = 1200 if hour >= 15 or hour < 8 else 120  # 20 hours overnight, 2 hours otherwise
         cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
-        if cache_age_minutes < 120:  # Cache valid for 2 hours max
+
+        if cache_age_minutes < max_cache_age:
             # Use n+1 (next day) GEX levels for forward-looking support/resistance
             n1_flip = _gex_cache.get('n1_flip_point') or _gex_cache.get('flip_point', 0)
             n1_call = _gex_cache.get('n1_call_wall') or _gex_cache.get('call_wall', 0)
             n1_put = _gex_cache.get('n1_put_wall') or _gex_cache.get('put_wall', 0)
 
+            session_type = "OVERNIGHT" if (hour >= 17 or hour < 8) else "POST_CLOSE"
             logger.info(
-                f"HERACLES using N+1 GEX data (options closed at 3 PM CT). "
+                f"HERACLES using N+1 GEX data ({session_type}, options closed). "
                 f"Cache age: {cache_age_minutes:.0f} min. "
                 f"n1_flip={n1_flip:.2f}, n1_call={n1_call:.2f}, n1_put={n1_put:.2f}"
             )
@@ -1374,9 +1383,12 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
                 'flip_point': n1_flip,
                 'call_wall': n1_call,
                 'put_wall': n1_put,
-                'net_gex': _gex_cache.get('net_gex', 0),  # Use current regime
+                'net_gex': _gex_cache.get('net_gex', 0),  # Use last known regime
                 'gex_ratio': _gex_cache.get('gex_ratio', 1.0),
                 'using_n1_data': True,  # Flag for logging/debugging
+                'n1_flip_point': n1_flip,  # Include n+1 data for signal generator
+                'n1_call_wall': n1_call,
+                'n1_put_wall': n1_put,
             }
 
     try:
