@@ -32,6 +32,7 @@ import {
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell } from 'recharts'
+import { apiClient } from '@/lib/api'
 
 // Types
 interface DiagnosticCard {
@@ -147,18 +148,26 @@ export default function GexChartsPage() {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`/api/argus/gex-analysis?symbol=${sym}`)
-      const result = await response.json()
+      const response = await apiClient.getArgusGexAnalysis(sym)
+      const result = response.data
 
-      if (result.success) {
+      if (result?.success) {
         setData(result.data)
         setLastUpdated(new Date())
+      } else if (result?.data_unavailable) {
+        setError(result.message || 'Data unavailable - market may be closed')
       } else {
-        setError(result.message || 'Failed to fetch GEX data')
+        setError(result?.message || 'Failed to fetch GEX data')
       }
-    } catch (err) {
-      setError('Failed to connect to API')
+    } catch (err: any) {
       console.error('Fetch error:', err)
+      if (err.response?.data?.message) {
+        setError(err.response.data.message)
+      } else if (err.message) {
+        setError(err.message)
+      } else {
+        setError('Failed to connect to API')
+      }
     } finally {
       setLoading(false)
     }

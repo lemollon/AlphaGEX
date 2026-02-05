@@ -1025,6 +1025,12 @@ export const apiClient = {
   updateArgusSignalOutcomes: (symbol?: string) =>
     api.post('/api/argus/signals/update-outcomes', {}, { params: { symbol } }),
 
+  // GEX Charts - Trading Volatility Style Analysis
+  getArgusGexAnalysis: (symbol?: string, expiration?: string) =>
+    api.get('/api/argus/gex-analysis', { params: { symbol, expiration } }),
+  getArgusFlowDiagnostics: (symbol?: string, expiration?: string) =>
+    api.get('/api/argus/flow-diagnostics', { params: { symbol, expiration } }),
+
   // HYPERION - Weekly Gamma visualization for stocks/ETFs (Enhanced)
   getHyperionGamma: (symbol?: string, expiration?: string) =>
     api.get('/api/hyperion/gamma', { params: { symbol, expiration } }),
