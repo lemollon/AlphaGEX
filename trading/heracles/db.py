@@ -639,6 +639,8 @@ class HERACLESDatabase:
                         mfe_points, mae_points, hold_duration, is_overnight
                     )
 
+                # Use UPSERT to ensure record is always created/updated
+                # ON CONFLICT DO UPDATE ensures we never silently skip recording a trade
                 c.execute("""
                     INSERT INTO heracles_closed_trades (
                         position_id, symbol, direction, contracts,
@@ -651,7 +653,18 @@ class HERACLESDatabase:
                         loss_analysis, mfe_points, mae_points,
                         was_profitable_before_loss, initial_stop_price, is_overnight_session
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (position_id) DO NOTHING
+                    ON CONFLICT (position_id) DO UPDATE SET
+                        exit_price = EXCLUDED.exit_price,
+                        realized_pnl = EXCLUDED.realized_pnl,
+                        close_reason = EXCLUDED.close_reason,
+                        close_time = EXCLUDED.close_time,
+                        hold_duration_minutes = EXCLUDED.hold_duration_minutes,
+                        high_price_since_entry = EXCLUDED.high_price_since_entry,
+                        low_price_since_entry = EXCLUDED.low_price_since_entry,
+                        loss_analysis = EXCLUDED.loss_analysis,
+                        mfe_points = EXCLUDED.mfe_points,
+                        mae_points = EXCLUDED.mae_points,
+                        was_profitable_before_loss = EXCLUDED.was_profitable_before_loss
                 """, (
                     position_id, position.symbol, position.direction.value,
                     position.contracts, _to_python(position.entry_price),
@@ -672,6 +685,11 @@ class HERACLESDatabase:
                     _to_python(position.initial_stop),
                     is_overnight
                 ))
+
+                # Verify the INSERT/UPDATE affected a row
+                rows_affected = c.rowcount
+                if rows_affected == 0:
+                    logger.error(f"CRITICAL: closed_trades INSERT/UPDATE affected 0 rows for {position_id}")
 
                 conn.commit()
                 logger.info(f"Closed position {position_id}: P&L=${realized_pnl:.2f}, reason={close_reason}")
@@ -904,6 +922,7 @@ class HERACLESDatabase:
                 # Insert into closed trades
                 hold_duration = int((now - position.open_time).total_seconds() / 60) if position.open_time else 0
 
+                # Use UPSERT to ensure record is always created/updated
                 c.execute("""
                     INSERT INTO heracles_closed_trades (
                         position_id, symbol, direction, contracts,
@@ -912,7 +931,12 @@ class HERACLESDatabase:
                         vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
                         open_time, close_time, hold_duration_minutes
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (position_id) DO NOTHING
+                    ON CONFLICT (position_id) DO UPDATE SET
+                        exit_price = EXCLUDED.exit_price,
+                        realized_pnl = EXCLUDED.realized_pnl,
+                        close_reason = EXCLUDED.close_reason,
+                        close_time = EXCLUDED.close_time,
+                        hold_duration_minutes = EXCLUDED.hold_duration_minutes
                 """, (
                     position_id, position.symbol, position.direction.value,
                     position.contracts, _to_python(position.entry_price),
@@ -1643,11 +1667,50 @@ class HERACLESDatabase:
             logger.error(f"Failed to update paper balance: {e}")
             return False, {}
 
-    def reset_paper_account(self, starting_capital: float = 100000.0) -> bool:
-        """Reset paper trading account (for fresh start)"""
+    def reset_paper_account(self, starting_capital: float = 100000.0, full_reset: bool = True) -> bool:
+        """
+        Reset paper trading account (for fresh start).
+
+        Args:
+            starting_capital: Starting balance for new account
+            full_reset: If True, also clears closed_trades, positions, equity snapshots
+                       to ensure data consistency (recommended after bugs)
+        """
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+
+                if full_reset:
+                    # FULL RESET: Clear all related tables to prevent data inconsistency
+                    # This is necessary after bugs where closed_trades got out of sync
+                    logger.warning("FULL RESET: Clearing all HERACLES trading data...")
+
+                    # Clear closed trades (historical P&L data)
+                    c.execute("DELETE FROM heracles_closed_trades")
+                    deleted_trades = c.rowcount
+
+                    # Clear open positions
+                    c.execute("DELETE FROM heracles_positions")
+                    deleted_positions = c.rowcount
+
+                    # Clear equity snapshots (intraday curve data)
+                    c.execute("DELETE FROM heracles_equity_snapshots")
+                    deleted_snapshots = c.rowcount
+
+                    # Clear scan activity ML training data (optional - keeps for history)
+                    # c.execute("DELETE FROM heracles_scan_activity")
+
+                    # Reset win tracker to default Bayesian priors
+                    c.execute("""
+                        UPDATE heracles_win_tracker
+                        SET alpha = 1.0, beta = 1.0, total_trades = 0,
+                            positive_gamma_wins = 0, positive_gamma_losses = 0,
+                            negative_gamma_wins = 0, negative_gamma_losses = 0,
+                            updated_at = NOW()
+                    """)
+
+                    logger.warning(f"FULL RESET completed: {deleted_trades} trades, "
+                                  f"{deleted_positions} positions, {deleted_snapshots} snapshots cleared")
 
                 # Deactivate existing accounts
                 c.execute("UPDATE heracles_paper_account SET is_active = FALSE")
@@ -1667,6 +1730,181 @@ class HERACLESDatabase:
         except Exception as e:
             logger.error(f"Failed to reset paper account: {e}")
             return False
+
+    def verify_data_integrity(self) -> Dict[str, Any]:
+        """
+        CRITICAL: Verify data consistency between paper_account and closed_trades.
+
+        This check should be run periodically to detect bugs early before they
+        cause major data loss. Called automatically after each trade close.
+
+        Returns dict with:
+            - is_consistent: bool - True if data matches
+            - paper_pnl: float - P&L from paper_account table
+            - trades_pnl: float - Sum of P&L from closed_trades
+            - discrepancy: float - Difference (should be 0)
+            - trade_count_account: int - Trades recorded in paper_account
+            - trade_count_actual: int - Actual records in closed_trades
+        """
+        result = {
+            "is_consistent": False,
+            "paper_pnl": 0.0,
+            "trades_pnl": 0.0,
+            "discrepancy": 0.0,
+            "trade_count_account": 0,
+            "trade_count_actual": 0,
+            "checked_at": datetime.now(CENTRAL_TZ).isoformat()
+        }
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Get paper account P&L
+                c.execute("""
+                    SELECT cumulative_pnl, total_trades
+                    FROM heracles_paper_account
+                    WHERE is_active = TRUE
+                    ORDER BY id DESC LIMIT 1
+                """)
+                row = c.fetchone()
+                if row:
+                    result["paper_pnl"] = float(row[0] or 0)
+                    result["trade_count_account"] = int(row[1] or 0)
+
+                # Get actual P&L from closed trades
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+                    FROM heracles_closed_trades
+                """)
+                row = c.fetchone()
+                if row:
+                    result["trades_pnl"] = float(row[0] or 0)
+                    result["trade_count_actual"] = int(row[1] or 0)
+
+                # Calculate discrepancy
+                result["discrepancy"] = abs(result["paper_pnl"] - result["trades_pnl"])
+
+                # Allow small floating point differences (< $0.01)
+                result["is_consistent"] = result["discrepancy"] < 0.01
+
+                if not result["is_consistent"]:
+                    logger.error(
+                        f"DATA INTEGRITY FAILURE: paper_account P&L (${result['paper_pnl']:.2f}) "
+                        f"!= closed_trades sum (${result['trades_pnl']:.2f}). "
+                        f"Discrepancy: ${result['discrepancy']:.2f}. "
+                        f"Account says {result['trade_count_account']} trades, "
+                        f"but closed_trades has {result['trade_count_actual']} records."
+                    )
+
+                return result
+
+        except Exception as e:
+            logger.error(f"Failed to verify data integrity: {e}")
+            result["error"] = str(e)
+            return result
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """
+        DIAGNOSTIC: Get raw counts and sample data from all HERACLES tables.
+
+        Use this to debug data sync issues.
+        """
+        result = {
+            "tables": {},
+            "checked_at": datetime.now(CENTRAL_TZ).isoformat()
+        }
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Paper account
+                c.execute("""
+                    SELECT id, starting_capital, current_balance, cumulative_pnl,
+                           total_trades, is_active, created_at
+                    FROM heracles_paper_account
+                    ORDER BY id DESC LIMIT 5
+                """)
+                rows = c.fetchall()
+                cols = [desc[0] for desc in c.description]
+                result["tables"]["paper_account"] = {
+                    "count": len(rows),
+                    "rows": [dict(zip(cols, [str(v) if v else None for v in row])) for row in rows]
+                }
+
+                # Closed trades
+                c.execute("SELECT COUNT(*) FROM heracles_closed_trades")
+                closed_count = c.fetchone()[0]
+
+                c.execute("""
+                    SELECT position_id, direction, realized_pnl, close_reason, close_time
+                    FROM heracles_closed_trades
+                    ORDER BY close_time DESC LIMIT 10
+                """)
+                rows = c.fetchall()
+                cols = [desc[0] for desc in c.description]
+                result["tables"]["closed_trades"] = {
+                    "total_count": closed_count,
+                    "recent_10": [dict(zip(cols, [str(v) if v else None for v in row])) for row in rows]
+                }
+
+                # Sum of closed trades P&L
+                c.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM heracles_closed_trades")
+                result["tables"]["closed_trades"]["sum_pnl"] = float(c.fetchone()[0])
+
+                # Open positions
+                c.execute("SELECT COUNT(*) FROM heracles_positions WHERE status = 'open'")
+                open_count = c.fetchone()[0]
+
+                c.execute("""
+                    SELECT position_id, direction, entry_price, status, open_time
+                    FROM heracles_positions
+                    ORDER BY open_time DESC LIMIT 10
+                """)
+                rows = c.fetchall()
+                cols = [desc[0] for desc in c.description]
+                result["tables"]["positions"] = {
+                    "open_count": open_count,
+                    "recent_10": [dict(zip(cols, [str(v) if v else None for v in row])) for row in rows]
+                }
+
+                # Equity snapshots
+                c.execute("SELECT COUNT(*) FROM heracles_equity_snapshots")
+                snap_count = c.fetchone()[0]
+                result["tables"]["equity_snapshots"] = {"count": snap_count}
+
+                # Scan activity
+                c.execute("SELECT COUNT(*) FROM heracles_scan_activity")
+                scan_count = c.fetchone()[0]
+
+                c.execute("SELECT COUNT(*) FROM heracles_scan_activity WHERE outcome = 'TRADED'")
+                traded_count = c.fetchone()[0]
+
+                c.execute("SELECT COUNT(*) FROM heracles_scan_activity WHERE trade_outcome IS NOT NULL")
+                outcome_count = c.fetchone()[0]
+
+                result["tables"]["scan_activity"] = {
+                    "total_scans": scan_count,
+                    "traded_scans": traded_count,
+                    "with_outcome": outcome_count
+                }
+
+                # Integrity summary
+                paper_pnl = float(result["tables"]["paper_account"]["rows"][0]["cumulative_pnl"]) if result["tables"]["paper_account"]["rows"] else 0
+                trades_pnl = result["tables"]["closed_trades"]["sum_pnl"]
+                result["integrity"] = {
+                    "paper_account_pnl": paper_pnl,
+                    "closed_trades_pnl": trades_pnl,
+                    "discrepancy": abs(paper_pnl - trades_pnl),
+                    "is_consistent": abs(paper_pnl - trades_pnl) < 0.01
+                }
+
+        except Exception as e:
+            logger.error(f"Failed to get diagnostics: {e}")
+            result["error"] = str(e)
+
+        return result
 
     def cleanup_orphaned_positions(self) -> Dict[str, int]:
         """

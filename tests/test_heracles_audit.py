@@ -418,6 +418,54 @@ class HERACLESAuditTester:
     # Run All Tests
     # ==================================================================
 
+    def test_data_integrity(self):
+        """
+        CRITICAL: Test data integrity between paper_account and closed_trades.
+
+        This test catches bugs where trades are recorded in one place but not
+        the other, which has happened multiple times and caused data loss.
+        """
+        print("\n--- DATA INTEGRITY TESTS ---")
+
+        # Test 1: Check integrity endpoint exists
+        resp = requests.get(f"{self.api_url}/api/heracles/data-integrity")
+        self.log(
+            "Data integrity endpoint exists",
+            resp.status_code == 200,
+            f"Status: {resp.status_code}"
+        )
+
+        if resp.status_code == 200:
+            data = resp.json()
+
+            # Test 2: Check for consistency
+            is_consistent = data.get("is_consistent", False)
+            discrepancy = data.get("discrepancy", 0)
+            self.log(
+                "Data is consistent (paper_account == closed_trades)",
+                is_consistent,
+                f"Discrepancy: ${discrepancy:.2f}" if not is_consistent else "OK"
+            )
+
+            # Test 3: Check trade counts match
+            paper_count = data.get("paper_trade_count", 0)
+            actual_count = data.get("actual_trade_count", 0)
+            counts_match = paper_count == actual_count
+            self.log(
+                "Trade counts match",
+                counts_match,
+                f"Paper: {paper_count}, Actual: {actual_count}"
+            )
+
+            # FAIL THE WHOLE AUDIT if data is inconsistent
+            if not is_consistent:
+                print("\n⚠️  WARNING: DATA INTEGRITY FAILURE DETECTED!")
+                print(f"    Paper account P&L: ${data.get('paper_account_pnl', 0):.2f}")
+                print(f"    Closed trades P&L: ${data.get('closed_trades_pnl', 0):.2f}")
+                print(f"    Discrepancy: ${discrepancy:.2f}")
+                print(f"    Recommendation: {data.get('recommendation', 'Unknown')}")
+                print("")
+
     def run_all(self):
         """Run complete test suite"""
         print("\n" + "=" * 70)
@@ -432,6 +480,7 @@ class HERACLESAuditTester:
         self.test_feature_implementation()
         self.test_max_loss_rule()
         self.test_loss_analysis()
+        self.test_data_integrity()  # CRITICAL: Always run this
 
         # Summary
         print("\n" + "=" * 70)

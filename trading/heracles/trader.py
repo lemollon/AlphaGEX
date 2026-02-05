@@ -133,10 +133,55 @@ class HERACLESTrader:
                     f"(started: ${paper_account['starting_capital']:,.2f})"
                 )
 
+            # CRITICAL: Auto-check data integrity on startup
+            # If discrepancy detected, auto-reset to prevent data corruption
+            self._startup_integrity_check()
+
         logger.info(
             f"HERACLES initialized: mode={self.config.mode.value}, "
             f"symbol={self.config.symbol}, capital=${self.config.capital:,.2f}"
         )
+
+    def _startup_integrity_check(self) -> None:
+        """
+        CRITICAL: Check data integrity on startup and auto-reset if corrupted.
+
+        This prevents the recurring bug where paper_account P&L gets out of sync
+        with closed_trades table. If detected, automatically resets to clean slate.
+        """
+        try:
+            integrity = self.db.verify_data_integrity()
+
+            if not integrity.get("is_consistent", True):
+                discrepancy = integrity.get("discrepancy", 0)
+                paper_pnl = integrity.get("paper_pnl", 0)
+                trades_pnl = integrity.get("trades_pnl", 0)
+
+                logger.error(
+                    f"STARTUP INTEGRITY CHECK FAILED! "
+                    f"Paper P&L: ${paper_pnl:.2f}, Trades P&L: ${trades_pnl:.2f}, "
+                    f"Discrepancy: ${discrepancy:.2f}"
+                )
+                logger.warning("AUTO-RESETTING to clean slate to fix data corruption...")
+
+                # Auto-reset with full_reset=True to clear all tables
+                success = self.db.reset_paper_account(
+                    starting_capital=self.config.capital,
+                    full_reset=True
+                )
+
+                if success:
+                    logger.warning(
+                        f"AUTO-RESET COMPLETE: Fresh start with ${self.config.capital:,.2f}. "
+                        f"Previous corrupted data cleared."
+                    )
+                else:
+                    logger.error("AUTO-RESET FAILED! Manual intervention required.")
+            else:
+                logger.info("Startup integrity check: OK (data consistent)")
+
+        except Exception as e:
+            logger.error(f"Startup integrity check failed: {e}")
 
     # ========================================================================
     # Main Trading Loop
@@ -976,6 +1021,17 @@ class HERACLESTrader:
                             logger.info(
                                 f"Paper balance updated: ${updated_account['current_balance']:,.2f} "
                                 f"(P&L: ${realized_pnl:+.2f}, Return: {updated_account['return_pct']:.2f}%)"
+                            )
+
+                        # CRITICAL: Verify data integrity after EVERY trade close
+                        # This catches bugs early before they cause major data loss
+                        integrity = self.db.verify_data_integrity()
+                        if not integrity.get("is_consistent", True):
+                            logger.error(
+                                f"DATA INTEGRITY CHECK FAILED after closing {position.position_id}! "
+                                f"Discrepancy: ${integrity['discrepancy']:.2f}. "
+                                f"Paper says {integrity['trade_count_account']} trades, "
+                                f"closed_trades has {integrity['trade_count_actual']}."
                             )
 
                     # Update daily stats

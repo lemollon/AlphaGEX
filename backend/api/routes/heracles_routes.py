@@ -464,23 +464,33 @@ async def initialize_heracles_paper_account(
 
 @router.post("/api/heracles/paper-account/reset")
 async def reset_heracles_paper_account(
-    starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for new account")
+    starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for new account"),
+    full_reset: bool = Query(True, description="If true, also clears closed_trades, positions, equity snapshots for clean slate")
 ):
     """
     Reset HERACLES paper trading account.
 
     Deactivates current account and creates a fresh one.
     WARNING: This will lose all paper trading history.
+
+    With full_reset=True (default), also clears:
+    - All closed trades history
+    - All open positions
+    - All equity snapshots
+    - Resets win tracker to default priors
+
+    This ensures data consistency after bugs where tables got out of sync.
     """
     try:
         trader = _get_trader()
-        success = trader.reset_paper_account(starting_capital)
+        success = trader.db.reset_paper_account(starting_capital, full_reset=full_reset)
 
         if success:
             paper_account = trader.get_paper_account()
             return {
                 "success": True,
-                "message": f"Paper trading account reset with ${starting_capital:,.2f}",
+                "message": f"Paper trading account {'FULLY ' if full_reset else ''}reset with ${starting_capital:,.2f}",
+                "full_reset": full_reset,
                 "account": paper_account,
                 "timestamp": datetime.now().isoformat()
             }
@@ -494,6 +504,100 @@ async def reset_heracles_paper_account(
         raise
     except Exception as e:
         logger.error(f"Error resetting paper account: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/heracles/data-integrity")
+async def check_heracles_data_integrity():
+    """
+    Check data integrity between paper_account and closed_trades.
+
+    Returns whether the cumulative P&L in paper_account matches the sum
+    of realized_pnl in closed_trades. A discrepancy indicates a bug
+    caused trades to be recorded in one place but not the other.
+
+    This should be checked periodically to catch issues early.
+    """
+    try:
+        trader = _get_trader()
+        result = trader.db.verify_data_integrity()
+
+        return {
+            "is_consistent": result.get("is_consistent", False),
+            "paper_account_pnl": result.get("paper_pnl", 0),
+            "closed_trades_pnl": result.get("trades_pnl", 0),
+            "discrepancy": result.get("discrepancy", 0),
+            "paper_trade_count": result.get("trade_count_account", 0),
+            "actual_trade_count": result.get("trade_count_actual", 0),
+            "checked_at": result.get("checked_at"),
+            "recommendation": "OK" if result.get("is_consistent") else "RESET RECOMMENDED - use POST /api/heracles/paper-account/reset with full_reset=true"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking data integrity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/heracles/diagnostics")
+async def get_heracles_diagnostics():
+    """
+    DIAGNOSTIC ENDPOINT: Get raw counts and data from all HERACLES tables.
+
+    Use this to debug data sync issues between tables.
+    """
+    try:
+        trader = _get_trader()
+
+        # Get raw counts from each table
+        diagnostics = trader.db.get_diagnostics()
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "diagnostics": diagnostics
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting diagnostics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/heracles/force-reset")
+async def force_reset_heracles():
+    """
+    EMERGENCY: Force a complete reset of all HERACLES data.
+
+    Use when data is corrupted and auto-reset didn't work.
+    """
+    try:
+        trader = _get_trader()
+
+        # Force full reset
+        success = trader.db.reset_paper_account(
+            starting_capital=trader.config.capital,
+            full_reset=True
+        )
+
+        if success:
+            # Verify the reset worked
+            integrity = trader.db.verify_data_integrity()
+            return {
+                "success": True,
+                "message": "Force reset completed",
+                "integrity_after_reset": integrity,
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Force reset failed",
+                "timestamp": datetime.now().isoformat()
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in force reset: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
