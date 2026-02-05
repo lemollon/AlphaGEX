@@ -29,24 +29,50 @@ from database_adapter import get_connection
 LOOKBACK_MINUTES = 5  # How far back to calculate momentum
 
 
-def get_price_n_minutes_ago(cursor, timestamp, minutes: int, symbol: str = 'SPX') -> Optional[float]:
+def build_price_history_from_scans(cursor) -> Dict[datetime, Tuple[float, float]]:
     """
-    Get price from N minutes before a given timestamp.
-    Uses gex_history which has spot_price snapshots.
+    Build a price history dict from all scan_activity records.
+    Returns: {scan_time: (underlying_price, atr)}
+    """
+    cursor.execute("""
+        SELECT scan_time, underlying_price, atr
+        FROM heracles_scan_activity
+        WHERE underlying_price > 0
+        ORDER BY scan_time
+    """)
+
+    history = {}
+    for row in cursor.fetchall():
+        scan_time, price, atr = row
+        history[scan_time] = (float(price), float(atr) if atr else 0)
+
+    return history
+
+
+def get_price_n_minutes_ago_from_history(
+    price_history: Dict[datetime, Tuple[float, float]],
+    timestamp: datetime,
+    minutes: int
+) -> Optional[Tuple[float, float]]:
+    """
+    Get price from N minutes before a given timestamp using pre-built history.
+    Returns: (price, atr) or None
     """
     target_time = timestamp - timedelta(minutes=minutes)
-    # Allow 2-minute window to find a price
-    cursor.execute("""
-        SELECT spot_price, timestamp
-        FROM gex_history
-        WHERE symbol = %s
-          AND timestamp BETWEEN %s AND %s
-        ORDER BY ABS(EXTRACT(EPOCH FROM (timestamp - %s)))
-        LIMIT 1
-    """, (symbol, target_time - timedelta(minutes=2), target_time + timedelta(minutes=2), target_time))
+    # Find closest scan within a window
+    best_match = None
+    best_diff = timedelta(minutes=10)  # Max window
 
-    row = cursor.fetchone()
-    return float(row[0]) if row else None
+    for scan_time, (price, atr) in price_history.items():
+        diff = abs(scan_time - target_time)
+        if diff < best_diff:
+            best_diff = diff
+            best_match = (price, atr)
+
+    # Only return if within 3 minutes of target
+    if best_match and best_diff <= timedelta(minutes=3):
+        return best_match
+    return None
 
 
 def calculate_momentum_metrics(
@@ -106,25 +132,31 @@ def run_backtest():
     # First check what data we have
     print("Checking available data...")
 
-    # Check gex_history for price data
+    # Check scan_activity for all scans (for price history)
     cursor.execute("""
-        SELECT COUNT(*), MIN(timestamp), MAX(timestamp), COUNT(DISTINCT DATE(timestamp))
-        FROM gex_history
+        SELECT COUNT(*), MIN(scan_time), MAX(scan_time), COUNT(DISTINCT DATE(scan_time))
+        FROM heracles_scan_activity
+        WHERE underlying_price > 0
     """)
-    gex_row = cursor.fetchone()
-    print(f"  gex_history: {gex_row[0]} records, {gex_row[3]} days ({gex_row[1]} to {gex_row[2]})")
+    scan_row = cursor.fetchone()
+    print(f"  heracles_scan_activity: {scan_row[0]} scans, {scan_row[3]} days ({scan_row[1]} to {scan_row[2]})")
 
-    # Check heracles_scan_activity for trades
+    # Check heracles_scan_activity for trades with outcomes
     cursor.execute("""
         SELECT COUNT(*) FROM heracles_scan_activity
         WHERE trade_executed = TRUE AND trade_outcome IS NOT NULL
     """)
     trades_with_outcome = cursor.fetchone()[0]
-    print(f"  heracles_scan_activity trades with outcomes: {trades_with_outcome}")
+    print(f"  trades with outcomes: {trades_with_outcome}")
 
     if trades_with_outcome == 0:
-        print("\n⚠️  No HERACLES trade history found. Using simulated backtest instead...")
+        print("\n[!] No HERACLES trade history found. Using simulated backtest instead...")
         return run_simulated_backtest(cursor)
+
+    # Build price history from all scans for momentum lookback
+    print("\nBuilding price history from scan_activity...")
+    price_history = build_price_history_from_scans(cursor)
+    print(f"  Price history entries: {len(price_history)}")
 
     # Get trades with outcomes
     cursor.execute("""
@@ -154,10 +186,12 @@ def run_backtest():
         'with_momentum': 0,
         'wins': 0,
         'losses': 0,
-        'by_alignment': defaultdict(lambda: {'wins': 0, 'losses': 0}),
-        'by_regime': defaultdict(lambda: {'wins': 0, 'losses': 0}),
+        'by_alignment': defaultdict(lambda: {'wins': 0, 'losses': 0, 'pnl': 0.0}),
+        'by_regime': defaultdict(lambda: {'wins': 0, 'losses': 0, 'pnl': 0.0}),
         'would_skip': 0,
         'skip_correct': 0,  # Skipped trades that were actually losses
+        'skip_pnl_saved': 0.0,  # P&L from skipped losing trades
+        'alignment_details': [],  # For detailed analysis
     }
 
     for trade in trades:
@@ -165,18 +199,20 @@ def run_backtest():
 
         results['total'] += 1
         is_win = outcome == 'WIN'
+        pnl_value = float(pnl) if pnl else 0.0
 
         if is_win:
             results['wins'] += 1
         else:
             results['losses'] += 1
 
-        # Get price from N minutes ago
-        price_ago = get_price_n_minutes_ago(cursor, scan_time, LOOKBACK_MINUTES)
+        # Get price from N minutes ago using our scan history
+        price_data = get_price_n_minutes_ago_from_history(price_history, scan_time, LOOKBACK_MINUTES)
 
-        if not price_ago:
+        if not price_data:
             continue
 
+        price_ago, _ = price_data
         results['with_momentum'] += 1
 
         # Calculate momentum metrics
@@ -185,6 +221,7 @@ def run_backtest():
             continue
 
         alignment = metrics['alignment']
+        momentum_atr = metrics['momentum_atr']
 
         # Bucket by alignment
         if alignment < -0.5:
@@ -196,6 +233,18 @@ def run_backtest():
         else:
             bucket = 'strong_confirm'
 
+        # Track details
+        results['alignment_details'].append({
+            'time': scan_time,
+            'direction': direction,
+            'regime': regime,
+            'alignment': alignment,
+            'momentum_atr': momentum_atr,
+            'bucket': bucket,
+            'outcome': outcome,
+            'pnl': pnl_value
+        })
+
         if is_win:
             results['by_alignment'][bucket]['wins'] += 1
             results['by_regime'][regime]['wins'] += 1
@@ -203,44 +252,80 @@ def run_backtest():
             results['by_alignment'][bucket]['losses'] += 1
             results['by_regime'][regime]['losses'] += 1
 
+        results['by_alignment'][bucket]['pnl'] += pnl_value
+        results['by_regime'][regime]['pnl'] += pnl_value
+
         # Would we have skipped this signal?
-        # Skip if: alignment < -0.6 AND momentum > 1.5 ATR
-        if alignment < -0.6 and abs(metrics['momentum_atr']) > 1.5:
+        # Skip if: strong momentum conflict (alignment < -0.5 AND abs momentum > 0.5 ATR)
+        if alignment < -0.5 and abs(momentum_atr) > 0.5:
             results['would_skip'] += 1
             if not is_win:
                 results['skip_correct'] += 1
+                results['skip_pnl_saved'] += abs(pnl_value)
 
     # Print results
     print("\n" + "=" * 70)
     print("BACKTEST RESULTS")
     print("=" * 70)
 
-    print(f"\nOverall: {results['total']} trades")
-    print(f"  Wins:   {results['wins']} ({results['wins']/results['total']*100:.1f}%)")
-    print(f"  Losses: {results['losses']} ({results['losses']/results['total']*100:.1f}%)")
-    print(f"  With momentum data: {results['with_momentum']}")
+    if results['total'] > 0:
+        print(f"\nOverall: {results['total']} trades")
+        print(f"  Wins:   {results['wins']} ({results['wins']/results['total']*100:.1f}%)")
+        print(f"  Losses: {results['losses']} ({results['losses']/results['total']*100:.1f}%)")
+        print(f"  With momentum data: {results['with_momentum']}")
 
-    print(f"\n--- BY ALIGNMENT BUCKET ---")
-    for bucket in ['strong_confirm', 'weak_confirm', 'weak_conflict', 'strong_conflict']:
-        data = results['by_alignment'][bucket]
-        total = data['wins'] + data['losses']
-        if total > 0:
-            win_rate = data['wins'] / total * 100
-            print(f"  {bucket:20s}: {total:4d} trades, {win_rate:.1f}% win rate")
+        print(f"\n--- BY ALIGNMENT BUCKET ---")
+        print(f"  {'Bucket':<20} {'Trades':>7} {'Win Rate':>10} {'Total P&L':>12}")
+        print(f"  {'-'*20} {'-'*7} {'-'*10} {'-'*12}")
+        for bucket in ['strong_confirm', 'weak_confirm', 'weak_conflict', 'strong_conflict']:
+            data = results['by_alignment'][bucket]
+            total = data['wins'] + data['losses']
+            if total > 0:
+                win_rate = data['wins'] / total * 100
+                print(f"  {bucket:<20} {total:>7} {win_rate:>9.1f}% ${data['pnl']:>10.2f}")
 
-    print(f"\n--- BY GAMMA REGIME ---")
-    for regime in ['POSITIVE', 'NEGATIVE', 'NEUTRAL']:
-        data = results['by_regime'][regime]
-        total = data['wins'] + data['losses']
-        if total > 0:
-            win_rate = data['wins'] / total * 100
-            print(f"  {regime:12s}: {total:4d} trades, {win_rate:.1f}% win rate")
+        print(f"\n--- BY GAMMA REGIME ---")
+        print(f"  {'Regime':<12} {'Trades':>7} {'Win Rate':>10} {'Total P&L':>12}")
+        print(f"  {'-'*12} {'-'*7} {'-'*10} {'-'*12}")
+        for regime in ['POSITIVE', 'NEGATIVE', 'NEUTRAL']:
+            data = results['by_regime'][regime]
+            total = data['wins'] + data['losses']
+            if total > 0:
+                win_rate = data['wins'] / total * 100
+                print(f"  {regime:<12} {total:>7} {win_rate:>9.1f}% ${data['pnl']:>10.2f}")
 
-    print(f"\n--- SKIP ANALYSIS ---")
-    print(f"  Would have skipped: {results['would_skip']} trades")
-    if results['would_skip'] > 0:
-        accuracy = results['skip_correct'] / results['would_skip'] * 100
-        print(f"  Skip accuracy: {results['skip_correct']}/{results['would_skip']} ({accuracy:.1f}% were actually losses)")
+        print(f"\n--- SKIP ANALYSIS ---")
+        print(f"  Would have skipped: {results['would_skip']} trades")
+        if results['would_skip'] > 0:
+            accuracy = results['skip_correct'] / results['would_skip'] * 100
+            print(f"  Skip accuracy: {results['skip_correct']}/{results['would_skip']} = {accuracy:.1f}% were losses")
+            print(f"  P&L saved by skipping: ${results['skip_pnl_saved']:.2f}")
+
+        # Key insight summary
+        print(f"\n" + "=" * 70)
+        print("KEY INSIGHTS")
+        print("=" * 70)
+
+        confirm_data = results['by_alignment']['strong_confirm']
+        conflict_data = results['by_alignment']['strong_conflict']
+
+        confirm_total = confirm_data['wins'] + confirm_data['losses']
+        conflict_total = conflict_data['wins'] + conflict_data['losses']
+
+        if confirm_total > 0 and conflict_total > 0:
+            confirm_wr = confirm_data['wins'] / confirm_total * 100
+            conflict_wr = conflict_data['wins'] / conflict_total * 100
+
+            print(f"\n  Strong Confirm win rate:  {confirm_wr:.1f}% ({confirm_total} trades)")
+            print(f"  Strong Conflict win rate: {conflict_wr:.1f}% ({conflict_total} trades)")
+            print(f"  Difference: {confirm_wr - conflict_wr:+.1f}%")
+
+            if confirm_wr > conflict_wr:
+                print(f"\n  --> Momentum alignment IS predictive!")
+                print(f"      Recommendation: Implement SAP with alignment factor")
+            else:
+                print(f"\n  --> Counter-momentum may be better (mean reversion)")
+                print(f"      Recommendation: Do NOT skip conflicting signals")
 
     cursor.close()
     conn.close()
