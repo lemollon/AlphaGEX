@@ -639,6 +639,8 @@ class HERACLESDatabase:
                         mfe_points, mae_points, hold_duration, is_overnight
                     )
 
+                # Use UPSERT to ensure record is always created/updated
+                # ON CONFLICT DO UPDATE ensures we never silently skip recording a trade
                 c.execute("""
                     INSERT INTO heracles_closed_trades (
                         position_id, symbol, direction, contracts,
@@ -651,7 +653,18 @@ class HERACLESDatabase:
                         loss_analysis, mfe_points, mae_points,
                         was_profitable_before_loss, initial_stop_price, is_overnight_session
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (position_id) DO NOTHING
+                    ON CONFLICT (position_id) DO UPDATE SET
+                        exit_price = EXCLUDED.exit_price,
+                        realized_pnl = EXCLUDED.realized_pnl,
+                        close_reason = EXCLUDED.close_reason,
+                        close_time = EXCLUDED.close_time,
+                        hold_duration_minutes = EXCLUDED.hold_duration_minutes,
+                        high_price_since_entry = EXCLUDED.high_price_since_entry,
+                        low_price_since_entry = EXCLUDED.low_price_since_entry,
+                        loss_analysis = EXCLUDED.loss_analysis,
+                        mfe_points = EXCLUDED.mfe_points,
+                        mae_points = EXCLUDED.mae_points,
+                        was_profitable_before_loss = EXCLUDED.was_profitable_before_loss
                 """, (
                     position_id, position.symbol, position.direction.value,
                     position.contracts, _to_python(position.entry_price),
@@ -672,6 +685,11 @@ class HERACLESDatabase:
                     _to_python(position.initial_stop),
                     is_overnight
                 ))
+
+                # Verify the INSERT/UPDATE affected a row
+                rows_affected = c.rowcount
+                if rows_affected == 0:
+                    logger.error(f"CRITICAL: closed_trades INSERT/UPDATE affected 0 rows for {position_id}")
 
                 conn.commit()
                 logger.info(f"Closed position {position_id}: P&L=${realized_pnl:.2f}, reason={close_reason}")
@@ -904,6 +922,7 @@ class HERACLESDatabase:
                 # Insert into closed trades
                 hold_duration = int((now - position.open_time).total_seconds() / 60) if position.open_time else 0
 
+                # Use UPSERT to ensure record is always created/updated
                 c.execute("""
                     INSERT INTO heracles_closed_trades (
                         position_id, symbol, direction, contracts,
@@ -912,7 +931,12 @@ class HERACLESDatabase:
                         vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
                         open_time, close_time, hold_duration_minutes
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (position_id) DO NOTHING
+                    ON CONFLICT (position_id) DO UPDATE SET
+                        exit_price = EXCLUDED.exit_price,
+                        realized_pnl = EXCLUDED.realized_pnl,
+                        close_reason = EXCLUDED.close_reason,
+                        close_time = EXCLUDED.close_time,
+                        hold_duration_minutes = EXCLUDED.hold_duration_minutes
                 """, (
                     position_id, position.symbol, position.direction.value,
                     position.contracts, _to_python(position.entry_price),
