@@ -720,7 +720,7 @@ export default function ArgusPage() {
   const [signalPerformance, setSignalPerformance] = useState<SignalPerformance | null>(null)
   const [recentSignals, setRecentSignals] = useState<RecentSignal[]>([])
   const [showPerformancePanel, setShowPerformancePanel] = useState(true)
-  const [autoLogSignals, setAutoLogSignals] = useState(false)
+  const [autoLogSignals, setAutoLogSignals] = useState(true)  // Default ON - auto-track signals
 
   // Next-day gamma data (tomorrow's expiration)
   const [tomorrowGammaData, setTomorrowGammaData] = useState<GammaData | null>(null)
@@ -3014,22 +3014,41 @@ export default function ArgusPage() {
                     {recentSignals.length > 0 && (
                       <div>
                         <div className="text-[10px] text-gray-500 mb-1">Recent Signals</div>
-                        <div className="space-y-1 max-h-24 overflow-y-auto">
-                          {recentSignals.slice(0, 4).map((sig) => (
-                            <div key={sig.id} className="flex items-center justify-between text-xs bg-black/20 rounded px-2 py-1">
-                              <div className="flex items-center gap-1">
-                                <span className={`w-1.5 h-1.5 rounded-full ${
-                                  sig.status === 'WIN' ? 'bg-emerald-500' :
-                                  sig.status === 'LOSS' ? 'bg-rose-500' :
-                                  sig.status === 'OPEN' ? 'bg-yellow-500' : 'bg-gray-500'
-                                }`} />
-                                <span className="text-gray-300 truncate max-w-[100px]">{sig.action}</span>
+                        <div className="space-y-1.5 max-h-32 overflow-y-auto">
+                          {recentSignals.slice(0, 5).map((sig) => (
+                            <div key={sig.id} className="text-xs bg-black/30 rounded px-2 py-1.5 border border-gray-700/30">
+                              <div className="flex items-center justify-between mb-0.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`w-2 h-2 rounded-full ${
+                                    sig.status === 'WIN' ? 'bg-emerald-500' :
+                                    sig.status === 'LOSS' ? 'bg-rose-500' :
+                                    sig.status === 'OPEN' ? 'bg-yellow-500 animate-pulse' : 'bg-gray-500'
+                                  }`} />
+                                  <span className={`font-medium ${
+                                    sig.direction?.includes('BULLISH') ? 'text-emerald-400' :
+                                    sig.direction?.includes('BEARISH') ? 'text-rose-400' : 'text-gray-300'
+                                  }`}>
+                                    {sig.action?.replace(/_/g, ' ')}
+                                  </span>
+                                </div>
+                                <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                                  sig.status === 'WIN' ? 'bg-emerald-500/20 text-emerald-400' :
+                                  sig.status === 'LOSS' ? 'bg-rose-500/20 text-rose-400' :
+                                  sig.status === 'OPEN' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-gray-500/20 text-gray-400'
+                                }`}>
+                                  {sig.status === 'OPEN' ? 'OPEN' : sig.status}
+                                </span>
                               </div>
-                              <span className={`font-mono ${
-                                (sig.actual_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                              }`}>
-                                {sig.status === 'OPEN' ? 'OPEN' : `$${(sig.actual_pnl || 0).toFixed(0)}`}
-                              </span>
+                              <div className="text-[10px] text-gray-400 font-mono truncate">
+                                {sig.trade_description || `${sig.contracts} contracts @ $${sig.credit?.toFixed(2) || '0.00'}`}
+                              </div>
+                              {sig.status !== 'OPEN' && sig.actual_pnl !== null && (
+                                <div className={`text-[10px] font-mono mt-0.5 ${
+                                  (sig.actual_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                                }`}>
+                                  P&L: ${(sig.actual_pnl || 0).toFixed(0)}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
