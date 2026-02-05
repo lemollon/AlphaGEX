@@ -457,35 +457,27 @@ class HERACLESSignalGenerator:
             net_gex = gex_data.get('net_gex') or 0
             gex_ratio = gex_data.get('gex_ratio') or 1.0
 
-            # Fallback to synthetic GEX levels if data is invalid
-            # CRITICAL: If flip_point = current_price, distance = 0, and NO signals can be generated
-            # We must offset the flip_point to allow signal generation
-            gex_is_synthetic = False
+            # ================================================================
+            # NEVER USE FAKE/SYNTHETIC GEX DATA
+            # If flip_point is invalid, skip trading entirely
+            # Real GEX data comes from TradingVolatilityAPI
+            # ================================================================
             if flip_point <= 0:
-                # When GEX data unavailable, create synthetic levels that allow trading
-                # Offset flip_point by 1% below current price (assumes slight bullish bias from historical data)
-                # This allows mean reversion SHORT signals when price is above flip_point
-                # and mean reversion LONG signals when price is below flip_point
-                #
-                # WARNING: This synthetic offset is designed for POSITIVE gamma (mean reversion)
-                # In NEGATIVE gamma, this creates WRONG signals (LONG when SHORT would be profitable)
-                # The _generate_signal method checks gex_is_synthetic and skips negative gamma
-                synthetic_offset_pct = 0.01  # 1% offset
-                flip_point = current_price * (1 - synthetic_offset_pct)
-                gex_is_synthetic = True
                 logger.warning(
-                    f"GEX flip_point unavailable - using SYNTHETIC flip_point={flip_point:.2f} "
-                    f"({synthetic_offset_pct*100:.1f}% below current_price={current_price:.2f}). "
-                    f"Signal quality may be reduced. Check SPX GEX data source."
+                    f"Signal SKIPPED: No real GEX data available (flip_point={flip_point}). "
+                    f"HERACLES requires real GEX data from TradingVolatilityAPI. "
+                    f"Check TRADING_VOLATILITY_API_KEY environment variable."
                 )
+                return None
+
+            # Validate call/put walls - use reasonable defaults if missing
+            # but only if we have a valid flip_point (real data)
             if call_wall <= 0:
-                call_wall = current_price + 50  # 50 MES points above
-                if gex_is_synthetic:
-                    logger.debug(f"Using synthetic call_wall={call_wall:.2f}")
+                call_wall = flip_point + 50  # 50 points above flip
+                logger.debug(f"Using estimated call_wall={call_wall:.2f} (flip_point + 50)")
             if put_wall <= 0:
-                put_wall = current_price - 50  # 50 MES points below
-                if gex_is_synthetic:
-                    logger.debug(f"Using synthetic put_wall={put_wall:.2f}")
+                put_wall = flip_point - 50  # 50 points below flip
+                logger.debug(f"Using estimated put_wall={put_wall:.2f} (flip_point - 50)")
 
             # For overnight, use n+1 (next day's expected levels)
             if is_overnight:
@@ -507,25 +499,8 @@ class HERACLESSignalGenerator:
             # Log signal generation context for debugging
             logger.debug(
                 f"Signal generation: price={current_price:.2f}, flip={flip_point:.2f}, "
-                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}, synthetic={gex_is_synthetic}"
+                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}"
             )
-
-            # ================================================================
-            # SYNTHETIC GEX + NEGATIVE GAMMA = SKIP (prevents wrong direction)
-            # The synthetic fallback puts flip 1% below price, so price is always
-            # "above flip". In negative gamma, this generates LONG signals.
-            # But production data shows SHORT is profitable in negative gamma:
-            # - SHORT: +$2,791 (65% win rate)
-            # - LONG: -$27,247 (40.9% win rate)
-            # So we SKIP trading in negative gamma when using synthetic GEX data.
-            # ================================================================
-            if gex_is_synthetic and gamma_regime == GammaRegime.NEGATIVE:
-                logger.warning(
-                    f"Signal SKIPPED: Synthetic GEX + NEGATIVE gamma = wrong direction bias. "
-                    f"Synthetic flip={flip_point:.2f} would generate LONG, but SHORT is profitable in neg gamma. "
-                    f"Wait for real GEX data."
-                )
-                return None
 
             # ================================================================
             # GAMMA REGIME FILTER - Skip if regime not allowed
