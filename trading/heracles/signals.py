@@ -466,6 +466,10 @@ class HERACLESSignalGenerator:
                 # Offset flip_point by 1% below current price (assumes slight bullish bias from historical data)
                 # This allows mean reversion SHORT signals when price is above flip_point
                 # and mean reversion LONG signals when price is below flip_point
+                #
+                # WARNING: This synthetic offset is designed for POSITIVE gamma (mean reversion)
+                # In NEGATIVE gamma, this creates WRONG signals (LONG when SHORT would be profitable)
+                # The _generate_signal method checks gex_is_synthetic and skips negative gamma
                 synthetic_offset_pct = 0.01  # 1% offset
                 flip_point = current_price * (1 - synthetic_offset_pct)
                 gex_is_synthetic = True
@@ -503,8 +507,25 @@ class HERACLESSignalGenerator:
             # Log signal generation context for debugging
             logger.debug(
                 f"Signal generation: price={current_price:.2f}, flip={flip_point:.2f}, "
-                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}"
+                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}, synthetic={gex_is_synthetic}"
             )
+
+            # ================================================================
+            # SYNTHETIC GEX + NEGATIVE GAMMA = SKIP (prevents wrong direction)
+            # The synthetic fallback puts flip 1% below price, so price is always
+            # "above flip". In negative gamma, this generates LONG signals.
+            # But production data shows SHORT is profitable in negative gamma:
+            # - SHORT: +$2,791 (65% win rate)
+            # - LONG: -$27,247 (40.9% win rate)
+            # So we SKIP trading in negative gamma when using synthetic GEX data.
+            # ================================================================
+            if gex_is_synthetic and gamma_regime == GammaRegime.NEGATIVE:
+                logger.warning(
+                    f"Signal SKIPPED: Synthetic GEX + NEGATIVE gamma = wrong direction bias. "
+                    f"Synthetic flip={flip_point:.2f} would generate LONG, but SHORT is profitable in neg gamma. "
+                    f"Wait for real GEX data."
+                )
+                return None
 
             # ================================================================
             # GAMMA REGIME FILTER - Skip if regime not allowed
