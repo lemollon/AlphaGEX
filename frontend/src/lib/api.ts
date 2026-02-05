@@ -1006,13 +1006,14 @@ export const apiClient = {
   getArgusDangerZoneLogs: () => api.get('/api/argus/danger-zones/log'),
   getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
   getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
-  getArgusTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number) =>
+  getArgusTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number, autoLog?: boolean) =>
     api.get('/api/argus/trade-action', {
       params: {
         symbol,
         account_size: accountSize,
         risk_per_trade_pct: riskPct,
-        spread_width: spreadWidth
+        spread_width: spreadWidth,
+        auto_log: autoLog ?? true  // Default to true (backend auto-logs signals)
       }
     }),
   // Signal tracking & performance
@@ -1024,6 +1025,12 @@ export const apiClient = {
     api.get('/api/argus/signals/performance', { params: { symbol, days } }),
   updateArgusSignalOutcomes: (symbol?: string) =>
     api.post('/api/argus/signals/update-outcomes', {}, { params: { symbol } }),
+
+  // GEX Charts - Trading Volatility Style Analysis
+  getArgusGexAnalysis: (symbol?: string, expiration?: string) =>
+    api.get('/api/argus/gex-analysis', { params: { symbol, expiration } }),
+  getArgusFlowDiagnostics: (symbol?: string, expiration?: string) =>
+    api.get('/api/argus/flow-diagnostics', { params: { symbol, expiration } }),
 
   // HYPERION - Weekly Gamma visualization for stocks/ETFs (Enhanced)
   getHyperionGamma: (symbol?: string, expiration?: string) =>
