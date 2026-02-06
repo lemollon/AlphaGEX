@@ -1458,6 +1458,7 @@ class PrometheusICSignalGenerator:
         # Check Oracle thresholds if required
         # NOTE: Like PEGASUS, we only check win_probability threshold, NOT the advice string
         # Oracle advice string (TRADE_FULL/SKIP_TODAY) is informational only
+        oracle_approved = True  # Will be set to False only if we fail the threshold check
         if self.config.require_oracle_approval:
             # Only check win probability - this is how PEGASUS works
             if oracle_win_prob < self.config.min_win_probability:
@@ -1466,6 +1467,8 @@ class PrometheusICSignalGenerator:
                 return self._create_skip_signal(
                     now, source_box_position_id, market, skip_reason, oracle
                 )
+            # If we pass the threshold, Oracle approved
+            logger.info(f"PROMETHEUS IC: Oracle APPROVED (win_prob {oracle_win_prob:.0%} >= {self.config.min_win_probability:.0%})")
 
         # Calculate strikes
         strikes = self.calculate_strikes(
