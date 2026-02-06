@@ -1579,7 +1579,13 @@ class PrometheusICExecutor:
                     f"PAPER TRADING with REAL quotes: credit=${real_quotes['total_credit']:.4f}"
                 )
             else:
-                logger.warning(f"Using estimated pricing: {real_quotes.get('error')}")
+                # REQUIRE real quotes - don't execute with bad estimated pricing
+                # Estimated pricing produces ~$0.50 instead of actual ~$2-5 SPX credits
+                logger.error(
+                    f"PROMETHEUS IC: Cannot execute - failed to get real quotes: {real_quotes.get('error')}. "
+                    f"Estimated pricing is unreliable. Skipping signal."
+                )
+                return None
 
         # Calculate totals
         total_credit_received = signal.total_credit * signal.contracts * 100
@@ -1811,6 +1817,24 @@ class PrometheusICExecutor:
 
         # Close in database
         success = self.db.close_ic_position(position_id, exit_price, close_reason)
+
+        # Log the close action for Activity Log
+        if success:
+            self.db.log_action(
+                action="IC_POSITION_CLOSED",
+                message=f"Closed IC position {position_id}: {close_reason}",
+                level="INFO",
+                details={
+                    'entry_credit': position.entry_credit,
+                    'exit_price': exit_price,
+                    'realized_pnl': realized_pnl,
+                    'contracts': position.contracts,
+                    'close_reason': close_reason,
+                    'put_spread': f"{position.put_long_strike}/{position.put_short_strike}",
+                    'call_spread': f"{position.call_short_strike}/{position.call_long_strike}",
+                },
+                position_id=position_id,
+            )
 
         # Record outcome to auto-validation system (which also notifies Solomon)
         if success:
