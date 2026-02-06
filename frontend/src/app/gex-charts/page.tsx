@@ -324,7 +324,7 @@ export default function GexChartsPage() {
         </div>
 
         {/* Controls Bar */}
-        <div className="bg-gray-800/50 backdrop-blur rounded-xl border border-gray-700 p-4 mb-6">
+        <div className="bg-gray-800/50 backdrop-blur rounded-xl border border-gray-700 p-4 mb-6 relative z-50">
           <div className="flex flex-wrap items-center gap-4">
             {/* Symbol Search */}
             <div className="flex items-center gap-2 bg-gray-900 rounded-lg px-3 py-2 border border-gray-700">
