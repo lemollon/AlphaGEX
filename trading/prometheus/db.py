@@ -2297,10 +2297,12 @@ class PrometheusDatabase:
         was_executed: bool,
         executed_position_id: str = None
     ) -> bool:
-        """Log a generated IC signal"""
+        """Log a generated IC signal (UPSERT - updates if signal already exists)"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
+            # Use UPSERT to handle case where signal is logged first as SKIPPED,
+            # then updated to EXECUTED when trade goes through
             cursor.execute("""
                 INSERT INTO prometheus_ic_signals (
                     signal_id, signal_time, source_box_position_id,
@@ -2317,6 +2319,10 @@ class PrometheusDatabase:
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
+                ON CONFLICT (signal_id) DO UPDATE SET
+                    was_executed = EXCLUDED.was_executed,
+                    executed_position_id = EXCLUDED.executed_position_id,
+                    skip_reason = EXCLUDED.skip_reason
             """, (
                 signal.signal_id, signal.signal_time, signal.source_box_position_id,
                 signal.ticker, signal.spot_price,
