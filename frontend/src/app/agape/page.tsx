@@ -11,17 +11,8 @@ import {
   Eye,
   CheckCircle,
 } from 'lucide-react'
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-} from 'recharts'
 import Navigation from '@/components/Navigation'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   BotPageHeader,
@@ -49,7 +40,6 @@ export default function AgapePage() {
 
   const { data: statusData, isLoading: statusLoading } = useSWR('/api/agape/status', fetcher, { refreshInterval: 30000 })
   const { data: perfData } = useSWR('/api/agape/performance', fetcher, { refreshInterval: 60000 })
-  const { data: equityData } = useSWR('/api/agape/equity-curve', fetcher, { refreshInterval: 60000 })
   const { data: positionsData, isLoading: posLoading } = useSWR(
     activeTab === 'positions' ? '/api/agape/positions' : null, fetcher, { refreshInterval: 15000 }
   )
@@ -68,7 +58,6 @@ export default function AgapePage() {
 
   const status = statusData?.data
   const perf = perfData?.data
-  const equity = equityData?.data?.equity_curve || []
 
   if (statusLoading) {
     return (
@@ -139,7 +128,7 @@ export default function AgapePage() {
               onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
                 activeTab === tab.id
-                  ? 'bg-violet-600 text-white'
+                  ? 'bg-fuchsia-600 text-white'
                   : 'text-text-secondary hover:text-text-primary hover:bg-background-hover'
               }`}
             >
@@ -149,7 +138,7 @@ export default function AgapePage() {
         </div>
 
         {/* Tab Content */}
-        {activeTab === 'overview' && <OverviewTab status={status} perf={perf} equity={equity} equityResponse={equityData} />}
+        {activeTab === 'overview' && <OverviewTab status={status} perf={perf} />}
         {activeTab === 'snapshot' && <SnapshotTab data={snapshotData?.data} loading={snapLoading} />}
         {activeTab === 'positions' && <PositionsTab data={positionsData?.data} loading={posLoading} />}
         {activeTab === 'activity' && <ActivityTab data={scansData?.data} />}
@@ -164,36 +153,15 @@ export default function AgapePage() {
 // OVERVIEW TAB
 // ==============================================================================
 
-function OverviewTab({ status, perf, equity, equityResponse }: { status: any; perf: any; equity: any[]; equityResponse: any }) {
+function OverviewTab({ status, perf }: { status: any; perf: any }) {
   return (
     <div className="space-y-6">
-      {/* Equity Curve */}
-      {equity.length > 0 && (
-        <div className="bg-background-card rounded-xl p-6 border border-gray-800">
-          <h3 className="text-lg font-semibold text-text-primary mb-4">Equity Curve</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={equity}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis
-                dataKey="date"
-                tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                tickFormatter={(v) => {
-                  if (!v) return ''
-                  const d = new Date(v + 'T12:00:00')
-                  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                }}
-              />
-              <YAxis tick={{ fill: '#9CA3AF', fontSize: 11 }} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
-                labelStyle={{ color: '#D1D5DB' }}
-              />
-              <ReferenceLine y={equityResponse?.data?.starting_capital || status?.starting_capital || 5000} stroke="#6B7280" strokeDasharray="5 5" label="Start" />
-              <Line type="monotone" dataKey="equity" stroke="#8B5CF6" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      {/* Equity Curve - shared component matching ARES/TITAN/ICARUS */}
+      <EquityCurveChart
+        title="AGAPE Equity Curve"
+        botFilter="AGAPE"
+        showIntradayOption={true}
+      />
 
       {/* Config */}
       <div className="bg-background-card rounded-xl p-6 border border-gray-800">
@@ -459,7 +427,7 @@ function PositionsTab({ data, loading }: { data: any[]; loading: boolean }) {
   return (
     <div className="space-y-4">
       {positions.map((pos: any) => (
-        <div key={pos.position_id} className="bg-background-card rounded-xl p-6 border border-violet-600/50">
+        <div key={pos.position_id} className="bg-background-card rounded-xl p-6 border border-fuchsia-600/50">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-3">
               <span className={`px-2 py-1 rounded text-xs font-bold ${

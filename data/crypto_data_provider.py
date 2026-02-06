@@ -216,11 +216,14 @@ class CoinGlassClient:
     - Liquidation heatmap data
     - Long/Short ratio
     """
-    BASE_URL = "https://open-api-v3.coinglass.com/api"
+    # v3 endpoints are broken (404/500) as of Feb 2026.
+    # v2 public API works: funding endpoint confirmed.
+    BASE_URL_V2 = "https://open-api.coinglass.com/public/v2"
+    BASE_URL_V3 = "https://open-api-v3.coinglass.com/api"
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("COINGLASS_API_KEY", "")
-        self.headers = {"CG-API-KEY": self.api_key} if self.api_key else {}
+        self.headers = {"coinglassSecret": self.api_key} if self.api_key else {}
         self._last_request_time = 0
         self._rate_limit_ms = 200  # 5 req/sec max
 
@@ -231,9 +234,10 @@ class CoinGlassClient:
             time.sleep((self._rate_limit_ms - elapsed) / 1000)
         self._last_request_time = time.time()
 
-    def _request(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    def _request(self, endpoint: str, params: Optional[Dict] = None, use_v2: bool = True) -> Optional[Dict]:
         """Make an API request with retry logic."""
-        url = f"{self.BASE_URL}/{endpoint}"
+        base = self.BASE_URL_V2 if use_v2 else self.BASE_URL_V3
+        url = f"{base}/{endpoint}"
         for attempt in range(3):
             try:
                 self._rate_limit()
@@ -250,7 +254,7 @@ class CoinGlassClient:
                     time.sleep(wait)
                     continue
                 else:
-                    logger.error(f"CoinGlass HTTP {resp.status_code}: {resp.text[:200]}")
+                    logger.debug(f"CoinGlass HTTP {resp.status_code} on {endpoint}")
                     return None
             except requests.RequestException as e:
                 logger.error(f"CoinGlass request failed (attempt {attempt + 1}): {e}")
@@ -259,21 +263,38 @@ class CoinGlassClient:
         return None
 
     def get_funding_rate(self, symbol: str = "ETH") -> Optional[FundingRate]:
-        """Get current funding rate across exchanges."""
-        data = self._request("futures/funding-rate-oi-weight", {"symbol": symbol})
-        if not data:
+        """Get current funding rate across exchanges.
+
+        Uses v2 /funding endpoint which returns an array of exchange data.
+        We compute a simple average across exchanges for the target symbol.
+        """
+        data = self._request("funding", {"symbol": symbol, "time_type": "all"}, use_v2=True)
+        if not data or not isinstance(data, list):
             return None
         try:
-            # CoinGlass returns OI-weighted average funding rate
-            rate = float(data.get("rate", data.get("fundingRate", 0)))
-            predicted = float(data.get("predictedRate", data.get("nextFundingRate", rate)))
+            # v2 returns list of exchanges. Find our symbol and average the rates.
+            rates = []
+            for entry in data:
+                if entry.get("symbol", "").upper() == symbol.upper():
+                    margin_list = entry.get("uMarginList", [])
+                    for ex in margin_list:
+                        r = ex.get("rate")
+                        if r is not None:
+                            rates.append(float(r))
+                    break  # found our symbol
+
+            if not rates:
+                logger.debug(f"CoinGlass: No funding rates found for {symbol}")
+                return None
+
+            rate = sum(rates) / len(rates)
             # Annualize: 3 funding periods/day * 365 days
             annualized = rate * 3 * 365
 
             return FundingRate(
                 symbol=symbol,
                 rate=rate,
-                predicted_rate=predicted,
+                predicted_rate=rate,  # v2 doesn't provide predicted; use current
                 exchange="aggregate",
                 interval_hours=8,
                 annualized_rate=annualized,
@@ -303,8 +324,12 @@ class CoinGlassClient:
         return data
 
     def get_liquidation_data(self, symbol: str = "ETH") -> List[LiquidationCluster]:
-        """Get liquidation heatmap data."""
-        data = self._request("futures/liquidation-heatmap", {"symbol": symbol})
+        """Get liquidation heatmap data.
+
+        Note: CoinGlass v2/v3 liquidation endpoints return 500 as of Feb 2026.
+        Returns empty list if unavailable - signal generator handles this gracefully.
+        """
+        data = self._request("futures/liquidation-heatmap", {"symbol": symbol}, use_v2=False)
         if not data or not isinstance(data, list):
             return []
 
@@ -336,10 +361,15 @@ class CoinGlassClient:
         return clusters
 
     def get_long_short_ratio(self, symbol: str = "ETH") -> Optional[LongShortRatio]:
-        """Get aggregate long/short ratio across exchanges."""
+        """Get aggregate long/short ratio across exchanges.
+
+        Note: CoinGlass v2/v3 long-short endpoints return 500 as of Feb 2026.
+        Returns None if unavailable - signal generator handles this gracefully.
+        """
         data = self._request(
             "futures/global-long-short-account-ratio",
             {"symbol": symbol},
+            use_v2=False,
         )
         if not data:
             return None
@@ -798,46 +828,82 @@ class CryptoDataProvider:
     ) -> Tuple[str, str]:
         """Calculate the combined trade signal.
 
-        Maps to ARGUS combined signal logic but using crypto data:
+        Uses ALL available data sources with Deribit GEX as primary signal:
 
-        Funding + L/S + Liquidations → Trade Signal
+        Priority 1 (Deribit GEX - always available):
+          NEGATIVE regime + price below max pain → LONG (mean reversion)
+          NEGATIVE regime + price above max pain → SHORT (momentum)
+          POSITIVE regime + stable               → RANGE_BOUND
 
-        BALANCED funding + NEUTRAL L/S                  → RANGE_BOUND (sell premium)
-        HIGH funding + EXTREME_LONG L/S + near liq      → SHORT (fade leverage)
-        LOW funding + EXTREME_SHORT L/S + near liq      → LONG (squeeze play)
-        OVERLEVERAGED + HIGH squeeze risk               → WAIT (too dangerous)
+        Priority 2 (CoinGlass data - when available, boosts confidence):
+          Funding + L/S ratio confirm or override the GEX signal.
         """
         funding_regime = snapshot.funding_regime
         bias = snapshot.directional_bias
         squeeze = snapshot.squeeze_risk
         leverage = snapshot.leverage_regime
 
-        # High conviction signals
-        if funding_regime == "BALANCED" and bias == "NEUTRAL" and squeeze == "LOW":
-            return ("RANGE_BOUND", "HIGH")
+        # Deribit GEX data (primary signal - always available)
+        has_gex = snapshot.crypto_gex is not None
+        gex_regime = snapshot.crypto_gex.gamma_regime if has_gex else "NEUTRAL"
+        gex_net = snapshot.crypto_gex.net_gex if has_gex else 0
+        max_pain = snapshot.crypto_gex.max_pain if has_gex else None
+        spot = snapshot.spot_price
 
-        if funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG") and bias == "BEARISH":
-            if squeeze in ("HIGH", "ELEVATED"):
-                return ("SHORT", "HIGH")
-            return ("SHORT", "MEDIUM")
+        # CoinGlass data availability check
+        has_coinglass = funding_regime not in ("UNKNOWN", "") and funding_regime is not None
 
-        if funding_regime in ("EXTREME_SHORT", "OVERLEVERAGED_SHORT") and bias == "BULLISH":
-            if squeeze in ("HIGH", "ELEVATED"):
-                return ("LONG", "HIGH")
-            return ("LONG", "MEDIUM")
+        # ---- HIGH CONVICTION: CoinGlass + GEX agree ----
+        if has_coinglass:
+            if funding_regime == "BALANCED" and bias == "NEUTRAL" and squeeze == "LOW":
+                return ("RANGE_BOUND", "HIGH")
 
-        # Medium conviction
-        if leverage == "BALANCED" and squeeze == "LOW":
+            if funding_regime in ("EXTREME_LONG", "OVERLEVERAGED_LONG") and bias == "BEARISH":
+                if squeeze in ("HIGH", "ELEVATED"):
+                    return ("SHORT", "HIGH")
+                return ("SHORT", "MEDIUM")
+
+            if funding_regime in ("EXTREME_SHORT", "OVERLEVERAGED_SHORT") and bias == "BULLISH":
+                if squeeze in ("HIGH", "ELEVATED"):
+                    return ("LONG", "HIGH")
+                return ("LONG", "MEDIUM")
+
+        # ---- MEDIUM CONVICTION: Deribit GEX alone ----
+        if has_gex and gex_regime == "NEGATIVE" and abs(gex_net) > 50000:
+            # Negative gamma = momentum regime. Use max pain as directional anchor.
+            if max_pain and spot > 0:
+                pain_dist_pct = (max_pain - spot) / spot
+                if pain_dist_pct > 0.03:
+                    # Price well below max pain → gravity pulls UP
+                    return ("LONG", "MEDIUM")
+                elif pain_dist_pct < -0.03:
+                    # Price well above max pain → gravity pulls DOWN
+                    return ("SHORT", "MEDIUM")
+
+        if has_gex and gex_regime == "POSITIVE" and squeeze == "LOW":
+            # Positive gamma = mean reversion. Range-bound.
             return ("RANGE_BOUND", "MEDIUM")
 
-        if bias == "BULLISH" and squeeze != "HIGH":
-            return ("LONG", "LOW")
+        # ---- LOW CONVICTION: Weaker GEX signals ----
+        if has_gex and gex_regime == "NEGATIVE":
+            if max_pain and spot > 0:
+                pain_dist_pct = (max_pain - spot) / spot
+                if pain_dist_pct > 0.01:
+                    return ("LONG", "LOW")
+                elif pain_dist_pct < -0.01:
+                    return ("SHORT", "LOW")
 
-        if bias == "BEARISH" and squeeze != "HIGH":
-            return ("SHORT", "LOW")
+        # CoinGlass-only low-confidence fallback
+        if has_coinglass:
+            if leverage == "BALANCED" and squeeze == "LOW":
+                return ("RANGE_BOUND", "MEDIUM")
+            if bias == "BULLISH" and squeeze != "HIGH":
+                return ("LONG", "LOW")
+            if bias == "BEARISH" and squeeze != "HIGH":
+                return ("SHORT", "LOW")
 
         # Too uncertain or too dangerous
         if leverage == "OVERLEVERAGED" and squeeze == "HIGH":
-            return ("WAIT", "HIGH")  # High confidence to WAIT
+            return ("WAIT", "HIGH")
 
         return ("WAIT", "LOW")

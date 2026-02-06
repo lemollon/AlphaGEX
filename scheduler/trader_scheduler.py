@@ -170,6 +170,18 @@ except ImportError:
     HERACLESTradingMode = None
     print("Warning: HERACLES not available. MES futures trading will be disabled.")
 
+# Import AGAPE (ETH Micro Futures with Crypto GEX)
+try:
+    from trading.agape.trader import AgapeTrader, create_agape_trader
+    from trading.agape.models import AgapeConfig, TradingMode as AgapeTradingMode
+    AGAPE_AVAILABLE = True
+except ImportError:
+    AGAPE_AVAILABLE = False
+    AgapeTrader = None
+    AgapeConfig = None
+    AgapeTradingMode = None
+    print("Warning: AGAPE not available. ETH crypto trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -567,6 +579,18 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"HERACLES initialization failed: {e}")
                 self.heracles_trader = None
+
+        # AGAPE - ETH Micro Futures with Crypto GEX signals
+        # 24/7 crypto trading with 5-minute scan interval
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_trader = None
+        if AGAPE_AVAILABLE:
+            try:
+                self.agape_trader = create_agape_trader()
+                logger.info("✅ AGAPE initialized (ETH Micro Futures, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE initialization failed: {e}")
+                self.agape_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -2182,6 +2206,65 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in HERACLES EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
+
+    def scheduled_agape_logic(self):
+        """
+        AGAPE ETH Micro Futures - runs every 5 minutes during CME crypto hours.
+
+        CME Micro Ether futures trade Sun 5PM - Fri 4PM CT with daily 4-5PM break.
+        Uses Deribit GEX as primary signal, CoinGlass funding rate as secondary.
+        """
+        if not self.agape_trader:
+            return
+
+        try:
+            result = self.agape_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE: Cycle error: {result['error']}")
+            else:
+                if self.agape_trader._cycle_count % 12 == 0:  # Log once per hour
+                    logger.debug(f"AGAPE scan #{self.agape_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_eod_logic(self):
+        """
+        AGAPE End-of-Day - runs at 3:45 PM CT (before CME 4PM close).
+        Force-closes any open positions before the daily maintenance break.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"{'=' * 80}")
+        logger.info(f"AGAPE EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_trader:
+            logger.warning("AGAPE trader not available - skipping EOD")
+            return
+
+        try:
+            result = self.agape_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE EOD: Closed {closed} position(s)")
+
+            perf = self.agape_trader.get_performance()
+            logger.info(f"AGAPE EOD Summary:")
+            logger.info(f"  Total Trades: {perf.get('total_trades', 0)}")
+            logger.info(f"  Win Rate: {perf.get('win_rate', 0)}%")
+            logger.info(f"  Total P&L: ${perf.get('total_pnl', 0):,.2f}")
+            logger.info(f"{'=' * 80}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"{'=' * 80}")
 
     def scheduled_prometheus_daily_logic(self):
         """
@@ -4266,6 +4349,40 @@ class AutonomousTraderScheduler:
             logger.info("✅ HERACLES EOD job scheduled (4:00 PM CT daily)")
         else:
             logger.warning("⚠️ HERACLES not available - MES futures trading disabled")
+
+        # =================================================================
+        # AGAPE JOB: ETH Micro Futures - runs every 5 minutes
+        # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
+        # Uses Deribit GEX as primary signal source
+        # =================================================================
+        if self.agape_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_trading',
+                name='AGAPE - ETH Micro Futures (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE job scheduled (every 5 min, checks CME crypto hours internally)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_eod',
+                name='AGAPE - Force Close Before CME Maintenance',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE not available - ETH crypto trading disabled")
 
         # =================================================================
         # PROMETHEUS JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT

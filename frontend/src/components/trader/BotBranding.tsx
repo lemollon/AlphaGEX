@@ -379,35 +379,35 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     fullName: `${BOT_DISPLAY_NAMES.AGAPE} ETH Micro Futures`,
     description: 'ETH Micro Futures with Crypto Microstructure Signals',
     strategy: 'Crypto GEX-Equivalent Directional Trading',
-    // Primary - Violet/Purple (royalty, devotion, love)
-    primaryColor: 'violet',
-    primaryBg: 'bg-violet-600',
-    primaryBorder: 'border-violet-500',
-    primaryText: 'text-violet-400',
+    // Primary - Fuchsia/Pink (devotion, unconditional love)
+    primaryColor: 'fuchsia',
+    primaryBg: 'bg-fuchsia-600',
+    primaryBorder: 'border-fuchsia-500',
+    primaryText: 'text-fuchsia-400',
     // Light variants
-    lightBg: 'bg-violet-900/20',
-    lightText: 'text-violet-300',
-    lightBorder: 'border-violet-700/50',
+    lightBg: 'bg-fuchsia-900/20',
+    lightText: 'text-fuchsia-300',
+    lightBorder: 'border-fuchsia-700/50',
     // Chart colors
-    chartLine: 'stroke-violet-400',
-    chartFill: 'fill-violet-500/20',
-    chartPositive: 'text-violet-400',
-    chartNegative: 'text-violet-600',
+    chartLine: 'stroke-fuchsia-400',
+    chartFill: 'fill-fuchsia-500/20',
+    chartPositive: 'text-fuchsia-400',
+    chartNegative: 'text-fuchsia-600',
     // Position cards
-    positionBorder: 'border-violet-600/50',
-    positionBg: 'bg-violet-950/30',
-    positionAccent: 'bg-violet-500',
+    positionBorder: 'border-fuchsia-600/50',
+    positionBg: 'bg-fuchsia-950/30',
+    positionAccent: 'bg-fuchsia-500',
     // Badges
-    badgeBg: 'bg-violet-900/50',
-    badgeText: 'text-violet-300',
+    badgeBg: 'bg-fuchsia-900/50',
+    badgeText: 'text-fuchsia-300',
     // Gradient
     icon: TrendingUp,
-    gradientFrom: 'from-violet-500',
-    gradientTo: 'to-violet-900',
+    gradientFrom: 'from-fuchsia-500',
+    gradientTo: 'to-fuchsia-900',
     // Hex for Recharts
-    hexPrimary: '#8B5CF6',
-    hexLight: '#A78BFA',
-    hexDark: '#7C3AED',
+    hexPrimary: '#D946EF',
+    hexLight: '#E879F9',
+    hexDark: '#C026D3',
   },
 }
 
