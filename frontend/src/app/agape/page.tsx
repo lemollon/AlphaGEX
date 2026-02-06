@@ -9,10 +9,7 @@ import {
   Clock,
   Activity,
   Eye,
-  AlertTriangle,
   CheckCircle,
-  XCircle,
-  RefreshCw,
 } from 'lucide-react'
 import {
   LineChart,
@@ -30,13 +27,10 @@ import {
   BotPageHeader,
   StatCard,
   LoadingState,
-  BOT_BRANDS,
 } from '@/components/trader'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const fetcher = (url: string) => fetch(`${API_BASE}${url}`).then(r => r.json())
-
-const brand = BOT_BRANDS.AGAPE
 
 const TABS = [
   { id: 'overview', label: 'Overview' },
@@ -94,9 +88,7 @@ export default function AgapePage() {
         {/* Header */}
         <BotPageHeader
           botName="AGAPE"
-          brand={brand}
-          status={status?.status === 'ACTIVE' ? 'active' : 'paused'}
-          mode={status?.mode || 'paper'}
+          isActive={status?.status === 'ACTIVE'}
         />
 
         {/* Top Stats */}
@@ -105,39 +97,37 @@ export default function AgapePage() {
             label="ETH Price"
             value={status?.current_eth_price ? `$${status.current_eth_price.toFixed(2)}` : '---'}
             icon={<DollarSign className="w-4 h-4" />}
-            brand={brand}
+            color="blue"
           />
           <StatCard
             label="Open Positions"
             value={`${status?.open_positions || 0} / ${status?.max_positions || 2}`}
             icon={<Activity className="w-4 h-4" />}
-            brand={brand}
+            color="blue"
           />
           <StatCard
             label="Unrealized P&L"
             value={status?.total_unrealized_pnl != null ? `$${status.total_unrealized_pnl.toFixed(2)}` : '$0.00'}
             icon={status?.total_unrealized_pnl >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-            brand={brand}
-            valueColor={status?.total_unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}
+            color={(status?.total_unrealized_pnl || 0) >= 0 ? 'green' : 'red'}
           />
           <StatCard
             label="Total P&L"
             value={perf?.total_pnl != null ? `$${perf.total_pnl.toFixed(2)}` : '$0.00'}
             icon={<DollarSign className="w-4 h-4" />}
-            brand={brand}
-            valueColor={perf?.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}
+            color={(perf?.total_pnl || 0) >= 0 ? 'green' : 'red'}
           />
           <StatCard
             label="Win Rate"
             value={perf?.win_rate != null ? `${perf.win_rate}%` : '---'}
             icon={<CheckCircle className="w-4 h-4" />}
-            brand={brand}
+            color={(perf?.win_rate || 0) >= 60 ? 'green' : (perf?.win_rate || 0) >= 50 ? 'yellow' : 'gray'}
           />
           <StatCard
             label="Trades"
             value={`${perf?.total_trades || 0}`}
             icon={<Clock className="w-4 h-4" />}
-            brand={brand}
+            color="blue"
           />
         </div>
 
@@ -149,7 +139,7 @@ export default function AgapePage() {
               onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
                 activeTab === tab.id
-                  ? `${brand.primaryBg} text-white`
+                  ? 'bg-violet-600 text-white'
                   : 'text-text-secondary hover:text-text-primary hover:bg-background-hover'
               }`}
             >
