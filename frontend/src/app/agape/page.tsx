@@ -146,7 +146,7 @@ export default function AgapePage() {
                   </div>
                   <div>
                     <span className="text-gray-500">Max Positions:</span>
-                    <span className={`${brand.primaryText} ml-2`}>{status?.max_positions || 20}</span>
+                    <span className={`${brand.primaryText} ml-2`}>Unlimited</span>
                   </div>
                 </div>
               </div>
@@ -166,7 +166,7 @@ export default function AgapePage() {
             />
             <StatCard
               label="Open Positions"
-              value={`${status?.open_positions || 0} / ${status?.max_positions || 20}`}
+              value={`${status?.open_positions || 0}`}
               icon={<Activity className="w-4 h-4" />}
               color="blue"
             />
