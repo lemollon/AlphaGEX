@@ -1031,6 +1031,8 @@ export const apiClient = {
     api.get('/api/argus/gex-analysis', { params: { symbol, expiration } }),
   getArgusFlowDiagnostics: (symbol?: string, expiration?: string) =>
     api.get('/api/argus/flow-diagnostics', { params: { symbol, expiration } }),
+  getArgusSymbolExpirations: (symbol?: string) =>
+    api.get('/api/argus/symbol-expirations', { params: { symbol } }),
 
   // HYPERION - Weekly Gamma visualization for stocks/ETFs (Enhanced)
   getHyperionGamma: (symbol?: string, expiration?: string) =>

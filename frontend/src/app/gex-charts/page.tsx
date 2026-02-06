@@ -8,6 +8,7 @@
  * - Options Flow Diagnostics (6 cards)
  * - Skew Measures panel
  * - GEX by Strike charts
+ * - Symbol-aware expiration selection (0DTE for SPY, weekly/OPEX for others)
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -27,7 +28,9 @@ import {
   Target,
   Percent,
   DollarSign,
-  Clock
+  Clock,
+  Calendar,
+  ChevronDown
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -130,8 +133,32 @@ interface GexAnalysisData {
   }
 }
 
+interface ExpirationInfo {
+  date: string
+  dte: number
+  day: string
+  category: string
+  is_opex: boolean
+  is_today: boolean
+}
+
+interface SymbolExpirations {
+  symbol: string
+  expiration_type: string
+  nearest: ExpirationInfo | null
+  next_opex: string | null
+  weekly: string[]
+  monthly_opex: string[]
+  all_expirations: ExpirationInfo[]
+  total_available: number
+  pattern_detection?: {
+    method: string
+    description: string
+  }
+}
+
 // Common symbols for quick selection
-const COMMON_SYMBOLS = ['SPY', 'SPX', 'QQQ', 'IWM', 'DIA', 'GLD', 'SLV', 'TLT', 'AAPL', 'TSLA', 'NVDA', 'AMD', 'META', 'AMZN', 'GOOGL', 'MSFT']
+const COMMON_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'USO', 'TLT', 'DIA', 'AAPL', 'TSLA', 'NVDA', 'AMD']
 
 export default function GexChartsPage() {
   const paddingClass = useSidebarPadding()
@@ -143,12 +170,36 @@ export default function GexChartsPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
 
-  const fetchData = useCallback(async (sym: string) => {
+  // Expiration state
+  const [expirations, setExpirations] = useState<SymbolExpirations | null>(null)
+  const [selectedExpiration, setSelectedExpiration] = useState<string | null>(null)
+  const [expirationMode, setExpirationMode] = useState<'nearest' | 'opex' | 'custom'>('nearest')
+  const [showExpirationDropdown, setShowExpirationDropdown] = useState(false)
+
+  // Fetch available expirations for symbol
+  const fetchExpirations = useCallback(async (sym: string) => {
+    try {
+      const response = await apiClient.getArgusSymbolExpirations(sym)
+      if (response.data?.success && response.data?.data) {
+        setExpirations(response.data.data)
+        // Auto-select nearest expiration
+        if (response.data.data.nearest) {
+          setSelectedExpiration(response.data.data.nearest.date)
+          setExpirationMode('nearest')
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching expirations:', err)
+    }
+  }, [])
+
+  // Fetch GEX data
+  const fetchData = useCallback(async (sym: string, exp?: string | null) => {
     try {
       setLoading(true)
       setError(null)
 
-      const response = await apiClient.getArgusGexAnalysis(sym)
+      const response = await apiClient.getArgusGexAnalysis(sym, exp || undefined)
       const result = response.data
 
       if (result?.success) {
@@ -173,27 +224,49 @@ export default function GexChartsPage() {
     }
   }, [])
 
+  // Fetch expirations when symbol changes
   useEffect(() => {
-    fetchData(symbol)
-  }, [symbol, fetchData])
+    fetchExpirations(symbol)
+  }, [symbol, fetchExpirations])
+
+  // Fetch data when symbol or expiration changes
+  useEffect(() => {
+    if (selectedExpiration) {
+      fetchData(symbol, selectedExpiration)
+    } else {
+      fetchData(symbol)
+    }
+  }, [symbol, selectedExpiration, fetchData])
 
   // Auto-refresh every 30 seconds during market hours
   useEffect(() => {
     if (!autoRefresh) return
 
     const interval = setInterval(() => {
-      fetchData(symbol)
+      fetchData(symbol, selectedExpiration)
     }, 30000)
 
     return () => clearInterval(interval)
-  }, [symbol, autoRefresh, fetchData])
+  }, [symbol, selectedExpiration, autoRefresh, fetchData])
+
+  const handleSymbolChange = (newSymbol: string) => {
+    setSymbol(newSymbol)
+    setSelectedExpiration(null)
+    setExpirationMode('nearest')
+  }
 
   const handleSymbolSearch = () => {
     const sym = searchInput.toUpperCase().trim()
     if (sym) {
-      setSymbol(sym)
+      handleSymbolChange(sym)
       setSearchInput('')
     }
+  }
+
+  const handleExpirationSelect = (exp: string, mode: 'nearest' | 'opex' | 'custom') => {
+    setSelectedExpiration(exp)
+    setExpirationMode(mode)
+    setShowExpirationDropdown(false)
   }
 
   const formatNumber = (num: number, decimals: number = 2) => {
@@ -219,19 +292,18 @@ export default function GexChartsPage() {
     }
   }
 
-  // Determine card color based on the metric
   const getCardColor = (card: DiagnosticCard) => {
-    // Cards that indicate bullish sentiment
     if (card.id === 'volume_pressure' && card.raw_value > 0.1) return 'border-cyan-500/50 bg-cyan-500/5'
     if (card.id === 'call_share' && card.raw_value > 55) return 'border-cyan-500/50 bg-cyan-500/5'
     if (card.id === 'short_dte_share' && card.raw_value > 50) return 'border-cyan-500/50 bg-cyan-500/5'
-
-    // Cards that indicate bearish/caution
     if (card.id === 'volume_pressure' && card.raw_value < -0.1) return 'border-red-500/50 bg-red-500/5'
     if (card.id === 'lotto_turnover' && card.raw_value > 0.3) return 'border-yellow-500/50 bg-yellow-500/5'
-
-    // Default neutral
     return 'border-gray-700 bg-gray-800/50'
+  }
+
+  const formatExpDate = (dateStr: string) => {
+    const date = new Date(dateStr + 'T12:00:00')
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
 
   return (
@@ -239,79 +311,206 @@ export default function GexChartsPage() {
       <Navigation />
 
       <main className="max-w-[1800px] mx-auto px-4 py-6">
-        {/* Header with Symbol Search */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <div className="flex items-center gap-4">
-            {/* Symbol Input */}
-            <div className="flex items-center gap-2 bg-gray-800 rounded-lg p-2">
-              <Search className="w-5 h-5 text-gray-400" />
+        {/* Page Title */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <BarChart3 className="w-7 h-7 text-cyan-400" />
+            GEX Charts
+            <span className="text-sm font-normal text-gray-400">Trading Volatility Style</span>
+          </h1>
+          <p className="text-gray-500 text-sm mt-1">
+            Options flow diagnostics, skew measures, and gamma exposure by strike
+          </p>
+        </div>
+
+        {/* Controls Bar */}
+        <div className="bg-gray-800/50 backdrop-blur rounded-xl border border-gray-700 p-4 mb-6">
+          <div className="flex flex-wrap items-center gap-4">
+            {/* Symbol Search */}
+            <div className="flex items-center gap-2 bg-gray-900 rounded-lg px-3 py-2 border border-gray-700">
+              <Search className="w-4 h-4 text-gray-400" />
               <input
                 type="text"
                 value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
+                onChange={(e) => setSearchInput(e.target.value.toUpperCase())}
                 onKeyDown={(e) => e.key === 'Enter' && handleSymbolSearch()}
-                placeholder="Enter Ticker"
-                className="bg-transparent text-white text-lg w-32 outline-none"
+                placeholder="Enter symbol..."
+                className="bg-transparent text-white text-sm w-28 outline-none placeholder-gray-500"
               />
               <button
                 onClick={handleSymbolSearch}
-                className="p-1 hover:bg-gray-700 rounded"
+                className="text-cyan-400 hover:text-cyan-300"
               >
                 <ArrowUpRight className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Current Symbol Display */}
-            <div className="flex items-center gap-3">
-              <span className="text-3xl font-bold text-white">{symbol}</span>
+            {/* Current Symbol */}
+            <div className="flex items-center gap-2">
+              <span className="text-2xl font-bold text-white">{symbol}</span>
               <a
                 href={`https://tradingview.com/symbols/${symbol}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-gray-400 hover:text-cyan-400 transition-colors"
+                className="text-gray-400 hover:text-cyan-400"
               >
-                <ArrowUpRight className="w-5 h-5" />
+                <ArrowUpRight className="w-4 h-4" />
               </a>
             </div>
-          </div>
 
-          {/* Quick Symbol Buttons */}
-          <div className="flex flex-wrap gap-2">
-            {COMMON_SYMBOLS.slice(0, 8).map(sym => (
+            {/* Quick Symbol Buttons */}
+            <div className="flex flex-wrap gap-1.5">
+              {COMMON_SYMBOLS.map(sym => (
+                <button
+                  key={sym}
+                  onClick={() => handleSymbolChange(sym)}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    symbol === sym
+                      ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50'
+                      : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 border border-transparent'
+                  }`}
+                >
+                  {sym}
+                </button>
+              ))}
+            </div>
+
+            {/* Spacer */}
+            <div className="flex-1" />
+
+            {/* Expiration Selector */}
+            <div className="relative">
               <button
-                key={sym}
-                onClick={() => setSymbol(sym)}
-                className={`px-3 py-1 rounded text-sm transition-colors ${
-                  symbol === sym
-                    ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/50'
-                    : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-                }`}
+                onClick={() => setShowExpirationDropdown(!showExpirationDropdown)}
+                className="flex items-center gap-2 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm hover:border-cyan-500/50 transition-colors"
               >
-                {sym}
+                <Calendar className="w-4 h-4 text-cyan-400" />
+                <span className="text-white">
+                  {selectedExpiration ? (
+                    <>
+                      {formatExpDate(selectedExpiration)}
+                      {expirations?.nearest?.date === selectedExpiration && (
+                        <span className="ml-1 text-xs text-cyan-400">(Nearest)</span>
+                      )}
+                      {expirations?.next_opex === selectedExpiration && (
+                        <span className="ml-1 text-xs text-yellow-400">(OPEX)</span>
+                      )}
+                    </>
+                  ) : 'Select Expiration'}
+                </span>
+                <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${showExpirationDropdown ? 'rotate-180' : ''}`} />
               </button>
-            ))}
-          </div>
 
-          {/* Controls */}
-          <div className="flex items-center gap-3">
+              {/* Expiration Dropdown */}
+              {showExpirationDropdown && expirations && (
+                <div className="absolute top-full left-0 mt-1 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                  {/* Nearest Expiration */}
+                  {expirations.nearest && (
+                    <div className="p-2 border-b border-gray-700">
+                      <div className="text-xs text-gray-500 uppercase mb-1 px-2">Nearest</div>
+                      <button
+                        onClick={() => handleExpirationSelect(expirations.nearest!.date, 'nearest')}
+                        className={`w-full text-left px-3 py-2 rounded text-sm flex items-center justify-between hover:bg-gray-800 ${
+                          selectedExpiration === expirations.nearest.date ? 'bg-cyan-500/10 text-cyan-400' : 'text-white'
+                        }`}
+                      >
+                        <span>{formatExpDate(expirations.nearest.date)} ({expirations.nearest.day})</span>
+                        <span className="text-xs text-gray-500">{expirations.nearest.dte}DTE</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* OPEX */}
+                  {expirations.next_opex && (
+                    <div className="p-2 border-b border-gray-700">
+                      <div className="text-xs text-gray-500 uppercase mb-1 px-2">Monthly OPEX</div>
+                      <button
+                        onClick={() => handleExpirationSelect(expirations.next_opex!, 'opex')}
+                        className={`w-full text-left px-3 py-2 rounded text-sm flex items-center justify-between hover:bg-gray-800 ${
+                          selectedExpiration === expirations.next_opex ? 'bg-yellow-500/10 text-yellow-400' : 'text-white'
+                        }`}
+                      >
+                        <span>{formatExpDate(expirations.next_opex)} (3rd Fri)</span>
+                        <span className="text-xs text-yellow-400">OPEX</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Weekly Expirations */}
+                  {expirations.weekly.length > 0 && (
+                    <div className="p-2 max-h-48 overflow-y-auto">
+                      <div className="text-xs text-gray-500 uppercase mb-1 px-2">
+                        {expirations.expiration_type === 'daily' ? 'Daily (0DTE)' :
+                         expirations.expiration_type === 'triple_weekly' ? 'Weekly (Mon/Wed/Fri)' : 'Weekly'}
+                      </div>
+                      {expirations.weekly.slice(0, 8).map(exp => {
+                        const expInfo = expirations.all_expirations.find(e => e.date === exp)
+                        return (
+                          <button
+                            key={exp}
+                            onClick={() => handleExpirationSelect(exp, 'custom')}
+                            className={`w-full text-left px-3 py-1.5 rounded text-sm flex items-center justify-between hover:bg-gray-800 ${
+                              selectedExpiration === exp ? 'bg-cyan-500/10 text-cyan-400' : 'text-gray-300'
+                            }`}
+                          >
+                            <span>{formatExpDate(exp)} ({expInfo?.day || ''})</span>
+                            <span className="text-xs text-gray-500">{expInfo?.dte || 0}DTE</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {/* Symbol Type Info - Dynamically detected */}
+                  <div className="p-2 bg-gray-800/50 border-t border-gray-700">
+                    <div className="text-xs text-gray-500">
+                      📅 {expirations.pattern_detection?.description || (
+                        expirations.expiration_type === 'daily' ? 'Expirations on all/most weekdays (0DTE)' :
+                        expirations.expiration_type === 'triple_weekly' ? 'Mon/Wed/Fri expirations' :
+                        expirations.expiration_type === 'weekly' ? 'Friday expirations' :
+                        'Monthly OPEX only'
+                      )}
+                      <span className="ml-1 text-gray-600">(auto-detected)</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Auto Refresh Toggle */}
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm ${
-                autoRefresh ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400'
+              className={`flex items-center gap-2 px-3 py-2 rounded text-sm ${
+                autoRefresh ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700'
               }`}
             >
               <Clock className="w-4 h-4" />
-              {autoRefresh ? 'Auto' : 'Manual'}
+              {autoRefresh ? 'Auto 30s' : 'Manual'}
             </button>
+
+            {/* Refresh Button */}
             <button
-              onClick={() => fetchData(symbol)}
+              onClick={() => fetchData(symbol, selectedExpiration)}
               disabled={loading}
-              className="flex items-center gap-2 px-3 py-1.5 rounded bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors"
+              className="flex items-center gap-2 px-3 py-2 rounded bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors border border-cyan-500/30"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </button>
           </div>
+
+          {/* Last Updated & Expiration Info */}
+          {lastUpdated && (
+            <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
+              <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
+              {data?.expiration && (
+                <span className="text-cyan-400">Viewing: {data.expiration}</span>
+              )}
+              {expirations && (
+                <span>({expirations.total_available} expirations available)</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Error State */}
@@ -332,7 +531,7 @@ export default function GexChartsPage() {
         {/* Main Content */}
         {data && (
           <>
-            {/* Header Metrics Bar (like Trading Volatility) */}
+            {/* Header Metrics Bar */}
             <div className="bg-gray-800/50 backdrop-blur rounded-xl border border-gray-700 p-4 mb-6">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 {/* Left metrics */}
@@ -374,13 +573,6 @@ export default function GexChartsPage() {
                   </div>
                 </div>
               </div>
-
-              {/* Last Updated */}
-              {lastUpdated && (
-                <div className="text-xs text-gray-500 mt-2">
-                  As of {lastUpdated.toLocaleTimeString()} CT | {data.expiration}
-                </div>
-              )}
             </div>
 
             {/* Main Grid */}
@@ -420,7 +612,6 @@ export default function GexChartsPage() {
                     {symbol} Net GEX for {data.expiration} Expiration, by Strike
                   </h3>
 
-                  {/* Market Closed Warning */}
                   {data.gex_chart.strikes.length === 0 ? (
                     <div className="text-center py-8 text-yellow-400">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2" />
@@ -428,7 +619,7 @@ export default function GexChartsPage() {
                     </div>
                   ) : (
                     <>
-                      {/* Horizontal Bar Chart (like Trading Volatility) */}
+                      {/* Horizontal Bar Chart */}
                       <div className="h-[500px]">
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart
@@ -456,7 +647,6 @@ export default function GexChartsPage() {
                               formatter={(value: number) => [formatNumber(value, 4), 'Net Gamma']}
                               labelFormatter={(label) => `Strike: ${label}`}
                             />
-                            {/* Reference lines */}
                             {data.levels.gex_flip && (
                               <ReferenceLine
                                 y={data.levels.gex_flip}
@@ -526,8 +716,8 @@ export default function GexChartsPage() {
                       <div className="text-2xl font-bold text-white">{data.skew_measures.skew_ratio.toFixed(3)}</div>
                       <div className="text-xs text-gray-400 mt-1">
                         {data.skew_measures.skew_ratio > 1
-                          ? '25-delta risk reversal (put IV + call IV). Values above 1 indicate stronger downside hedging demand; below 1 implies call-side skew.'
-                          : 'Values below 1 indicate call-side skew (bullish sentiment).'}
+                          ? '25-delta risk reversal. Values >1 = downside hedging demand.'
+                          : 'Values <1 = call-side skew (bullish).'}
                       </div>
                     </div>
 
@@ -535,7 +725,7 @@ export default function GexChartsPage() {
                       <div className="text-xs text-gray-500 uppercase">Call Skew</div>
                       <div className="text-2xl font-bold text-white">{data.skew_measures.call_skew.toFixed(2)}</div>
                       <div className="text-xs text-gray-400 mt-1">
-                        Difference in delta between out-of-the-money calls and puts at +/- 1STD. Positive values indicate call-side demand.
+                        OTM call/put delta diff at ±1STD. Positive = call demand.
                       </div>
                     </div>
                   </div>
@@ -676,6 +866,14 @@ export default function GexChartsPage() {
           </>
         )}
       </main>
+
+      {/* Click outside to close dropdown */}
+      {showExpirationDropdown && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setShowExpirationDropdown(false)}
+        />
+      )}
     </div>
   )
 }
