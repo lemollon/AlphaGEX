@@ -79,6 +79,7 @@ from backend.api.routes import (
     prometheus_box_routes,  # PROMETHEUS Box Spread - Synthetic Borrowing for IC Volume Scaling
     tastytrade_routes,  # Tastytrade API - HERACLES futures bot integration
     heracles_routes,  # HERACLES - MES Futures Scalping Bot using GEX signals
+    agape_routes,  # AGAPE - ETH Micro Futures (/MET) bot using crypto microstructure signals
 )
 
 # ============================================================================
@@ -330,7 +331,8 @@ app.include_router(bot_reports_routes.router)
 app.include_router(prometheus_box_routes.router)
 app.include_router(tastytrade_routes.router)
 app.include_router(heracles_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer, validation, drift, bot-reports, tastytrade, heracles")
+app.include_router(agape_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer, validation, drift, bot-reports, tastytrade, heracles, agape")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded
