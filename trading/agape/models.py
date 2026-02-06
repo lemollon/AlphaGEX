@@ -77,7 +77,7 @@ class AgapeConfig:
     # Let winners run, only trail after profitable
     use_no_loss_trailing: bool = True
     no_loss_activation_pct: float = 1.0   # % profit before trailing activates
-    no_loss_trail_distance_pct: float = 0.5  # % behind price to trail (MUST be < activation_pct)
+    no_loss_trail_distance_pct: float = 0.75  # % behind best price (< activation_pct to lock in profit)
     no_loss_emergency_stop_pct: float = 5.0  # Emergency stop for catastrophic moves
     max_unrealized_loss_pct: float = 3.0     # Exit if down 3% (safety net)
     no_loss_profit_target_pct: float = 0.0   # 0 = disabled, let winners run
