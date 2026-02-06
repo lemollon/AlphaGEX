@@ -1452,32 +1452,20 @@ class PrometheusICSignalGenerator:
         oracle_confidence = oracle.get('confidence', 0)
         oracle_win_prob = oracle.get('win_probability', 0)
 
-        # Check Oracle approval if required
+        # Log Oracle advice (informational - PEGASUS style)
+        logger.info(f"PROMETHEUS IC Oracle: advice={oracle_advice}, confidence={oracle_confidence:.0%}, win_prob={oracle_win_prob:.0%}")
+
+        # Check Oracle thresholds if required
+        # NOTE: Like PEGASUS, we only check win_probability threshold, NOT the advice string
+        # Oracle advice string (TRADE_FULL/SKIP_TODAY) is informational only
         if self.config.require_oracle_approval:
-            oracle_approved = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
-
-            if not oracle_approved:
-                skip_reason = f"Oracle says {oracle_advice} (confidence: {oracle_confidence:.0%})"
-                logger.info(f"PROMETHEUS IC: {skip_reason}")
-                return self._create_skip_signal(
-                    now, source_box_position_id, market, skip_reason, oracle
-                )
-
-            if oracle_confidence < self.config.min_oracle_confidence:
-                skip_reason = f"Oracle confidence {oracle_confidence:.0%} below min {self.config.min_oracle_confidence:.0%}"
-                logger.info(f"PROMETHEUS IC: {skip_reason}")
-                return self._create_skip_signal(
-                    now, source_box_position_id, market, skip_reason, oracle
-                )
-
+            # Only check win probability - this is how PEGASUS works
             if oracle_win_prob < self.config.min_win_probability:
                 skip_reason = f"Win probability {oracle_win_prob:.0%} below min {self.config.min_win_probability:.0%}"
                 logger.info(f"PROMETHEUS IC: {skip_reason}")
                 return self._create_skip_signal(
                     now, source_box_position_id, market, skip_reason, oracle
                 )
-        else:
-            oracle_approved = True
 
         # Calculate strikes
         strikes = self.calculate_strikes(
