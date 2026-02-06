@@ -120,7 +120,7 @@ export default function AgapePage() {
             lastHeartbeat={status?.heartbeat?.last_scan_iso || status?.last_scan_iso || undefined}
             onRefresh={handleRefresh}
             isRefreshing={statusLoading}
-            scanIntervalMinutes={status?.cooldown_minutes || 5}
+            scanIntervalMinutes={5}
           />
 
           {/* Aggressive Mode Banner - Uses brand colors */}
@@ -144,7 +144,7 @@ export default function AgapePage() {
                   </div>
                   <div>
                     <span className="text-gray-500">Cooldown:</span>
-                    <span className={`${brand.primaryText} ml-2`}>{status?.cooldown_minutes || 5}m</span>
+                    <span className={`${brand.primaryText} ml-2`}>None</span>
                   </div>
                   <div>
                     <span className="text-gray-500">Max Positions:</span>
