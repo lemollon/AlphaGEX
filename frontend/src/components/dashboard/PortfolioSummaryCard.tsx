@@ -47,6 +47,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   ATLAS: 100000,
   PROMETHEUS: 500000,
   HERACLES: 100000,
+  AGAPE: 5000,
 }
 
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
