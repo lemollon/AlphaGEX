@@ -43,8 +43,10 @@ except ImportError as e:
     logger.warning(f"AGAPE Signals: CryptoDataProvider not available: {e}")
 
 OracleAdvisor = None
+MarketContext = None
+GEXRegime = None
 try:
-    from quant.oracle_advisor import OracleAdvisor
+    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
     logger.info("AGAPE Signals: OracleAdvisor loaded")
 except ImportError as e:
     logger.warning(f"AGAPE Signals: OracleAdvisor not available: {e}")
@@ -142,29 +144,42 @@ class AgapeSignalGenerator:
             }
 
         try:
-            # Map crypto data to Oracle's expected format
-            oracle_input = {
-                "symbol": market_data.get("symbol", "ETH"),
-                "spot_price": market_data["spot_price"],
-                "vix": self._funding_to_vix_proxy(market_data.get("funding_rate", 0)),
-                "gex_regime": market_data.get("crypto_gex_regime", "NEUTRAL"),
-                "net_gex": market_data.get("crypto_gex", 0),
-                "flip_point": market_data.get("max_pain", market_data["spot_price"]),
-                # Additional context
-                "funding_rate": market_data.get("funding_rate", 0),
-                "funding_regime": market_data.get("funding_regime", "UNKNOWN"),
-                "ls_ratio": market_data.get("ls_ratio", 1.0),
-                "squeeze_risk": market_data.get("squeeze_risk", "LOW"),
-                "asset_class": "crypto",
-            }
+            # Map crypto data to Oracle's MarketContext dataclass
+            vix_proxy = self._funding_to_vix_proxy(market_data.get("funding_rate", 0))
+            crypto_gex_regime = market_data.get("crypto_gex_regime", "NEUTRAL")
 
-            result = self._oracle.get_recommendation(oracle_input)
-            if result:
+            # Map crypto GEX regime to Oracle's GEXRegime enum
+            gex_regime_map = {
+                "POSITIVE": GEXRegime.POSITIVE,
+                "NEGATIVE": GEXRegime.NEGATIVE,
+                "NEUTRAL": GEXRegime.NEUTRAL,
+            }
+            gex_regime = gex_regime_map.get(crypto_gex_regime, GEXRegime.NEUTRAL)
+
+            context = MarketContext(
+                spot_price=market_data["spot_price"],
+                vix=vix_proxy,
+                gex_net=market_data.get("crypto_gex", 0),
+                gex_regime=gex_regime,
+                gex_flip_point=market_data.get("max_pain", market_data["spot_price"]),
+                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
+            )
+
+            recommendation = self._oracle.get_strategy_recommendation(context)
+            if recommendation:
+                # AGAPE is directional, so high dir_suitability = TRADE
+                advice = "TRADE" if recommendation.dir_suitability >= 0.5 else "SKIP"
                 return {
-                    "advice": result.get("recommendation", "SKIP"),
-                    "win_probability": float(result.get("win_probability", 0.5)),
-                    "confidence": float(result.get("confidence", 0)),
-                    "top_factors": result.get("top_factors", []),
+                    "advice": advice,
+                    "win_probability": recommendation.dir_suitability,
+                    "confidence": recommendation.confidence,
+                    "top_factors": [
+                        f"strategy={recommendation.recommended_strategy.value}",
+                        f"vix_regime={recommendation.vix_regime.value}",
+                        f"gex_regime={recommendation.gex_regime.value}",
+                        f"dir_suitability={recommendation.dir_suitability:.0%}",
+                        f"size_mult={recommendation.size_multiplier}",
+                    ],
                 }
         except Exception as e:
             logger.error(f"AGAPE Signals: Oracle call failed: {e}")
@@ -370,9 +385,10 @@ class AgapeSignalGenerator:
         capital = self.config.starting_capital
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
 
-        # Risk per contract based on stop distance
-        # Default: 2% stop → $0.10 * spot * 0.02 per contract
-        stop_distance = spot_price * (self.config.stop_loss_pct / 100 * 0.02)
+        # Risk per contract based on 2% stop distance (matches _calculate_levels default)
+        # stop_loss_pct=100 means 100% of base 2% stop = 2% of spot
+        base_stop_pct = 0.02  # 2% base stop distance
+        stop_distance = spot_price * base_stop_pct * (self.config.stop_loss_pct / 100)
         risk_per_contract = stop_distance * self.config.contract_size
 
         if risk_per_contract <= 0:
