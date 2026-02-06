@@ -4649,7 +4649,187 @@ async def get_expirations():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== TRADE SETUP DETECTOR ====================
+def get_third_friday(year: int, month: int) -> date:
+    """Get the third Friday of a given month (OPEX day)."""
+    first_day = date(year, month, 1)
+    # Find first Friday
+    days_until_friday = (4 - first_day.weekday()) % 7
+    first_friday = first_day + timedelta(days=days_until_friday)
+    # Add 2 weeks for third Friday
+    return first_friday + timedelta(weeks=2)
+
+
+def detect_expiration_pattern(expirations: list, today: date) -> str:
+    """
+    Dynamically detect the expiration pattern based on actual expirations.
+
+    Returns: 'daily', 'triple_weekly', 'weekly', or 'monthly_only'
+    """
+    if not expirations:
+        return 'weekly'
+
+    # Look at expirations in the next 14 days to detect pattern
+    near_term_days = set()
+    for exp_str in expirations:
+        try:
+            exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+            dte = (exp_date - today).days
+            if 0 <= dte <= 14:  # Next 2 weeks
+                near_term_days.add(exp_date.weekday())  # 0=Mon, 4=Fri
+        except ValueError:
+            continue
+
+    # Check patterns
+    weekdays = {0, 1, 2, 3, 4}  # Mon-Fri
+    triple_weekly = {0, 2, 4}    # Mon, Wed, Fri
+
+    if near_term_days >= weekdays or len(near_term_days) >= 5:
+        return 'daily'  # Has expirations on all/most weekdays
+    elif near_term_days >= triple_weekly or len(near_term_days) >= 3:
+        return 'triple_weekly'  # Mon/Wed/Fri pattern
+    elif 4 in near_term_days:  # Has Fridays
+        return 'weekly'
+    else:
+        return 'monthly_only'
+
+
+@router.get("/symbol-expirations")
+async def get_symbol_expirations(
+    symbol: str = Query("SPY", description="Symbol to get expirations for")
+):
+    """
+    Get available option expirations for any symbol with DYNAMIC pattern detection.
+
+    Automatically detects the expiration pattern based on actual expirations:
+    - daily: Expirations on all/most weekdays (SPY, SPX, QQQ, IWM)
+    - triple_weekly: Mon/Wed/Fri expirations (GLD, SLV, USO, TLT, etc.)
+    - weekly: Friday expirations only
+    - monthly_only: Only monthly OPEX dates
+
+    Returns:
+    - nearest: The closest expiration (0DTE if available)
+    - next_opex: Next monthly options expiration (3rd Friday)
+    - weekly: List of near-term expirations
+    - all_expirations: All categorized expirations
+    """
+    try:
+        # Get Tradier fetcher
+        if not TRADIER_AVAILABLE or TradierDataFetcher is None:
+            raise HTTPException(status_code=503, detail="Tradier data not available")
+
+        import os
+        api_key = os.environ.get('TRADIER_API_KEY')
+        if not api_key:
+            raise HTTPException(status_code=503, detail="Tradier API key not configured")
+
+        fetcher = TradierDataFetcher(api_key=api_key, sandbox=False)
+
+        # Get all expirations from Tradier
+        all_expirations = fetcher.get_option_expirations(symbol.upper())
+
+        if not all_expirations:
+            return {
+                "success": False,
+                "message": f"No expirations found for {symbol}"
+            }
+
+        today = date.today()
+        symbol_upper = symbol.upper()
+
+        # DYNAMICALLY detect expiration pattern from actual data
+        expiration_type = detect_expiration_pattern(all_expirations, today)
+
+        # Categorize expirations
+        nearest = None
+        weekly = []
+        monthly_opex = []
+        categorized = []
+
+        for exp_str in all_expirations:
+            try:
+                exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                if exp_date < today:
+                    continue  # Skip past expirations
+
+                dte = (exp_date - today).days
+                day_of_week = exp_date.weekday()  # 0=Mon, 4=Fri
+
+                # Check if it's OPEX (3rd Friday)
+                is_opex = exp_date == get_third_friday(exp_date.year, exp_date.month)
+
+                # Determine category based on dynamically detected pattern
+                category = 'other'
+                if is_opex:
+                    category = 'monthly'
+                    monthly_opex.append(exp_str)
+                elif expiration_type == 'daily' and day_of_week < 5:
+                    # Daily expirations - any weekday
+                    category = 'daily'
+                    weekly.append(exp_str)
+                elif expiration_type == 'triple_weekly' and day_of_week in [0, 2, 4]:
+                    # Triple weekly - Mon/Wed/Fri
+                    category = 'weekly'
+                    weekly.append(exp_str)
+                elif day_of_week == 4:  # Friday
+                    category = 'weekly'
+                    weekly.append(exp_str)
+                else:
+                    category = 'other'
+
+                exp_info = {
+                    'date': exp_str,
+                    'dte': dte,
+                    'day': ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'][day_of_week],
+                    'category': category,
+                    'is_opex': is_opex,
+                    'is_today': dte == 0
+                }
+
+                categorized.append(exp_info)
+
+                # Track nearest
+                if nearest is None or dte < nearest['dte']:
+                    nearest = exp_info
+
+            except ValueError:
+                continue
+
+        # Sort by date
+        categorized.sort(key=lambda x: x['date'])
+        weekly.sort()
+        monthly_opex.sort()
+
+        # Get next OPEX date
+        next_opex = monthly_opex[0] if monthly_opex else None
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol_upper,
+                "expiration_type": expiration_type,  # Dynamically detected
+                "nearest": nearest,
+                "next_opex": next_opex,
+                "weekly": weekly[:8],  # Limit to next 8 weekly
+                "monthly_opex": monthly_opex[:4],  # Next 4 OPEX dates
+                "all_expirations": categorized[:20],  # All categorized, limited to 20
+                "total_available": len(all_expirations),
+                "pattern_detection": {
+                    "method": "dynamic",
+                    "description": {
+                        "daily": "Expirations on all/most weekdays (0DTE)",
+                        "triple_weekly": "Mon/Wed/Fri expirations",
+                        "weekly": "Friday expirations",
+                        "monthly_only": "Monthly OPEX only"
+                    }.get(expiration_type, "Unknown pattern")
+                }
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting expirations for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/trade-setups")
 async def get_trade_setups(symbol: str = Query(default="SPY")):
