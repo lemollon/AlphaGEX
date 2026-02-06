@@ -27,6 +27,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   ATLAS: 100000,
   PROMETHEUS: 100000,
   HERACLES: 100000,
+  AGAPE: 5000,
 }
 
 // Bot configuration with colors
@@ -88,6 +89,7 @@ export default function MultiBotEquityCurve({
     TITAN: true,
     PROMETHEUS: true,
     HERACLES: true,
+    AGAPE: true,
     PHOENIX: false,
     ATLAS: false,
   })
@@ -141,6 +143,7 @@ export default function MultiBotEquityCurve({
     TITAN: titanData,
     PROMETHEUS: prometheusData,
     HERACLES: heraclesData,
+    AGAPE: undefined,
     PHOENIX: undefined,
     ATLAS: undefined,
   }
@@ -200,6 +203,7 @@ export default function MultiBotEquityCurve({
       TITAN: null,
       PROMETHEUS: null,
       HERACLES: null,
+      AGAPE: null,
       PHOENIX: null,
       ATLAS: null,
     }
