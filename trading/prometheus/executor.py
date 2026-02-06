@@ -1579,7 +1579,13 @@ class PrometheusICExecutor:
                     f"PAPER TRADING with REAL quotes: credit=${real_quotes['total_credit']:.4f}"
                 )
             else:
-                logger.warning(f"Using estimated pricing: {real_quotes.get('error')}")
+                # REQUIRE real quotes - don't execute with bad estimated pricing
+                # Estimated pricing produces ~$0.50 instead of actual ~$2-5 SPX credits
+                logger.error(
+                    f"PROMETHEUS IC: Cannot execute - failed to get real quotes: {real_quotes.get('error')}. "
+                    f"Estimated pricing is unreliable. Skipping signal."
+                )
+                return None
 
         # Calculate totals
         total_credit_received = signal.total_credit * signal.contracts * 100
