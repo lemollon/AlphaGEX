@@ -384,9 +384,13 @@ class SignalGenerator:
         breached ~32% of the time by statistical definition. Now uses 1.2 SD
         for SD-based fallback (20% more cushion).
         """
-        # Use config SD multiplier, but enforce minimum of 1.2 for safety
-        # Backtests show WIDE_STRIKES preset (1.2 SD) has highest win rate
-        sd = max(self.config.sd_multiplier, 1.2)  # FIX: Floor at 1.2 SD for safety
+        # FIX (Feb 2026): Increased minimum from 1.2 to 1.5 SD.
+        # 1.2 SD was too tight - ARES lost $5,850 on Feb 6 with wings at 1.21 SD.
+        # Multiple trades from Jan 29 - Feb 3 had Oracle-suggested strikes at 0.6-0.9 SD
+        # that bypassed the 1.2 SD validation, causing $3,726+ in losses.
+        # 1.5 SD provides 50% more cushion beyond expected move.
+        MIN_SD_FLOOR = 1.5
+        sd = max(self.config.sd_multiplier, MIN_SD_FLOOR)
         width = self.config.spread_width
 
         # Round strikes to nearest $1 for SPY, but AWAY from spot for safety
@@ -404,17 +408,16 @@ class SignalGenerator:
         effective_em = max(expected_move, min_expected_move)
 
         # FIX: Calculate MINIMUM strike distances using SD, NOT percentage!
-        # BUG: Previously used 0.5%-5% percentage validation which could accept
-        # GEX walls at 0.5% (~0.5 SD in low VIX) while SD fallback uses 1.2 SD.
-        # PEGASUS enforces 1 SD minimum - ARES should enforce 1.2 SD minimum.
-        min_sd_for_external = 1.2  # Minimum SD for Oracle/GEX strikes
-        min_put_short = spot_price - (min_sd_for_external * effective_em)  # 1.2 SD below
-        min_call_short = spot_price + (min_sd_for_external * effective_em)  # 1.2 SD above
+        # BUG (Feb 2026): Oracle was suggesting strikes at 0.6-0.9 SD that passed
+        # the old 1.2 SD validation. Now uses MIN_SD_FLOOR for ALL strike sources.
+        min_sd_for_external = MIN_SD_FLOOR  # Minimum SD for Oracle/GEX strikes
+        min_put_short = spot_price - (min_sd_for_external * effective_em)
+        min_call_short = spot_price + (min_sd_for_external * effective_em)
 
-        # Helper to validate strike is at least min SD away from spot
+        # Helper to validate strike is at least MIN_SD_FLOOR away from spot
         def is_valid_sd_distance(put_strike: float, call_strike: float) -> tuple:
             """
-            Validate strikes are at least 1.2 SD from spot.
+            Validate strikes are at least MIN_SD_FLOOR from spot.
             Returns (is_valid, put_sd, call_sd) for logging.
             """
             put_sd = (spot_price - put_strike) / effective_em if effective_em > 0 else 0
@@ -428,7 +431,7 @@ class SignalGenerator:
         put_short = 0
         call_short = 0
 
-        # Priority 1: Oracle suggested strikes (ONLY if >= 1.2 SD away from spot)
+        # Priority 1: Oracle suggested strikes (ONLY if >= MIN_SD_FLOOR away from spot)
         if oracle_put_strike and oracle_call_strike:
             is_valid, put_sd, call_sd = is_valid_sd_distance(oracle_put_strike, oracle_call_strike)
             if is_valid:
@@ -439,7 +442,7 @@ class SignalGenerator:
             else:
                 logger.warning(f"[ARES STRIKES] Oracle strikes TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 2: GEX walls (ONLY if >= 1.2 SD away from spot)
+        # Priority 2: GEX walls (ONLY if >= MIN_SD_FLOOR away from spot)
         if not use_oracle and call_wall > 0 and put_wall > 0:
             is_valid, put_sd, call_sd = is_valid_sd_distance(put_wall, call_wall)
             if is_valid:
@@ -450,11 +453,11 @@ class SignalGenerator:
             else:
                 logger.warning(f"[ARES STRIKES] GEX walls TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 3: SD-based fallback (guaranteed 1.2 SD minimum)
+        # Priority 3: SD-based fallback (guaranteed MIN_SD_FLOOR minimum)
         if not use_oracle and not use_gex:
             # effective_em already calculated above with 0.5% minimum
 
-            # Use 1.2 SD minimum for wider strikes
+            # Use MIN_SD_FLOOR for wider strikes
             put_short = round_put_strike(spot_price - sd * effective_em)
             call_short = round_call_strike(spot_price + sd * effective_em)
 
@@ -467,6 +470,35 @@ class SignalGenerator:
 
             if expected_move < min_expected_move:
                 logger.warning(f"Expected move ${expected_move:.2f} too small, using minimum ${effective_em:.2f}")
+
+        # ============================================================
+        # FINAL SAFETY NET: Validate selected strikes regardless of source
+        # BUG (Feb 2026): Oracle strikes at 0.6-0.9 SD were bypassing the
+        # per-source validation above. This catches ALL tight wings.
+        # ============================================================
+        final_put_sd = (spot_price - put_short) / effective_em if effective_em > 0 else 0
+        final_call_sd = (call_short - spot_price) / effective_em if effective_em > 0 else 0
+
+        if final_put_sd < MIN_SD_FLOOR or final_call_sd < MIN_SD_FLOOR:
+            source_used = 'ORACLE' if use_oracle else ('GEX' if use_gex else 'SD')
+            logger.warning(
+                f"[ARES SAFETY NET] {source_used} strikes TOO TIGHT! "
+                f"Put ${put_short} ({final_put_sd:.2f} SD), Call ${call_short} ({final_call_sd:.2f} SD) "
+                f"- need >= {MIN_SD_FLOOR} SD. Overriding with SD-based fallback."
+            )
+            # Force SD-based fallback
+            put_short = round_put_strike(spot_price - sd * effective_em)
+            call_short = round_call_strike(spot_price + sd * effective_em)
+            use_oracle = False
+            use_gex = False
+
+            # Verify the override is safe
+            override_put_sd = (spot_price - put_short) / effective_em if effective_em > 0 else 0
+            override_call_sd = (call_short - spot_price) / effective_em if effective_em > 0 else 0
+            logger.info(
+                f"[ARES SAFETY NET] Override: Put ${put_short} ({override_put_sd:.2f} SD), "
+                f"Call ${call_short} ({override_call_sd:.2f} SD)"
+            )
 
         # Long strikes are spread_width away from shorts
         put_long = put_short - width
