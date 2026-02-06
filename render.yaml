@@ -13,7 +13,7 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    buildCommand: "chmod +x verify_deployment.sh && ./verify_deployment.sh && pip install --no-cache-dir -r requirements-render.txt"
+    buildCommand: "pip install --upgrade pip setuptools wheel && chmod +x verify_deployment.sh && ./verify_deployment.sh && pip install --no-cache-dir -r requirements-render.txt"
     startCommand: "./start.sh"
     healthCheckPath: /health
     # Zero-downtime deployment settings:
@@ -58,7 +58,7 @@ services:
     branch: main
     autoDeploy: true
     gracePeriodSeconds: 60
-    buildCommand: pip install --no-cache-dir -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install --no-cache-dir -r requirements.txt
     startCommand: cd /opt/render/project/src && PYTHONPATH=/opt/render/project/src python scheduler/trader_scheduler.py
     envVars:
       - key: TZ
@@ -109,7 +109,7 @@ services:
     branch: main
     autoDeploy: true
     gracePeriodSeconds: 45
-    buildCommand: pip install --no-cache-dir -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install --no-cache-dir -r requirements.txt
     startCommand: python data/automated_data_collector.py
     envVars:
       - key: TZ
@@ -140,7 +140,7 @@ services:
     branch: main
     autoDeploy: true
     gracePeriodSeconds: 90
-    buildCommand: pip install --no-cache-dir -r requirements.txt
+    buildCommand: pip install --upgrade pip setuptools wheel && pip install --no-cache-dir -r requirements.txt
     startCommand: python backend/services/backtest_worker.py
     envVars:
       - key: TZ
