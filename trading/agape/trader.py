@@ -142,6 +142,10 @@ class AgapeTrader:
             result["positions_managed"] = managed
             result["positions_closed"] = closed
 
+            # Save equity snapshot EVERY cycle (not just after trades)
+            # This ensures intraday curve always has data
+            self._save_equity_snapshot(market_data)
+
             # If close_only mode, stop here
             if close_only:
                 result["outcome"] = "CLOSE_ONLY"
@@ -193,7 +197,6 @@ class AgapeTrader:
                 result["outcome"] = "EXECUTION_FAILED"
 
             self._log_scan(result, scan_context, signal=signal)
-            self._save_equity_snapshot(market_data)
             return result
 
         except Exception as e:
@@ -750,13 +753,13 @@ class AgapeTrader:
             self.db.save_equity_snapshot(
                 equity=round(equity, 2),
                 unrealized_pnl=round(unrealized, 2),
-                realized_pnl_cumulative=round(realized_cum, 2),
+                realized_cumulative=round(realized_cum, 2),
                 open_positions=len(open_positions),
                 eth_price=current_price,
                 funding_rate=funding_rate,
             )
         except Exception as e:
-            logger.debug(f"AGAPE Trader: Snapshot save failed: {e}")
+            logger.warning(f"AGAPE Trader: Snapshot save failed: {e}")
 
     # ------------------------------------------------------------------
     # Status & Performance (for API routes)
@@ -805,32 +808,55 @@ class AgapeTrader:
         }
 
     def get_performance(self) -> Dict[str, Any]:
-        """Get performance statistics for API."""
+        """Get performance statistics for API.
+
+        Includes both realized P&L (from closed trades) and unrealized P&L
+        (from open positions) so Total P&L reflects reality.
+        """
         closed_trades = self.db.get_closed_trades(limit=1000)
+
+        # Calculate unrealized P&L from open positions
+        open_positions = self.db.get_open_positions()
+        current_price = self.executor.get_current_price()
+        unrealized_pnl = 0.0
+        if current_price and open_positions:
+            for pos in open_positions:
+                direction = 1 if pos["side"] == "long" else -1
+                pnl = (current_price - pos["entry_price"]) * self.config.contract_size * direction * pos.get("contracts", 1)
+                unrealized_pnl += pnl
+
         if not closed_trades:
             return {
                 "total_trades": 0,
-                "win_rate": 0,
-                "total_pnl": 0,
+                "open_positions": len(open_positions),
+                "win_rate": None,
+                "total_pnl": round(unrealized_pnl, 2),
+                "realized_pnl": 0,
+                "unrealized_pnl": round(unrealized_pnl, 2),
                 "avg_win": 0,
                 "avg_loss": 0,
                 "best_trade": 0,
                 "worst_trade": 0,
                 "profit_factor": 0,
+                "return_pct": round(unrealized_pnl / self.config.starting_capital * 100, 2),
             }
 
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0]
         losses = [t for t in closed_trades if (t.get("realized_pnl") or 0) <= 0]
-        total_pnl = sum(t.get("realized_pnl", 0) for t in closed_trades)
+        realized_pnl = sum(t.get("realized_pnl", 0) for t in closed_trades)
+        total_pnl = realized_pnl + unrealized_pnl
         total_wins = sum(t.get("realized_pnl", 0) for t in wins) if wins else 0
         total_losses = abs(sum(t.get("realized_pnl", 0) for t in losses)) if losses else 0
 
         return {
             "total_trades": len(closed_trades),
+            "open_positions": len(open_positions),
             "wins": len(wins),
             "losses": len(losses),
-            "win_rate": round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else 0,
+            "win_rate": round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None,
             "total_pnl": round(total_pnl, 2),
+            "realized_pnl": round(realized_pnl, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
             "avg_win": round(total_wins / len(wins), 2) if wins else 0,
             "avg_loss": round(total_losses / len(losses), 2) if losses else 0,
             "best_trade": max((t.get("realized_pnl", 0) for t in closed_trades), default=0),

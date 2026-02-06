@@ -327,47 +327,231 @@ async def get_equity_curve(
 
 
 @router.get("/equity-curve/intraday")
-async def get_equity_curve_intraday():
-    """Get today's intraday equity snapshots."""
+async def get_equity_curve_intraday(date: Optional[str] = None):
+    """Get today's intraday equity curve matching standard bot format.
+
+    Returns data_points[], snapshots_count, current_equity, day_pnl,
+    starting_equity, high_of_day, low_of_day - same format as ARES/TITAN.
+    """
+    now = datetime.now(CENTRAL_TZ)
+    today = date or now.strftime('%Y-%m-%d')
+    current_time = now.strftime('%H:%M:%S')
+
+    starting_capital = 5000.0
+
     if not get_connection:
-        return {"success": False, "data": [], "message": "Database not available"}
+        return _intraday_fallback(today, now, current_time, starting_capital)
 
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
+
+        # Get starting capital from config
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'agape_starting_capital'")
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get intraday snapshots for the requested date
         cursor.execute("""
             SELECT timestamp, equity, unrealized_pnl,
-                   realized_pnl_cumulative, open_positions, eth_price, funding_rate
+                   realized_pnl_cumulative, open_positions, eth_price
             FROM agape_equity_snapshots
-            WHERE timestamp::date = (NOW() AT TIME ZONE 'America/Chicago')::date
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY timestamp ASC
+        """, (today,))
+        snapshots = cursor.fetchall()
+
+        # Get total realized P&L from all closed positions up to today
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM agape_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
+        """, (today,))
+        total_realized_row = cursor.fetchone()
+        total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
+
+        # Get today's closed positions P&L
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+            FROM agape_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+        """, (today,))
+        today_row = cursor.fetchone()
+        today_realized = float(today_row[0]) if today_row and today_row[0] else 0
+        today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
+
+        # Get today's closed trades with timestamps for accurate intraday cumulative calculation
+        cursor.execute("""
+            SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
+            FROM agape_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            ORDER BY COALESCE(close_time, open_time) ASC
+        """, (today,))
+        today_closes = cursor.fetchall()
+
+        # Calculate unrealized P&L from open positions
+        # AGAPE: P&L = (current - entry) * 0.1 * contracts * direction
+        unrealized_pnl = 0.0
+        open_positions_count = 0
+
+        cursor.execute("""
+            SELECT position_id, side, contracts, entry_price
+            FROM agape_positions
+            WHERE status = 'open'
         """)
-        rows = cursor.fetchall()
-        data = [
-            {
-                "timestamp": row[0].isoformat() if row[0] else None,
-                "equity": float(row[1]),
-                "unrealized_pnl": float(row[2]) if row[2] else 0,
-                "realized_pnl_cumulative": float(row[3]) if row[3] else 0,
-                "open_positions": row[4],
-                "eth_price": float(row[5]) if row[5] else None,
-                "funding_rate": float(row[6]) if row[6] else None,
-            }
-            for row in rows
-        ]
+        open_rows = cursor.fetchall()
+        open_positions_count = len(open_rows)
+
+        if open_rows:
+            # Get current ETH price from latest snapshot or trader
+            current_eth_price = None
+            if snapshots:
+                current_eth_price = float(snapshots[-1][5]) if snapshots[-1][5] else None
+
+            if not current_eth_price:
+                # Try from trader
+                trader = _get_trader()
+                if trader:
+                    try:
+                        current_eth_price = trader.executor.get_current_price()
+                    except Exception:
+                        pass
+
+            if current_eth_price:
+                for pos_row in open_rows:
+                    side = pos_row[1]
+                    contracts = int(pos_row[2])
+                    entry_price = float(pos_row[3])
+                    direction = 1 if side == 'long' else -1
+                    pnl = (current_eth_price - entry_price) * 0.1 * contracts * direction
+                    unrealized_pnl += pnl
+
+        conn.close()
+        conn = None
+
+        # Build intraday data_points (frontend expects this format)
+        data_points = []
+
+        # Add market open point (crypto trades 23h/day but use 00:00 for "day start")
+        prev_day_realized = total_realized - today_realized
+        market_open_equity = round(starting_capital + prev_day_realized, 2)
+        data_points.append({
+            "timestamp": f"{today}T00:00:00",
+            "time": "00:00:00",
+            "equity": market_open_equity,
+            "cumulative_pnl": round(prev_day_realized, 2),
+            "open_positions": 0,
+            "unrealized_pnl": 0
+        })
+
+        all_equities = [market_open_equity]
+
+        # Add snapshots with correct cumulative realized at each timestamp
+        for snapshot in snapshots:
+            ts, balance, snap_unrealized, snap_realized_cum, open_count, eth_price = snapshot
+            snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
+
+            # Calculate cumulative realized at this snapshot's timestamp from actual trades
+            snap_realized_val = prev_day_realized
+            for close_time, close_pnl in today_closes:
+                close_time_ct = close_time.astimezone(CENTRAL_TZ) if close_time and close_time.tzinfo else close_time
+                if close_time_ct and close_time_ct <= snap_time:
+                    snap_realized_val += float(close_pnl or 0)
+
+            snap_unrealized_val = float(snap_unrealized or 0)
+            snap_equity = round(starting_capital + snap_realized_val + snap_unrealized_val, 2)
+            all_equities.append(snap_equity)
+
+            data_points.append({
+                "timestamp": snap_time.isoformat(),
+                "time": snap_time.strftime('%H:%M:%S'),
+                "equity": snap_equity,
+                "cumulative_pnl": round(snap_realized_val + snap_unrealized_val, 2),
+                "open_positions": open_count or 0,
+                "unrealized_pnl": round(snap_unrealized_val, 2)
+            })
+
+        # Add current live point
+        current_equity = starting_capital + total_realized + unrealized_pnl
+        if today == now.strftime('%Y-%m-%d'):
+            total_pnl = total_realized + unrealized_pnl
+            current_equity = starting_capital + total_pnl
+            all_equities.append(round(current_equity, 2))
+
+            data_points.append({
+                "timestamp": now.isoformat(),
+                "time": current_time,
+                "equity": round(current_equity, 2),
+                "cumulative_pnl": round(total_pnl, 2),
+                "open_positions": open_positions_count,
+                "unrealized_pnl": round(unrealized_pnl, 2)
+            })
+
+        high_of_day = max(all_equities) if all_equities else starting_capital
+        low_of_day = min(all_equities) if all_equities else starting_capital
+        day_pnl = today_realized + unrealized_pnl
+
         return {
             "success": True,
-            "data": data,
-            "count": len(data),
-            "fetched_at": _format_ct(),
+            "date": today,
+            "bot": "AGAPE",
+            "data_points": data_points,
+            "current_equity": round(current_equity, 2),
+            "day_pnl": round(day_pnl, 2),
+            "day_realized": round(today_realized, 2),
+            "day_unrealized": round(unrealized_pnl, 2),
+            "starting_equity": market_open_equity,
+            "high_of_day": round(high_of_day, 2),
+            "low_of_day": round(low_of_day, 2),
+            "snapshots_count": len(snapshots),
+            "today_closed_count": today_closed_count,
+            "open_positions_count": open_positions_count
         }
+
     except Exception as e:
         logger.error(f"AGAPE intraday equity error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        return _intraday_fallback(today, now, current_time, starting_capital, str(e))
     finally:
         if conn:
             conn.close()
+
+
+def _intraday_fallback(today, now, current_time, starting_capital, error=None):
+    """Return a valid intraday response even when data is unavailable."""
+    return {
+        "success": error is None,
+        "error": error,
+        "date": today,
+        "bot": "AGAPE",
+        "data_points": [{
+            "timestamp": now.isoformat(),
+            "time": current_time,
+            "equity": starting_capital,
+            "cumulative_pnl": 0,
+            "open_positions": 0,
+            "unrealized_pnl": 0
+        }],
+        "current_equity": starting_capital,
+        "day_pnl": 0,
+        "day_realized": 0,
+        "day_unrealized": 0,
+        "starting_equity": starting_capital,
+        "high_of_day": starting_capital,
+        "low_of_day": starting_capital,
+        "snapshots_count": 0,
+        "today_closed_count": 0,
+        "open_positions_count": 0
+    }
 
 
 # ------------------------------------------------------------------
