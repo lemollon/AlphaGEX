@@ -781,6 +781,17 @@ class AgapeTrader:
         # Direction tracker status
         dt_status = self._direction_tracker.get_status()
 
+        # Calculate cumulative realized P&L from all closed trades
+        closed_trades = self.db.get_closed_trades(limit=10000)
+        realized_pnl = sum(t.get("realized_pnl", 0) for t in closed_trades) if closed_trades else 0.0
+        total_pnl = realized_pnl + total_unrealized
+        current_balance = self.config.starting_capital + total_pnl
+        return_pct = (total_pnl / self.config.starting_capital * 100) if self.config.starting_capital else 0
+
+        # Win rate
+        wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0] if closed_trades else []
+        win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None
+
         return {
             "bot_name": "AGAPE",
             "status": "ACTIVE" if self._enabled else "DISABLED",
@@ -797,6 +808,17 @@ class AgapeTrader:
             "max_contracts": self.config.max_contracts,
             "cooldown_minutes": self.config.cooldown_minutes,
             "require_oracle": self.config.require_oracle_approval,
+            # Paper account summary (matches HERACLES pattern)
+            "paper_account": {
+                "starting_capital": self.config.starting_capital,
+                "current_balance": round(current_balance, 2),
+                "cumulative_pnl": round(total_pnl, 2),
+                "realized_pnl": round(realized_pnl, 2),
+                "unrealized_pnl": round(total_unrealized, 2),
+                "return_pct": round(return_pct, 2),
+                "total_trades": len(closed_trades) if closed_trades else 0,
+                "win_rate": win_rate,
+            },
             "aggressive_features": {
                 "use_no_loss_trailing": self.config.use_no_loss_trailing,
                 "use_sar": self.config.use_sar,
