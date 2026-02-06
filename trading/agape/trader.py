@@ -658,10 +658,7 @@ class AgapeTrader:
         if not self._enabled:
             return "BOT_DISABLED"
 
-        # Check position limits
-        open_count = self.db.get_position_count()
-        if open_count >= self.config.max_open_positions:
-            return f"MAX_POSITIONS_{open_count}"
+        # No position limit - AGAPE can have unlimited concurrent positions
 
         # Check cooldown
         if self.db.has_traded_recently(self.config.cooldown_minutes):
@@ -789,7 +786,7 @@ class AgapeTrader:
             "instrument": self.config.instrument,
             "cycle_count": self._cycle_count,
             "open_positions": len(open_positions),
-            "max_positions": self.config.max_open_positions,
+            "max_positions": None,  # Unlimited
             "current_eth_price": current_price,
             "total_unrealized_pnl": round(total_unrealized, 2),
             "starting_capital": self.config.starting_capital,

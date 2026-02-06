@@ -912,6 +912,44 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+
+  // AGAPE ETH Micro Futures Bot
+  agapeStatus: async () => {
+    const response = await api.get('/api/agape/status')
+    return response.data
+  },
+  agapePositions: async () => {
+    const response = await api.get('/api/agape/positions')
+    return response.data
+  },
+  agapeClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeIntradayEquity: async () => {
+    const response = await api.get('/api/agape/equity-curve/intraday')
+    return response.data
+  },
+  agapePerformance: async () => {
+    const response = await api.get('/api/agape/performance')
+    return response.data
+  },
+  agapeScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeSnapshot: async () => {
+    const response = await api.get('/api/agape/snapshot')
+    return response.data
+  },
+  agapeGexMapping: async () => {
+    const response = await api.get('/api/agape/gex-mapping')
+    return response.data
+  },
 }
 
 // =============================================================================
@@ -1716,6 +1754,82 @@ export function usePROMETHEUSReconciliation(options?: SWRConfiguration) {
   return useSWR('prometheus-reconciliation', fetchers.prometheusReconciliation, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE ETH MICRO FUTURES HOOKS
+// =============================================================================
+
+export function useAGAPEStatus(options?: SWRConfiguration) {
+  return useSWR('agape-status', fetchers.agapeStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEPositions(options?: SWRConfiguration) {
+  return useSWR('agape-positions', fetchers.agapePositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-closed-trades-${limit}`,
+    () => fetchers.agapeClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-equity-curve-${days}`,
+    () => fetchers.agapeEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-intraday-equity', fetchers.agapeIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-performance', fetchers.agapePerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-scan-activity-${limit}`,
+    () => fetchers.agapeScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPESnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-snapshot', fetchers.agapeSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-gex-mapping', fetchers.agapeGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
     ...options,
   })
 }
