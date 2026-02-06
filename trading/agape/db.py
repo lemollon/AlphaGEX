@@ -47,6 +47,24 @@ class AgapeDatabase:
             return None
         return get_connection()
 
+    def _execute(self, sql: str, params=None) -> bool:
+        """Execute a raw SQL statement (used for trailing stop updates)."""
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"AGAPE DB: Execute failed: {e}")
+            conn.rollback()
+            return False
+        finally:
+            cursor.close()
+            conn.close()
+
     def _ensure_tables(self):
         """Create tables if they don't exist."""
         conn = self._get_conn()
@@ -148,6 +166,16 @@ class AgapeDatabase:
                     details JSONB
                 )
             """)
+
+            # Add trailing columns for no-loss trailing strategy
+            for col_sql in [
+                "ALTER TABLE agape_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE agape_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
+            ]:
+                try:
+                    cursor.execute(col_sql)
+                except Exception:
+                    pass
 
             # Indexes
             cursor.execute("""
@@ -342,7 +370,8 @@ class AgapeDatabase:
                        oracle_advice, oracle_win_probability, oracle_confidence,
                        oracle_top_factors,
                        signal_action, signal_confidence, signal_reasoning,
-                       status, open_time, high_water_mark
+                       status, open_time, high_water_mark,
+                       COALESCE(trailing_active, FALSE), current_stop
                 FROM agape_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
@@ -376,6 +405,8 @@ class AgapeDatabase:
                     "status": row[22],
                     "open_time": row[23].isoformat() if row[23] else None,
                     "high_water_mark": float(row[24]) if row[24] else 0,
+                    "trailing_active": bool(row[25]),
+                    "current_stop": float(row[26]) if row[26] else None,
                 })
             return positions
         except Exception as e:

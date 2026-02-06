@@ -37,7 +37,16 @@ class SignalAction(Enum):
 
 @dataclass
 class AgapeConfig:
-    """Configuration for AGAPE bot - loaded from autonomous_config table."""
+    """Configuration for AGAPE bot - loaded from autonomous_config table.
+
+    AGGRESSIVE MODE (matching HERACLES/Valor aggressiveness):
+    - High position limits for frequent trading
+    - Short cooldown to avoid missing opportunities
+    - Low confidence threshold to trade on any signal
+    - Oracle advisory only (not blocking)
+    - No-loss trailing to let winners run
+    - SAR to reverse losing positions
+    """
 
     # Identity
     bot_name: str = "AGAPE"
@@ -51,7 +60,7 @@ class AgapeConfig:
     starting_capital: float = 5000.0   # Small account for micro futures
     risk_per_trade_pct: float = 5.0    # 5% risk per trade ($250 on $5K)
     max_contracts: int = 10
-    max_open_positions: int = 2        # Allow 2 concurrent positions
+    max_open_positions: int = 20       # Aggressive: allow many concurrent positions
 
     # Position sizing
     contract_size: float = 0.1         # /MET = 0.1 ETH
@@ -61,26 +70,50 @@ class AgapeConfig:
     # Entry/exit rules
     profit_target_pct: float = 50.0    # Close at 50% of expected move captured
     stop_loss_pct: float = 100.0       # Stop at 100% of risk (1:1 R:R)
-    trailing_stop_pct: float = 0.0     # 0 = disabled
+    trailing_stop_pct: float = 0.0     # 0 = disabled (use no-loss trailing instead)
     max_hold_hours: int = 24           # Max position duration
+
+    # No-Loss Trailing Strategy (ported from HERACLES)
+    # Let winners run, only trail after profitable
+    use_no_loss_trailing: bool = True
+    no_loss_activation_pct: float = 1.0   # % profit before trailing activates
+    no_loss_trail_distance_pct: float = 1.5  # % behind price to trail
+    no_loss_emergency_stop_pct: float = 5.0  # Emergency stop for catastrophic moves
+    max_unrealized_loss_pct: float = 3.0     # Exit if down 3% (safety net)
+    no_loss_profit_target_pct: float = 0.0   # 0 = disabled, let winners run
+
+    # Stop-and-Reverse (SAR) Strategy (ported from HERACLES)
+    # When a trade is clearly wrong, reverse direction to capture momentum
+    use_sar: bool = True
+    sar_trigger_pct: float = 1.5       # Trigger SAR when down this % from entry
+    sar_mfe_threshold_pct: float = 0.3 # Only reverse if MFE < this % (never profitable)
 
     # Timing (crypto trades 23hrs/day Sun-Fri)
     entry_start: str = "18:00"         # 6 PM CT Sunday open
     entry_end: str = "15:30"           # 3:30 PM CT Friday
     force_exit: str = "15:45"          # Force close before CME close
 
-    # Signal thresholds
-    min_confidence: str = "MEDIUM"     # Minimum combined_confidence to trade
-    min_funding_rate_signal: float = 0.005  # Minimum |funding| for directional
-    min_ls_ratio_extreme: float = 1.3       # L/S ratio to consider extreme
-    min_liquidation_proximity_pct: float = 3.0  # Liquidation cluster distance
+    # Signal thresholds - AGGRESSIVE
+    min_confidence: str = "LOW"        # Trade on any signal (was MEDIUM)
+    min_funding_rate_signal: float = 0.001  # Lower threshold for directional signals
+    min_ls_ratio_extreme: float = 1.1       # Lower extreme threshold
+    min_liquidation_proximity_pct: float = 5.0  # Wider liquidation zone
 
-    # Oracle integration
-    require_oracle_approval: bool = True
-    min_oracle_win_probability: float = 0.45
+    # Oracle integration - ADVISORY ONLY (not blocking)
+    require_oracle_approval: bool = False   # Don't let Oracle block trades
+    min_oracle_win_probability: float = 0.35  # Lower threshold when advisory
 
-    # Cooldown
-    cooldown_minutes: int = 30         # Min time between trades
+    # Cooldown - AGGRESSIVE
+    cooldown_minutes: int = 5          # Short cooldown (was 30)
+
+    # Loss streak protection (from HERACLES)
+    max_consecutive_losses: int = 3    # Pause after 3 losses in a row
+    loss_streak_pause_minutes: int = 5 # How long to pause (minutes)
+
+    # Direction Tracker settings (from HERACLES)
+    direction_cooldown_scans: int = 2      # Pause direction for 2 scans after loss
+    direction_win_streak_caution: int = 100 # Effectively disabled
+    direction_memory_size: int = 10         # Track last 10 trades per direction
 
     @classmethod
     def load_from_db(cls, db) -> "AgapeConfig":
