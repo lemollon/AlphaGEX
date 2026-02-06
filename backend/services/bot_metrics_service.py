@@ -44,6 +44,7 @@ class BotName(Enum):
     TITAN = "TITAN"
     PEGASUS = "PEGASUS"
     HERACLES = "HERACLES"
+    AGAPE = "AGAPE"
 
 
 @dataclass
@@ -162,6 +163,7 @@ class BotMetricsService:
         BotName.TITAN: 200000,
         BotName.PEGASUS: 200000,
         BotName.HERACLES: 100000,  # MES Futures paper trading
+        BotName.AGAPE: 5000,       # ETH Micro Futures paper trading
     }
 
     # Database table mappings
@@ -193,9 +195,15 @@ class BotMetricsService:
         },
         BotName.HERACLES: {
             'positions': 'heracles_positions',
-            'closed_trades': 'heracles_closed_trades',  # HERACLES uses separate closed trades table
+            'closed_trades': 'heracles_closed_trades',
             'snapshots': 'heracles_equity_snapshots',
             'config_key': 'heracles_starting_capital',
+        },
+        BotName.AGAPE: {
+            'positions': 'agape_positions',
+            'closed_trades': 'agape_positions',  # AGAPE uses same table with status filter
+            'snapshots': 'agape_equity_snapshots',
+            'config_key': 'agape_starting_capital',
         },
     }
 

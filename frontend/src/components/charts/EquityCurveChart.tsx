@@ -49,6 +49,13 @@ const getBrandColors = (botFilter?: string) => {
       dark: BOT_BRANDS.TITAN.hexDark,        // Dark violet
     }
   }
+  if (botFilter === 'AGAPE') {
+    return {
+      primary: BOT_BRANDS.AGAPE.hexPrimary, // Fuchsia #D946EF
+      light: BOT_BRANDS.AGAPE.hexLight,      // Light fuchsia
+      dark: BOT_BRANDS.AGAPE.hexDark,        // Dark fuchsia
+    }
+  }
   // Default green/red for combined view
   return {
     primary: '#22C55E',
