@@ -256,49 +256,45 @@ if not config_table_exists:
     print("[WARN] autonomous_config table doesn't exist - creating it")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS autonomous_config (
-            id SERIAL PRIMARY KEY,
-            bot_name VARCHAR(50) NOT NULL,
-            config_key VARCHAR(100) NOT NULL,
-            config_value TEXT,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            UNIQUE(bot_name, config_key)
+            key TEXT PRIMARY KEY NOT NULL,
+            value TEXT NOT NULL
         )
     """)
     conn.commit()
     print("[OK] autonomous_config table created")
 
-# Check if AGAPE config exists
-cursor.execute("SELECT COUNT(*) FROM autonomous_config WHERE bot_name = 'AGAPE'")
+# Check if AGAPE config exists (key/value schema with agape_ prefix)
+cursor.execute("SELECT COUNT(*) FROM autonomous_config WHERE key LIKE 'agape_%'")
 agape_config_count = cursor.fetchone()[0]
 
 if agape_config_count > 0:
     print(f"[OK] AGAPE config already exists ({agape_config_count} keys)")
-    cursor.execute("SELECT config_key, config_value FROM autonomous_config WHERE bot_name = 'AGAPE' ORDER BY config_key")
+    cursor.execute("SELECT key, value FROM autonomous_config WHERE key LIKE 'agape_%' ORDER BY key")
     for row in cursor.fetchall():
         print(f"      {row[0]} = {row[1]}")
 else:
     print("[MISSING] No AGAPE config found - seeding defaults")
     config_defaults = {
-        "starting_capital": "5000.0",
-        "risk_per_trade_pct": "5.0",
-        "max_contracts": "10",
-        "max_open_positions": "2",
-        "cooldown_minutes": "30",
-        "instrument": "/MET",
-        "ticker": "ETH",
-        "mode": "paper",
-        "min_oracle_win_probability": "0.45",
-        "require_oracle_approval": "true",
-        "max_hold_hours": "24",
-        "profit_target_pct": "50.0",
-        "stop_loss_pct": "100.0",
+        "agape_starting_capital": "5000.0",
+        "agape_risk_per_trade_pct": "5.0",
+        "agape_max_contracts": "10",
+        "agape_max_open_positions": "2",
+        "agape_cooldown_minutes": "30",
+        "agape_instrument": "/MET",
+        "agape_ticker": "ETH",
+        "agape_mode": "paper",
+        "agape_min_oracle_win_probability": "0.45",
+        "agape_require_oracle_approval": "true",
+        "agape_max_hold_hours": "24",
+        "agape_profit_target_pct": "50.0",
+        "agape_stop_loss_pct": "100.0",
     }
 
     for key, value in config_defaults.items():
         cursor.execute(
-            """INSERT INTO autonomous_config (bot_name, config_key, config_value)
-               VALUES ('AGAPE', %s, %s)
-               ON CONFLICT (bot_name, config_key) DO UPDATE SET config_value = EXCLUDED.config_value""",
+            """INSERT INTO autonomous_config (key, value)
+               VALUES (%s, %s)
+               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value""",
             (key, value),
         )
     conn.commit()
@@ -389,9 +385,9 @@ for table in REQUIRED_TABLES:
     count = cursor.fetchone()[0]
     print(f"  {table}: {count} rows")
 
-cursor.execute("SELECT COUNT(*) FROM autonomous_config WHERE bot_name = 'AGAPE'")
+cursor.execute("SELECT COUNT(*) FROM autonomous_config WHERE key LIKE 'agape_%'")
 config_count = cursor.fetchone()[0]
-print(f"  autonomous_config (AGAPE): {config_count} keys")
+print(f"  autonomous_config (agape_*): {config_count} keys")
 
 # Check the equity curve would return data
 cursor.execute("""

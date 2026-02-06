@@ -181,19 +181,24 @@ class AgapeDatabase:
     # ------------------------------------------------------------------
 
     def load_config(self) -> Optional[Dict[str, str]]:
-        """Load bot config from autonomous_config table."""
+        """Load bot config from autonomous_config table.
+
+        Uses ICARUS-style key/value schema with 'agape_' prefix:
+          key='agape_starting_capital', value='5000.0'
+        """
         conn = self._get_conn()
         if not conn:
             return None
         try:
             cursor = conn.cursor()
+            prefix = f"{self.bot_name.lower()}_"
             cursor.execute(
-                "SELECT config_key, config_value FROM autonomous_config WHERE bot_name = %s",
-                (self.bot_name,),
+                "SELECT key, value FROM autonomous_config WHERE key LIKE %s",
+                (f"{prefix}%",),
             )
             rows = cursor.fetchall()
             if rows:
-                return {row[0]: row[1] for row in rows}
+                return {row[0].replace(prefix, ""): row[1] for row in rows}
             return None
         except Exception as e:
             logger.debug(f"AGAPE DB: Config load failed (table may not exist): {e}")
