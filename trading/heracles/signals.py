@@ -1005,7 +1005,7 @@ class HERACLESSignalGenerator:
 
         Returns:
             Tuple of (signal, stop_type, stop_points_used)
-            stop_type is 'NO_LOSS_TRAIL', 'NO_LOSS_TRAIL_OVERNIGHT', 'FIXED', 'DYNAMIC', etc.
+            stop_type is 'NO_LOSS_TRAIL', 'NL_OVERNIGHT', 'FIXED', 'DYNAMIC', etc.
             stop_points_used is the actual stop distance in points
         """
         # ================================================================
@@ -1015,7 +1015,7 @@ class HERACLESSignalGenerator:
             # Determine emergency stop based on session (overnight vs RTH)
             if is_overnight and self.config.use_overnight_hybrid:
                 stop_distance = self.config.overnight_emergency_stop  # 10.0 pts for overnight
-                stop_type = 'NO_LOSS_TRAIL_OVERNIGHT'
+                stop_type = 'NL_OVERNIGHT'
                 session_label = "OVERNIGHT"
             else:
                 stop_distance = self.config.no_loss_emergency_stop  # 15.0 pts default

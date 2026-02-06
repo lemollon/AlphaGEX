@@ -407,23 +407,35 @@ class HERACLESDatabase:
                 # Add A/B test columns for dynamic stop tracking
                 c.execute("""
                     ALTER TABLE heracles_closed_trades
-                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(50),
                     ADD COLUMN IF NOT EXISTS stop_points_used DECIMAL(6, 2)
                 """)
 
                 # Add A/B test columns to positions
                 c.execute("""
                     ALTER TABLE heracles_positions
-                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(50),
                     ADD COLUMN IF NOT EXISTS stop_points_used DECIMAL(6, 2)
                 """)
 
                 # Add A/B test columns to scan activity for ML training
                 c.execute("""
                     ALTER TABLE heracles_scan_activity
-                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS stop_type VARCHAR(50),
                     ADD COLUMN IF NOT EXISTS stop_points_used DECIMAL(6, 2)
                 """)
+
+                # FIX: Widen stop_type columns from VARCHAR(20) to VARCHAR(50)
+                # Some migrations created columns with VARCHAR(20) which is too short
+                # for values like 'NO_LOSS_TRAIL_OVERNIGHT' (21 chars)
+                for table in ['heracles_positions', 'heracles_closed_trades', 'heracles_scan_activity']:
+                    try:
+                        c.execute(f"""
+                            ALTER TABLE {table}
+                            ALTER COLUMN stop_type TYPE VARCHAR(50)
+                        """)
+                    except Exception:
+                        pass  # Column might not exist or already be VARCHAR(50)
 
                 conn.commit()
                 logger.info("HERACLES database tables ensured")
