@@ -1629,50 +1629,9 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"TradingVolatilityAPI error: {e}")
 
-        # Overnight fallback: Tradier (if available)
-        try:
-            from data.gex_calculator import TradierGEXCalculator
-
-            calculator = TradierGEXCalculator(sandbox=False)
-            gex_result = calculator.calculate_gex(symbol)
-
-            if gex_result:
-                flip_point = gex_result.get('flip_point', 0)
-                call_wall = gex_result.get('call_wall', 0)
-                put_wall = gex_result.get('put_wall', 0)
-                net_gex = gex_result.get('net_gex', 0)
-
-                if flip_point > 0:
-                    if call_wall <= 0:
-                        call_wall = flip_point * 1.01
-                    if put_wall <= 0:
-                        put_wall = flip_point * 0.99
-
-                    logger.info(
-                        f"HERACLES GEX from Tradier (overnight fallback): flip={flip_point:.2f}, "
-                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
-                    )
-
-                    gex_data = {
-                        'flip_point': flip_point,
-                        'call_wall': call_wall,
-                        'put_wall': put_wall,
-                        'net_gex': net_gex,
-                        'gex_ratio': gex_result.get('gex_ratio', 1.0),
-                        'data_source': 'tradier_calculator',
-                    }
-
-                    _gex_cache.clear()
-                    _gex_cache.update(gex_data)
-                    _gex_cache_time = now
-                    _persist_gex_cache_to_db(gex_data, now)
-
-                    return gex_data
-
-            logger.warning(f"TradierGEXCalculator returned no valid data for {symbol}")
-
-        except Exception as e:
-            logger.warning(f"TradierGEXCalculator error: {e}")
+        # OVERNIGHT: No Tradier fallback - TradingVolatility is the only source
+        # If TradingVolatility fails, we use cached data (checked earlier)
+        # or skip trading (flip_point = 0)
 
     # Try API endpoint as fallback (SPX endpoint)
     try:
