@@ -625,6 +625,7 @@ class BoxSpreadExecutor:
                 },
                 position_id=position_id,
                 signal_id=signal.signal_id,
+                log_type="BOX",
             )
 
             return position
@@ -979,6 +980,7 @@ Track this position through the PROMETHEUS dashboard:
                     'net_profit': position.net_profit,
                 },
                 position_id=position.position_id,
+                log_type="BOX",
             )
 
         return success
@@ -1650,6 +1652,7 @@ class PrometheusICExecutor:
                 },
                 position_id=position_id,
                 signal_id=signal.signal_id,
+                log_type="IC",
             )
 
             return position
@@ -1834,6 +1837,7 @@ class PrometheusICExecutor:
                     'call_spread': f"{position.call_short_strike}/{position.call_long_strike}",
                 },
                 position_id=position_id,
+                log_type="IC",
             )
 
         # Record outcome to auto-validation system (which also notifies Solomon)

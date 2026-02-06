@@ -1837,7 +1837,8 @@ class PrometheusDatabase:
         level: str = "INFO",
         details: Dict[str, Any] = None,
         position_id: str = None,
-        signal_id: str = None
+        signal_id: str = None,
+        log_type: str = "SYSTEM"  # BOX, IC, or SYSTEM
     ) -> bool:
         """Log an action for audit trail"""
         try:
@@ -1845,9 +1846,9 @@ class PrometheusDatabase:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO prometheus_logs (
-                    log_time, level, action, message, details, position_id, signal_id
-                ) VALUES (NOW(), %s, %s, %s, %s, %s, %s)
-            """, (level, action, message, json.dumps(details) if details else None,
+                    log_time, log_type, level, action, message, details, position_id, signal_id
+                ) VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s)
+            """, (log_type, level, action, message, json.dumps(details) if details else None,
                   position_id, signal_id))
             conn.commit()
             cursor.close()
