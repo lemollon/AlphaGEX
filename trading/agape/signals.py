@@ -1,15 +1,19 @@
 """
 AGAPE Signal Generator - Generates directional /MET trade signals.
 
+AGGRESSIVE MODE: Trades on any actionable signal with low confidence thresholds.
+Includes Direction Tracker for nimble reversal detection (ported from HERACLES).
+
 Uses crypto market microstructure (funding, OI, liquidations, crypto GEX)
 as the equivalent of GEX-based signal generation used by ARES/ATHENA.
 
 Signal Flow:
   1. Fetch crypto market snapshot (CryptoDataProvider)
   2. Analyze microstructure signals
-  3. Consult Oracle for approval
-  4. Calculate position size and risk levels
-  5. Return AgapeSignal with full audit trail
+  3. Direction Tracker check (cooldown after losses, nimble reversals)
+  4. Consult Oracle for advisory (non-blocking)
+  5. Calculate position size and risk levels
+  6. Return AgapeSignal with full audit trail
 """
 
 import logging
@@ -50,6 +54,150 @@ try:
     logger.info("AGAPE Signals: OracleAdvisor loaded")
 except ImportError as e:
     logger.warning(f"AGAPE Signals: OracleAdvisor not available: {e}")
+
+
+# ============================================================================
+# DIRECTION TRACKER - Makes bot nimble at detecting direction changes
+# Ported from HERACLES for aggressive trading
+# ============================================================================
+
+class AgapeDirectionTracker:
+    """
+    Tracks recent trade results by direction to adapt to market changes.
+    Ported from HERACLES DirectionTracker.
+
+    Features:
+    1. Loss Cooldown: After a loss, pause that direction for N scans
+    2. Opposite Boost: After a loss, boost confidence in opposite direction
+    3. Recent Win Rate: Track win rate by direction over recent trades
+    """
+
+    def __init__(self, cooldown_scans: int = 2, win_streak_caution: int = 100, memory_size: int = 10):
+        self.cooldown_scans = cooldown_scans
+        self.win_streak_caution = win_streak_caution
+        self.memory_size = memory_size
+
+        self.long_trades = []
+        self.short_trades = []
+        self.long_cooldown_until = 0
+        self.short_cooldown_until = 0
+        self.current_scan = 0
+        self.long_consecutive_wins = 0
+        self.short_consecutive_wins = 0
+        self.last_direction = None
+        self.last_result = None
+
+    def record_trade(self, direction: str, is_win: bool, scan_number: int) -> None:
+        self.current_scan = scan_number
+        dir_upper = direction.upper()
+
+        if dir_upper == "LONG":
+            self.long_trades.append((is_win, scan_number))
+            if len(self.long_trades) > self.memory_size:
+                self.long_trades.pop(0)
+            if is_win:
+                self.long_consecutive_wins += 1
+                self.short_consecutive_wins = 0
+            else:
+                self.long_consecutive_wins = 0
+                self.long_cooldown_until = scan_number + self.cooldown_scans
+                logger.info(f"AGAPE DIRECTION: LONG loss - cooldown until scan {self.long_cooldown_until}")
+        elif dir_upper == "SHORT":
+            self.short_trades.append((is_win, scan_number))
+            if len(self.short_trades) > self.memory_size:
+                self.short_trades.pop(0)
+            if is_win:
+                self.short_consecutive_wins += 1
+                self.long_consecutive_wins = 0
+            else:
+                self.short_consecutive_wins = 0
+                self.short_cooldown_until = scan_number + self.cooldown_scans
+                logger.info(f"AGAPE DIRECTION: SHORT loss - cooldown until scan {self.short_cooldown_until}")
+
+        self.last_direction = dir_upper
+        self.last_result = "WIN" if is_win else "LOSS"
+
+    def update_scan(self, scan_number: int) -> None:
+        self.current_scan = scan_number
+
+    def is_direction_cooled_down(self, direction: str) -> bool:
+        dir_upper = direction.upper()
+        if dir_upper == "LONG":
+            return self.current_scan < self.long_cooldown_until
+        elif dir_upper == "SHORT":
+            return self.current_scan < self.short_cooldown_until
+        return False
+
+    def get_confidence_adjustment(self, direction: str) -> float:
+        dir_upper = direction.upper()
+        if dir_upper == "LONG" and self.long_consecutive_wins >= self.win_streak_caution:
+            return 0.8
+        if dir_upper == "SHORT" and self.short_consecutive_wins >= self.win_streak_caution:
+            return 0.8
+        if self.last_result == "LOSS" and self.last_direction:
+            opposite = "SHORT" if self.last_direction == "LONG" else "LONG"
+            if dir_upper == opposite:
+                return 1.15
+        return 1.0
+
+    def should_skip_direction(self, direction: str) -> Tuple[bool, str]:
+        dir_upper = direction.upper()
+        if self.is_direction_cooled_down(dir_upper):
+            remaining = (self.long_cooldown_until if dir_upper == "LONG"
+                        else self.short_cooldown_until) - self.current_scan
+            return True, f"{dir_upper} in cooldown ({remaining} scans remaining after loss)"
+        win_rate = self.get_recent_win_rate(dir_upper)
+        if win_rate is not None and win_rate < 0.20:
+            return True, f"{dir_upper} has poor recent win rate ({win_rate:.0%})"
+        return False, ""
+
+    def get_recent_win_rate(self, direction: str) -> Optional[float]:
+        dir_upper = direction.upper()
+        trades = self.long_trades if dir_upper == "LONG" else self.short_trades
+        if len(trades) < 3:
+            return None
+        wins = sum(1 for is_win, _ in trades if is_win)
+        return wins / len(trades)
+
+    def get_status(self) -> Dict[str, Any]:
+        return {
+            "current_scan": self.current_scan,
+            "long_cooldown_until": self.long_cooldown_until,
+            "short_cooldown_until": self.short_cooldown_until,
+            "long_consecutive_wins": self.long_consecutive_wins,
+            "short_consecutive_wins": self.short_consecutive_wins,
+            "long_recent_trades": len(self.long_trades),
+            "short_recent_trades": len(self.short_trades),
+            "long_win_rate": self.get_recent_win_rate("LONG"),
+            "short_win_rate": self.get_recent_win_rate("SHORT"),
+            "last_direction": self.last_direction,
+            "last_result": self.last_result,
+        }
+
+
+# Global direction tracker instance (singleton)
+_direction_tracker: Optional[AgapeDirectionTracker] = None
+
+
+def get_agape_direction_tracker(config: Optional[AgapeConfig] = None) -> AgapeDirectionTracker:
+    """Get the global AGAPE direction tracker singleton."""
+    global _direction_tracker
+    if _direction_tracker is None:
+        cooldown = config.direction_cooldown_scans if config else 2
+        caution = config.direction_win_streak_caution if config else 100
+        memory = config.direction_memory_size if config else 10
+        _direction_tracker = AgapeDirectionTracker(
+            cooldown_scans=cooldown,
+            win_streak_caution=caution,
+            memory_size=memory,
+        )
+    return _direction_tracker
+
+
+def record_agape_trade_outcome(direction: str, is_win: bool, scan_number: int) -> None:
+    """Record a trade outcome to the AGAPE direction tracker."""
+    tracker = get_agape_direction_tracker()
+    tracker.record_trade(direction, is_win, scan_number)
 
 
 class AgapeSignalGenerator:
@@ -223,7 +371,7 @@ class AgapeSignalGenerator:
         if oracle_data is None:
             oracle_data = self.get_oracle_advice(market_data)
 
-        # Step 3: Check Oracle approval (ORACLE IS GOD)
+        # Step 3: Check Oracle advice (ADVISORY ONLY - does not block trades)
         oracle_advice = oracle_data.get("advice", "UNAVAILABLE")
         oracle_win_prob = oracle_data.get("win_probability", 0.5)
 
@@ -252,6 +400,12 @@ class AgapeSignalGenerator:
                     oracle_confidence=oracle_data.get("confidence", 0),
                     oracle_top_factors=oracle_data.get("top_factors", []),
                 )
+        else:
+            # Oracle is advisory only - log advice but never block
+            logger.info(
+                f"AGAPE Signal: Oracle advisory (non-blocking): {oracle_advice} "
+                f"win_prob={oracle_win_prob:.2%}"
+            )
 
         # Step 4: Determine trade direction from combined signal
         combined_signal = market_data.get("combined_signal", "WAIT")
@@ -324,32 +478,147 @@ class AgapeSignalGenerator:
     ) -> Tuple[SignalAction, Optional[str], str]:
         """Translate combined crypto signal into trade action.
 
-        Maps crypto signals to ARES-equivalent actions:
+        AGGRESSIVE MODE: Trades on any actionable signal including RANGE_BOUND.
+        Uses Direction Tracker to skip directions that are on cooldown.
+
+        Maps crypto signals to actions:
           LONG       → Buy /MET (bullish directional)
           SHORT      → Sell /MET (bearish directional)
-          RANGE_BOUND → WAIT (future: could sell straddles)
-          WAIT       → No trade
+          RANGE_BOUND → Trade based on microstructure bias (no longer skipped)
+          WAIT       → Derive direction from funding/LS bias (fallback)
         """
         min_confidence = self.config.min_confidence
 
-        # Check minimum confidence
+        # Check minimum confidence - LOW means trade on anything
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
-        if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 2):
+        if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 1):
             return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
 
+        # Direction Tracker: skip directions on cooldown after losses
+        direction_tracker = get_agape_direction_tracker(self.config)
+
         if combined_signal == "LONG":
+            should_skip, skip_reason = direction_tracker.should_skip_direction("LONG")
+            if should_skip:
+                logger.info(f"AGAPE Signal: LONG skipped by direction tracker: {skip_reason}")
+                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
             reasoning = self._build_reasoning("LONG", market_data)
             return (SignalAction.LONG, "long", reasoning)
 
         elif combined_signal == "SHORT":
+            should_skip, skip_reason = direction_tracker.should_skip_direction("SHORT")
+            if should_skip:
+                logger.info(f"AGAPE Signal: SHORT skipped by direction tracker: {skip_reason}")
+                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
             reasoning = self._build_reasoning("SHORT", market_data)
             return (SignalAction.SHORT, "short", reasoning)
 
         elif combined_signal == "RANGE_BOUND":
-            # For now, skip range-bound (future: premium selling)
-            return (SignalAction.WAIT, None, "RANGE_BOUND_NO_STRATEGY_YET")
+            # AGGRESSIVE: In range-bound, use microstructure bias to pick a direction
+            return self._derive_range_bound_direction(market_data, direction_tracker)
+
+        elif combined_signal == "WAIT":
+            # AGGRESSIVE: Even on WAIT, try to derive direction from individual signals
+            return self._derive_fallback_direction(market_data, direction_tracker)
 
         return (SignalAction.WAIT, None, f"NO_SIGNAL_{combined_signal}")
+
+    def _derive_range_bound_direction(
+        self,
+        market_data: Dict,
+        tracker: AgapeDirectionTracker,
+    ) -> Tuple[SignalAction, Optional[str], str]:
+        """Derive a directional trade from range-bound conditions.
+
+        In range-bound markets, use microstructure signals to pick a direction:
+        - Funding rate bias (negative funding = shorts paying longs = bullish)
+        - Long/Short ratio extreme (crowded trade = fade the crowd)
+        - Max pain distance (price tends to drift toward max pain)
+        """
+        funding_rate = market_data.get("funding_rate", 0)
+        ls_bias = market_data.get("ls_bias", "NEUTRAL")
+        max_pain = market_data.get("max_pain")
+        spot = market_data.get("spot_price", 0)
+
+        # Score for direction: positive = LONG, negative = SHORT
+        score = 0.0
+
+        # Funding rate: negative funding is bullish (shorts paying longs)
+        if funding_rate < -self.config.min_funding_rate_signal:
+            score += 1.0
+        elif funding_rate > self.config.min_funding_rate_signal:
+            score -= 1.0
+
+        # L/S ratio: extreme long = bearish (fade), extreme short = bullish (fade)
+        ls_ratio = market_data.get("ls_ratio", 1.0)
+        if ls_ratio > self.config.min_ls_ratio_extreme:
+            score -= 0.5  # Too many longs, fade
+        elif ls_ratio < (1.0 / self.config.min_ls_ratio_extreme):
+            score += 0.5  # Too many shorts, fade
+
+        # Max pain: price drifts toward max pain
+        if max_pain and spot:
+            if max_pain > spot * 1.005:
+                score += 0.5  # Max pain above = bullish drift
+            elif max_pain < spot * 0.995:
+                score -= 0.5  # Max pain below = bearish drift
+
+        if score > 0:
+            should_skip, reason = tracker.should_skip_direction("LONG")
+            if should_skip:
+                return (SignalAction.WAIT, None, f"RANGE_BOUND_LONG_BLOCKED_{reason}")
+            reasoning = self._build_reasoning("RANGE_LONG", market_data)
+            return (SignalAction.LONG, "long", reasoning)
+        elif score < 0:
+            should_skip, reason = tracker.should_skip_direction("SHORT")
+            if should_skip:
+                return (SignalAction.WAIT, None, f"RANGE_BOUND_SHORT_BLOCKED_{reason}")
+            reasoning = self._build_reasoning("RANGE_SHORT", market_data)
+            return (SignalAction.SHORT, "short", reasoning)
+
+        return (SignalAction.WAIT, None, "RANGE_BOUND_NO_BIAS")
+
+    def _derive_fallback_direction(
+        self,
+        market_data: Dict,
+        tracker: AgapeDirectionTracker,
+    ) -> Tuple[SignalAction, Optional[str], str]:
+        """Derive direction from individual microstructure signals when combined is WAIT.
+
+        Aggressive fallback: if any single signal is strong enough, trade it.
+        """
+        funding_regime = market_data.get("funding_regime", "NEUTRAL")
+        squeeze_risk = market_data.get("squeeze_risk", "LOW")
+        ls_bias = market_data.get("ls_bias", "NEUTRAL")
+        crypto_gex_regime = market_data.get("crypto_gex_regime", "NEUTRAL")
+
+        # Strong single-signal trades
+        if squeeze_risk == "HIGH":
+            # High squeeze risk = strong directional move coming
+            if ls_bias == "SHORT_HEAVY":
+                should_skip, reason = tracker.should_skip_direction("LONG")
+                if not should_skip:
+                    reasoning = self._build_reasoning("SQUEEZE_LONG", market_data)
+                    return (SignalAction.LONG, "long", reasoning)
+            elif ls_bias == "LONG_HEAVY":
+                should_skip, reason = tracker.should_skip_direction("SHORT")
+                if not should_skip:
+                    reasoning = self._build_reasoning("SQUEEZE_SHORT", market_data)
+                    return (SignalAction.SHORT, "short", reasoning)
+
+        # Funding regime extreme
+        if funding_regime in ("HEAVILY_NEGATIVE", "EXTREME_NEGATIVE"):
+            should_skip, reason = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                reasoning = self._build_reasoning("FUNDING_LONG", market_data)
+                return (SignalAction.LONG, "long", reasoning)
+        elif funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
+            should_skip, reason = tracker.should_skip_direction("SHORT")
+            if not should_skip:
+                reasoning = self._build_reasoning("FUNDING_SHORT", market_data)
+                return (SignalAction.SHORT, "short", reasoning)
+
+        return (SignalAction.WAIT, None, "NO_FALLBACK_SIGNAL")
 
     def _build_reasoning(self, direction: str, market_data: Dict) -> str:
         """Build human-readable reasoning string."""

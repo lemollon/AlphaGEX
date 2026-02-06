@@ -1,16 +1,21 @@
 """
 AGAPE Trader - Main orchestrator for ETH Micro Futures trading.
 
-Follows the ARES V2 pattern:
-  scan → signal → oracle → execute → log → manage positions
+AGGRESSIVE MODE (matching HERACLES/Valor):
+  - No-loss trailing: Let winners run, only trail after profitable
+  - Stop-and-Reverse (SAR): Reverse losing positions to capture momentum
+  - Direction Tracker: Nimble reversal detection, cooldown after losses
+  - Loss streak protection: Pause after consecutive losses
+  - Low barriers to entry: No Oracle blocking, low confidence threshold
 
 Runs on a 5-minute cycle (configurable), trading /MET contracts
 via tastytrade based on crypto market microstructure signals.
 """
 
 import logging
+import uuid
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from zoneinfo import ZoneInfo
 
 from trading.agape.models import (
@@ -23,7 +28,11 @@ from trading.agape.models import (
     TradingMode,
 )
 from trading.agape.db import AgapeDatabase
-from trading.agape.signals import AgapeSignalGenerator
+from trading.agape.signals import (
+    AgapeSignalGenerator,
+    get_agape_direction_tracker,
+    record_agape_trade_outcome,
+)
 from trading.agape.executor import AgapeExecutor
 
 logger = logging.getLogger(__name__)
@@ -49,16 +58,14 @@ def create_agape_trader(config: Optional[AgapeConfig] = None) -> "AgapeTrader":
 class AgapeTrader:
     """Main AGAPE trading bot orchestrator.
 
-    Lifecycle:
-      1. Init: Load config → create DB → create signal generator → create executor
-      2. Run Cycle: Called every 5 min by scheduler
-         a. Manage existing positions (check exits)
-         b. Check entry conditions (time, cooldown, position limits)
-         c. Generate signal (crypto microstructure analysis)
-         d. Consult Oracle (if enabled)
-         e. Execute trade (if signal valid)
-         f. Log everything (scan activity)
-      3. Record outcomes for ML feedback loop
+    AGGRESSIVE MODE - Matches HERACLES/Valor aggressiveness:
+    - No-loss trailing strategy (let winners run)
+    - SAR (Stop-and-Reverse) for losing positions
+    - Direction tracker for nimble reversal detection
+    - Loss streak protection (pause after 3 consecutive losses)
+    - 20 max open positions (was 2)
+    - 5 min cooldown (was 30)
+    - Oracle advisory only (was blocking)
     """
 
     def __init__(self, config: Optional[AgapeConfig] = None):
@@ -76,8 +83,21 @@ class AgapeTrader:
         self._cycle_count: int = 0
         self._enabled: bool = True
 
-        self.db.log("INFO", "INIT", f"AGAPE trader initialized (mode={self.config.mode.value})")
-        logger.info(f"AGAPE Trader: Initialized (mode={self.config.mode.value})")
+        # Loss streak tracking (from HERACLES)
+        self.consecutive_losses: int = 0
+        self.loss_streak_pause_until: Optional[datetime] = None
+
+        # Direction tracker (from HERACLES)
+        self._direction_tracker = get_agape_direction_tracker(self.config)
+
+        self.db.log("INFO", "INIT", f"AGAPE trader initialized AGGRESSIVE (mode={self.config.mode.value})")
+        logger.info(
+            f"AGAPE Trader: Initialized AGGRESSIVE (mode={self.config.mode.value}, "
+            f"max_pos={self.config.max_open_positions}, cooldown={self.config.cooldown_minutes}m, "
+            f"oracle_required={self.config.require_oracle_approval}, "
+            f"no_loss_trailing={self.config.use_no_loss_trailing}, "
+            f"sar={self.config.use_sar})"
+        )
 
     def run_cycle(self, close_only: bool = False) -> Dict[str, Any]:
         """Execute one trading cycle.
@@ -87,6 +107,10 @@ class AgapeTrader:
         """
         self._cycle_count += 1
         now = datetime.now(CENTRAL_TZ)
+
+        # Update direction tracker scan count
+        self._direction_tracker.update_scan(self._cycle_count)
+
         result = {
             "cycle": self._cycle_count,
             "timestamp": now.isoformat(),
@@ -113,7 +137,7 @@ class AgapeTrader:
                 oracle_data = self.signals.get_oracle_advice(market_data)
                 scan_context["oracle_data"] = oracle_data
 
-            # Step 3: Manage existing positions FIRST
+            # Step 3: Manage existing positions FIRST (includes no-loss trailing + SAR)
             managed, closed = self._manage_positions(market_data)
             result["positions_managed"] = managed
             result["positions_closed"] = closed
@@ -124,14 +148,25 @@ class AgapeTrader:
                 self._log_scan(result, scan_context)
                 return result
 
-            # Step 4: Check basic entry conditions
+            # Step 4: Check loss streak pause
+            if self.loss_streak_pause_until:
+                if now < self.loss_streak_pause_until:
+                    remaining = (self.loss_streak_pause_until - now).total_seconds() / 60
+                    result["outcome"] = f"LOSS_STREAK_PAUSE_{remaining:.1f}min"
+                    self._log_scan(result, scan_context)
+                    return result
+                else:
+                    logger.info(f"AGAPE: Loss streak pause expired (was {self.consecutive_losses} losses)")
+                    self.loss_streak_pause_until = None
+
+            # Step 5: Check basic entry conditions
             skip_reason = self._check_entry_conditions(now)
             if skip_reason:
                 result["outcome"] = skip_reason
                 self._log_scan(result, scan_context)
                 return result
 
-            # Step 5: Generate signal with pre-fetched Oracle data
+            # Step 6: Generate signal with pre-fetched Oracle data
             signal = self.signals.generate_signal(oracle_data=oracle_data)
             result["signal"] = signal.to_dict() if signal else None
 
@@ -140,7 +175,7 @@ class AgapeTrader:
                 self._log_scan(result, scan_context, signal=signal)
                 return result
 
-            # Step 6: Execute the trade
+            # Step 7: Execute the trade
             position = self.executor.execute_trade(signal)
             if position:
                 self.db.save_position(position)
@@ -169,8 +204,18 @@ class AgapeTrader:
             self._log_scan(result, scan_context)
             return result
 
+    # ==================================================================
+    # Position Management (with No-Loss Trailing + SAR)
+    # ==================================================================
+
     def _manage_positions(self, market_data: Optional[Dict]) -> tuple:
         """Check and manage all open positions.
+
+        Includes:
+        - No-loss trailing strategy (let winners run)
+        - SAR (Stop-and-Reverse) for losing positions
+        - Max hold time enforcement
+        - Emergency stop for catastrophic moves
 
         Returns (positions_checked, positions_closed).
         """
@@ -189,13 +234,20 @@ class AgapeTrader:
 
         for pos_dict in open_positions:
             try:
-                should_close, reason = self._check_exit_conditions(
-                    pos_dict, current_price, now
-                )
-                if should_close:
-                    success = self._close_position(pos_dict, current_price, reason)
-                    if success:
-                        closed += 1
+                if self.config.use_no_loss_trailing:
+                    did_close = self._manage_position_no_loss_trailing(
+                        pos_dict, current_price, now
+                    )
+                else:
+                    should_close, reason = self._check_exit_conditions(
+                        pos_dict, current_price, now
+                    )
+                    did_close = False
+                    if should_close:
+                        did_close = self._close_position(pos_dict, current_price, reason)
+
+                if did_close:
+                    closed += 1
                 else:
                     # Update high water mark for trailing stop
                     self._update_hwm(pos_dict, current_price)
@@ -204,10 +256,276 @@ class AgapeTrader:
 
         return (len(open_positions), closed)
 
+    def _manage_position_no_loss_trailing(
+        self, pos: Dict, current_price: float, now: datetime
+    ) -> bool:
+        """No-loss trailing position management (ported from HERACLES).
+
+        Strategy:
+        1. Check SAR conditions first (reverse clearly wrong trades)
+        2. Check max unrealized loss (safety net)
+        3. Check emergency stop (catastrophic protection)
+        4. Check trailing stop (if activated)
+        5. Activate trailing once profitable enough
+        6. Update trailing stop as price improves
+        7. Check max hold time
+
+        Returns True if position was closed.
+        """
+        entry_price = pos["entry_price"]
+        side = pos["side"]
+        contracts = pos.get("contracts", 1)
+        is_long = side == "long"
+
+        # Calculate profit as percentage
+        if is_long:
+            profit_pct = ((current_price - entry_price) / entry_price) * 100
+        else:
+            profit_pct = ((entry_price - current_price) / entry_price) * 100
+
+        # Track high water mark for MFE
+        hwm = pos.get("high_water_mark", entry_price)
+        if is_long:
+            max_profit_pct = ((hwm - entry_price) / entry_price) * 100 if hwm > entry_price else 0
+        else:
+            max_profit_pct = ((entry_price - hwm) / entry_price) * 100 if hwm < entry_price else 0
+
+        # ================================================================
+        # 1. STOP-AND-REVERSE (SAR) - Reverse clearly wrong trades
+        # ================================================================
+        if self.config.use_sar:
+            sar_trigger = self.config.sar_trigger_pct
+            sar_mfe = self.config.sar_mfe_threshold_pct
+
+            if -profit_pct >= sar_trigger and max_profit_pct < sar_mfe:
+                logger.info(
+                    f"AGAPE SAR: {pos['position_id']} down {-profit_pct:.1f}% "
+                    f"(MFE={max_profit_pct:.2f}%) -> Reversing"
+                )
+                return self._execute_sar(pos, current_price)
+
+        # ================================================================
+        # 2. MAX UNREALIZED LOSS (safety net)
+        # ================================================================
+        max_loss_pct = self.config.max_unrealized_loss_pct
+        if -profit_pct >= max_loss_pct:
+            # Calculate simulated stop price
+            if is_long:
+                stop_price = entry_price * (1 - max_loss_pct / 100)
+            else:
+                stop_price = entry_price * (1 + max_loss_pct / 100)
+            logger.warning(
+                f"AGAPE: MAX LOSS {pos['position_id']} at {-profit_pct:.1f}% "
+                f"(limit={max_loss_pct}%)"
+            )
+            return self._close_position(pos, stop_price, f"MAX_LOSS_{max_loss_pct}pct")
+
+        # ================================================================
+        # 3. EMERGENCY STOP (catastrophic protection)
+        # ================================================================
+        emergency_pct = self.config.no_loss_emergency_stop_pct
+        if -profit_pct >= emergency_pct:
+            if is_long:
+                stop_price = entry_price * (1 - emergency_pct / 100)
+            else:
+                stop_price = entry_price * (1 + emergency_pct / 100)
+            logger.warning(
+                f"AGAPE: EMERGENCY STOP {pos['position_id']} at {-profit_pct:.1f}%"
+            )
+            return self._close_position(pos, stop_price, "EMERGENCY_STOP")
+
+        # ================================================================
+        # 4. CHECK TRAILING STOP (if active)
+        # ================================================================
+        trailing_active = pos.get("trailing_active", False)
+        current_stop = pos.get("current_stop")
+
+        if trailing_active and current_stop:
+            if is_long and current_price <= current_stop:
+                exit_pnl_pct = ((current_stop - entry_price) / entry_price) * 100
+                logger.info(
+                    f"AGAPE: TRAIL STOP {pos['position_id']} at {current_stop:.2f} "
+                    f"(locked +{exit_pnl_pct:.1f}%)"
+                )
+                return self._close_position(pos, current_stop, f"TRAIL_STOP_+{exit_pnl_pct:.1f}pct")
+
+            if not is_long and current_price >= current_stop:
+                exit_pnl_pct = ((entry_price - current_stop) / entry_price) * 100
+                logger.info(
+                    f"AGAPE: TRAIL STOP {pos['position_id']} at {current_stop:.2f} "
+                    f"(locked +{exit_pnl_pct:.1f}%)"
+                )
+                return self._close_position(pos, current_stop, f"TRAIL_STOP_+{exit_pnl_pct:.1f}pct")
+
+        # ================================================================
+        # 5. CHECK PROFIT TARGET (if enabled)
+        # ================================================================
+        profit_target_pct = self.config.no_loss_profit_target_pct
+        if profit_target_pct > 0 and profit_pct >= profit_target_pct:
+            logger.info(
+                f"AGAPE: PROFIT TARGET {pos['position_id']} at +{profit_pct:.1f}%"
+            )
+            return self._close_position(pos, current_price, f"PROFIT_TARGET_+{profit_pct:.1f}pct")
+
+        # ================================================================
+        # 6. ACTIVATE TRAILING (once profitable enough)
+        # ================================================================
+        activation_pct = self.config.no_loss_activation_pct
+        if not trailing_active and max_profit_pct >= activation_pct:
+            # Set trailing stop at breakeven initially
+            self.db.update_high_water_mark(pos["position_id"], entry_price)
+            # Store trailing activation state
+            try:
+                self.db._execute(
+                    """UPDATE agape_positions
+                       SET trailing_active = TRUE, current_stop = %s
+                       WHERE position_id = %s AND status = 'open'""",
+                    (entry_price, pos["position_id"])
+                )
+            except Exception:
+                pass  # Best effort
+            logger.info(
+                f"AGAPE: TRAIL ACTIVATED {pos['position_id']} at +{max_profit_pct:.1f}% "
+                f"(stop set to breakeven {entry_price:.2f})"
+            )
+
+        # ================================================================
+        # 7. UPDATE TRAILING STOP (ratchet as price improves)
+        # ================================================================
+        if trailing_active:
+            trail_distance_pct = self.config.no_loss_trail_distance_pct
+            trail_distance = entry_price * (trail_distance_pct / 100)
+
+            if is_long:
+                new_stop = hwm - trail_distance
+                if current_stop and new_stop > current_stop and new_stop > entry_price:
+                    try:
+                        self.db._execute(
+                            """UPDATE agape_positions SET current_stop = %s
+                               WHERE position_id = %s AND status = 'open'""",
+                            (new_stop, pos["position_id"])
+                        )
+                    except Exception:
+                        pass
+                    locked = ((new_stop - entry_price) / entry_price) * 100
+                    logger.info(
+                        f"AGAPE: Trail raised {pos['position_id']} to {new_stop:.2f} "
+                        f"(locking +{locked:.1f}%)"
+                    )
+            else:
+                new_stop = hwm + trail_distance
+                if current_stop and new_stop < current_stop and new_stop < entry_price:
+                    try:
+                        self.db._execute(
+                            """UPDATE agape_positions SET current_stop = %s
+                               WHERE position_id = %s AND status = 'open'""",
+                            (new_stop, pos["position_id"])
+                        )
+                    except Exception:
+                        pass
+                    locked = ((entry_price - new_stop) / entry_price) * 100
+                    logger.info(
+                        f"AGAPE: Trail lowered {pos['position_id']} to {new_stop:.2f} "
+                        f"(locking +{locked:.1f}%)"
+                    )
+
+        # ================================================================
+        # 8. MAX HOLD TIME
+        # ================================================================
+        open_time_str = pos.get("open_time")
+        if open_time_str:
+            try:
+                if isinstance(open_time_str, str):
+                    open_time = datetime.fromisoformat(open_time_str)
+                else:
+                    open_time = open_time_str
+                if open_time.tzinfo is None:
+                    open_time = open_time.replace(tzinfo=CENTRAL_TZ)
+                hold_hours = (now - open_time).total_seconds() / 3600
+                if hold_hours >= self.config.max_hold_hours:
+                    return self._close_position(pos, current_price, "MAX_HOLD_TIME")
+            except (ValueError, TypeError):
+                pass
+
+        return False
+
+    def _execute_sar(self, pos: Dict, current_price: float) -> bool:
+        """Execute Stop-and-Reverse: close losing position and open reversal.
+
+        Ported from HERACLES SAR strategy.
+        """
+        position_id = pos["position_id"]
+        entry_price = pos["entry_price"]
+        side = pos["side"]
+        contracts = pos.get("contracts", 1)
+
+        # Close original position at SAR trigger price
+        is_long = side == "long"
+        sar_pct = self.config.sar_trigger_pct
+        if is_long:
+            sar_close_price = entry_price * (1 - sar_pct / 100)
+        else:
+            sar_close_price = entry_price * (1 + sar_pct / 100)
+
+        success = self._close_position(pos, sar_close_price, f"SAR_CLOSED_{sar_pct}pct")
+        if not success:
+            return False
+
+        # Open reversal position
+        reversal_side = "short" if is_long else "long"
+        reversal_id = f"SAR-{uuid.uuid4().hex[:8]}"
+
+        # Calculate emergency stop for reversal
+        emergency_pct = self.config.no_loss_emergency_stop_pct
+        if reversal_side == "long":
+            stop_loss = current_price * (1 - emergency_pct / 100)
+            take_profit = current_price * (1 + emergency_pct / 100)
+        else:
+            stop_loss = current_price * (1 + emergency_pct / 100)
+            take_profit = current_price * (1 - emergency_pct / 100)
+
+        # Create reversal signal
+        reversal_signal = AgapeSignal(
+            spot_price=current_price,
+            timestamp=datetime.now(CENTRAL_TZ),
+            funding_rate=0,
+            funding_regime="SAR_REVERSAL",
+            action=SignalAction.LONG if reversal_side == "long" else SignalAction.SHORT,
+            confidence="HIGH",
+            reasoning=f"SAR_REVERSAL from {side.upper()} {position_id}",
+            side=reversal_side,
+            entry_price=current_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            contracts=contracts,
+            max_risk_usd=0,
+        )
+
+        reversal_pos = self.executor.execute_trade(reversal_signal)
+        if reversal_pos:
+            self.db.save_position(reversal_pos)
+            self.db.log(
+                "INFO", "SAR_EXECUTED",
+                f"SAR: Closed {side.upper()} {position_id}, "
+                f"Opened {reversal_side.upper()} {reversal_pos.position_id} @ ${current_price:.2f}",
+            )
+            logger.info(
+                f"AGAPE SAR COMPLETE: Closed {side.upper()} {position_id}, "
+                f"Opened {reversal_side.upper()} {reversal_pos.position_id}"
+            )
+            return True
+
+        logger.error(f"AGAPE SAR: Reversal execution failed for {position_id}")
+        return True  # Original was still closed
+
+    # ==================================================================
+    # Original exit conditions (fallback when no-loss trailing disabled)
+    # ==================================================================
+
     def _check_exit_conditions(
         self, pos: Dict, current_price: float, now: datetime
     ) -> tuple:
-        """Check if a position should be closed.
+        """Check if a position should be closed (fallback, non-trailing mode).
 
         Returns (should_close: bool, reason: str).
         """
@@ -216,12 +534,6 @@ class AgapeTrader:
         stop_loss = pos.get("stop_loss")
         take_profit = pos.get("take_profit")
         open_time_str = pos.get("open_time")
-
-        # Direction multiplier
-        if side == "long":
-            direction = 1
-        else:
-            direction = -1
 
         # 1. Stop Loss
         if stop_loss:
@@ -244,31 +556,24 @@ class AgapeTrader:
                     open_time = datetime.fromisoformat(open_time_str)
                 else:
                     open_time = open_time_str
-
                 if open_time.tzinfo is None:
                     open_time = open_time.replace(tzinfo=CENTRAL_TZ)
-
                 hold_hours = (now - open_time).total_seconds() / 3600
                 if hold_hours >= self.config.max_hold_hours:
                     return (True, "MAX_HOLD_TIME")
             except (ValueError, TypeError):
                 pass
 
-        # 4. Trailing stop (if configured)
-        if self.config.trailing_stop_pct > 0:
-            hwm = pos.get("high_water_mark", entry_price)
-            trail_distance = hwm * (self.config.trailing_stop_pct / 100)
-            if side == "long" and current_price < (hwm - trail_distance):
-                return (True, "TRAILING_STOP")
-            elif side == "short" and current_price > (hwm + trail_distance):
-                return (True, "TRAILING_STOP")
-
         return (False, "")
+
+    # ==================================================================
+    # Position Close + Feedback Loops
+    # ==================================================================
 
     def _close_position(
         self, pos_dict: Dict, current_price: float, reason: str
     ) -> bool:
-        """Close a position and record the outcome."""
+        """Close a position and record the outcome with feedback loops."""
         position_id = pos_dict["position_id"]
         entry_price = pos_dict["entry_price"]
         side = pos_dict["side"]
@@ -276,7 +581,7 @@ class AgapeTrader:
 
         # Calculate P&L
         direction = 1 if side == "long" else -1
-        pnl_per_contract = (current_price - entry_price) * 0.1 * direction
+        pnl_per_contract = (current_price - entry_price) * self.config.contract_size * direction
         realized_pnl = round(pnl_per_contract * contracts, 2)
 
         # Use expire_position for time-based exits, close_position for P&L exits
@@ -288,10 +593,41 @@ class AgapeTrader:
             )
 
         if success:
+            won = realized_pnl > 0
+
+            # Update loss streak tracking
+            if won:
+                if self.consecutive_losses > 0:
+                    logger.info(f"AGAPE: Loss streak reset (was {self.consecutive_losses})")
+                self.consecutive_losses = 0
+                self.loss_streak_pause_until = None
+            else:
+                self.consecutive_losses += 1
+                logger.warning(f"AGAPE: Consecutive losses: {self.consecutive_losses}")
+                if self.consecutive_losses >= self.config.max_consecutive_losses:
+                    pause_min = self.config.loss_streak_pause_minutes
+                    self.loss_streak_pause_until = datetime.now(CENTRAL_TZ) + timedelta(minutes=pause_min)
+                    logger.warning(
+                        f"AGAPE: LOSS STREAK PAUSE - {self.consecutive_losses} losses, "
+                        f"pausing until {self.loss_streak_pause_until.strftime('%H:%M:%S')} CT"
+                    )
+
+            # Update direction tracker
+            record_agape_trade_outcome(
+                direction=side.upper(),
+                is_win=won,
+                scan_number=self._cycle_count,
+            )
+
             self.db.log(
                 "INFO", "CLOSE_POSITION",
                 f"Closed {position_id} @ ${current_price:.2f} P&L=${realized_pnl:+.2f} ({reason})",
-                details={"position_id": position_id, "realized_pnl": realized_pnl, "reason": reason},
+                details={
+                    "position_id": position_id,
+                    "realized_pnl": realized_pnl,
+                    "reason": reason,
+                    "consecutive_losses": self.consecutive_losses,
+                },
             )
             logger.info(
                 f"AGAPE Trader: Closed {position_id} "
@@ -309,6 +645,10 @@ class AgapeTrader:
             self.db.update_high_water_mark(pos_dict["position_id"], current_price)
         elif side == "short" and current_price < hwm:
             self.db.update_high_water_mark(pos_dict["position_id"], current_price)
+
+    # ==================================================================
+    # Entry Conditions
+    # ==================================================================
 
     def _check_entry_conditions(self, now: datetime) -> Optional[str]:
         """Check if conditions allow new entries.
@@ -349,6 +689,10 @@ class AgapeTrader:
             return "DAILY_MAINTENANCE"
 
         return None
+
+    # ==================================================================
+    # Logging
+    # ==================================================================
 
     def _log_scan(
         self,
@@ -396,7 +740,7 @@ class AgapeTrader:
             if current_price and open_positions:
                 for pos in open_positions:
                     direction = 1 if pos["side"] == "long" else -1
-                    pnl = (current_price - pos["entry_price"]) * 0.1 * direction * pos.get("contracts", 1)
+                    pnl = (current_price - pos["entry_price"]) * self.config.contract_size * direction * pos.get("contracts", 1)
                     unrealized += pnl
 
             # Get cumulative realized P&L from all closed trades
@@ -431,8 +775,11 @@ class AgapeTrader:
         if current_price and open_positions:
             for pos in open_positions:
                 direction = 1 if pos["side"] == "long" else -1
-                pnl = (current_price - pos["entry_price"]) * 0.1 * direction * pos.get("contracts", 1)
+                pnl = (current_price - pos["entry_price"]) * self.config.contract_size * direction * pos.get("contracts", 1)
                 total_unrealized += pnl
+
+        # Direction tracker status
+        dt_status = self._direction_tracker.get_status()
 
         return {
             "bot_name": "AGAPE",
@@ -450,6 +797,13 @@ class AgapeTrader:
             "max_contracts": self.config.max_contracts,
             "cooldown_minutes": self.config.cooldown_minutes,
             "require_oracle": self.config.require_oracle_approval,
+            "aggressive_features": {
+                "use_no_loss_trailing": self.config.use_no_loss_trailing,
+                "use_sar": self.config.use_sar,
+                "direction_tracker": dt_status,
+                "consecutive_losses": self.consecutive_losses,
+                "loss_streak_paused": self.loss_streak_pause_until is not None and datetime.now(CENTRAL_TZ) < self.loss_streak_pause_until,
+            },
             "positions": open_positions,
         }
 
@@ -488,9 +842,33 @@ class AgapeTrader:
             "return_pct": round(total_pnl / self.config.starting_capital * 100, 2),
         }
 
+    def force_close_all(self, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
+        """Force close all open positions."""
+        open_positions = self.db.get_open_positions()
+        current_price = self.executor.get_current_price()
+        results = []
+        total_pnl = 0.0
+
+        if not current_price:
+            return {"error": "No price available", "closed": 0}
+
+        for pos in open_positions:
+            closed = self._close_position(pos, current_price, reason)
+            if closed:
+                direction = 1 if pos["side"] == "long" else -1
+                pnl = (current_price - pos["entry_price"]) * self.config.contract_size * direction * pos.get("contracts", 1)
+                total_pnl += pnl
+                results.append({"position_id": pos["position_id"], "pnl": round(pnl, 2)})
+
+        return {
+            "closed": len(results),
+            "total_pnl": round(total_pnl, 2),
+            "details": results,
+        }
+
     def enable(self):
         self._enabled = True
-        self.db.log("INFO", "ENABLE", "AGAPE bot enabled")
+        self.db.log("INFO", "ENABLE", "AGAPE bot enabled (AGGRESSIVE MODE)")
 
     def disable(self):
         self._enabled = False
