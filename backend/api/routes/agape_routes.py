@@ -219,11 +219,11 @@ async def get_equity_curve(
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get starting capital from config (NOT hardcoded)
+        # Get starting capital from config (key/value schema with agape_ prefix)
         starting_capital = 5000.0
         try:
             cursor.execute(
-                "SELECT config_value FROM autonomous_config WHERE bot_name = 'AGAPE' AND config_key = 'starting_capital'"
+                "SELECT value FROM autonomous_config WHERE key = 'agape_starting_capital'"
             )
             row = cursor.fetchone()
             if row and row[0]:
