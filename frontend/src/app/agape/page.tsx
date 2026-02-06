@@ -89,6 +89,8 @@ export default function AgapePage() {
 
   const status = statusData?.data
   const perf = perfData?.data
+  const paperAccount = status?.paper_account || null
+  const startingCapital = paperAccount?.starting_capital ?? status?.starting_capital ?? 5000
 
   const handleRefresh = async () => {
     await refreshStatus()
@@ -150,11 +152,43 @@ export default function AgapePage() {
                   </div>
                 </div>
               </div>
-              {status?.aggressive_features?.loss_streak_paused && (
-                <span className="px-2 py-0.5 bg-red-900/50 text-red-300 text-xs rounded font-mono">LOSS STREAK PAUSE</span>
+              {status?.mode && (
+                <span className={`px-2 py-0.5 text-xs rounded font-mono ${
+                  status.mode === 'live' ? 'bg-green-900/50 text-green-300' : 'bg-yellow-900/50 text-yellow-300'
+                }`}>{status.mode.toUpperCase()}</span>
               )}
             </div>
           </div>
+
+          {/* Loss Streak Warning Banner (matches HERACLES pattern) */}
+          {status?.aggressive_features?.consecutive_losses > 0 && !status?.aggressive_features?.loss_streak_paused && (
+            <div className="bg-orange-900/30 border border-orange-500/50 rounded-lg p-3">
+              <div className="flex items-center gap-3">
+                <div className="w-3 h-3 rounded-full bg-orange-500" />
+                <p className="text-orange-300 text-sm">
+                  <span className="font-semibold">Loss Streak: {status.aggressive_features.consecutive_losses}</span>
+                  <span className="text-gray-400 ml-2">
+                    (pauses after 3 consecutive losses)
+                  </span>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Loss Streak Pause Banner */}
+          {status?.aggressive_features?.loss_streak_paused && (
+            <div className="bg-red-900/40 border border-red-500/50 rounded-lg p-4 animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 rounded-full bg-red-500 animate-ping" />
+                <div className="flex-1">
+                  <h3 className="text-red-400 font-semibold">PAUSED - Loss Streak Protection Active</h3>
+                  <p className="text-gray-400 text-sm mt-1">
+                    AGAPE paused after {status.aggressive_features.consecutive_losses} consecutive losses. Will resume automatically.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Top Stats */}
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -178,19 +212,19 @@ export default function AgapePage() {
             />
             <StatCard
               label="Total P&L"
-              value={perf?.total_pnl != null ? `$${perf.total_pnl.toFixed(2)}` : '$0.00'}
+              value={`$${(perf?.total_pnl ?? paperAccount?.cumulative_pnl ?? 0).toFixed(2)}`}
               icon={<DollarSign className="w-4 h-4" />}
-              color={(perf?.total_pnl || 0) >= 0 ? 'green' : 'red'}
+              color={(perf?.total_pnl ?? paperAccount?.cumulative_pnl ?? 0) >= 0 ? 'green' : 'red'}
             />
             <StatCard
               label="Win Rate"
-              value={perf?.win_rate != null ? `${perf.win_rate}%` : '---'}
+              value={(perf?.win_rate ?? paperAccount?.win_rate) != null ? `${perf?.win_rate ?? paperAccount?.win_rate}%` : '---'}
               icon={<CheckCircle className="w-4 h-4" />}
-              color={(perf?.win_rate || 0) >= 60 ? 'green' : (perf?.win_rate || 0) >= 50 ? 'yellow' : 'gray'}
+              color={(perf?.win_rate ?? paperAccount?.win_rate ?? 0) >= 60 ? 'green' : (perf?.win_rate ?? paperAccount?.win_rate ?? 0) >= 50 ? 'yellow' : 'gray'}
             />
             <StatCard
               label="Trades"
-              value={`${perf?.total_trades || 0}`}
+              value={`${perf?.total_trades ?? paperAccount?.total_trades ?? 0}`}
               icon={<BarChart3 className="w-4 h-4" />}
               color="blue"
             />
@@ -225,6 +259,8 @@ export default function AgapePage() {
                 equityTimeframe={equityTimeframe}
                 setEquityTimeframe={setEquityTimeframe}
                 brand={brand}
+                paperAccount={paperAccount}
+                startingCapital={startingCapital}
               />
             )}
             {activeTab === 'overview' && (
@@ -255,6 +291,8 @@ function PortfolioTab({
   equityTimeframe,
   setEquityTimeframe,
   brand,
+  paperAccount,
+  startingCapital,
 }: {
   status: any
   perf: any
@@ -263,11 +301,48 @@ function PortfolioTab({
   equityTimeframe: string
   setEquityTimeframe: (tf: string) => void
   brand: typeof BOT_BRANDS.AGAPE
+  paperAccount: any
+  startingCapital: number
 }) {
   const openPositions = positions || []
 
   return (
     <>
+      {/* Paper Account Summary (matches HERACLES pattern) */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
+          <div className="text-sm text-gray-400">Starting Capital</div>
+          <div className="text-2xl font-bold text-white mt-1">
+            ${startingCapital.toLocaleString()}
+          </div>
+        </div>
+        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
+          <div className="text-sm text-gray-400">Current Balance</div>
+          <div className={`text-2xl font-bold mt-1 ${
+            (paperAccount?.current_balance || startingCapital) >= startingCapital
+              ? 'text-green-400' : 'text-red-400'
+          }`}>
+            ${(paperAccount?.current_balance || startingCapital).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </div>
+        </div>
+        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
+          <div className="text-sm text-gray-400">Cumulative P&L</div>
+          <div className={`text-2xl font-bold mt-1 ${
+            (paperAccount?.cumulative_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+          }`}>
+            {(paperAccount?.cumulative_pnl || 0) >= 0 ? '+' : ''}${(paperAccount?.cumulative_pnl || 0).toFixed(2)}
+          </div>
+        </div>
+        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
+          <div className="text-sm text-gray-400">Return</div>
+          <div className={`text-2xl font-bold mt-1 ${
+            (paperAccount?.return_pct || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+          }`}>
+            {(paperAccount?.return_pct || 0) >= 0 ? '+' : ''}{(paperAccount?.return_pct || 0).toFixed(2)}%
+          </div>
+        </div>
+      </div>
+
       {/* Equity Curve */}
       <BotCard title="Equity Curve" botName="AGAPE" icon={<TrendingUp className="w-5 h-5" />}
         headerRight={
@@ -331,7 +406,7 @@ function PortfolioTab({
                     {(pos.unrealized_pnl || 0) >= 0 ? '+' : ''}${pos.unrealized_pnl?.toFixed(2) || '0.00'}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
                   <div>
                     <span className="text-gray-500">Stop Loss</span>
                     <p className="text-red-400 font-mono">{pos.stop_loss ? `$${pos.stop_loss.toFixed(2)}` : 'Trailing'}</p>
@@ -351,6 +426,14 @@ function PortfolioTab({
                       {pos.oracle_win_probability ? ` (${(pos.oracle_win_probability * 100).toFixed(0)}%)` : ''}
                     </p>
                   </div>
+                  <div>
+                    <span className="text-gray-500">Opened</span>
+                    <p className="text-white">{pos.open_time ? new Date(pos.open_time).toLocaleTimeString() : '---'}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">ID</span>
+                    <p className="text-white font-mono">{pos.position_id?.slice(0, 8) || '---'}</p>
+                  </div>
                 </div>
               </div>
             ))}
@@ -359,26 +442,46 @@ function PortfolioTab({
       </BotCard>
 
       {/* Performance Stats */}
-      {perf && perf.total_trades > 0 && (
+      {(perf?.total_trades > 0 || (paperAccount?.total_trades ?? 0) > 0) && (
         <BotCard title="Performance" botName="AGAPE" icon={<BarChart3 className="w-5 h-5" />}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
               <span className="text-gray-500">Profit Factor</span>
-              <p className="text-white font-mono text-lg">{perf.profit_factor}</p>
+              <p className="text-white font-mono text-lg">{perf?.profit_factor ?? '---'}</p>
             </div>
             <div>
               <span className="text-gray-500">Avg Win</span>
-              <p className="text-green-400 font-mono">${perf.avg_win}</p>
+              <p className="text-green-400 font-mono">${perf?.avg_win ?? '---'}</p>
             </div>
             <div>
               <span className="text-gray-500">Avg Loss</span>
-              <p className="text-red-400 font-mono">-${perf.avg_loss}</p>
+              <p className="text-red-400 font-mono">-${perf?.avg_loss ?? '---'}</p>
             </div>
             <div>
               <span className="text-gray-500">Return</span>
-              <p className={`font-mono ${perf.return_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {perf.return_pct}%
+              <p className={`font-mono ${(perf?.return_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {perf?.return_pct ?? paperAccount?.return_pct ?? 0}%
               </p>
+            </div>
+            <div>
+              <span className="text-gray-500">Realized P&L</span>
+              <p className={`font-mono ${(perf?.realized_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                ${(perf?.realized_pnl ?? paperAccount?.realized_pnl ?? 0).toFixed(2)}
+              </p>
+            </div>
+            <div>
+              <span className="text-gray-500">Unrealized P&L</span>
+              <p className={`font-mono ${(perf?.unrealized_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                ${(perf?.unrealized_pnl ?? paperAccount?.unrealized_pnl ?? 0).toFixed(2)}
+              </p>
+            </div>
+            <div>
+              <span className="text-gray-500">Best Trade</span>
+              <p className="text-green-400 font-mono">${perf?.best_trade?.toFixed(2) ?? '---'}</p>
+            </div>
+            <div>
+              <span className="text-gray-500">Worst Trade</span>
+              <p className="text-red-400 font-mono">${perf?.worst_trade?.toFixed(2) ?? '---'}</p>
             </div>
           </div>
         </BotCard>
