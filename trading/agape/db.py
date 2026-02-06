@@ -264,11 +264,11 @@ class AgapeDatabase:
                     oracle_advice, oracle_win_probability, oracle_confidence,
                     oracle_top_factors,
                     signal_action, signal_confidence, signal_reasoning,
-                    status, open_time
+                    status, open_time, high_water_mark
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s
+                    %s, %s, %s, %s, %s
                 )
             """, (
                 pos.position_id, pos.side.value, pos.contracts, pos.entry_price,
@@ -281,6 +281,7 @@ class AgapeDatabase:
                 json.dumps(pos.oracle_top_factors),
                 pos.signal_action, pos.signal_confidence, pos.signal_reasoning,
                 pos.status.value, pos.open_time or _now_ct(),
+                pos.entry_price,  # high_water_mark starts at entry price, NOT 0
             ))
             conn.commit()
             logger.info(f"AGAPE DB: Saved position {pos.position_id}")
@@ -404,7 +405,7 @@ class AgapeDatabase:
                     "signal_reasoning": row[21],
                     "status": row[22],
                     "open_time": row[23].isoformat() if row[23] else None,
-                    "high_water_mark": float(row[24]) if row[24] else 0,
+                    "high_water_mark": float(row[24]) if row[24] and float(row[24]) > 0 else float(row[3]),  # Fall back to entry_price if 0/NULL
                     "trailing_active": bool(row[25]),
                     "current_stop": float(row[26]) if row[26] else None,
                 })

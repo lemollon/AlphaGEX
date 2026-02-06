@@ -287,7 +287,10 @@ class AgapeTrader:
             profit_pct = ((entry_price - current_price) / entry_price) * 100
 
         # Track high water mark for MFE
-        hwm = pos.get("high_water_mark", entry_price)
+        # Guard: HWM of 0 or None means DB default wasn't updated yet - use entry_price
+        hwm = pos.get("high_water_mark") or entry_price
+        if hwm <= 0:
+            hwm = entry_price
         if is_long:
             max_profit_pct = ((hwm - entry_price) / entry_price) * 100 if hwm > entry_price else 0
         else:
