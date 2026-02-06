@@ -480,8 +480,8 @@ class AgapeDatabase:
             cursor.close()
             conn.close()
 
-    def has_traded_recently(self, cooldown_minutes: int = 30) -> bool:
-        """Check if we traded within cooldown period."""
+    def has_traded_recently(self, cooldown_minutes: int = 5) -> bool:
+        """Check if we opened a new position within cooldown period."""
         conn = self._get_conn()
         if not conn:
             return False

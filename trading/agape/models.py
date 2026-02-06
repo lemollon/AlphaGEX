@@ -119,10 +119,14 @@ class AgapeConfig:
     def load_from_db(cls, db) -> "AgapeConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
+        # These keys are code-controlled and should NOT be overridden by DB
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
         try:
             db_config = db.load_config()
             if db_config:
                 for key, value in db_config.items():
+                    if key in code_controlled_keys:
+                        continue  # Skip DB override for code-controlled settings
                     if hasattr(config, key):
                         attr_type = type(getattr(config, key))
                         if attr_type == float:
