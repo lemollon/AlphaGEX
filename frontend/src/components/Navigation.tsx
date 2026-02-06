@@ -69,6 +69,7 @@ const navItems = [
   { href: '/pegasus', label: `${BOT_DISPLAY_NAMES.PEGASUS} (SPX Iron Condor)`, icon: Shield, category: 'Live Trading' },
   { href: '/titan', label: `${BOT_DISPLAY_NAMES.TITAN} (Aggressive SPX IC)`, icon: Zap, category: 'Live Trading' },
   { href: '/heracles', label: `${BOT_DISPLAY_NAMES.HERACLES} (MES Futures)`, icon: Activity, category: 'Live Trading' },
+  { href: '/agape', label: `${BOT_DISPLAY_NAMES.AGAPE} (ETH Futures)`, icon: TrendingUp, category: 'Live Trading' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Volatility' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Volatility' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Volatility' },

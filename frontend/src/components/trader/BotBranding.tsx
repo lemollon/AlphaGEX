@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES'
+export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES' | 'AGAPE'
 
 export interface BotBrand {
   name: BotName
@@ -372,6 +372,42 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#EAB308',
     hexLight: '#FDE047',
     hexDark: '#CA8A04',
+  },
+  AGAPE: {
+    name: 'AGAPE',
+    displayName: BOT_DISPLAY_NAMES.AGAPE,  // AGAPE - 1 Corinthians 13:4,7
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE} ETH Micro Futures`,
+    description: 'ETH Micro Futures with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading',
+    // Primary - Violet/Purple (royalty, devotion, love)
+    primaryColor: 'violet',
+    primaryBg: 'bg-violet-600',
+    primaryBorder: 'border-violet-500',
+    primaryText: 'text-violet-400',
+    // Light variants
+    lightBg: 'bg-violet-900/20',
+    lightText: 'text-violet-300',
+    lightBorder: 'border-violet-700/50',
+    // Chart colors
+    chartLine: 'stroke-violet-400',
+    chartFill: 'fill-violet-500/20',
+    chartPositive: 'text-violet-400',
+    chartNegative: 'text-violet-600',
+    // Position cards
+    positionBorder: 'border-violet-600/50',
+    positionBg: 'bg-violet-950/30',
+    positionAccent: 'bg-violet-500',
+    // Badges
+    badgeBg: 'bg-violet-900/50',
+    badgeText: 'text-violet-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-violet-500',
+    gradientTo: 'to-violet-900',
+    // Hex for Recharts
+    hexPrimary: '#8B5CF6',
+    hexLight: '#A78BFA',
+    hexDark: '#7C3AED',
   },
 }
 

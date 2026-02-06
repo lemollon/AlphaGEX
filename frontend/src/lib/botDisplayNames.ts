@@ -128,6 +128,16 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
     reference: 'Joshua 1:9',
     why: 'Futures scalping requires courage—quick decisions in fast-moving markets. Like Joshua leading Israel into battle, this bot enters and exits positions with valor and conviction.',
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE → AGAPE (ETH Micro Futures - Unconditional Love, Steadfast Devotion)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE: {
+    displayName: 'AGAPE',
+    verse: '"Love is patient, love is kind. It does not envy, it does not boast, it is not proud. It always protects, always trusts, always hopes, always perseveres."',
+    reference: '1 Corinthians 13:4,7',
+    why: 'Agape (ἀγάπη) is the highest form of love—unconditional and steadfast. Trading crypto requires patience through extreme volatility and unwavering commitment to the system. Like love that always perseveres, this bot holds discipline through wild swings.',
+  },
 }
 
 // =============================================================================
@@ -212,6 +222,7 @@ export const BOT_DISPLAY_NAMES = {
   HERMES: BOT_SCRIPTURES.HERMES.displayName,
   PROMETHEUS: BOT_SCRIPTURES.PROMETHEUS.displayName,
   HERACLES: BOT_SCRIPTURES.HERACLES.displayName,
+  AGAPE: BOT_SCRIPTURES.AGAPE.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {
