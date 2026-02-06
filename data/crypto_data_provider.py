@@ -581,9 +581,12 @@ class CryptoDataProvider:
             return self._snapshot_cache
 
         spot = self._get_spot_price(symbol)
+        if not spot or spot <= 0:
+            logger.warning(f"CryptoDataProvider: No valid spot price for {symbol}")
+            return None
         snapshot = CryptoMarketSnapshot(
             symbol=symbol,
-            spot_price=spot or 0.0,
+            spot_price=spot,
             timestamp=datetime.now(CENTRAL_TZ),
         )
 
@@ -773,7 +776,19 @@ class CryptoDataProvider:
             else:
                 snapshot.squeeze_risk = "LOW"
 
-        # 4. Combined Signal (the trade decision)
+        # 4. Volatility Regime (from funding rate magnitude + squeeze risk)
+        if snapshot.funding_rate:
+            abs_fr = abs(snapshot.funding_rate.rate) if snapshot.funding_rate.rate else 0
+            if abs_fr > 0.03 or snapshot.squeeze_risk == "HIGH":
+                snapshot.volatility_regime = "HIGH"
+            elif abs_fr > 0.01 or snapshot.squeeze_risk == "ELEVATED":
+                snapshot.volatility_regime = "ELEVATED"
+            elif abs_fr < 0.003:
+                snapshot.volatility_regime = "LOW"
+            else:
+                snapshot.volatility_regime = "NORMAL"
+
+        # 5. Combined Signal (the trade decision)
         snapshot.combined_signal, snapshot.combined_confidence = (
             self._calculate_combined_signal(snapshot)
         )

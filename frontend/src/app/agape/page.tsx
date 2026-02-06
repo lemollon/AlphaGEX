@@ -68,7 +68,7 @@ export default function AgapePage() {
 
   const status = statusData?.data
   const perf = perfData?.data
-  const equity = equityData?.data || []
+  const equity = equityData?.data?.equity_curve || []
 
   if (statusLoading) {
     return (
@@ -149,7 +149,7 @@ export default function AgapePage() {
         </div>
 
         {/* Tab Content */}
-        {activeTab === 'overview' && <OverviewTab status={status} perf={perf} equity={equity} />}
+        {activeTab === 'overview' && <OverviewTab status={status} perf={perf} equity={equity} equityResponse={equityData} />}
         {activeTab === 'snapshot' && <SnapshotTab data={snapshotData?.data} loading={snapLoading} />}
         {activeTab === 'positions' && <PositionsTab data={positionsData?.data} loading={posLoading} />}
         {activeTab === 'activity' && <ActivityTab data={scansData?.data} />}
@@ -164,7 +164,7 @@ export default function AgapePage() {
 // OVERVIEW TAB
 // ==============================================================================
 
-function OverviewTab({ status, perf, equity }: { status: any; perf: any; equity: any[] }) {
+function OverviewTab({ status, perf, equity, equityResponse }: { status: any; perf: any; equity: any[]; equityResponse: any }) {
   return (
     <div className="space-y-6">
       {/* Equity Curve */}
@@ -175,16 +175,20 @@ function OverviewTab({ status, perf, equity }: { status: any; perf: any; equity:
             <LineChart data={equity}>
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
               <XAxis
-                dataKey="timestamp"
+                dataKey="date"
                 tick={{ fill: '#9CA3AF', fontSize: 11 }}
-                tickFormatter={(v) => v ? new Date(v).toLocaleDateString() : ''}
+                tickFormatter={(v) => {
+                  if (!v) return ''
+                  const d = new Date(v + 'T12:00:00')
+                  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                }}
               />
               <YAxis tick={{ fill: '#9CA3AF', fontSize: 11 }} />
               <Tooltip
                 contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }}
                 labelStyle={{ color: '#D1D5DB' }}
               />
-              <ReferenceLine y={status?.starting_capital || 5000} stroke="#6B7280" strokeDasharray="5 5" label="Start" />
+              <ReferenceLine y={equityResponse?.data?.starting_capital || status?.starting_capital || 5000} stroke="#6B7280" strokeDasharray="5 5" label="Start" />
               <Line type="monotone" dataKey="equity" stroke="#8B5CF6" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>

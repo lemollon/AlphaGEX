@@ -158,6 +158,7 @@ class AgapeTrader:
                 result["outcome"] = "EXECUTION_FAILED"
 
             self._log_scan(result, scan_context, signal=signal)
+            self._save_equity_snapshot(market_data)
             return result
 
         except Exception as e:
@@ -278,10 +279,13 @@ class AgapeTrader:
         pnl_per_contract = (current_price - entry_price) * 0.1 * direction
         realized_pnl = round(pnl_per_contract * contracts, 2)
 
-        # Simulate close via executor
-        success = self.db.close_position(
-            position_id, current_price, realized_pnl, reason
-        )
+        # Use expire_position for time-based exits, close_position for P&L exits
+        if reason == "MAX_HOLD_TIME":
+            success = self.db.expire_position(position_id, realized_pnl, current_price)
+        else:
+            success = self.db.close_position(
+                position_id, current_price, realized_pnl, reason
+            )
 
         if success:
             self.db.log(
@@ -379,6 +383,40 @@ class AgapeTrader:
         }
         self.db.log_scan(scan_data)
 
+    def _save_equity_snapshot(self, market_data: Optional[Dict]):
+        """Save an equity snapshot for intraday tracking."""
+        try:
+            open_positions = self.db.get_open_positions()
+            current_price = self.executor.get_current_price()
+            if not current_price and market_data:
+                current_price = market_data.get("spot_price")
+
+            # Calculate unrealized P&L from open positions
+            unrealized = 0.0
+            if current_price and open_positions:
+                for pos in open_positions:
+                    direction = 1 if pos["side"] == "long" else -1
+                    pnl = (current_price - pos["entry_price"]) * 0.1 * direction * pos.get("contracts", 1)
+                    unrealized += pnl
+
+            # Get cumulative realized P&L from all closed trades
+            closed = self.db.get_closed_trades(limit=10000)
+            realized_cum = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
+
+            equity = self.config.starting_capital + realized_cum + unrealized
+            funding_rate = market_data.get("funding_rate") if market_data else None
+
+            self.db.save_equity_snapshot(
+                equity=round(equity, 2),
+                unrealized_pnl=round(unrealized, 2),
+                realized_pnl_cumulative=round(realized_cum, 2),
+                open_positions=len(open_positions),
+                eth_price=current_price,
+                funding_rate=funding_rate,
+            )
+        except Exception as e:
+            logger.debug(f"AGAPE Trader: Snapshot save failed: {e}")
+
     # ------------------------------------------------------------------
     # Status & Performance (for API routes)
     # ------------------------------------------------------------------
@@ -449,32 +487,6 @@ class AgapeTrader:
             "profit_factor": round(total_wins / total_losses, 2) if total_losses > 0 else float("inf"),
             "return_pct": round(total_pnl / self.config.starting_capital * 100, 2),
         }
-
-    def get_equity_curve(self) -> List[Dict]:
-        """Build historical equity curve from closed trades."""
-        closed_trades = self.db.get_closed_trades(limit=10000)
-        if not closed_trades:
-            return []
-
-        starting_capital = self.db.get_starting_capital()
-        cumulative_pnl = 0
-        curve = []
-
-        # Trades come DESC, reverse for chronological
-        for trade in reversed(closed_trades):
-            pnl = trade.get("realized_pnl", 0)
-            cumulative_pnl += pnl
-            equity = starting_capital + cumulative_pnl
-
-            curve.append({
-                "timestamp": trade.get("close_time"),
-                "equity": round(equity, 2),
-                "cumulative_pnl": round(cumulative_pnl, 2),
-                "trade_pnl": round(pnl, 2),
-                "return_pct": round(cumulative_pnl / starting_capital * 100, 2),
-            })
-
-        return curve
 
     def enable(self):
         self._enabled = True
