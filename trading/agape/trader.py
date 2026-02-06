@@ -287,7 +287,10 @@ class AgapeTrader:
             profit_pct = ((entry_price - current_price) / entry_price) * 100
 
         # Track high water mark for MFE
-        hwm = pos.get("high_water_mark", entry_price)
+        # Guard: HWM of 0 or None means DB default wasn't updated yet - use entry_price
+        hwm = pos.get("high_water_mark") or entry_price
+        if hwm <= 0:
+            hwm = entry_price
         if is_long:
             max_profit_pct = ((hwm - entry_price) / entry_price) * 100 if hwm > entry_price else 0
         else:
@@ -674,16 +677,20 @@ class AgapeTrader:
     def _check_entry_conditions(self, now: datetime) -> Optional[str]:
         """Check if conditions allow new entries.
 
+        Matches HERACLES pattern: no time-based cooldown.
+        Entry gating is handled by loss streak pause, market hours,
+        and signal quality only.
+
         Returns skip reason string, or None if conditions are met.
         """
         if not self._enabled:
             return "BOT_DISABLED"
 
-        # No position limit - AGAPE can have unlimited concurrent positions
-
-        # Check cooldown
-        if self.db.has_traded_recently(self.config.cooldown_minutes):
-            return "COOLDOWN"
+        # No cooldown - matches HERACLES pattern
+        # Entry frequency is controlled by:
+        # 1. Loss streak pause (checked in run_cycle before this)
+        # 2. Signal quality (generate_signal returns WAIT if no opportunity)
+        # 3. Market hours (below)
 
         # CME Micro Ether trades Sun 5PM - Fri 4PM CT
         weekday = now.weekday()  # 0=Mon, 6=Sun
@@ -824,7 +831,7 @@ class AgapeTrader:
             "starting_capital": self.config.starting_capital,
             "risk_per_trade_pct": self.config.risk_per_trade_pct,
             "max_contracts": self.config.max_contracts,
-            "cooldown_minutes": self.config.cooldown_minutes,
+            "cooldown_minutes": 0,  # No cooldown - matches HERACLES
             "require_oracle": self.config.require_oracle_approval,
             # Paper account summary (matches HERACLES pattern)
             "paper_account": {

@@ -77,7 +77,7 @@ class AgapeConfig:
     # Let winners run, only trail after profitable
     use_no_loss_trailing: bool = True
     no_loss_activation_pct: float = 1.0   # % profit before trailing activates
-    no_loss_trail_distance_pct: float = 0.5  # % behind price to trail (MUST be < activation_pct)
+    no_loss_trail_distance_pct: float = 0.75  # % behind best price (< activation_pct to lock in profit)
     no_loss_emergency_stop_pct: float = 5.0  # Emergency stop for catastrophic moves
     max_unrealized_loss_pct: float = 3.0     # Exit if down 3% (safety net)
     no_loss_profit_target_pct: float = 0.0   # 0 = disabled, let winners run
@@ -119,10 +119,14 @@ class AgapeConfig:
     def load_from_db(cls, db) -> "AgapeConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
+        # These keys are code-controlled and should NOT be overridden by DB
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
         try:
             db_config = db.load_config()
             if db_config:
                 for key, value in db_config.items():
+                    if key in code_controlled_keys:
+                        continue  # Skip DB override for code-controlled settings
                     if hasattr(config, key):
                         attr_type = type(getattr(config, key))
                         if attr_type == float:
