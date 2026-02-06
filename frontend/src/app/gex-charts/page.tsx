@@ -621,9 +621,15 @@ export default function GexChartsPage() {
                     <>
                       {/* Horizontal Bar Chart */}
                       <div className="h-[500px]">
+                        {(() => {
+                          const sortedStrikes = [...data.gex_chart.strikes]
+                            .filter(s => Math.abs(s.net_gamma) > 0.00001)
+                            .slice(0, 40)
+                            .sort((a, b) => b.strike - a.strike)
+                          return (
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart
-                            data={data.gex_chart.strikes.filter(s => Math.abs(s.net_gamma) > 0.00001).slice(0, 40)}
+                            data={sortedStrikes}
                             layout="vertical"
                             margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
                           >
@@ -656,7 +662,7 @@ export default function GexChartsPage() {
                               />
                             )}
                             <Bar dataKey="net_gamma" name="Net Gamma at Strike">
-                              {data.gex_chart.strikes.map((entry, index) => (
+                              {sortedStrikes.map((entry, index) => (
                                 <Cell
                                   key={`cell-${index}`}
                                   fill={entry.net_gamma >= 0 ? '#06b6d4' : '#06b6d4'}
@@ -665,6 +671,8 @@ export default function GexChartsPage() {
                             </Bar>
                           </BarChart>
                         </ResponsiveContainer>
+                          )
+                        })()}
                       </div>
 
                       {/* Key Levels Legend */}
