@@ -39,6 +39,7 @@ const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'TITAN', endpoint: '/api/titan/equity-curve' },
   { name: 'PROMETHEUS', endpoint: '/api/prometheus-box/ic/equity-curve' },
   { name: 'HERACLES', endpoint: '/api/heracles/paper-equity-curve' },
+  { name: 'AGAPE', endpoint: '/api/agape/equity-curve' },
 ]
 
 interface EquityCurvePoint {
@@ -131,8 +132,13 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
+  const { data: agapeData, isLoading: agapeLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[7].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading
+  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -143,7 +149,7 @@ export default function MultiBotEquityCurve({
     TITAN: titanData,
     PROMETHEUS: prometheusData,
     HERACLES: heraclesData,
-    AGAPE: undefined,
+    AGAPE: agapeData,
     PHOENIX: undefined,
     ATLAS: undefined,
   }
@@ -191,7 +197,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, showPercentage])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -222,7 +228,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {
@@ -416,7 +422,7 @@ export default function MultiBotEquityCurve({
 
       {/* Summary Stats Table */}
       <div className="px-4 pb-4">
-        <div className="grid grid-cols-6 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           {LIVE_BOTS.map(bot => {
             const brand = BOT_BRANDS[bot.name]
             const stats = botStats[bot.name]

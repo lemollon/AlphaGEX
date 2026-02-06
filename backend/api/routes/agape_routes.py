@@ -18,7 +18,7 @@ Endpoints follow the standard bot pattern:
 
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict
 from fastapi import APIRouter, HTTPException, Query
 from zoneinfo import ZoneInfo
 
@@ -181,30 +181,149 @@ async def get_closed_trades(
 # ------------------------------------------------------------------
 
 @router.get("/equity-curve")
-async def get_equity_curve():
+async def get_equity_curve(
+    days: int = Query(default=30, ge=1, le=365, description="Number of days to return"),
+):
     """Get historical equity curve built from all closed trades.
 
-    Cumulative P&L = running sum of all realized_pnl.
-    Equity = starting_capital + cumulative_pnl.
-    Starting capital from config table (NOT hardcoded).
-    """
-    trader = _get_trader()
-    if not trader:
-        return {"success": False, "data": [], "message": "AGAPE not available"}
+    Returns EXACT same format as HERACLES /paper-equity-curve so that
+    MultiBotEquityCurve component can render it without any adaptation.
 
-    try:
-        curve = trader.get_equity_curve()
-        starting_capital = trader.db.get_starting_capital()
+    Format: { equity_curve: [...], points: N, days: N, timestamp: "..." }
+    """
+    if not get_connection:
+        now = datetime.now(CENTRAL_TZ)
         return {
             "success": True,
-            "data": curve,
-            "count": len(curve),
-            "starting_capital": starting_capital,
-            "fetched_at": _format_ct(),
+            "data": {
+                "equity_curve": [{
+                    "date": now.strftime("%Y-%m-%d"),
+                    "daily_pnl": 0.0,
+                    "cumulative_pnl": 0.0,
+                    "equity": 5000.0,
+                    "trades": 0,
+                    "return_pct": 0.0,
+                }],
+                "starting_capital": 5000.0,
+                "current_equity": 5000.0,
+                "total_pnl": 0.0,
+                "total_return_pct": 0.0,
+            },
+            "points": 1,
+            "days": days,
+            "timestamp": now.isoformat(),
         }
+
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital from config (NOT hardcoded)
+        starting_capital = 5000.0
+        try:
+            cursor.execute(
+                "SELECT config_value FROM autonomous_config WHERE bot_name = 'AGAPE' AND config_key = 'starting_capital'"
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                starting_capital = float(row[0])
+        except Exception:
+            pass
+
+        # Get ALL closed trades ordered chronologically (no date filter on SQL)
+        cursor.execute("""
+            SELECT
+                (close_time AT TIME ZONE 'America/Chicago')::date as trade_date,
+                realized_pnl,
+                position_id
+            FROM agape_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+              AND close_time IS NOT NULL
+              AND realized_pnl IS NOT NULL
+            ORDER BY close_time ASC
+        """)
+        rows = cursor.fetchall()
+
+        if not rows:
+            now = datetime.now(CENTRAL_TZ)
+            return {
+                "success": True,
+                "data": {
+                    "equity_curve": [{
+                        "date": now.strftime("%Y-%m-%d"),
+                        "daily_pnl": 0.0,
+                        "cumulative_pnl": 0.0,
+                        "equity": starting_capital,
+                        "trades": 0,
+                        "return_pct": 0.0,
+                    }],
+                    "starting_capital": starting_capital,
+                    "current_equity": starting_capital,
+                    "total_pnl": 0.0,
+                    "total_return_pct": 0.0,
+                },
+                "points": 1,
+                "days": days,
+                "timestamp": now.isoformat(),
+            }
+
+        # Aggregate by day
+        from collections import defaultdict
+        daily: Dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
+        for row in rows:
+            trade_date = str(row[0])
+            pnl = float(row[1]) if row[1] else 0.0
+            daily[trade_date]["pnl"] += pnl
+            daily[trade_date]["trades"] += 1
+
+        # Build equity curve chronologically
+        sorted_dates = sorted(daily.keys())
+        cumulative_pnl = 0.0
+        equity_curve = []
+
+        for d in sorted_dates:
+            day_pnl = daily[d]["pnl"]
+            day_trades = daily[d]["trades"]
+            cumulative_pnl += day_pnl
+            equity = starting_capital + cumulative_pnl
+
+            equity_curve.append({
+                "date": d,
+                "daily_pnl": round(day_pnl, 2),
+                "cumulative_pnl": round(cumulative_pnl, 2),
+                "equity": round(equity, 2),
+                "trades": day_trades,
+                "return_pct": round(cumulative_pnl / starting_capital, 4),
+            })
+
+        # Filter to requested days (output filter only, not SQL)
+        if days < 365 and len(equity_curve) > days:
+            equity_curve = equity_curve[-days:]
+
+        current_equity = equity_curve[-1]["equity"] if equity_curve else starting_capital
+        total_pnl = equity_curve[-1]["cumulative_pnl"] if equity_curve else 0.0
+
+        return {
+            "success": True,
+            "data": {
+                "equity_curve": equity_curve,
+                "starting_capital": starting_capital,
+                "current_equity": round(current_equity, 2),
+                "total_pnl": round(total_pnl, 2),
+                "total_return_pct": round(total_pnl / starting_capital * 100, 2),
+            },
+            "points": len(equity_curve),
+            "days": days,
+            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+        }
+
     except Exception as e:
         logger.error(f"AGAPE equity curve error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
 
 
 @router.get("/equity-curve/intraday")
