@@ -1254,46 +1254,6 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* System Performance Summary */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-xl font-bold mb-4">System Performance Summary</h2>
-                  <div className="grid md:grid-cols-4 gap-4">
-                    <div className="bg-gradient-to-br from-blue-900/40 to-blue-900/20 rounded-lg p-4 text-center border border-blue-700/30">
-                      <div className="text-xs text-blue-300 mb-1">Total Capital Working</div>
-                      <div className="text-2xl font-bold text-white">{formatCurrency(totalBorrowed)}</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-green-900/40 to-green-900/20 rounded-lg p-4 text-center border border-green-700/30">
-                      <div className="text-xs text-green-300 mb-1">Gross IC Returns</div>
-                      <div className="text-2xl font-bold text-green-400">{formatCurrency(totalICReturns)}</div>
-                    </div>
-                    <div className="bg-gradient-to-br from-red-900/40 to-red-900/20 rounded-lg p-4 text-center border border-red-700/30">
-                      <div className="text-xs text-red-300 mb-1">Borrowing Costs</div>
-                      <div className="text-2xl font-bold text-red-400">{formatCurrency(totalCostAccrued)}</div>
-                    </div>
-                    <div className={`bg-gradient-to-br ${netPnL >= 0 ? 'from-emerald-900/40 to-emerald-900/20 border-emerald-700/30' : 'from-rose-900/40 to-rose-900/20 border-rose-700/30'} rounded-lg p-4 text-center border`}>
-                      <div className={`text-xs ${netPnL >= 0 ? 'text-emerald-300' : 'text-rose-300'} mb-1`}>Net Profit</div>
-                      <div className={`text-2xl font-bold ${netPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(netPnL)}</div>
-                    </div>
-                  </div>
-                  {/* ROI bar */}
-                  {totalBorrowed > 0 && (
-                    <div className="mt-4 pt-4 border-t border-gray-700">
-                      <div className="flex justify-between text-sm mb-2">
-                        <span className="text-gray-400">Return on Borrowed Capital</span>
-                        <span className={`font-bold ${returnOnBorrowed >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {formatPct(returnOnBorrowed)}
-                        </span>
-                      </div>
-                      <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full transition-all ${returnOnBorrowed >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
-                          style={{ width: `${Math.min(100, Math.abs(returnOnBorrowed) * 10)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 {/* ================================================================ */}
                 {/* FULL RECONCILIATION SECTION - All values from API               */}
                 {/* ================================================================ */}
