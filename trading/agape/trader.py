@@ -375,22 +375,38 @@ class AgapeTrader:
         # ================================================================
         activation_pct = self.config.no_loss_activation_pct
         if not trailing_active and max_profit_pct >= activation_pct:
-            # Set trailing stop at breakeven initially
-            self.db.update_high_water_mark(pos["position_id"], entry_price)
-            # Store trailing activation state
+            # Calculate initial trailing stop using trail formula, floored at breakeven
+            trail_distance_pct = self.config.no_loss_trail_distance_pct
+            trail_distance = entry_price * (trail_distance_pct / 100)
+
+            if is_long:
+                # Trail below the current best price, but never below breakeven
+                initial_stop = max(entry_price, hwm - trail_distance)
+            else:
+                # Trail above the current best price, but never above breakeven
+                initial_stop = min(entry_price, hwm + trail_distance)
+
+            initial_stop = round(initial_stop, 2)
+            locked_pct = abs(initial_stop - entry_price) / entry_price * 100
+
+            # Update HWM to current best price (NOT entry_price!)
+            self.db.update_high_water_mark(pos["position_id"], hwm)
             try:
                 self.db._execute(
                     """UPDATE agape_positions
                        SET trailing_active = TRUE, current_stop = %s
                        WHERE position_id = %s AND status = 'open'""",
-                    (entry_price, pos["position_id"])
+                    (initial_stop, pos["position_id"])
                 )
             except Exception:
                 pass  # Best effort
             logger.info(
                 f"AGAPE: TRAIL ACTIVATED {pos['position_id']} at +{max_profit_pct:.1f}% "
-                f"(stop set to breakeven {entry_price:.2f})"
+                f"(stop={initial_stop:.2f}, locking +{locked_pct:.2f}%, hwm={hwm:.2f})"
             )
+            # Mark as active for the ratchet step below
+            trailing_active = True
+            current_stop = initial_stop
 
         # ================================================================
         # 7. UPDATE TRAILING STOP (ratchet as price improves)
@@ -400,8 +416,9 @@ class AgapeTrader:
             trail_distance = entry_price * (trail_distance_pct / 100)
 
             if is_long:
-                new_stop = hwm - trail_distance
-                if current_stop and new_stop > current_stop and new_stop > entry_price:
+                new_stop = round(hwm - trail_distance, 2)
+                # Only require: better than current stop AND at or above breakeven
+                if new_stop > (current_stop or 0) and new_stop >= entry_price:
                     try:
                         self.db._execute(
                             """UPDATE agape_positions SET current_stop = %s
@@ -413,11 +430,12 @@ class AgapeTrader:
                     locked = ((new_stop - entry_price) / entry_price) * 100
                     logger.info(
                         f"AGAPE: Trail raised {pos['position_id']} to {new_stop:.2f} "
-                        f"(locking +{locked:.1f}%)"
+                        f"(locking +{locked:.1f}%, hwm={hwm:.2f})"
                     )
             else:
-                new_stop = hwm + trail_distance
-                if current_stop and new_stop < current_stop and new_stop < entry_price:
+                new_stop = round(hwm + trail_distance, 2)
+                # Only require: better than current stop AND at or below breakeven
+                if current_stop and new_stop < current_stop and new_stop <= entry_price:
                     try:
                         self.db._execute(
                             """UPDATE agape_positions SET current_stop = %s
@@ -429,7 +447,7 @@ class AgapeTrader:
                     locked = ((entry_price - new_stop) / entry_price) * 100
                     logger.info(
                         f"AGAPE: Trail lowered {pos['position_id']} to {new_stop:.2f} "
-                        f"(locking +{locked:.1f}%)"
+                        f"(locking +{locked:.1f}%, hwm={hwm:.2f})"
                     )
 
         # ================================================================
