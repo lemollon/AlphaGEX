@@ -123,6 +123,25 @@ export default function AgapePage() {
             scanIntervalMinutes={5}
           />
 
+          {/* CME Market Status Banner */}
+          {status?.market && (
+            <div className={`rounded-lg p-3 border ${
+              status.market.cme_market_open
+                ? 'bg-green-900/20 border-green-500/30'
+                : 'bg-yellow-900/20 border-yellow-500/30'
+            }`}>
+              <div className="flex items-center gap-3 text-sm">
+                <div className={`w-2.5 h-2.5 rounded-full ${
+                  status.market.cme_market_open ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
+                }`} />
+                <span className={status.market.cme_market_open ? 'text-green-300' : 'text-yellow-300'}>
+                  CME /MET: {status.market.cme_market_open ? 'Market Open' : status.market.reason}
+                </span>
+                <span className="text-gray-500 ml-auto text-xs">{status.market.schedule}</span>
+              </div>
+            </div>
+          )}
+
           {/* Aggressive Mode Banner - Uses brand colors */}
           <div className={`${brand.lightBg} border ${brand.lightBorder} rounded-lg p-4`}>
             <div className="flex items-start gap-3">

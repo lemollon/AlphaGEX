@@ -705,8 +705,8 @@ class AgapeTrader:
         if weekday == 6 and hour < 17:
             return "MARKET_CLOSED_SUNDAY_EARLY"
 
-        # Friday: market closes at 4 PM CT
-        if weekday == 4 and (hour > 16 or (hour == 16 and minute > 0)):
+        # Friday: market closes at 4 PM CT (4:00:00 = closed)
+        if weekday == 4 and hour >= 16:
             return "MARKET_CLOSED_FRIDAY_LATE"
 
         # Daily maintenance break: 4 PM - 5 PM CT (Mon-Thu)
@@ -787,11 +787,81 @@ class AgapeTrader:
             logger.warning(f"AGAPE Trader: Snapshot save failed: {e}")
 
     # ------------------------------------------------------------------
+    # CME Market Status
+    # ------------------------------------------------------------------
+
+    def get_cme_market_status(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        """Get CME Micro Ether Futures market status.
+
+        CME /MET hours: Sunday 5:00 PM CT - Friday 4:00 PM CT
+        Daily maintenance break: 4:00 PM - 5:00 PM CT (Mon-Thu)
+
+        This is DIFFERENT from the US equity market (8:30 AM - 3:00 PM CT).
+        """
+        if now is None:
+            now = datetime.now(CENTRAL_TZ)
+
+        weekday = now.weekday()  # 0=Mon, 6=Sun
+        hour = now.hour
+
+        # Determine CME crypto market status
+        if weekday == 5:
+            # Saturday: closed all day, reopens Sunday 5 PM CT
+            next_open = now + timedelta(days=1)
+            next_open = next_open.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "CLOSED_SATURDAY",
+                "reason": "CME closed Saturday. Reopens Sunday 5:00 PM CT.",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        elif weekday == 6 and hour < 17:
+            # Sunday before 5 PM: still closed
+            next_open = now.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "CLOSED_SUNDAY_EARLY",
+                "reason": "CME opens at 5:00 PM CT today (Sunday).",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        elif weekday == 4 and hour >= 16:
+            # Friday 4 PM+: closed for the weekend
+            next_open = now + timedelta(days=2)
+            next_open = next_open.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "CLOSED_FRIDAY_LATE",
+                "reason": "CME closed for the weekend. Reopens Sunday 5:00 PM CT.",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        elif 0 <= weekday <= 3 and hour == 16:
+            # Mon-Thu 4-5 PM: daily maintenance
+            next_open = now.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "DAILY_MAINTENANCE",
+                "reason": "CME daily maintenance break (4:00-5:00 PM CT). Reopens at 5:00 PM CT.",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        else:
+            return {
+                "cme_market_open": True,
+                "status": "OPEN",
+                "reason": "CME Micro Ether Futures market is open.",
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+
+    # ------------------------------------------------------------------
     # Status & Performance (for API routes)
     # ------------------------------------------------------------------
 
     def get_status(self) -> Dict[str, Any]:
         """Get bot status for API."""
+        now = datetime.now(CENTRAL_TZ)
         open_positions = self.db.get_open_positions()
         current_price = self.executor.get_current_price()
 
@@ -817,6 +887,9 @@ class AgapeTrader:
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0] if closed_trades else []
         win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None
 
+        # CME market status (separate from equity market status in nav bar)
+        cme_status = self.get_cme_market_status(now)
+
         return {
             "bot_name": "AGAPE",
             "status": "ACTIVE" if self._enabled else "DISABLED",
@@ -833,6 +906,10 @@ class AgapeTrader:
             "max_contracts": self.config.max_contracts,
             "cooldown_minutes": 0,  # No cooldown - matches HERACLES
             "require_oracle": self.config.require_oracle_approval,
+            # CME Micro Ether Futures market status
+            # NOTE: This is DIFFERENT from the equity "Market Open/Closed" in the nav bar.
+            # CME /MET trades Sun 5PM - Fri 4PM CT (nearly 24/7), not just 8:30AM-3PM.
+            "market": cme_status,
             # Paper account summary (matches HERACLES pattern)
             "paper_account": {
                 "starting_capital": self.config.starting_capital,
@@ -849,7 +926,7 @@ class AgapeTrader:
                 "use_sar": self.config.use_sar,
                 "direction_tracker": dt_status,
                 "consecutive_losses": self.consecutive_losses,
-                "loss_streak_paused": self.loss_streak_pause_until is not None and datetime.now(CENTRAL_TZ) < self.loss_streak_pause_until,
+                "loss_streak_paused": self.loss_streak_pause_until is not None and now < self.loss_streak_pause_until,
             },
             "positions": open_positions,
         }
