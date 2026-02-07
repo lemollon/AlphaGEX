@@ -26,6 +26,7 @@ from trading.agape.models import (
     PositionStatus,
     SignalAction,
     TradingMode,
+    Exchange,
 )
 from trading.agape.db import AgapeDatabase
 from trading.agape.signals import (
@@ -34,6 +35,13 @@ from trading.agape.signals import (
     record_agape_trade_outcome,
 )
 from trading.agape.executor import AgapeExecutor
+
+# Coinbase executor for 24/7 spot trading (optional)
+CoinbaseExecutor = None
+try:
+    from trading.agape.coinbase_executor import CoinbaseExecutor
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +85,16 @@ class AgapeTrader:
             self.config = AgapeConfig.load_from_db(self.db)
 
         self.signals = AgapeSignalGenerator(self.config)
-        self.executor = AgapeExecutor(self.config, self.db)
+
+        # Pick executor based on exchange config
+        if self.config.exchange == Exchange.COINBASE_SPOT and CoinbaseExecutor:
+            self.executor = CoinbaseExecutor(self.config, self.db)
+            self._is_24_7 = True
+            exchange_label = "Coinbase (24/7 spot)"
+        else:
+            self.executor = AgapeExecutor(self.config, self.db)
+            self._is_24_7 = False
+            exchange_label = "tastytrade CME /MET"
 
         self._last_scan_time: Optional[datetime] = None
         self._cycle_count: int = 0
@@ -90,9 +107,10 @@ class AgapeTrader:
         # Direction tracker (from HERACLES)
         self._direction_tracker = get_agape_direction_tracker(self.config)
 
-        self.db.log("INFO", "INIT", f"AGAPE trader initialized AGGRESSIVE (mode={self.config.mode.value})")
+        self.db.log("INFO", "INIT", f"AGAPE trader initialized AGGRESSIVE (mode={self.config.mode.value}, exchange={exchange_label})")
         logger.info(
             f"AGAPE Trader: Initialized AGGRESSIVE (mode={self.config.mode.value}, "
+            f"exchange={exchange_label}, "
             f"max_pos={self.config.max_open_positions}, cooldown={self.config.cooldown_minutes}m, "
             f"oracle_required={self.config.require_oracle_approval}, "
             f"no_loss_trailing={self.config.use_no_loss_trailing}, "
@@ -690,7 +708,11 @@ class AgapeTrader:
         # Entry frequency is controlled by:
         # 1. Loss streak pause (checked in run_cycle before this)
         # 2. Signal quality (generate_signal returns WAIT if no opportunity)
-        # 3. Market hours (below)
+        # 3. Market hours (below - skipped for 24/7 Coinbase spot)
+
+        # Coinbase spot trades 24/7/365 - no market hours restrictions
+        if self._is_24_7:
+            return None
 
         # CME Micro Ether trades Sun 5PM - Fri 4PM CT
         weekday = now.weekday()  # 0=Mon, 6=Sun
@@ -791,15 +813,24 @@ class AgapeTrader:
     # ------------------------------------------------------------------
 
     def get_cme_market_status(self, now: Optional[datetime] = None) -> Dict[str, Any]:
-        """Get CME Micro Ether Futures market status.
+        """Get market status for the configured exchange.
 
-        CME /MET hours: Sunday 5:00 PM CT - Friday 4:00 PM CT
-        Daily maintenance break: 4:00 PM - 5:00 PM CT (Mon-Thu)
-
-        This is DIFFERENT from the US equity market (8:30 AM - 3:00 PM CT).
+        For COINBASE_SPOT: Always open (24/7/365).
+        For TASTYTRADE_CME: Sunday 5:00 PM CT - Friday 4:00 PM CT
+          with daily maintenance break 4:00-5:00 PM CT (Mon-Thu).
         """
         if now is None:
             now = datetime.now(CENTRAL_TZ)
+
+        # Coinbase spot = always open
+        if self._is_24_7:
+            return {
+                "cme_market_open": True,
+                "status": "OPEN",
+                "reason": "Coinbase spot ETH-USD trades 24/7/365.",
+                "exchange": "coinbase",
+                "schedule": "24/7/365 (no maintenance breaks)",
+            }
 
         weekday = now.weekday()  # 0=Mon, 6=Sun
         hour = now.hour
@@ -895,7 +926,8 @@ class AgapeTrader:
             "status": "ACTIVE" if self._enabled else "DISABLED",
             "mode": self.config.mode.value,
             "ticker": self.config.ticker,
-            "instrument": self.config.instrument,
+            "instrument": "ETH-USD spot" if self._is_24_7 else self.config.instrument,
+            "exchange": "coinbase" if self._is_24_7 else "tastytrade",
             "cycle_count": self._cycle_count,
             "open_positions": len(open_positions),
             "max_positions": None,  # Unlimited
