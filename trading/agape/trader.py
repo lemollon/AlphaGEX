@@ -26,6 +26,7 @@ from trading.agape.models import (
     PositionStatus,
     SignalAction,
     TradingMode,
+    Exchange,
 )
 from trading.agape.db import AgapeDatabase
 from trading.agape.signals import (
@@ -34,6 +35,13 @@ from trading.agape.signals import (
     record_agape_trade_outcome,
 )
 from trading.agape.executor import AgapeExecutor
+
+# Coinbase executor for 24/7 spot trading (optional)
+CoinbaseExecutor = None
+try:
+    from trading.agape.coinbase_executor import CoinbaseExecutor
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +85,16 @@ class AgapeTrader:
             self.config = AgapeConfig.load_from_db(self.db)
 
         self.signals = AgapeSignalGenerator(self.config)
-        self.executor = AgapeExecutor(self.config, self.db)
+
+        # Pick executor based on exchange config
+        if self.config.exchange == Exchange.COINBASE_SPOT and CoinbaseExecutor:
+            self.executor = CoinbaseExecutor(self.config, self.db)
+            self._is_24_7 = True
+            exchange_label = "Coinbase (24/7 spot)"
+        else:
+            self.executor = AgapeExecutor(self.config, self.db)
+            self._is_24_7 = False
+            exchange_label = "tastytrade CME /MET"
 
         self._last_scan_time: Optional[datetime] = None
         self._cycle_count: int = 0
@@ -90,9 +107,10 @@ class AgapeTrader:
         # Direction tracker (from HERACLES)
         self._direction_tracker = get_agape_direction_tracker(self.config)
 
-        self.db.log("INFO", "INIT", f"AGAPE trader initialized AGGRESSIVE (mode={self.config.mode.value})")
+        self.db.log("INFO", "INIT", f"AGAPE trader initialized AGGRESSIVE (mode={self.config.mode.value}, exchange={exchange_label})")
         logger.info(
             f"AGAPE Trader: Initialized AGGRESSIVE (mode={self.config.mode.value}, "
+            f"exchange={exchange_label}, "
             f"max_pos={self.config.max_open_positions}, cooldown={self.config.cooldown_minutes}m, "
             f"oracle_required={self.config.require_oracle_approval}, "
             f"no_loss_trailing={self.config.use_no_loss_trailing}, "
@@ -690,7 +708,11 @@ class AgapeTrader:
         # Entry frequency is controlled by:
         # 1. Loss streak pause (checked in run_cycle before this)
         # 2. Signal quality (generate_signal returns WAIT if no opportunity)
-        # 3. Market hours (below)
+        # 3. Market hours (below - skipped for 24/7 Coinbase spot)
+
+        # Coinbase spot trades 24/7/365 - no market hours restrictions
+        if self._is_24_7:
+            return None
 
         # CME Micro Ether trades Sun 5PM - Fri 4PM CT
         weekday = now.weekday()  # 0=Mon, 6=Sun
@@ -705,8 +727,8 @@ class AgapeTrader:
         if weekday == 6 and hour < 17:
             return "MARKET_CLOSED_SUNDAY_EARLY"
 
-        # Friday: market closes at 4 PM CT
-        if weekday == 4 and (hour > 16 or (hour == 16 and minute > 0)):
+        # Friday: market closes at 4 PM CT (4:00:00 = closed)
+        if weekday == 4 and hour >= 16:
             return "MARKET_CLOSED_FRIDAY_LATE"
 
         # Daily maintenance break: 4 PM - 5 PM CT (Mon-Thu)
@@ -787,11 +809,90 @@ class AgapeTrader:
             logger.warning(f"AGAPE Trader: Snapshot save failed: {e}")
 
     # ------------------------------------------------------------------
+    # CME Market Status
+    # ------------------------------------------------------------------
+
+    def get_cme_market_status(self, now: Optional[datetime] = None) -> Dict[str, Any]:
+        """Get market status for the configured exchange.
+
+        For COINBASE_SPOT: Always open (24/7/365).
+        For TASTYTRADE_CME: Sunday 5:00 PM CT - Friday 4:00 PM CT
+          with daily maintenance break 4:00-5:00 PM CT (Mon-Thu).
+        """
+        if now is None:
+            now = datetime.now(CENTRAL_TZ)
+
+        # Coinbase spot = always open
+        if self._is_24_7:
+            return {
+                "cme_market_open": True,
+                "status": "OPEN",
+                "reason": "Coinbase spot ETH-USD trades 24/7/365.",
+                "exchange": "coinbase",
+                "schedule": "24/7/365 (no maintenance breaks)",
+            }
+
+        weekday = now.weekday()  # 0=Mon, 6=Sun
+        hour = now.hour
+
+        # Determine CME crypto market status
+        if weekday == 5:
+            # Saturday: closed all day, reopens Sunday 5 PM CT
+            next_open = now + timedelta(days=1)
+            next_open = next_open.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "CLOSED_SATURDAY",
+                "reason": "CME closed Saturday. Reopens Sunday 5:00 PM CT.",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        elif weekday == 6 and hour < 17:
+            # Sunday before 5 PM: still closed
+            next_open = now.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "CLOSED_SUNDAY_EARLY",
+                "reason": "CME opens at 5:00 PM CT today (Sunday).",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        elif weekday == 4 and hour >= 16:
+            # Friday 4 PM+: closed for the weekend
+            next_open = now + timedelta(days=2)
+            next_open = next_open.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "CLOSED_FRIDAY_LATE",
+                "reason": "CME closed for the weekend. Reopens Sunday 5:00 PM CT.",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        elif 0 <= weekday <= 3 and hour == 16:
+            # Mon-Thu 4-5 PM: daily maintenance
+            next_open = now.replace(hour=17, minute=0, second=0, microsecond=0)
+            return {
+                "cme_market_open": False,
+                "status": "DAILY_MAINTENANCE",
+                "reason": "CME daily maintenance break (4:00-5:00 PM CT). Reopens at 5:00 PM CT.",
+                "next_open": next_open.strftime("%Y-%m-%d %H:%M CT"),
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+        else:
+            return {
+                "cme_market_open": True,
+                "status": "OPEN",
+                "reason": "CME Micro Ether Futures market is open.",
+                "schedule": "Sun 5:00 PM - Fri 4:00 PM CT (daily 4-5 PM break Mon-Thu)",
+            }
+
+    # ------------------------------------------------------------------
     # Status & Performance (for API routes)
     # ------------------------------------------------------------------
 
     def get_status(self) -> Dict[str, Any]:
         """Get bot status for API."""
+        now = datetime.now(CENTRAL_TZ)
         open_positions = self.db.get_open_positions()
         current_price = self.executor.get_current_price()
 
@@ -817,12 +918,16 @@ class AgapeTrader:
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0] if closed_trades else []
         win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None
 
+        # CME market status (separate from equity market status in nav bar)
+        cme_status = self.get_cme_market_status(now)
+
         return {
             "bot_name": "AGAPE",
             "status": "ACTIVE" if self._enabled else "DISABLED",
             "mode": self.config.mode.value,
             "ticker": self.config.ticker,
-            "instrument": self.config.instrument,
+            "instrument": "ETH-USD spot" if self._is_24_7 else self.config.instrument,
+            "exchange": "coinbase" if self._is_24_7 else "tastytrade",
             "cycle_count": self._cycle_count,
             "open_positions": len(open_positions),
             "max_positions": None,  # Unlimited
@@ -833,6 +938,10 @@ class AgapeTrader:
             "max_contracts": self.config.max_contracts,
             "cooldown_minutes": 0,  # No cooldown - matches HERACLES
             "require_oracle": self.config.require_oracle_approval,
+            # CME Micro Ether Futures market status
+            # NOTE: This is DIFFERENT from the equity "Market Open/Closed" in the nav bar.
+            # CME /MET trades Sun 5PM - Fri 4PM CT (nearly 24/7), not just 8:30AM-3PM.
+            "market": cme_status,
             # Paper account summary (matches HERACLES pattern)
             "paper_account": {
                 "starting_capital": self.config.starting_capital,
@@ -849,7 +958,7 @@ class AgapeTrader:
                 "use_sar": self.config.use_sar,
                 "direction_tracker": dt_status,
                 "consecutive_losses": self.consecutive_losses,
-                "loss_streak_paused": self.loss_streak_pause_until is not None and datetime.now(CENTRAL_TZ) < self.loss_streak_pause_until,
+                "loss_streak_paused": self.loss_streak_pause_until is not None and now < self.loss_streak_pause_until,
             },
             "positions": open_positions,
         }

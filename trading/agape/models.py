@@ -15,6 +15,11 @@ class TradingMode(Enum):
     LIVE = "live"
 
 
+class Exchange(Enum):
+    TASTYTRADE_CME = "tastytrade"    # CME /MET futures (Sun 5PM - Fri 4PM CT)
+    COINBASE_SPOT = "coinbase"       # Spot ETH-USD (24/7/365)
+
+
 class PositionSide(Enum):
     LONG = "long"
     SHORT = "short"
@@ -55,6 +60,7 @@ class AgapeConfig:
 
     # Trading mode
     mode: TradingMode = TradingMode.PAPER
+    exchange: Exchange = Exchange.TASTYTRADE_CME  # or COINBASE_SPOT for 24/7
 
     # Risk management
     starting_capital: float = 5000.0   # Small account for micro futures
@@ -139,6 +145,8 @@ class AgapeConfig:
                             setattr(config, key, str(value))
                         elif attr_type == TradingMode:
                             setattr(config, key, TradingMode(value))
+                        elif attr_type == Exchange:
+                            setattr(config, key, Exchange(value))
         except Exception:
             pass  # Use defaults
         return config
