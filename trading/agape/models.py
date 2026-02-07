@@ -191,10 +191,14 @@ class AgapeSignal:
 
     @property
     def is_valid(self) -> bool:
-        """Signal is tradeable."""
+        """Signal is tradeable.
+
+        AGGRESSIVE MODE: Accepts LOW confidence signals since
+        min_confidence is set to LOW in AgapeConfig.
+        """
         return (
             self.action in (SignalAction.LONG, SignalAction.SHORT)
-            and self.confidence in ("HIGH", "MEDIUM")
+            and self.confidence in ("HIGH", "MEDIUM", "LOW")
             and self.contracts > 0
             and self.entry_price is not None
         )
