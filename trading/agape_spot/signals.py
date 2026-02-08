@@ -290,7 +290,7 @@ class AgapeSpotSignalGenerator:
 
         # Spot-native position sizing (per-ticker)
         quantity, max_risk = self._calculate_position_size(ticker, spot)
-        stop_loss, take_profit = self._calculate_levels(spot, market_data)
+        stop_loss, take_profit = self._calculate_levels(spot, market_data, ticker)
 
         return AgapeSpotSignal(
             ticker=ticker,
@@ -475,7 +475,7 @@ class AgapeSpotSignalGenerator:
         actual_risk = quantity * risk_per_unit
         return (quantity, round(actual_risk, 2))
 
-    def _calculate_levels(self, spot: float, market_data: Dict) -> Tuple[float, float]:
+    def _calculate_levels(self, spot: float, market_data: Dict, ticker: str = "ETH-USD") -> Tuple[float, float]:
         """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above."""
         stop_pct = 0.02
         target_pct = 0.03
@@ -505,7 +505,8 @@ class AgapeSpotSignalGenerator:
         else:
             take_profit = spot * (1 + target_pct)
 
-        return (round(stop_loss, 2), round(take_profit, 2))
+        pd = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
+        return (round(stop_loss, pd), round(take_profit, pd))
 
     @staticmethod
     def _funding_to_vix_proxy(funding_rate: float) -> float:

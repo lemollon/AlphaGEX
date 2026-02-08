@@ -180,7 +180,7 @@ async def get_summary():
             unrealized_pnl = 0.0
             if current_price and open_positions:
                 for pos in open_positions:
-                    qty = pos.get("quantity", pos.get("eth_quantity", 0.1))
+                    qty = pos.get("quantity", pos.get("eth_quantity", 0))
                     unrealized_pnl += (current_price - pos["entry_price"]) * qty
 
             realized_pnl = sum(t.get("realized_pnl", 0) for t in closed_trades) if closed_trades else 0.0
@@ -315,7 +315,7 @@ async def get_positions(
 
             current_price = price_cache[pos_ticker]
             if current_price:
-                qty = pos.get("quantity", pos.get("eth_quantity", 0.1))
+                qty = pos.get("quantity", pos.get("eth_quantity", 0))
                 pnl = (current_price - pos["entry_price"]) * qty
                 pos["unrealized_pnl"] = round(pnl, 2)
                 pos["current_price"] = current_price
@@ -454,7 +454,7 @@ async def get_equity_curve(
                 "cumulative_pnl": round(cumulative_pnl, 2),
                 "equity": round(equity, 2),
                 "trades": day_trades,
-                "return_pct": round(cumulative_pnl / starting_capital * 100, 2),
+                "return_pct": round(cumulative_pnl / starting_capital * 100, 2) if starting_capital else 0,
             })
 
         # Filter to requested days (output filter only, not SQL)
@@ -633,7 +633,7 @@ async def get_equity_curve_intraday(
 
             if current_ticker_price:
                 for pos_row in open_rows:
-                    quantity = float(pos_row[1]) if pos_row[1] else 0.1
+                    quantity = float(pos_row[1]) if pos_row[1] else 0
                     entry_price = float(pos_row[2])
                     # Long-only P&L
                     pnl = (current_ticker_price - entry_price) * quantity

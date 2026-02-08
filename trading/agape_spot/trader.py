@@ -655,26 +655,15 @@ class AgapeSpotTrader:
             equity = starting_capital + realized_cum + unrealized
             funding_rate = market_data.get("funding_rate") if market_data else None
 
-            # Try passing ticker; fall back if DB doesn't accept it yet
-            try:
-                self.db.save_equity_snapshot(
-                    equity=round(equity, 2),
-                    unrealized_pnl=round(unrealized, 2),
-                    realized_cumulative=round(realized_cum, 2),
-                    open_positions=len(open_positions),
-                    eth_price=current_price,
-                    funding_rate=funding_rate,
-                    ticker=ticker,
-                )
-            except TypeError:
-                self.db.save_equity_snapshot(
-                    equity=round(equity, 2),
-                    unrealized_pnl=round(unrealized, 2),
-                    realized_cumulative=round(realized_cum, 2),
-                    open_positions=len(open_positions),
-                    eth_price=current_price,
-                    funding_rate=funding_rate,
-                )
+            self.db.save_equity_snapshot(
+                ticker=ticker,
+                equity=round(equity, 2),
+                unrealized_pnl=round(unrealized, 2),
+                realized_cumulative=round(realized_cum, 2),
+                open_positions=len(open_positions),
+                eth_price=current_price,
+                funding_rate=funding_rate,
+            )
         except Exception as e:
             logger.warning(f"AGAPE-SPOT: Snapshot save failed for {ticker}: {e}")
 

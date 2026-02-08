@@ -96,7 +96,6 @@ export default function MultiBotEquityCurve({
     AGAPE_SPOT: true,
     PHOENIX: false,
     ATLAS: false,
-    AGAPE_SPOT: false,
   })
   const [selectedDays, setSelectedDays] = useState(days)
 
@@ -162,7 +161,6 @@ export default function MultiBotEquityCurve({
     AGAPE_SPOT: agapeSpotData,
     PHOENIX: undefined,
     ATLAS: undefined,
-    AGAPE_SPOT: undefined,
   }
 
   // Combine all data into a single chart dataset
@@ -224,7 +222,6 @@ export default function MultiBotEquityCurve({
       AGAPE_SPOT: null,
       PHOENIX: null,
       ATLAS: null,
-      AGAPE_SPOT: null,
     }
 
     LIVE_BOTS.forEach(bot => {
