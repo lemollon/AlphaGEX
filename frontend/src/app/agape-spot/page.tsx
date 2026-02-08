@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import useSWR from 'swr'
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -8,6 +8,7 @@ import {
 } from 'recharts'
 import {
   TrendingUp,
+  TrendingDown,
   Activity,
   Eye,
   RefreshCw,
@@ -16,6 +17,7 @@ import {
   BarChart3,
   Layers,
   ArrowRight,
+  Calendar,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -167,6 +169,49 @@ function fmtPrice(val: number | null | undefined): string {
 }
 
 // ==============================================================================
+// DATA TRANSFORMS (pure functions, no hooks)
+// ==============================================================================
+
+/** Compute drawdown % from equity points. Each output point gets a `drawdown` field (always <= 0). */
+function computeDrawdown(points: any[], startingCapital: number): any[] {
+  if (!points || points.length === 0) return []
+  let peak = startingCapital
+  return points.map(p => {
+    const eq = p.equity ?? startingCapital
+    if (eq > peak) peak = eq
+    const dd = peak > 0 ? ((eq - peak) / peak) * 100 : 0
+    return { ...p, drawdown: Math.round(dd * 100) / 100 }
+  })
+}
+
+/**
+ * Fill daily P&L from equity curve into a contiguous array of days.
+ * Equity curve only has entries for trade days. We fill gaps with pnl=null.
+ * Returns array sorted oldest→newest.
+ *
+ * Backend equity point: { date: "YYYY-MM-DD", daily_pnl: number, trades: number }
+ */
+function buildHeatmapDays(equityPoints: any[]): { date: string; pnl: number | null; trades: number }[] {
+  if (!equityPoints || equityPoints.length === 0) return []
+  const pnlMap = new Map<string, { pnl: number; trades: number }>()
+  for (const p of equityPoints) {
+    if (p.date) pnlMap.set(p.date, { pnl: p.daily_pnl ?? 0, trades: p.trades ?? 0 })
+  }
+  const first = new Date(equityPoints[0].date + 'T12:00:00')
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  const days: { date: string; pnl: number | null; trades: number }[] = []
+  const d = new Date(first)
+  while (d <= today) {
+    const ds = d.toISOString().slice(0, 10)
+    const entry = pnlMap.get(ds)
+    days.push({ date: ds, pnl: entry?.pnl ?? null, trades: entry?.trades ?? 0 })
+    d.setDate(d.getDate() + 1)
+  }
+  return days
+}
+
+// ==============================================================================
 // MAIN PAGE COMPONENT
 // ==============================================================================
 
@@ -229,6 +274,11 @@ export default function AgapeSpotPage() {
               <RefreshCw className={`w-4 h-4 ${statusLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
+
+          {/* ================================================================ */}
+          {/* LIVE PRICE TICKER STRIP                                          */}
+          {/* ================================================================ */}
+          <PriceTickerStrip tickers={summaryData?.data?.tickers} />
 
           {/* ================================================================ */}
           {/* COIN SELECTOR                                                    */}
@@ -347,6 +397,15 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
     ? (intradayData?.data_points || [])
     : (equityData?.data?.equity_curve || [])
 
+  const drawdownPoints = useMemo(
+    () => computeDrawdown(equityPoints, TOTAL_CAPITAL),
+    [equityPoints],
+  )
+
+  // Heatmap uses historical (non-intraday) data with daily_pnl field
+  const histPoints = equityData?.data?.equity_curve || []
+  const heatmapDays = useMemo(() => buildHeatmapDays(histPoints), [histPoints])
+
   return (
     <div className="space-y-5">
       {/* Combined totals row */}
@@ -358,60 +417,11 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
         <MetricCard label="Open Positions" value={String(totalPositions)} color="text-cyan-400" />
       </div>
 
-      {/* Per-coin summary cards */}
+      {/* Per-coin summary cards (with sparklines) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {(['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => {
-          const meta = TICKER_META[ticker]
-          const data: TickerSummary | undefined = tickers[ticker]
-          const pnl = data?.total_pnl ?? 0
-          const returnPct = data?.return_pct ?? 0
-          return (
-            <div
-              key={ticker}
-              className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard} transition-colors`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <span className={`font-bold text-lg ${meta.textActive}`}>{meta.symbol}</span>
-                  <span className="text-gray-500 text-xs">{meta.label}</span>
-                </div>
-                <span className="text-white font-mono text-sm">
-                  {fmtPrice(data?.current_price)}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 gap-y-2 text-sm">
-                <div>
-                  <span className="text-gray-500 text-xs">P&L</span>
-                  <p className={`font-mono font-semibold ${pnlColor(pnl)}`}>{fmtUsd(pnl)}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">Return</span>
-                  <p className={`font-mono font-semibold ${pnlColor(returnPct)}`}>{fmtPct(returnPct)}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">Open</span>
-                  <p className="text-white font-mono">{data?.open_positions ?? 0}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">Trades</span>
-                  <p className="text-white font-mono">{data?.total_trades ?? 0}</p>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">Win Rate</span>
-                  <p className="text-white font-mono">
-                    {data?.win_rate != null ? `${data.win_rate.toFixed(1)}%` : '---'}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-gray-500 text-xs">Unrealized</span>
-                  <p className={`font-mono ${pnlColor(data?.unrealized_pnl ?? 0)}`}>
-                    {fmtUsd(data?.unrealized_pnl ?? 0)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )
-        })}
+        {(['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => (
+          <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
+        ))}
       </div>
 
       {/* Combined Equity Curve */}
@@ -432,50 +442,64 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
         {equityPoints.length === 0 ? (
           <EmptyBox message={isIntraday ? "No intraday snapshots yet. The bot saves equity every 5 minutes." : "No equity data yet. Trades will populate this chart."} />
         ) : (
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={equityPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="eqFillAll" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#06B6D4" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#06B6D4" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
-                <XAxis
-                  dataKey={isIntraday ? 'time' : 'date'}
-                  tick={{ fill: '#6b7280', fontSize: 11 }}
-                  tickFormatter={(v: string) => {
-                    if (isIntraday) {
-                      // "HH:MM:SS" → "HH:MM"
-                      return v?.slice(0, 5) || v
-                    }
-                    const d = new Date(v + 'T00:00:00')
-                    return `${d.getMonth() + 1}/${d.getDate()}`
-                  }}
-                />
-                <YAxis
-                  tick={{ fill: '#6b7280', fontSize: 11 }}
-                  tickFormatter={(v: number) => `$${v.toLocaleString()}`}
-                />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
-                  labelStyle={{ color: '#9ca3af' }}
-                  formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
-                  labelFormatter={(label: string) => isIntraday ? `Time: ${label}` : label}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="equity"
-                  stroke="#06B6D4"
-                  strokeWidth={2}
-                  fill="url(#eqFillAll)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          <>
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={equityPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="eqFillAll" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#06B6D4" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#06B6D4" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                  <XAxis
+                    dataKey={isIntraday ? 'time' : 'date'}
+                    tick={{ fill: '#6b7280', fontSize: 11 }}
+                    tickFormatter={(v: string) => {
+                      if (isIntraday) {
+                        return v?.slice(0, 5) || v
+                      }
+                      const d = new Date(v + 'T00:00:00')
+                      return `${d.getMonth() + 1}/${d.getDate()}`
+                    }}
+                  />
+                  <YAxis
+                    tick={{ fill: '#6b7280', fontSize: 11 }}
+                    tickFormatter={(v: number) => `$${v.toLocaleString()}`}
+                  />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+                    labelStyle={{ color: '#9ca3af' }}
+                    formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
+                    labelFormatter={(label: string) => isIntraday ? `Time: ${label}` : label}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="equity"
+                    stroke="#06B6D4"
+                    strokeWidth={2}
+                    fill="url(#eqFillAll)"
+                    dot={(props: any) => {
+                      const { cx, cy, payload, key } = props
+                      if (!payload?.trades || payload.trades === 0) return <g key={key} />
+                      const color = (payload.daily_pnl ?? 0) >= 0 ? '#4ade80' : '#f87171'
+                      return <circle key={key} cx={cx} cy={cy} r={4} fill={color} stroke="#111827" strokeWidth={1.5} />
+                    }}
+                    activeDot={{ r: 5, strokeWidth: 2 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            <DrawdownChart points={drawdownPoints} isIntraday={isIntraday} />
+          </>
         )}
       </SectionCard>
+
+      {/* Daily P&L Heatmap (historical only) */}
+      {!isIntraday && heatmapDays.length > 1 && (
+        <PnlHeatmap days={heatmapDays} />
+      )}
 
       {/* Recent activity across all coins */}
       <AllCoinsRecentTrades />
@@ -911,6 +935,11 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
   const gradientId = `eqFill-${ticker.replace('-', '')}`
   const isLoading = isIntraday ? intradayLoading : histLoading
 
+  const startCap = equityData?.data?.starting_capital ?? 1000
+  const drawdownPoints = useMemo(() => computeDrawdown(points, startCap), [points, startCap])
+  const histPoints = equityData?.data?.equity_curve || []
+  const heatmapDays = useMemo(() => buildHeatmapDays(histPoints), [histPoints])
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -986,10 +1015,25 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
               stroke={meta.hexColor}
               strokeWidth={2}
               fill={`url(#${gradientId})`}
+              dot={(props: any) => {
+                const { cx, cy, payload, key } = props
+                if (!payload?.trades || payload.trades === 0) return <g key={key} />
+                const color = (payload.daily_pnl ?? 0) >= 0 ? '#4ade80' : '#f87171'
+                return <circle key={key} cx={cx} cy={cy} r={4} fill={color} stroke="#111827" strokeWidth={1.5} />
+              }}
+              activeDot={{ r: 5, strokeWidth: 2 }}
             />
           </AreaChart>
         </ResponsiveContainer>
       </div>
+      {/* Drawdown sub-chart */}
+      <DrawdownChart points={drawdownPoints} isIntraday={isIntraday} />
+      {/* Daily P&L Heatmap (historical only) */}
+      {!isIntraday && heatmapDays.length > 1 && (
+        <div className="mt-4">
+          <PnlHeatmap days={heatmapDays} />
+        </div>
+      )}
     </SectionCard>
   )
 }
@@ -1120,6 +1164,224 @@ function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onCh
     </div>
   )
 }
+
+// ==============================================================================
+// ENHANCEMENT: Live Price Ticker Strip
+// ==============================================================================
+
+function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> | undefined }) {
+  if (!tickers) return null
+  const coins = ['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const
+  return (
+    <div className="flex items-center gap-4 overflow-x-auto py-2 px-3 bg-gray-900/60 rounded-lg border border-gray-800/50">
+      {coins.map(ticker => {
+        const meta = TICKER_META[ticker]
+        const data = tickers[ticker]
+        if (!data) return null
+        const ret = data.return_pct ?? 0
+        return (
+          <div key={ticker} className="flex items-center gap-2 whitespace-nowrap">
+            <span className={`text-xs font-bold ${meta.textActive}`}>{meta.symbol}</span>
+            <span className="text-white font-mono text-sm">{fmtPrice(data.current_price)}</span>
+            <span className={`text-xs font-mono ${pnlColor(ret)}`}>
+              {ret >= 0 ? '+' : ''}{ret.toFixed(2)}%
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ==============================================================================
+// ENHANCEMENT: Per-coin card with sparkline
+// ==============================================================================
+
+function CoinCard({ ticker, data }: { ticker: string; data: TickerSummary | undefined }) {
+  // Each CoinCard is its own component so the hook call is valid (not in a loop)
+  const { data: intradayData } = useAgapeSpotIntradayEquity(ticker)
+  // Response shape: { data_points: [{ time, equity, ... }], day_pnl, ... }
+  const sparkPoints = intradayData?.data_points || []
+  const dayPnl = intradayData?.day_pnl ?? null
+
+  const meta = TICKER_META[ticker]
+  const pnl = data?.total_pnl ?? 0
+  const returnPct = data?.return_pct ?? 0
+
+  return (
+    <div className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard} transition-colors`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className={`font-bold text-lg ${meta.textActive}`}>{meta.symbol}</span>
+          <span className="text-gray-500 text-xs">{meta.label}</span>
+        </div>
+        <span className="text-white font-mono text-sm">{fmtPrice(data?.current_price)}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-y-2 text-sm">
+        <div>
+          <span className="text-gray-500 text-xs">P&L</span>
+          <p className={`font-mono font-semibold ${pnlColor(pnl)}`}>{fmtUsd(pnl)}</p>
+        </div>
+        <div>
+          <span className="text-gray-500 text-xs">Return</span>
+          <p className={`font-mono font-semibold ${pnlColor(returnPct)}`}>{fmtPct(returnPct)}</p>
+        </div>
+        <div>
+          <span className="text-gray-500 text-xs">Open</span>
+          <p className="text-white font-mono">{data?.open_positions ?? 0}</p>
+        </div>
+        <div>
+          <span className="text-gray-500 text-xs">Trades</span>
+          <p className="text-white font-mono">{data?.total_trades ?? 0}</p>
+        </div>
+        <div>
+          <span className="text-gray-500 text-xs">Win Rate</span>
+          <p className="text-white font-mono">
+            {data?.win_rate != null ? `${data.win_rate.toFixed(1)}%` : '---'}
+          </p>
+        </div>
+        <div>
+          <span className="text-gray-500 text-xs">Day P&L</span>
+          <p className={`font-mono ${pnlColor(dayPnl ?? 0)}`}>
+            {dayPnl != null ? fmtUsd(dayPnl) : '---'}
+          </p>
+        </div>
+      </div>
+      {/* Sparkline: tiny intraday equity chart */}
+      {sparkPoints.length > 1 && (
+        <div className="h-10 mt-2 -mx-1">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={sparkPoints} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id={`spark-${ticker}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={meta.hexColor} stopOpacity={0.3} />
+                  <stop offset="95%" stopColor={meta.hexColor} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area
+                type="monotone"
+                dataKey="equity"
+                stroke={meta.hexColor}
+                strokeWidth={1.5}
+                fill={`url(#spark-${ticker})`}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ==============================================================================
+// ENHANCEMENT: Drawdown chart
+// ==============================================================================
+
+function DrawdownChart({ points, isIntraday }: { points: any[]; isIntraday: boolean }) {
+  if (!points || points.length < 2) return null
+  const minDD = Math.min(...points.map(p => p.drawdown ?? 0))
+  // No drawdown to show
+  if (minDD >= -0.01) return null
+
+  return (
+    <div className="mt-3">
+      <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+        <TrendingDown className="w-3 h-3" /> Drawdown
+      </div>
+      <div className="h-20">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={points} margin={{ top: 0, right: 10, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id="drawdownFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2} />
+                <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+            <XAxis dataKey={isIntraday ? 'time' : 'date'} hide />
+            <YAxis
+              tick={{ fill: '#6b7280', fontSize: 10 }}
+              tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+              width={45}
+              domain={['dataMin', 0]}
+            />
+            <Tooltip
+              contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+              labelStyle={{ color: '#9ca3af' }}
+              formatter={(value: number) => [`${value.toFixed(2)}%`, 'Drawdown']}
+            />
+            <Area
+              type="monotone"
+              dataKey="drawdown"
+              stroke="#ef4444"
+              strokeWidth={1.5}
+              fill="url(#drawdownFill)"
+              dot={false}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  )
+}
+
+// ==============================================================================
+// ENHANCEMENT: Daily P&L Heatmap
+// ==============================================================================
+
+function PnlHeatmap({ days }: { days: { date: string; pnl: number | null; trades: number }[] }) {
+  if (!days || days.length < 2) return null
+
+  // Find max abs P&L for intensity scaling
+  const maxAbs = Math.max(
+    ...days.filter(d => d.pnl != null).map(d => Math.abs(d.pnl!)),
+    1, // prevent division by zero
+  )
+
+  function cellColor(pnl: number | null): string {
+    if (pnl == null || pnl === 0) return 'bg-gray-800'
+    const intensity = Math.min(Math.abs(pnl) / maxAbs, 1)
+    if (pnl > 0) {
+      if (intensity > 0.6) return 'bg-green-500'
+      if (intensity > 0.3) return 'bg-green-600'
+      return 'bg-green-800'
+    }
+    if (intensity > 0.6) return 'bg-red-500'
+    if (intensity > 0.3) return 'bg-red-600'
+    return 'bg-red-800'
+  }
+
+  return (
+    <SectionCard
+      title="Daily P&L Map"
+      icon={<Calendar className="w-5 h-5 text-gray-400" />}
+    >
+      <div className="flex gap-[3px] flex-wrap">
+        {days.map((d, i) => (
+          <div
+            key={i}
+            title={`${d.date}: ${d.pnl != null ? fmtUsd(d.pnl) : 'No trades'}${d.trades ? ` (${d.trades} trade${d.trades > 1 ? 's' : ''})` : ''}`}
+            className={`w-3.5 h-3.5 rounded-sm ${cellColor(d.pnl)} cursor-default transition-colors hover:ring-1 hover:ring-white/30`}
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-3 mt-2 text-[10px] text-gray-500">
+        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-gray-800" /> No trades</div>
+        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-red-800" /> Loss</div>
+        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-red-500" /> Big loss</div>
+        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-green-800" /> Win</div>
+        <div className="flex items-center gap-1"><div className="w-2.5 h-2.5 rounded-sm bg-green-500" /> Big win</div>
+      </div>
+    </SectionCard>
+  )
+}
+
+// ==============================================================================
+// SHARED UI PRIMITIVES (kept at bottom)
+// ==============================================================================
 
 function EmptyBox({ message }: { message: string }) {
   return (
