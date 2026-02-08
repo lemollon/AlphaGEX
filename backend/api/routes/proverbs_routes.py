@@ -1,11 +1,11 @@
 """
-SOLOMON Dashboard API Routes
+PROVERBS Dashboard API Routes
 =============================
 
-API endpoints for the Solomon Feedback Loop Intelligence System.
+API endpoints for the Proverbs Feedback Loop Intelligence System.
 Provides dashboard, audit logs, proposal management, version control, and rollback.
 
-All endpoints require the Solomon system to be available.
+All endpoints require the Proverbs system to be available.
 """
 
 import logging
@@ -15,23 +15,23 @@ from fastapi import APIRouter, HTTPException, Query, Body
 from pydantic import BaseModel, Field
 from zoneinfo import ZoneInfo
 
-router = APIRouter(prefix="/api/solomon", tags=["Solomon"])
+router = APIRouter(prefix="/api/proverbs", tags=["Proverbs"])
 logger = logging.getLogger(__name__)
 
-# Try to import Solomon
-SOLOMON_AVAILABLE = False
-solomon_instance = None
+# Try to import Proverbs
+PROVERBS_AVAILABLE = False
+proverbs_instance = None
 
 try:
-    from quant.solomon_feedback_loop import (
-        get_solomon, run_feedback_loop, approve_proposal, reject_proposal,
+    from quant.proverbs_feedback_loop import (
+        get_proverbs, run_feedback_loop, approve_proposal, reject_proposal,
         rollback_bot, kill_bot, resume_bot, get_dashboard,
         BotName, ActionType, ProposalType, ProposalStatus
     )
-    SOLOMON_AVAILABLE = True
-    logger.info("Solomon feedback loop system loaded")
+    PROVERBS_AVAILABLE = True
+    logger.info("Proverbs feedback loop system loaded")
 except ImportError as e:
-    logger.warning(f"Solomon not available: {e}")
+    logger.warning(f"Proverbs not available: {e}")
 
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -90,26 +90,26 @@ class ProposalCreateRequest(BaseModel):
 # =============================================================================
 
 @router.get("/health")
-async def solomon_health():
+async def proverbs_health():
     """
-    Check Solomon system health.
+    Check Proverbs system health.
 
     Returns availability status and basic metrics.
     """
-    if not SOLOMON_AVAILABLE:
+    if not PROVERBS_AVAILABLE:
         return {
             "status": "unavailable",
-            "message": "Solomon feedback loop system not loaded",
+            "message": "Proverbs feedback loop system not loaded",
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
         }
 
     try:
-        solomon = get_solomon()
-        health = solomon._get_system_health()
+        proverbs = get_proverbs()
+        health = proverbs._get_system_health()
 
         return {
             "status": "healthy",
-            "session_id": solomon.session_id,
+            "session_id": proverbs.session_id,
             "database_connected": health.get('database', False),
             "oracle_connected": health.get('oracle', False),
             "last_feedback_run": health.get('last_feedback_run'),
@@ -118,7 +118,7 @@ async def solomon_health():
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
         }
     except Exception as e:
-        logger.error(f"Solomon health check failed: {e}")
+        logger.error(f"Proverbs health check failed: {e}")
         return {
             "status": "error",
             "message": str(e),
@@ -131,9 +131,9 @@ async def solomon_health():
 # =============================================================================
 
 @router.get("/dashboard")
-async def get_solomon_dashboard():
+async def get_proverbs_dashboard():
     """
-    Get comprehensive Solomon dashboard data.
+    Get comprehensive Proverbs dashboard data.
 
     Returns:
     - Bot statuses (performance, versions, kill switch)
@@ -141,8 +141,8 @@ async def get_solomon_dashboard():
     - Recent actions (audit log)
     - System health
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         return get_dashboard()
@@ -156,25 +156,25 @@ async def get_bot_dashboard(bot_name: str):
     """
     Get detailed dashboard for a specific bot.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     bot_name = bot_name.upper()
     if bot_name not in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
         raise HTTPException(status_code=400, detail=f"Invalid bot name: {bot_name}")
 
     try:
-        solomon = get_solomon()
+        proverbs = get_proverbs()
 
         return {
             "bot_name": bot_name,
-            "is_killed": solomon.is_bot_killed(bot_name),
-            "performance": solomon._get_current_performance(bot_name),
-            "performance_history": solomon.get_performance_history(bot_name, days=30),
-            "active_version": solomon._get_active_version_info(bot_name),
-            "version_history": solomon.get_version_history(bot_name, limit=10),
-            "recent_actions": solomon.get_audit_log(bot_name=bot_name, limit=20),
-            "rollback_history": solomon.get_rollback_history(bot_name=bot_name, limit=5),
+            "is_killed": proverbs.is_bot_killed(bot_name),
+            "performance": proverbs._get_current_performance(bot_name),
+            "performance_history": proverbs.get_performance_history(bot_name, days=30),
+            "active_version": proverbs._get_active_version_info(bot_name),
+            "version_history": proverbs.get_version_history(bot_name, limit=10),
+            "recent_actions": proverbs.get_audit_log(bot_name=bot_name, limit=20),
+            "rollback_history": proverbs.get_rollback_history(bot_name=bot_name, limit=5),
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
         }
     except Exception as e:
@@ -199,16 +199,16 @@ async def get_audit_log(
 
     The audit log contains WHO, WHAT, WHY, WHEN for every action.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
+        proverbs = get_proverbs()
 
         start = datetime.fromisoformat(start_date) if start_date else None
         end = datetime.fromisoformat(end_date) if end_date else None
 
-        logs = solomon.get_audit_log(
+        logs = proverbs.get_audit_log(
             bot_name=bot_name.upper() if bot_name else None,
             action_type=action_type,
             start_date=start,
@@ -234,8 +234,8 @@ async def get_audit_log(
 @router.get("/audit/action-types")
 async def get_action_types():
     """Get all available action types for filtering."""
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     return {
         "action_types": [at.value for at in ActionType]
@@ -257,8 +257,8 @@ async def get_proposals(
 
     By default returns pending proposals.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         from database_adapter import get_connection
@@ -266,7 +266,7 @@ async def get_proposals(
         conn = get_connection()
         cursor = conn.cursor()
 
-        query = "SELECT * FROM solomon_proposals WHERE 1=1"
+        query = "SELECT * FROM proverbs_proposals WHERE 1=1"
         params = []
 
         if status:
@@ -304,12 +304,12 @@ async def get_pending_proposals(
     """
     Get all pending proposals awaiting approval.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
-        proposals = solomon.get_pending_proposals(bot_name=bot_name.upper() if bot_name else None)
+        proverbs = get_proverbs()
+        proposals = proverbs.get_pending_proposals(bot_name=bot_name.upper() if bot_name else None)
 
         return {
             "count": len(proposals),
@@ -325,8 +325,8 @@ async def get_proposal(proposal_id: str):
     """
     Get a specific proposal by ID.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         from database_adapter import get_connection
@@ -334,7 +334,7 @@ async def get_proposal(proposal_id: str):
         conn = get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT * FROM solomon_proposals WHERE proposal_id = %s", (proposal_id,))
+        cursor.execute("SELECT * FROM proverbs_proposals WHERE proposal_id = %s", (proposal_id,))
         columns = [desc[0] for desc in cursor.description]
         row = cursor.fetchone()
         conn.close()
@@ -357,15 +357,15 @@ async def create_proposal(request: ProposalCreateRequest):
 
     Proposals must be approved before changes are applied.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
+        proverbs = get_proverbs()
 
         proposal_type = ProposalType[request.proposal_type.upper()]
 
-        proposal_id = solomon.create_proposal(
+        proposal_id = proverbs.create_proposal(
             bot_name=request.bot_name.upper(),
             proposal_type=proposal_type,
             title=request.title,
@@ -402,8 +402,8 @@ async def approve_proposal_endpoint(proposal_id: str, request: ApprovalRequest):
 
     This will apply the proposed changes.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         success = approve_proposal(proposal_id, request.reviewer, request.notes)
@@ -429,8 +429,8 @@ async def reject_proposal_endpoint(proposal_id: str, request: RejectionRequest):
     """
     Reject a pending proposal.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         success = reject_proposal(proposal_id, request.reviewer, request.notes)
@@ -464,12 +464,12 @@ async def get_versions(
     """
     Get version history for a bot.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
-        versions = solomon.get_version_history(
+        proverbs = get_proverbs()
+        versions = proverbs.get_version_history(
             bot_name=bot_name.upper(),
             artifact_name=artifact_name,
             limit=limit
@@ -492,12 +492,12 @@ async def activate_version(version_id: str, user: str = Query(..., description="
 
     Deactivates the current active version.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
-        success = solomon.activate_version(version_id, f"USER:{user}")
+        proverbs = get_proverbs()
+        success = proverbs.activate_version(version_id, f"USER:{user}")
 
         if not success:
             raise HTTPException(status_code=400, detail="Failed to activate version")
@@ -527,12 +527,12 @@ async def get_rollback_history(
     """
     Get rollback history.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
-        rollbacks = solomon.get_rollback_history(
+        proverbs = get_proverbs()
+        rollbacks = proverbs.get_rollback_history(
             bot_name=bot_name.upper() if bot_name else None,
             limit=limit
         )
@@ -551,8 +551,8 @@ async def rollback_bot_endpoint(bot_name: str, request: RollbackRequest):
     """
     Rollback a bot to a previous version.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         success = rollback_bot(
@@ -588,12 +588,12 @@ async def get_kill_switch_status():
     """
     Get kill switch status for all bots.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
-        status = solomon.get_kill_switch_status()
+        proverbs = get_proverbs()
+        status = proverbs.get_kill_switch_status()
 
         # Add bots not yet in the table
         for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
@@ -622,8 +622,8 @@ async def activate_kill_switch(bot_name: str, request: KillSwitchRequest):
 
     Immediately stops all trading for the specified bot.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         success = kill_bot(bot_name.upper(), request.reason, request.user)
@@ -652,8 +652,8 @@ async def deactivate_kill_switch(bot_name: str, request: ResumeRequest):
 
     Allows the bot to resume trading.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         success = resume_bot(bot_name.upper(), request.user)
@@ -687,7 +687,7 @@ async def clear_all_kill_switches():
         cursor = conn.cursor()
 
         # Clear all killswitch records
-        cursor.execute("DELETE FROM solomon_kill_switch")
+        cursor.execute("DELETE FROM proverbs_kill_switch")
         deleted_count = cursor.rowcount
 
         conn.commit()
@@ -718,8 +718,8 @@ async def trigger_feedback_loop():
     3. Create proposals for improvements
     4. Record performance snapshots
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
         result = run_feedback_loop()
@@ -746,20 +746,20 @@ async def get_feedback_loop_status():
     """
     Get the current status of the feedback loop.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
+        proverbs = get_proverbs()
 
         # Get last run info
-        runs = solomon.get_audit_log(
+        runs = proverbs.get_audit_log(
             action_type="FEEDBACK_LOOP_RUN",
             limit=5
         )
 
         return {
-            "session_id": solomon.session_id,
+            "session_id": proverbs.session_id,
             "recent_runs": runs,
             "guardrails": {
                 'min_sample_size': 50,
@@ -787,15 +787,15 @@ async def get_bot_performance(
     """
     Get performance history for a bot.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
+        proverbs = get_proverbs()
 
-        current = solomon._get_current_performance(bot_name.upper())
-        history = solomon.get_performance_history(bot_name.upper(), days=days)
-        degradation = solomon.detect_degradation(bot_name.upper())
+        current = proverbs._get_current_performance(bot_name.upper())
+        history = proverbs.get_performance_history(bot_name.upper(), days=days)
+        degradation = proverbs.detect_degradation(bot_name.upper())
 
         return {
             "bot_name": bot_name.upper(),
@@ -814,12 +814,12 @@ async def record_performance_snapshot(bot_name: str):
     """
     Record a performance snapshot for a bot.
     """
-    if not SOLOMON_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Solomon system not available")
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     try:
-        solomon = get_solomon()
-        snapshot_id = solomon.record_performance_snapshot(bot_name.upper())
+        proverbs = get_proverbs()
+        snapshot_id = proverbs.record_performance_snapshot(bot_name.upper())
 
         if not snapshot_id:
             raise HTTPException(status_code=400, detail="Failed to record snapshot - no performance data available")
@@ -841,14 +841,14 @@ async def record_performance_snapshot(bot_name: str):
 # ENHANCED FEATURES
 # =============================================================================
 
-# Try to import enhanced Solomon features
+# Try to import enhanced Proverbs features
 ENHANCED_AVAILABLE = False
 try:
-    from quant.solomon_enhancements import get_solomon_enhanced
+    from quant.proverbs_enhancements import get_proverbs_enhanced
     ENHANCED_AVAILABLE = True
-    logger.info("Solomon enhanced features loaded")
+    logger.info("Proverbs enhanced features loaded")
 except ImportError as e:
-    logger.warning(f"Solomon enhanced features not available: {e}")
+    logger.warning(f"Proverbs enhanced features not available: {e}")
 
 
 @router.get("/realtime-status")
@@ -856,9 +856,9 @@ async def get_realtime_status(
     days: int = Query(7, ge=1, le=30, description="Number of days for recent analysis")
 ):
     """
-    Get real-time Solomon monitoring status with actual trade data.
+    Get real-time Proverbs monitoring status with actual trade data.
 
-    This endpoint provides visibility into what Solomon is actively monitoring,
+    This endpoint provides visibility into what Proverbs is actively monitoring,
     derived directly from each bot's positions table (ares_positions, titan_positions, etc.)
     rather than summary tables.
 
@@ -1043,7 +1043,7 @@ async def get_strategy_analysis(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         analysis = enhanced.get_strategy_analysis(days=days)
 
         return {
@@ -1074,7 +1074,7 @@ async def get_oracle_accuracy(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         accuracy = enhanced.get_oracle_accuracy(days=days)
 
         return {
@@ -1105,7 +1105,7 @@ async def get_enhanced_analysis(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         analysis = enhanced.get_comprehensive_analysis(bot_name.upper())
 
         return {
@@ -1130,7 +1130,7 @@ async def get_cross_bot_correlations(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         correlations = enhanced.get_portfolio_correlations()
 
         return {
@@ -1157,7 +1157,7 @@ async def get_time_of_day_analysis(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         analysis = enhanced.time_analyzer.analyze(bot_name.upper(), days)
 
         return {
@@ -1185,7 +1185,7 @@ async def get_regime_performance(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         analysis = enhanced.regime_tracker.analyze_regime_performance(bot_name.upper(), days)
 
         return {
@@ -1212,7 +1212,7 @@ async def get_daily_digest(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         digest = enhanced.daily_digest.generate_digest(date)
 
         return {
@@ -1235,7 +1235,7 @@ async def get_weekend_precheck():
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         precheck = enhanced.weekend_precheck.generate_precheck()
 
         return {
@@ -1260,7 +1260,7 @@ async def compare_versions(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         comparison = enhanced.version_comparer.compare_versions(
             bot_name.upper(), version_a, version_b
         )
@@ -1287,7 +1287,7 @@ async def get_version_performance_history(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         history = enhanced.version_comparer.get_version_performance_history(
             bot_name.upper(), days
         )
@@ -1324,7 +1324,7 @@ async def create_ab_test(request: ABTestCreateRequest):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         test_id = enhanced.ab_testing.create_test(
             request.bot_name.upper(),
             request.control_config,
@@ -1353,7 +1353,7 @@ async def get_active_ab_tests(
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         tests = enhanced.ab_testing.get_active_tests(bot_name.upper() if bot_name else None)
 
         return {
@@ -1374,7 +1374,7 @@ async def evaluate_ab_test(test_id: str):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         result = enhanced.ab_testing.evaluate_test(test_id)
 
         return {
@@ -1399,7 +1399,7 @@ async def get_rollback_status(bot_name: str):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         can_rollback, message = enhanced.rollback_cooldown.can_rollback(bot_name.upper())
 
         return {
@@ -1418,11 +1418,11 @@ async def get_rollback_status(bot_name: str):
 
 AI_ANALYST_AVAILABLE = False
 try:
-    from quant.solomon_ai_analyst import SolomonAIAnalyst, get_analyst
+    from quant.proverbs_ai_analyst import ProverbsAIAnalyst, get_analyst
     AI_ANALYST_AVAILABLE = True
-    logger.info("Solomon AI Analyst loaded")
+    logger.info("Proverbs AI Analyst loaded")
 except ImportError as e:
-    logger.warning(f"Solomon AI Analyst not available: {e}")
+    logger.warning(f"Proverbs AI Analyst not available: {e}")
 
 
 @router.get("/ai/analyze-performance/{bot_name}")
@@ -1465,7 +1465,7 @@ async def ai_proposal_reasoning(proposal_id: str):
 
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM solomon_proposals WHERE proposal_id = %s", (proposal_id,))
+        cursor.execute("SELECT * FROM proverbs_proposals WHERE proposal_id = %s", (proposal_id,))
         columns = [desc[0] for desc in cursor.description]
         row = cursor.fetchone()
 
@@ -1572,7 +1572,7 @@ async def create_validated_proposal(request: ValidatedProposalRequest):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
 
         result = enhanced.create_proposal_with_reasoning(
             bot_name=request.bot_name.upper(),
@@ -1606,7 +1606,7 @@ async def get_all_validation_status():
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         status = enhanced.get_validation_status()
 
         return {
@@ -1633,7 +1633,7 @@ async def get_proposal_validation_status(proposal_id: str):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         status = enhanced.get_validation_status(proposal_id)
 
         return {
@@ -1660,7 +1660,7 @@ async def can_apply_proposal(proposal_id: str):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         result = enhanced.can_apply_proposal(proposal_id)
 
         return {
@@ -1696,7 +1696,7 @@ async def apply_validated_proposal(proposal_id: str, request: ApplyValidatedProp
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         result = enhanced.apply_validated_proposal(
             proposal_id=proposal_id,
             reviewer=request.reviewer
@@ -1737,7 +1737,7 @@ async def get_proposal_reasoning(proposal_id: str):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         reasoning = enhanced.get_proposal_reasoning(proposal_id)
 
         if not reasoning:
@@ -1771,7 +1771,7 @@ async def get_transparency_report(proposal_id: str):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         report = enhanced.get_proposal_transparency_report(proposal_id)
 
         return {
@@ -1801,7 +1801,7 @@ async def record_validation_trade(request: RecordValidationTradeRequest):
         raise HTTPException(status_code=503, detail="Enhanced features not available")
 
     try:
-        enhanced = get_solomon_enhanced()
+        enhanced = get_proverbs_enhanced()
         enhanced.proposal_validator.record_validation_trade(
             validation_id=request.validation_id,
             is_proposed=request.is_proposed,

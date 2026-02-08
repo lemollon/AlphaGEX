@@ -338,32 +338,32 @@ class TestOracleIntegration:
             pytest.skip("Oracle BotName enum not available")
 
 
-class TestSolomonIntegration:
-    """Tests for PEGASUS Solomon feedback loop integration"""
+class TestProverbsIntegration:
+    """Tests for PEGASUS Proverbs feedback loop integration"""
 
-    def test_solomon_botname_enum(self):
-        """Test that PEGASUS is in Solomon BotName enum"""
+    def test_proverbs_botname_enum(self):
+        """Test that PEGASUS is in Proverbs BotName enum"""
         try:
-            from quant.solomon_feedback_loop import BotName
+            from quant.proverbs_feedback_loop import BotName
 
             assert 'PEGASUS' in [b.name for b in BotName]
 
         except ImportError:
-            pytest.skip("Solomon not available")
+            pytest.skip("Proverbs not available")
 
-    def test_solomon_table_map(self):
+    def test_proverbs_table_map(self):
         """Test that PEGASUS has correct table mapping"""
         try:
-            from quant.solomon_feedback_loop import Solomon
+            from quant.proverbs_feedback_loop import Proverbs
 
             # Check if table_map includes PEGASUS
-            solomon = Solomon.__new__(Solomon)
-            if hasattr(solomon, 'table_map'):
+            proverbs = Proverbs.__new__(Proverbs)
+            if hasattr(proverbs, 'table_map'):
                 # The table_map should include PEGASUS
                 pass  # Table map check would require instance
 
         except ImportError:
-            pytest.skip("Solomon not available")
+            pytest.skip("Proverbs not available")
 
 
 class TestDecisionLogger:

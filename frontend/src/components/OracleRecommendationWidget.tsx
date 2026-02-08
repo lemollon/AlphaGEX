@@ -223,14 +223,14 @@ export default function OracleRecommendationWidget() {
                 </div>
               </div>
 
-              {/* Oracle Reasoning (includes Solomon info) */}
+              {/* Oracle Reasoning (includes Proverbs info) */}
               {recommendation.reasoning && (
                 <div className="p-2 bg-background-hover rounded text-xs">
                   <div className="text-[10px] text-text-muted mb-1 font-semibold">Oracle Reasoning</div>
                   <div className="text-text-secondary leading-relaxed">
                     {recommendation.reasoning.split(' | ').map((part, i) => (
                       <span key={i} className={`${
-                        part.includes('SOLOMON INFO') ? 'text-amber-400' :
+                        part.includes('PROVERBS INFO') ? 'text-amber-400' :
                         part.includes('RESULT') ? 'text-info font-medium' :
                         ''
                       }`}>

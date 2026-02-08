@@ -67,7 +67,7 @@ from backend.api.routes import (
     hyperion_routes,  # HYPERION - Weekly Gamma visualization for stocks/ETFs
     data_transparency_routes,  # Data Transparency - expose ALL hidden collected data
     docs_routes,  # Documentation - codebase search and source code retrieval
-    solomon_routes,  # SOLOMON - Feedback Loop Intelligence System for bot learning
+    proverbs_routes,  # PROVERBS - Feedback Loop Intelligence System for bot learning
     events_routes,  # Trading Events - auto-detected events for equity curves
     oracle_routes,  # ORACLE - ML Advisory System for strategy recommendations
     quant_routes,  # QUANT - ML Models Dashboard (Regime Classifier, Directional ML, Ensemble)
@@ -319,7 +319,7 @@ app.include_router(argus_routes.router)
 app.include_router(hyperion_routes.router)
 app.include_router(data_transparency_routes.router)
 app.include_router(docs_routes.router)
-app.include_router(solomon_routes.router)
+app.include_router(proverbs_routes.router)
 app.include_router(events_routes.router)
 app.include_router(oracle_routes.router)
 app.include_router(quant_routes.router)
@@ -332,7 +332,7 @@ app.include_router(prometheus_box_routes.router)
 app.include_router(tastytrade_routes.router)
 app.include_router(heracles_routes.router)
 app.include_router(agape_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer, validation, drift, bot-reports, tastytrade, heracles, agape")
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, proverbs, events, oracle, math-optimizer, validation, drift, bot-reports, tastytrade, heracles, agape")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded

@@ -302,14 +302,14 @@ class TestAtlasScheduling:
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.SOLOMON_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.get_solomon')
+    @patch('scheduler.trader_scheduler.PROVERBS_AVAILABLE', True)
+    @patch('scheduler.trader_scheduler.get_proverbs')
     @patch('scheduler.trader_scheduler.SPXWheelTrader')
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_atlas_respects_kill_switch(self, mock_conn, mock_api, mock_trader, mock_wheel, mock_solomon):
-        """Test ATLAS respects Solomon kill switch"""
+    def test_atlas_respects_kill_switch(self, mock_conn, mock_api, mock_trader, mock_wheel, mock_proverbs):
+        """Test ATLAS respects Proverbs kill switch"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
@@ -318,9 +318,9 @@ class TestAtlasScheduling:
         mock_atlas = MagicMock()
         mock_wheel.return_value = mock_atlas
 
-        mock_solomon_instance = MagicMock()
-        mock_solomon_instance.is_bot_killed.return_value = True  # Kill switch active
-        mock_solomon.return_value = mock_solomon_instance
+        mock_proverbs_instance = MagicMock()
+        mock_proverbs_instance.is_bot_killed.return_value = True  # Kill switch active
+        mock_proverbs.return_value = mock_proverbs_instance
 
         from scheduler.trader_scheduler import AutonomousTraderScheduler
         scheduler = AutonomousTraderScheduler()

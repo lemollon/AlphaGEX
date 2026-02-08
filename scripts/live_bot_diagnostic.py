@@ -547,21 +547,21 @@ def run_diagnostic():
     except Exception as e:
         print(f"  [ERROR] {e}")
 
-    # 9. Solomon Kill Switch
+    # 9. Proverbs Kill Switch
     print("\n" + "-" * 60)
-    print("SOLOMON FEEDBACK LOOP")
+    print("PROVERBS FEEDBACK LOOP")
     print("-" * 60)
 
     try:
-        from quant.solomon_feedback_loop import get_solomon
-        solomon = get_solomon()
+        from quant.proverbs_feedback_loop import get_proverbs
+        proverbs = get_proverbs()
         for bot in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN']:
             # Check if bot is killed via kill switch
-            is_killed = solomon.is_bot_killed(bot) if hasattr(solomon, 'is_bot_killed') else False
+            is_killed = proverbs.is_bot_killed(bot) if hasattr(proverbs, 'is_bot_killed') else False
             status_icon = "🔴" if is_killed else "🟢"
             print(f"  {status_icon} {bot:10} : {'KILLED' if is_killed else 'Active'}")
     except ImportError:
-        print("  [INFO] Solomon module not available")
+        print("  [INFO] Proverbs module not available")
     except Exception as e:
         print(f"  [ERROR] {e}")
 

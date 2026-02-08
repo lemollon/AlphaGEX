@@ -298,7 +298,7 @@ export default function CapitalConfigPanel({
           Recapitalize Account
         </h4>
         <p className="text-gray-400 text-sm mb-4">
-          Add fresh capital after a drawdown while <strong className="text-green-400">preserving all historical data</strong> for Solomon learning.
+          Add fresh capital after a drawdown while <strong className="text-green-400">preserving all historical data</strong> for Proverbs learning.
           Use this instead of reset to keep valuable trade history.
         </p>
 

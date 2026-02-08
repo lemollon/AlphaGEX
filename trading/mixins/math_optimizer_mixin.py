@@ -10,7 +10,7 @@ Provides mathematical optimization capabilities for all trading bots:
 - HJB Exit Optimizer (exit timing)
 - MDP Trade Sequencer (trade ordering)
 
-All decisions are logged to Solomon's audit trail.
+All decisions are logged to Proverbs's audit trail.
 
 Usage:
     from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
@@ -81,7 +81,7 @@ class MathOptimizerMixin:
     5. HJB Exit Optimizer - Optimal exit timing
     6. MDP Trade Sequencer - Optimal trade ordering
 
-    All decisions are logged to Solomon for full audit trail.
+    All decisions are logged to Proverbs for full audit trail.
     """
 
     def _init_math_optimizers(self, bot_name: str, enabled: bool = True):

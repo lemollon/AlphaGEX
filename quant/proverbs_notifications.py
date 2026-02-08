@@ -1,8 +1,8 @@
 """
-SOLOMON Notifications System
+PROVERBS Notifications System
 ============================
 
-Multi-channel notification system for Solomon feedback loop alerts:
+Multi-channel notification system for Proverbs feedback loop alerts:
 - Slack webhooks
 - Discord webhooks
 - Email (via SendGrid or SMTP)
@@ -95,24 +95,24 @@ class Notification:
         }
 
 
-class SolomonNotifications:
+class ProverbsNotifications:
     """
-    Multi-channel notification system for Solomon.
+    Multi-channel notification system for Proverbs.
 
     Configuration via environment variables:
-    - SOLOMON_SLACK_WEBHOOK: Slack incoming webhook URL
-    - SOLOMON_DISCORD_WEBHOOK: Discord webhook URL
-    - SOLOMON_EMAIL_ENABLED: Enable email notifications
+    - PROVERBS_SLACK_WEBHOOK: Slack incoming webhook URL
+    - PROVERBS_DISCORD_WEBHOOK: Discord webhook URL
+    - PROVERBS_EMAIL_ENABLED: Enable email notifications
     - SENDGRID_API_KEY: SendGrid API key for email
-    - SOLOMON_NOTIFY_EMAIL: Email address to send to
+    - PROVERBS_NOTIFY_EMAIL: Email address to send to
     """
 
     def __init__(self):
         # Load configuration from environment
-        self.slack_webhook = os.getenv('SOLOMON_SLACK_WEBHOOK') or os.getenv('SLACK_WEBHOOK_URL')
-        self.discord_webhook = os.getenv('SOLOMON_DISCORD_WEBHOOK') or os.getenv('DISCORD_WEBHOOK_URL')
-        self.email_enabled = os.getenv('SOLOMON_EMAIL_ENABLED', '').lower() == 'true'
-        self.notify_email = os.getenv('SOLOMON_NOTIFY_EMAIL')
+        self.slack_webhook = os.getenv('PROVERBS_SLACK_WEBHOOK') or os.getenv('SLACK_WEBHOOK_URL')
+        self.discord_webhook = os.getenv('PROVERBS_DISCORD_WEBHOOK') or os.getenv('DISCORD_WEBHOOK_URL')
+        self.email_enabled = os.getenv('PROVERBS_EMAIL_ENABLED', '').lower() == 'true'
+        self.notify_email = os.getenv('PROVERBS_NOTIFY_EMAIL')
         self.sendgrid_key = os.getenv('SENDGRID_API_KEY')
 
         # Track sent notifications to avoid spam
@@ -129,9 +129,9 @@ class SolomonNotifications:
             channels.append('Email')
 
         if channels:
-            logger.info(f"Solomon notifications enabled: {', '.join(channels)}")
+            logger.info(f"Proverbs notifications enabled: {', '.join(channels)}")
         else:
-            logger.info("Solomon notifications: No external channels configured (DB only)")
+            logger.info("Proverbs notifications: No external channels configured (DB only)")
 
     def _should_send(self, notification: Notification) -> bool:
         """Check if we should send this notification (avoid spam)"""
@@ -269,7 +269,7 @@ class SolomonNotifications:
             "description": notification.message,
             "color": color,
             "timestamp": notification.created_at.isoformat(),
-            "footer": {"text": "Solomon Feedback Loop"}
+            "footer": {"text": "Proverbs Feedback Loop"}
         }
 
         if notification.bot_name:
@@ -293,7 +293,7 @@ class SolomonNotifications:
             return
 
         # Build email content
-        subject = f"[Solomon] {notification.title}"
+        subject = f"[Proverbs] {notification.title}"
         html_content = f"""
         <h2>{notification.title}</h2>
         <p>{notification.message}</p>
@@ -312,7 +312,7 @@ class SolomonNotifications:
 
         payload = {
             "personalizations": [{"to": [{"email": self.notify_email}]}],
-            "from": {"email": "solomon@alphagex.com", "name": "Solomon"},
+            "from": {"email": "proverbs@alphagex.com", "name": "Proverbs"},
             "subject": subject,
             "content": [{"type": "text/html", "value": html_content}]
         }
@@ -364,7 +364,7 @@ class SolomonNotifications:
 
             # Ensure table exists
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS solomon_notifications (
+                CREATE TABLE IF NOT EXISTS proverbs_notifications (
                     id SERIAL PRIMARY KEY,
                     notification_type TEXT NOT NULL,
                     priority TEXT NOT NULL,
@@ -378,7 +378,7 @@ class SolomonNotifications:
             """)
 
             cursor.execute("""
-                INSERT INTO solomon_notifications
+                INSERT INTO proverbs_notifications
                 (notification_type, priority, title, message, bot_name, data, channels, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
@@ -567,19 +567,19 @@ class SolomonNotifications:
         self.send(Notification(
             notification_type=NotificationType.DAILY_DIGEST,
             priority=NotificationPriority.MEDIUM,
-            title="Daily Solomon Digest",
+            title="Daily Proverbs Digest",
             message="\n".join(message_parts),
             data=summary
         ))
 
 
 # Singleton
-_notifications: Optional[SolomonNotifications] = None
+_notifications: Optional[ProverbsNotifications] = None
 
 
-def get_notifications() -> SolomonNotifications:
+def get_notifications() -> ProverbsNotifications:
     """Get or create notifications singleton"""
     global _notifications
     if _notifications is None:
-        _notifications = SolomonNotifications()
+        _notifications = ProverbsNotifications()
     return _notifications

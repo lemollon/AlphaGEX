@@ -37,40 +37,40 @@ try:
 except ImportError:
     PositionManagementAgent = None
 
-# SOLOMON Feedback Loop - continuous learning system
-SOLOMON_AVAILABLE = False
+# PROVERBS Feedback Loop - continuous learning system
+PROVERBS_AVAILABLE = False
 try:
-    from quant.solomon_feedback_loop import SolomonFeedbackLoop, ProposalStatus
-    SOLOMON_AVAILABLE = True
+    from quant.proverbs_feedback_loop import ProverbsFeedbackLoop, ProposalStatus
+    PROVERBS_AVAILABLE = True
 except ImportError:
-    SolomonFeedbackLoop = None
+    ProverbsFeedbackLoop = None
     ProposalStatus = None
 
-# SOLOMON Enhancements - risk guardrails (consecutive loss kill, max daily loss)
-SOLOMON_ENHANCEMENTS_AVAILABLE = False
+# PROVERBS Enhancements - risk guardrails (consecutive loss kill, max daily loss)
+PROVERBS_ENHANCEMENTS_AVAILABLE = False
 try:
-    from quant.solomon_enhancements import ConsecutiveLossTracker, DailyLossTracker, ENHANCED_GUARDRAILS
-    SOLOMON_ENHANCEMENTS_AVAILABLE = True
+    from quant.proverbs_enhancements import ConsecutiveLossTracker, DailyLossTracker, ENHANCED_GUARDRAILS
+    PROVERBS_ENHANCEMENTS_AVAILABLE = True
 except ImportError:
     ConsecutiveLossTracker = None
     DailyLossTracker = None
     ENHANCED_GUARDRAILS = None
 
-# SOLOMON Notifications - multi-channel alerts
-SOLOMON_NOTIFICATIONS_AVAILABLE = False
+# PROVERBS Notifications - multi-channel alerts
+PROVERBS_NOTIFICATIONS_AVAILABLE = False
 try:
-    from quant.solomon_notifications import SolomonNotifications
-    SOLOMON_NOTIFICATIONS_AVAILABLE = True
+    from quant.proverbs_notifications import ProverbsNotifications
+    PROVERBS_NOTIFICATIONS_AVAILABLE = True
 except ImportError:
-    SolomonNotifications = None
+    ProverbsNotifications = None
 
-# SOLOMON AI Analyst - Claude-powered performance analysis
-SOLOMON_AI_AVAILABLE = False
+# PROVERBS AI Analyst - Claude-powered performance analysis
+PROVERBS_AI_AVAILABLE = False
 try:
-    from quant.solomon_ai_analyst import SolomonAIAnalyst
-    SOLOMON_AI_AVAILABLE = True
+    from quant.proverbs_ai_analyst import ProverbsAIAnalyst
+    PROVERBS_AI_AVAILABLE = True
 except ImportError:
-    SolomonAIAnalyst = None
+    ProverbsAIAnalyst = None
 
 # AI Trade Recommendations - Claude Haiku generates entry/exit triggers
 AI_TRADE_RECOMMENDATIONS_AVAILABLE = False

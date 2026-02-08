@@ -76,7 +76,7 @@ const SYSTEM_ROUTES: Record<string, string> = {
   systems: '/system/processes',
   apollo: '/apollo',
   kronos: '/zero-dte-backtest',
-  solomon: '/solomon',
+  proverbs: '/proverbs',
   hyperion: '/hyperion',
   ares: '/ares',
   athena: '/athena',
@@ -1507,7 +1507,7 @@ function InterstellarWormhole({
 function InterstellarNetwork({ onNavigate, paused }: { onNavigate: (systemId: string, position: [number, number, number]) => void, paused: boolean }) {
   // Position wormholes between solar systems
   const wormholes = useMemo(() => [
-    { position: [-5, 12, -22] as [number, number, number], color: '#f59e0b', targetSystem: 'SOLOMON' },
+    { position: [-5, 12, -22] as [number, number, number], color: '#f59e0b', targetSystem: 'PROVERBS' },
     { position: [12, 0, -21] as [number, number, number], color: '#06b6d4', targetSystem: 'ARGUS' },
     { position: [-8, -3, -23] as [number, number, number], color: '#8b5cf6', targetSystem: 'ORACLE' },
     { position: [8, -10, -22] as [number, number, number], color: '#ef4444', targetSystem: 'KRONOS' },
@@ -2466,10 +2466,10 @@ const SOLAR_SYSTEMS = [
     ]
   },
   {
-    id: 'solomon',
-    name: 'SOLOMON',
+    id: 'proverbs',
+    name: 'PROVERBS',
     subtitle: 'AI Wisdom',
-    route: '/solomon',
+    route: '/proverbs',
     position: [-78, -20, -65] as [number, number, number],  // Left - 9 o'clock
     sunColor: '#f59e0b',
     glowColor: '#fbbf24',
@@ -4427,8 +4427,8 @@ function SystemAmbientEffects({
     switch (systemId) {
       case 'manna':
         return <MannaEffects color={color} sunColor={sunColor} paused={paused} />
-      case 'solomon':
-        return <SolomonEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'proverbs':
+        return <ProverbsEffects color={color} sunColor={sunColor} paused={paused} />
       case 'argus':
         return <ArgusEffects color={color} sunColor={sunColor} paused={paused} />
       case 'oracle':
@@ -5013,8 +5013,8 @@ function GexCoreEffects({ color, sunColor, paused }: { color: string, sunColor: 
   )
 }
 
-// SOLOMON - Wisdom scrolls, knowledge particles, ancient symbols
-function SolomonEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+// PROVERBS - Wisdom scrolls, knowledge particles, ancient symbols
+function ProverbsEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
   const scrollsRef = useRef<THREE.Group>(null)
   const symbolsRef = useRef<THREE.Group>(null)
@@ -7773,7 +7773,7 @@ function StardustField({ paused }: { paused: boolean }) {
 // ENHANCED THEMATIC EFFECTS - Books, Matrix, Crystal Balls, Pendulum, Terminals
 // =============================================================================
 
-// SOLOMON: Floating open books with glowing pages
+// PROVERBS: Floating open books with glowing pages
 function FloatingBooks({ position, color, paused }: { position: [number, number, number], color: string, paused: boolean }) {
   const booksRef = useRef<THREE.Group>(null)
 
@@ -8910,9 +8910,9 @@ function SolarSystemsContainer({
       {/* === WOW FACTOR 8: Thematic Enhancements Per System === */}
       {/* All planet effects wrapped in AlwaysVisibleGroup for visibility from all angles */}
       <AlwaysVisibleGroup>
-        {/* SOLOMON - Floating Wisdom Books */}
+        {/* PROVERBS - Floating Wisdom Books */}
         <FloatingBooks
-          position={SOLAR_SYSTEMS.find(s => s.id === 'solomon')?.position || [-22, 8, -20]}
+          position={SOLAR_SYSTEMS.find(s => s.id === 'proverbs')?.position || [-22, 8, -20]}
           color="#f59e0b"
           paused={paused}
         />

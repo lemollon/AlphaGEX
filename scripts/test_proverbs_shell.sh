@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# SOLOMON SHELL TEST SCRIPT
-# Run in Render shell: bash scripts/test_solomon_shell.sh
+# PROVERBS SHELL TEST SCRIPT
+# Run in Render shell: bash scripts/test_proverbs_shell.sh
 #
-# Quick verification of Solomon tables and functionality
+# Quick verification of Proverbs tables and functionality
 #
 
 echo "======================================================================"
-echo "SOLOMON SHELL VERIFICATION TESTS"
+echo "PROVERBS SHELL VERIFICATION TESTS"
 echo "======================================================================"
 echo ""
 
@@ -53,22 +53,22 @@ else
 fi
 
 # =====================================================
-# TEST 2: Solomon Tables Exist
+# TEST 2: Proverbs Tables Exist
 # =====================================================
 echo ""
-echo "TEST 2: SOLOMON TABLES EXIST"
+echo "TEST 2: PROVERBS TABLES EXIST"
 echo "----------------------------"
 
 TABLES=(
-    "solomon_audit_log"
-    "solomon_proposals"
-    "solomon_versions"
-    "solomon_performance"
-    "solomon_rollbacks"
-    "solomon_health"
-    "solomon_kill_switch"
-    "solomon_validations"
-    "solomon_ab_tests"
+    "proverbs_audit_log"
+    "proverbs_proposals"
+    "proverbs_versions"
+    "proverbs_performance"
+    "proverbs_rollbacks"
+    "proverbs_health"
+    "proverbs_kill_switch"
+    "proverbs_validations"
+    "proverbs_ab_tests"
 )
 
 for TABLE in "${TABLES[@]}"; do
@@ -82,18 +82,18 @@ for TABLE in "${TABLES[@]}"; do
 done
 
 # =====================================================
-# TEST 3: Solomon Health Endpoint
+# TEST 3: Proverbs Health Endpoint
 # =====================================================
 echo ""
-echo "TEST 3: SOLOMON HEALTH ENDPOINT"
+echo "TEST 3: PROVERBS HEALTH ENDPOINT"
 echo "--------------------------------"
 
-HEALTH=$(curl -s http://localhost:8000/api/solomon/health 2>/dev/null)
+HEALTH=$(curl -s http://localhost:8000/api/proverbs/health 2>/dev/null)
 if echo "$HEALTH" | grep -q '"status"'; then
     STATUS=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null)
-    pass "Solomon health endpoint: $STATUS"
+    pass "Proverbs health endpoint: $STATUS"
 else
-    warn "Solomon health endpoint not responding (server may not be running)"
+    warn "Proverbs health endpoint not responding (server may not be running)"
 fi
 
 # =====================================================
@@ -108,12 +108,12 @@ if echo "$ORACLE" | grep -q '"recommended_strategy"'; then
     STRATEGY=$(echo "$ORACLE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('recommended_strategy','unknown'))" 2>/dev/null)
     pass "Oracle returning strategy: $STRATEGY"
 
-    # Check for Solomon info in reasoning
-    HAS_SOLOMON=$(echo "$ORACLE" | python3 -c "import sys,json; d=json.load(sys.stdin); print('YES' if 'SOLOMON' in d.get('reasoning','') else 'NO')" 2>/dev/null)
-    if [ "$HAS_SOLOMON" = "YES" ]; then
-        pass "Solomon info present in Oracle reasoning"
+    # Check for Proverbs info in reasoning
+    HAS_PROVERBS=$(echo "$ORACLE" | python3 -c "import sys,json; d=json.load(sys.stdin); print('YES' if 'PROVERBS' in d.get('reasoning','') else 'NO')" 2>/dev/null)
+    if [ "$HAS_PROVERBS" = "YES" ]; then
+        pass "Proverbs info present in Oracle reasoning"
     else
-        warn "No Solomon info in reasoning (may be expected if no historical data)"
+        warn "No Proverbs info in reasoning (may be expected if no historical data)"
     fi
 else
     warn "Oracle endpoint not responding (server may not be running)"
@@ -129,7 +129,7 @@ echo "--------------------------------"
 # Try to insert and then delete a test record
 TEST_ID="TEST-VERIFY-$(date +%s)"
 INSERT_RESULT=$(psql $DATABASE_URL -c "
-    INSERT INTO solomon_ab_tests (test_id, bot_name, control_config, variant_config, status)
+    INSERT INTO proverbs_ab_tests (test_id, bot_name, control_config, variant_config, status)
     VALUES ('$TEST_ID', 'TEST', '{\"test\": true}', '{\"test\": true}', 'RUNNING')
 " 2>&1)
 
@@ -137,7 +137,7 @@ if echo "$INSERT_RESULT" | grep -q "INSERT"; then
     pass "A/B test table is writable"
 
     # Verify read
-    READ_RESULT=$(psql $DATABASE_URL -t -c "SELECT test_id FROM solomon_ab_tests WHERE test_id = '$TEST_ID'" 2>/dev/null | tr -d ' ')
+    READ_RESULT=$(psql $DATABASE_URL -t -c "SELECT test_id FROM proverbs_ab_tests WHERE test_id = '$TEST_ID'" 2>/dev/null | tr -d ' ')
     if [ "$READ_RESULT" = "$TEST_ID" ]; then
         pass "A/B test record readable"
     else
@@ -145,7 +145,7 @@ if echo "$INSERT_RESULT" | grep -q "INSERT"; then
     fi
 
     # Cleanup
-    psql $DATABASE_URL -c "DELETE FROM solomon_ab_tests WHERE test_id = '$TEST_ID'" > /dev/null 2>&1
+    psql $DATABASE_URL -c "DELETE FROM proverbs_ab_tests WHERE test_id = '$TEST_ID'" > /dev/null 2>&1
     pass "Test record cleaned up"
 else
     fail "A/B test table not writable: $INSERT_RESULT"
@@ -183,18 +183,18 @@ for BOT_TABLE in "${BOTS[@]}"; do
 done
 
 # =====================================================
-# TEST 7: Solomon Enhanced Endpoints
+# TEST 7: Proverbs Enhanced Endpoints
 # =====================================================
 echo ""
-echo "TEST 7: SOLOMON ENHANCED ENDPOINTS"
+echo "TEST 7: PROVERBS ENHANCED ENDPOINTS"
 echo "-----------------------------------"
 
 ENDPOINTS=(
-    "/api/solomon/enhanced/digest"
-    "/api/solomon/enhanced/correlations"
-    "/api/solomon/strategy-analysis?days=30"
-    "/api/solomon/oracle-accuracy?days=30"
-    "/api/solomon/realtime-status?days=7"
+    "/api/proverbs/enhanced/digest"
+    "/api/proverbs/enhanced/correlations"
+    "/api/proverbs/strategy-analysis?days=30"
+    "/api/proverbs/oracle-accuracy?days=30"
+    "/api/proverbs/realtime-status?days=7"
 )
 
 for ENDPOINT in "${ENDPOINTS[@]}"; do
@@ -224,7 +224,7 @@ echo ""
 
 if [ $FAILED -eq 0 ]; then
     echo -e "${GREEN}======================================================================"
-    echo "✅ ALL TESTS PASSED - SOLOMON IS PRODUCTION READY"
+    echo "✅ ALL TESTS PASSED - PROVERBS IS PRODUCTION READY"
     echo -e "======================================================================${NC}"
 else
     echo -e "${RED}======================================================================"

@@ -1840,7 +1840,7 @@ class PrometheusICExecutor:
                 log_type="IC",
             )
 
-        # Record outcome to auto-validation system (which also notifies Solomon)
+        # Record outcome to auto-validation system (which also notifies Proverbs)
         if success:
             try:
                 from quant.auto_validation_system import record_bot_outcome

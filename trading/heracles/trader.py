@@ -64,13 +64,13 @@ except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
     get_learning_memory = None
 
-# Solomon Enhanced for feedback loop recording
+# Proverbs Enhanced for feedback loop recording
 try:
-    from quant.solomon_enhancements import get_solomon_enhanced
-    SOLOMON_ENHANCED_AVAILABLE = True
+    from quant.proverbs_enhancements import get_proverbs_enhanced
+    PROVERBS_ENHANCED_AVAILABLE = True
 except ImportError:
-    SOLOMON_ENHANCED_AVAILABLE = False
-    get_solomon_enhanced = None
+    PROVERBS_ENHANCED_AVAILABLE = False
+    get_proverbs_enhanced = None
 
 # Auto-Validation System for Thompson Sampling capital allocation
 try:
@@ -1034,10 +1034,10 @@ class HERACLESTrader:
                     # Record outcome to Oracle ML for feedback loop
                     self._record_oracle_outcome(position, reason, realized_pnl)
 
-                    # Record outcome to Solomon Enhanced for feedback loops
+                    # Record outcome to Proverbs Enhanced for feedback loops
                     trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
                     outcome_type = self._determine_outcome_type(reason, realized_pnl)
-                    self._record_solomon_outcome(realized_pnl, trade_date, outcome_type)
+                    self._record_proverbs_outcome(realized_pnl, trade_date, outcome_type)
 
                     # Record outcome to Thompson Sampling for capital allocation
                     self._record_thompson_outcome(realized_pnl)
@@ -1550,25 +1550,25 @@ class HERACLESTrader:
         except Exception as e:
             logger.warning(f"HERACLES: Oracle outcome recording failed: {e}")
 
-    def _record_solomon_outcome(
+    def _record_proverbs_outcome(
         self,
         pnl: float,
         trade_date: str,
         outcome_type: str = None
     ):
         """
-        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+        Record trade outcome to Proverbs Enhanced for feedback loop tracking.
 
         This updates:
         - Consecutive loss tracking
         - Daily P&L monitoring
         - Performance tracking for version comparison
         """
-        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+        if not PROVERBS_ENHANCED_AVAILABLE or not get_proverbs_enhanced:
             return
 
         try:
-            enhanced = get_solomon_enhanced()
+            enhanced = get_proverbs_enhanced()
             alerts = enhanced.record_trade_outcome(
                 bot_name='HERACLES',
                 pnl=pnl,
@@ -1580,12 +1580,12 @@ class HERACLESTrader:
 
             if alerts:
                 for alert in alerts:
-                    logger.warning(f"HERACLES Solomon Alert: {alert}")
+                    logger.warning(f"HERACLES Proverbs Alert: {alert}")
 
-            logger.debug(f"HERACLES: Recorded outcome to Solomon Enhanced - P&L=${pnl:.2f}")
+            logger.debug(f"HERACLES: Recorded outcome to Proverbs Enhanced - P&L=${pnl:.2f}")
 
         except Exception as e:
-            logger.warning(f"HERACLES: Solomon outcome recording failed: {e}")
+            logger.warning(f"HERACLES: Proverbs outcome recording failed: {e}")
 
     def _record_thompson_outcome(self, pnl: float):
         """

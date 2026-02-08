@@ -2273,7 +2273,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
     Recapitalize a bot with fresh capital while preserving all historical data.
 
     Use this instead of reset when a bot blows an account - keeps all trade
-    history for Solomon learning while allowing the bot to continue trading.
+    history for Proverbs learning while allowing the bot to continue trading.
 
     Args:
         bot: Bot name (ARES, ATHENA, TITAN, PEGASUS, ICARUS)
@@ -2283,7 +2283,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
     Preserves:
         - All closed trades (for win/loss pattern analysis)
         - All equity snapshots (for drawdown analysis)
-        - All decision logs (for Solomon learning)
+        - All decision logs (for Proverbs learning)
         - All scan activity (for signal analysis)
     """
     valid_bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']
@@ -2352,7 +2352,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
             "previous_capital": previous_capital,
             "new_capital": capital,
             "note": note,
-            "message": f"{bot_upper} recapitalized to ${capital:,.2f}. All historical data preserved for Solomon learning.",
+            "message": f"{bot_upper} recapitalized to ${capital:,.2f}. All historical data preserved for Proverbs learning.",
             "data_preserved": [
                 f"{bot_lower}_positions (closed trades)",
                 f"{bot_lower}_equity_snapshots (drawdown history)",

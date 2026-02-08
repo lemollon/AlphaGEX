@@ -292,7 +292,7 @@ TRADING:
 AI & TESTING:
 - /zero-dte-backtest - KRONOS 0DTE Condor backtester
 - /oracle - ORACLE AI Trading Advisor
-- /solomon - SOLOMON Feedback Loop and learning system
+- /proverbs - PROVERBS Feedback Loop and learning system
 
 LIVE TRADING:
 - /ares - ARES Iron Condor dashboard (SPX live/SPY sandbox)

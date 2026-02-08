@@ -65,7 +65,7 @@ class OmegaIntegrationMixin:
         - capital: float (current capital)
 
     This mixin replaces:
-        - CircuitBreaker checks (now handled by Solomon layer in OMEGA)
+        - CircuitBreaker checks (now handled by Proverbs layer in OMEGA)
         - Direct Oracle calls (now routed through OMEGA's layered decision)
         - ML Advisor calls (now the PRIMARY decision in OMEGA)
     """
@@ -145,7 +145,7 @@ class OmegaIntegrationMixin:
         Record trade outcome to OMEGA for feedback loops.
 
         This updates:
-            - Solomon (consecutive loss tracking)
+            - Proverbs (consecutive loss tracking)
             - Auto-retrain monitor (Gap 1)
             - Thompson allocator (Gap 2)
             - Equity scaler (Gap 10)
@@ -175,7 +175,7 @@ class OmegaIntegrationMixin:
 
     def omega_can_trade(self) -> bool:
         """
-        Check if trading is allowed via OMEGA (Solomon layer).
+        Check if trading is allowed via OMEGA (Proverbs layer).
 
         This replaces: circuit_breaker.can_trade()
 
@@ -190,11 +190,11 @@ class OmegaIntegrationMixin:
         bot_name = getattr(self, 'bot_name', 'UNKNOWN')
 
         try:
-            # Get Solomon verdict directly
-            verdict = omega._check_solomon(bot_name)
+            # Get Proverbs verdict directly
+            verdict = omega._check_proverbs(bot_name)
             return verdict.can_trade
         except Exception as e:
-            logger.error(f"OMEGA Solomon check failed for {bot_name}: {e}")
+            logger.error(f"OMEGA Proverbs check failed for {bot_name}: {e}")
             return True  # Default to allow on error
 
     def omega_get_capital_allocation(self) -> float:

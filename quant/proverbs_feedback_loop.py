@@ -1,11 +1,11 @@
 """
-SOLOMON - Feedback Loop Intelligence System for AlphaGEX Trading Bots
+PROVERBS - Feedback Loop Intelligence System for AlphaGEX Trading Bots
 ======================================================================
 
-Named after King Solomon, renowned for wisdom and judgment.
+Named after the Book of Proverbs, renowned for wisdom and judgment.
 
 PURPOSE:
-Solomon is the central feedback loop orchestrator that ensures trading bots
+Proverbs is the central feedback loop orchestrator that ensures trading bots
 continuously learn and improve while maintaining full transparency and human oversight.
 
 CORE PRINCIPLES:
@@ -16,7 +16,7 @@ CORE PRINCIPLES:
 
 ARCHITECTURE:
     ┌─────────────────────────────────────────────────────────────────┐
-    │                         SOLOMON                                  │
+    │                         PROVERBS                                 │
     │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
     │  │   COLLECT   │  │   ANALYZE   │  │   PROPOSE   │             │
     │  │  Outcomes   │──│  Performance│──│   Changes   │             │
@@ -42,11 +42,11 @@ BOTS COVERED:
 - PHOENIX: 0DTE Options Trading
 
 DATABASE TABLES:
-- solomon_audit_log: Complete audit trail of every action
-- solomon_proposals: Pending changes awaiting approval
-- solomon_versions: Version history for models and parameters
-- solomon_rollbacks: Rollback history and recovery points
-- solomon_performance: Performance tracking per version
+- proverbs_audit_log: Complete audit trail of every action
+- proverbs_proposals: Pending changes awaiting approval
+- proverbs_versions: Version history for models and parameters
+- proverbs_rollbacks: Rollback history and recovery points
+- proverbs_performance: Performance tracking per version
 
 Author: AlphaGEX Quant
 Date: 2024-12
@@ -138,7 +138,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 # =============================================================================
 
 class BotName(Enum):
-    """Trading bots under Solomon's oversight"""
+    """Trading bots under Proverbs's oversight"""
     ARES = "ARES"           # SPY Iron Condor (0DTE)
     ATHENA = "ATHENA"       # SPY Directional Spreads
     TITAN = "TITAN"         # SPX Aggressive Iron Condor
@@ -151,7 +151,7 @@ class BotName(Enum):
 
 
 class ActionType(Enum):
-    """Types of actions Solomon can take"""
+    """Types of actions Proverbs can take"""
     # Training actions
     MODEL_RETRAIN = "MODEL_RETRAIN"
     MODEL_LOADED = "MODEL_LOADED"
@@ -190,7 +190,7 @@ class ProposalStatus(Enum):
 
 
 class ProposalType(Enum):
-    """Types of proposals Solomon can make"""
+    """Types of proposals Proverbs can make"""
     MODEL_UPDATE = "MODEL_UPDATE"
     PARAMETER_CHANGE = "PARAMETER_CHANGE"
     STRATEGY_ADJUSTMENT = "STRATEGY_ADJUSTMENT"
@@ -226,14 +226,14 @@ class AuditEntry:
     """
     Complete audit log entry - WHO, WHAT, WHY, WHEN
 
-    Every action Solomon takes is recorded with full context.
+    Every action Proverbs takes is recorded with full context.
     """
     # WHEN
     timestamp: datetime
 
     # WHO
     bot_name: str
-    actor: str  # "SOLOMON", "USER:<username>", "SCHEDULER", "SYSTEM"
+    actor: str  # "PROVERBS", "USER:<username>", "SCHEDULER", "SYSTEM"
     session_id: str
 
     # WHAT
@@ -468,8 +468,8 @@ class FeedbackLoopResult:
 # =============================================================================
 
 SCHEMA_SQL = """
--- Solomon Audit Log: Complete history of every action
-CREATE TABLE IF NOT EXISTS solomon_audit_log (
+-- Proverbs Audit Log: Complete history of every action
+CREATE TABLE IF NOT EXISTS proverbs_audit_log (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     bot_name TEXT NOT NULL,
@@ -489,13 +489,13 @@ CREATE TABLE IF NOT EXISTS solomon_audit_log (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_solomon_audit_bot ON solomon_audit_log(bot_name);
-CREATE INDEX IF NOT EXISTS idx_solomon_audit_action ON solomon_audit_log(action_type);
-CREATE INDEX IF NOT EXISTS idx_solomon_audit_time ON solomon_audit_log(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_solomon_audit_proposal ON solomon_audit_log(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_proverbs_audit_bot ON proverbs_audit_log(bot_name);
+CREATE INDEX IF NOT EXISTS idx_proverbs_audit_action ON proverbs_audit_log(action_type);
+CREATE INDEX IF NOT EXISTS idx_proverbs_audit_time ON proverbs_audit_log(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_proverbs_audit_proposal ON proverbs_audit_log(proposal_id);
 
--- Solomon Proposals: Changes awaiting approval
-CREATE TABLE IF NOT EXISTS solomon_proposals (
+-- Proverbs Proposals: Changes awaiting approval
+CREATE TABLE IF NOT EXISTS proverbs_proposals (
     id SERIAL PRIMARY KEY,
     proposal_id TEXT UNIQUE NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -521,12 +521,12 @@ CREATE TABLE IF NOT EXISTS solomon_proposals (
     rolled_back_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_solomon_proposals_status ON solomon_proposals(status);
-CREATE INDEX IF NOT EXISTS idx_solomon_proposals_bot ON solomon_proposals(bot_name);
-CREATE INDEX IF NOT EXISTS idx_solomon_proposals_expires ON solomon_proposals(expires_at);
+CREATE INDEX IF NOT EXISTS idx_proverbs_proposals_status ON proverbs_proposals(status);
+CREATE INDEX IF NOT EXISTS idx_proverbs_proposals_bot ON proverbs_proposals(bot_name);
+CREATE INDEX IF NOT EXISTS idx_proverbs_proposals_expires ON proverbs_proposals(expires_at);
 
--- Solomon Versions: Version history for models and parameters
-CREATE TABLE IF NOT EXISTS solomon_versions (
+-- Proverbs Versions: Version history for models and parameters
+CREATE TABLE IF NOT EXISTS proverbs_versions (
     id SERIAL PRIMARY KEY,
     version_id TEXT UNIQUE NOT NULL,
     version_number TEXT NOT NULL,
@@ -546,12 +546,12 @@ CREATE TABLE IF NOT EXISTS solomon_versions (
     deactivation_reason TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_solomon_versions_bot ON solomon_versions(bot_name);
-CREATE INDEX IF NOT EXISTS idx_solomon_versions_active ON solomon_versions(is_active);
-CREATE INDEX IF NOT EXISTS idx_solomon_versions_type ON solomon_versions(version_type);
+CREATE INDEX IF NOT EXISTS idx_proverbs_versions_bot ON proverbs_versions(bot_name);
+CREATE INDEX IF NOT EXISTS idx_proverbs_versions_active ON proverbs_versions(is_active);
+CREATE INDEX IF NOT EXISTS idx_proverbs_versions_type ON proverbs_versions(version_type);
 
--- Solomon Performance: Performance tracking over time
-CREATE TABLE IF NOT EXISTS solomon_performance (
+-- Proverbs Performance: Performance tracking over time
+CREATE TABLE IF NOT EXISTS proverbs_performance (
     id SERIAL PRIMARY KEY,
     snapshot_id TEXT UNIQUE NOT NULL,
     timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -572,11 +572,11 @@ CREATE TABLE IF NOT EXISTS solomon_performance (
     period_end DATE
 );
 
-CREATE INDEX IF NOT EXISTS idx_solomon_perf_bot ON solomon_performance(bot_name);
-CREATE INDEX IF NOT EXISTS idx_solomon_perf_time ON solomon_performance(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_proverbs_perf_bot ON proverbs_performance(bot_name);
+CREATE INDEX IF NOT EXISTS idx_proverbs_perf_time ON proverbs_performance(timestamp DESC);
 
--- Solomon Rollbacks: History of rollbacks
-CREATE TABLE IF NOT EXISTS solomon_rollbacks (
+-- Proverbs Rollbacks: History of rollbacks
+CREATE TABLE IF NOT EXISTS proverbs_rollbacks (
     id SERIAL PRIMARY KEY,
     rollback_id TEXT UNIQUE NOT NULL,
     executed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -593,10 +593,10 @@ CREATE TABLE IF NOT EXISTS solomon_rollbacks (
     error_message TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_solomon_rollbacks_bot ON solomon_rollbacks(bot_name);
+CREATE INDEX IF NOT EXISTS idx_proverbs_rollbacks_bot ON proverbs_rollbacks(bot_name);
 
--- Solomon Health: System health tracking
-CREATE TABLE IF NOT EXISTS solomon_health (
+-- Proverbs Health: System health tracking
+CREATE TABLE IF NOT EXISTS proverbs_health (
     id SERIAL PRIMARY KEY,
     check_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     component TEXT NOT NULL,
@@ -606,10 +606,10 @@ CREATE TABLE IF NOT EXISTS solomon_health (
     consecutive_failures INTEGER DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_solomon_health_component ON solomon_health(component);
+CREATE INDEX IF NOT EXISTS idx_proverbs_health_component ON proverbs_health(component);
 
--- Solomon Kill Switch: Emergency stop state
-CREATE TABLE IF NOT EXISTS solomon_kill_switch (
+-- Proverbs Kill Switch: Emergency stop state
+CREATE TABLE IF NOT EXISTS proverbs_kill_switch (
     id SERIAL PRIMARY KEY,
     bot_name TEXT UNIQUE NOT NULL,
     is_killed BOOLEAN DEFAULT FALSE,
@@ -621,11 +621,11 @@ CREATE TABLE IF NOT EXISTS solomon_kill_switch (
     resumed_by TEXT
 );
 
--- Solomon Validations: Track proposal validations for proven improvement
-CREATE TABLE IF NOT EXISTS solomon_validations (
+-- Proverbs Validations: Track proposal validations for proven improvement
+CREATE TABLE IF NOT EXISTS proverbs_validations (
     id SERIAL PRIMARY KEY,
     validation_id TEXT UNIQUE NOT NULL,
-    proposal_id TEXT NOT NULL REFERENCES solomon_proposals(proposal_id),
+    proposal_id TEXT NOT NULL REFERENCES proverbs_proposals(proposal_id),
     bot_name TEXT NOT NULL,
     method TEXT NOT NULL,  -- AB_TEST, BACKTEST, SHADOW_MODE, HISTORICAL
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -668,12 +668,12 @@ CREATE TABLE IF NOT EXISTS solomon_validations (
 );
 
 -- Index for quick lookups
-CREATE INDEX IF NOT EXISTS idx_solomon_validations_proposal ON solomon_validations(proposal_id);
-CREATE INDEX IF NOT EXISTS idx_solomon_validations_bot ON solomon_validations(bot_name);
-CREATE INDEX IF NOT EXISTS idx_solomon_validations_status ON solomon_validations(status);
+CREATE INDEX IF NOT EXISTS idx_proverbs_validations_proposal ON proverbs_validations(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_proverbs_validations_bot ON proverbs_validations(bot_name);
+CREATE INDEX IF NOT EXISTS idx_proverbs_validations_status ON proverbs_validations(status);
 
--- Solomon A/B Tests: Track A/B test configurations and results
-CREATE TABLE IF NOT EXISTS solomon_ab_tests (
+-- Proverbs A/B Tests: Track A/B test configurations and results
+CREATE TABLE IF NOT EXISTS proverbs_ab_tests (
     id SERIAL PRIMARY KEY,
     test_id TEXT UNIQUE NOT NULL,
     bot_name TEXT NOT NULL,
@@ -703,16 +703,16 @@ CREATE TABLE IF NOT EXISTS solomon_ab_tests (
 );
 
 -- Index for quick lookups
-CREATE INDEX IF NOT EXISTS idx_solomon_ab_tests_bot ON solomon_ab_tests(bot_name);
-CREATE INDEX IF NOT EXISTS idx_solomon_ab_tests_status ON solomon_ab_tests(status);
+CREATE INDEX IF NOT EXISTS idx_proverbs_ab_tests_bot ON proverbs_ab_tests(bot_name);
+CREATE INDEX IF NOT EXISTS idx_proverbs_ab_tests_status ON proverbs_ab_tests(status);
 """
 
 
 # =============================================================================
-# SOLOMON FEEDBACK LOOP SERVICE
+# PROVERBS FEEDBACK LOOP SERVICE
 # =============================================================================
 
-class SolomonFeedbackLoop:
+class ProverbsFeedbackLoop:
     """
     Central feedback loop orchestrator for all trading bots.
 
@@ -731,20 +731,20 @@ class SolomonFeedbackLoop:
         self._ensure_schema()
         self._oracle = None
 
-        logger.info(f"[SOLOMON] Initialized new session: {self.session_id}")
-        logger.info(f"[SOLOMON] Database available: {DB_AVAILABLE}")
-        logger.info(f"[SOLOMON] Oracle available: {ORACLE_AVAILABLE}")
-        logger.info(f"[SOLOMON] Math Optimizer available: {MATH_OPTIMIZER_AVAILABLE}")
+        logger.info(f"[PROVERBS] Initialized new session: {self.session_id}")
+        logger.info(f"[PROVERBS] Database available: {DB_AVAILABLE}")
+        logger.info(f"[PROVERBS] Oracle available: {ORACLE_AVAILABLE}")
+        logger.info(f"[PROVERBS] Math Optimizer available: {MATH_OPTIMIZER_AVAILABLE}")
 
     def _generate_session_id(self) -> str:
         """Generate unique session ID"""
         import uuid
-        return f"SOLOMON-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        return f"PROVERBS-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
     def _ensure_schema(self):
         """Ensure all required database tables exist"""
         if not DB_AVAILABLE:
-            logger.warning("Database not available - Solomon running in limited mode")
+            logger.warning("Database not available - Proverbs running in limited mode")
             return
 
         with get_db_connection() as conn:
@@ -754,9 +754,9 @@ class SolomonFeedbackLoop:
                 cursor = conn.cursor()
                 cursor.execute(SCHEMA_SQL)
                 conn.commit()
-                logger.info("Solomon database schema verified")
+                logger.info("Proverbs database schema verified")
             except Exception as e:
-                logger.error(f"Failed to create Solomon schema: {e}")
+                logger.error(f"Failed to create Proverbs schema: {e}")
 
     @property
     def oracle(self):
@@ -775,7 +775,7 @@ class SolomonFeedbackLoop:
         action_type: ActionType,
         description: str,
         reason: str = "",
-        actor: str = "SOLOMON",
+        actor: str = "PROVERBS",
         before_state: Dict = None,
         after_state: Dict = None,
         justification: Dict = None,
@@ -819,7 +819,7 @@ class SolomonFeedbackLoop:
                 cursor = conn.cursor()
 
                 cursor.execute("""
-                    INSERT INTO solomon_audit_log (
+                    INSERT INTO proverbs_audit_log (
                         timestamp, bot_name, actor, session_id, action_type,
                         action_description, before_state, after_state, reason,
                         justification, version_from, version_to, proposal_id,
@@ -849,7 +849,7 @@ class SolomonFeedbackLoop:
                 conn.commit()
 
                 # Enhanced logging with more context
-                log_msg = f"[SOLOMON AUDIT #{audit_id}] {bot_name} | {action_type.value} | {description}"
+                log_msg = f"[PROVERBS AUDIT #{audit_id}] {bot_name} | {action_type.value} | {description}"
                 if reason:
                     log_msg += f" | Reason: {reason}"
                 if version_from and version_to:
@@ -863,8 +863,8 @@ class SolomonFeedbackLoop:
                 return audit_id
 
             except Exception as e:
-                logger.error(f"[SOLOMON] Failed to log audit entry: {e}")
-                logger.error(f"[SOLOMON] Audit details - Bot: {bot_name}, Action: {action_type.value}, Description: {description}")
+                logger.error(f"[PROVERBS] Failed to log audit entry: {e}")
+                logger.error(f"[PROVERBS] Audit details - Bot: {bot_name}, Action: {action_type.value}, Description: {description}")
                 return None
 
     def get_audit_log(
@@ -887,7 +887,7 @@ class SolomonFeedbackLoop:
             try:
                 cursor = conn.cursor()
 
-                query = "SELECT * FROM solomon_audit_log WHERE 1=1"
+                query = "SELECT * FROM proverbs_audit_log WHERE 1=1"
                 params = []
 
                 if bot_name:
@@ -982,7 +982,7 @@ class SolomonFeedbackLoop:
                 cursor = conn.cursor()
 
                 cursor.execute("""
-                    INSERT INTO solomon_proposals (
+                    INSERT INTO proverbs_proposals (
                         proposal_id, created_at, expires_at, proposal_type, bot_name,
                         title, description, current_value, proposed_value, change_summary,
                         reason, supporting_metrics, expected_improvement, risk_level,
@@ -1022,18 +1022,18 @@ class SolomonFeedbackLoop:
                     proposal_id=proposal_id
                 )
 
-                logger.info(f"[SOLOMON PROPOSAL] Created {proposal_id}")
-                logger.info(f"[SOLOMON PROPOSAL]   Bot: {bot_name} | Type: {proposal_type.value}")
-                logger.info(f"[SOLOMON PROPOSAL]   Title: {title}")
-                logger.info(f"[SOLOMON PROPOSAL]   Risk Level: {risk_level} | Expires: {expires_at.strftime('%Y-%m-%d %H:%M')} CT")
-                logger.info(f"[SOLOMON PROPOSAL]   Change: {change_summary}")
+                logger.info(f"[PROVERBS PROPOSAL] Created {proposal_id}")
+                logger.info(f"[PROVERBS PROPOSAL]   Bot: {bot_name} | Type: {proposal_type.value}")
+                logger.info(f"[PROVERBS PROPOSAL]   Title: {title}")
+                logger.info(f"[PROVERBS PROPOSAL]   Risk Level: {risk_level} | Expires: {expires_at.strftime('%Y-%m-%d %H:%M')} CT")
+                logger.info(f"[PROVERBS PROPOSAL]   Change: {change_summary}")
                 if expected_improvement:
-                    logger.info(f"[SOLOMON PROPOSAL]   Expected Improvement: {expected_improvement}")
+                    logger.info(f"[PROVERBS PROPOSAL]   Expected Improvement: {expected_improvement}")
                 return proposal_id
 
             except Exception as e:
-                logger.error(f"[SOLOMON] Failed to create proposal: {e}")
-                logger.error(f"[SOLOMON] Proposal details - Bot: {bot_name}, Title: {title}, Type: {proposal_type.value}")
+                logger.error(f"[PROVERBS] Failed to create proposal: {e}")
+                logger.error(f"[PROVERBS] Proposal details - Bot: {bot_name}, Title: {title}, Type: {proposal_type.value}")
                 return None
 
     def _build_change_summary(self, current: Dict, proposed: Dict) -> str:
@@ -1078,31 +1078,31 @@ class SolomonFeedbackLoop:
             cursor.execute("""
                 SELECT proposal_type, bot_name, title, current_value, proposed_value,
                        reason, supporting_metrics, status
-                FROM solomon_proposals
+                FROM proverbs_proposals
                 WHERE proposal_id = %s
             """, (proposal_id,))
 
             row = cursor.fetchone()
             if not row:
-                logger.error(f"[SOLOMON] Proposal {proposal_id} not found - cannot approve")
+                logger.error(f"[PROVERBS] Proposal {proposal_id} not found - cannot approve")
                 conn.close()
                 return False
 
             proposal_type, bot_name, title, current_value, proposed_value, reason, metrics, status = row
 
             if status != ProposalStatus.PENDING.value:
-                logger.warning(f"[SOLOMON] Proposal {proposal_id} is not pending (current status: {status}) - cannot approve")
+                logger.warning(f"[PROVERBS] Proposal {proposal_id} is not pending (current status: {status}) - cannot approve")
                 conn.close()
                 return False
 
-            logger.info(f"[SOLOMON APPROVAL] Processing approval for {proposal_id}")
-            logger.info(f"[SOLOMON APPROVAL]   Bot: {bot_name} | Title: {title}")
-            logger.info(f"[SOLOMON APPROVAL]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
+            logger.info(f"[PROVERBS APPROVAL] Processing approval for {proposal_id}")
+            logger.info(f"[PROVERBS APPROVAL]   Bot: {bot_name} | Title: {title}")
+            logger.info(f"[PROVERBS APPROVAL]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
 
             # Update proposal status
             reviewed_at = datetime.now(CENTRAL_TZ)
             cursor.execute("""
-                UPDATE solomon_proposals
+                UPDATE proverbs_proposals
                 SET status = %s, reviewed_by = %s, reviewed_at = %s, review_notes = %s
                 WHERE proposal_id = %s
             """, (ProposalStatus.APPROVED.value, reviewer, reviewed_at, notes, proposal_id))
@@ -1123,7 +1123,7 @@ class SolomonFeedbackLoop:
             )
 
             # Apply the changes
-            logger.info(f"[SOLOMON APPROVAL] Applying changes for {proposal_id}...")
+            logger.info(f"[PROVERBS APPROVAL] Applying changes for {proposal_id}...")
             success = self._apply_proposal(proposal_id, proposal_type, bot_name, proposed_value)
 
             if success:
@@ -1131,21 +1131,21 @@ class SolomonFeedbackLoop:
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""
-                    UPDATE solomon_proposals
+                    UPDATE proverbs_proposals
                     SET status = %s, applied_at = %s
                     WHERE proposal_id = %s
                 """, (ProposalStatus.APPLIED.value, datetime.now(CENTRAL_TZ), proposal_id))
                 conn.commit()
                 conn.close()
-                logger.info(f"[SOLOMON APPROVAL] Successfully applied proposal {proposal_id}")
-                logger.info(f"[SOLOMON APPROVAL]   Changes applied to {bot_name} at {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')} CT")
+                logger.info(f"[PROVERBS APPROVAL] Successfully applied proposal {proposal_id}")
+                logger.info(f"[PROVERBS APPROVAL]   Changes applied to {bot_name} at {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')} CT")
             else:
-                logger.error(f"[SOLOMON APPROVAL] Failed to apply proposal {proposal_id}")
+                logger.error(f"[PROVERBS APPROVAL] Failed to apply proposal {proposal_id}")
 
             return success
 
         except Exception as e:
-            logger.error(f"[SOLOMON] Failed to approve proposal {proposal_id}: {e}")
+            logger.error(f"[PROVERBS] Failed to approve proposal {proposal_id}: {e}")
             traceback.print_exc()
             return False
 
@@ -1167,7 +1167,7 @@ class SolomonFeedbackLoop:
 
             # Get proposal info for logging
             cursor.execute("""
-                SELECT bot_name, title FROM solomon_proposals WHERE proposal_id = %s
+                SELECT bot_name, title FROM proverbs_proposals WHERE proposal_id = %s
             """, (proposal_id,))
 
             row = cursor.fetchone()
@@ -1179,7 +1179,7 @@ class SolomonFeedbackLoop:
 
             # Update status
             cursor.execute("""
-                UPDATE solomon_proposals
+                UPDATE proverbs_proposals
                 SET status = %s, reviewed_by = %s, reviewed_at = %s, review_notes = %s
                 WHERE proposal_id = %s
             """, (ProposalStatus.REJECTED.value, reviewer, datetime.now(CENTRAL_TZ), notes, proposal_id))
@@ -1197,13 +1197,13 @@ class SolomonFeedbackLoop:
                 proposal_id=proposal_id
             )
 
-            logger.info(f"[SOLOMON REJECTION] Proposal {proposal_id} rejected")
-            logger.info(f"[SOLOMON REJECTION]   Bot: {bot_name} | Title: {title}")
-            logger.info(f"[SOLOMON REJECTION]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
+            logger.info(f"[PROVERBS REJECTION] Proposal {proposal_id} rejected")
+            logger.info(f"[PROVERBS REJECTION]   Bot: {bot_name} | Title: {title}")
+            logger.info(f"[PROVERBS REJECTION]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
             return True
 
         except Exception as e:
-            logger.error(f"[SOLOMON] Failed to reject proposal {proposal_id}: {e}")
+            logger.error(f"[PROVERBS] Failed to reject proposal {proposal_id}: {e}")
             return False
 
     def _apply_proposal(
@@ -1397,7 +1397,7 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             query = """
-                SELECT * FROM solomon_proposals
+                SELECT * FROM proverbs_proposals
                 WHERE status = 'PENDING' AND expires_at > NOW()
             """
             params = []
@@ -1429,7 +1429,7 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             cursor.execute("""
-                UPDATE solomon_proposals
+                UPDATE proverbs_proposals
                 SET status = 'EXPIRED'
                 WHERE status = 'PENDING' AND expires_at < NOW()
                 RETURNING proposal_id, bot_name, title
@@ -1497,7 +1497,7 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO solomon_versions (
+                INSERT INTO proverbs_versions (
                     version_id, version_number, created_at, version_type, bot_name,
                     artifact_name, artifact_hash, artifact_data, metadata,
                     performance_metrics, parent_version, is_active, approved_by,
@@ -1542,7 +1542,7 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             cursor.execute("""
-                SELECT version_number FROM solomon_versions
+                SELECT version_number FROM proverbs_versions
                 WHERE bot_name = %s AND version_type = %s AND artifact_name = %s
                 ORDER BY created_at DESC LIMIT 1
             """, (bot_name, version_type.value, artifact_name))
@@ -1571,7 +1571,7 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             cursor.execute("""
-                SELECT version_id FROM solomon_versions
+                SELECT version_id FROM proverbs_versions
                 WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
                 LIMIT 1
             """, (bot_name, version_type.value, artifact_name))
@@ -1585,7 +1585,7 @@ class SolomonFeedbackLoop:
             logger.error(f"Failed to get active version: {e}")
             return None
 
-    def activate_version(self, version_id: str, activated_by: str = "SOLOMON") -> bool:
+    def activate_version(self, version_id: str, activated_by: str = "PROVERBS") -> bool:
         """
         Activate a specific version (deactivate current active).
         """
@@ -1599,7 +1599,7 @@ class SolomonFeedbackLoop:
             # Get version info
             cursor.execute("""
                 SELECT bot_name, version_type, artifact_name, version_number
-                FROM solomon_versions WHERE version_id = %s
+                FROM proverbs_versions WHERE version_id = %s
             """, (version_id,))
 
             row = cursor.fetchone()
@@ -1611,7 +1611,7 @@ class SolomonFeedbackLoop:
 
             # Get current active version
             cursor.execute("""
-                SELECT version_id, version_number FROM solomon_versions
+                SELECT version_id, version_number FROM proverbs_versions
                 WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
             """, (bot_name, version_type, artifact_name))
 
@@ -1622,14 +1622,14 @@ class SolomonFeedbackLoop:
             # Deactivate current
             if current_version_id:
                 cursor.execute("""
-                    UPDATE solomon_versions
+                    UPDATE proverbs_versions
                     SET is_active = FALSE, deactivated_at = NOW()
                     WHERE version_id = %s
                 """, (current_version_id,))
 
             # Activate new
             cursor.execute("""
-                UPDATE solomon_versions
+                UPDATE proverbs_versions
                 SET is_active = TRUE, approved_by = COALESCE(approved_by, %s), approved_at = COALESCE(approved_at, NOW())
                 WHERE version_id = %s
             """, (activated_by, version_id))
@@ -1667,7 +1667,7 @@ class SolomonFeedbackLoop:
                 SELECT version_id, version_number, created_at, version_type, artifact_name,
                        artifact_hash, metadata, performance_metrics, parent_version,
                        is_active, approved_by, approved_at
-                FROM solomon_versions
+                FROM proverbs_versions
                 WHERE bot_name = %s
             """
             params = [bot_name]
@@ -1710,14 +1710,14 @@ class SolomonFeedbackLoop:
         rollback_id = f"ROLL-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
         if not DB_AVAILABLE:
-            logger.info(f"[SOLOMON ROLLBACK] {rollback_id} | {bot_name} → {to_version_id} (DB not available)")
+            logger.info(f"[PROVERBS ROLLBACK] {rollback_id} | {bot_name} → {to_version_id} (DB not available)")
             return True
 
-        logger.info(f"[SOLOMON ROLLBACK] Initiating rollback {rollback_id}")
-        logger.info(f"[SOLOMON ROLLBACK]   Bot: {bot_name}")
-        logger.info(f"[SOLOMON ROLLBACK]   Target version: {to_version_id}")
-        logger.info(f"[SOLOMON ROLLBACK]   Reason: {reason}")
-        logger.info(f"[SOLOMON ROLLBACK]   Triggered by: {triggered_by} | Automatic: {automatic}")
+        logger.info(f"[PROVERBS ROLLBACK] Initiating rollback {rollback_id}")
+        logger.info(f"[PROVERBS ROLLBACK]   Bot: {bot_name}")
+        logger.info(f"[PROVERBS ROLLBACK]   Target version: {to_version_id}")
+        logger.info(f"[PROVERBS ROLLBACK]   Reason: {reason}")
+        logger.info(f"[PROVERBS ROLLBACK]   Triggered by: {triggered_by} | Automatic: {automatic}")
 
         try:
             conn = get_connection()
@@ -1726,7 +1726,7 @@ class SolomonFeedbackLoop:
             # Get target version info
             cursor.execute("""
                 SELECT version_type, artifact_name, version_number
-                FROM solomon_versions WHERE version_id = %s
+                FROM proverbs_versions WHERE version_id = %s
             """, (to_version_id,))
 
             row = cursor.fetchone()
@@ -1739,7 +1739,7 @@ class SolomonFeedbackLoop:
 
             # Get current active version
             cursor.execute("""
-                SELECT version_id, version_number FROM solomon_versions
+                SELECT version_id, version_number FROM proverbs_versions
                 WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
             """, (bot_name, version_type, artifact_name))
 
@@ -1756,20 +1756,20 @@ class SolomonFeedbackLoop:
 
             # Perform rollback (deactivate current, activate target)
             cursor.execute("""
-                UPDATE solomon_versions
+                UPDATE proverbs_versions
                 SET is_active = FALSE, deactivated_at = NOW(), deactivation_reason = %s
                 WHERE version_id = %s
             """, (f"Rolled back: {reason}", from_version_id))
 
             cursor.execute("""
-                UPDATE solomon_versions
+                UPDATE proverbs_versions
                 SET is_active = TRUE
                 WHERE version_id = %s
             """, (to_version_id,))
 
             # Record rollback
             cursor.execute("""
-                INSERT INTO solomon_rollbacks (
+                INSERT INTO proverbs_rollbacks (
                     rollback_id, executed_at, bot_name, rollback_type, from_version,
                     to_version, reason, triggered_by, automatic, performance_before
                 ) VALUES (
@@ -1803,13 +1803,13 @@ class SolomonFeedbackLoop:
                 justification={'automatic': automatic, 'performance_before': perf_before}
             )
 
-            logger.info(f"[SOLOMON ROLLBACK] Rollback {rollback_id} completed successfully")
-            logger.info(f"[SOLOMON ROLLBACK]   Version change: {from_version_number} → {target_version_number}")
-            logger.info(f"[SOLOMON ROLLBACK]   Performance before rollback: {json.dumps(perf_before)}")
+            logger.info(f"[PROVERBS ROLLBACK] Rollback {rollback_id} completed successfully")
+            logger.info(f"[PROVERBS ROLLBACK]   Version change: {from_version_number} → {target_version_number}")
+            logger.info(f"[PROVERBS ROLLBACK]   Performance before rollback: {json.dumps(perf_before)}")
             return True
 
         except Exception as e:
-            logger.error(f"[SOLOMON ROLLBACK] Failed to execute rollback {rollback_id}: {e}")
+            logger.error(f"[PROVERBS ROLLBACK] Failed to execute rollback {rollback_id}: {e}")
             traceback.print_exc()
             return False
 
@@ -1884,7 +1884,7 @@ class SolomonFeedbackLoop:
             conn = get_connection()
             cursor = conn.cursor()
 
-            query = "SELECT * FROM solomon_rollbacks"
+            query = "SELECT * FROM proverbs_rollbacks"
             params = []
 
             if bot_name:
@@ -1933,7 +1933,7 @@ class SolomonFeedbackLoop:
             losses = perf.get('losses', 0)
 
             cursor.execute("""
-                INSERT INTO solomon_performance (
+                INSERT INTO proverbs_performance (
                     snapshot_id, timestamp, bot_name, version_id, win_rate,
                     total_trades, winning_trades, losing_trades, total_pnl
                 ) VALUES (
@@ -2139,7 +2139,7 @@ class SolomonFeedbackLoop:
         """
         Automatically create a proposal when degradation is detected.
 
-        This is the automated proposal generation that Solomon performs.
+        This is the automated proposal generation that Proverbs performs.
         """
         try:
             # Determine strategy type and appropriate adjustments
@@ -2183,7 +2183,7 @@ class SolomonFeedbackLoop:
             )
 
             if proposal_id:
-                logger.info(f"[SOLOMON] Auto-created proposal {proposal_id} for {bot_name} degradation")
+                logger.info(f"[PROVERBS] Auto-created proposal {proposal_id} for {bot_name} degradation")
                 self.log_action(
                     bot_name=bot_name,
                     action_type=ActionType.PROPOSAL_CREATED,
@@ -2204,12 +2204,12 @@ class SolomonFeedbackLoop:
 
     def activate_kill_switch(self, bot_name: str, reason: str, killed_by: str = "SYSTEM") -> bool:
         """Activate kill switch for a bot"""
-        logger.warning(f"[SOLOMON KILL SWITCH] Activating kill switch for {bot_name}")
-        logger.warning(f"[SOLOMON KILL SWITCH]   Reason: {reason}")
-        logger.warning(f"[SOLOMON KILL SWITCH]   Killed by: {killed_by}")
+        logger.warning(f"[PROVERBS KILL SWITCH] Activating kill switch for {bot_name}")
+        logger.warning(f"[PROVERBS KILL SWITCH]   Reason: {reason}")
+        logger.warning(f"[PROVERBS KILL SWITCH]   Killed by: {killed_by}")
 
         if not DB_AVAILABLE:
-            logger.warning(f"[SOLOMON KILL SWITCH] {bot_name} KILLED (DB not available)")
+            logger.warning(f"[PROVERBS KILL SWITCH] {bot_name} KILLED (DB not available)")
             return True
 
         try:
@@ -2217,7 +2217,7 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO solomon_kill_switch (bot_name, is_killed, killed_at, killed_by, kill_reason)
+                INSERT INTO proverbs_kill_switch (bot_name, is_killed, killed_at, killed_by, kill_reason)
                 VALUES (%s, TRUE, NOW(), %s, %s)
                 ON CONFLICT (bot_name) DO UPDATE SET
                     is_killed = TRUE,
@@ -2239,20 +2239,20 @@ class SolomonFeedbackLoop:
                 actor=killed_by
             )
 
-            logger.warning(f"[SOLOMON KILL SWITCH] Kill switch ACTIVATED for {bot_name} - all trading halted")
+            logger.warning(f"[PROVERBS KILL SWITCH] Kill switch ACTIVATED for {bot_name} - all trading halted")
             return True
 
         except Exception as e:
-            logger.error(f"[SOLOMON KILL SWITCH] Failed to activate kill switch for {bot_name}: {e}")
+            logger.error(f"[PROVERBS KILL SWITCH] Failed to activate kill switch for {bot_name}: {e}")
             return False
 
     def deactivate_kill_switch(self, bot_name: str, resumed_by: str) -> bool:
         """Deactivate kill switch for a bot"""
-        logger.info(f"[SOLOMON KILL SWITCH] Deactivating kill switch for {bot_name}")
-        logger.info(f"[SOLOMON KILL SWITCH]   Resumed by: {resumed_by}")
+        logger.info(f"[PROVERBS KILL SWITCH] Deactivating kill switch for {bot_name}")
+        logger.info(f"[PROVERBS KILL SWITCH]   Resumed by: {resumed_by}")
 
         if not DB_AVAILABLE:
-            logger.info(f"[SOLOMON KILL SWITCH] {bot_name} resumed (DB not available)")
+            logger.info(f"[PROVERBS KILL SWITCH] {bot_name} resumed (DB not available)")
             return True
 
         try:
@@ -2260,7 +2260,7 @@ class SolomonFeedbackLoop:
             cursor = conn.cursor()
 
             cursor.execute("""
-                UPDATE solomon_kill_switch
+                UPDATE proverbs_kill_switch
                 SET is_killed = FALSE, resumed_at = NOW(), resumed_by = %s
                 WHERE bot_name = %s
             """, (resumed_by, bot_name))
@@ -2276,11 +2276,11 @@ class SolomonFeedbackLoop:
                 actor=f"USER:{resumed_by}"
             )
 
-            logger.info(f"[SOLOMON KILL SWITCH] Kill switch DEACTIVATED for {bot_name} - trading resumed")
+            logger.info(f"[PROVERBS KILL SWITCH] Kill switch DEACTIVATED for {bot_name} - trading resumed")
             return True
 
         except Exception as e:
-            logger.error(f"[SOLOMON KILL SWITCH] Failed to deactivate kill switch for {bot_name}: {e}")
+            logger.error(f"[PROVERBS KILL SWITCH] Failed to deactivate kill switch for {bot_name}: {e}")
             return False
 
     def is_bot_killed(self, bot_name: str) -> bool:
@@ -2306,7 +2306,7 @@ class SolomonFeedbackLoop:
             try:
                 cursor = conn.cursor()
 
-                cursor.execute("SELECT * FROM solomon_kill_switch")
+                cursor.execute("SELECT * FROM proverbs_kill_switch")
                 columns = [desc[0] for desc in cursor.description]
                 rows = cursor.fetchall()
 
@@ -2339,11 +2339,11 @@ class SolomonFeedbackLoop:
         run_id = f"RUN-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
         started_at = datetime.now(CENTRAL_TZ)
 
-        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] Starting feedback loop run: {run_id}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] Start time: {started_at.strftime('%Y-%m-%d %H:%M:%S')} CT")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] Session: {self.session_id}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] ========================================")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] Starting feedback loop run: {run_id}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] Start time: {started_at.strftime('%Y-%m-%d %H:%M:%S')} CT")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] Session: {self.session_id}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] ========================================")
 
         self.log_action(
             bot_name="SYSTEM",
@@ -2364,18 +2364,18 @@ class SolomonFeedbackLoop:
 
         try:
             # Step 1: Expire old proposals
-            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 1: Checking for expired proposals...")
+            logger.info(f"[PROVERBS FEEDBACK LOOP] Step 1: Checking for expired proposals...")
             expired_count = self.expire_old_proposals()
             if expired_count > 0:
-                logger.info(f"[SOLOMON FEEDBACK LOOP]   Expired {expired_count} old proposals")
+                logger.info(f"[PROVERBS FEEDBACK LOOP]   Expired {expired_count} old proposals")
             else:
-                logger.info(f"[SOLOMON FEEDBACK LOOP]   No proposals to expire")
+                logger.info(f"[PROVERBS FEEDBACK LOOP]   No proposals to expire")
 
-            # Step 1.5: AUTO-APPLY proven proposals (Solomon's autonomous improvement)
+            # Step 1.5: AUTO-APPLY proven proposals (Proverbs's autonomous improvement)
             # Check all proposals with active validations for proven improvement
-            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 1.5: Checking for proven proposals to auto-apply...")
+            logger.info(f"[PROVERBS FEEDBACK LOOP] Step 1.5: Checking for proven proposals to auto-apply...")
             pending_proposals = self.get_pending_proposals()
-            logger.info(f"[SOLOMON FEEDBACK LOOP]   Found {len(pending_proposals)} pending proposals")
+            logger.info(f"[PROVERBS FEEDBACK LOOP]   Found {len(pending_proposals)} pending proposals")
             for proposal in pending_proposals:
                 proposal_id = proposal.get('proposal_id')
                 if not proposal_id:
@@ -2383,8 +2383,8 @@ class SolomonFeedbackLoop:
 
                 try:
                     # Import and use the enhanced validation
-                    from quant.solomon_enhancements import get_solomon_enhanced
-                    enhanced = get_solomon_enhanced()
+                    from quant.proverbs_enhancements import get_proverbs_enhanced
+                    enhanced = get_proverbs_enhanced()
                     validation_result = enhanced.can_apply_proposal(proposal_id)
 
                     if validation_result.get('can_apply') and validation_result.get('improvement_proven'):
@@ -2395,7 +2395,7 @@ class SolomonFeedbackLoop:
                         # Apply the proposal
                         success = self.approve_proposal(
                             proposal_id=proposal_id,
-                            reviewer="SOLOMON_AUTO",
+                            reviewer="PROVERBS_AUTO",
                             notes=f"Auto-applied: {improvement_pct:.1f}% improvement proven over {validation_result.get('improvement_metrics', {}).get('days_validated', 0)} days"
                         )
                         if success:
@@ -2412,64 +2412,64 @@ class SolomonFeedbackLoop:
                     logger.debug(f"Could not check proposal {proposal_id} for auto-apply: {e}")
 
             # Step 2-5: Process each bot
-            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 2-5: Processing bots: {[b.value for b in bots]}")
+            logger.info(f"[PROVERBS FEEDBACK LOOP] Step 2-5: Processing bots: {[b.value for b in bots]}")
             for bot in bots:
                 bot_name = bot.value
-                logger.info(f"[SOLOMON FEEDBACK LOOP] Processing {bot_name}...")
+                logger.info(f"[PROVERBS FEEDBACK LOOP] Processing {bot_name}...")
 
                 # Skip if killed
                 if self.is_bot_killed(bot_name):
-                    logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - SKIPPED (kill switch active)")
+                    logger.info(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - SKIPPED (kill switch active)")
                     continue
 
                 try:
                     # Record performance snapshot
-                    logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Recording performance snapshot...")
+                    logger.info(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - Recording performance snapshot...")
                     snapshot_id = self.record_performance_snapshot(bot_name)
                     if snapshot_id:
-                        logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Performance snapshot: {snapshot_id}")
+                        logger.info(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - Performance snapshot: {snapshot_id}")
                     else:
-                        logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - No performance data available")
+                        logger.info(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - No performance data available")
 
                     # Detect degradation
-                    logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Checking for performance degradation...")
+                    logger.info(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - Checking for performance degradation...")
                     degradation = self.detect_degradation(bot_name)
                     if degradation:
-                        logger.warning(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - DEGRADATION DETECTED: {degradation['degradation_pct']:.1f}%")
+                        logger.warning(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - DEGRADATION DETECTED: {degradation['degradation_pct']:.1f}%")
                         alerts_raised.append(degradation)
 
                         # Auto-rollback if severe
                         if degradation['degradation_pct'] > GUARDRAILS['rollback_on_drawdown_pct']:
-                            logger.warning(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Triggering auto-rollback (degradation > {GUARDRAILS['rollback_on_drawdown_pct']}%)")
+                            logger.warning(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - Triggering auto-rollback (degradation > {GUARDRAILS['rollback_on_drawdown_pct']}%)")
                             versions = self.get_version_history(bot_name, limit=2)
                             if len(versions) >= 2:
                                 prev_version = versions[1]
-                                logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Rolling back to version {prev_version['version_number']}")
+                                logger.info(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - Rolling back to version {prev_version['version_number']}")
                                 self.rollback(
                                     bot_name=bot_name,
                                     to_version_id=prev_version['version_id'],
                                     reason=f"Automatic rollback: {degradation['degradation_pct']:.1f}% degradation",
-                                    triggered_by="SOLOMON",
+                                    triggered_by="PROVERBS",
                                     automatic=True
                                 )
                             else:
-                                logger.warning(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Cannot rollback: insufficient version history")
+                                logger.warning(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - Cannot rollback: insufficient version history")
                     else:
-                        logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - No degradation detected")
+                        logger.info(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - No degradation detected")
 
                 except Exception as e:
                     errors.append(f"{bot_name}: {str(e)}")
-                    logger.error(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - ERROR: {e}")
+                    logger.error(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - ERROR: {e}")
 
             # Step 6: Check if Oracle retraining is needed
-            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 6: Checking Oracle retraining requirements...")
+            logger.info(f"[PROVERBS FEEDBACK LOOP] Step 6: Checking Oracle retraining requirements...")
             if ORACLE_AVAILABLE:
                 pending_outcomes = get_pending_outcomes_count()
                 outcomes_processed = pending_outcomes
-                logger.info(f"[SOLOMON FEEDBACK LOOP]   Oracle pending outcomes: {pending_outcomes} (threshold: {GUARDRAILS['min_sample_size']})")
+                logger.info(f"[PROVERBS FEEDBACK LOOP]   Oracle pending outcomes: {pending_outcomes} (threshold: {GUARDRAILS['min_sample_size']})")
 
                 if pending_outcomes >= GUARDRAILS['min_sample_size']:
-                    logger.info(f"[SOLOMON FEEDBACK LOOP]   Creating retraining proposal...")
+                    logger.info(f"[PROVERBS FEEDBACK LOOP]   Creating retraining proposal...")
                     # Create proposal for retraining
                     proposal_id = self.create_proposal(
                         bot_name="ORACLE",
@@ -2492,7 +2492,7 @@ class SolomonFeedbackLoop:
 
         except Exception as e:
             errors.append(f"Loop error: {str(e)}")
-            logger.error(f"[SOLOMON FEEDBACK LOOP] Loop error: {e}")
+            logger.error(f"[PROVERBS FEEDBACK LOOP] Loop error: {e}")
             traceback.print_exc()
 
         completed_at = datetime.now(CENTRAL_TZ)
@@ -2513,20 +2513,20 @@ class SolomonFeedbackLoop:
         )
 
         # Enhanced completion logging
-        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] Feedback loop completed: {run_id}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] Duration: {duration:.2f} seconds")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] Status: {'SUCCESS' if result.success else 'FAILED'}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] Summary:")
-        logger.info(f"[SOLOMON FEEDBACK LOOP]   Bots checked: {len(result.bots_checked)}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP]   Outcomes processed: {result.outcomes_processed}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP]   Proposals created: {len(result.proposals_created)}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP]   Proposals auto-applied: {len(result.proposals_applied)}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP]   Models retrained: {len(result.models_retrained)}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP]   Alerts raised: {len(result.alerts_raised)}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] ========================================")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] Feedback loop completed: {run_id}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] Duration: {duration:.2f} seconds")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] Status: {'SUCCESS' if result.success else 'FAILED'}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] Summary:")
+        logger.info(f"[PROVERBS FEEDBACK LOOP]   Bots checked: {len(result.bots_checked)}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP]   Outcomes processed: {result.outcomes_processed}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP]   Proposals created: {len(result.proposals_created)}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP]   Proposals auto-applied: {len(result.proposals_applied)}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP]   Models retrained: {len(result.models_retrained)}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP]   Alerts raised: {len(result.alerts_raised)}")
         if result.errors:
-            logger.warning(f"[SOLOMON FEEDBACK LOOP]   Errors: {result.errors}")
-        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
+            logger.warning(f"[PROVERBS FEEDBACK LOOP]   Errors: {result.errors}")
+        logger.info(f"[PROVERBS FEEDBACK LOOP] ========================================")
 
         self.log_action(
             bot_name="SYSTEM",
@@ -2602,7 +2602,7 @@ class SolomonFeedbackLoop:
 
             cursor.execute("""
                 SELECT version_id, version_number, created_at, artifact_name, approved_by
-                FROM solomon_versions
+                FROM proverbs_versions
                 WHERE bot_name = %s AND is_active = TRUE
                 LIMIT 1
             """, (bot_name,))
@@ -2646,7 +2646,7 @@ class SolomonFeedbackLoop:
 
                 # Last feedback run
                 cursor.execute("""
-                    SELECT timestamp FROM solomon_audit_log
+                    SELECT timestamp FROM proverbs_audit_log
                     WHERE action_type = 'FEEDBACK_LOOP_RUN'
                     ORDER BY timestamp DESC LIMIT 1
                 """)
@@ -2655,12 +2655,12 @@ class SolomonFeedbackLoop:
                     health['last_feedback_run'] = row[0].isoformat()
 
                 # Pending proposals count
-                cursor.execute("SELECT COUNT(*) FROM solomon_proposals WHERE status = 'PENDING'")
+                cursor.execute("SELECT COUNT(*) FROM proverbs_proposals WHERE status = 'PENDING'")
                 health['pending_proposals_count'] = cursor.fetchone()[0]
 
                 # Degradation alerts (last 24h)
                 cursor.execute("""
-                    SELECT COUNT(*) FROM solomon_audit_log
+                    SELECT COUNT(*) FROM proverbs_audit_log
                     WHERE action_type = 'DEGRADATION_DETECTED'
                     AND timestamp > NOW() - INTERVAL '24 hours'
                 """)
@@ -2703,7 +2703,7 @@ class SolomonFeedbackLoop:
         if MATH_OPTIMIZER_AVAILABLE and MathOptimizerOrchestrator:
             try:
                 # Get orchestrator to check algorithm states
-                orchestrator = MathOptimizerOrchestrator(bot_name="SOLOMON_CHECK")
+                orchestrator = MathOptimizerOrchestrator(bot_name="PROVERBS_CHECK")
                 status['orchestrator_status'] = 'ACTIVE'
 
                 # Track which bots have math optimizer enabled
@@ -2729,50 +2729,50 @@ class SolomonFeedbackLoop:
 # SINGLETON AND CONVENIENCE FUNCTIONS
 # =============================================================================
 
-_solomon: Optional[SolomonFeedbackLoop] = None
+_proverbs: Optional[ProverbsFeedbackLoop] = None
 
 
-def get_solomon() -> SolomonFeedbackLoop:
-    """Get or create Solomon singleton"""
-    global _solomon
-    if _solomon is None:
-        _solomon = SolomonFeedbackLoop()
-    return _solomon
+def get_proverbs() -> ProverbsFeedbackLoop:
+    """Get or create Proverbs singleton"""
+    global _proverbs
+    if _proverbs is None:
+        _proverbs = ProverbsFeedbackLoop()
+    return _proverbs
 
 
 def run_feedback_loop() -> FeedbackLoopResult:
     """Run the feedback loop (convenience function)"""
-    return get_solomon().run_feedback_loop()
+    return get_proverbs().run_feedback_loop()
 
 
 def approve_proposal(proposal_id: str, reviewer: str, notes: str = "") -> bool:
     """Approve a proposal"""
-    return get_solomon().approve_proposal(proposal_id, reviewer, notes)
+    return get_proverbs().approve_proposal(proposal_id, reviewer, notes)
 
 
 def reject_proposal(proposal_id: str, reviewer: str, notes: str = "") -> bool:
     """Reject a proposal"""
-    return get_solomon().reject_proposal(proposal_id, reviewer, notes)
+    return get_proverbs().reject_proposal(proposal_id, reviewer, notes)
 
 
 def rollback_bot(bot_name: str, to_version_id: str, reason: str, user: str) -> bool:
     """Rollback a bot to a previous version"""
-    return get_solomon().rollback(bot_name, to_version_id, reason, f"USER:{user}")
+    return get_proverbs().rollback(bot_name, to_version_id, reason, f"USER:{user}")
 
 
 def kill_bot(bot_name: str, reason: str, user: str) -> bool:
     """Activate kill switch for a bot"""
-    return get_solomon().activate_kill_switch(bot_name, reason, f"USER:{user}")
+    return get_proverbs().activate_kill_switch(bot_name, reason, f"USER:{user}")
 
 
 def resume_bot(bot_name: str, user: str) -> bool:
     """Resume a killed bot"""
-    return get_solomon().deactivate_kill_switch(bot_name, user)
+    return get_proverbs().deactivate_kill_switch(bot_name, user)
 
 
 def get_dashboard() -> Dict:
     """Get dashboard summary"""
-    return get_solomon().get_dashboard_summary()
+    return get_proverbs().get_dashboard_summary()
 
 
 # =============================================================================
@@ -2784,31 +2784,31 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    solomon = get_solomon()
+    proverbs = get_proverbs()
 
     if len(sys.argv) > 1:
         command = sys.argv[1]
 
         if command == "run":
-            result = solomon.run_feedback_loop()
+            result = proverbs.run_feedback_loop()
             print(json.dumps(result.to_dict(), indent=2, default=str))
 
         elif command == "dashboard":
-            dashboard = solomon.get_dashboard_summary()
+            dashboard = proverbs.get_dashboard_summary()
             print(json.dumps(dashboard, indent=2, default=str))
 
         elif command == "proposals":
-            proposals = solomon.get_pending_proposals()
+            proposals = proverbs.get_pending_proposals()
             print(json.dumps(proposals, indent=2, default=str))
 
         elif command == "audit":
             bot = sys.argv[2] if len(sys.argv) > 2 else None
-            logs = solomon.get_audit_log(bot_name=bot, limit=50)
+            logs = proverbs.get_audit_log(bot_name=bot, limit=50)
             print(json.dumps(logs, indent=2, default=str))
 
         else:
             print(f"Unknown command: {command}")
-            print("Usage: python solomon_feedback_loop.py [run|dashboard|proposals|audit [bot_name]]")
+            print("Usage: python proverbs_feedback_loop.py [run|dashboard|proposals|audit [bot_name]]")
     else:
-        print("Solomon Feedback Loop Service")
-        print("Usage: python solomon_feedback_loop.py [run|dashboard|proposals|audit [bot_name]]")
+        print("Proverbs Feedback Loop Service")
+        print("Usage: python proverbs_feedback_loop.py [run|dashboard|proposals|audit [bot_name]]")

@@ -76,13 +76,13 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object
 
-# Solomon Enhanced for feedback loop recording
+# Proverbs Enhanced for feedback loop recording
 try:
-    from quant.solomon_enhancements import get_solomon_enhanced
-    SOLOMON_ENHANCED_AVAILABLE = True
+    from quant.proverbs_enhancements import get_proverbs_enhanced
+    PROVERBS_ENHANCED_AVAILABLE = True
 except ImportError:
-    SOLOMON_ENHANCED_AVAILABLE = False
-    get_solomon_enhanced = None
+    PROVERBS_ENHANCED_AVAILABLE = False
+    get_proverbs_enhanced = None
 
 # Auto-Validation System for Thompson Sampling capital allocation
 try:
@@ -391,14 +391,14 @@ class ICARUSTrader(MathOptimizerMixin):
 
                     self._record_oracle_outcome(pos, reason, pnl)
 
-                    # Record outcome to Solomon Enhanced for feedback loops
+                    # Record outcome to Proverbs Enhanced for feedback loops
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
                     # Migration 023: Pass outcome_type, prediction_id, and direction data for feedback loop
                     outcome_type = self._determine_outcome_type(reason, pnl)
                     prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
                     direction_predicted = self.db.get_direction_taken(pos.position_id)
                     direction_correct = pnl > 0  # For directional, profit = correct direction
-                    self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id, direction_predicted, direction_correct)
+                    self._record_proverbs_outcome(pnl, trade_date, outcome_type, prediction_id, direction_predicted, direction_correct)
 
                     # Record outcome to Thompson Sampling for capital allocation
                     self._record_thompson_outcome(pnl)
@@ -477,7 +477,7 @@ class ICARUSTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"ICARUS: Oracle outcome recording failed: {e}")
 
-    def _record_solomon_outcome(
+    def _record_proverbs_outcome(
         self,
         pnl: float,
         trade_date: str,
@@ -487,7 +487,7 @@ class ICARUSTrader(MathOptimizerMixin):
         direction_correct: bool = None
     ):
         """
-        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+        Record trade outcome to Proverbs Enhanced for feedback loop tracking.
 
         Migration 023: Enhanced to pass strategy-level data for feedback loop analysis.
 
@@ -498,11 +498,11 @@ class ICARUSTrader(MathOptimizerMixin):
         - Strategy-level analysis (Directional effectiveness)
         - Direction accuracy tracking for directional bots
         """
-        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+        if not PROVERBS_ENHANCED_AVAILABLE or not get_proverbs_enhanced:
             return
 
         try:
-            enhanced = get_solomon_enhanced()
+            enhanced = get_proverbs_enhanced()
             alerts = enhanced.record_trade_outcome(
                 bot_name='ICARUS',
                 pnl=pnl,
@@ -517,10 +517,10 @@ class ICARUSTrader(MathOptimizerMixin):
             )
             if alerts:
                 for alert in alerts:
-                    logger.warning(f"ICARUS Solomon alert: {alert}")
-            logger.debug(f"ICARUS: Recorded outcome to Solomon - P&L=${pnl:.2f}, Dir={direction_predicted}, Correct={direction_correct}")
+                    logger.warning(f"ICARUS Proverbs alert: {alert}")
+            logger.debug(f"ICARUS: Recorded outcome to Proverbs - P&L=${pnl:.2f}, Dir={direction_predicted}, Correct={direction_correct}")
         except Exception as e:
-            logger.warning(f"ICARUS: Solomon outcome recording failed: {e}")
+            logger.warning(f"ICARUS: Proverbs outcome recording failed: {e}")
 
     def _determine_outcome_type(self, close_reason: str, pnl: float) -> str:
         """

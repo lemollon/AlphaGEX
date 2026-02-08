@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# SOLOMON API ENDPOINT TEST SCRIPT
-# Run in Render shell: bash scripts/test_solomon_api.sh
+# PROVERBS API ENDPOINT TEST SCRIPT
+# Run in Render shell: bash scripts/test_proverbs_api.sh
 #
-# Tests all 49 Solomon API endpoints
+# Tests all 49 Proverbs API endpoints
 #
 
 echo "======================================================================"
-echo "SOLOMON API ENDPOINT TESTS"
+echo "PROVERBS API ENDPOINT TESTS"
 echo "======================================================================"
 echo ""
 
@@ -52,9 +52,9 @@ test_endpoint() {
 # =====================================================
 echo "CORE ENDPOINTS"
 echo "--------------"
-test_endpoint "GET" "/api/solomon/health" "200"
-test_endpoint "GET" "/api/solomon/dashboard" "200"
-test_endpoint "GET" "/api/solomon/dashboard/bot/ARES" "200"
+test_endpoint "GET" "/api/proverbs/health" "200"
+test_endpoint "GET" "/api/proverbs/dashboard" "200"
+test_endpoint "GET" "/api/proverbs/dashboard/bot/ARES" "200"
 
 # =====================================================
 # AUDIT ENDPOINTS
@@ -62,9 +62,9 @@ test_endpoint "GET" "/api/solomon/dashboard/bot/ARES" "200"
 echo ""
 echo "AUDIT ENDPOINTS"
 echo "---------------"
-test_endpoint "GET" "/api/solomon/audit" "200"
-test_endpoint "GET" "/api/solomon/audit?bot_name=ARES&limit=10" "200"
-test_endpoint "GET" "/api/solomon/audit/action-types" "200"
+test_endpoint "GET" "/api/proverbs/audit" "200"
+test_endpoint "GET" "/api/proverbs/audit?bot_name=ARES&limit=10" "200"
+test_endpoint "GET" "/api/proverbs/audit/action-types" "200"
 
 # =====================================================
 # PROPOSAL ENDPOINTS
@@ -72,8 +72,8 @@ test_endpoint "GET" "/api/solomon/audit/action-types" "200"
 echo ""
 echo "PROPOSAL ENDPOINTS"
 echo "------------------"
-test_endpoint "GET" "/api/solomon/proposals" "200"
-test_endpoint "GET" "/api/solomon/proposals/pending" "200"
+test_endpoint "GET" "/api/proverbs/proposals" "200"
+test_endpoint "GET" "/api/proverbs/proposals/pending" "200"
 
 # =====================================================
 # VERSION ENDPOINTS
@@ -81,8 +81,8 @@ test_endpoint "GET" "/api/solomon/proposals/pending" "200"
 echo ""
 echo "VERSION ENDPOINTS"
 echo "-----------------"
-test_endpoint "GET" "/api/solomon/versions/ARES" "200"
-test_endpoint "GET" "/api/solomon/rollbacks" "200"
+test_endpoint "GET" "/api/proverbs/versions/ARES" "200"
+test_endpoint "GET" "/api/proverbs/rollbacks" "200"
 
 # =====================================================
 # KILL SWITCH ENDPOINTS
@@ -90,7 +90,7 @@ test_endpoint "GET" "/api/solomon/rollbacks" "200"
 echo ""
 echo "KILL SWITCH ENDPOINTS"
 echo "---------------------"
-test_endpoint "GET" "/api/solomon/killswitch" "200"
+test_endpoint "GET" "/api/proverbs/killswitch" "200"
 
 # =====================================================
 # FEEDBACK LOOP ENDPOINTS
@@ -98,7 +98,7 @@ test_endpoint "GET" "/api/solomon/killswitch" "200"
 echo ""
 echo "FEEDBACK LOOP ENDPOINTS"
 echo "-----------------------"
-test_endpoint "GET" "/api/solomon/feedback-loop/status" "200"
+test_endpoint "GET" "/api/proverbs/feedback-loop/status" "200"
 
 # =====================================================
 # PERFORMANCE ENDPOINTS
@@ -106,8 +106,8 @@ test_endpoint "GET" "/api/solomon/feedback-loop/status" "200"
 echo ""
 echo "PERFORMANCE ENDPOINTS"
 echo "---------------------"
-test_endpoint "GET" "/api/solomon/performance/ARES" "200"
-test_endpoint "GET" "/api/solomon/realtime-status?days=7" "200"
+test_endpoint "GET" "/api/proverbs/performance/ARES" "200"
+test_endpoint "GET" "/api/proverbs/realtime-status?days=7" "200"
 
 # =====================================================
 # STRATEGY ANALYSIS ENDPOINTS
@@ -115,8 +115,8 @@ test_endpoint "GET" "/api/solomon/realtime-status?days=7" "200"
 echo ""
 echo "STRATEGY ANALYSIS ENDPOINTS"
 echo "---------------------------"
-test_endpoint "GET" "/api/solomon/strategy-analysis?days=30" "200"
-test_endpoint "GET" "/api/solomon/oracle-accuracy?days=30" "200"
+test_endpoint "GET" "/api/proverbs/strategy-analysis?days=30" "200"
+test_endpoint "GET" "/api/proverbs/oracle-accuracy?days=30" "200"
 
 # =====================================================
 # ENHANCED ANALYTICS ENDPOINTS
@@ -124,13 +124,13 @@ test_endpoint "GET" "/api/solomon/oracle-accuracy?days=30" "200"
 echo ""
 echo "ENHANCED ANALYTICS ENDPOINTS"
 echo "----------------------------"
-test_endpoint "GET" "/api/solomon/enhanced/analysis/ARES?days=30" "200"
-test_endpoint "GET" "/api/solomon/enhanced/correlations" "200"
-test_endpoint "GET" "/api/solomon/enhanced/time-analysis/ARES" "200"
-test_endpoint "GET" "/api/solomon/enhanced/regime/ARES?days=30" "200"
-test_endpoint "GET" "/api/solomon/enhanced/digest" "200"
-test_endpoint "GET" "/api/solomon/enhanced/weekend-precheck" "200"
-test_endpoint "GET" "/api/solomon/enhanced/rollback-status/ARES" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/analysis/ARES?days=30" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/correlations" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/time-analysis/ARES" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/regime/ARES?days=30" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/digest" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/weekend-precheck" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/rollback-status/ARES" "200"
 
 # =====================================================
 # A/B TESTING ENDPOINTS
@@ -138,7 +138,7 @@ test_endpoint "GET" "/api/solomon/enhanced/rollback-status/ARES" "200"
 echo ""
 echo "A/B TESTING ENDPOINTS"
 echo "---------------------"
-test_endpoint "GET" "/api/solomon/enhanced/ab-test" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/ab-test" "200"
 
 # =====================================================
 # AI ANALYSIS ENDPOINTS
@@ -146,7 +146,7 @@ test_endpoint "GET" "/api/solomon/enhanced/ab-test" "200"
 echo ""
 echo "AI ANALYSIS ENDPOINTS"
 echo "---------------------"
-test_endpoint "GET" "/api/solomon/ai/weekend-analysis" "200"
+test_endpoint "GET" "/api/proverbs/ai/weekend-analysis" "200"
 
 # =====================================================
 # VALIDATION ENDPOINTS
@@ -154,7 +154,7 @@ test_endpoint "GET" "/api/solomon/ai/weekend-analysis" "200"
 echo ""
 echo "VALIDATION ENDPOINTS"
 echo "--------------------"
-test_endpoint "GET" "/api/solomon/validation/status" "200"
+test_endpoint "GET" "/api/proverbs/validation/status" "200"
 
 # =====================================================
 # ORACLE ENDPOINTS (Cross-check)

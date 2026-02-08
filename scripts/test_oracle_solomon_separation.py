@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-ORACLE-SOLOMON SEPARATION TEST
+ORACLE-PROVERBS SEPARATION TEST
 
-This script PROVES that Solomon does NOT interfere with Oracle's decision-making.
+This script PROVES that Proverbs does NOT interfere with Oracle's decision-making.
 
 Tests:
 1. Oracle scores are deterministic (same input = same output)
-2. Solomon info appears in reasoning but doesn't affect scores
+2. Proverbs info appears in reasoning but doesn't affect scores
 3. No score modifications found in code
 
-Run in Render shell: python scripts/test_oracle_solomon_separation.py
+Run in Render shell: python scripts/test_oracle_proverbs_separation.py
 """
 
 import os
@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     print("=" * 70)
-    print("ORACLE-SOLOMON SEPARATION PROOF")
+    print("ORACLE-PROVERBS SEPARATION PROOF")
     print("=" * 70)
     print()
 
@@ -79,7 +79,7 @@ def main():
         if all_deterministic:
             print()
             print("   ✅ PROVEN: Oracle scores are 100% deterministic")
-            print("   ✅ Solomon does NOT add randomness to Oracle")
+            print("   ✅ Proverbs does NOT add randomness to Oracle")
         else:
             print()
             print("   ❌ FAILED: Oracle scores are NOT deterministic!")
@@ -96,22 +96,22 @@ def main():
     print("-" * 40)
 
     try:
-        # Read the oracle_advisor.py file and check for Solomon score modifications
+        # Read the oracle_advisor.py file and check for Proverbs score modifications
         oracle_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                    "quant", "oracle_advisor.py")
 
         with open(oracle_file, 'r') as f:
             content = f.read()
 
-        # Search for patterns that would indicate Solomon modifying scores
+        # Search for patterns that would indicate Proverbs modifying scores
         dangerous_patterns = [
-            ("ic_score += solomon", "IC score increased by Solomon"),
-            ("dir_score += solomon", "DIR score increased by Solomon"),
-            ("ic_score -= solomon", "IC score decreased by Solomon"),
-            ("dir_score -= solomon", "DIR score decreased by Solomon"),
-            ("ic_score *= solomon", "IC score multiplied by Solomon"),
-            ("dir_score *= solomon", "DIR score multiplied by Solomon"),
-            ("size_multiplier *= solomon", "Size multiplied by Solomon"),
+            ("ic_score += proverbs", "IC score increased by Proverbs"),
+            ("dir_score += proverbs", "DIR score increased by Proverbs"),
+            ("ic_score -= proverbs", "IC score decreased by Proverbs"),
+            ("dir_score -= proverbs", "DIR score decreased by Proverbs"),
+            ("ic_score *= proverbs", "IC score multiplied by Proverbs"),
+            ("dir_score *= proverbs", "DIR score multiplied by Proverbs"),
+            ("size_multiplier *= proverbs", "Size multiplied by Proverbs"),
         ]
 
         found_issues = []
@@ -121,7 +121,7 @@ def main():
                 found_issues.append(description)
 
         if not found_issues:
-            print("   ✅ No Solomon score modifications found in oracle_advisor.py")
+            print("   ✅ No Proverbs score modifications found in oracle_advisor.py")
         else:
             for issue in found_issues:
                 print(f"   ❌ FOUND: {issue}")
@@ -132,22 +132,22 @@ def main():
         else:
             print("   ⚠️  'INFORMATION ONLY' comment not found")
 
-        # Verify Solomon doesn't affect size_multiplier
-        if "solomon_size_multiplier" not in content:
-            print("   ✅ No solomon_size_multiplier variable found")
+        # Verify Proverbs doesn't affect size_multiplier
+        if "proverbs_size_multiplier" not in content:
+            print("   ✅ No proverbs_size_multiplier variable found")
         else:
             # Check if it's being applied
-            if "size_multiplier *= solomon_size_multiplier" in content:
-                print("   ❌ FOUND: solomon_size_multiplier is being applied!")
+            if "size_multiplier *= proverbs_size_multiplier" in content:
+                print("   ❌ FOUND: proverbs_size_multiplier is being applied!")
             else:
-                print("   ✅ solomon_size_multiplier exists but is NOT applied")
+                print("   ✅ proverbs_size_multiplier exists but is NOT applied")
 
     except Exception as e:
         print(f"   ❌ Code analysis failed: {e}")
 
-    # Test 3: Solomon info in reasoning
+    # Test 3: Proverbs info in reasoning
     print()
-    print("TEST 3: SOLOMON INFO IN REASONING (Display Only)")
+    print("TEST 3: PROVERBS INFO IN REASONING (Display Only)")
     print("-" * 40)
 
     try:
@@ -173,21 +173,21 @@ def main():
 
         parts = rec.reasoning.split(' | ')
         for part in parts:
-            if 'SOLOMON' in part.upper():
-                print(f"      🟡 {part}")  # Solomon info (display only)
+            if 'PROVERBS' in part.upper():
+                print(f"      🟡 {part}")  # Proverbs info (display only)
             elif 'RESULT' in part.upper():
                 print(f"      🔵 {part}")  # Final result
             else:
                 print(f"      ▫️ {part}")
 
-        if any('SOLOMON' in p.upper() for p in parts):
+        if any('PROVERBS' in p.upper() for p in parts):
             print()
-            print("   ✅ Solomon info PRESENT in reasoning (for display)")
-            print("   ✅ But scores above are UNCHANGED by Solomon")
+            print("   ✅ Proverbs info PRESENT in reasoning (for display)")
+            print("   ✅ But scores above are UNCHANGED by Proverbs")
         else:
             print()
-            print("   ℹ️  No Solomon info in reasoning (no historical data yet)")
-            print("   ✅ This is expected if Solomon has no trade history")
+            print("   ℹ️  No Proverbs info in reasoning (no historical data yet)")
+            print("   ✅ This is expected if Proverbs has no trade history")
 
     except Exception as e:
         print(f"   ❌ Test failed: {e}")
@@ -195,7 +195,7 @@ def main():
     # Summary
     print()
     print("=" * 70)
-    print("SUMMARY: ORACLE-SOLOMON SEPARATION")
+    print("SUMMARY: ORACLE-PROVERBS SEPARATION")
     print("=" * 70)
     print()
     print("   1. Oracle scores are DETERMINISTIC ✅")
@@ -204,11 +204,11 @@ def main():
     print("   2. No score modifications in code ✅")
     print("      Searched for ic_score +=, dir_score +=, size_multiplier *= patterns")
     print()
-    print("   3. Solomon info is DISPLAY ONLY ✅")
+    print("   3. Proverbs info is DISPLAY ONLY ✅")
     print("      Added to reasoning string, not to score calculations")
     print()
     print("=" * 70)
-    print("✅ PROVEN: ORACLE IS GOD - Solomon is purely informational")
+    print("✅ PROVEN: ORACLE IS GOD - Proverbs is purely informational")
     print("=" * 70)
     print()
 

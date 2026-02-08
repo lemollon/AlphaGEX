@@ -108,14 +108,14 @@ except ImportError:
     get_trend_tracker = None
     logger.info("Price trend tracker not available - NEUTRAL regime will use legacy logic")
 
-# Solomon Feedback Loop - Advisory data for Oracle
-SOLOMON_AVAILABLE = False
+# Proverbs Feedback Loop - Advisory data for Oracle
+PROVERBS_AVAILABLE = False
 try:
-    from quant.solomon_enhancements import get_solomon_enhanced
-    SOLOMON_AVAILABLE = True
+    from quant.proverbs_enhancements import get_proverbs_enhanced
+    PROVERBS_AVAILABLE = True
 except ImportError:
-    get_solomon_enhanced = None
-    print("Info: Solomon enhanced features not available")
+    get_proverbs_enhanced = None
+    print("Info: Proverbs enhanced features not available")
 
 # GEX Signal Integration - ML direction for ATHENA/ICARUS
 GEX_ML_AVAILABLE = False
@@ -420,12 +420,12 @@ class ClaudeAnalysis:
 
 
 @dataclass
-class SolomonAdvisory:
+class ProverbsAdvisory:
     """
-    Advisory data from Solomon Feedback Loop.
+    Advisory data from Proverbs Feedback Loop.
 
     These are SUGGESTIONS to Oracle - Oracle remains the final decision maker.
-    Solomon provides historical performance data to help Oracle make better decisions.
+    Proverbs provides historical performance data to help Oracle make better decisions.
     """
     # Time-of-day analysis
     is_optimal_hour: bool = True  # Is this hour historically good for this bot?
@@ -455,12 +455,12 @@ class SolomonAdvisory:
     pending_proposal: bool = False
     proposal_summary: Optional[str] = None
 
-    # Overall Solomon confidence
+    # Overall Proverbs confidence
     data_quality: str = "GOOD"  # GOOD, LIMITED, NONE
-    solomon_confidence: float = 0.5  # How confident Solomon is in its advice
+    proverbs_confidence: float = 0.5  # How confident Proverbs is in its advice
 
     def get_combined_adjustment(self) -> float:
-        """Get combined score adjustment from all Solomon factors"""
+        """Get combined score adjustment from all Proverbs factors"""
         return self.time_of_day_adjustment + self.regime_adjustment
 
 
@@ -1539,20 +1539,20 @@ class OracleAdvisor:
         return self.claude is not None and self.claude.is_enabled
 
     # =========================================================================
-    # SOLOMON ADVISORY - Feedback Loop Intelligence
-    # Solomon provides historical performance data as SUGGESTIONS to Oracle.
+    # PROVERBS ADVISORY - Feedback Loop Intelligence
+    # Proverbs provides historical performance data as SUGGESTIONS to Oracle.
     # Oracle remains the final decision maker ("Oracle is god").
     # =========================================================================
 
-    def get_solomon_advisory(
+    def get_proverbs_advisory(
         self,
         bot_name: str,
         current_hour: Optional[int] = None,
         market_regime: Optional[str] = None,
         is_friday: bool = False
-    ) -> SolomonAdvisory:
+    ) -> ProverbsAdvisory:
         """
-        Get Solomon's advisory data for Oracle decision-making.
+        Get Proverbs's advisory data for Oracle decision-making.
 
         This data INFORMS Oracle's decisions but does NOT override them.
         Oracle uses this historical performance data to adjust its scores.
@@ -1564,25 +1564,25 @@ class OracleAdvisor:
             is_friday: Whether it's Friday (for weekend pre-check)
 
         Returns:
-            SolomonAdvisory with all relevant performance data
+            ProverbsAdvisory with all relevant performance data
         """
-        advisory = SolomonAdvisory()
+        advisory = ProverbsAdvisory()
 
-        if not SOLOMON_AVAILABLE:
+        if not PROVERBS_AVAILABLE:
             advisory.data_quality = "NONE"
-            advisory.solomon_confidence = 0.0
+            advisory.proverbs_confidence = 0.0
             return advisory
 
         try:
-            solomon = get_solomon_enhanced()
-            if solomon is None:
+            proverbs = get_proverbs_enhanced()
+            if proverbs is None:
                 advisory.data_quality = "NONE"
                 return advisory
 
             # 1. TIME-OF-DAY ANALYSIS
             if current_hour is not None:
                 try:
-                    time_analysis = solomon.time_analyzer.analyze(bot_name, days=30)
+                    time_analysis = proverbs.time_analyzer.analyze(bot_name, days=30)
                     if time_analysis:
                         # Find current hour performance
                         for hour_data in time_analysis:
@@ -1608,12 +1608,12 @@ class OracleAdvisor:
                         elif advisory.hour_win_rate < 40:
                             advisory.time_of_day_adjustment = -0.10  # Poor historical hour
                 except Exception as e:
-                    self.live_log.log("SOLOMON_TIME_ERR", f"Time analysis failed: {e}")
+                    self.live_log.log("PROVERBS_TIME_ERR", f"Time analysis failed: {e}")
 
             # 2. REGIME PERFORMANCE ANALYSIS
             if market_regime:
                 try:
-                    regime_perf = solomon.regime_tracker.analyze_regime_performance(bot_name, days=90)
+                    regime_perf = proverbs.regime_tracker.analyze_regime_performance(bot_name, days=90)
                     if regime_perf:
                         for rp in regime_perf:
                             if rp.regime and rp.regime.upper() == market_regime.upper():
@@ -1633,11 +1633,11 @@ class OracleAdvisor:
                                     advisory.regime_recommendation = "DIR_PREFERRED" if is_ic_bot else "IC_PREFERRED"
                                 break
                 except Exception as e:
-                    self.live_log.log("SOLOMON_REGIME_ERR", f"Regime analysis failed: {e}")
+                    self.live_log.log("PROVERBS_REGIME_ERR", f"Regime analysis failed: {e}")
 
             # 3. CROSS-BOT CORRELATION (check for concentration risk)
             try:
-                correlations = solomon.cross_bot_analyzer.get_all_correlations(days=30)
+                correlations = proverbs.cross_bot_analyzer.get_all_correlations(days=30)
                 if correlations:
                     high_correlation_bots = []
                     for corr in correlations:
@@ -1651,12 +1651,12 @@ class OracleAdvisor:
                         advisory.correlation_risk = "HIGH" if len(high_correlation_bots) >= 2 else "MEDIUM"
                         advisory.size_reduction_pct = min(30, len(high_correlation_bots) * 15)  # 15% per correlated bot
             except Exception as e:
-                self.live_log.log("SOLOMON_CORR_ERR", f"Correlation analysis failed: {e}")
+                self.live_log.log("PROVERBS_CORR_ERR", f"Correlation analysis failed: {e}")
 
             # 4. WEEKEND PRE-CHECK (Friday only)
             if is_friday:
                 try:
-                    weekend_check = solomon.weekend_prechecker.analyze()
+                    weekend_check = proverbs.weekend_prechecker.analyze()
                     if weekend_check:
                         advisory.weekend_gap_prediction = weekend_check.get('prediction', 'NEUTRAL')
                         advisory.weekend_risk_level = weekend_check.get('risk_level', 'NORMAL')
@@ -1666,11 +1666,11 @@ class OracleAdvisor:
                         elif advisory.weekend_risk_level == 'EXTREME':
                             advisory.friday_size_adjustment = 0.25
                 except Exception as e:
-                    self.live_log.log("SOLOMON_WEEKEND_ERR", f"Weekend pre-check failed: {e}")
+                    self.live_log.log("PROVERBS_WEEKEND_ERR", f"Weekend pre-check failed: {e}")
 
             # 5. CHECK FOR PENDING PROPOSALS
             try:
-                proposals = solomon.proposals
+                proposals = proverbs.proposals
                 if proposals:
                     for p in proposals:
                         if p.get('bot_name') == bot_name and p.get('status') == 'pending':
@@ -1682,10 +1682,10 @@ class OracleAdvisor:
 
             # Set overall data quality
             advisory.data_quality = "GOOD"
-            advisory.solomon_confidence = 0.7
+            advisory.proverbs_confidence = 0.7
 
             # Log the advisory
-            self.live_log.log("SOLOMON_ADVISORY", f"Advisory for {bot_name}", {
+            self.live_log.log("PROVERBS_ADVISORY", f"Advisory for {bot_name}", {
                 "time_adjustment": advisory.time_of_day_adjustment,
                 "regime_adjustment": advisory.regime_adjustment,
                 "combined_adjustment": advisory.get_combined_adjustment(),
@@ -1696,9 +1696,9 @@ class OracleAdvisor:
             return advisory
 
         except Exception as e:
-            self.live_log.log("SOLOMON_ERR", f"Failed to get Solomon advisory: {e}")
+            self.live_log.log("PROVERBS_ERR", f"Failed to get Proverbs advisory: {e}")
             advisory.data_quality = "NONE"
-            advisory.solomon_confidence = 0.0
+            advisory.proverbs_confidence = 0.0
             return advisory
 
     # =========================================================================
@@ -2109,14 +2109,14 @@ class OracleAdvisor:
             dir_score += 0.05
 
         # =========================================================================
-        # SOLOMON ADVISORY - Historical Performance Feedback (INFORMATION ONLY)
-        # Solomon provides informational context based on past performance.
+        # PROVERBS ADVISORY - Historical Performance Feedback (INFORMATION ONLY)
+        # Proverbs provides informational context based on past performance.
         # This data is for DISPLAY ONLY - it does NOT affect Oracle's scores.
         # Oracle is the sole decision authority for all trading decisions.
         # =========================================================================
-        solomon_info = []  # Collect Solomon insights for display
+        proverbs_info = []  # Collect Proverbs insights for display
 
-        if SOLOMON_AVAILABLE:
+        if PROVERBS_AVAILABLE:
             try:
                 # Get current hour (Central Time)
                 from datetime import datetime
@@ -2133,55 +2133,55 @@ class OracleAdvisor:
                 else:
                     market_regime = "NEUTRAL"
 
-                # Get Solomon's advisory (informational only)
-                solomon_advisory = self.get_solomon_advisory(
+                # Get Proverbs's advisory (informational only)
+                proverbs_advisory = self.get_proverbs_advisory(
                     bot_name="STRATEGY",  # Generic for strategy-level advice
                     current_hour=current_hour,
                     market_regime=market_regime,
                     is_friday=is_friday
                 )
 
-                if solomon_advisory.data_quality != "NONE":
+                if proverbs_advisory.data_quality != "NONE":
                     # Time-of-day info (DISPLAY ONLY - no score adjustment)
-                    if solomon_advisory.hour_win_rate > 0:
-                        hour_quality = "strong" if solomon_advisory.hour_win_rate >= 60 else "weak" if solomon_advisory.hour_win_rate < 45 else "average"
-                        solomon_info.append(
-                            f"Hour {current_hour}: {solomon_advisory.hour_win_rate:.0f}% historical win rate ({hour_quality})"
+                    if proverbs_advisory.hour_win_rate > 0:
+                        hour_quality = "strong" if proverbs_advisory.hour_win_rate >= 60 else "weak" if proverbs_advisory.hour_win_rate < 45 else "average"
+                        proverbs_info.append(
+                            f"Hour {current_hour}: {proverbs_advisory.hour_win_rate:.0f}% historical win rate ({hour_quality})"
                         )
 
                     # Regime performance info (DISPLAY ONLY - no score adjustment)
-                    if solomon_advisory.regime_recommendation != "NEUTRAL":
-                        if solomon_advisory.regime_recommendation == "IC_PREFERRED":
-                            solomon_info.append(
+                    if proverbs_advisory.regime_recommendation != "NEUTRAL":
+                        if proverbs_advisory.regime_recommendation == "IC_PREFERRED":
+                            proverbs_info.append(
                                 f"IC historically performs well in {market_regime} regime "
-                                f"({solomon_advisory.regime_ic_win_rate:.0f}% win rate)"
+                                f"({proverbs_advisory.regime_ic_win_rate:.0f}% win rate)"
                             )
-                        elif solomon_advisory.regime_recommendation == "DIR_PREFERRED":
-                            solomon_info.append(
+                        elif proverbs_advisory.regime_recommendation == "DIR_PREFERRED":
+                            proverbs_info.append(
                                 f"Directional historically performs well in {market_regime} regime "
-                                f"({solomon_advisory.regime_dir_win_rate:.0f}% win rate)"
+                                f"({proverbs_advisory.regime_dir_win_rate:.0f}% win rate)"
                             )
 
                     # Correlation risk info (DISPLAY ONLY - no size adjustment)
-                    if solomon_advisory.correlation_risk in ["MEDIUM", "HIGH"]:
-                        solomon_info.append(
-                            f"Correlation alert: {len(solomon_advisory.correlated_bots_active)} correlated bots active "
-                            f"({solomon_advisory.correlation_risk} risk)"
+                    if proverbs_advisory.correlation_risk in ["MEDIUM", "HIGH"]:
+                        proverbs_info.append(
+                            f"Correlation alert: {len(proverbs_advisory.correlated_bots_active)} correlated bots active "
+                            f"({proverbs_advisory.correlation_risk} risk)"
                         )
 
                     # Weekend risk info (DISPLAY ONLY - no size adjustment)
-                    if is_friday and solomon_advisory.weekend_risk_level != "NORMAL":
-                        solomon_info.append(
-                            f"Weekend gap prediction: {solomon_advisory.weekend_gap_prediction} "
-                            f"(risk level: {solomon_advisory.weekend_risk_level})"
+                    if is_friday and proverbs_advisory.weekend_risk_level != "NORMAL":
+                        proverbs_info.append(
+                            f"Weekend gap prediction: {proverbs_advisory.weekend_gap_prediction} "
+                            f"(risk level: {proverbs_advisory.weekend_risk_level})"
                         )
 
-                    # Add all Solomon info to reasoning as informational context
-                    if solomon_info:
-                        reasoning_parts.append(f"SOLOMON INFO: {' | '.join(solomon_info)}")
+                    # Add all Proverbs info to reasoning as informational context
+                    if proverbs_info:
+                        reasoning_parts.append(f"PROVERBS INFO: {' | '.join(proverbs_info)}")
 
             except Exception as e:
-                self.live_log.log("SOLOMON_STRATEGY_ERR", f"Solomon advisory failed: {e}")
+                self.live_log.log("PROVERBS_STRATEGY_ERR", f"Proverbs advisory failed: {e}")
 
         # =========================================================================
         # DETERMINE RECOMMENDATION
@@ -2202,7 +2202,7 @@ class OracleAdvisor:
         else:
             size_multiplier = 1.0
 
-        # NOTE: Solomon is information-only and does NOT affect sizing
+        # NOTE: Proverbs is information-only and does NOT affect sizing
         # Oracle is the sole authority for all trading decisions
 
         # Determine strategy
@@ -4902,7 +4902,7 @@ class OracleAdvisor:
         - direction_predicted: For directional bots (ATHENA, ICARUS) - BULLISH or BEARISH
         - direction_correct: Whether the directional prediction was correct
 
-        This data flows to Solomon for strategy-level analysis.
+        This data flows to Proverbs for strategy-level analysis.
         """
         if not DB_AVAILABLE:
             return False

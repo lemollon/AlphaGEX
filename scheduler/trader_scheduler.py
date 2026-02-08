@@ -205,15 +205,15 @@ except ImportError:
     DECISION_LOGGER_AVAILABLE = False
     print("Warning: Decision logger not available.")
 
-# Import SOLOMON (Feedback Loop Intelligence System)
+# Import PROVERBS (Feedback Loop Intelligence System)
 try:
-    from quant.solomon_feedback_loop import get_solomon, run_feedback_loop
-    SOLOMON_AVAILABLE = True
+    from quant.proverbs_feedback_loop import get_proverbs, run_feedback_loop
+    PROVERBS_AVAILABLE = True
 except ImportError:
-    SOLOMON_AVAILABLE = False
-    get_solomon = None
+    PROVERBS_AVAILABLE = False
+    get_proverbs = None
     run_feedback_loop = None
-    print("Warning: Solomon not available. Feedback loop will be disabled.")
+    print("Warning: Proverbs not available. Feedback loop will be disabled.")
 
 # REMOVED: ML Regime Classifier - Oracle is god
 # The MLRegimeClassifier import and training code has been removed.
@@ -357,14 +357,14 @@ except ImportError:
     TradingAdvice = None
     oracle_auto_train = None
 
-# Import Solomon Enhanced for strategy-level feedback
+# Import Proverbs Enhanced for strategy-level feedback
 try:
-    from quant.solomon_enhancements import get_solomon_enhanced, SolomonEnhanced
-    SOLOMON_ENHANCED_AVAILABLE = True
+    from quant.proverbs_enhancements import get_proverbs_enhanced, ProverbsEnhanced
+    PROVERBS_ENHANCED_AVAILABLE = True
 except ImportError:
-    SOLOMON_ENHANCED_AVAILABLE = False
-    get_solomon_enhanced = None
-    SolomonEnhanced = None
+    PROVERBS_ENHANCED_AVAILABLE = False
+    get_proverbs_enhanced = None
+    ProverbsEnhanced = None
     OracleBotName = None
     TradeOutcome = None
     print("Warning: OracleAdvisor not available for PHOENIX.")
@@ -2738,15 +2738,15 @@ class AutonomousTraderScheduler:
             logger.info("VIX signal will retry next interval")
             logger.info(f"=" * 80)
 
-    def scheduled_solomon_logic(self):
+    def scheduled_proverbs_logic(self):
         """
-        SOLOMON (Feedback Loop Intelligence) - runs DAILY at 4:00 PM CT
+        PROVERBS (Feedback Loop Intelligence) - runs DAILY at 4:00 PM CT
 
-        Migration 023: Enhanced with Oracle-Solomon integration for complete feedback loop.
+        Migration 023: Enhanced with Oracle-Proverbs integration for complete feedback loop.
 
         Orchestrates the autonomous feedback loop for all trading bots:
         1. Trains Oracle from new trade outcomes (auto_train)
-        2. Runs Solomon feedback loop (parameter proposals, A/B testing)
+        2. Runs Proverbs feedback loop (parameter proposals, A/B testing)
         3. Analyzes strategy-level performance (IC vs Directional)
         4. Tracks Oracle recommendation accuracy
 
@@ -2757,19 +2757,19 @@ class AutonomousTraderScheduler:
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"SOLOMON (Feedback Loop) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"PROVERBS (Feedback Loop) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not SOLOMON_AVAILABLE:
-            logger.warning("SOLOMON: Feedback loop system not available")
+        if not PROVERBS_AVAILABLE:
+            logger.warning("PROVERBS: Feedback loop system not available")
             return
 
         try:
             # ================================================================
             # STEP 1: Train Oracle from new trade outcomes
-            # Migration 023: Oracle learns from outcomes before Solomon analyzes
+            # Migration 023: Oracle learns from outcomes before Proverbs analyzes
             # ================================================================
             if ORACLE_AVAILABLE and oracle_auto_train:
-                logger.info("SOLOMON: Step 1 - Training Oracle from new outcomes...")
+                logger.info("PROVERBS: Step 1 - Training Oracle from new outcomes...")
                 try:
                     train_result = oracle_auto_train(threshold_outcomes=10)  # Lower threshold for daily runs
                     if train_result.get('triggered'):
@@ -2785,16 +2785,16 @@ class AutonomousTraderScheduler:
                 except Exception as e:
                     logger.warning(f"  Oracle auto_train failed: {e}")
             else:
-                logger.info("SOLOMON: Step 1 - Oracle training skipped (not available)")
+                logger.info("PROVERBS: Step 1 - Oracle training skipped (not available)")
 
             # ================================================================
-            # STEP 2: Run Solomon feedback loop
+            # STEP 2: Run Proverbs feedback loop
             # ================================================================
-            logger.info("SOLOMON: Step 2 - Running feedback loop analysis...")
+            logger.info("PROVERBS: Step 2 - Running feedback loop analysis...")
             result = run_feedback_loop()
 
             if result.success:
-                logger.info(f"SOLOMON: Feedback loop completed successfully")
+                logger.info(f"PROVERBS: Feedback loop completed successfully")
                 logger.info(f"  Run ID: {result.run_id}")
                 logger.info(f"  Bots checked: {', '.join(result.bots_checked)}")
                 logger.info(f"  Outcomes processed: {result.outcomes_processed}")
@@ -2812,7 +2812,7 @@ class AutonomousTraderScheduler:
                     for alert in result.alerts_raised:
                         logger.warning(f"    - {alert.get('bot_name')}: {alert.get('alert_type')}")
             else:
-                logger.error(f"SOLOMON: Feedback loop completed with errors")
+                logger.error(f"PROVERBS: Feedback loop completed with errors")
                 for error in result.errors:
                     logger.error(f"  Error: {error}")
 
@@ -2822,10 +2822,10 @@ class AutonomousTraderScheduler:
             strategy_analysis = None
             oracle_accuracy = None
 
-            if SOLOMON_ENHANCED_AVAILABLE and get_solomon_enhanced:
-                logger.info("SOLOMON: Step 3 - Analyzing strategy-level performance...")
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                logger.info("PROVERBS: Step 3 - Analyzing strategy-level performance...")
                 try:
-                    enhanced = get_solomon_enhanced()
+                    enhanced = get_proverbs_enhanced()
 
                     # Get IC vs Directional analysis
                     strategy_analysis = enhanced.get_strategy_analysis(days=30)
@@ -2849,10 +2849,10 @@ class AutonomousTraderScheduler:
                 except Exception as e:
                     logger.warning(f"  Strategy analysis failed: {e}")
             else:
-                logger.info("SOLOMON: Step 3 - Strategy analysis skipped (Solomon Enhanced not available)")
+                logger.info("PROVERBS: Step 3 - Strategy analysis skipped (Proverbs Enhanced not available)")
 
             # Save heartbeat with enhanced data
-            self._save_heartbeat('SOLOMON', 'FEEDBACK_LOOP_COMPLETE', {
+            self._save_heartbeat('PROVERBS', 'FEEDBACK_LOOP_COMPLETE', {
                 'run_id': result.run_id,
                 'success': result.success,
                 'proposals_created': len(result.proposals_created),
@@ -2862,15 +2862,15 @@ class AutonomousTraderScheduler:
                 'oracle_accuracy': oracle_accuracy.get('summary') if oracle_accuracy else None
             })
 
-            logger.info(f"SOLOMON: Next run tomorrow at 4:00 PM CT")
+            logger.info(f"PROVERBS: Next run tomorrow at 4:00 PM CT")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in SOLOMON feedback loop: {str(e)}"
+            error_msg = f"ERROR in PROVERBS feedback loop: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            self._save_heartbeat('SOLOMON', 'ERROR', {'error': str(e)})
-            logger.info("SOLOMON will retry tomorrow at 4:00 PM CT")
+            self._save_heartbeat('PROVERBS', 'ERROR', {'error': str(e)})
+            logger.info("PROVERBS will retry tomorrow at 4:00 PM CT")
             logger.info(f"=" * 80)
 
     def scheduled_quant_training_logic(self):
@@ -2973,7 +2973,7 @@ class AutonomousTraderScheduler:
         receives updated probability predictions.
 
         Training order on Sundays:
-        - 4:00 PM: SOLOMON (feedback loop)
+        - 4:00 PM: PROVERBS (feedback loop)
         - 4:30 PM: SAGE (this job)
         - 5:00 PM: QUANT (GEX Directional)
         - 6:00 PM: GEX ML (Probability Models)
@@ -3034,9 +3034,9 @@ class AutonomousTraderScheduler:
         """
         ORACLE Training - runs DAILY at midnight CT
 
-        FIX (Jan 2026): Oracle training was previously only triggered via SOLOMON
+        FIX (Jan 2026): Oracle training was previously only triggered via PROVERBS
         feedback loop at 4 PM. This standalone job ensures Oracle gets trained
-        even if SOLOMON has issues.
+        even if PROVERBS has issues.
 
         Oracle learns from:
         1. Live trade outcomes (primary)
@@ -4033,7 +4033,7 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, VIX_SIGNAL, SOLOMON, QUANT")
+        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, VIX_SIGNAL, PROVERBS, QUANT")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
@@ -4044,7 +4044,7 @@ class AutonomousTraderScheduler:
         logger.info(f"TITAN Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"ARGUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"VIX_SIGNAL Schedule: HOURLY (9 AM - 3 PM CT), Hedge Signal Generation")
-        logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
+        logger.info(f"PROVERBS Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"QUANT Schedule: WEEKLY on Sunday at 5:00 PM CT (ML model training)")
         logger.info(f"EQUITY_SNAPSHOTS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"BOT_REPORTS Schedule: DAILY at 3:15 PM CT (end-of-day analysis reports)")
@@ -4527,33 +4527,33 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ VIX Hedge Manager not available - signal generation disabled")
 
         # =================================================================
-        # SOLOMON JOB: Feedback Loop Intelligence - runs DAILY after market close
+        # PROVERBS JOB: Feedback Loop Intelligence - runs DAILY after market close
         # Orchestrates autonomous bot improvement:
         # - Collects trade outcomes and analyzes performance
         # - Creates proposals for underperforming bots
         # - Validates proposals via A/B testing (7 days, 20 trades, 5% improvement)
         # - AUTO-APPLIES proven improvements - no manual intervention required
         # =================================================================
-        if SOLOMON_AVAILABLE:
+        if PROVERBS_AVAILABLE:
             self.scheduler.add_job(
-                self.scheduled_solomon_logic,
+                self.scheduled_proverbs_logic,
                 trigger=CronTrigger(
                     hour=16,       # 4:00 PM CT - after market close
                     minute=0,
                     day_of_week='mon-fri',  # Every trading day
                     timezone='America/Chicago'
                 ),
-                id='solomon_feedback_loop',
-                name='SOLOMON - Daily Feedback Loop Intelligence',
+                id='proverbs_feedback_loop',
+                name='PROVERBS - Daily Feedback Loop Intelligence',
                 replace_existing=True
             )
-            logger.info("✅ SOLOMON job scheduled (DAILY at 4:00 PM CT)")
+            logger.info("✅ PROVERBS job scheduled (DAILY at 4:00 PM CT)")
         else:
-            logger.warning("⚠️ SOLOMON not available - Feedback loop disabled")
+            logger.warning("⚠️ PROVERBS not available - Feedback loop disabled")
 
         # =================================================================
         # ORACLE JOB: ML Training - runs DAILY at midnight CT
-        # FIX (Jan 2026): Standalone Oracle training, not dependent on SOLOMON
+        # FIX (Jan 2026): Standalone Oracle training, not dependent on PROVERBS
         # =================================================================
         if ORACLE_AVAILABLE:
             self.scheduler.add_job(

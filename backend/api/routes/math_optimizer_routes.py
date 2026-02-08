@@ -12,7 +12,7 @@ These routes provide access to:
 5. HJB Exit Optimizer - Exit timing signals
 6. MDP Trade Sequencer - Trade ordering
 
-All actions are logged to Solomon's audit trail for full transparency.
+All actions are logged to Proverbs's audit trail for full transparency.
 
 Author: AlphaGEX Quant Team
 Date: January 2025
@@ -148,7 +148,7 @@ async def get_math_optimizer_documentation():
     Returns detailed explanations of:
     - Algorithm formulas and mathematical foundations
     - How each algorithm improves trading
-    - Integration with Solomon's feedback loop
+    - Integration with Proverbs's feedback loop
     - Expected performance improvements
     """
     return {
@@ -175,7 +175,7 @@ async def get_math_optimizer_documentation():
                     "Reduces whipsaw by 30-50% in regime-sensitive strategies",
                     "Learns optimal thresholds from historical data"
                 ],
-                "solomon_integration": {
+                "proverbs_integration": {
                     "action_type": "HMM_REGIME_UPDATE",
                     "logged_data": ["current_regime", "probability", "confidence", "transition_from"]
                 }
@@ -201,7 +201,7 @@ async def get_math_optimizer_documentation():
                     "Fewer false signals from noisy delta/gamma readings",
                     "Predictive capability for short-term Greeks movement"
                 ],
-                "solomon_integration": {
+                "proverbs_integration": {
                     "action_type": "KALMAN_SMOOTHING",
                     "logged_data": ["raw_values", "smoothed_values", "kalman_gain"]
                 }
@@ -227,7 +227,7 @@ async def get_math_optimizer_documentation():
                     "Converges to optimal allocation while maintaining flexibility",
                     "Expected 15-30% better capital efficiency"
                 ],
-                "solomon_integration": {
+                "proverbs_integration": {
                     "action_type": "THOMPSON_ALLOCATION",
                     "logged_data": ["allocations", "sampled_rewards", "exploration_bonus"]
                 }
@@ -263,7 +263,7 @@ async def get_math_optimizer_documentation():
                     "Optimizes for expected P&L, not just current Greeks",
                     "2-5% improvement in strike selection P&L"
                 ],
-                "solomon_integration": {
+                "proverbs_integration": {
                     "action_type": "CONVEX_STRIKE_OPTIMIZATION",
                     "logged_data": ["original_strike", "optimized_strike", "improvement_pct", "scenarios_evaluated"]
                 }
@@ -288,7 +288,7 @@ async def get_math_optimizer_documentation():
                     "Volatility-aware: exits earlier in high-vol to lock gains",
                     "10-20% improvement in exit timing P&L"
                 ],
-                "solomon_integration": {
+                "proverbs_integration": {
                     "action_type": "HJB_EXIT_SIGNAL",
                     "logged_data": ["should_exit", "optimal_boundary", "time_value", "expected_future_value", "reason"]
                 }
@@ -311,7 +311,7 @@ async def get_math_optimizer_documentation():
                     "Reduces unnecessary transaction costs",
                     "5-15% improvement in trade selection"
                 ],
-                "solomon_integration": {
+                "proverbs_integration": {
                     "action_type": "MDP_TRADE_SEQUENCE",
                     "logged_data": ["original_order", "optimized_order", "skipped_trades", "ev_improvement"]
                 }
@@ -327,7 +327,7 @@ async def get_math_optimizer_documentation():
                 "more_trades_in_good_conditions": "MDP sequences more trades when regime is favorable"
             },
             "safety_guardrails": [
-                "Solomon approval required for parameter changes",
+                "Proverbs approval required for parameter changes",
                 "Automatic rollback if degradation detected",
                 "Kill switch available per bot",
                 "All decisions logged with full audit trail"
@@ -1098,19 +1098,19 @@ async def get_live_dashboard():
 @router.get("/api/math-optimizer/decisions")
 async def get_recent_decisions(limit: int = Query(20, description="Number of decisions to return")):
     """
-    Get recent optimizer decisions from Solomon audit log.
+    Get recent optimizer decisions from Proverbs audit log.
 
     Shows which entries were blocked or allowed by the HMM regime detector.
     """
     try:
-        # Try to get from Solomon audit log
+        # Try to get from Proverbs audit log
         try:
             from database_adapter import get_connection
 
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Query Solomon audit log for math optimizer actions
+            # Query Proverbs audit log for math optimizer actions
             cursor.execute("""
                 SELECT
                     timestamp,
@@ -1119,7 +1119,7 @@ async def get_recent_decisions(limit: int = Query(20, description="Number of dec
                     action_description,
                     justification,
                     success
-                FROM solomon_audit_log
+                FROM proverbs_audit_log
                 WHERE action_type IN (
                     'HMM_REGIME_UPDATE',
                     'THOMPSON_ALLOCATION',
@@ -1153,7 +1153,7 @@ async def get_recent_decisions(limit: int = Query(20, description="Number of dec
             }
 
         except Exception as db_error:
-            logger.debug(f"Could not fetch from Solomon: {db_error}")
+            logger.debug(f"Could not fetch from Proverbs: {db_error}")
 
             # Return simulated decisions based on current state
             try:
@@ -1187,7 +1187,7 @@ async def get_recent_decisions(limit: int = Query(20, description="Number of dec
                     "status": "success",
                     "count": len(decisions),
                     "decisions": decisions,
-                    "note": "Live decisions - Solomon audit log not available"
+                    "note": "Live decisions - Proverbs audit log not available"
                 }
             except HTTPException:
                 # Optimizer not available, return empty decisions

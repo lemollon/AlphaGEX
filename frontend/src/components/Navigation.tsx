@@ -59,7 +59,7 @@ const navItems = [
   { href: '/gex-ml', label: `${ADVISOR_DISPLAY_NAMES.ORION} (GEX ML)`, icon: Brain, category: 'AI & Testing' },
   { href: '/oracle', label: `${ADVISOR_DISPLAY_NAMES.ORACLE} (AI Advisor)`, icon: Eye, category: 'AI & Testing' },
   { href: '/quant', label: 'QUANT (ML Models)', icon: Calculator, category: 'AI & Testing' },
-  { href: '/solomon', label: `${ADVISOR_DISPLAY_NAMES.SOLOMON} (Feedback Loop)`, icon: BookOpen, category: 'AI & Testing' },
+  { href: '/proverbs', label: `${ADVISOR_DISPLAY_NAMES.PROVERBS} (Feedback Loop)`, icon: BookOpen, category: 'AI & Testing' },
   { href: '/math-optimizer', label: 'Math Optimizer', icon: Brain, category: 'AI & Testing' },
   { href: '/live-trading', label: 'Live Trading', icon: LayoutDashboard, category: 'Live Trading' },
   { href: '/prometheus-box', label: `${BOT_DISPLAY_NAMES.PROMETHEUS} (Box Spread + IC)`, icon: Flame, category: 'Live Trading' },

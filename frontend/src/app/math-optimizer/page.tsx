@@ -24,7 +24,7 @@ interface AlgorithmCardProps {
   details: {
     mathematicalFoundation: string[]
     whyItImproves: string[]
-    solomonIntegration: {
+    proverbsIntegration: {
       actionType: string
       loggedData: string[]
     }
@@ -102,20 +102,20 @@ const AlgorithmCard = ({ name, icon, purpose, formula, improvement, color, detai
             </ul>
           </div>
 
-          {/* Solomon Integration */}
+          {/* Proverbs Integration */}
           <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
             <h4 className="text-sm font-bold text-purple-400 mb-2 flex items-center gap-2">
               <Brain className="w-4 h-4" />
-              Solomon Integration
+              Proverbs Integration
             </h4>
             <div className="text-sm">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-gray-500">Action Type:</span>
-                <code className="px-2 py-0.5 bg-gray-800 rounded text-purple-400">{details.solomonIntegration.actionType}</code>
+                <code className="px-2 py-0.5 bg-gray-800 rounded text-purple-400">{details.proverbsIntegration.actionType}</code>
               </div>
               <div className="flex items-start gap-2">
                 <span className="text-gray-500">Logged:</span>
-                <span className="text-gray-400">{details.solomonIntegration.loggedData.join(', ')}</span>
+                <span className="text-gray-400">{details.proverbsIntegration.loggedData.join(', ')}</span>
               </div>
             </div>
           </div>
@@ -550,7 +550,7 @@ const AggressiveModeSection = () => {
         <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-gray-400">
           <li className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-green-400" />
-            Solomon approval required for parameter changes
+            Proverbs approval required for parameter changes
           </li>
           <li className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-green-400" />
@@ -597,7 +597,7 @@ export default function MathOptimizerPage() {
           "Learns optimal thresholds from historical data",
           "Reduces regime whipsaw by 30-50%"
         ],
-        solomonIntegration: {
+        proverbsIntegration: {
           actionType: "HMM_REGIME_UPDATE",
           loggedData: ["current_regime", "probability", "confidence", "transition_from"]
         }
@@ -624,7 +624,7 @@ export default function MathOptimizerPage() {
           "Fewer false signals from noisy delta/gamma readings",
           "Predictive capability for short-term Greeks movement"
         ],
-        solomonIntegration: {
+        proverbsIntegration: {
           actionType: "KALMAN_SMOOTHING",
           loggedData: ["raw_values", "smoothed_values", "kalman_gain", "prediction"]
         }
@@ -651,7 +651,7 @@ export default function MathOptimizerPage() {
           "Exploration bonus ensures underperforming bots get tested",
           "Converges to optimal allocation while maintaining flexibility"
         ],
-        solomonIntegration: {
+        proverbsIntegration: {
           actionType: "THOMPSON_ALLOCATION",
           loggedData: ["allocations", "sampled_rewards", "exploration_bonus", "expected_win_rates"]
         }
@@ -678,7 +678,7 @@ export default function MathOptimizerPage() {
           "Optimizes for expected P&L, not just current Greeks",
           "2-5% improvement in strike selection P&L"
         ],
-        solomonIntegration: {
+        proverbsIntegration: {
           actionType: "CONVEX_STRIKE_OPTIMIZATION",
           loggedData: ["original_strike", "optimized_strike", "improvement_pct", "scenarios_evaluated"]
         }
@@ -705,7 +705,7 @@ export default function MathOptimizerPage() {
           "Volatility-aware: exits earlier in high-vol to lock gains",
           "10-20% improvement in exit timing P&L"
         ],
-        solomonIntegration: {
+        proverbsIntegration: {
           actionType: "HJB_EXIT_SIGNAL",
           loggedData: ["should_exit", "optimal_boundary", "time_value", "expected_future_value", "reason"]
         }
@@ -732,7 +732,7 @@ export default function MathOptimizerPage() {
           "Regime-aware: adjusts trade value based on current regime",
           "Reduces unnecessary transaction costs"
         ],
-        solomonIntegration: {
+        proverbsIntegration: {
           actionType: "MDP_TRADE_SEQUENCE",
           loggedData: ["original_order", "optimized_order", "skipped_trades", "ev_improvement"]
         }
@@ -761,9 +761,9 @@ export default function MathOptimizerPage() {
           <div className="flex items-center gap-3">
             <Info className="w-5 h-5 text-purple-400" />
             <div>
-              <span className="text-white font-medium">Solomon Integration:</span>
+              <span className="text-white font-medium">Proverbs Integration:</span>
               <span className="text-gray-400 ml-2">
-                All algorithm decisions are logged to Solomon's audit trail with WHO, WHAT, WHY, WHEN for full transparency and rollback capability.
+                All algorithm decisions are logged to Proverbs' audit trail with WHO, WHAT, WHY, WHEN for full transparency and rollback capability.
               </span>
             </div>
           </div>
@@ -832,7 +832,7 @@ export default function MathOptimizerPage() {
 
         {/* Integration Flow Diagram */}
         <div className="bg-gray-800 rounded-lg border border-gray-700 p-6 mb-8">
-          <h3 className="text-lg font-bold text-white mb-4">Integration with Solomon Feedback Loop</h3>
+          <h3 className="text-lg font-bold text-white mb-4">Integration with Proverbs Feedback Loop</h3>
           <div className="overflow-x-auto">
             <pre className="text-sm text-gray-400 font-mono whitespace-pre">
 {`
@@ -856,7 +856,7 @@ YOUR BOTS                     [THOMPSON SAMPLING]
              [HJB EXIT OPT] → Exit Timing
                      ↓
         ┌──────────────────────────┐
-        │      SOLOMON LOGS        │
+        │      PROVERBS LOGS        │
         │  All decisions tracked   │
         │  WHO, WHAT, WHY, WHEN    │
         └──────────────────────────┘

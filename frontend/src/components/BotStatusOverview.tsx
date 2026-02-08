@@ -360,7 +360,7 @@ export default function BotStatusOverview() {
               NEXUS View
             </Link>
             <Link
-              href="/solomon"
+              href="/proverbs"
               className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-warning bg-warning/10 rounded-lg hover:bg-warning/20 transition-colors"
             >
               <Activity className="w-3 h-3" />

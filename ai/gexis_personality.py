@@ -139,7 +139,7 @@ AI & ML SYSTEMS:
 6. KRONOS - GEX Calculator and 0DTE Condor backtester
 7. ORACLE - AI Trading Advisor with probability calibration
 8. PROMETHEUS - ML prediction system for trade outcome forecasting
-9. SOLOMON - Feedback Loop system for continuous learning
+9. PROVERBS - Feedback Loop system for continuous learning
 10. APOLLO - ML-powered options scanner
 
 ANALYSIS & VISUALIZATION:

@@ -1258,17 +1258,17 @@ def ares_strike_distance(spot, vix):
     tags: ['brier', 'calibration', 'probability', 'validation']
   },
 
-  // ==================== SOLOMON - Feedback Loop Intelligence ====================
+  // ==================== PROVERBS - Feedback Loop Intelligence ====================
   {
     id: 46,
     name: 'Proposal Validation Score',
     formula: 'score = (improvement_pct >= 5) && (trades >= 20) && (days >= 7)',
     purpose: 'Determines if a bot configuration change has proven improvement before applying',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 156,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Validation',
-    description: 'Solomon\'s core validation logic ensures configuration changes only apply when improvement is PROVEN. Requires minimum 7 days, 20 trades, and 5% improvement over baseline to pass validation.',
+    description: 'Proverbs\'s core validation logic ensures configuration changes only apply when improvement is PROVEN. Requires minimum 7 days, 20 trades, and 5% improvement over baseline to pass validation.',
     codeSnippet: `def evaluate_validation(self, validation_id: str) -> Dict[str, Any]:
     """Evaluate if validation period proves improvement"""
     v = self.validations[validation_id]
@@ -1291,16 +1291,16 @@ def ares_strike_distance(spot, vix):
       output: 'improvement=9.1%, can_apply=True (all criteria met)'
     },
     related: ['A/B Test Framework', 'Rollback Trigger', 'Confidence Interval'],
-    tags: ['solomon', 'validation', 'improvement', 'proven']
+    tags: ['proverbs', 'validation', 'improvement', 'proven']
   },
   {
     id: 47,
     name: 'Win Rate Improvement %',
     formula: 'improvement = (proposed_win_rate - current_win_rate) / current_win_rate × 100',
     purpose: 'Measures percentage improvement in win rate between control and variant',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 178,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Metrics',
     description: 'Calculates the relative improvement in win rate between the current configuration (control) and the proposed configuration (variant). Used to determine if a change should be applied.',
     codeSnippet: `def calculate_improvement(current_win_rate: float, proposed_win_rate: float) -> float:
@@ -1313,16 +1313,16 @@ def ares_strike_distance(spot, vix):
       output: 'improvement = (58-52)/52 × 100 = 11.5%'
     },
     related: ['Proposal Validation Score', 'PnL Improvement'],
-    tags: ['solomon', 'win-rate', 'improvement', 'comparison']
+    tags: ['proverbs', 'win-rate', 'improvement', 'comparison']
   },
   {
     id: 48,
     name: 'Proposal Confidence Score',
     formula: 'confidence = min(1.0, trades/50) × min(1.0, days/14) × consistency_factor',
     purpose: 'Quantifies confidence in a proposal based on sample size and consistency',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 205,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Validation',
     description: 'Calculates confidence in a proposed change based on number of trades, days elapsed, and consistency of results. Higher confidence means more reliable validation.',
     codeSnippet: `def calculate_confidence(trades: int, days: int, std_dev: float) -> float:
@@ -1336,16 +1336,16 @@ def ares_strike_distance(spot, vix):
       output: 'confidence = 0.6 × 0.71 × 0.87 = 0.37'
     },
     related: ['Proposal Validation Score', 'A/B Test Framework'],
-    tags: ['solomon', 'confidence', 'sample-size', 'consistency']
+    tags: ['proverbs', 'confidence', 'sample-size', 'consistency']
   },
   {
     id: 49,
     name: 'Rollback Trigger Score',
     formula: 'trigger = (win_rate < baseline × 0.9) || (max_drawdown > threshold) || (consecutive_losses > 5)',
     purpose: 'Determines if a configuration should be rolled back due to poor performance',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 245,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Safety',
     description: 'Safety mechanism that triggers automatic rollback when a configuration underperforms. Monitors win rate degradation, drawdown limits, and consecutive losses.',
     codeSnippet: `def check_rollback_trigger(metrics: Dict, baseline: Dict) -> bool:
@@ -1365,16 +1365,16 @@ def ares_strike_distance(spot, vix):
       output: 'trigger=True (both win rate drop and consecutive losses exceeded)'
     },
     related: ['Version Control', 'Emergency Killswitch'],
-    tags: ['solomon', 'rollback', 'safety', 'trigger']
+    tags: ['proverbs', 'rollback', 'safety', 'trigger']
   },
   {
     id: 50,
     name: 'Version Diff Score',
     formula: 'diff_score = Σ|new_param - old_param| / |old_param| for each parameter',
     purpose: 'Quantifies magnitude of configuration changes between versions',
-    file: 'quant/solomon_feedback_loop.py',
+    file: 'quant/proverbs_feedback_loop.py',
     line: 312,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Versioning',
     description: 'Calculates the total magnitude of changes between configuration versions. Higher scores indicate more significant changes that may require more careful validation.',
     codeSnippet: `def calculate_diff_score(old_config: Dict, new_config: Dict) -> float:
@@ -1392,7 +1392,7 @@ def ares_strike_distance(spot, vix):
       output: 'diff = |0.35-0.30|/0.30 + |55-50|/50 = 0.167 + 0.10 = 0.267'
     },
     related: ['Version History', 'Proposal Validation'],
-    tags: ['solomon', 'version', 'diff', 'magnitude']
+    tags: ['proverbs', 'version', 'diff', 'magnitude']
   },
 
   // Add more calculations here following the same pattern...
@@ -1404,7 +1404,7 @@ def ares_strike_distance(spot, vix):
 
 // Add remaining GEX calculations
 for (let i = 46; i <= 268; i++) {
-  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'ARES', 'ATHENA', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation', 'Solomon']
+  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'ARES', 'ATHENA', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation', 'Proverbs']
   const subcategories: { [key: string]: string[] } = {
     'GEX': ['Core Gamma', 'Distance Metrics', 'Normalized Metrics', 'Wall Analysis', 'Ratios', 'Changes'],
     'Greeks': ['Black-Scholes', 'First-Order Greeks', 'Second-Order Greeks', 'Volatility'],
@@ -1425,7 +1425,7 @@ for (let i = 46; i <= 268; i++) {
     'Ensemble': ['Weighting', 'Signals', 'Performance'],
     'ARGUS': ['Gamma Momentum', 'Risk Detection', 'Real-time'],
     'Validation': ['Probability Calibration', 'Regression', 'Classification'],
-    'Solomon': ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop']
+    'Proverbs': ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop']
   }
 
   // This would be populated with real data in production
@@ -1453,7 +1453,7 @@ const CATEGORIES = [
   { name: 'Ensemble', icon: Layers, color: 'text-teal-400', bgColor: 'bg-teal-500/20', subcategories: ['Weighting', 'Signals', 'Performance'] },
   { name: 'ARGUS', icon: Eye, color: 'text-orange-400', bgColor: 'bg-orange-500/20', subcategories: ['Gamma Momentum', 'Risk Detection', 'Real-time'] },
   { name: 'Validation', icon: Check, color: 'text-green-400', bgColor: 'bg-green-500/20', subcategories: ['Probability Calibration', 'Regression', 'Classification'] },
-  { name: 'Solomon', icon: BookOpen, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop'] },
+  { name: 'Proverbs', icon: BookOpen, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop'] },
 ]
 
 // ============================================================================

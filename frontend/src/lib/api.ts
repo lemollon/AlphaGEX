@@ -1058,107 +1058,107 @@ export const apiClient = {
   getHyperionAccuracy: (symbol?: string) =>
     api.get('/api/hyperion/accuracy', { params: { symbol } }),
 
-  // SOLOMON - Feedback Loop Intelligence System
+  // PROVERBS - Feedback Loop Intelligence System
   // Core Dashboard & Health
-  getSolomonHealth: () => api.get('/api/solomon/health'),
-  getSolomonDashboard: () => api.get('/api/solomon/dashboard'),
-  getSolomonBotDashboard: (botName: string) => api.get(`/api/solomon/dashboard/bot/${botName}`),
+  getProverbsHealth: () => api.get('/api/proverbs/health'),
+  getProverbsDashboard: () => api.get('/api/proverbs/dashboard'),
+  getProverbsBotDashboard: (botName: string) => api.get(`/api/proverbs/dashboard/bot/${botName}`),
 
   // Audit & Compliance
-  getSolomonAudit: (params?: { bot_name?: string; action_type?: string; limit?: number; offset?: number }) =>
-    api.get('/api/solomon/audit', { params }),
-  getSolomonAuditActionTypes: () => api.get('/api/solomon/audit/action-types'),
+  getProverbsAudit: (params?: { bot_name?: string; action_type?: string; limit?: number; offset?: number }) =>
+    api.get('/api/proverbs/audit', { params }),
+  getProverbsAuditActionTypes: () => api.get('/api/proverbs/audit/action-types'),
 
   // Proposals & Approval
-  getSolomonProposals: (params?: { bot_name?: string; status?: string; limit?: number }) =>
-    api.get('/api/solomon/proposals', { params }),
-  getSolomonPendingProposals: () => api.get('/api/solomon/proposals/pending'),
-  getSolomonProposal: (proposalId: string) => api.get(`/api/solomon/proposals/${proposalId}`),
-  createSolomonProposal: (data: { bot_name: string; proposal_type: string; title: string; current_value: unknown; proposed_value: unknown; reason: string }) =>
-    api.post('/api/solomon/proposals', data),
-  approveSolomonProposal: (proposalId: string, data: { reviewer: string; notes?: string }) =>
-    api.post(`/api/solomon/proposals/${proposalId}/approve`, data),
-  rejectSolomonProposal: (proposalId: string, data: { reviewer: string; notes: string }) =>
-    api.post(`/api/solomon/proposals/${proposalId}/reject`, data),
+  getProverbsProposals: (params?: { bot_name?: string; status?: string; limit?: number }) =>
+    api.get('/api/proverbs/proposals', { params }),
+  getProverbsPendingProposals: () => api.get('/api/proverbs/proposals/pending'),
+  getProverbsProposal: (proposalId: string) => api.get(`/api/proverbs/proposals/${proposalId}`),
+  createProverbsProposal: (data: { bot_name: string; proposal_type: string; title: string; current_value: unknown; proposed_value: unknown; reason: string }) =>
+    api.post('/api/proverbs/proposals', data),
+  approveProverbsProposal: (proposalId: string, data: { reviewer: string; notes?: string }) =>
+    api.post(`/api/proverbs/proposals/${proposalId}/approve`, data),
+  rejectProverbsProposal: (proposalId: string, data: { reviewer: string; notes: string }) =>
+    api.post(`/api/proverbs/proposals/${proposalId}/reject`, data),
 
   // Version Management
-  getSolomonVersions: (botName: string) => api.get(`/api/solomon/versions/${botName}`),
-  activateSolomonVersion: (versionId: string, user: string) =>
-    api.post(`/api/solomon/versions/${versionId}/activate`, null, { params: { user } }),
-  getSolomonRollbacks: (params?: { bot_name?: string; limit?: number }) =>
-    api.get('/api/solomon/rollbacks', { params }),
-  rollbackSolomonBot: (botName: string, data: { to_version_id: string; reason: string; user?: string }) =>
-    api.post(`/api/solomon/rollback/${botName}`, data),
+  getProverbsVersions: (botName: string) => api.get(`/api/proverbs/versions/${botName}`),
+  activateProverbsVersion: (versionId: string, user: string) =>
+    api.post(`/api/proverbs/versions/${versionId}/activate`, null, { params: { user } }),
+  getProverbsRollbacks: (params?: { bot_name?: string; limit?: number }) =>
+    api.get('/api/proverbs/rollbacks', { params }),
+  rollbackProverbsBot: (botName: string, data: { to_version_id: string; reason: string; user?: string }) =>
+    api.post(`/api/proverbs/rollback/${botName}`, data),
 
   // Kill Switch Control
-  getSolomonKillswitchStatus: () => api.get('/api/solomon/killswitch'),
-  activateSolomonKillswitch: (botName: string, data: { reason: string; duration_hours?: number; user?: string }) =>
-    api.post(`/api/solomon/killswitch/${botName}/activate`, data),
-  deactivateSolomonKillswitch: (botName: string, data: { user?: string }) =>
-    api.post(`/api/solomon/killswitch/${botName}/deactivate`, data),
-  clearAllSolomonKillswitches: () => api.post('/api/solomon/killswitch/clear-all'),
+  getProverbsKillswitchStatus: () => api.get('/api/proverbs/killswitch'),
+  activateProverbsKillswitch: (botName: string, data: { reason: string; duration_hours?: number; user?: string }) =>
+    api.post(`/api/proverbs/killswitch/${botName}/activate`, data),
+  deactivateProverbsKillswitch: (botName: string, data: { user?: string }) =>
+    api.post(`/api/proverbs/killswitch/${botName}/deactivate`, data),
+  clearAllProverbsKillswitches: () => api.post('/api/proverbs/killswitch/clear-all'),
 
   // Feedback Loop Control
-  runSolomonFeedbackLoop: () => api.post('/api/solomon/feedback-loop/run'),
-  getSolomonFeedbackLoopStatus: () => api.get('/api/solomon/feedback-loop/status'),
+  runProverbsFeedbackLoop: () => api.post('/api/proverbs/feedback-loop/run'),
+  getProverbsFeedbackLoopStatus: () => api.get('/api/proverbs/feedback-loop/status'),
 
   // Performance Tracking
-  getSolomonPerformance: (botName: string, days: number = 30) =>
-    api.get(`/api/solomon/performance/${botName}`, { params: { days } }),
-  recordSolomonPerformanceSnapshot: (botName: string) =>
-    api.post(`/api/solomon/performance/${botName}/snapshot`),
-  getSolomonRealtimeStatus: (days: number = 7) =>
-    api.get('/api/solomon/realtime-status', { params: { days } }),
+  getProverbsPerformance: (botName: string, days: number = 30) =>
+    api.get(`/api/proverbs/performance/${botName}`, { params: { days } }),
+  recordProverbsPerformanceSnapshot: (botName: string) =>
+    api.post(`/api/proverbs/performance/${botName}/snapshot`),
+  getProverbsRealtimeStatus: (days: number = 7) =>
+    api.get('/api/proverbs/realtime-status', { params: { days } }),
 
   // Strategy & Oracle Analysis
-  getSolomonStrategyAnalysis: (days: number = 30) => api.get('/api/solomon/strategy-analysis', { params: { days } }),
-  getSolomonOracleAccuracy: (days: number = 30) => api.get('/api/solomon/oracle-accuracy', { params: { days } }),
+  getProverbsStrategyAnalysis: (days: number = 30) => api.get('/api/proverbs/strategy-analysis', { params: { days } }),
+  getProverbsOracleAccuracy: (days: number = 30) => api.get('/api/proverbs/oracle-accuracy', { params: { days } }),
 
   // Enhanced Analytics
-  getSolomonEnhancedAnalysis: (botName: string, days: number = 30) =>
-    api.get(`/api/solomon/enhanced/analysis/${botName}`, { params: { days } }),
-  getSolomonEnhancedCorrelations: () => api.get('/api/solomon/enhanced/correlations'),
-  getSolomonEnhancedTimeAnalysis: (bot: string) => api.get(`/api/solomon/enhanced/time-analysis/${bot}`),
-  getSolomonEnhancedRegime: (botName: string, days: number = 30) =>
-    api.get(`/api/solomon/enhanced/regime/${botName}`, { params: { days } }),
-  getSolomonEnhancedDigest: () => api.get('/api/solomon/enhanced/digest'),
-  getSolomonWeekendPrecheck: () => api.get('/api/solomon/enhanced/weekend-precheck'),
-  getSolomonVersionCompare: (botName: string, versionA: string, versionB: string) =>
-    api.get(`/api/solomon/enhanced/version-compare/${botName}`, { params: { version_a: versionA, version_b: versionB } }),
-  getSolomonVersionHistory: (botName: string, days: number = 90) =>
-    api.get(`/api/solomon/enhanced/version-history/${botName}`, { params: { days } }),
+  getProverbsEnhancedAnalysis: (botName: string, days: number = 30) =>
+    api.get(`/api/proverbs/enhanced/analysis/${botName}`, { params: { days } }),
+  getProverbsEnhancedCorrelations: () => api.get('/api/proverbs/enhanced/correlations'),
+  getProverbsEnhancedTimeAnalysis: (bot: string) => api.get(`/api/proverbs/enhanced/time-analysis/${bot}`),
+  getProverbsEnhancedRegime: (botName: string, days: number = 30) =>
+    api.get(`/api/proverbs/enhanced/regime/${botName}`, { params: { days } }),
+  getProverbsEnhancedDigest: () => api.get('/api/proverbs/enhanced/digest'),
+  getProverbsWeekendPrecheck: () => api.get('/api/proverbs/enhanced/weekend-precheck'),
+  getProverbsVersionCompare: (botName: string, versionA: string, versionB: string) =>
+    api.get(`/api/proverbs/enhanced/version-compare/${botName}`, { params: { version_a: versionA, version_b: versionB } }),
+  getProverbsVersionHistory: (botName: string, days: number = 90) =>
+    api.get(`/api/proverbs/enhanced/version-history/${botName}`, { params: { days } }),
 
   // A/B Testing
-  createSolomonABTest: (data: { bot_name: string; control_config: unknown; variant_config: unknown; allocation?: number }) =>
-    api.post('/api/solomon/enhanced/ab-test', data),
-  getSolomonABTests: (botName?: string) =>
-    api.get('/api/solomon/enhanced/ab-test', { params: { bot_name: botName } }),
-  evaluateSolomonABTest: (testId: string) =>
-    api.get(`/api/solomon/enhanced/ab-test/${testId}/evaluate`),
-  getSolomonRollbackCooldown: (botName: string) =>
-    api.get(`/api/solomon/enhanced/rollback-status/${botName}`),
+  createProverbsABTest: (data: { bot_name: string; control_config: unknown; variant_config: unknown; allocation?: number }) =>
+    api.post('/api/proverbs/enhanced/ab-test', data),
+  getProverbsABTests: (botName?: string) =>
+    api.get('/api/proverbs/enhanced/ab-test', { params: { bot_name: botName } }),
+  evaluateProverbsABTest: (testId: string) =>
+    api.get(`/api/proverbs/enhanced/ab-test/${testId}/evaluate`),
+  getProverbsRollbackCooldown: (botName: string) =>
+    api.get(`/api/proverbs/enhanced/rollback-status/${botName}`),
 
   // AI Analysis (Claude-powered)
-  aiAnalyzeSolomonPerformance: (botName: string) =>
-    api.get(`/api/solomon/ai/analyze-performance/${botName}`),
-  aiSolomonProposalReasoning: (proposalId: string) =>
-    api.get(`/api/solomon/ai/proposal-reasoning/${proposalId}`),
-  aiSolomonWeekendAnalysis: () => api.get('/api/solomon/ai/weekend-analysis'),
+  aiAnalyzeProverbsPerformance: (botName: string) =>
+    api.get(`/api/proverbs/ai/analyze-performance/${botName}`),
+  aiProverbsProposalReasoning: (proposalId: string) =>
+    api.get(`/api/proverbs/ai/proposal-reasoning/${proposalId}`),
+  aiProverbsWeekendAnalysis: () => api.get('/api/proverbs/ai/weekend-analysis'),
 
   // Proposal Validation (Proven Improvement)
-  createValidatedSolomonProposal: (data: { bot_name: string; config_change: unknown; reasoning: unknown }) =>
-    api.post('/api/solomon/validation/create-proposal', data),
-  getSolomonValidationStatus: () => api.get('/api/solomon/validation/status'),
-  getSolomonValidationStatusById: (proposalId: string) =>
-    api.get(`/api/solomon/validation/status/${proposalId}`),
-  getSolomonValidationCanApply: (proposalId: string) => api.get(`/api/solomon/validation/can-apply/${proposalId}`),
-  applySolomonValidatedProposal: (proposalId: string, data?: { user?: string }) =>
-    api.post(`/api/solomon/validation/apply/${proposalId}`, data),
-  getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
-  getSolomonTransparencyReport: (proposalId: string) =>
-    api.get(`/api/solomon/validation/transparency-report/${proposalId}`),
-  recordSolomonValidationTrade: (data: { validation_id: string; is_proposed: boolean; pnl: number }) =>
-    api.post('/api/solomon/validation/record-trade', data),
+  createValidatedProverbsProposal: (data: { bot_name: string; config_change: unknown; reasoning: unknown }) =>
+    api.post('/api/proverbs/validation/create-proposal', data),
+  getProverbsValidationStatus: () => api.get('/api/proverbs/validation/status'),
+  getProverbsValidationStatusById: (proposalId: string) =>
+    api.get(`/api/proverbs/validation/status/${proposalId}`),
+  getProverbsValidationCanApply: (proposalId: string) => api.get(`/api/proverbs/validation/can-apply/${proposalId}`),
+  applyProverbsValidatedProposal: (proposalId: string, data?: { user?: string }) =>
+    api.post(`/api/proverbs/validation/apply/${proposalId}`, data),
+  getProverbsProposalReasoning: (proposalId: string) => api.get(`/api/proverbs/validation/reasoning/${proposalId}`),
+  getProverbsTransparencyReport: (proposalId: string) =>
+    api.get(`/api/proverbs/validation/transparency-report/${proposalId}`),
+  recordProverbsValidationTrade: (data: { validation_id: string; is_proposed: boolean; pnl: number }) =>
+    api.post('/api/proverbs/validation/record-trade', data),
 
   // QUANT - ML Models Dashboard
   getQuantHealth: () => api.get('/api/quant/health'),

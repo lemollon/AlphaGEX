@@ -131,7 +131,7 @@ class TestBotLoggerTable:
         bot_counts = {row[0]: row[1] for row in results}
         print(f"\nBot decision counts: {bot_counts}")
 
-        # List of expected bots (PEGASUS replaces ATLAS in Solomon)
+        # List of expected bots (PEGASUS replaces ATLAS in Proverbs)
         expected_bots = ['ARES', 'ATHENA', 'PHOENIX', 'PEGASUS']
 
         # Check which bots have logged

@@ -6,7 +6,7 @@ These tests verify that all components of the unified trading system
 work together correctly:
 
 1. OMEGA Orchestrator (central hub)
-2. Solomon Integration (safety layer)
+2. Proverbs Integration (safety layer)
 3. Ensemble Weighting (market context)
 4. ML Advisor (primary decision)
 5. Oracle Adaptation (bot-specific)
@@ -458,7 +458,7 @@ class TestIntegrationFlow:
 
         assert decision is not None
         assert decision.bot_name == "ARES"
-        assert decision.solomon_verdict is not None
+        assert decision.proverbs_verdict is not None
         assert decision.ensemble_context is not None
         assert decision.ml_decision is not None
         assert decision.oracle_adaptation is not None

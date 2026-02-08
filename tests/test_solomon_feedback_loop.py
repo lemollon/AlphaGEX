@@ -1,5 +1,5 @@
 """
-Comprehensive integration tests for Solomon Feedback Loop Intelligence System.
+Comprehensive integration tests for Proverbs Feedback Loop Intelligence System.
 
 Tests cover:
 1. API endpoint wiring
@@ -8,7 +8,7 @@ Tests cover:
 4. Proposal validation flow
 5. Frontend-backend contract
 
-Run with: pytest tests/test_solomon_feedback_loop.py -v
+Run with: pytest tests/test_proverbs_feedback_loop.py -v
 """
 
 import pytest
@@ -73,41 +73,41 @@ def sample_validation():
 
 
 # =============================================================================
-# 1. IMPORT TESTS - Verify all Solomon modules can be imported
+# 1. IMPORT TESTS - Verify all Proverbs modules can be imported
 # =============================================================================
 
-class TestSolomonImports:
-    """Test that all Solomon modules import correctly"""
+class TestProverbsImports:
+    """Test that all Proverbs modules import correctly"""
 
-    def test_import_solomon_feedback_loop(self):
+    def test_import_proverbs_feedback_loop(self):
         """Test main feedback loop module imports"""
-        from quant.solomon_feedback_loop import (
-            SolomonFeedbackLoop,
+        from quant.proverbs_feedback_loop import (
+            ProverbsFeedbackLoop,
             ActionType,
             ProposalType,
             ProposalStatus,
         )
-        assert SolomonFeedbackLoop is not None
+        assert ProverbsFeedbackLoop is not None
         assert ActionType is not None
         assert ProposalType is not None
         assert ProposalStatus is not None
 
-    def test_import_solomon_enhancements(self):
+    def test_import_proverbs_enhancements(self):
         """Test enhancements module imports"""
-        from quant.solomon_enhancements import (
-            SolomonEnhanced,
+        from quant.proverbs_enhancements import (
+            ProverbsEnhanced,
             ProposalValidator,
             ValidationResult,
             ProposalReasoning,
         )
-        assert SolomonEnhanced is not None
+        assert ProverbsEnhanced is not None
         assert ProposalValidator is not None
         assert ValidationResult is not None
         assert ProposalReasoning is not None
 
     def test_import_action_type_enum_values(self):
         """Test ActionType enum has expected values"""
-        from quant.solomon_feedback_loop import ActionType
+        from quant.proverbs_feedback_loop import ActionType
 
         # Verify key enum values exist
         assert hasattr(ActionType, 'PROPOSAL_CREATED')
@@ -121,7 +121,7 @@ class TestSolomonImports:
 
     def test_import_proposal_type_enum_values(self):
         """Test ProposalType enum has expected values"""
-        from quant.solomon_feedback_loop import ProposalType
+        from quant.proverbs_feedback_loop import ProposalType
 
         assert hasattr(ProposalType, 'MODEL_RETRAIN')
         assert hasattr(ProposalType, 'PARAMETER_CHANGE')
@@ -131,14 +131,14 @@ class TestSolomonImports:
 # 2. DATABASE SCHEMA TESTS
 # =============================================================================
 
-class TestSolomonDatabaseSchema:
+class TestProverbsDatabaseSchema:
     """Test database schema definitions"""
 
     def test_proposals_table_sql_valid(self):
         """Test that proposals table SQL is valid"""
-        from quant.solomon_feedback_loop import SCHEMA_SQL
+        from quant.proverbs_feedback_loop import SCHEMA_SQL
 
-        assert 'CREATE TABLE IF NOT EXISTS solomon_proposals' in SCHEMA_SQL
+        assert 'CREATE TABLE IF NOT EXISTS proverbs_proposals' in SCHEMA_SQL
         assert 'proposal_id TEXT' in SCHEMA_SQL
         assert 'bot_name TEXT' in SCHEMA_SQL
         assert 'status TEXT' in SCHEMA_SQL
@@ -146,9 +146,9 @@ class TestSolomonDatabaseSchema:
 
     def test_validations_table_sql_valid(self):
         """Test that validations table SQL is valid"""
-        from quant.solomon_feedback_loop import SCHEMA_SQL
+        from quant.proverbs_feedback_loop import SCHEMA_SQL
 
-        assert 'CREATE TABLE IF NOT EXISTS solomon_validations' in SCHEMA_SQL
+        assert 'CREATE TABLE IF NOT EXISTS proverbs_validations' in SCHEMA_SQL
         assert 'validation_id TEXT' in SCHEMA_SQL
         assert 'proposal_id TEXT' in SCHEMA_SQL
         assert 'improvement_proven BOOLEAN' in SCHEMA_SQL
@@ -166,9 +166,9 @@ class TestProposalValidator:
 
     def test_win_rate_calculation_on_loss(self):
         """Test that win rate updates correctly on losses (BUG #3 fix)"""
-        from quant.solomon_enhancements import ProposalValidator
+        from quant.proverbs_enhancements import ProposalValidator
 
-        with patch('quant.solomon_enhancements.get_connection') as mock_get_conn:
+        with patch('quant.proverbs_enhancements.get_connection') as mock_get_conn:
             mock_get_conn.return_value = MagicMock()
 
             validator = ProposalValidator.__new__(ProposalValidator)
@@ -197,9 +197,9 @@ class TestProposalValidator:
 
     def test_validation_minimum_requirements(self):
         """Test validation requires minimum trades and days"""
-        from quant.solomon_enhancements import ProposalValidator, ValidationResult
+        from quant.proverbs_enhancements import ProposalValidator, ValidationResult
 
-        with patch('quant.solomon_enhancements.get_connection') as mock_get_conn:
+        with patch('quant.proverbs_enhancements.get_connection') as mock_get_conn:
             mock_get_conn.return_value = MagicMock()
 
             validator = ProposalValidator.__new__(ProposalValidator)
@@ -233,19 +233,19 @@ class TestCanApplyProposal:
 
     def test_expired_proposal_cannot_be_applied(self):
         """Test that expired proposals return can_apply=False (BUG #11 fix)"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon:
-            mock_solomon = MagicMock()
-            mock_solomon.get_pending_proposals.return_value = [{
+        with patch('quant.proverbs_enhancements.get_proverbs') as mock_get_proverbs:
+            mock_proverbs = MagicMock()
+            mock_proverbs.get_pending_proposals.return_value = [{
                 'proposal_id': 'PROP-EXPIRED',
                 'status': 'EXPIRED',
                 'expires_at': (datetime.now(CENTRAL_TZ) - timedelta(days=1)).isoformat(),
             }]
-            mock_get_solomon.return_value = mock_solomon
+            mock_get_proverbs.return_value = mock_proverbs
 
-            enhancements = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhancements.solomon = mock_solomon
+            enhancements = ProverbsEnhanced.__new__(ProverbsEnhanced)
+            enhancements.proverbs = mock_proverbs
             enhancements.proposal_validator = MagicMock()
 
             result = enhancements.can_apply_proposal('PROP-EXPIRED')
@@ -256,15 +256,15 @@ class TestCanApplyProposal:
 
     def test_missing_proposal_returns_correct_response(self):
         """Test response includes improvement_proven when proposal not found (BUG #2 fix)"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon:
-            mock_solomon = MagicMock()
-            mock_solomon.get_pending_proposals.return_value = []  # No proposals
-            mock_get_solomon.return_value = mock_solomon
+        with patch('quant.proverbs_enhancements.get_proverbs') as mock_get_proverbs:
+            mock_proverbs = MagicMock()
+            mock_proverbs.get_pending_proposals.return_value = []  # No proposals
+            mock_get_proverbs.return_value = mock_proverbs
 
-            enhancements = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhancements.solomon = mock_solomon
+            enhancements = ProverbsEnhanced.__new__(ProverbsEnhanced)
+            enhancements.proverbs = mock_proverbs
             enhancements.proposal_validator = MagicMock()
 
             result = enhancements.can_apply_proposal('PROP-NONEXISTENT')
@@ -279,17 +279,17 @@ class TestCanApplyProposal:
 # 5. API ROUTES TESTS
 # =============================================================================
 
-class TestSolomonAPIRoutes:
+class TestProverbsAPIRoutes:
     """Test that API routes are properly defined"""
 
     def test_routes_module_imports(self):
         """Test routes module imports without error"""
-        from backend.api.routes import solomon_routes
-        assert solomon_routes.router is not None
+        from backend.api.routes import proverbs_routes
+        assert proverbs_routes.router is not None
 
     def test_route_definitions_exist(self):
         """Test key routes are defined"""
-        from backend.api.routes.solomon_routes import router
+        from backend.api.routes.proverbs_routes import router
 
         routes = [r.path for r in router.routes]
 
@@ -308,7 +308,7 @@ class TestSolomonAPIRoutes:
 
     def test_request_models_have_correct_fields(self):
         """Test Pydantic request models have expected fields"""
-        from backend.api.routes.solomon_routes import (
+        from backend.api.routes.proverbs_routes import (
             ApprovalRequest,
             RejectionRequest,
             RollbackRequest,
@@ -333,16 +333,16 @@ class TestFrontendBackendContract:
 
     def test_validation_status_response_structure(self):
         """Test validation status has all required fields for frontend"""
-        from quant.solomon_enhancements import SolomonEnhanced, ValidationResult
+        from quant.proverbs_enhancements import ProverbsEnhanced, ValidationResult
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon:
-            mock_solomon = MagicMock()
-            mock_solomon.get_pending_proposals.return_value = [{
+        with patch('quant.proverbs_enhancements.get_proverbs') as mock_get_proverbs:
+            mock_proverbs = MagicMock()
+            mock_proverbs.get_pending_proposals.return_value = [{
                 'proposal_id': 'PROP-TEST',
                 'status': 'PENDING',
                 'expires_at': (datetime.now(CENTRAL_TZ) + timedelta(days=7)).isoformat(),
             }]
-            mock_get_solomon.return_value = mock_solomon
+            mock_get_proverbs.return_value = mock_proverbs
 
             mock_validator = MagicMock()
             mock_validator.get_pending_validations.return_value = [{
@@ -359,8 +359,8 @@ class TestFrontendBackendContract:
                 detailed_reasoning={'summary': 'Test passed'},
             )
 
-            enhancements = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhancements.solomon = mock_solomon
+            enhancements = ProverbsEnhanced.__new__(ProverbsEnhanced)
+            enhancements.proverbs = mock_proverbs
             enhancements.proposal_validator = mock_validator
 
             result = enhancements.can_apply_proposal('PROP-TEST')
@@ -376,31 +376,31 @@ class TestFrontendBackendContract:
 # 7. INTEGRATION TESTS - Full Flow
 # =============================================================================
 
-class TestSolomonFullFlow:
+class TestProverbsFullFlow:
     """Test complete proposal -> validation -> apply flow"""
 
     def test_proposal_validation_apply_flow(self):
         """Test the full flow from proposal creation to application"""
-        from quant.solomon_enhancements import SolomonEnhanced, ProposalValidator
+        from quant.proverbs_enhancements import ProverbsEnhanced, ProposalValidator
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon, \
-             patch('quant.solomon_enhancements.get_connection') as mock_get_conn:
+        with patch('quant.proverbs_enhancements.get_proverbs') as mock_get_proverbs, \
+             patch('quant.proverbs_enhancements.get_connection') as mock_get_conn:
 
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
             mock_get_conn.return_value = mock_conn
 
-            mock_solomon = MagicMock()
-            mock_solomon.get_pending_proposals.return_value = [{
+            mock_proverbs = MagicMock()
+            mock_proverbs.get_pending_proposals.return_value = [{
                 'proposal_id': 'PROP-FLOW-TEST',
                 'bot_name': 'ARES',
                 'status': 'PENDING',
                 'expires_at': (datetime.now(CENTRAL_TZ) + timedelta(days=7)).isoformat(),
             }]
-            mock_solomon.approve_proposal.return_value = True
-            mock_solomon.log_action = MagicMock()
-            mock_get_solomon.return_value = mock_solomon
+            mock_proverbs.approve_proposal.return_value = True
+            mock_proverbs.log_action = MagicMock()
+            mock_get_proverbs.return_value = mock_proverbs
 
             # Create validator with mocked save
             validator = ProposalValidator.__new__(ProposalValidator)
@@ -447,20 +447,20 @@ class TestSolomonFullFlow:
 # 8. EDGE CASE TESTS
 # =============================================================================
 
-class TestSolomonEdgeCases:
+class TestProverbsEdgeCases:
     """Test edge cases and error handling"""
 
     def test_empty_proposal_id(self):
         """Test handling of empty proposal ID"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon:
-            mock_solomon = MagicMock()
-            mock_solomon.get_pending_proposals.return_value = []
-            mock_get_solomon.return_value = mock_solomon
+        with patch('quant.proverbs_enhancements.get_proverbs') as mock_get_proverbs:
+            mock_proverbs = MagicMock()
+            mock_proverbs.get_pending_proposals.return_value = []
+            mock_get_proverbs.return_value = mock_proverbs
 
-            enhancements = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhancements.solomon = mock_solomon
+            enhancements = ProverbsEnhanced.__new__(ProverbsEnhanced)
+            enhancements.proverbs = mock_proverbs
             enhancements.proposal_validator = MagicMock()
 
             result = enhancements.can_apply_proposal('')
@@ -469,9 +469,9 @@ class TestSolomonEdgeCases:
 
     def test_invalid_validation_id(self):
         """Test handling of non-existent validation ID"""
-        from quant.solomon_enhancements import ProposalValidator, ValidationResult
+        from quant.proverbs_enhancements import ProposalValidator, ValidationResult
 
-        with patch('quant.solomon_enhancements.get_connection') as mock_get_conn:
+        with patch('quant.proverbs_enhancements.get_connection') as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.fetchall.return_value = []  # No validations in DB
@@ -489,21 +489,21 @@ class TestSolomonEdgeCases:
 
     def test_timezone_handling(self):
         """Test that timezone-aware datetimes are handled correctly"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon:
-            mock_solomon = MagicMock()
+        with patch('quant.proverbs_enhancements.get_proverbs') as mock_get_proverbs:
+            mock_proverbs = MagicMock()
 
             # Test with ISO format with Z suffix
-            mock_solomon.get_pending_proposals.return_value = [{
+            mock_proverbs.get_pending_proposals.return_value = [{
                 'proposal_id': 'PROP-TZ-TEST',
                 'status': 'PENDING',
                 'expires_at': '2099-12-31T23:59:59Z',  # Far future
             }]
-            mock_get_solomon.return_value = mock_solomon
+            mock_get_proverbs.return_value = mock_proverbs
 
-            enhancements = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhancements.solomon = mock_solomon
+            enhancements = ProverbsEnhanced.__new__(ProverbsEnhanced)
+            enhancements.proverbs = mock_proverbs
             enhancements.proposal_validator = MagicMock()
             enhancements.proposal_validator.get_pending_validations.return_value = []
 
@@ -517,14 +517,14 @@ class TestSolomonEdgeCases:
 # 9. PERFORMANCE TESTS
 # =============================================================================
 
-class TestSolomonPerformance:
+class TestProverbsPerformance:
     """Test performance-related concerns"""
 
     def test_validation_trade_recording_efficiency(self):
         """Test that recording many trades doesn't accumulate errors"""
-        from quant.solomon_enhancements import ProposalValidator
+        from quant.proverbs_enhancements import ProposalValidator
 
-        with patch('quant.solomon_enhancements.get_connection') as mock_get_conn:
+        with patch('quant.proverbs_enhancements.get_connection') as mock_get_conn:
             mock_get_conn.return_value = MagicMock()
 
             validator = ProposalValidator.__new__(ProposalValidator)
@@ -558,9 +558,9 @@ class TestMigration023StrategyAnalysis:
 
     def test_bot_strategy_configs_exist(self):
         """Test that BOT_STRATEGY_CONFIGS has all 5 bots"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        configs = SolomonEnhanced.BOT_STRATEGY_CONFIGS
+        configs = ProverbsEnhanced.BOT_STRATEGY_CONFIGS
 
         # Verify all 5 bots are configured
         assert 'ARES' in configs
@@ -571,9 +571,9 @@ class TestMigration023StrategyAnalysis:
 
     def test_bot_strategy_types_correct(self):
         """Test that bots have correct strategy types"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        configs = SolomonEnhanced.BOT_STRATEGY_CONFIGS
+        configs = ProverbsEnhanced.BOT_STRATEGY_CONFIGS
 
         # Iron Condor bots
         assert configs['ARES']['strategy_type'] == 'IRON_CONDOR'
@@ -586,11 +586,11 @@ class TestMigration023StrategyAnalysis:
 
     def test_get_bot_strategy_config(self):
         """Test get_bot_strategy_config method"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        # Create SolomonEnhanced without calling __init__
-        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
-        enhanced.solomon = MagicMock()
+        # Create ProverbsEnhanced without calling __init__
+        enhanced = ProverbsEnhanced.__new__(ProverbsEnhanced)
+        enhanced.proverbs = MagicMock()
         enhanced.proposal_validator = MagicMock()
 
         config = enhanced.get_bot_strategy_config('ARES')
@@ -607,8 +607,8 @@ class TestMigration023StrategyAnalysis:
 
     def test_get_strategy_analysis_structure(self):
         """Test get_strategy_analysis returns correct structure"""
-        from quant.solomon_enhancements import SolomonEnhanced
-        import quant.solomon_enhancements as se_module
+        from quant.proverbs_enhancements import ProverbsEnhanced
+        import quant.proverbs_enhancements as se_module
 
         with patch.object(se_module, 'get_connection') as mock_get_conn, \
              patch.object(se_module, 'DB_AVAILABLE', True):
@@ -625,8 +625,8 @@ class TestMigration023StrategyAnalysis:
             mock_conn.cursor.return_value = mock_cursor
             mock_get_conn.return_value = mock_conn
 
-            enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhanced.solomon = MagicMock()
+            enhanced = ProverbsEnhanced.__new__(ProverbsEnhanced)
+            enhanced.proverbs = MagicMock()
             enhanced.proposal_validator = MagicMock()
 
             result = enhanced.get_strategy_analysis(days=30)
@@ -651,8 +651,8 @@ class TestMigration023StrategyAnalysis:
 
     def test_get_oracle_accuracy_structure(self):
         """Test get_oracle_accuracy returns correct structure"""
-        from quant.solomon_enhancements import SolomonEnhanced
-        import quant.solomon_enhancements as se_module
+        from quant.proverbs_enhancements import ProverbsEnhanced
+        import quant.proverbs_enhancements as se_module
 
         with patch.object(se_module, 'get_connection') as mock_get_conn, \
              patch.object(se_module, 'DB_AVAILABLE', True):
@@ -669,8 +669,8 @@ class TestMigration023StrategyAnalysis:
             mock_conn.cursor.return_value = mock_cursor
             mock_get_conn.return_value = mock_conn
 
-            enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhanced.solomon = MagicMock()
+            enhanced = ProverbsEnhanced.__new__(ProverbsEnhanced)
+            enhanced.proverbs = MagicMock()
             enhanced.proposal_validator = MagicMock()
 
             result = enhanced.get_oracle_accuracy(days=30)
@@ -702,9 +702,9 @@ class TestMigration023StrategyAnalysis:
 
     def test_strategy_recommendation_ic_outperforming(self):
         """Test recommendation when Iron Condor is outperforming"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+        enhanced = ProverbsEnhanced.__new__(ProverbsEnhanced)
 
         # IC: 80% win rate, $60 avg PnL
         ic_row = (10, 8, 600.0, 60.0)
@@ -720,9 +720,9 @@ class TestMigration023StrategyAnalysis:
 
     def test_strategy_recommendation_directional_outperforming(self):
         """Test recommendation when Directional is outperforming"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+        enhanced = ProverbsEnhanced.__new__(ProverbsEnhanced)
 
         # IC: 45% win rate, $20 avg PnL
         ic_row = (10, 4, 200.0, 20.0)
@@ -738,9 +738,9 @@ class TestMigration023StrategyAnalysis:
 
     def test_strategy_recommendation_insufficient_data(self):
         """Test recommendation with insufficient data"""
-        from quant.solomon_enhancements import SolomonEnhanced
+        from quant.proverbs_enhancements import ProverbsEnhanced
 
-        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+        enhanced = ProverbsEnhanced.__new__(ProverbsEnhanced)
 
         ic_row = (3, 2, 100.0, 33.0)
         dir_row = (2, 1, 50.0, 25.0, 1)
@@ -757,14 +757,14 @@ class TestMigration023APIRoutes:
 
     def test_strategy_analysis_route_exists(self):
         """Test that /strategy-analysis route is defined"""
-        from backend.api.routes.solomon_routes import router
+        from backend.api.routes.proverbs_routes import router
 
         routes = [r.path for r in router.routes]
         assert '/strategy-analysis' in routes
 
     def test_oracle_accuracy_route_exists(self):
         """Test that /oracle-accuracy route is defined"""
-        from backend.api.routes.solomon_routes import router
+        from backend.api.routes.proverbs_routes import router
 
         routes = [r.path for r in router.routes]
         assert '/oracle-accuracy' in routes
@@ -793,12 +793,12 @@ class TestMigration023FrontendContract:
             api_content = f.read()
 
         # Check Migration 023 methods exist
-        assert 'getSolomonStrategyAnalysis' in api_content
-        assert 'getSolomonOracleAccuracy' in api_content
+        assert 'getProverbsStrategyAnalysis' in api_content
+        assert 'getProverbsOracleAccuracy' in api_content
 
         # Check they call the correct endpoints
-        assert '/api/solomon/strategy-analysis' in api_content
-        assert '/api/solomon/oracle-accuracy' in api_content
+        assert '/api/proverbs/strategy-analysis' in api_content
+        assert '/api/proverbs/oracle-accuracy' in api_content
 
 
 if __name__ == '__main__':

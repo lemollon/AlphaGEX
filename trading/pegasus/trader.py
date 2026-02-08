@@ -87,13 +87,13 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object
 
-# Solomon Enhanced for feedback loop recording
+# Proverbs Enhanced for feedback loop recording
 try:
-    from quant.solomon_enhancements import get_solomon_enhanced
-    SOLOMON_ENHANCED_AVAILABLE = True
+    from quant.proverbs_enhancements import get_proverbs_enhanced
+    PROVERBS_ENHANCED_AVAILABLE = True
 except ImportError:
-    SOLOMON_ENHANCED_AVAILABLE = False
-    get_solomon_enhanced = None
+    PROVERBS_ENHANCED_AVAILABLE = False
+    get_proverbs_enhanced = None
 
 # Auto-Validation System for Thompson Sampling capital allocation
 try:
@@ -464,12 +464,12 @@ class PEGASUSTrader(MathOptimizerMixin):
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
 
-                    # Record outcome to Solomon Enhanced for feedback loops
+                    # Record outcome to Proverbs Enhanced for feedback loops
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
                     # Migration 023: Pass outcome_type and oracle_prediction_id for feedback loop
                     outcome_type = self._determine_outcome_type(reason, pnl)
                     prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
-                    self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id)
+                    self._record_proverbs_outcome(pnl, trade_date, outcome_type, prediction_id)
 
                     # Record outcome to Thompson Sampling for capital allocation
                     self._record_thompson_outcome(pnl)
@@ -560,7 +560,7 @@ class PEGASUSTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"PEGASUS: Oracle outcome recording failed: {e}")
 
-    def _record_solomon_outcome(
+    def _record_proverbs_outcome(
         self,
         pnl: float,
         trade_date: str,
@@ -568,7 +568,7 @@ class PEGASUSTrader(MathOptimizerMixin):
         oracle_prediction_id: int = None
     ):
         """
-        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+        Record trade outcome to Proverbs Enhanced for feedback loop tracking.
 
         Migration 023: Enhanced to pass strategy-level data for feedback loop analysis.
 
@@ -578,11 +578,11 @@ class PEGASUSTrader(MathOptimizerMixin):
         - Performance tracking for version comparison
         - Strategy-level analysis (IC effectiveness)
         """
-        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+        if not PROVERBS_ENHANCED_AVAILABLE or not get_proverbs_enhanced:
             return
 
         try:
-            enhanced = get_solomon_enhanced()
+            enhanced = get_proverbs_enhanced()
             alerts = enhanced.record_trade_outcome(
                 bot_name='PEGASUS',
                 pnl=pnl,
@@ -595,9 +595,9 @@ class PEGASUSTrader(MathOptimizerMixin):
             )
             if alerts:
                 for alert in alerts:
-                    logger.warning(f"PEGASUS Solomon alert: {alert}")
+                    logger.warning(f"PEGASUS Proverbs alert: {alert}")
         except Exception as e:
-            logger.warning(f"PEGASUS: Solomon outcome recording failed: {e}")
+            logger.warning(f"PEGASUS: Proverbs outcome recording failed: {e}")
 
     def _determine_outcome_type(self, close_reason: str, pnl: float) -> str:
         """

@@ -1,8 +1,8 @@
 """
-SOLOMON Enhancement Module
-==========================
+PROVERBS Enhancement Module
+============================
 
-Advanced features for the Solomon Feedback Loop Intelligence System:
+Advanced features for the Proverbs Feedback Loop Intelligence System:
 - Consecutive loss auto-kill trigger
 - Max daily loss auto-kill
 - Daily performance digest
@@ -224,8 +224,8 @@ class WeekendPreCheck:
 class ConsecutiveLossMonitor:
     """Monitor and respond to consecutive losses"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
         self._trackers: Dict[str, ConsecutiveLossTracker] = {}
 
     def _get_tracker(self, bot_name: str) -> ConsecutiveLossTracker:
@@ -270,10 +270,10 @@ class ConsecutiveLossMonitor:
                     }
 
                     # Activate kill switch
-                    self.solomon.activate_kill_switch(
+                    self.proverbs.activate_kill_switch(
                         bot_name=bot_name,
                         reason=f"Consecutive loss limit reached: {tracker.consecutive_losses} losses in a row (${tracker.total_loss_streak_pnl:,.2f})",
-                        killed_by="SOLOMON_AUTO"
+                        killed_by="PROVERBS_AUTO"
                     )
 
                     return alert
@@ -309,8 +309,8 @@ class ConsecutiveLossMonitor:
 class DailyLossMonitor:
     """Monitor and respond to daily P&L limits"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
         self._trackers: Dict[str, DailyLossTracker] = {}
 
     def _get_today(self) -> str:
@@ -364,10 +364,10 @@ class DailyLossMonitor:
                     'action': 'KILL_SWITCH_ACTIVATED'
                 }
 
-                self.solomon.activate_kill_switch(
+                self.proverbs.activate_kill_switch(
                     bot_name=bot_name,
                     reason=f"Daily loss limit reached: ${tracker.total_pnl:,.2f} (limit: ${ENHANCED_GUARDRAILS['max_daily_loss_dollars']:,.2f})",
-                    killed_by="SOLOMON_AUTO"
+                    killed_by="PROVERBS_AUTO"
                 )
 
                 return alert
@@ -388,10 +388,10 @@ class DailyLossMonitor:
                     'action': 'KILL_SWITCH_ACTIVATED'
                 }
 
-                self.solomon.activate_kill_switch(
+                self.proverbs.activate_kill_switch(
                     bot_name=bot_name,
                     reason=f"Daily loss % limit reached: {loss_pct:.1f}% (limit: {ENHANCED_GUARDRAILS['max_daily_loss_percent']:.1f}%)",
-                    killed_by="SOLOMON_AUTO"
+                    killed_by="PROVERBS_AUTO"
                 )
 
                 return alert
@@ -422,8 +422,8 @@ class DailyLossMonitor:
 class VersionComparer:
     """Compare performance across versions"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
     def compare_versions(
         self,
@@ -449,7 +449,7 @@ class VersionComparer:
                         SUM(total_pnl) as total_pnl,
                         AVG(CASE WHEN total_pnl > 0 THEN total_pnl END) as avg_win,
                         AVG(CASE WHEN total_pnl < 0 THEN total_pnl END) as avg_loss
-                    FROM solomon_performance
+                    FROM proverbs_performance
                     WHERE version_id = %s
                 """, (version_id,))
 
@@ -536,7 +536,7 @@ class VersionComparer:
                     AVG(avg_loss) as avg_loss,
                     MAX(max_drawdown) as max_drawdown,
                     AVG(sharpe_ratio) as sharpe_ratio
-                FROM solomon_performance
+                FROM proverbs_performance
                 WHERE bot_name = %s
                 AND timestamp > NOW() - INTERVAL '%s days'
                 AND version_id IS NOT NULL
@@ -577,8 +577,8 @@ class VersionComparer:
 class TimeOfDayAnalyzer:
     """Analyze performance by time of day"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
     def analyze(self, bot_name: str, days: int = 30) -> List[TimeOfDayAnalysis]:
         """Analyze performance by hour of day"""
@@ -668,8 +668,8 @@ class TimeOfDayAnalyzer:
 class CrossBotAnalyzer:
     """Analyze correlations between bots"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
     def calculate_correlation(
         self,
@@ -791,8 +791,8 @@ class CrossBotAnalyzer:
 class RegimePerformanceTracker:
     """Track performance by market regime"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
     def analyze_regime_performance(
         self,
@@ -866,8 +866,8 @@ class RegimePerformanceTracker:
 class ABTestingFramework:
     """Framework for A/B testing bot configurations with database persistence"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
         self._active_tests: Dict[str, ABTest] = {}
         # Load existing tests from database on initialization
         self._load_from_database()
@@ -888,7 +888,7 @@ class ABTestingFramework:
                        control_win_rate, variant_win_rate,
                        control_pnl, variant_pnl,
                        status, winner, confidence
-                FROM solomon_ab_tests
+                FROM proverbs_ab_tests
                 WHERE status IN ('RUNNING', 'COMPLETED')
                 ORDER BY created_at DESC
             """)
@@ -931,7 +931,7 @@ class ABTestingFramework:
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO solomon_ab_tests (
+                INSERT INTO proverbs_ab_tests (
                     test_id, bot_name, created_at,
                     control_config, variant_config, control_allocation,
                     control_trades, variant_trades,
@@ -1168,8 +1168,8 @@ class ApprovalTierManager:
         }
     }
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
     def determine_tier(
         self,
@@ -1210,8 +1210,8 @@ class ApprovalTierManager:
 class RollbackCooldownManager:
     """Manage rollback cooldown periods"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
         self._last_rollbacks: Dict[str, List[datetime]] = {}
 
     def can_rollback(self, bot_name: str) -> Tuple[bool, str]:
@@ -1261,8 +1261,8 @@ class RollbackCooldownManager:
 class WeekendPreChecker:
     """Generate weekend pre-check analysis"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
     def generate_precheck(self) -> WeekendPreCheck:
         """Generate pre-weekend analysis"""
@@ -1370,8 +1370,8 @@ class WeekendPreChecker:
 
     def _analyze_bot_readiness(self, bot_name: str) -> Dict:
         """Analyze if a bot is ready for the upcoming week"""
-        is_killed = self.solomon.is_bot_killed(bot_name)
-        performance = self.solomon._get_current_performance(bot_name)
+        is_killed = self.proverbs.is_bot_killed(bot_name)
+        performance = self.proverbs._get_current_performance(bot_name)
 
         if is_killed:
             return {
@@ -1409,8 +1409,8 @@ class WeekendPreChecker:
 class DailyDigestGenerator:
     """Generate daily performance digest"""
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
     def generate_digest(self, for_date: str = None) -> Dict:
         """Generate daily performance digest"""
@@ -1591,7 +1591,7 @@ class ProposalValidator:
     - Statistical significance (default 95%)
     - Clear improvement in primary metric
 
-    Data is persisted to solomon_validations table for durability across restarts.
+    Data is persisted to proverbs_validations table for durability across restarts.
     """
 
     VALIDATION_REQUIREMENTS = {
@@ -1603,8 +1603,8 @@ class ProposalValidator:
         'shadow_mode_min_days': 3,
     }
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
         self._ab_tests: Dict[str, str] = {}  # proposal_id -> ab_test_id
         # In-memory cache, backed by database
         self._pending_validations: Dict[str, Dict] = {}
@@ -1625,7 +1625,7 @@ class ProposalValidator:
                        proposed_trades, proposed_wins, proposed_pnl, proposed_win_rate,
                        problem_statement, hypothesis, supporting_evidence,
                        expected_improvement, confidence_level, success_criteria, rollback_trigger
-                FROM solomon_validations
+                FROM proverbs_validations
                 WHERE status = 'RUNNING'
             """)
             rows = cursor.fetchall()
@@ -1685,7 +1685,7 @@ class ProposalValidator:
             proposed_perf = validation.get('proposed_performance', {})
 
             cursor.execute("""
-                INSERT INTO solomon_validations (
+                INSERT INTO proverbs_validations (
                     validation_id, proposal_id, bot_name, method, started_at,
                     current_config, proposed_config, status,
                     current_trades, current_wins, current_pnl, current_win_rate,
@@ -2032,14 +2032,14 @@ class ProposalValidator:
 
 
 # =============================================================================
-# ENHANCED SOLOMON CLASS
+# ENHANCED PROVERBS CLASS
 # =============================================================================
 
-class SolomonEnhanced:
+class ProverbsEnhanced:
     """
-    Enhanced Solomon with all advanced features.
+    Enhanced Proverbs with all advanced features.
 
-    Wraps the base Solomon instance and adds:
+    Wraps the base Proverbs instance and adds:
     - Consecutive loss monitoring
     - Daily loss monitoring
     - Version comparison
@@ -2054,27 +2054,27 @@ class SolomonEnhanced:
     - PROPOSAL VALIDATION (changes only apply if improvement is PROVEN)
     """
 
-    def __init__(self, solomon):
-        self.solomon = solomon
+    def __init__(self, proverbs):
+        self.proverbs = proverbs
 
         # Initialize all enhancement modules
-        self.consecutive_loss_monitor = ConsecutiveLossMonitor(solomon)
-        self.daily_loss_monitor = DailyLossMonitor(solomon)
-        self.version_comparer = VersionComparer(solomon)
-        self.time_analyzer = TimeOfDayAnalyzer(solomon)
-        self.cross_bot_analyzer = CrossBotAnalyzer(solomon)
-        self.regime_tracker = RegimePerformanceTracker(solomon)
-        self.ab_testing = ABTestingFramework(solomon)
-        self.approval_tiers = ApprovalTierManager(solomon)
-        self.rollback_cooldown = RollbackCooldownManager(solomon)
-        self.weekend_precheck = WeekendPreChecker(solomon)
-        self.daily_digest = DailyDigestGenerator(solomon)
-        self.proposal_validator = ProposalValidator(solomon)  # NEW: Validates improvements before applying
+        self.consecutive_loss_monitor = ConsecutiveLossMonitor(proverbs)
+        self.daily_loss_monitor = DailyLossMonitor(proverbs)
+        self.version_comparer = VersionComparer(proverbs)
+        self.time_analyzer = TimeOfDayAnalyzer(proverbs)
+        self.cross_bot_analyzer = CrossBotAnalyzer(proverbs)
+        self.regime_tracker = RegimePerformanceTracker(proverbs)
+        self.ab_testing = ABTestingFramework(proverbs)
+        self.approval_tiers = ApprovalTierManager(proverbs)
+        self.rollback_cooldown = RollbackCooldownManager(proverbs)
+        self.weekend_precheck = WeekendPreChecker(proverbs)
+        self.daily_digest = DailyDigestGenerator(proverbs)
+        self.proposal_validator = ProposalValidator(proverbs)  # NEW: Validates improvements before applying
 
         # Store proposal reasoning documents
         self._proposal_reasoning: Dict[str, ProposalReasoning] = {}
 
-        logger.info("Solomon Enhanced initialized with all modules including proposal validation")
+        logger.info("Proverbs Enhanced initialized with all modules including proposal validation")
 
     def record_trade_outcome(
         self,
@@ -2114,7 +2114,7 @@ class SolomonEnhanced:
         if daily_alert:
             alerts.append(daily_alert)
 
-        # Migration 023: Record enhanced feedback data to solomon_performance
+        # Migration 023: Record enhanced feedback data to proverbs_performance
         self._record_enhanced_outcome(
             bot_name=bot_name,
             pnl=pnl,
@@ -2142,7 +2142,7 @@ class SolomonEnhanced:
         direction_correct: bool = None
     ):
         """
-        Record enhanced outcome data to solomon_performance table.
+        Record enhanced outcome data to proverbs_performance table.
 
         Migration 023: This data enables strategy-level analysis of
         Iron Condor vs Directional effectiveness.
@@ -2161,9 +2161,9 @@ class SolomonEnhanced:
                 else:
                     strategy_type = 'IRON_CONDOR'
 
-            # Insert or update solomon_performance with enhanced data
+            # Insert or update proverbs_performance with enhanced data
             cursor.execute("""
-                INSERT INTO solomon_performance (
+                INSERT INTO proverbs_performance (
                     bot_name, trade_date, pnl, is_win,
                     strategy_type, outcome_type, oracle_advice,
                     oracle_prediction_id, direction_taken, direction_correct,
@@ -2172,12 +2172,12 @@ class SolomonEnhanced:
                 ON CONFLICT (bot_name, trade_date) DO UPDATE SET
                     pnl = EXCLUDED.pnl,
                     is_win = EXCLUDED.is_win,
-                    strategy_type = COALESCE(EXCLUDED.strategy_type, solomon_performance.strategy_type),
-                    outcome_type = COALESCE(EXCLUDED.outcome_type, solomon_performance.outcome_type),
-                    oracle_advice = COALESCE(EXCLUDED.oracle_advice, solomon_performance.oracle_advice),
-                    oracle_prediction_id = COALESCE(EXCLUDED.oracle_prediction_id, solomon_performance.oracle_prediction_id),
-                    direction_taken = COALESCE(EXCLUDED.direction_taken, solomon_performance.direction_taken),
-                    direction_correct = COALESCE(EXCLUDED.direction_correct, solomon_performance.direction_correct),
+                    strategy_type = COALESCE(EXCLUDED.strategy_type, proverbs_performance.strategy_type),
+                    outcome_type = COALESCE(EXCLUDED.outcome_type, proverbs_performance.outcome_type),
+                    oracle_advice = COALESCE(EXCLUDED.oracle_advice, proverbs_performance.oracle_advice),
+                    oracle_prediction_id = COALESCE(EXCLUDED.oracle_prediction_id, proverbs_performance.oracle_prediction_id),
+                    direction_taken = COALESCE(EXCLUDED.direction_taken, proverbs_performance.direction_taken),
+                    direction_correct = COALESCE(EXCLUDED.direction_correct, proverbs_performance.direction_correct),
                     updated_at = NOW()
             """, (
                 bot_name,
@@ -2195,10 +2195,10 @@ class SolomonEnhanced:
             conn.commit()
             conn.close()
 
-            logger.debug(f"Solomon: Enhanced outcome recorded for {bot_name} on {trade_date}")
+            logger.debug(f"Proverbs: Enhanced outcome recorded for {bot_name} on {trade_date}")
 
         except Exception as e:
-            logger.warning(f"Solomon: Failed to record enhanced outcome: {e}")
+            logger.warning(f"Proverbs: Failed to record enhanced outcome: {e}")
 
     def get_comprehensive_analysis(self, bot_name: str) -> Dict:
         """Get comprehensive analysis for a bot"""
@@ -2254,10 +2254,10 @@ class SolomonEnhanced:
         """
         Analyze performance by strategy type (Iron Condor vs Directional).
 
-        Migration 023: This enables Solomon to understand which strategy works
+        Migration 023: This enables Proverbs to understand which strategy works
         best in different market conditions and provide insights to Oracle.
 
-        Fix: Now queries unified_trades directly instead of solomon_performance
+        Fix: Now queries unified_trades directly instead of proverbs_performance
         to ensure we're analyzing actual trade data.
         """
         if not DB_AVAILABLE:
@@ -2374,7 +2374,7 @@ class SolomonEnhanced:
             }
 
         except Exception as e:
-            logger.error(f"Solomon: Failed to analyze strategies: {e}")
+            logger.error(f"Proverbs: Failed to analyze strategies: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def _generate_strategy_recommendation(self, ic_row, dir_row, ic_trades: int, dir_trades: int) -> str:
@@ -2568,7 +2568,7 @@ class SolomonEnhanced:
             }
 
         except Exception as e:
-            logger.error(f"Solomon: Failed to analyze Oracle accuracy: {e}")
+            logger.error(f"Proverbs: Failed to analyze Oracle accuracy: {e}")
             return {'status': 'error', 'message': str(e)}
 
     def _generate_oracle_accuracy_summary(self, advice_analysis: Dict) -> Dict:
@@ -2650,7 +2650,7 @@ class SolomonEnhanced:
 
         Returns dict with proposal_id, reasoning, and validation_id.
         """
-        from quant.solomon_feedback_loop import ProposalType
+        from quant.proverbs_feedback_loop import ProposalType
 
         # Create the reasoning document
         reasoning = self.proposal_validator.create_proposal_reasoning(
@@ -2673,8 +2673,8 @@ class SolomonEnhanced:
                 'issues': issues
             }
 
-        # Create the proposal in base Solomon
-        proposal_id = self.solomon.create_proposal(
+        # Create the proposal in base Proverbs
+        proposal_id = self.proverbs.create_proposal(
             bot_name=bot_name,
             proposal_type=ProposalType.MODEL_UPDATE,
             title=title,
@@ -2728,7 +2728,7 @@ class SolomonEnhanced:
             return self._proposal_reasoning[proposal_id].to_dict()
 
         # Fallback: Reconstruct reasoning from database proposal
-        proposals = self.solomon.get_pending_proposals()
+        proposals = self.proverbs.get_pending_proposals()
         proposal = next((p for p in proposals if p.get('proposal_id') == proposal_id), None)
 
         if not proposal:
@@ -2739,7 +2739,7 @@ class SolomonEnhanced:
                 cursor = conn.cursor()
                 cursor.execute(
                     "SELECT reason, supporting_metrics, expected_improvement, risk_factors, description "
-                    "FROM solomon_proposals WHERE proposal_id = %s",
+                    "FROM proverbs_proposals WHERE proposal_id = %s",
                     (proposal_id,)
                 )
                 row = cursor.fetchone()
@@ -2797,7 +2797,7 @@ class SolomonEnhanced:
         Returns detailed status on why/why not.
         """
         # First check if proposal exists and is not expired
-        proposals = self.solomon.get_pending_proposals()
+        proposals = self.proverbs.get_pending_proposals()
         proposal = next((p for p in proposals if p.get('proposal_id') == proposal_id), None)
 
         if not proposal:
@@ -2898,8 +2898,8 @@ class SolomonEnhanced:
         # Get reasoning for logging
         reasoning = self.get_proposal_reasoning(proposal_id)
 
-        # Apply via base Solomon
-        success = self.solomon.approve_proposal(
+        # Apply via base Proverbs
+        success = self.proverbs.approve_proposal(
             proposal_id=proposal_id,
             reviewer=reviewer,
             notes=f"VALIDATED: Improvement proven. {can_apply_result.get('message', '')}"
@@ -2908,8 +2908,8 @@ class SolomonEnhanced:
         if success:
             # Log the detailed reasoning
             # Import ActionType for logging
-            from quant.solomon_feedback_loop import ActionType
-            self.solomon.log_action(
+            from quant.proverbs_feedback_loop import ActionType
+            self.proverbs.log_action(
                 bot_name=reasoning.get('bot_name', 'UNKNOWN') if reasoning else 'UNKNOWN',
                 action_type=ActionType.PROPOSAL_APPROVED,
                 description=f"Proposal {proposal_id} applied after validation proved improvement",
@@ -2972,8 +2972,8 @@ class SolomonEnhanced:
 
         This shows ALL the details of WHY a change is being made.
         """
-        # Get proposal from base Solomon
-        proposals = self.solomon.get_pending_proposals()
+        # Get proposal from base Proverbs
+        proposals = self.proverbs.get_pending_proposals()
         proposal = None
         for p in proposals:
             if p.get('proposal_id') == proposal_id:
@@ -2982,7 +2982,7 @@ class SolomonEnhanced:
 
         if not proposal:
             # Check audit log for applied proposals
-            audit = self.solomon.get_audit_log(limit=100)
+            audit = self.proverbs.get_audit_log(limit=100)
             for entry in audit:
                 if entry.get('proposal_id') == proposal_id:
                     proposal = entry
@@ -2997,7 +2997,7 @@ class SolomonEnhanced:
 
             # WHO is making the change
             'who': {
-                'proposed_by': 'SOLOMON' if proposal else 'Unknown',
+                'proposed_by': 'PROVERBS' if proposal else 'Unknown',
                 'requires_approval_from': 'Human operator',
                 'approval_status': proposal.get('status', 'Unknown') if proposal else 'Unknown'
             },
@@ -3053,16 +3053,16 @@ class SolomonEnhanced:
 # SINGLETON
 # =============================================================================
 
-_enhanced: Optional[SolomonEnhanced] = None
+_enhanced: Optional[ProverbsEnhanced] = None
 
 
-def get_solomon_enhanced():
-    """Get or create enhanced Solomon singleton"""
+def get_proverbs_enhanced():
+    """Get or create enhanced Proverbs singleton"""
     global _enhanced
 
     if _enhanced is None:
-        from quant.solomon_feedback_loop import get_solomon
-        _enhanced = SolomonEnhanced(get_solomon())
+        from quant.proverbs_feedback_loop import get_proverbs
+        _enhanced = ProverbsEnhanced(get_proverbs())
 
     return _enhanced
 
@@ -3076,7 +3076,7 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    enhanced = get_solomon_enhanced()
+    enhanced = get_proverbs_enhanced()
 
     if len(sys.argv) > 1:
         command = sys.argv[1]
@@ -3101,5 +3101,5 @@ if __name__ == "__main__":
         else:
             print(f"Unknown command: {command}")
     else:
-        print("Solomon Enhanced - Advanced Features")
+        print("Proverbs Enhanced - Advanced Features")
         print("Commands: analysis [bot], correlations, digest, precheck")

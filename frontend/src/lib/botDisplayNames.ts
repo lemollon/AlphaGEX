@@ -193,7 +193,7 @@ export const ADVISOR_SCRIPTURES: Record<string, BotScripture> = {
     reference: 'Philippians 1:9-10',
     why: 'The ML Scanner discerns trading opportunities from noise, separating signal from static.',
   },
-  SOLOMON: {
+  PROVERBS: {
     displayName: 'PROVERBS',
     verse: '"The proverbs of Solomon son of David, king of Israel: for gaining wisdom and instruction; for understanding words of insight."',
     reference: 'Proverbs 1:1-2',
@@ -234,7 +234,7 @@ export const ADVISOR_DISPLAY_NAMES = {
   KRONOS: ADVISOR_SCRIPTURES.KRONOS.displayName,
   HYPERION: ADVISOR_SCRIPTURES.HYPERION.displayName,
   APOLLO: ADVISOR_SCRIPTURES.APOLLO.displayName,
-  SOLOMON: ADVISOR_SCRIPTURES.SOLOMON.displayName,
+  PROVERBS: ADVISOR_SCRIPTURES.PROVERBS.displayName,
   NEXUS: ADVISOR_SCRIPTURES.NEXUS.displayName,
 } as const
 

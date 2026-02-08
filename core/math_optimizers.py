@@ -3,7 +3,7 @@ AlphaGEX Mathematical Optimization Algorithms
 ==============================================
 
 This module implements advanced mathematical algorithms to enhance trading bot
-performance. These algorithms integrate with Solomon's feedback loop to provide
+performance. These algorithms integrate with Proverbs's feedback loop to provide
 continuous optimization while maintaining full transparency and human oversight.
 
 ALGORITHMS IMPLEMENTED:
@@ -14,8 +14,8 @@ ALGORITHMS IMPLEMENTED:
 5. Hamilton-Jacobi-Bellman (HJB) - Optimal exit timing
 6. Markov Decision Process (MDP) - Trade sequencing optimization
 
-SOLOMON INTEGRATION:
-Each algorithm logs its decisions to Solomon's audit trail with:
+PROVERBS INTEGRATION:
+Each algorithm logs its decisions to Proverbs's audit trail with:
 - WHO: Which algorithm made the decision
 - WHAT: The specific optimization performed
 - WHY: Mathematical justification (metrics, probabilities)
@@ -65,7 +65,7 @@ class MarketRegime(Enum):
 
 
 class OptimizationAction(Enum):
-    """Actions logged to Solomon"""
+    """Actions logged to Proverbs"""
     HMM_REGIME_UPDATE = "HMM_REGIME_UPDATE"
     KALMAN_SMOOTHING = "KALMAN_SMOOTHING"
     THOMPSON_ALLOCATION = "THOMPSON_ALLOCATION"
@@ -1364,7 +1364,7 @@ class MathOptimizerOrchestrator:
     """
     Central orchestrator for all mathematical optimizers.
 
-    Integrates with Solomon's feedback loop for:
+    Integrates with Proverbs's feedback loop for:
     - Logging all optimization decisions
     - Tracking performance of each algorithm
     - Enabling A/B testing of optimizations
@@ -1379,8 +1379,8 @@ class MathOptimizerOrchestrator:
         self.hjb_exit = HJBExitOptimizer()
         self.mdp_sequencer = MDPTradeSequencer()
 
-        # Solomon integration (lazy load)
-        self._solomon = None
+        # Proverbs integration (lazy load)
+        self._proverbs = None
 
         # Performance tracking
         self.optimization_counts = defaultdict(int)
@@ -1389,29 +1389,29 @@ class MathOptimizerOrchestrator:
         logger.info("Math Optimizer Orchestrator initialized with all algorithms")
 
     @property
-    def solomon(self):
-        """Lazy load Solomon for logging"""
-        if self._solomon is None:
+    def proverbs(self):
+        """Lazy load Proverbs for logging"""
+        if self._proverbs is None:
             try:
-                from quant.solomon_feedback_loop import get_solomon
-                self._solomon = get_solomon()
+                from quant.proverbs_feedback_loop import get_proverbs
+                self._proverbs = get_proverbs()
             except ImportError:
-                logger.debug("Solomon not available for optimizer logging")
-        return self._solomon
+                logger.debug("Proverbs not available for optimizer logging")
+        return self._proverbs
 
-    def log_to_solomon(
+    def log_to_proverbs(
         self,
         action: OptimizationAction,
         description: str,
         bot_name: str = "SYSTEM",
         justification: Dict = None
     ):
-        """Log optimization action to Solomon audit trail"""
-        if self.solomon:
+        """Log optimization action to Proverbs audit trail"""
+        if self.proverbs:
             try:
-                from quant.solomon_feedback_loop import ActionType
+                from quant.proverbs_feedback_loop import ActionType
 
-                # Map our action to Solomon's action type
+                # Map our action to Proverbs's action type
                 action_map = {
                     OptimizationAction.HMM_REGIME_UPDATE: "FEEDBACK_LOOP_RUN",
                     OptimizationAction.KALMAN_SMOOTHING: "FEEDBACK_LOOP_RUN",
@@ -1421,7 +1421,7 @@ class MathOptimizerOrchestrator:
                     OptimizationAction.MDP_TRADE_SEQUENCE: "FEEDBACK_LOOP_RUN"
                 }
 
-                self.solomon.log_action(
+                self.proverbs.log_action(
                     bot_name=bot_name,
                     action_type=ActionType.FEEDBACK_LOOP_RUN,
                     description=f"[{action.value}] {description}",
@@ -1429,7 +1429,7 @@ class MathOptimizerOrchestrator:
                     justification=justification or {}
                 )
             except Exception as e:
-                logger.debug(f"Could not log to Solomon: {e}")
+                logger.debug(f"Could not log to Proverbs: {e}")
 
     # Convenience methods that combine algorithms
 
@@ -1458,7 +1458,7 @@ class MathOptimizerOrchestrator:
             result['regime'] = regime_state.to_dict()
             result['analysis']['regime_probabilities'] = self.hmm_regime.get_regime_probabilities()
 
-            self.log_to_solomon(
+            self.log_to_proverbs(
                 OptimizationAction.HMM_REGIME_UPDATE,
                 f"Regime: {regime_state.regime.value} (prob={regime_state.probability:.2%})",
                 justification=regime_state.to_dict()
@@ -1469,7 +1469,7 @@ class MathOptimizerOrchestrator:
             kalman_results = self.kalman_greeks.update(market_data['greeks'])
             result['smoothed_greeks'] = self.kalman_greeks.get_smoothed_greeks()
 
-            self.log_to_solomon(
+            self.log_to_proverbs(
                 OptimizationAction.KALMAN_SMOOTHING,
                 f"Smoothed {len(kalman_results)} Greeks",
                 justification={'smoothed': result['smoothed_greeks']}
@@ -1479,7 +1479,7 @@ class MathOptimizerOrchestrator:
         allocation = self.thompson.sample_allocation()
         result['allocations'] = allocation.to_dict()
 
-        self.log_to_solomon(
+        self.log_to_proverbs(
             OptimizationAction.THOMPSON_ALLOCATION,
             f"Capital allocation: {', '.join(f'{b}:{a:.1%}' for b, a in allocation.allocations.items())}",
             justification=allocation.to_dict()
@@ -1523,7 +1523,7 @@ class MathOptimizerOrchestrator:
             )
             result['optimized']['strike'] = strike_opt.to_dict()
 
-            self.log_to_solomon(
+            self.log_to_proverbs(
                 OptimizationAction.CONVEX_STRIKE_OPTIMIZATION,
                 f"Strike optimized: {strike_opt.original_strike} → {strike_opt.optimized_strike} ({strike_opt.improvement_pct:.1f}% improvement)",
                 bot_name=signal.get('bot', 'SYSTEM'),
@@ -1539,7 +1539,7 @@ class MathOptimizerOrchestrator:
         result['optimized']['sequencing'] = sequence.to_dict()
 
         if sequence.skipped_trades:
-            self.log_to_solomon(
+            self.log_to_proverbs(
                 OptimizationAction.MDP_TRADE_SEQUENCE,
                 f"Trade sequencing: {len(sequence.optimized_order)} execute, {len(sequence.skipped_trades)} skip",
                 bot_name=signal.get('bot', 'SYSTEM'),
@@ -1585,7 +1585,7 @@ class MathOptimizerOrchestrator:
         )
 
         if signal.should_exit:
-            self.log_to_solomon(
+            self.log_to_proverbs(
                 OptimizationAction.HJB_EXIT_SIGNAL,
                 f"Exit signal: {signal.reason}",
                 bot_name=position.get('bot', 'SYSTEM'),

@@ -9,7 +9,7 @@ Tests cover:
 5. API Authentication
 6. Pydantic Models
 
-Note: Circuit Breaker tests removed - module deprecated in favor of Solomon Enhancements
+Note: Circuit Breaker tests removed - module deprecated in favor of Proverbs Enhancements
 """
 
 import pytest

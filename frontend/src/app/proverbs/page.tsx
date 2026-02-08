@@ -67,7 +67,7 @@ const AutomatedScheduleIndicator = ({ lastRun, nextRun }: { lastRun: string | nu
 
   useEffect(() => {
     const calculateNextRun = () => {
-      // Solomon runs at 4:00 PM CT (16:00) every weekday
+      // Proverbs runs at 4:00 PM CT (16:00) every weekday
       const now = new Date()
       const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
       const ctHour = ct.getHours()
@@ -558,13 +558,13 @@ const ProposalCard = ({
       setLoadingValidation(true)
       try {
         // Fetch validation status using apiClient
-        const validationRes = await apiClient.getSolomonValidationCanApply(proposal.proposal_id)
+        const validationRes = await apiClient.getProverbsValidationCanApply(proposal.proposal_id)
         if (validationRes.data) {
           setValidationStatus(validationRes.data)
         }
 
         // Fetch detailed reasoning using apiClient
-        const reasoningRes = await apiClient.getSolomonProposalReasoning(proposal.proposal_id)
+        const reasoningRes = await apiClient.getProverbsProposalReasoning(proposal.proposal_id)
         if (reasoningRes.data?.reasoning) {
           setReasoning(reasoningRes.data.reasoning)
         }
@@ -1056,7 +1056,7 @@ const VersionModal = ({
 
 // ==================== MAIN PAGE ====================
 
-export default function SolomonPage() {
+export default function ProverbsPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -1082,12 +1082,12 @@ export default function SolomonPage() {
   const fetchAnalytics = useCallback(async (bot: string) => {
     try {
       const [digestRes, corrRes, timeRes, strategyRes, oracleRes] = await Promise.all([
-        apiClient.getSolomonEnhancedDigest(),
-        apiClient.getSolomonEnhancedCorrelations(),
-        apiClient.getSolomonEnhancedTimeAnalysis(bot),
+        apiClient.getProverbsEnhancedDigest(),
+        apiClient.getProverbsEnhancedCorrelations(),
+        apiClient.getProverbsEnhancedTimeAnalysis(bot),
         // Migration 023: Fetch strategy analysis
-        apiClient.getSolomonStrategyAnalysis(),
-        apiClient.getSolomonOracleAccuracy()
+        apiClient.getProverbsStrategyAnalysis(),
+        apiClient.getProverbsOracleAccuracy()
       ])
       setDailyDigest(digestRes.data)
       setCorrelations(corrRes.data)
@@ -1101,13 +1101,13 @@ export default function SolomonPage() {
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const response = await apiClient.getSolomonDashboard()
+      const response = await apiClient.getProverbsDashboard()
       setDashboard(response.data)
       setLastRefresh(new Date())
       setError(null)
     } catch (err) {
       console.error('Failed to fetch dashboard:', err)
-      setError('Failed to load Solomon dashboard')
+      setError('Failed to load Proverbs dashboard')
     } finally {
       setLoading(false)
     }
@@ -1129,7 +1129,7 @@ export default function SolomonPage() {
     if (!reason) return
 
     try {
-      await apiClient.activateSolomonKillswitch(botName, {
+      await apiClient.activateProverbsKillswitch(botName, {
         reason,
         user: 'Dashboard User'
       })
@@ -1142,7 +1142,7 @@ export default function SolomonPage() {
 
   const handleResumeBot = async (botName: string) => {
     try {
-      await apiClient.deactivateSolomonKillswitch(botName, {
+      await apiClient.deactivateProverbsKillswitch(botName, {
         user: 'Dashboard User'
       })
       fetchDashboard()
@@ -1154,7 +1154,7 @@ export default function SolomonPage() {
 
   const handleViewVersions = async (botName: string) => {
     try {
-      const response = await apiClient.getSolomonVersions(botName)
+      const response = await apiClient.getProverbsVersions(botName)
       setVersions(response.data.versions || [])
       setVersionModalBot(botName)
     } catch (err) {
@@ -1165,7 +1165,7 @@ export default function SolomonPage() {
 
   const handleApproveProposal = async (proposalId: string, notes: string) => {
     try {
-      await apiClient.approveSolomonProposal(proposalId, {
+      await apiClient.approveProverbsProposal(proposalId, {
         reviewer: 'Dashboard User',
         notes
       })
@@ -1182,7 +1182,7 @@ export default function SolomonPage() {
       return
     }
     try {
-      await apiClient.rejectSolomonProposal(proposalId, {
+      await apiClient.rejectProverbsProposal(proposalId, {
         reviewer: 'Dashboard User',
         notes
       })
@@ -1196,7 +1196,7 @@ export default function SolomonPage() {
   const handleRollback = async (versionId: string, reason: string) => {
     if (!versionModalBot) return
     try {
-      await apiClient.rollbackSolomonBot(versionModalBot, {
+      await apiClient.rollbackProverbsBot(versionModalBot, {
         to_version_id: versionId,
         reason,
         user: 'Dashboard User'
@@ -1211,7 +1211,7 @@ export default function SolomonPage() {
 
   const handleActivateVersion = async (versionId: string) => {
     try {
-      await apiClient.activateSolomonVersion(versionId, 'Dashboard User')
+      await apiClient.activateProverbsVersion(versionId, 'Dashboard User')
       handleViewVersions(versionModalBot!)
       fetchDashboard()
     } catch (err) {
@@ -1240,7 +1240,7 @@ export default function SolomonPage() {
         <main className="max-w-7xl mx-auto px-4 py-8 pt-24">
           <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-6 text-center">
             <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-red-400 mb-2">Solomon Unavailable</h2>
+            <h2 className="text-xl font-bold text-red-400 mb-2">Proverbs Unavailable</h2>
             <p className="text-gray-400">{error || 'Could not load dashboard data'}</p>
             <button
               onClick={fetchDashboard}
@@ -1270,7 +1270,7 @@ export default function SolomonPage() {
               <Brain className="w-8 h-8 text-purple-400" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">SOLOMON</h1>
+              <h1 className="text-2xl font-bold text-white">PROVERBS</h1>
               <p className="text-gray-400 italic">"Iron sharpens iron, and one man sharpens another."</p>
               <p className="text-gray-500 text-xs">Proverbs 27:17 — Feedback Loop Intelligence System</p>
             </div>
@@ -1809,11 +1809,11 @@ export default function SolomonPage() {
                       <span className="font-medium">Autonomous Mode Active</span>
                     </div>
                     <div className="text-xs text-gray-400 mt-1">
-                      Solomon runs daily at 4:00 PM CT and auto-applies proven improvements
+                      Proverbs runs daily at 4:00 PM CT and auto-applies proven improvements
                     </div>
                   </div>
                   <button
-                    onClick={() => apiClient.getSolomonWeekendPrecheck().then(r => alert(JSON.stringify(r.data, null, 2)))}
+                    onClick={() => apiClient.getProverbsWeekendPrecheck().then(r => alert(JSON.stringify(r.data, null, 2)))}
                     className="w-full text-left px-3 py-2 bg-gray-900/50 rounded text-sm text-gray-300 hover:bg-gray-700 transition-colors"
                   >
                     Weekend Pre-Check Analysis
