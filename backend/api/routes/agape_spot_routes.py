@@ -1,25 +1,32 @@
 """
-AGAPE-SPOT API Routes - 24/7 Coinbase Spot ETH-USD Trading Bot endpoints.
+AGAPE-SPOT API Routes - Multi-ticker, long-only 24/7 Coinbase Spot trading.
 
-AGAPE-SPOT trades spot ETH-USD on Coinbase, using crypto market microstructure
-signals as GEX equivalents. Unlike AGAPE (CME futures), this bot trades 24/7
-with no exchange closures.
+Supports: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+LONG-ONLY: P&L = (current_price - entry_price) * quantity (always long).
 
-Endpoints follow the standard bot pattern:
-  /status        - Bot health and config
-  /positions     - Open positions with unrealized P&L
-  /closed-trades - Completed trade history
-  /equity-curve  - Historical equity curve
-  /performance   - Win rate, P&L, statistics
-  /logs          - Activity log
-  /scan-activity - Scan history (every cycle logged)
-  /snapshot      - Current crypto market microstructure
-  /signal        - Generate a signal (dry run)
+All endpoints accept an optional ``?ticker=`` query param to filter by a
+specific ticker (e.g. ``ETH-USD``).  When omitted the endpoint returns data
+aggregated across ALL active tickers.
+
+Standard bot endpoints:
+  /tickers        - Supported tickers with per-coin config
+  /summary        - Overview of all tickers: P&L, positions, win rate, price
+  /status         - Bot health and config (per-ticker or combined)
+  /positions      - Open positions with unrealized P&L
+  /closed-trades  - Completed trade history
+  /equity-curve   - Historical equity curve (requires ?ticker=)
+  /equity-curve/intraday - Today's intraday equity (requires ?ticker=)
+  /performance    - Win rate, P&L, statistics
+  /logs           - Activity log
+  /scan-activity  - Scan history (every cycle logged)
+  /snapshot       - Current crypto market microstructure
+  /signal         - Generate a signal (dry run)
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from fastapi import APIRouter, HTTPException, Query
 from zoneinfo import ZoneInfo
 
@@ -29,12 +36,18 @@ router = APIRouter(prefix="/api/agape-spot", tags=["AGAPE-SPOT"])
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
+# ---------------------------------------------------------------------------
 # Graceful imports
+# ---------------------------------------------------------------------------
+
 AGAPE_SPOT_AVAILABLE = False
-AgapeSpotTrader = None
 get_agape_spot_trader = None
+create_agape_spot_trader = None
+SPOT_TICKERS: Dict = {}
+
 try:
-    from trading.agape_spot.trader import AgapeSpotTrader, get_agape_spot_trader, create_agape_spot_trader
+    from trading.agape_spot.trader import get_agape_spot_trader, create_agape_spot_trader
+    from trading.agape_spot.models import SPOT_TICKERS
     AGAPE_SPOT_AVAILABLE = True
     logger.info("AGAPE-SPOT Routes: AgapeSpotTrader loaded")
 except ImportError as e:
@@ -48,7 +61,7 @@ try:
 except ImportError:
     pass
 
-# Database adapter
+# Database adapter (used by equity-curve raw SQL path)
 get_connection = None
 try:
     from database_adapter import get_connection
@@ -56,8 +69,12 @@ except ImportError:
     pass
 
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
 def _get_trader():
-    """Get or lazily create the AGAPE-SPOT trader instance."""
+    """Get or lazily create the AGAPE-SPOT trader singleton."""
     if not AGAPE_SPOT_AVAILABLE:
         return None
     trader = get_agape_spot_trader()
@@ -75,19 +92,58 @@ def _format_ct(dt: Optional[datetime] = None) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S CT")
 
 
-# ------------------------------------------------------------------
-# Bot Status
-# ------------------------------------------------------------------
+_VALID_TICKERS = {"ETH-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"}
 
-@router.get("/status")
-async def get_status():
-    """Get AGAPE-SPOT bot status, configuration, and open positions.
 
-    Returns:
-    - Bot health (active/disabled)
-    - Current ETH spot price
-    - Open position count and details
-    - Configuration parameters
+def _validate_ticker(ticker: Optional[str]) -> Optional[str]:
+    """Validate a ticker string.  Returns the normalised ticker or None."""
+    if ticker is None:
+        return None
+    ticker = ticker.strip().upper()
+    if ticker not in _VALID_TICKERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid ticker '{ticker}'. Supported: {sorted(_VALID_TICKERS)}",
+        )
+    return ticker
+
+
+# ---------------------------------------------------------------------------
+# Ticker & Summary endpoints (NEW)
+# ---------------------------------------------------------------------------
+
+@router.get("/tickers")
+async def list_tickers():
+    """List all supported tickers with their per-coin configuration.
+
+    Returns capital allocation, display names, order sizing, etc.
+    """
+    trader = _get_trader()
+    active_tickers: List[str] = []
+    if trader:
+        active_tickers = list(trader.config.tickers)
+
+    tickers_out = {}
+    for ticker_key, cfg in SPOT_TICKERS.items():
+        tickers_out[ticker_key] = {
+            **cfg,
+            "active": ticker_key in active_tickers,
+        }
+
+    return {
+        "success": True,
+        "data": tickers_out,
+        "active_tickers": active_tickers,
+        "count": len(tickers_out),
+        "fetched_at": _format_ct(),
+    }
+
+
+@router.get("/summary")
+async def get_summary():
+    """Overview of ALL tickers: per-ticker P&L, positions, win rate, current price.
+
+    This is the primary multi-ticker dashboard endpoint.
     """
     trader = _get_trader()
     if not trader:
@@ -99,10 +155,128 @@ async def get_status():
         }
 
     try:
-        status = trader.get_status()
+        tickers = trader.config.tickers
+        per_ticker: Dict[str, Dict] = {}
+        totals = {
+            "starting_capital": 0.0,
+            "current_balance": 0.0,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+            "total_pnl": 0.0,
+            "open_positions": 0,
+            "total_trades": 0,
+            "wins": 0,
+            "losses": 0,
+        }
+
+        for ticker in tickers:
+            current_price = trader.executor.get_current_price(ticker)
+            starting_capital = trader.config.get_starting_capital(ticker)
+
+            open_positions = trader.db.get_open_positions(ticker=ticker)
+            closed_trades = trader.db.get_closed_trades(ticker=ticker, limit=10000)
+
+            # Unrealized P&L (long-only)
+            unrealized_pnl = 0.0
+            if current_price and open_positions:
+                for pos in open_positions:
+                    qty = pos.get("quantity", pos.get("eth_quantity", 0.1))
+                    unrealized_pnl += (current_price - pos["entry_price"]) * qty
+
+            realized_pnl = sum(t.get("realized_pnl", 0) for t in closed_trades) if closed_trades else 0.0
+            total_pnl = realized_pnl + unrealized_pnl
+            current_balance = starting_capital + total_pnl
+
+            wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0] if closed_trades else []
+            losses_list = [t for t in closed_trades if (t.get("realized_pnl") or 0) <= 0] if closed_trades else []
+            win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None
+
+            display_name = SPOT_TICKERS.get(ticker, {}).get("display_name", ticker)
+
+            per_ticker[ticker] = {
+                "ticker": ticker,
+                "display_name": display_name,
+                "current_price": current_price,
+                "starting_capital": starting_capital,
+                "current_balance": round(current_balance, 2),
+                "realized_pnl": round(realized_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "total_pnl": round(total_pnl, 2),
+                "return_pct": round(total_pnl / starting_capital * 100, 2) if starting_capital else 0,
+                "open_positions": len(open_positions),
+                "total_trades": len(closed_trades) if closed_trades else 0,
+                "wins": len(wins),
+                "losses": len(losses_list),
+                "win_rate": win_rate,
+            }
+
+            totals["starting_capital"] += starting_capital
+            totals["current_balance"] += current_balance
+            totals["realized_pnl"] += realized_pnl
+            totals["unrealized_pnl"] += unrealized_pnl
+            totals["total_pnl"] += total_pnl
+            totals["open_positions"] += len(open_positions)
+            totals["total_trades"] += len(closed_trades) if closed_trades else 0
+            totals["wins"] += len(wins)
+            totals["losses"] += len(losses_list)
+
+        # Round totals
+        for key in ("starting_capital", "current_balance", "realized_pnl",
+                     "unrealized_pnl", "total_pnl"):
+            totals[key] = round(totals[key], 2)
+        totals["return_pct"] = (
+            round(totals["total_pnl"] / totals["starting_capital"] * 100, 2)
+            if totals["starting_capital"] else 0
+        )
+        totals["win_rate"] = (
+            round(totals["wins"] / totals["total_trades"] * 100, 1)
+            if totals["total_trades"] else None
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "tickers": per_ticker,
+                "totals": totals,
+            },
+            "active_tickers": list(tickers),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT summary error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Bot Status
+# ---------------------------------------------------------------------------
+
+@router.get("/status")
+async def get_status(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker (e.g. ETH-USD)"),
+):
+    """Get AGAPE-SPOT bot status, configuration, and open positions.
+
+    If ``?ticker=`` is provided, returns status for that single ticker.
+    Otherwise returns a combined summary across all tickers.
+    """
+    ticker = _validate_ticker(ticker)
+
+    trader = _get_trader()
+    if not trader:
+        return {
+            "success": False,
+            "data_unavailable": True,
+            "reason": "AGAPE-SPOT trader not initialized",
+            "message": "AGAPE-SPOT module not available",
+        }
+
+    try:
+        status = trader.get_status(ticker=ticker)
         return {
             "success": True,
             "data": status,
+            "ticker_filter": ticker,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -110,34 +284,39 @@ async def get_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Positions
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @router.get("/positions")
-async def get_positions():
-    """Get all open AGAPE-SPOT positions with unrealized P&L.
+async def get_positions(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker (e.g. ETH-USD)"),
+):
+    """Get open AGAPE-SPOT positions with unrealized P&L.
 
-    Each position includes:
-    - Entry details (price, side, eth_quantity)
-    - Market context at entry (funding, L/S, squeeze risk)
-    - Oracle context (advice, win probability)
-    - Current unrealized P&L
+    LONG-ONLY: P&L = (current_price - entry_price) * quantity.
+    Each position dict includes a ``ticker`` field.
     """
+    ticker = _validate_ticker(ticker)
+
     trader = _get_trader()
     if not trader:
         return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
-        positions = trader.db.get_open_positions()
-        current_price = trader.executor.get_current_price()
+        positions = trader.db.get_open_positions(ticker=ticker)
 
-        # Add unrealized P&L
-        # AGAPE-SPOT: P&L = (current - entry) * eth_quantity * direction
+        # Compute unrealized P&L per position, grouping price lookups by ticker
+        price_cache: Dict[str, Optional[float]] = {}
         for pos in positions:
+            pos_ticker = pos.get("ticker", "ETH-USD")
+            if pos_ticker not in price_cache:
+                price_cache[pos_ticker] = trader.executor.get_current_price(pos_ticker)
+
+            current_price = price_cache[pos_ticker]
             if current_price:
-                direction = 1 if pos["side"] == "long" else -1
-                pnl = (current_price - pos["entry_price"]) * pos.get("eth_quantity", 0.1) * direction
+                qty = pos.get("quantity", pos.get("eth_quantity", 0.1))
+                pnl = (current_price - pos["entry_price"]) * qty
                 pos["unrealized_pnl"] = round(pnl, 2)
                 pos["current_price"] = current_price
             else:
@@ -148,7 +327,7 @@ async def get_positions():
             "success": True,
             "data": positions,
             "count": len(positions),
-            "current_eth_price": current_price,
+            "ticker_filter": ticker,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -158,19 +337,23 @@ async def get_positions():
 
 @router.get("/closed-trades")
 async def get_closed_trades(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker (e.g. ETH-USD)"),
     limit: int = Query(default=50, le=500, description="Number of trades to return"),
 ):
-    """Get closed/expired trade history."""
+    """Get closed/expired trade history, optionally filtered by ticker."""
+    ticker = _validate_ticker(ticker)
+
     trader = _get_trader()
     if not trader:
         return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
-        trades = trader.db.get_closed_trades(limit=limit)
+        trades = trader.db.get_closed_trades(ticker=ticker, limit=limit)
         return {
             "success": True,
             "data": trades,
             "count": len(trades),
+            "ticker_filter": ticker,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -178,100 +361,75 @@ async def get_closed_trades(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Equity Curve
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @router.get("/equity-curve")
 async def get_equity_curve(
+    ticker: Optional[str] = Query(
+        default=None,
+        description="Ticker to build the equity curve for (e.g. ETH-USD). "
+                    "Required so we know which starting_capital to use.",
+    ),
     days: int = Query(default=30, ge=1, le=365, description="Number of days to return"),
 ):
-    """Get historical equity curve built from all closed trades.
+    """Get historical equity curve built from closed trades.
 
-    Returns EXACT same format as HERACLES /paper-equity-curve so that
-    MultiBotEquityCurve component can render it without any adaptation.
+    ``?ticker=`` is required so that the correct per-coin starting capital is
+    used.  Without it the endpoint returns an error asking for a ticker.
 
-    Format: { equity_curve: [...], points: N, days: N, timestamp: "..." }
+    Format matches the standard MultiBotEquityCurve component:
+    ``{ equity_curve: [...], points: N, days: N, timestamp: "..." }``
     """
+    ticker = _validate_ticker(ticker)
+
+    if ticker is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The ?ticker= query param is required for equity-curve so we "
+                "know which starting_capital to use. "
+                f"Supported tickers: {sorted(_VALID_TICKERS)}"
+            ),
+        )
+
+    # Determine starting capital for this ticker
+    trader = _get_trader()
+    if trader:
+        starting_capital = trader.config.get_starting_capital(ticker)
+    else:
+        starting_capital = SPOT_TICKERS.get(ticker, {}).get("starting_capital", 1000.0)
+
+    now = datetime.now(CENTRAL_TZ)
+
     if not get_connection:
-        now = datetime.now(CENTRAL_TZ)
-        return {
-            "success": True,
-            "data": {
-                "equity_curve": [{
-                    "date": now.strftime("%Y-%m-%d"),
-                    "daily_pnl": 0.0,
-                    "cumulative_pnl": 0.0,
-                    "equity": 5000.0,
-                    "trades": 0,
-                    "return_pct": 0.0,
-                }],
-                "starting_capital": 5000.0,
-                "current_equity": 5000.0,
-                "total_pnl": 0.0,
-                "total_return_pct": 0.0,
-            },
-            "points": 1,
-            "days": days,
-            "timestamp": now.isoformat(),
-        }
+        return _equity_curve_empty(now, starting_capital, days, ticker)
 
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get starting capital from config (key/value schema with agape_spot_ prefix)
-        starting_capital = 5000.0
-        try:
-            cursor.execute(
-                "SELECT value FROM autonomous_config WHERE key = 'agape_spot_starting_capital'"
-            )
-            row = cursor.fetchone()
-            if row and row[0]:
-                starting_capital = float(row[0])
-        except Exception:
-            pass
-
-        # Get ALL closed trades ordered chronologically (no date filter on SQL)
+        # Get ALL closed trades for this ticker ordered chronologically
         cursor.execute("""
             SELECT
-                (close_time AT TIME ZONE 'America/Chicago')::date as trade_date,
+                (close_time AT TIME ZONE 'America/Chicago')::date AS trade_date,
                 realized_pnl,
                 position_id
             FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
               AND close_time IS NOT NULL
               AND realized_pnl IS NOT NULL
+              AND ticker = %s
             ORDER BY close_time ASC
-        """)
+        """, (ticker,))
         rows = cursor.fetchall()
 
         if not rows:
-            now = datetime.now(CENTRAL_TZ)
-            return {
-                "success": True,
-                "data": {
-                    "equity_curve": [{
-                        "date": now.strftime("%Y-%m-%d"),
-                        "daily_pnl": 0.0,
-                        "cumulative_pnl": 0.0,
-                        "equity": starting_capital,
-                        "trades": 0,
-                        "return_pct": 0.0,
-                    }],
-                    "starting_capital": starting_capital,
-                    "current_equity": starting_capital,
-                    "total_pnl": 0.0,
-                    "total_return_pct": 0.0,
-                },
-                "points": 1,
-                "days": days,
-                "timestamp": now.isoformat(),
-            }
+            return _equity_curve_empty(now, starting_capital, days, ticker)
 
         # Aggregate by day
-        from collections import defaultdict
         daily: Dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
         for row in rows:
             trade_date = str(row[0])
@@ -315,9 +473,10 @@ async def get_equity_curve(
                 "total_pnl": round(total_pnl, 2),
                 "total_return_pct": round(total_pnl / starting_capital * 100, 2),
             },
+            "ticker": ticker,
             "points": len(equity_curve),
             "days": days,
-            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+            "timestamp": now.isoformat(),
         }
 
     except Exception as e:
@@ -328,114 +487,156 @@ async def get_equity_curve(
             conn.close()
 
 
+def _equity_curve_empty(now: datetime, starting_capital: float, days: int, ticker: str):
+    """Return a valid equity curve response when no trade data exists."""
+    return {
+        "success": True,
+        "data": {
+            "equity_curve": [{
+                "date": now.strftime("%Y-%m-%d"),
+                "daily_pnl": 0.0,
+                "cumulative_pnl": 0.0,
+                "equity": starting_capital,
+                "trades": 0,
+                "return_pct": 0.0,
+            }],
+            "starting_capital": starting_capital,
+            "current_equity": starting_capital,
+            "total_pnl": 0.0,
+            "total_return_pct": 0.0,
+        },
+        "ticker": ticker,
+        "points": 1,
+        "days": days,
+        "timestamp": now.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Intraday Equity Curve
+# ---------------------------------------------------------------------------
+
 @router.get("/equity-curve/intraday")
-async def get_equity_curve_intraday(date: Optional[str] = None):
-    """Get today's intraday equity curve matching standard bot format.
+async def get_equity_curve_intraday(
+    ticker: Optional[str] = Query(
+        default=None,
+        description="Ticker for intraday equity (e.g. ETH-USD). Required.",
+    ),
+    date: Optional[str] = None,
+):
+    """Get today's intraday equity curve for a specific ticker.
 
     Returns data_points[], snapshots_count, current_equity, day_pnl,
-    starting_equity, high_of_day, low_of_day - same format as ARES/TITAN.
+    starting_equity, high_of_day, low_of_day -- same format as ARES/TITAN.
 
     AGAPE-SPOT trades 24/7 so "day start" is midnight CT.
     """
-    now = datetime.now(CENTRAL_TZ)
-    today = date or now.strftime('%Y-%m-%d')
-    current_time = now.strftime('%H:%M:%S')
+    ticker = _validate_ticker(ticker)
 
-    starting_capital = 5000.0
+    if ticker is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The ?ticker= query param is required for intraday equity. "
+                f"Supported: {sorted(_VALID_TICKERS)}"
+            ),
+        )
+
+    now = datetime.now(CENTRAL_TZ)
+    today = date or now.strftime("%Y-%m-%d")
+    current_time = now.strftime("%H:%M:%S")
+
+    # Starting capital for this ticker
+    trader = _get_trader()
+    if trader:
+        starting_capital = trader.config.get_starting_capital(ticker)
+    else:
+        starting_capital = SPOT_TICKERS.get(ticker, {}).get("starting_capital", 1000.0)
 
     if not get_connection:
-        return _intraday_fallback(today, now, current_time, starting_capital)
+        return _intraday_fallback(today, now, current_time, starting_capital, ticker)
 
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get starting capital from config
-        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'agape_spot_starting_capital'")
-        row = cursor.fetchone()
-        if row and row[0]:
-            try:
-                starting_capital = float(row[0])
-            except (ValueError, TypeError):
-                pass
-
-        # Get intraday snapshots for the requested date
+        # Get intraday snapshots for this ticker
         cursor.execute("""
             SELECT timestamp, equity, unrealized_pnl,
                    realized_pnl_cumulative, open_positions, eth_price
             FROM agape_spot_equity_snapshots
             WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+              AND ticker = %s
             ORDER BY timestamp ASC
-        """, (today,))
+        """, (today, ticker))
         snapshots = cursor.fetchall()
 
-        # Get total realized P&L from all closed positions up to today
+        # Total realized P&L from all closed positions for this ticker up to today
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
-            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
-        """, (today,))
+              AND ticker = %s
+              AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
+        """, (ticker, today))
         total_realized_row = cursor.fetchone()
         total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
 
-        # Get today's closed positions P&L
+        # Today's closed positions P&L for this ticker
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
-            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
-        """, (today,))
+              AND ticker = %s
+              AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+        """, (ticker, today))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-        # Get today's closed trades with timestamps for accurate intraday cumulative calculation
+        # Today's closed trades with timestamps for accurate intraday cumulative
         cursor.execute("""
             SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
             FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
-            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+              AND ticker = %s
+              AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY COALESCE(close_time, open_time) ASC
-        """, (today,))
+        """, (ticker, today))
         today_closes = cursor.fetchall()
 
-        # Calculate unrealized P&L from open positions
-        # AGAPE-SPOT: P&L = (current - entry) * eth_quantity * direction
+        # Calculate unrealized P&L from open positions for this ticker
+        # LONG-ONLY: P&L = (current - entry) * quantity
         unrealized_pnl = 0.0
         open_positions_count = 0
 
         cursor.execute("""
-            SELECT position_id, side, eth_quantity, entry_price
+            SELECT position_id, quantity, entry_price
             FROM agape_spot_positions
-            WHERE status = 'open'
-        """)
+            WHERE status = 'open' AND ticker = %s
+        """, (ticker,))
         open_rows = cursor.fetchall()
         open_positions_count = len(open_rows)
 
         if open_rows:
-            # Get current ETH price from latest snapshot or trader
-            current_eth_price = None
+            # Get current price from latest snapshot or trader
+            current_ticker_price = None
             if snapshots:
-                current_eth_price = float(snapshots[-1][5]) if snapshots[-1][5] else None
+                current_ticker_price = float(snapshots[-1][5]) if snapshots[-1][5] else None
 
-            if not current_eth_price:
-                # Try from trader
-                trader = _get_trader()
-                if trader:
-                    try:
-                        current_eth_price = trader.executor.get_current_price()
-                    except Exception:
-                        pass
+            if not current_ticker_price and trader:
+                try:
+                    current_ticker_price = trader.executor.get_current_price(ticker)
+                except Exception:
+                    pass
 
-            if current_eth_price:
+            if current_ticker_price:
                 for pos_row in open_rows:
-                    side = pos_row[1]
-                    eth_quantity = float(pos_row[2]) if pos_row[2] else 0.1
-                    entry_price = float(pos_row[3])
-                    direction = 1 if side == 'long' else -1
-                    pnl = (current_eth_price - entry_price) * eth_quantity * direction
+                    quantity = float(pos_row[1]) if pos_row[1] else 0.1
+                    entry_price = float(pos_row[2])
+                    # Long-only P&L
+                    pnl = (current_ticker_price - entry_price) * quantity
                     unrealized_pnl += pnl
 
         conn.close()
@@ -444,7 +645,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         # Build intraday data_points (frontend expects this format)
         data_points = []
 
-        # Add day start point (AGAPE-SPOT trades 24/7 - use midnight CT as day start)
+        # Day start point (AGAPE-SPOT 24/7 -- midnight CT as day start)
         prev_day_realized = total_realized - today_realized
         market_open_equity = round(starting_capital + prev_day_realized, 2)
         data_points.append({
@@ -453,17 +654,17 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
             "equity": market_open_equity,
             "cumulative_pnl": round(prev_day_realized, 2),
             "open_positions": 0,
-            "unrealized_pnl": 0
+            "unrealized_pnl": 0,
         })
 
         all_equities = [market_open_equity]
 
         # Add snapshots with correct cumulative realized at each timestamp
         for snapshot in snapshots:
-            ts, balance, snap_unrealized, snap_realized_cum, open_count, eth_price = snapshot
+            ts, balance, snap_unrealized, snap_realized_cum, open_count, price = snapshot
             snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
 
-            # Calculate cumulative realized at this snapshot's timestamp from actual trades
+            # Cumulative realized at this snapshot's timestamp from actual trades
             snap_realized_val = prev_day_realized
             for close_time, close_pnl in today_closes:
                 close_time_ct = close_time.astimezone(CENTRAL_TZ) if close_time and close_time.tzinfo else close_time
@@ -476,16 +677,16 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
 
             data_points.append({
                 "timestamp": snap_time.isoformat(),
-                "time": snap_time.strftime('%H:%M:%S'),
+                "time": snap_time.strftime("%H:%M:%S"),
                 "equity": snap_equity,
                 "cumulative_pnl": round(snap_realized_val + snap_unrealized_val, 2),
                 "open_positions": open_count or 0,
-                "unrealized_pnl": round(snap_unrealized_val, 2)
+                "unrealized_pnl": round(snap_unrealized_val, 2),
             })
 
         # Add current live point
         current_equity = starting_capital + total_realized + unrealized_pnl
-        if today == now.strftime('%Y-%m-%d'):
+        if today == now.strftime("%Y-%m-%d"):
             total_pnl = total_realized + unrealized_pnl
             current_equity = starting_capital + total_pnl
             all_equities.append(round(current_equity, 2))
@@ -496,7 +697,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
                 "equity": round(current_equity, 2),
                 "cumulative_pnl": round(total_pnl, 2),
                 "open_positions": open_positions_count,
-                "unrealized_pnl": round(unrealized_pnl, 2)
+                "unrealized_pnl": round(unrealized_pnl, 2),
             })
 
         high_of_day = max(all_equities) if all_equities else starting_capital
@@ -506,6 +707,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         return {
             "success": True,
             "date": today,
+            "ticker": ticker,
             "bot": "AGAPE-SPOT",
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
@@ -517,25 +719,26 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
             "low_of_day": round(low_of_day, 2),
             "snapshots_count": len(snapshots),
             "today_closed_count": today_closed_count,
-            "open_positions_count": open_positions_count
+            "open_positions_count": open_positions_count,
         }
 
     except Exception as e:
         logger.error(f"AGAPE-SPOT intraday equity error: {e}")
         import traceback
         traceback.print_exc()
-        return _intraday_fallback(today, now, current_time, starting_capital, str(e))
+        return _intraday_fallback(today, now, current_time, starting_capital, ticker, str(e))
     finally:
         if conn:
             conn.close()
 
 
-def _intraday_fallback(today, now, current_time, starting_capital, error=None):
+def _intraday_fallback(today, now, current_time, starting_capital, ticker, error=None):
     """Return a valid intraday response even when data is unavailable."""
     return {
         "success": error is None,
         "error": error,
         "date": today,
+        "ticker": ticker,
         "bot": "AGAPE-SPOT",
         "data_points": [{
             "timestamp": now.isoformat(),
@@ -543,7 +746,7 @@ def _intraday_fallback(today, now, current_time, starting_capital, error=None):
             "equity": starting_capital,
             "cumulative_pnl": 0,
             "open_positions": 0,
-            "unrealized_pnl": 0
+            "unrealized_pnl": 0,
         }],
         "current_equity": starting_capital,
         "day_pnl": 0,
@@ -554,29 +757,35 @@ def _intraday_fallback(today, now, current_time, starting_capital, error=None):
         "low_of_day": starting_capital,
         "snapshots_count": 0,
         "today_closed_count": 0,
-        "open_positions_count": 0
+        "open_positions_count": 0,
     }
 
 
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Performance
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @router.get("/performance")
-async def get_performance():
+async def get_performance(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker (e.g. ETH-USD)"),
+):
     """Get AGAPE-SPOT performance statistics.
 
     Returns win rate, total P&L, average win/loss, profit factor, etc.
+    If ``?ticker=`` is provided, scoped to that ticker; otherwise all tickers.
     """
+    ticker = _validate_ticker(ticker)
+
     trader = _get_trader()
     if not trader:
         return {"success": False, "data": {}, "message": "AGAPE-SPOT not available"}
 
     try:
-        perf = trader.get_performance()
+        perf = trader.get_performance(ticker=ticker)
         return {
             "success": True,
             "data": perf,
+            "ticker_filter": ticker,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -584,25 +793,29 @@ async def get_performance():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Logs & Scan Activity
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @router.get("/logs")
 async def get_logs(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker"),
     limit: int = Query(default=50, le=200, description="Number of log entries"),
 ):
-    """Get AGAPE-SPOT activity log."""
+    """Get AGAPE-SPOT activity log, optionally filtered by ticker."""
+    ticker = _validate_ticker(ticker)
+
     trader = _get_trader()
     if not trader:
         return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
-        logs = trader.db.get_logs(limit=limit)
+        logs = trader.db.get_logs(ticker=ticker, limit=limit)
         return {
             "success": True,
             "data": logs,
             "count": len(logs),
+            "ticker_filter": ticker,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -612,23 +825,27 @@ async def get_logs(
 
 @router.get("/scan-activity")
 async def get_scan_activity(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker"),
     limit: int = Query(default=50, le=200, description="Number of scans"),
 ):
-    """Get AGAPE-SPOT scan history - every cycle is logged.
+    """Get AGAPE-SPOT scan history -- every cycle is logged.
 
     Shows what the bot saw, what it decided, and why.
     Includes crypto microstructure data, Oracle advice, and signal reasoning.
     """
+    ticker = _validate_ticker(ticker)
+
     trader = _get_trader()
     if not trader:
         return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
-        scans = trader.db.get_scan_activity(limit=limit)
+        scans = trader.db.get_scan_activity(ticker=ticker, limit=limit)
         return {
             "success": True,
             "data": scans,
             "count": len(scans),
+            "ticker_filter": ticker,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -636,13 +853,13 @@ async def get_scan_activity(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Market Snapshot (Crypto Microstructure)
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @router.get("/snapshot")
 async def get_crypto_snapshot(
-    symbol: str = Query(default="ETH", description="Crypto symbol"),
+    symbol: str = Query(default="ETH", description="Crypto symbol (e.g. ETH, XRP, DOGE, SHIB)"),
 ):
     """Get current crypto market microstructure snapshot.
 
@@ -739,30 +956,61 @@ async def get_crypto_snapshot(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Signal Generation (Dry Run)
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @router.get("/signal")
-async def generate_signal():
+async def generate_signal(
+    ticker: Optional[str] = Query(
+        default=None,
+        description="Ticker to generate signal for (e.g. ETH-USD). "
+                    "If omitted, generates for all active tickers.",
+    ),
+):
     """Generate a trade signal without executing (dry run).
 
     Returns the full signal with:
     - Crypto microstructure analysis
     - Oracle consultation result
-    - Recommended action (LONG/SHORT/WAIT)
+    - Recommended action (LONG/WAIT)
     - Position sizing and risk levels
+
+    If ``?ticker=`` provided, returns a single signal.
+    Otherwise returns signals for ALL active tickers.
     """
+    ticker = _validate_ticker(ticker)
+
     trader = _get_trader()
     if not trader:
         return {"success": False, "message": "AGAPE-SPOT not available"}
 
     try:
-        signal = trader.signals.generate_signal()
+        if ticker:
+            signal = trader.signals.generate_signal(ticker=ticker)
+            return {
+                "success": True,
+                "data": signal.to_dict() if signal else None,
+                "is_tradeable": signal.is_valid if signal else False,
+                "ticker": ticker,
+                "fetched_at": _format_ct(),
+            }
+
+        # Generate for all active tickers
+        all_signals = {}
+        for t in trader.config.tickers:
+            try:
+                sig = trader.signals.generate_signal(ticker=t)
+                all_signals[t] = {
+                    "signal": sig.to_dict() if sig else None,
+                    "is_tradeable": sig.is_valid if sig else False,
+                }
+            except Exception as e:
+                all_signals[t] = {"signal": None, "is_tradeable": False, "error": str(e)}
+
         return {
             "success": True,
-            "data": signal.to_dict(),
-            "is_tradeable": signal.is_valid,
+            "data": all_signals,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -770,9 +1018,9 @@ async def generate_signal():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Bot Control
-# ------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 
 @router.post("/enable")
 async def enable_bot():
@@ -792,3 +1040,31 @@ async def disable_bot():
         raise HTTPException(status_code=503, detail="AGAPE-SPOT not available")
     trader.disable()
     return {"success": True, "message": "AGAPE-SPOT disabled"}
+
+
+@router.post("/force-close")
+async def force_close_positions(
+    ticker: Optional[str] = Query(default=None, description="Close positions for this ticker only"),
+    reason: str = Query(default="MANUAL_CLOSE", description="Close reason"),
+):
+    """Force-close all open positions, optionally filtered by ticker.
+
+    LONG-ONLY: P&L = (exit_price - entry_price) * quantity.
+    """
+    ticker = _validate_ticker(ticker)
+
+    trader = _get_trader()
+    if not trader:
+        raise HTTPException(status_code=503, detail="AGAPE-SPOT not available")
+
+    try:
+        result = trader.force_close_all(ticker=ticker, reason=reason)
+        return {
+            "success": True,
+            "data": result,
+            "ticker_filter": ticker,
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT force-close error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

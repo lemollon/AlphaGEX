@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Activity } from 'lucide-react'
+import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Activity, Globe } from 'lucide-react'
 import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/botDisplayNames'
 
 // =============================================================================
@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES' | 'AGAPE'
+export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES' | 'AGAPE' | 'AGAPE_SPOT'
 
 export interface BotBrand {
   name: BotName
@@ -408,6 +408,42 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#D946EF',
     hexLight: '#E879F9',
     hexDark: '#C026D3',
+  },
+  AGAPE_SPOT: {
+    name: 'AGAPE_SPOT',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_SPOT,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_SPOT} 24/7 Crypto Spot`,
+    description: '24/7 Multi-Coin Spot Trading (ETH, XRP, SHIB, DOGE)',
+    strategy: 'Crypto Microstructure Long-Only Spot Trading',
+    // Primary - Cyan (clarity, 24/7 ocean of opportunity)
+    primaryColor: 'cyan',
+    primaryBg: 'bg-cyan-600',
+    primaryBorder: 'border-cyan-500',
+    primaryText: 'text-cyan-400',
+    // Light variants
+    lightBg: 'bg-cyan-900/20',
+    lightText: 'text-cyan-300',
+    lightBorder: 'border-cyan-700/50',
+    // Chart colors
+    chartLine: 'stroke-cyan-400',
+    chartFill: 'fill-cyan-500/20',
+    chartPositive: 'text-cyan-400',
+    chartNegative: 'text-cyan-600',
+    // Position cards
+    positionBorder: 'border-cyan-600/50',
+    positionBg: 'bg-cyan-950/30',
+    positionAccent: 'bg-cyan-500',
+    // Badges
+    badgeBg: 'bg-cyan-900/50',
+    badgeText: 'text-cyan-300',
+    // Gradient
+    icon: Globe,
+    gradientFrom: 'from-cyan-500',
+    gradientTo: 'to-cyan-900',
+    // Hex for Recharts
+    hexPrimary: '#06B6D4',
+    hexLight: '#22D3EE',
+    hexDark: '#0891B2',
   },
 }
 
