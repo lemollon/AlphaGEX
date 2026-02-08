@@ -1,8 +1,9 @@
 """
-AGAPE API Routes - ETH Micro Futures Trading Bot endpoints.
+AGAPE-SPOT API Routes - 24/7 Coinbase Spot ETH-USD Trading Bot endpoints.
 
-AGAPE (ἀγάπη) trades Micro Ether Futures (/MET) on CME via tastytrade,
-using crypto market microstructure signals as GEX equivalents.
+AGAPE-SPOT trades spot ETH-USD on Coinbase, using crypto market microstructure
+signals as GEX equivalents. Unlike AGAPE (CME futures), this bot trades 24/7
+with no exchange closures.
 
 Endpoints follow the standard bot pattern:
   /status        - Bot health and config
@@ -24,20 +25,20 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/agape", tags=["AGAPE"])
+router = APIRouter(prefix="/api/agape-spot", tags=["AGAPE-SPOT"])
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # Graceful imports
-AGAPE_AVAILABLE = False
-AgapeTrader = None
-get_agape_trader = None
+AGAPE_SPOT_AVAILABLE = False
+AgapeSpotTrader = None
+get_agape_spot_trader = None
 try:
-    from trading.agape.trader import AgapeTrader, get_agape_trader, create_agape_trader
-    AGAPE_AVAILABLE = True
-    logger.info("AGAPE Routes: AgapeTrader loaded")
+    from trading.agape_spot.trader import AgapeSpotTrader, get_agape_spot_trader, create_agape_spot_trader
+    AGAPE_SPOT_AVAILABLE = True
+    logger.info("AGAPE-SPOT Routes: AgapeSpotTrader loaded")
 except ImportError as e:
-    logger.warning(f"AGAPE Routes: AgapeTrader not available: {e}")
+    logger.warning(f"AGAPE-SPOT Routes: AgapeSpotTrader not available: {e}")
 
 CRYPTO_PROVIDER_AVAILABLE = False
 get_crypto_data_provider = None
@@ -56,15 +57,15 @@ except ImportError:
 
 
 def _get_trader():
-    """Get or lazily create the AGAPE trader instance."""
-    if not AGAPE_AVAILABLE:
+    """Get or lazily create the AGAPE-SPOT trader instance."""
+    if not AGAPE_SPOT_AVAILABLE:
         return None
-    trader = get_agape_trader()
+    trader = get_agape_spot_trader()
     if trader is None:
         try:
-            trader = create_agape_trader()
+            trader = create_agape_spot_trader()
         except Exception as e:
-            logger.error(f"AGAPE Routes: Failed to create trader: {e}")
+            logger.error(f"AGAPE-SPOT Routes: Failed to create trader: {e}")
     return trader
 
 
@@ -80,11 +81,11 @@ def _format_ct(dt: Optional[datetime] = None) -> str:
 
 @router.get("/status")
 async def get_status():
-    """Get AGAPE bot status, configuration, and open positions.
+    """Get AGAPE-SPOT bot status, configuration, and open positions.
 
     Returns:
     - Bot health (active/disabled)
-    - Current ETH price
+    - Current ETH spot price
     - Open position count and details
     - Configuration parameters
     """
@@ -93,8 +94,8 @@ async def get_status():
         return {
             "success": False,
             "data_unavailable": True,
-            "reason": "AGAPE trader not initialized",
-            "message": "AGAPE module not available",
+            "reason": "AGAPE-SPOT trader not initialized",
+            "message": "AGAPE-SPOT module not available",
         }
 
     try:
@@ -105,7 +106,7 @@ async def get_status():
             "fetched_at": _format_ct(),
         }
     except Exception as e:
-        logger.error(f"AGAPE status error: {e}")
+        logger.error(f"AGAPE-SPOT status error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -115,27 +116,28 @@ async def get_status():
 
 @router.get("/positions")
 async def get_positions():
-    """Get all open AGAPE positions with unrealized P&L.
+    """Get all open AGAPE-SPOT positions with unrealized P&L.
 
     Each position includes:
-    - Entry details (price, side, contracts)
+    - Entry details (price, side, eth_quantity)
     - Market context at entry (funding, L/S, squeeze risk)
     - Oracle context (advice, win probability)
     - Current unrealized P&L
     """
     trader = _get_trader()
     if not trader:
-        return {"success": False, "data": [], "message": "AGAPE not available"}
+        return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
         positions = trader.db.get_open_positions()
         current_price = trader.executor.get_current_price()
 
         # Add unrealized P&L
+        # AGAPE-SPOT: P&L = (current - entry) * eth_quantity * direction
         for pos in positions:
             if current_price:
                 direction = 1 if pos["side"] == "long" else -1
-                pnl = (current_price - pos["entry_price"]) * trader.config.contract_size * direction * pos.get("contracts", 1)
+                pnl = (current_price - pos["entry_price"]) * pos.get("eth_quantity", 0.1) * direction
                 pos["unrealized_pnl"] = round(pnl, 2)
                 pos["current_price"] = current_price
             else:
@@ -150,7 +152,7 @@ async def get_positions():
             "fetched_at": _format_ct(),
         }
     except Exception as e:
-        logger.error(f"AGAPE positions error: {e}")
+        logger.error(f"AGAPE-SPOT positions error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -161,7 +163,7 @@ async def get_closed_trades(
     """Get closed/expired trade history."""
     trader = _get_trader()
     if not trader:
-        return {"success": False, "data": [], "message": "AGAPE not available"}
+        return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
         trades = trader.db.get_closed_trades(limit=limit)
@@ -172,7 +174,7 @@ async def get_closed_trades(
             "fetched_at": _format_ct(),
         }
     except Exception as e:
-        logger.error(f"AGAPE closed trades error: {e}")
+        logger.error(f"AGAPE-SPOT closed trades error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -219,11 +221,11 @@ async def get_equity_curve(
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get starting capital from config (key/value schema with agape_ prefix)
+        # Get starting capital from config (key/value schema with agape_spot_ prefix)
         starting_capital = 5000.0
         try:
             cursor.execute(
-                "SELECT value FROM autonomous_config WHERE key = 'agape_starting_capital'"
+                "SELECT value FROM autonomous_config WHERE key = 'agape_spot_starting_capital'"
             )
             row = cursor.fetchone()
             if row and row[0]:
@@ -237,7 +239,7 @@ async def get_equity_curve(
                 (close_time AT TIME ZONE 'America/Chicago')::date as trade_date,
                 realized_pnl,
                 position_id
-            FROM agape_positions
+            FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
               AND close_time IS NOT NULL
               AND realized_pnl IS NOT NULL
@@ -319,7 +321,7 @@ async def get_equity_curve(
         }
 
     except Exception as e:
-        logger.error(f"AGAPE equity curve error: {e}")
+        logger.error(f"AGAPE-SPOT equity curve error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn:
@@ -332,6 +334,8 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
 
     Returns data_points[], snapshots_count, current_equity, day_pnl,
     starting_equity, high_of_day, low_of_day - same format as ARES/TITAN.
+
+    AGAPE-SPOT trades 24/7 so "day start" is midnight CT.
     """
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime('%Y-%m-%d')
@@ -348,7 +352,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         cursor = conn.cursor()
 
         # Get starting capital from config
-        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'agape_starting_capital'")
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'agape_spot_starting_capital'")
         row = cursor.fetchone()
         if row and row[0]:
             try:
@@ -360,7 +364,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         cursor.execute("""
             SELECT timestamp, equity, unrealized_pnl,
                    realized_pnl_cumulative, open_positions, eth_price
-            FROM agape_equity_snapshots
+            FROM agape_spot_equity_snapshots
             WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY timestamp ASC
         """, (today,))
@@ -369,7 +373,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         # Get total realized P&L from all closed positions up to today
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
-            FROM agape_positions
+            FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
@@ -379,7 +383,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         # Get today's closed positions P&L
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
-            FROM agape_positions
+            FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
@@ -390,7 +394,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         # Get today's closed trades with timestamps for accurate intraday cumulative calculation
         cursor.execute("""
             SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
-            FROM agape_positions
+            FROM agape_spot_positions
             WHERE status IN ('closed', 'expired', 'stopped')
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY COALESCE(close_time, open_time) ASC
@@ -398,13 +402,13 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         today_closes = cursor.fetchall()
 
         # Calculate unrealized P&L from open positions
-        # AGAPE: P&L = (current - entry) * 0.1 * contracts * direction
+        # AGAPE-SPOT: P&L = (current - entry) * eth_quantity * direction
         unrealized_pnl = 0.0
         open_positions_count = 0
 
         cursor.execute("""
-            SELECT position_id, side, contracts, entry_price
-            FROM agape_positions
+            SELECT position_id, side, eth_quantity, entry_price
+            FROM agape_spot_positions
             WHERE status = 'open'
         """)
         open_rows = cursor.fetchall()
@@ -428,10 +432,10 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
             if current_eth_price:
                 for pos_row in open_rows:
                     side = pos_row[1]
-                    contracts = int(pos_row[2])
+                    eth_quantity = float(pos_row[2]) if pos_row[2] else 0.1
                     entry_price = float(pos_row[3])
                     direction = 1 if side == 'long' else -1
-                    pnl = (current_eth_price - entry_price) * 0.1 * contracts * direction
+                    pnl = (current_eth_price - entry_price) * eth_quantity * direction
                     unrealized_pnl += pnl
 
         conn.close()
@@ -440,7 +444,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         # Build intraday data_points (frontend expects this format)
         data_points = []
 
-        # Add market open point (crypto trades 23h/day but use 00:00 for "day start")
+        # Add day start point (AGAPE-SPOT trades 24/7 - use midnight CT as day start)
         prev_day_realized = total_realized - today_realized
         market_open_equity = round(starting_capital + prev_day_realized, 2)
         data_points.append({
@@ -502,7 +506,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         return {
             "success": True,
             "date": today,
-            "bot": "AGAPE",
+            "bot": "AGAPE-SPOT",
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
             "day_pnl": round(day_pnl, 2),
@@ -517,7 +521,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
         }
 
     except Exception as e:
-        logger.error(f"AGAPE intraday equity error: {e}")
+        logger.error(f"AGAPE-SPOT intraday equity error: {e}")
         import traceback
         traceback.print_exc()
         return _intraday_fallback(today, now, current_time, starting_capital, str(e))
@@ -532,7 +536,7 @@ def _intraday_fallback(today, now, current_time, starting_capital, error=None):
         "success": error is None,
         "error": error,
         "date": today,
-        "bot": "AGAPE",
+        "bot": "AGAPE-SPOT",
         "data_points": [{
             "timestamp": now.isoformat(),
             "time": current_time,
@@ -560,13 +564,13 @@ def _intraday_fallback(today, now, current_time, starting_capital, error=None):
 
 @router.get("/performance")
 async def get_performance():
-    """Get AGAPE performance statistics.
+    """Get AGAPE-SPOT performance statistics.
 
     Returns win rate, total P&L, average win/loss, profit factor, etc.
     """
     trader = _get_trader()
     if not trader:
-        return {"success": False, "data": {}, "message": "AGAPE not available"}
+        return {"success": False, "data": {}, "message": "AGAPE-SPOT not available"}
 
     try:
         perf = trader.get_performance()
@@ -576,7 +580,7 @@ async def get_performance():
             "fetched_at": _format_ct(),
         }
     except Exception as e:
-        logger.error(f"AGAPE performance error: {e}")
+        logger.error(f"AGAPE-SPOT performance error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -588,10 +592,10 @@ async def get_performance():
 async def get_logs(
     limit: int = Query(default=50, le=200, description="Number of log entries"),
 ):
-    """Get AGAPE activity log."""
+    """Get AGAPE-SPOT activity log."""
     trader = _get_trader()
     if not trader:
-        return {"success": False, "data": [], "message": "AGAPE not available"}
+        return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
         logs = trader.db.get_logs(limit=limit)
@@ -602,7 +606,7 @@ async def get_logs(
             "fetched_at": _format_ct(),
         }
     except Exception as e:
-        logger.error(f"AGAPE logs error: {e}")
+        logger.error(f"AGAPE-SPOT logs error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -610,14 +614,14 @@ async def get_logs(
 async def get_scan_activity(
     limit: int = Query(default=50, le=200, description="Number of scans"),
 ):
-    """Get AGAPE scan history - every cycle is logged.
+    """Get AGAPE-SPOT scan history - every cycle is logged.
 
     Shows what the bot saw, what it decided, and why.
     Includes crypto microstructure data, Oracle advice, and signal reasoning.
     """
     trader = _get_trader()
     if not trader:
-        return {"success": False, "data": [], "message": "AGAPE not available"}
+        return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
 
     try:
         scans = trader.db.get_scan_activity(limit=limit)
@@ -628,7 +632,7 @@ async def get_scan_activity(
             "fetched_at": _format_ct(),
         }
     except Exception as e:
-        logger.error(f"AGAPE scan activity error: {e}")
+        logger.error(f"AGAPE-SPOT scan activity error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -643,11 +647,11 @@ async def get_crypto_snapshot(
     """Get current crypto market microstructure snapshot.
 
     Returns the crypto equivalent of ARGUS's gamma snapshot:
-    - Funding rate and regime (→ gamma regime)
-    - Liquidation clusters (→ gamma walls)
-    - Long/Short ratio (→ directional bias)
-    - Options OI and max pain (→ flip point)
-    - Crypto GEX from Deribit (→ net GEX)
+    - Funding rate and regime (-> gamma regime)
+    - Liquidation clusters (-> gamma walls)
+    - Long/Short ratio (-> directional bias)
+    - Options OI and max pain (-> flip point)
+    - Crypto GEX from Deribit (-> net GEX)
     - Combined signal and confidence
     """
     if not CRYPTO_PROVIDER_AVAILABLE:
@@ -665,7 +669,7 @@ async def get_crypto_snapshot(
             "symbol": snapshot.symbol,
             "spot_price": snapshot.spot_price,
             "timestamp": snapshot.timestamp.isoformat(),
-            # Funding Rate (→ Gamma Regime)
+            # Funding Rate (-> Gamma Regime)
             "funding": {
                 "rate": snapshot.funding_rate.rate if snapshot.funding_rate else None,
                 "predicted": snapshot.funding_rate.predicted_rate if snapshot.funding_rate else None,
@@ -673,7 +677,7 @@ async def get_crypto_snapshot(
                 "annualized": snapshot.funding_rate.annualized_rate if snapshot.funding_rate else None,
                 "gex_equivalent": "Replaces gamma regime (POSITIVE/NEGATIVE)",
             },
-            # Liquidations (→ Gamma Walls / Magnets)
+            # Liquidations (-> Gamma Walls / Magnets)
             "liquidations": {
                 "nearest_long_liq": snapshot.nearest_long_liq,
                 "nearest_short_liq": snapshot.nearest_short_liq,
@@ -690,7 +694,7 @@ async def get_crypto_snapshot(
                 ],
                 "gex_equivalent": "Replaces gamma walls and price magnets",
             },
-            # L/S Ratio (→ Directional Bias)
+            # L/S Ratio (-> Directional Bias)
             "long_short": {
                 "ratio": snapshot.ls_ratio.ratio if snapshot.ls_ratio else None,
                 "long_pct": snapshot.ls_ratio.long_pct if snapshot.ls_ratio else None,
@@ -698,13 +702,13 @@ async def get_crypto_snapshot(
                 "bias": snapshot.ls_ratio.bias if snapshot.ls_ratio else "NEUTRAL",
                 "gex_equivalent": "Replaces GEX directional bias",
             },
-            # OI / Max Pain (→ Flip Point)
+            # OI / Max Pain (-> Flip Point)
             "options": {
                 "max_pain": snapshot.max_pain,
                 "oi_levels_count": len(snapshot.oi_levels),
                 "gex_equivalent": "Replaces GEX flip point",
             },
-            # Crypto GEX (→ Direct GEX equivalent)
+            # Crypto GEX (-> Direct GEX equivalent)
             "crypto_gex": {
                 "net_gex": snapshot.crypto_gex.net_gex if snapshot.crypto_gex else None,
                 "regime": snapshot.crypto_gex.gamma_regime if snapshot.crypto_gex else "NEUTRAL",
@@ -731,7 +735,7 @@ async def get_crypto_snapshot(
         }
 
     except Exception as e:
-        logger.error(f"AGAPE snapshot error: {e}")
+        logger.error(f"AGAPE-SPOT snapshot error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -751,7 +755,7 @@ async def generate_signal():
     """
     trader = _get_trader()
     if not trader:
-        return {"success": False, "message": "AGAPE not available"}
+        return {"success": False, "message": "AGAPE-SPOT not available"}
 
     try:
         signal = trader.signals.generate_signal()
@@ -762,106 +766,8 @@ async def generate_signal():
             "fetched_at": _format_ct(),
         }
     except Exception as e:
-        logger.error(f"AGAPE signal error: {e}")
+        logger.error(f"AGAPE-SPOT signal error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-# ------------------------------------------------------------------
-# GEX Mapping Reference
-# ------------------------------------------------------------------
-
-@router.get("/gex-mapping")
-async def get_gex_mapping():
-    """Returns the GEX → Crypto signal mapping reference.
-
-    Educational endpoint showing how equity GEX concepts translate
-    to crypto market microstructure signals used by AGAPE.
-    """
-    return {
-        "success": True,
-        "data": {
-            "title": "AGAPE: GEX → Crypto Signal Mapping",
-            "description": (
-                "AGAPE uses crypto market microstructure signals as equivalents "
-                "to the GEX-based analysis used by equity bots (ARES, ARGUS, etc.)"
-            ),
-            "mappings": [
-                {
-                    "gex_concept": "Gamma Regime (POSITIVE/NEGATIVE)",
-                    "crypto_equivalent": "Funding Rate Regime",
-                    "explanation": (
-                        "High positive funding = overleveraged longs = NEGATIVE GAMMA equivalent. "
-                        "Near zero = balanced = POSITIVE GAMMA (mean reversion). "
-                        "High negative = overleveraged shorts = squeeze risk."
-                    ),
-                    "data_source": "CoinGlass (aggregated across exchanges)",
-                    "thresholds": {
-                        "balanced": "|funding| < 0.5%",
-                        "mild_bias": "0.5% - 1%",
-                        "overleveraged": "1% - 3%",
-                        "extreme": "> 3%",
-                    },
-                },
-                {
-                    "gex_concept": "Gamma Walls (Call/Put)",
-                    "crypto_equivalent": "Liquidation Clusters",
-                    "explanation": (
-                        "Where leveraged positions get force-closed, creating price "
-                        "magnets just like gamma walls. Long liquidations below price "
-                        "act like put walls; short liquidations above like call walls."
-                    ),
-                    "data_source": "CoinGlass liquidation heatmap",
-                },
-                {
-                    "gex_concept": "GEX Flip Point",
-                    "crypto_equivalent": "Max Pain Level",
-                    "explanation": (
-                        "The price where most options expire worthless. Price gravitates "
-                        "toward max pain near expiry, similar to how price gravitates "
-                        "to the GEX flip point."
-                    ),
-                    "data_source": "Deribit options OI by strike",
-                },
-                {
-                    "gex_concept": "Net GEX Value",
-                    "crypto_equivalent": "Crypto GEX (Deribit)",
-                    "explanation": (
-                        "Actual gamma exposure calculated from Deribit ETH options. "
-                        "Less reliable than equity GEX due to different market structure "
-                        "(no designated market makers), but provides similar signals."
-                    ),
-                    "data_source": "Deribit public API (options book summaries)",
-                },
-                {
-                    "gex_concept": "Directional Bias",
-                    "crypto_equivalent": "Long/Short Ratio",
-                    "explanation": (
-                        "Shows which side of the market is crowded. Extreme ratios "
-                        "signal overcrowding, similar to extreme GEX readings "
-                        "predicting reversals. AGAPE uses contrarian logic."
-                    ),
-                    "data_source": "CoinGlass (aggregated L/S ratio)",
-                },
-                {
-                    "gex_concept": "ARGUS Market Structure (9 signals)",
-                    "crypto_equivalent": "Combined Crypto Signals (6 inputs)",
-                    "explanation": (
-                        "Funding regime + L/S ratio + Liquidation proximity + "
-                        "Options OI + Crypto GEX + Squeeze risk → Combined signal "
-                        "(LONG / SHORT / RANGE_BOUND / WAIT)"
-                    ),
-                },
-            ],
-            "trade_instrument": {
-                "symbol": "/MET (Micro Ether Futures)",
-                "exchange": "CME Globex",
-                "broker": "tastytrade",
-                "contract_size": "0.1 ETH",
-                "tick_value": "$0.05",
-                "margin": "~$125-225 per contract",
-            },
-        },
-    }
 
 
 # ------------------------------------------------------------------
@@ -870,19 +776,19 @@ async def get_gex_mapping():
 
 @router.post("/enable")
 async def enable_bot():
-    """Enable AGAPE trading."""
+    """Enable AGAPE-SPOT trading."""
     trader = _get_trader()
     if not trader:
-        raise HTTPException(status_code=503, detail="AGAPE not available")
+        raise HTTPException(status_code=503, detail="AGAPE-SPOT not available")
     trader.enable()
-    return {"success": True, "message": "AGAPE enabled"}
+    return {"success": True, "message": "AGAPE-SPOT enabled"}
 
 
 @router.post("/disable")
 async def disable_bot():
-    """Disable AGAPE trading (positions still managed)."""
+    """Disable AGAPE-SPOT trading (positions still managed)."""
     trader = _get_trader()
     if not trader:
-        raise HTTPException(status_code=503, detail="AGAPE not available")
+        raise HTTPException(status_code=503, detail="AGAPE-SPOT not available")
     trader.disable()
-    return {"success": True, "message": "AGAPE disabled"}
+    return {"success": True, "message": "AGAPE-SPOT disabled"}
