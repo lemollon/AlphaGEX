@@ -93,6 +93,12 @@ class AgapeSpotConfig:
     # Active tickers
     tickers: List[str] = field(default_factory=lambda: list(SPOT_TICKERS.keys()))
 
+    # Per-ticker live trading: tickers in this list execute real Coinbase orders.
+    # Tickers NOT in this list run in paper mode regardless of global mode.
+    live_tickers: List[str] = field(
+        default_factory=lambda: ["XRP-USD", "SHIB-USD", "DOGE-USD"]
+    )
+
     # Risk management (shared)
     risk_per_trade_pct: float = 5.0
     max_open_positions_per_ticker: int = 5
@@ -136,6 +142,10 @@ class AgapeSpotConfig:
     direction_win_streak_caution: int = 100
     direction_memory_size: int = 10
 
+    def is_live(self, ticker: str) -> bool:
+        """Return True if *ticker* should execute real Coinbase orders."""
+        return ticker in self.live_tickers
+
     def get_ticker_config(self, ticker: str) -> Dict[str, Any]:
         """Get per-ticker config (capital, sizing, etc.)."""
         return SPOT_TICKERS.get(ticker, SPOT_TICKERS["ETH-USD"])
@@ -157,6 +167,9 @@ class AgapeSpotConfig:
                         continue
                     if key == "tickers":
                         config.tickers = [t.strip() for t in str(value).split(",") if t.strip()]
+                        continue
+                    if key == "live_tickers":
+                        config.live_tickers = [t.strip() for t in str(value).split(",") if t.strip()]
                         continue
                     if hasattr(config, key):
                         attr_type = type(getattr(config, key))

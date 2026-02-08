@@ -113,7 +113,7 @@ class AgapeSpotExecutor:
             )
             return None
 
-        if self.config.mode == TradingMode.LIVE:
+        if self.config.is_live(signal.ticker):
             return self._execute_live(signal)
         return self._execute_paper(signal)
 
@@ -264,7 +264,7 @@ class AgapeSpotExecutor:
         reason: str,
     ) -> Tuple[bool, float, float]:
         """Close a long position (always sells)."""
-        if self.config.mode == TradingMode.LIVE and self._client:
+        if self.config.is_live(position.ticker) and self._client:
             return self._close_live(position, current_price, reason)
         return self._close_paper(position, current_price, reason)
 
