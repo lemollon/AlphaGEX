@@ -31,6 +31,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "symbol": "XRP",
         "display_name": "XRP",
         "starting_capital": 1000.0,
+        "live_capital": 50.0,
         "default_quantity": 100.0,
         "min_order": 1.0,
         "max_per_trade": 5000.0,
@@ -41,6 +42,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "symbol": "SHIB",
         "display_name": "Shiba Inu",
         "starting_capital": 1000.0,
+        "live_capital": 50.0,
         "default_quantity": 1000000.0,
         "min_order": 1000.0,
         "max_per_trade": 100000000.0,
@@ -51,6 +53,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "symbol": "DOGE",
         "display_name": "Dogecoin",
         "starting_capital": 1000.0,
+        "live_capital": 50.0,
         "default_quantity": 500.0,
         "min_order": 1.0,
         "max_per_trade": 50000.0,
@@ -151,8 +154,19 @@ class AgapeSpotConfig:
         return SPOT_TICKERS.get(ticker, SPOT_TICKERS["ETH-USD"])
 
     def get_starting_capital(self, ticker: str) -> float:
-        """Get starting capital for a specific ticker."""
+        """Get starting capital for a specific ticker (paper tracking)."""
         return self.get_ticker_config(ticker).get("starting_capital", 1000.0)
+
+    def get_trading_capital(self, ticker: str) -> float:
+        """Get capital used for position sizing.
+
+        LIVE tickers use live_capital (real Coinbase balance).
+        PAPER tickers use starting_capital.
+        """
+        cfg = self.get_ticker_config(ticker)
+        if self.is_live(ticker):
+            return cfg.get("live_capital", cfg.get("starting_capital", 1000.0))
+        return cfg.get("starting_capital", 1000.0)
 
     @classmethod
     def load_from_db(cls, db) -> "AgapeSpotConfig":

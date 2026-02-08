@@ -171,8 +171,11 @@ class AgapeSpotExecutor:
     def _execute_live(self, signal: AgapeSpotSignal) -> Optional[AgapeSpotPosition]:
         """Execute a real long-only spot buy via Coinbase."""
         if not self._client:
-            logger.error("AGAPE-SPOT Executor: No Coinbase client")
-            return self._execute_paper(signal)
+            logger.error(
+                f"AGAPE-SPOT Executor: No Coinbase client - SKIPPING {signal.ticker} "
+                f"LIVE trade. Set COINBASE_API_KEY and COINBASE_API_SECRET."
+            )
+            return None
 
         try:
             ticker_config = SPOT_TICKERS.get(signal.ticker, {})
