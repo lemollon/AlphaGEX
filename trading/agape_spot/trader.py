@@ -758,6 +758,7 @@ class AgapeSpotTrader:
             "side": "long",
             "instrument": "Multi-ticker spot",
             "exchange": "coinbase",
+            "coinbase_connected": self.executor._client is not None,
             "market": {"status": "OPEN", "reason": "Coinbase spot trades 24/7/365."},
             "cycle_count": self._cycle_count,
             "total_open_positions": total_open,
@@ -839,10 +840,13 @@ class AgapeSpotTrader:
         pause_until = self._loss_pause_until.get(ticker)
 
         is_live = self.config.is_live(ticker)
+        coinbase_ok = self.executor._client is not None
         return {
             "bot_name": "AGAPE-SPOT",
             "status": "ACTIVE" if self._enabled else "DISABLED",
             "mode": "live" if is_live else "paper",
+            "coinbase_connected": coinbase_ok,
+            "live_ready": is_live and coinbase_ok,
             "ticker": ticker,
             "display_name": ticker_config.get("display_name", ticker),
             "side": "long",

@@ -443,7 +443,8 @@ class AgapeSpotSignalGenerator:
         Rounded to quantity_decimals for the ticker.
         """
         ticker_config = SPOT_TICKERS.get(ticker, SPOT_TICKERS.get("ETH-USD", {}))
-        capital = ticker_config.get("starting_capital", 1000.0)
+        # Use trading capital (live_capital for LIVE tickers, starting_capital for PAPER)
+        capital = self.config.get_trading_capital(ticker)
         min_order = ticker_config.get("min_order", 0.001)
         max_per_trade = ticker_config.get("max_per_trade", 1.0)
         quantity_decimals = ticker_config.get("quantity_decimals", 4)
