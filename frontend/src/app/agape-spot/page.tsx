@@ -376,7 +376,7 @@ export default function AgapeSpotPage() {
 // ==============================================================================
 
 function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
-  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
+  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('today')
   const isIntraday = eqTimeFrame === 'today'
   const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
 
@@ -922,7 +922,7 @@ function ClosedTradesTable({ ticker }: { ticker: TickerId }) {
 // ==============================================================================
 
 function EquityCurveTab({ ticker }: { ticker: TickerId }) {
-  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
+  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('today')
   const isIntraday = eqTimeFrame === 'today'
   const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
 
