@@ -91,6 +91,7 @@ export default function AllBotReportsSummary() {
     PROMETHEUS: undefined,
     HERACLES: undefined,
     AGAPE: undefined,
+    AGAPE_SPOT: undefined,
   }
 
   // Calculate aggregate stats

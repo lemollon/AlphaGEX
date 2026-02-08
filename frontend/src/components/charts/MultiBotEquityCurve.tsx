@@ -28,6 +28,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   PROMETHEUS: 100000,
   HERACLES: 100000,
   AGAPE: 5000,
+  AGAPE_SPOT: 5000,
 }
 
 // Bot configuration with colors
@@ -93,6 +94,7 @@ export default function MultiBotEquityCurve({
     AGAPE: true,
     PHOENIX: false,
     ATLAS: false,
+    AGAPE_SPOT: false,
   })
   const [selectedDays, setSelectedDays] = useState(days)
 
@@ -152,6 +154,7 @@ export default function MultiBotEquityCurve({
     AGAPE: agapeData,
     PHOENIX: undefined,
     ATLAS: undefined,
+    AGAPE_SPOT: undefined,
   }
 
   // Combine all data into a single chart dataset
@@ -212,6 +215,7 @@ export default function MultiBotEquityCurve({
       AGAPE: null,
       PHOENIX: null,
       ATLAS: null,
+      AGAPE_SPOT: null,
     }
 
     LIVE_BOTS.forEach(bot => {
