@@ -285,14 +285,14 @@ def test_database_schema_completeness():
     """Verify database schema has all required columns"""
     print("\n=== Testing Database Schema Completeness ===")
 
-    # argus_snapshots required columns
+    # watchtower_snapshots required columns
     argus_columns = [
         'id', 'symbol', 'expiration_date', 'snapshot_time',
         'spot_price', 'expected_move', 'vix',
         'total_net_gamma', 'gamma_regime', 'previous_regime',
         'regime_flipped', 'market_status', 'created_at'
     ]
-    print(f"  ✓ argus_snapshots has {len(argus_columns)} required columns")
+    print(f"  ✓ watchtower_snapshots has {len(argus_columns)} required columns")
 
     # gex_history required columns (for flip_point, walls)
     gex_columns = [

@@ -64,7 +64,7 @@ AlphaGEX is an **autonomous options trading platform** that combines proprietary
 │  └─────────────────────┘    └─────────────────────┘                         │
 │                                                                              │
 │  ┌─────────────────────┐    ┌─────────────────────┐                         │
-│  │     ⚡ HERMES       │    │     🔮 ORACLE       │                         │
+│  │     ⚡ HERMES       │    │     🔮 PROPHET       │                         │
 │  │  Manual Wheel Bot   │    │   AI Advisory Bot   │                         │
 │  ├─────────────────────┤    ├─────────────────────┤                         │
 │  │ • User-Controlled   │    │ • Trade Analysis    │                         │
@@ -381,7 +381,7 @@ AlphaGEX is an **autonomous options trading platform** that combines proprietary
 │   │   DECISION RECORD                                                   │   │
 │   │   ────────────────                                                  │   │
 │   │   • Timestamp (UTC)                                                 │   │
-│   │   • Bot Name (PHOENIX/ATLAS/HERMES/ORACLE)                         │   │
+│   │   • Bot Name (PHOENIX/ATLAS/HERMES/PROPHET)                         │   │
 │   │   • Decision Type (ENTRY/EXIT/ADJUSTMENT)                          │   │
 │   │   • Strategy Used                                                   │   │
 │   │   • Position Details (symbol, strike, expiry, quantity)            │   │
@@ -398,7 +398,7 @@ AlphaGEX is an **autonomous options trading platform** that combines proprietary
 │   │   • Why this strategy was selected                                  │   │
 │   │   • Risk/reward calculation                                         │   │
 │   │   • Confidence score                                                │   │
-│   │   • AI recommendation (if ORACLE consulted)                         │   │
+│   │   • AI recommendation (if PROPHET consulted)                         │   │
 │   │                                                                      │   │
 │   │   BACKTEST REFERENCE                                                │   │
 │   │   ──────────────────                                                │   │
@@ -485,11 +485,11 @@ AlphaGEX is an **autonomous options trading platform** that combines proprietary
 
 ---
 
-# AI Advisory System (ORACLE)
+# AI Advisory System (PROPHET)
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                    ORACLE - AI TRADE ADVISOR                                 │
+│                    PROPHET - AI TRADE ADVISOR                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   POWERED BY: Claude AI (Anthropic)                                         │

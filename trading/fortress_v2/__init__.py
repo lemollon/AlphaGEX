@@ -18,7 +18,7 @@ Usage:
 Components:
     - models.py: Data classes (IronCondorPosition, FortressConfig, etc.)
     - db.py: All database operations
-    - signals.py: Signal generation (GEX, Oracle, SD-based)
+    - signals.py: Signal generation (GEX, Prophet, SD-based)
     - executor.py: Order execution (paper/live)
     - trader.py: Main orchestrator
 """

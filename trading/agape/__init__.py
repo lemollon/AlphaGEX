@@ -20,7 +20,7 @@ GEX → Crypto Signal Mapping:
 Architecture mirrors FORTRESS V2:
     models.py   → Config, Position, Signal dataclasses
     db.py       → PostgreSQL persistence layer
-    signals.py  → Signal generation with Oracle integration
+    signals.py  → Signal generation with Prophet integration
     executor.py → tastytrade /MET order execution
-    trader.py   → Main orchestrator (scan → signal → oracle → execute → log)
+    trader.py   → Main orchestrator (scan → signal → prophet → execute → log)
 """

@@ -59,25 +59,25 @@ COMMENT ON COLUMN scan_activity.low_of_day IS 'Low of day at scan time';
 
 DO $$
 BEGIN
-    -- Check if oracle_predictions table exists before adding columns
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'oracle_predictions') THEN
+    -- Check if prophet_predictions table exists before adding columns
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'prophet_predictions') THEN
         -- NEUTRAL Regime Analysis
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS neutral_derived_direction VARCHAR(20);
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS neutral_confidence DECIMAL(5, 4);
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS neutral_reasoning TEXT;
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS neutral_derived_direction VARCHAR(20);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS neutral_confidence DECIMAL(5, 4);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS neutral_reasoning TEXT;
 
         -- Strategy Suitability Scores
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS ic_suitability DECIMAL(5, 2);
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS bullish_suitability DECIMAL(5, 2);
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS bearish_suitability DECIMAL(5, 2);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS ic_suitability DECIMAL(5, 2);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS bullish_suitability DECIMAL(5, 2);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS bearish_suitability DECIMAL(5, 2);
 
         -- Trend Data
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS trend_direction VARCHAR(20);
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS trend_strength DECIMAL(5, 4);
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS position_in_range_pct DECIMAL(5, 2);
-        ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS wall_filter_passed BOOLEAN;
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS trend_direction VARCHAR(20);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS trend_strength DECIMAL(5, 4);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS position_in_range_pct DECIMAL(5, 2);
+        ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS wall_filter_passed BOOLEAN;
 
-        RAISE NOTICE 'Added NEUTRAL regime columns to oracle_predictions table';
+        RAISE NOTICE 'Added NEUTRAL regime columns to prophet_predictions table';
     END IF;
 END $$;
 

@@ -118,7 +118,7 @@ interface IronCondorPosition {
   put_wall: number
   flip_point: number
   net_gex: number
-  // Oracle Context (AUDIT TRAIL - WHY this trade)
+  // Prophet Context (AUDIT TRAIL - WHY this trade)
   oracle_confidence: number
   oracle_win_probability: number
   oracle_advice: string
@@ -218,10 +218,10 @@ function exportTradesToCSV(positions: IronCondorPosition[], filename: string) {
     'GEX Regime',
     'Flip Point',
     'Net GEX',
-    'Oracle Confidence',
-    'Oracle Win Prob',
-    'Oracle Advice',
-    'Oracle Reasoning',
+    'Prophet Confidence',
+    'Prophet Win Prob',
+    'Prophet Advice',
+    'Prophet Reasoning',
   ]
 
   const rows = positions.map(p => [
@@ -293,7 +293,7 @@ function PositionCard({ position, isOpen }: { position: IronCondorPosition; isOp
                   position.oracle_advice === 'EXIT' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
                   'bg-gray-500/20 text-gray-400 border border-gray-500/30'
                 }`}>
-                  Oracle: {position.oracle_advice}
+                  Prophet: {position.oracle_advice}
                 </span>
               )}
             </div>
@@ -345,11 +345,11 @@ function PositionCard({ position, isOpen }: { position: IronCondorPosition; isOp
       {/* Expanded Content - Full Audit Trail */}
       {expanded && (
         <div className="px-4 pb-4 border-t border-gray-800 space-y-4">
-          {/* Oracle Context - WHY this trade */}
+          {/* Prophet Context - WHY this trade */}
           <div className="mt-4 bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Zap className="w-4 h-4 text-purple-400" />
-              <span className="text-purple-400 font-medium text-sm">Oracle Decision</span>
+              <span className="text-purple-400 font-medium text-sm">Prophet Decision</span>
             </div>
             <div className="grid grid-cols-3 gap-3 text-xs">
               <div>

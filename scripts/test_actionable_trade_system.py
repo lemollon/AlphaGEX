@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-ARGUS Actionable Trade & Signal Tracking - End-to-End Test
+WATCHTOWER Actionable Trade & Signal Tracking - End-to-End Test
 ==========================================================
 
 Tests the complete loop for:
-1. Actionable trade recommendations (/api/argus/trade-action)
-2. Signal logging (/api/argus/signals/log)
-3. Signal retrieval (/api/argus/signals/recent)
-4. Performance stats (/api/argus/signals/performance)
-5. Outcome updates (/api/argus/signals/update-outcomes)
+1. Actionable trade recommendations (/api/watchtower/trade-action)
+2. Signal logging (/api/watchtower/signals/log)
+3. Signal retrieval (/api/watchtower/signals/recent)
+4. Performance stats (/api/watchtower/signals/performance)
+5. Outcome updates (/api/watchtower/signals/update-outcomes)
 
 Run: python scripts/test_actionable_trade_system.py
 """
@@ -95,13 +95,13 @@ def test_database_table():
 
 
 def test_trade_action_endpoint():
-    """Test 2: Verify /api/argus/trade-action returns proper structure"""
+    """Test 2: Verify /api/watchtower/trade-action returns proper structure"""
     print("\n" + "=" * 60)
     print("TEST 2: Trade Action Endpoint")
     print("=" * 60)
 
     try:
-        url = f"{API_BASE}/api/argus/trade-action"
+        url = f"{API_BASE}/api/watchtower/trade-action"
         params = {
             "symbol": SYMBOL,
             "account_size": 50000,
@@ -176,7 +176,7 @@ def test_signal_logging(trade_data: dict):
         return None
 
     try:
-        url = f"{API_BASE}/api/argus/signals/log"
+        url = f"{API_BASE}/api/watchtower/signals/log"
         params = {"symbol": SYMBOL}
         response = requests.post(url, params=params, json=trade_data, timeout=30)
 
@@ -209,7 +209,7 @@ def test_recent_signals():
     print("=" * 60)
 
     try:
-        url = f"{API_BASE}/api/argus/signals/recent"
+        url = f"{API_BASE}/api/watchtower/signals/recent"
         params = {"symbol": SYMBOL, "limit": 10}
         response = requests.get(url, params=params, timeout=30)
 
@@ -257,7 +257,7 @@ def test_performance_stats():
     print("=" * 60)
 
     try:
-        url = f"{API_BASE}/api/argus/signals/performance"
+        url = f"{API_BASE}/api/watchtower/signals/performance"
         params = {"symbol": SYMBOL, "days": 30}
         response = requests.get(url, params=params, timeout=30)
 
@@ -309,7 +309,7 @@ def test_outcome_update():
     print("=" * 60)
 
     try:
-        url = f"{API_BASE}/api/argus/signals/update-outcomes"
+        url = f"{API_BASE}/api/watchtower/signals/update-outcomes"
         params = {"symbol": SYMBOL}
         response = requests.post(url, params=params, timeout=30)
 
@@ -360,7 +360,7 @@ def test_complete_loop():
 def main():
     """Run all tests"""
     print("=" * 60)
-    print("  ARGUS Actionable Trade & Signal Tracking Test Suite")
+    print("  WATCHTOWER Actionable Trade & Signal Tracking Test Suite")
     print("=" * 60)
     print(f"  API Base: {API_BASE}")
     print(f"  Symbol: {SYMBOL}")

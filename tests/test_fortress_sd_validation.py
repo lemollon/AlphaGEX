@@ -1,7 +1,7 @@
 """
 Test FORTRESS SD-based strike validation fix.
 
-This test verifies that FORTRESS now correctly rejects GEX walls and Oracle strikes
+This test verifies that FORTRESS now correctly rejects GEX walls and Prophet strikes
 that are less than 1.2 SD from spot, falling back to SD-based calculation.
 
 The bug was that FORTRESS used percentage-based validation (0.5%-5%) which could

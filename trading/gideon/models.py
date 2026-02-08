@@ -134,7 +134,7 @@ class SpreadPosition:
     """
     A directional spread position with FULL context for audit trail.
 
-    Stores all market conditions, ML predictions, and Oracle advice
+    Stores all market conditions, ML predictions, and Prophet advice
     at time of entry for post-trade analysis.
     """
     # Identity
@@ -160,13 +160,13 @@ class SpreadPosition:
     gex_regime: str = ""
     vix_at_entry: float = 0
 
-    # Kronos GEX context (for audit)
+    # Chronicles GEX context (for audit)
     flip_point: float = 0
     net_gex: float = 0
 
     # ML context (FULL audit trail)
     oracle_confidence: float = 0
-    oracle_advice: str = ""  # Oracle's trade decision for audit trail
+    oracle_advice: str = ""  # Prophet's trade decision for audit trail
     ml_direction: str = ""
     ml_confidence: float = 0
     ml_model_name: str = ""
@@ -221,7 +221,7 @@ class TradeSignal:
     """
     A trading signal with ALL context for audit trail.
 
-    Contains market data, ML predictions, Oracle advice, and trade reasoning.
+    Contains market data, ML predictions, Prophet advice, and trade reasoning.
     """
     # Direction
     direction: str  # BULLISH or BEARISH
@@ -235,7 +235,7 @@ class TradeSignal:
     gex_regime: str
     vix: float
 
-    # Kronos GEX context
+    # Chronicles GEX context
     flip_point: float = 0
     net_gex: float = 0
 
@@ -259,7 +259,7 @@ class TradeSignal:
     ml_win_probability: float = 0
     ml_top_features: str = ""
 
-    # Oracle context (for audit)
+    # Prophet context (for audit)
     oracle_win_probability: float = 0
     oracle_advice: str = ""
     oracle_direction: str = ""
@@ -273,7 +273,7 @@ class TradeSignal:
     @property
     def is_valid(self) -> bool:
         """Check if signal passes validation (aggressive Apache thresholds)"""
-        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        # PROPHET IS GOD: When Prophet says TRADE, nothing blocks it
         oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 
         if oracle_approved:

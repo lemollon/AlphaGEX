@@ -13,7 +13,7 @@ Usage (in Render shell):
 Gathers:
 - All closed trades with full context
 - Win/loss breakdown by every dimension
-- Oracle prediction accuracy
+- Prophet prediction accuracy
 - Signal generation patterns
 - Configuration settings
 - Comparison with IC bots (FORTRESS, SAMSON, ANCHOR)
@@ -207,8 +207,8 @@ def gather_solomon_data(db):
         wr = (wins / trades * 100) if trades > 0 else 0
         print(f"  {reason}: {trades} trades, {wr:.1f}% WR, ${pnl:,.2f} total, ${avg:,.2f} avg")
 
-    # 8. BY ORACLE CONFIDENCE
-    print("\n--- 8. BY ORACLE CONFIDENCE ---")
+    # 8. BY PROPHET CONFIDENCE
+    print("\n--- 8. BY PROPHET CONFIDENCE ---")
     rows = run_query(cursor, """
         SELECT
             CASE
@@ -232,8 +232,8 @@ def gather_solomon_data(db):
         wr = (wins / trades * 100) if trades > 0 else 0
         print(f"  {conf}: {trades} trades, {wr:.1f}% WR, ${pnl:,.2f}")
 
-    # 9. BY ORACLE ADVICE
-    print("\n--- 9. BY ORACLE ADVICE ---")
+    # 9. BY PROPHET ADVICE
+    print("\n--- 9. BY PROPHET ADVICE ---")
     rows = run_query(cursor, """
         SELECT
             COALESCE(oracle_advice, 'UNKNOWN') as advice,
@@ -292,7 +292,7 @@ def gather_solomon_data(db):
         ORDER BY close_time DESC
         LIMIT 20
     """)
-    print(f"  {'ID':<20} {'Type':<12} {'Strikes':<12} {'Spot':<8} {'VIX':<6} {'Regime':<10} {'Oracle':<8} {'P&L':<10} {'Reason':<15}")
+    print(f"  {'ID':<20} {'Type':<12} {'Strikes':<12} {'Spot':<8} {'VIX':<6} {'Regime':<10} {'Prophet':<8} {'P&L':<10} {'Reason':<15}")
     print(f"  {'-'*110}")
     for row in rows:
         pos_id, spread, long_s, short_s, spot, vix, regime, conf, advice, pnl, reason, open_t, close_t = row
@@ -321,7 +321,7 @@ def gather_solomon_data(db):
         outcome, avg_vix, avg_conf, avg_min, avg_wall = row
         print(f"  {outcome}:")
         print(f"    Avg VIX: {avg_vix:.1f}" if avg_vix else "    Avg VIX: N/A")
-        print(f"    Avg Oracle Conf: {avg_conf:.1%}" if avg_conf else "    Avg Oracle Conf: N/A")
+        print(f"    Avg Prophet Conf: {avg_conf:.1%}" if avg_conf else "    Avg Prophet Conf: N/A")
         print(f"    Avg Time Held: {avg_min:.0f} min" if avg_min else "    Avg Time Held: N/A")
         print(f"    Avg Wall Distance: {avg_wall:.2f}%" if avg_wall else "    Avg Wall Distance: N/A")
 
@@ -487,8 +487,8 @@ def gather_gideon_data(db):
         wr = (wins / trades * 100) if trades > 0 else 0
         print(f"  {reason}: {trades} trades, {wr:.1f}% WR, ${pnl:,.2f} total, ${avg:,.2f} avg")
 
-    # 8. BY ORACLE CONFIDENCE
-    print("\n--- 8. BY ORACLE CONFIDENCE ---")
+    # 8. BY PROPHET CONFIDENCE
+    print("\n--- 8. BY PROPHET CONFIDENCE ---")
     rows = run_query(cursor, """
         SELECT
             CASE
@@ -512,8 +512,8 @@ def gather_gideon_data(db):
         wr = (wins / trades * 100) if trades > 0 else 0
         print(f"  {conf}: {trades} trades, {wr:.1f}% WR, ${pnl:,.2f}")
 
-    # 9. BY ORACLE ADVICE
-    print("\n--- 9. BY ORACLE ADVICE ---")
+    # 9. BY PROPHET ADVICE
+    print("\n--- 9. BY PROPHET ADVICE ---")
     rows = run_query(cursor, """
         SELECT
             COALESCE(oracle_advice, 'UNKNOWN') as advice,
@@ -572,7 +572,7 @@ def gather_gideon_data(db):
         ORDER BY close_time DESC
         LIMIT 20
     """)
-    print(f"  {'ID':<20} {'Type':<12} {'Strikes':<12} {'Spot':<8} {'VIX':<6} {'Regime':<10} {'Oracle':<8} {'P&L':<10} {'Reason':<15}")
+    print(f"  {'ID':<20} {'Type':<12} {'Strikes':<12} {'Spot':<8} {'VIX':<6} {'Regime':<10} {'Prophet':<8} {'P&L':<10} {'Reason':<15}")
     print(f"  {'-'*110}")
     for row in rows:
         pos_id, spread, long_s, short_s, spot, vix, regime, conf, advice, pnl, reason, open_t, close_t = row
@@ -601,7 +601,7 @@ def gather_gideon_data(db):
         outcome, avg_vix, avg_conf, avg_min, avg_wall = row
         print(f"  {outcome}:")
         print(f"    Avg VIX: {avg_vix:.1f}" if avg_vix else "    Avg VIX: N/A")
-        print(f"    Avg Oracle Conf: {avg_conf:.1%}" if avg_conf else "    Avg Oracle Conf: N/A")
+        print(f"    Avg Prophet Conf: {avg_conf:.1%}" if avg_conf else "    Avg Prophet Conf: N/A")
         print(f"    Avg Time Held: {avg_min:.0f} min" if avg_min else "    Avg Time Held: N/A")
         print(f"    Avg Wall Distance: {avg_wall:.2f}%" if avg_wall else "    Avg Wall Distance: N/A")
 

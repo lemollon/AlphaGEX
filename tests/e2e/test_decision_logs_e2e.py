@@ -342,7 +342,7 @@ class TestAnchorLogging:
             print("\nNo ANCHOR decisions to verify yet")
 
     def test_anchor_oracle_integration(self, db_connection):
-        """Verify ANCHOR has Oracle context in decisions."""
+        """Verify ANCHOR has Prophet context in decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT full_decision
@@ -359,9 +359,9 @@ class TestAnchorLogging:
                 data = json.loads(full_decision)
             else:
                 data = full_decision
-            # Check for Oracle context
-            has_oracle = 'oracle' in str(data).lower()
-            print(f"\nANCHOR has Oracle context: {has_oracle}")
+            # Check for Prophet context
+            has_oracle = 'prophet' in str(data).lower()
+            print(f"\nANCHOR has Prophet context: {has_oracle}")
         else:
             print("\nNo ANCHOR decisions with full_decision to check")
 
@@ -668,7 +668,7 @@ class TestDataConsistency:
         cursor.execute("""
             SELECT bot_name, COUNT(*) as count
             FROM bot_decision_logs
-            WHERE bot_name NOT IN ('FORTRESS', 'CORNERSTONE', 'SOLOMON', 'LAZARUS', 'ANCHOR', 'SHEPHERD', 'ORACLE')
+            WHERE bot_name NOT IN ('FORTRESS', 'CORNERSTONE', 'SOLOMON', 'LAZARUS', 'ANCHOR', 'SHEPHERD', 'PROPHET')
             GROUP BY bot_name
         """)
         results = cursor.fetchall()

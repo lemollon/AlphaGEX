@@ -116,26 +116,26 @@ try:
 except ImportError:
     AutonomousAIReasoning = None
 
-# GEXIS Extended Thinking - deeper reasoning for complex decisions
+# COUNSELOR Extended Thinking - deeper reasoning for complex decisions
 GEXIS_THINKING_AVAILABLE = False
 try:
-    from ai.gexis_extended_thinking import ExtendedThinking
+    from ai.counselor_extended_thinking import ExtendedThinking
     GEXIS_THINKING_AVAILABLE = True
 except ImportError:
     ExtendedThinking = None
 
-# GEXIS Knowledge - context management for decisions
+# COUNSELOR Knowledge - context management for decisions
 GEXIS_KNOWLEDGE_AVAILABLE = False
 try:
-    from ai.gexis_knowledge import GEXISKnowledge
+    from ai.counselor_knowledge import GEXISKnowledge
     GEXIS_KNOWLEDGE_AVAILABLE = True
 except ImportError:
     GEXISKnowledge = None
 
-# GEXIS Learning Memory - persistent learning
+# COUNSELOR Learning Memory - persistent learning
 GEXIS_MEMORY_AVAILABLE = False
 try:
-    from ai.gexis_learning_memory import GEXISLearningMemory
+    from ai.counselor_learning_memory import GEXISLearningMemory
     GEXIS_MEMORY_AVAILABLE = True
 except ImportError:
     GEXISLearningMemory = None
@@ -302,7 +302,7 @@ class OrderExecutor:
             return self._execute_live(signal, thompson_weight)
 
     def _execute_paper(self, signal: IronCondorSignal, thompson_weight: float = 1.0) -> Optional[IronCondorPosition]:
-        """Paper trade execution with FULL Oracle/Kronos context"""
+        """Paper trade execution with FULL Prophet/Chronicles context"""
         try:
             import json
             now = datetime.now(CENTRAL_TZ)
@@ -312,7 +312,7 @@ class OrderExecutor:
             max_profit = signal.total_credit * 100 * contracts
             max_loss = (self.config.spread_width - signal.total_credit) * 100 * contracts
 
-            # Convert Oracle top_factors to JSON string for DB storage
+            # Convert Prophet top_factors to JSON string for DB storage
             oracle_factors_json = json.dumps(signal.oracle_top_factors) if signal.oracle_top_factors else ""
 
             position = IronCondorPosition(
@@ -336,10 +336,10 @@ class OrderExecutor:
                 call_wall=signal.call_wall,
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
-                # Kronos GEX context (FULL audit trail)
+                # Chronicles GEX context (FULL audit trail)
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
-                # Oracle context (FULL audit trail)
+                # Prophet context (FULL audit trail)
                 oracle_confidence=signal.oracle_confidence,
                 oracle_win_probability=signal.oracle_win_probability,
                 oracle_advice=signal.oracle_advice,
@@ -356,7 +356,7 @@ class OrderExecutor:
                 f"SAMSON PAPER SPX IC: {signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} "
                 f"x{contracts} @ ${signal.total_credit:.2f}"
             )
-            logger.info(f"Context: Oracle={signal.oracle_advice} ({signal.oracle_win_probability:.0%}), GEX Regime={signal.gex_regime}")
+            logger.info(f"Context: Prophet={signal.oracle_advice} ({signal.oracle_win_probability:.0%}), GEX Regime={signal.gex_regime}")
 
             return position
         except Exception as e:
@@ -364,7 +364,7 @@ class OrderExecutor:
             return None
 
     def _execute_live(self, signal: IronCondorSignal, thompson_weight: float = 1.0) -> Optional[IronCondorPosition]:
-        """Live SPX execution with FULL Oracle/Kronos context"""
+        """Live SPX execution with FULL Prophet/Chronicles context"""
         if not self.tradier:
             logger.error("Tradier not available")
             return None
@@ -421,10 +421,10 @@ class OrderExecutor:
                 call_wall=signal.call_wall,
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
-                # Kronos GEX context
+                # Chronicles GEX context
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
-                # Oracle context
+                # Prophet context
                 oracle_confidence=signal.oracle_confidence,
                 oracle_win_probability=signal.oracle_win_probability,
                 oracle_advice=signal.oracle_advice,
@@ -438,7 +438,7 @@ class OrderExecutor:
             )
 
             logger.info(f"SAMSON LIVE SPX IC: {signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} x{contracts} [Order: {ic_order_id}]")
-            logger.info(f"Context: Oracle={signal.oracle_advice} ({signal.oracle_win_probability:.0%}), GEX Regime={signal.gex_regime}")
+            logger.info(f"Context: Prophet={signal.oracle_advice} ({signal.oracle_win_probability:.0%}), GEX Regime={signal.gex_regime}")
             return position
         except Exception as e:
             logger.error(f"Live execution failed: {e}")

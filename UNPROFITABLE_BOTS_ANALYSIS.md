@@ -14,7 +14,7 @@ After analyzing the codebase, verification reports, and data structures, there a
 2. **Disabled Safety Thresholds** - Win probability and VIX filters weakened or disabled
 3. **Silent Exit Failures** - Positions not closing when they should
 4. **Data Integrity Issues** - NULL realized_pnl values making P&L tracking unreliable
-5. **Oracle Calibration Problems** - Predicted win probabilities not matching actual outcomes
+5. **Prophet Calibration Problems** - Predicted win probabilities not matching actual outcomes
 
 ---
 
@@ -44,7 +44,7 @@ if current_value is None:
 
 **Expected vs Actual Performance**:
 - Strategy requires **accurate direction prediction**
-- If Oracle's direction confidence is not well-calibrated, directional bets fail
+- If Prophet's direction confidence is not well-calibrated, directional bets fail
 - NEUTRAL GEX regime (where direction is uncertain) may still be trading
 
 ---
@@ -123,7 +123,7 @@ The question isn't "which regime favors which strategy" - it's **"is the directi
 
 **Direction Determination Flow** (from `trading/solomon_v2/signals.py`):
 1. ML 5-model ensemble provides direction (primary)
-2. Oracle provides direction (backup)
+2. Prophet provides direction (backup)
 3. If FLAT/NEUTRAL:
    - Compare `bullish_suitability` vs `bearish_suitability`
    - Tie-breaker: GEX wall proximity
@@ -137,7 +137,7 @@ The analysis script now includes:
 - **Direction Accuracy by GEX Regime** - Win rate for BULL/BEAR in each regime
 - **Wall Proximity vs Direction Choice** - Is the wall logic choosing the right direction?
 
-**Evidence from Code** (`quant/oracle_advisor.py`):
+**Evidence from Code** (`quant/prophet_advisor.py`):
 
 ```
 VIX Regime Impact:
@@ -155,9 +155,9 @@ VIX Regime Impact:
 
 > - **Win probability threshold DISABLED** at `signals.py:960-962`
 > - **VIX filter DISABLED** at `signals.py:497-498`
-> - Signal defaults to 50% confidence if ML and Oracle both fail
+> - Signal defaults to 50% confidence if ML and Prophet both fail
 
-**Oracle Changes Made**:
+**Prophet Changes Made**:
 - Monday/Friday penalties REMOVED (these days have historically lower win rates)
 - `vix_monday_friday_skip` set to 0 (was 30.0)
 - Win probability penalties reduced
@@ -195,15 +195,15 @@ Common database problems:
 - Win rates appear artificially low
 - Equity curves incomplete
 
-### 5. Oracle Calibration Problems
+### 5. Prophet Calibration Problems
 
 **Expected Behavior**:
-- Oracle predicts 60% win probability → actual wins should be ~60%
+- Prophet predicts 60% win probability → actual wins should be ~60%
 
 **Potential Issue**:
-- Oracle predicts 60% → actual wins are only 40%
+- Prophet predicts 60% → actual wins are only 40%
 
-This means the Oracle is **overconfident** in its predictions, leading bots to take trades that look good on paper but fail in practice.
+This means the Prophet is **overconfident** in its predictions, leading bots to take trades that look good on paper but fail in practice.
 
 The analysis script includes this check:
 ```sql
@@ -213,7 +213,7 @@ SELECT
     COUNT(*) as trades,
     actual_win_rate,
     avg_predicted_win_probability
--- If actual_win_rate << avg_predicted, Oracle is miscalibrated
+-- If actual_win_rate << avg_predicted, Prophet is miscalibrated
 ```
 
 ---
@@ -244,7 +244,7 @@ SELECT
 4. **Reduce risk per trade to 10%** (not 15%)
 5. **Add GEX regime filter** - skip when NEGATIVE GEX
 
-### For Oracle System
+### For Prophet System
 
 1. **Implement calibration monitoring**:
    ```sql
@@ -274,7 +274,7 @@ This will show:
 - P&L by day of week
 - P&L by VIX level
 - P&L by GEX regime
-- Oracle win probability vs actual outcomes
+- Prophet win probability vs actual outcomes
 - Scan activity (why trades are being skipped)
 
 ---
@@ -286,9 +286,9 @@ This will show:
 | P0 | Fix SPX pricing for TITAN | TITAN | DevOps |
 | P0 | Audit NULL realized_pnl rows and backfill | ALL | Backend |
 | P1 | Run analysis script on production | ALL | Quant |
-| P1 | Review Oracle calibration data | ALL | ML |
+| P1 | Review Prophet calibration data | ALL | ML |
 | P1 | Raise win probability thresholds | GIDEON, TITAN | Config |
-| P2 | Restore Monday/Friday penalties | ALL (via Oracle) | Quant |
+| P2 | Restore Monday/Friday penalties | ALL (via Prophet) | Quant |
 | P2 | Add direction confirmation for SOLOMON | SOLOMON | Trading |
 | P3 | Consider disabling GIDEON until SOLOMON profitable | GIDEON | PM |
 
@@ -301,7 +301,7 @@ The bots are unprofitable due to a combination of:
 1. **Loosened safety filters** that allow marginal trades
 2. **Silent failures** preventing proper exit execution
 3. **Data integrity issues** obscuring true performance
-4. **Potential Oracle miscalibration** leading to overconfident predictions
+4. **Potential Prophet miscalibration** leading to overconfident predictions
 5. **Strategy-market mismatch** (trading against optimal conditions)
 
 The most impactful immediate fix is to **run the analysis script on production data** to get actual numbers, then adjust thresholds based on evidence.

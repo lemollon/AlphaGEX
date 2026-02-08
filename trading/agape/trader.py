@@ -6,7 +6,7 @@ AGGRESSIVE MODE (matching VALOR/Valor):
   - Stop-and-Reverse (SAR): Reverse losing positions to capture momentum
   - Direction Tracker: Nimble reversal detection, cooldown after losses
   - Loss streak protection: Pause after consecutive losses
-  - Low barriers to entry: No Oracle blocking, low confidence threshold
+  - Low barriers to entry: No Prophet blocking, low confidence threshold
 
 Runs on a 5-minute cycle (configurable), trading /MET contracts
 via tastytrade based on crypto market microstructure signals.
@@ -65,7 +65,7 @@ class AgapeTrader:
     - Loss streak protection (pause after 3 consecutive losses)
     - 20 max open positions (was 2)
     - 5 min cooldown (was 30)
-    - Oracle advisory only (was blocking)
+    - Prophet advisory only (was blocking)
     """
 
     def __init__(self, config: Optional[AgapeConfig] = None):
@@ -131,11 +131,11 @@ class AgapeTrader:
                 scan_context["market_data"] = market_data
                 scan_context["eth_price"] = market_data.get("spot_price")
 
-            # Step 2: Get Oracle advice early (avoid double-fetching)
-            oracle_data = None
+            # Step 2: Get Prophet advice early (avoid double-fetching)
+            prophet_data = None
             if market_data:
-                oracle_data = self.signals.get_oracle_advice(market_data)
-                scan_context["oracle_data"] = oracle_data
+                prophet_data = self.signals.get_oracle_advice(market_data)
+                scan_context["prophet_data"] = prophet_data
 
             # Step 3: Manage existing positions FIRST (includes no-loss trailing + SAR)
             managed, closed = self._manage_positions(market_data)
@@ -170,8 +170,8 @@ class AgapeTrader:
                 self._log_scan(result, scan_context)
                 return result
 
-            # Step 6: Generate signal with pre-fetched Oracle data
-            signal = self.signals.generate_signal(oracle_data=oracle_data)
+            # Step 6: Generate signal with pre-fetched Prophet data
+            signal = self.signals.generate_signal(prophet_data=prophet_data)
             result["signal"] = signal.to_dict() if signal else None
 
             if not signal or not signal.is_valid:
@@ -727,7 +727,7 @@ class AgapeTrader:
     ):
         """Log the scan cycle for visibility."""
         market = context.get("market_data", {})
-        oracle = context.get("oracle_data", {})
+        prophet = context.get("prophet_data", {})
 
         scan_data = {
             "outcome": result.get("outcome", "UNKNOWN"),
@@ -743,8 +743,8 @@ class AgapeTrader:
             "crypto_gex_regime": market.get("crypto_gex_regime"),
             "combined_signal": market.get("combined_signal"),
             "combined_confidence": market.get("combined_confidence"),
-            "oracle_advice": oracle.get("advice"),
-            "oracle_win_prob": oracle.get("win_probability"),
+            "oracle_advice": prophet.get("advice"),
+            "oracle_win_prob": prophet.get("win_probability"),
             "signal_action": signal.action.value if signal else None,
             "signal_reasoning": signal.reasoning if signal else None,
             "position_id": context.get("position_id"),

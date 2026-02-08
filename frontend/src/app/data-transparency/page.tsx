@@ -23,7 +23,7 @@ interface TransparencySummary {
   [key: string]: DataCategory
 }
 
-type ActiveTab = 'summary' | 'regime' | 'vix' | 'ai' | 'sizing' | 'decisions' | 'options' | 'strike' | 'greeks' | 'dte' | 'psychology' | 'volatility' | 'ml' | 'argus' | 'backtest' | 'walkforward' | 'spreadwidth' | 'patterns' | 'volsnapshots'
+type ActiveTab = 'summary' | 'regime' | 'vix' | 'ai' | 'sizing' | 'decisions' | 'options' | 'strike' | 'greeks' | 'dte' | 'psychology' | 'volatility' | 'ml' | 'watchtower' | 'backtest' | 'walkforward' | 'spreadwidth' | 'patterns' | 'volsnapshots'
 
 export default function DataTransparencyPage() {
   const [summary, setSummary] = useState<TransparencySummary | null>(null)
@@ -133,8 +133,8 @@ export default function DataTransparencyPage() {
           endpoint = '/api/data-transparency/ml-model-details'
           setter = setMlData
           break
-        case 'argus':
-          endpoint = '/api/data-transparency/argus-gamma-details'
+        case 'watchtower':
+          endpoint = '/api/data-transparency/watchtower-gamma-details'
           setter = setArgusData
           break
         case 'backtest':
@@ -196,7 +196,7 @@ export default function DataTransparencyPage() {
     { id: 'volatility', name: 'Volatility Surface', icon: Activity, color: 'bg-teal-600' },
     { id: 'volsnapshots', name: 'Vol Surface History', icon: TrendingUp, color: 'bg-emerald-600' },
     { id: 'ml', name: 'ML Models', icon: Brain, color: 'bg-violet-600' },
-    { id: 'argus', name: 'ARGUS Gamma', icon: Eye, color: 'bg-rose-600' },
+    { id: 'watchtower', name: 'WATCHTOWER Gamma', icon: Eye, color: 'bg-rose-600' },
     { id: 'backtest', name: 'Backtest Trades', icon: FileText, color: 'bg-sky-600' },
     { id: 'walkforward', name: 'Walk-Forward', icon: BarChart3, color: 'bg-lime-600' },
     { id: 'spreadwidth', name: 'Spread Width', icon: Layers, color: 'bg-fuchsia-600' },
@@ -965,7 +965,7 @@ export default function DataTransparencyPage() {
               renderDataTable(greeksData, 'Greeks Efficiency')
             ) : activeTab === 'dte' ? (
               renderDataTable(dteData, 'DTE Performance')
-            ) : activeTab === 'argus' ? (
+            ) : activeTab === 'watchtower' ? (
               <div className="space-y-6">
                 {argusData?.gamma_flips?.length > 0 && (
                   <div>

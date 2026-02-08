@@ -10,7 +10,7 @@ Tests:
 3. Data integrity checks
 4. Box spread calculations
 5. IC trading endpoints
-6. Integration with Oracle
+6. Integration with Prophet
 """
 
 import os
@@ -228,7 +228,7 @@ def test_ic_positions(db):
                 print(f"       Position: {pos.get('position_id', 'N/A')}")
                 print(f"         Put Spread: {pos.get('put_short_strike')}/{pos.get('put_long_strike')}")
                 print(f"         Call Spread: {pos.get('call_short_strike')}/{pos.get('call_long_strike')}")
-                print(f"         Oracle Conf: {pos.get('oracle_confidence', 0)*100:.1f}%")
+                print(f"         Prophet Conf: {pos.get('oracle_confidence', 0)*100:.1f}%")
                 print()
     except Exception as e:
         log_test("IC positions query", False, str(e))
@@ -291,7 +291,7 @@ def test_scan_activity(db):
             latest = result[0]
             print(f"       Latest scan: {latest.get('scan_time')}")
             print(f"         SPX: {latest.get('spx_price')}, VIX: {latest.get('vix_level')}")
-            print(f"         Oracle: {latest.get('oracle_decision')}, Conf: {latest.get('oracle_confidence', 0)*100:.1f}%")
+            print(f"         Prophet: {latest.get('oracle_decision')}, Conf: {latest.get('oracle_confidence', 0)*100:.1f}%")
             print(f"         Action: {latest.get('action_taken')}, Reason: {latest.get('reason')}")
     except Exception as e:
         log_test("Scan activity query", False, str(e))
@@ -542,41 +542,41 @@ def test_box_spread_calculations():
 
 
 def test_oracle_integration():
-    """Test Oracle integration for IC trading"""
-    log_section("ORACLE INTEGRATION")
+    """Test Prophet integration for IC trading"""
+    log_section("PROPHET INTEGRATION")
 
     try:
-        from quant.oracle_advisor import OracleAdvisor
+        from quant.prophet_advisor import ProphetAdvisor
 
-        oracle = OracleAdvisor()
-        log_test("OracleAdvisor instantiation", True)
+        prophet = ProphetAdvisor()
+        log_test("ProphetAdvisor instantiation", True)
 
         # Test health check
         try:
-            health = oracle.health_check() if hasattr(oracle, 'health_check') else None
-            log_test("Oracle health check", health is not None or True)
+            health = prophet.health_check() if hasattr(prophet, 'health_check') else None
+            log_test("Prophet health check", health is not None or True)
         except Exception as e:
-            log_test("Oracle health check", False, str(e))
+            log_test("Prophet health check", False, str(e))
 
         # Test get_recommendation (if method exists)
         try:
-            if hasattr(oracle, 'get_strategy_recommendation'):
-                rec = oracle.get_strategy_recommendation(
+            if hasattr(prophet, 'get_strategy_recommendation'):
+                rec = prophet.get_strategy_recommendation(
                     symbol='SPX',
                     spot_price=5950,
                     vix=18.5
                 )
-                log_test("Oracle strategy recommendation", rec is not None)
+                log_test("Prophet strategy recommendation", rec is not None)
                 if rec:
                     print(f"       Recommendation: {rec.get('strategy', 'N/A')}")
                     print(f"       Confidence: {rec.get('confidence', 0)*100:.1f}%")
         except Exception as e:
-            log_test("Oracle strategy recommendation", False, str(e))
+            log_test("Prophet strategy recommendation", False, str(e))
 
     except ImportError as e:
-        log_test("OracleAdvisor import", False, str(e))
+        log_test("ProphetAdvisor import", False, str(e))
     except Exception as e:
-        log_test("Oracle integration", False, str(e))
+        log_test("Prophet integration", False, str(e))
 
 
 # =============================================================================

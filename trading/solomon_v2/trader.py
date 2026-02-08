@@ -48,19 +48,19 @@ except ImportError as e:
     gather_ml_data = None
     print(f"⚠️ SOLOMON: ML Data Gatherer not available: {e}")
 
-# Oracle for outcome recording
+# Prophet for outcome recording
 try:
-    from quant.oracle_advisor import OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome
+    from quant.prophet_advisor import ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleBotName = None
     OracleTradeOutcome = None
 
 # Learning Memory for self-improvement tracking
 try:
-    from ai.gexis_learning_memory import get_learning_memory
+    from ai.counselor_learning_memory import get_learning_memory
     LEARNING_MEMORY_AVAILABLE = True
 except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
@@ -138,10 +138,10 @@ class SolomonTrader(MathOptimizerMixin):
         # Skip date functionality - set via API to skip trading for a specific day
         self.skip_date: Optional[datetime] = None
 
-        # Math Optimizers DISABLED - Oracle is the sole decision maker
+        # Math Optimizers DISABLED - Prophet is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             self._init_math_optimizers("SOLOMON", enabled=False)
-            logger.info("SOLOMON: Math optimizers DISABLED - Oracle controls all trading decisions")
+            logger.info("SOLOMON: Math optimizers DISABLED - Prophet controls all trading decisions")
 
         logger.info(
             f"SOLOMON V2 initialized: mode={self.config.mode.value}, "
@@ -179,7 +179,7 @@ class SolomonTrader(MathOptimizerMixin):
             'gex_data': None,
             'signal': None,
             'checks': [],
-            'oracle_data': None,
+            'prophet_data': None,
             'position': None
         }
 
@@ -208,7 +208,7 @@ class SolomonTrader(MathOptimizerMixin):
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
             try:
-                # Use get_market_data() which includes expected_move (required for Oracle)
+                # Use get_market_data() which includes expected_move (required for Prophet)
                 market_data = self.signals.get_market_data() if hasattr(self.signals, 'get_market_data') else None
                 gex_data = self.signals.get_gex_data()
 
@@ -226,13 +226,13 @@ class SolomonTrader(MathOptimizerMixin):
                         'put_wall': gex_data.get('put_wall', 0),
                         'flip_point': gex_data.get('flip_point', 0),
                     }
-                    # Fetch Oracle advice using FULL market_data (includes expected_move)
+                    # Fetch Prophet advice using FULL market_data (includes expected_move)
                     try:
                         oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
                         if oracle_advice:
-                            scan_context['oracle_data'] = oracle_advice
+                            scan_context['prophet_data'] = oracle_advice
                     except Exception as e:
-                        logger.debug(f"Oracle fetch skipped: {e}")
+                        logger.debug(f"Prophet fetch skipped: {e}")
             except Exception as e:
                 logger.warning(f"Market data fetch failed: {e}")
 
@@ -255,8 +255,8 @@ class SolomonTrader(MathOptimizerMixin):
             # Step 3: Look for new entry if we have capacity
             open_positions = self.db.get_open_positions()
             if len(open_positions) < self.config.max_open_positions:
-                # Pass early-fetched oracle_data to avoid double Oracle call (bug fix)
-                position, signal = self._try_new_entry_with_context(oracle_data=scan_context.get('oracle_data'))
+                # Pass early-fetched prophet_data to avoid double Prophet call (bug fix)
+                position, signal = self._try_new_entry_with_context(prophet_data=scan_context.get('prophet_data'))
                 result['trades_opened'] = 1 if position else 0
                 if position:
                     result['action'] = 'opened'
@@ -344,7 +344,7 @@ class SolomonTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After trading window ({self.config.entry_end})"
 
-        # NOTE: Daily trade limit removed - Oracle decides trade frequency
+        # NOTE: Daily trade limit removed - Prophet decides trade frequency
 
         # Position limit
         open_count = self.db.get_position_count()
@@ -384,7 +384,7 @@ class SolomonTrader(MathOptimizerMixin):
                     closed_count += 1
                     total_pnl += pnl
 
-                    # Record outcome to Oracle for ML feedback loop
+                    # Record outcome to Prophet for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
 
                     # Record outcome to Proverbs Enhanced for feedback loops
@@ -428,7 +428,7 @@ class SolomonTrader(MathOptimizerMixin):
 
     def _record_oracle_outcome(self, pos: SpreadPosition, close_reason: str, pnl: float):
         """
-        Record trade outcome to Oracle for ML feedback loop.
+        Record trade outcome to Prophet for ML feedback loop.
 
         Migration 023: Enhanced to pass prediction_id and direction_correct for
         accurate feedback loop tracking of directional strategy performance.
@@ -437,7 +437,7 @@ class SolomonTrader(MathOptimizerMixin):
             return
 
         try:
-            oracle = OracleAdvisor()
+            prophet = ProphetAdvisor()
 
             # Determine outcome type based on P&L
             # SOLOMON trades directional spreads, so it's simpler: WIN or LOSS
@@ -459,8 +459,8 @@ class SolomonTrader(MathOptimizerMixin):
             # For directional bots, profitability = direction prediction was correct
             direction_correct = pnl > 0
 
-            # Record to Oracle using SOLOMON bot name with enhanced feedback data
-            success = oracle.update_outcome(
+            # Record to Prophet using SOLOMON bot name with enhanced feedback data
+            success = prophet.update_outcome(
                 trade_date=trade_date,
                 bot_name=OracleBotName.SOLOMON,
                 outcome=outcome,
@@ -472,12 +472,12 @@ class SolomonTrader(MathOptimizerMixin):
             )
 
             if success:
-                logger.info(f"SOLOMON: Recorded outcome to Oracle - {outcome.value}, Dir={direction_predicted}, Correct={direction_correct}, P&L=${pnl:.2f}")
+                logger.info(f"SOLOMON: Recorded outcome to Prophet - {outcome.value}, Dir={direction_predicted}, Correct={direction_correct}, P&L=${pnl:.2f}")
             else:
-                logger.warning(f"SOLOMON: Failed to record outcome to Oracle")
+                logger.warning(f"SOLOMON: Failed to record outcome to Prophet")
 
         except Exception as e:
-            logger.warning(f"SOLOMON: Oracle outcome recording failed: {e}")
+            logger.warning(f"SOLOMON: Prophet outcome recording failed: {e}")
 
     def _record_proverbs_outcome(
         self,
@@ -625,16 +625,16 @@ class SolomonTrader(MathOptimizerMixin):
 
     def _store_oracle_prediction(self, signal, position: SpreadPosition) -> int | None:
         """
-        Store Oracle prediction to database AFTER position opens.
+        Store Prophet prediction to database AFTER position opens.
 
         Migration 023 (Option C): This is called ONLY when a position is opened,
         not during every scan. This ensures 1:1 prediction-to-position mapping.
 
         This is CRITICAL for the ML feedback loop:
-        1. store_prediction() creates the record in oracle_predictions table
+        1. store_prediction() creates the record in prophet_predictions table
         2. We link the prediction to this position via position_id
         3. After trade closes, update_outcome() updates that record with actual results
-        4. Oracle uses this data for continuous model improvement
+        4. Prophet uses this data for continuous model improvement
 
         Returns:
             int: The oracle_prediction_id for linking, or None if storage failed
@@ -643,10 +643,10 @@ class SolomonTrader(MathOptimizerMixin):
             return None
 
         try:
-            oracle = OracleAdvisor()
+            prophet = ProphetAdvisor()
 
             # Build MarketContext from signal
-            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
 
             gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
             try:
@@ -665,8 +665,8 @@ class SolomonTrader(MathOptimizerMixin):
                 day_of_week=datetime.now(CENTRAL_TZ).weekday(),
             )
 
-            # Build OraclePrediction from signal's Oracle context
-            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+            # Build OraclePrediction from signal's Prophet context
+            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
 
             # Determine advice from signal
             advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
@@ -695,7 +695,7 @@ class SolomonTrader(MathOptimizerMixin):
 
             # Store to database with position_id and strategy_recommendation (Migration 023)
             trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-            prediction_id = oracle.store_prediction(
+            prediction_id = prophet.store_prediction(
                 prediction,
                 context,
                 trade_date,
@@ -704,19 +704,19 @@ class SolomonTrader(MathOptimizerMixin):
             )
 
             if prediction_id and isinstance(prediction_id, int):
-                logger.info(f"SOLOMON: Oracle prediction stored for {trade_date} (id={prediction_id}, Dir={direction_predicted}, Win Prob: {prediction.win_probability:.0%})")
+                logger.info(f"SOLOMON: Prophet prediction stored for {trade_date} (id={prediction_id}, Dir={direction_predicted}, Win Prob: {prediction.win_probability:.0%})")
                 # Update position in database with the oracle_prediction_id and direction
                 self.db.update_oracle_prediction_id(position.position_id, prediction_id, direction_predicted)
                 return prediction_id
             elif prediction_id:  # True (backward compatibility)
-                logger.info(f"SOLOMON: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+                logger.info(f"SOLOMON: Prophet prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
                 return None
             else:
-                logger.warning(f"SOLOMON: Failed to store Oracle prediction for {trade_date}")
+                logger.warning(f"SOLOMON: Failed to store Prophet prediction for {trade_date}")
                 return None
 
         except Exception as e:
-            logger.warning(f"SOLOMON: Oracle prediction storage failed: {e}")
+            logger.warning(f"SOLOMON: Prophet prediction storage failed: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -724,19 +724,19 @@ class SolomonTrader(MathOptimizerMixin):
     def _store_oracle_prediction_for_scan(
         self,
         signal,
-        oracle_data: Dict[str, Any],
+        prophet_data: Dict[str, Any],
         market_data: Dict[str, Any],
         decision: str
     ):
         """
-        Store Oracle prediction to database for ALL scans (not just traded).
+        Store Prophet prediction to database for ALL scans (not just traded).
 
-        This provides visibility into Oracle decisions even when no trade is executed.
+        This provides visibility into Prophet decisions even when no trade is executed.
         Critical for debugging "why isn't the bot trading?" scenarios.
 
         Args:
             signal: The generated signal (may be invalid)
-            oracle_data: Oracle advice dict from get_oracle_advice()
+            prophet_data: Prophet advice dict from get_oracle_advice()
             market_data: Market conditions at scan time
             decision: The decision made (TRADED, NO_TRADE, SKIP, etc.)
         """
@@ -744,9 +744,9 @@ class SolomonTrader(MathOptimizerMixin):
             return
 
         try:
-            oracle = OracleAdvisor()
-            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
-            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+            prophet = ProphetAdvisor()
+            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
 
             # Build MarketContext
             gex_regime_str = market_data.get('gex_regime', market_data.get('regime', 'NEUTRAL'))
@@ -771,8 +771,8 @@ class SolomonTrader(MathOptimizerMixin):
                 day_of_week=datetime.now(CENTRAL_TZ).weekday(),
             )
 
-            # Get advice from oracle_data or signal
-            advice_str = oracle_data.get('advice', 'SKIP_TODAY') if oracle_data else 'SKIP_TODAY'
+            # Get advice from prophet_data or signal
+            advice_str = prophet_data.get('advice', 'SKIP_TODAY') if prophet_data else 'SKIP_TODAY'
             if signal and hasattr(signal, 'oracle_advice') and signal.oracle_advice:
                 advice_str = signal.oracle_advice
             try:
@@ -782,22 +782,22 @@ class SolomonTrader(MathOptimizerMixin):
 
             # Get win probability
             win_prob = 0
-            if oracle_data:
-                win_prob = oracle_data.get('win_probability', 0)
+            if prophet_data:
+                win_prob = prophet_data.get('win_probability', 0)
             if signal and hasattr(signal, 'oracle_win_probability') and signal.oracle_win_probability > win_prob:
                 win_prob = signal.oracle_win_probability
 
             # Get confidence
             confidence = 0
-            if oracle_data:
-                confidence = oracle_data.get('confidence', 0)
+            if prophet_data:
+                confidence = prophet_data.get('confidence', 0)
             if signal and hasattr(signal, 'confidence') and signal.confidence > confidence:
                 confidence = signal.confidence
 
             # Get top factors
             top_factors = []
-            if oracle_data and oracle_data.get('top_factors'):
-                factors = oracle_data['top_factors']
+            if prophet_data and prophet_data.get('top_factors'):
+                factors = prophet_data['top_factors']
                 if isinstance(factors, list):
                     for f in factors:
                         if isinstance(f, dict):
@@ -807,8 +807,8 @@ class SolomonTrader(MathOptimizerMixin):
 
             # Build reasoning
             reasoning = f"Decision: {decision}"
-            if oracle_data and oracle_data.get('reasoning'):
-                reasoning = oracle_data['reasoning']
+            if prophet_data and prophet_data.get('reasoning'):
+                reasoning = prophet_data['reasoning']
             if signal and signal.reasoning:
                 reasoning = signal.reasoning
 
@@ -817,27 +817,27 @@ class SolomonTrader(MathOptimizerMixin):
                 advice=advice,
                 win_probability=win_prob,
                 confidence=confidence,
-                suggested_risk_pct=oracle_data.get('suggested_risk_pct', 0) if oracle_data else 0,
+                suggested_risk_pct=prophet_data.get('suggested_risk_pct', 0) if prophet_data else 0,
                 suggested_sd_multiplier=1.0,
                 use_gex_walls=True,
                 suggested_put_strike=signal.long_strike if signal and signal.direction == 'BEARISH' else None,
                 suggested_call_strike=signal.long_strike if signal and signal.direction == 'BULLISH' else None,
                 top_factors=top_factors,
                 reasoning=reasoning,
-                probabilities=oracle_data.get('probabilities', {}) if oracle_data else {},
+                probabilities=prophet_data.get('probabilities', {}) if prophet_data else {},
             )
 
             # Store to database - use today's date for non-traded scans
             trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-            success = oracle.store_prediction(prediction, context, trade_date)
+            success = prophet.store_prediction(prediction, context, trade_date)
 
             if success:
-                logger.debug(f"SOLOMON: Oracle scan prediction stored (Win Prob: {win_prob:.0%}, Decision: {decision})")
+                logger.debug(f"SOLOMON: Prophet scan prediction stored (Win Prob: {win_prob:.0%}, Decision: {decision})")
             else:
-                logger.debug(f"SOLOMON: Oracle scan prediction storage returned False")
+                logger.debug(f"SOLOMON: Prophet scan prediction storage returned False")
 
         except Exception as e:
-            logger.debug(f"SOLOMON: Oracle scan prediction storage skipped: {e}")
+            logger.debug(f"SOLOMON: Prophet scan prediction storage skipped: {e}")
 
     def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
         """
@@ -952,12 +952,12 @@ class SolomonTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_new_entry_with_context(self, oracle_data: dict = None) -> tuple[Optional[SpreadPosition], Optional[Any]]:
+    def _try_new_entry_with_context(self, prophet_data: dict = None) -> tuple[Optional[SpreadPosition], Optional[Any]]:
         """
         Try to open a new position, returning both position and signal for logging.
 
         Args:
-            oracle_data: Pre-fetched Oracle advice from run_cycle(). Passed to generate_signal()
+            prophet_data: Pre-fetched Prophet advice from run_cycle(). Passed to generate_signal()
                         to ensure consistency between scan logs and trade decision.
 
         Returns (SpreadPosition, Signal) tuple.
@@ -977,8 +977,8 @@ class SolomonTrader(MathOptimizerMixin):
             except Exception as e:
                 logger.debug(f"Regime check skipped: {e}")
 
-        # Generate signal - pass pre-fetched oracle_data to avoid double Oracle call
-        signal = self.signals.generate_signal(oracle_data=oracle_data)
+        # Generate signal - pass pre-fetched prophet_data to avoid double Prophet call
+        signal = self.signals.generate_signal(prophet_data=prophet_data)
         if not signal:
             self.db.log("INFO", "No valid signal generated")
             return None, None
@@ -1060,7 +1060,7 @@ class SolomonTrader(MathOptimizerMixin):
             note=f"Opened {position.position_id}"
         )
 
-        # CRITICAL: Store Oracle prediction for ML feedback loop
+        # CRITICAL: Store Prophet prediction for ML feedback loop
         # This enables update_outcome to find and update the prediction record
         self._store_oracle_prediction(signal, position)
 
@@ -1110,9 +1110,9 @@ class SolomonTrader(MathOptimizerMixin):
                 outcome = ScanOutcome.NO_TRADE
                 decision = "No valid signal"
 
-            # Build signal context with FULL Oracle data for frontend visibility
+            # Build signal context with FULL Prophet data for frontend visibility
             signal = context.get('signal')
-            oracle_data = context.get('oracle_data', {})
+            prophet_data = context.get('prophet_data', {})
             signal_direction = ""
             signal_confidence = 0
             signal_win_probability = 0
@@ -1132,8 +1132,8 @@ class SolomonTrader(MathOptimizerMixin):
                 'wall_distance_threshold': getattr(self.config, 'wall_distance_threshold', 0.01),
             }
 
-            # Extract Oracle data from context FIRST (fetched early for all scans)
-            # This ensures we always have Oracle data even if signal doesn't have it
+            # Extract Prophet data from context FIRST (fetched early for all scans)
+            # This ensures we always have Prophet data even if signal doesn't have it
             # Initialize NEUTRAL regime analysis fields
             neutral_derived_direction = ""
             neutral_confidence = 0
@@ -1146,31 +1146,31 @@ class SolomonTrader(MathOptimizerMixin):
             position_in_range_pct = 50.0
             wall_filter_passed = False
 
-            if oracle_data:
-                oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
-                oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
-                oracle_win_probability = oracle_data.get('win_probability', 0)
-                oracle_confidence = oracle_data.get('confidence', 0)
-                oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
+            if prophet_data:
+                oracle_advice = prophet_data.get('advice', prophet_data.get('recommendation', ''))
+                oracle_reasoning = prophet_data.get('reasoning', prophet_data.get('full_reasoning', ''))
+                oracle_win_probability = prophet_data.get('win_probability', 0)
+                oracle_confidence = prophet_data.get('confidence', 0)
+                oracle_top_factors = prophet_data.get('top_factors', prophet_data.get('factors', []))
                 # Extract NEUTRAL regime analysis fields
-                neutral_derived_direction = oracle_data.get('neutral_derived_direction', '')
-                neutral_confidence = oracle_data.get('neutral_confidence', 0)
-                neutral_reasoning = oracle_data.get('neutral_reasoning', '')
-                ic_suitability = oracle_data.get('ic_suitability', 0)
-                bullish_suitability = oracle_data.get('bullish_suitability', 0)
-                bearish_suitability = oracle_data.get('bearish_suitability', 0)
-                trend_direction = oracle_data.get('trend_direction', '')
-                trend_strength = oracle_data.get('trend_strength', 0)
-                position_in_range_pct = oracle_data.get('position_in_range_pct', 50.0)
-                wall_filter_passed = oracle_data.get('wall_filter_passed', False)
+                neutral_derived_direction = prophet_data.get('neutral_derived_direction', '')
+                neutral_confidence = prophet_data.get('neutral_confidence', 0)
+                neutral_reasoning = prophet_data.get('neutral_reasoning', '')
+                ic_suitability = prophet_data.get('ic_suitability', 0)
+                bullish_suitability = prophet_data.get('bullish_suitability', 0)
+                bearish_suitability = prophet_data.get('bearish_suitability', 0)
+                trend_direction = prophet_data.get('trend_direction', '')
+                trend_strength = prophet_data.get('trend_strength', 0)
+                position_in_range_pct = prophet_data.get('position_in_range_pct', 50.0)
+                wall_filter_passed = prophet_data.get('wall_filter_passed', False)
 
-            # If we have a signal, use signal data (but don't override Oracle data with zeros)
+            # If we have a signal, use signal data (but don't override Prophet data with zeros)
             if signal:
                 signal_direction = signal.direction
                 signal_confidence = signal.confidence
                 signal_win_probability = getattr(signal, 'ml_win_probability', 0)
 
-                # Only override Oracle data if signal has it (don't replace with zeros)
+                # Only override Prophet data if signal has it (don't replace with zeros)
                 signal_oracle_advice = getattr(signal, 'oracle_advice', '')
                 if signal_oracle_advice:
                     oracle_advice = signal_oracle_advice
@@ -1268,7 +1268,7 @@ class SolomonTrader(MathOptimizerMixin):
                 print(f"[SOLOMON DEBUG] ❌ Scan logging returned None - check database!")
                 logger.warning("[SOLOMON] Scan logging returned None - possible DB issue")
 
-            # Migration 023 (Option C): NO LONGER store Oracle predictions for non-traded scans.
+            # Migration 023 (Option C): NO LONGER store Prophet predictions for non-traded scans.
             # Predictions are ONLY stored when a position is actually opened.
             # This ensures 1:1 prediction-to-position mapping for accurate feedback loop.
             # Scan activity is still logged to solomon_scan_activity for debugging visibility.
@@ -1368,7 +1368,7 @@ class SolomonTrader(MathOptimizerMixin):
         return self.signals.get_ml_signal(gex_data)
 
     def get_oracle_advice(self) -> Optional[Dict[str, Any]]:
-        """Get Oracle advice with current GEX data"""
+        """Get Prophet advice with current GEX data"""
         gex_data = self.signals.get_gex_data()
         if not gex_data:
             return None
@@ -1413,7 +1413,7 @@ class SolomonTrader(MathOptimizerMixin):
                 )
                 if not db_success:
                     logger.error(f"CRITICAL: Failed to close {pos.position_id} in database! P&L ${pnl:.2f} not recorded.")
-                # Record outcome to Oracle for ML feedback
+                # Record outcome to Prophet for ML feedback
                 self._record_oracle_outcome(pos, reason, pnl)
                 # Record outcome to Proverbs Enhanced for feedback loops
                 trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")

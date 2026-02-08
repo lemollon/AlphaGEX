@@ -4,11 +4,11 @@ AlphaGEX Quant Module - Production-Grade Enhancements
 This module contains key improvements:
 1. Walk-Forward Optimizer - Automated train/test validation to prevent overfitting
 2. Monte Carlo Position Sizing - Stress testing for Kelly criterion
-3. Oracle Advisor - Primary decision maker for all bots
-4. GEX Probability Models (ORION) - ML predictions for ARGUS/HYPERION
+3. Prophet Advisor - Primary decision maker for all bots
+4. GEX Probability Models (STARS) - ML predictions for WATCHTOWER/GLORY
 
 Note: ML Regime Classifier and Ensemble Strategy were removed in January 2025.
-Oracle is now the sole decision authority for all trading bots.
+Prophet is now the sole decision authority for all trading bots.
 
 Author: AlphaGEX Quant Team
 Date: 2025-12-03 (Updated: 2026-01)
@@ -88,7 +88,7 @@ if _DEPENDENCIES_AVAILABLE:
     except ImportError:
         pass
 
-    # GEX Probability Models / ORION (active)
+    # GEX Probability Models / STARS (active)
     try:
         from .gex_probability_models import (
             GEXProbabilityModels,
@@ -101,16 +101,16 @@ if _DEPENDENCIES_AVAILABLE:
     except ImportError:
         pass
 
-    # Oracle Advisor (primary decision maker)
+    # Prophet Advisor (primary decision maker)
     try:
-        from .oracle_advisor import OracleAdvisor
-        __all__.append('OracleAdvisor')
+        from .prophet_advisor import ProphetAdvisor
+        __all__.append('ProphetAdvisor')
     except ImportError:
         pass
 
     # REMOVED modules (January 2025):
-    # - ml_regime_classifier: Oracle handles regime decisions
-    # - ensemble_strategy: Oracle is sole authority
+    # - ml_regime_classifier: Prophet handles regime decisions
+    # - ensemble_strategy: Prophet is sole authority
 
 else:
     # Provide helpful error message

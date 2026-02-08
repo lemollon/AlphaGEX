@@ -312,7 +312,7 @@ def analyze_trade(trade: dict) -> dict:
     analysis['contracts'] = trade['contracts']
     analysis['is_loss'] = analysis['realized_pnl'] < 0
 
-    # Oracle context
+    # Prophet context
     analysis['oracle_advice'] = trade['oracle_advice']
     analysis['oracle_win_prob'] = float(trade['oracle_win_probability'] or 0)
     analysis['gex_regime'] = trade['gex_regime']
@@ -359,7 +359,7 @@ def print_analysis(bot_name: str, trades: list, analyses: list):
             print(f"    Put Wall: ${float(trade['put_wall'] or 0):.2f} ({analysis['put_wall_sd']} SD) - Strike is {analysis['put_vs_wall']}")
             print(f"    Call Wall: ${float(trade['call_wall'] or 0):.2f} ({analysis['call_wall_sd']} SD) - Strike is {analysis['call_vs_wall']}")
 
-        print(f"\n  ORACLE:")
+        print(f"\n  PROPHET:")
         print(f"    Advice: {analysis['oracle_advice']}")
         print(f"    Win Probability: {analysis['oracle_win_prob']*100:.1f}%")
         print(f"    GEX Regime: {analysis['gex_regime']}")

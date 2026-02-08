@@ -86,7 +86,7 @@ for row in r:
     label = "OLD" if "60%" in str(row[0]) else ("NEW" if "50%" in str(row[0]) else "")
     print(f"  {row[0]}: {row[1]} trades, ${row[2]:,.2f} {label}")
 
-# Oracle Confidence Check
+# Prophet Confidence Check
 r = query("""
     SELECT
         SUM(CASE WHEN oracle_confidence > 1 THEN 1 ELSE 0 END) as bad,
@@ -106,7 +106,7 @@ KEY QUESTIONS TO INVESTIGATE:
   2. Is BEAR_PUT still catastrophically bad?
   3. Are trades near flip point winning more?
   4. Is Friday filter reducing losses?
-  5. Is Oracle confidence correlating with win rate?
+  5. Is Prophet confidence correlating with win rate?
 
 Run the full analysis:
   python scripts/icarus_analysis/run_all.py

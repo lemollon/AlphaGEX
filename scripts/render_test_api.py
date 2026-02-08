@@ -36,9 +36,9 @@ if args.live:
 
     endpoints = [
         ("/health", "GET", "Health check"),
-        ("/api/ai/gexis/health", "GET", "GEXIS health"),
-        ("/api/ai/gexis/capabilities", "GET", "GEXIS capabilities"),
-        ("/api/ai/gexis/learning-memory/stats", "GET", "Learning Memory stats"),
+        ("/api/ai/counselor/health", "GET", "COUNSELOR health"),
+        ("/api/ai/counselor/capabilities", "GET", "COUNSELOR capabilities"),
+        ("/api/ai/counselor/learning-memory/stats", "GET", "Learning Memory stats"),
         ("/api/fortress/status", "GET", "FORTRESS status"),
         ("/api/solomon/status", "GET", "SOLOMON status"),
     ]
@@ -86,12 +86,12 @@ else:
 
         # Check for new endpoints
         new_endpoints = [
-            "/gexis/learning-memory/stats",
-            "/gexis/extended-thinking",
-            "/gexis/analyze-strike",
-            "/gexis/evaluate-trade",
-            "/gexis/capabilities",
-            "/gexis/health",
+            "/counselor/learning-memory/stats",
+            "/counselor/extended-thinking",
+            "/counselor/analyze-strike",
+            "/counselor/evaluate-trade",
+            "/counselor/capabilities",
+            "/counselor/health",
         ]
 
         for ep in new_endpoints:

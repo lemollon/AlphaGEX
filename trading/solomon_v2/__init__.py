@@ -15,7 +15,7 @@ Usage:
 Components:
     - models.py: Data classes (SpreadPosition, SolomonConfig, etc.)
     - db.py: All database operations
-    - signals.py: Signal generation (GEX, ML, Oracle)
+    - signals.py: Signal generation (GEX, ML, Prophet)
     - executor.py: Order execution (paper/live)
     - trader.py: Main orchestrator
 """

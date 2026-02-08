@@ -57,8 +57,8 @@ class MarketContext:
 
 @dataclass
 class SignalContext:
-    """Signal information from ML/Oracle"""
-    source: str  # "ML", "Oracle", "GEX", "None"
+    """Signal information from ML/Prophet"""
+    source: str  # "ML", "Prophet", "GEX", "None"
     direction: str  # "BULLISH", "BEARISH", "NEUTRAL", "NONE"
     confidence: Optional[float] = None
     win_probability: Optional[float] = None
@@ -261,7 +261,7 @@ Signal Information:
     if context.error_message:
         error_str = f"\nError: {context.error_message}"
 
-    prompt = f"""You are GEXIS, explaining a trading bot's decision to a human trader who needs to understand exactly what happened and why.
+    prompt = f"""You are COUNSELOR, explaining a trading bot's decision to a human trader who needs to understand exactly what happened and why.
 
 Bot: {bot_desc}
 Scan #{context.scan_number}
@@ -362,8 +362,8 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
                     what_trigger = f"Need better R:R ratio. Current: {failed_check.actual_value}, Required: {failed_check.required_value}."
             elif "confidence" in failed_check.name.lower():
                 what_trigger = f"Signal confidence needs to increase from {failed_check.actual_value} to at least {failed_check.required_value}."
-            elif "oracle" in failed_check.name.lower():
-                what_trigger = f"Oracle needs to change recommendation from {failed_check.actual_value} to TRADE."
+            elif "prophet" in failed_check.name.lower():
+                what_trigger = f"Prophet needs to change recommendation from {failed_check.actual_value} to TRADE."
             else:
                 what_trigger = f"{failed_check.name} needs to change from {failed_check.actual_value} to meet threshold {failed_check.required_value}."
 

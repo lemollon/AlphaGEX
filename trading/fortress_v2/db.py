@@ -230,10 +230,10 @@ class FortressDatabase:
                         call_wall=float(row[17] or 0),
                         put_wall=float(row[18] or 0),
                         gex_regime=row[19] or "",
-                        # Kronos context
+                        # Chronicles context
                         flip_point=float(row[20] or 0),
                         net_gex=float(row[21] or 0),
-                        # Oracle context (FULL audit trail)
+                        # Prophet context (FULL audit trail)
                         oracle_confidence=float(row[22] or 0),
                         oracle_win_probability=float(row[23] or 0),
                         oracle_advice=row[24] or "",
@@ -258,7 +258,7 @@ class FortressDatabase:
         return positions
 
     def save_position(self, pos: IronCondorPosition) -> bool:
-        """Save a new position to database with FULL Oracle/Kronos context"""
+        """Save a new position to database with FULL Prophet/Chronicles context"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -309,7 +309,7 @@ class FortressDatabase:
             return False
 
     def _ensure_oracle_columns(self, cursor) -> None:
-        """Add new Oracle/Kronos columns if they don't exist (migration)"""
+        """Add new Prophet/Chronicles columns if they don't exist (migration)"""
         columns_to_add = [
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
@@ -319,7 +319,7 @@ class FortressDatabase:
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
             ("open_date", "DATE"),  # Extracted date from open_time for easier queries
             # Migration 023: Feedback loop enhancements
-            ("oracle_prediction_id", "INTEGER"),  # Links to oracle_predictions.id
+            ("oracle_prediction_id", "INTEGER"),  # Links to prophet_predictions.id
         ]
 
         for col_name, col_type in columns_to_add:
@@ -333,9 +333,9 @@ class FortressDatabase:
 
     def update_oracle_prediction_id(self, position_id: str, oracle_prediction_id: int) -> bool:
         """
-        Update the oracle_prediction_id for a position after Oracle prediction is stored.
+        Update the oracle_prediction_id for a position after Prophet prediction is stored.
 
-        Migration 023: This links the position to the specific oracle prediction for
+        Migration 023: This links the position to the specific prophet prediction for
         accurate outcome tracking in the feedback loop.
         """
         try:

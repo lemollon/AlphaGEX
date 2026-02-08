@@ -45,9 +45,9 @@ So I did what any engineer with too much free time would do: I built a system.
 
 ---
 
-## The Secret Sauce: The Oracle + Claude AI
+## The Secret Sauce: The Prophet + Claude AI
 
-At the heart of AlphaGEX is **The Oracle** — an ensemble of 5 specialized ML models:
+At the heart of AlphaGEX is **The Prophet** — an ensemble of 5 specialized ML models:
 
 1. **Direction Probability Model** — UP/DOWN/FLAT predictions
 2. **Flip Gravity Model** — Probability price gravitates to GEX flip point
@@ -108,7 +108,7 @@ One API key. Full autonomy.
 
 ## The Daily Ritual
 
-Every morning, I check **The Daily Mana** — the Oracle's overnight analysis:
+Every morning, I check **The Daily Mana** — the Prophet's overnight analysis:
 
 - Market regime classification (VIX + GEX state)
 - Bot recommendations for the day

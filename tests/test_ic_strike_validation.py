@@ -11,7 +11,7 @@ Run on Render server:
 This tests that:
 1. Tight GEX walls are REJECTED (< minimum SD)
 2. Wide GEX walls are ACCEPTED (>= minimum SD)
-3. Oracle strikes are validated with same rules
+3. Prophet strikes are validated with same rules
 4. SD fallback produces correct strikes
 
 Exit code: 0 = all pass, 1 = failures

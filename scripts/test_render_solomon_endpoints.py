@@ -175,16 +175,16 @@ def run_proverbs_tests(base_url: str, verbose: bool = False) -> Tuple[int, int]:
             "params": {"days": 7},
         },
 
-        # Migration 023: Oracle Accuracy
+        # Migration 023: Prophet Accuracy
         {
-            "name": "Oracle Accuracy (Migration 023)",
-            "endpoint": "/api/proverbs/oracle-accuracy",
+            "name": "Prophet Accuracy (Migration 023)",
+            "endpoint": "/api/proverbs/prophet-accuracy",
             "method": "GET",
             "expected_fields": ["success"],
         },
         {
-            "name": "Oracle Accuracy with Days Param",
-            "endpoint": "/api/proverbs/oracle-accuracy",
+            "name": "Prophet Accuracy with Days Param",
+            "endpoint": "/api/proverbs/prophet-accuracy",
             "method": "GET",
             "params": {"days": 14},
         },
@@ -260,7 +260,7 @@ def run_bot_integration_tests(base_url: str, verbose: bool = False) -> Tuple[int
             # Check if bot has oracle_prediction tracking enabled
             if data and isinstance(data, dict):
                 # Look for signs of feedback loop integration
-                has_integration = any(k in str(data).lower() for k in ['oracle', 'prediction', 'feedback'])
+                has_integration = any(k in str(data).lower() for k in ['prophet', 'prediction', 'feedback'])
                 if has_integration:
                     print_status("PASS", f"{bot.upper()}: Status OK with feedback loop indicators")
                 else:

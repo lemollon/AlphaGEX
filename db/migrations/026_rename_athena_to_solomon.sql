@@ -26,8 +26,8 @@ UPDATE unified_trades SET bot_name = 'SOLOMON' WHERE bot_name = 'ATHENA';
 -- Update bot_name references in trading_decisions
 UPDATE trading_decisions SET bot_name = 'SOLOMON' WHERE bot_name = 'ATHENA';
 
--- Update bot_name references in oracle_predictions
-UPDATE oracle_predictions SET bot_name = 'SOLOMON' WHERE bot_name = 'ATHENA';
+-- Update bot_name references in prophet_predictions
+UPDATE prophet_predictions SET bot_name = 'SOLOMON' WHERE bot_name = 'ATHENA';
 
 -- Update bot_name references in ml_decision_logs
 UPDATE ml_decision_logs SET bot_name = 'SOLOMON' WHERE bot_name = 'ATHENA';

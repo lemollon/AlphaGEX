@@ -128,11 +128,11 @@ class IronCondorPosition:
     put_wall: float = 0
     gex_regime: str = ""
 
-    # Kronos context (flip point, net GEX)
+    # Chronicles context (flip point, net GEX)
     flip_point: float = 0
     net_gex: float = 0
 
-    # Oracle context (FULL audit trail)
+    # Prophet context (FULL audit trail)
     oracle_confidence: float = 0
     oracle_win_probability: float = 0
     oracle_advice: str = ""
@@ -187,10 +187,10 @@ class IronCondorPosition:
             'call_wall': self.call_wall,
             'put_wall': self.put_wall,
             'gex_regime': self.gex_regime,
-            # Kronos context
+            # Chronicles context
             'flip_point': self.flip_point,
             'net_gex': self.net_gex,
-            # Oracle context (FULL audit trail)
+            # Prophet context (FULL audit trail)
             'oracle_confidence': self.oracle_confidence,
             'oracle_win_probability': self.oracle_win_probability,
             'oracle_advice': self.oracle_advice,
@@ -236,8 +236,8 @@ class FortressConfig:
     min_credit: float = 0.02  # Min credit per spread
     max_trades_per_day: int = 3  # Allow up to 3 trades per day with re-entry
 
-    # Oracle thresholds
-    min_win_probability: float = 0.42  # Minimum Oracle win probability to trade (42%)
+    # Prophet thresholds
+    min_win_probability: float = 0.42  # Minimum Prophet win probability to trade (42%)
 
     # Stop loss / Profit target
     use_stop_loss: bool = False
@@ -340,7 +340,7 @@ class IronCondorSignal:
     put_wall: float
     gex_regime: str
 
-    # Kronos GEX context
+    # Chronicles GEX context
     flip_point: float = 0
     net_gex: float = 0
 
@@ -361,12 +361,12 @@ class IronCondorSignal:
     # Signal quality
     confidence: float = 0
     reasoning: str = ""
-    source: str = "GEX"  # GEX, ORACLE, or COMBINED
+    source: str = "GEX"  # GEX, PROPHET, or COMBINED
 
-    # Oracle prediction details (CRITICAL for audit)
+    # Prophet prediction details (CRITICAL for audit)
     oracle_win_probability: float = 0
     oracle_advice: str = ""  # ENTER, HOLD, EXIT
-    oracle_confidence: float = 0  # Oracle's confidence in its prediction
+    oracle_confidence: float = 0  # Prophet's confidence in its prediction
     oracle_top_factors: List[Dict[str, Any]] = field(default_factory=list)
     oracle_suggested_sd: float = 1.0
     oracle_use_gex_walls: bool = False
@@ -375,7 +375,7 @@ class IronCondorSignal:
     @property
     def is_valid(self) -> bool:
         """Check if signal passes basic validation"""
-        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        # PROPHET IS GOD: When Prophet says TRADE, nothing blocks it
         oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 
         return (

@@ -298,7 +298,7 @@ interface DashboardData {
   kill_switch_status: Record<string, unknown>
   health: {
     database: boolean
-    oracle: boolean
+    prophet: boolean
     last_feedback_run: string | null
     pending_proposals_count: number
     degradation_alerts: number
@@ -1310,8 +1310,8 @@ export default function ProverbsPage() {
                 <span className="text-sm text-gray-400">Database</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${dashboard.health.oracle ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="text-sm text-gray-400">Oracle</span>
+                <div className={`w-2 h-2 rounded-full ${dashboard.health.prophet ? 'bg-green-500' : 'bg-red-500'}`} />
+                <span className="text-sm text-gray-400">Prophet</span>
               </div>
               {pendingProposals.length > 0 && (
                 <div className="flex items-center gap-2 px-3 py-1 bg-yellow-500/20 rounded-lg">
@@ -1663,12 +1663,12 @@ export default function ProverbsPage() {
               </div>
             )}
 
-            {/* Migration 023: Oracle Accuracy */}
+            {/* Migration 023: Prophet Accuracy */}
             {oracleAccuracy && oracleAccuracy.status === 'analyzed' && (
               <div className="bg-gray-800 rounded-lg border border-green-500/30 p-4">
                 <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
                   <CheckCircle className="w-5 h-5 text-green-400" />
-                  Oracle Advice Accuracy - Last 30 Days
+                  Prophet Advice Accuracy - Last 30 Days
                 </h3>
 
                 {/* Summary */}
@@ -1852,9 +1852,9 @@ export default function ProverbsPage() {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Oracle</span>
-                    <span className={dashboard?.health.oracle ? 'text-green-400' : 'text-red-400'}>
-                      {dashboard?.health.oracle ? 'Active' : 'Inactive'}
+                    <span className="text-gray-500">Prophet</span>
+                    <span className={dashboard?.health.prophet ? 'text-green-400' : 'text-red-400'}>
+                      {dashboard?.health.prophet ? 'Active' : 'Inactive'}
                     </span>
                   </div>
                   <div className="flex justify-between">

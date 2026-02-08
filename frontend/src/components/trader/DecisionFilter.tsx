@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Search, Filter, X, Calendar, ChevronDown } from 'lucide-react'
 
 type DecisionType = 'all' | 'entry' | 'exit' | 'skip' | 'error'
-type SignalSource = 'all' | 'ml' | 'oracle' | 'override' | 'config'
+type SignalSource = 'all' | 'ml' | 'prophet' | 'override' | 'config'
 
 interface DecisionFilterProps {
   onFilterChange: (filters: DecisionFilters) => void
@@ -65,7 +65,7 @@ export default function DecisionFilter({ onFilterChange, decisionCounts }: Decis
   const signalSources: { value: SignalSource; label: string }[] = [
     { value: 'all', label: 'All Sources' },
     { value: 'ml', label: 'ML' },
-    { value: 'oracle', label: 'Oracle' },
+    { value: 'prophet', label: 'Prophet' },
     { value: 'override', label: 'Overrides' },
     { value: 'config', label: 'Config' }
   ]

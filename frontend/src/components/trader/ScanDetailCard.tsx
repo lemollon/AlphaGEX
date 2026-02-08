@@ -71,7 +71,7 @@ export interface ScanData {
   // Signals
   oracle_signal?: SignalData
   ml_signal?: SignalData
-  winning_signal?: 'oracle' | 'ml' | 'aligned'
+  winning_signal?: 'prophet' | 'ml' | 'aligned'
   override_occurred?: boolean
   override_reason?: string
 
@@ -229,14 +229,14 @@ function MarketContextPanel({ context, botName }: { context?: MarketContext; bot
 // =============================================================================
 
 function SignalComparisonPanel({
-  oracle,
+  prophet,
   ml,
   winner,
   override,
   overrideReason,
   botName
 }: {
-  oracle?: SignalData
+  prophet?: SignalData
   ml?: SignalData
   winner?: string
   override?: boolean
@@ -267,38 +267,38 @@ function SignalComparisonPanel({
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        {/* Oracle Signal */}
-        <div className={`bg-gray-900/50 rounded-lg p-3 border ${winner === 'oracle' ? 'border-purple-500' : 'border-gray-700'}`}>
+        {/* Prophet Signal */}
+        <div className={`bg-gray-900/50 rounded-lg p-3 border ${winner === 'prophet' ? 'border-purple-500' : 'border-gray-700'}`}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <Brain className="w-4 h-4 text-purple-400" />
-              <span className="text-sm font-medium text-purple-400">Oracle</span>
+              <span className="text-sm font-medium text-purple-400">Prophet</span>
             </div>
-            {winner === 'oracle' && (
+            {winner === 'prophet' && (
               <span className="px-1.5 py-0.5 bg-purple-500/30 text-purple-300 text-xs rounded">WINNER</span>
             )}
           </div>
           <div className="space-y-1">
             <div className="flex justify-between">
               <span className="text-xs text-gray-500">Signal</span>
-              <span className={`text-sm font-bold ${getSignalColor(oracle?.signal)}`}>
-                {oracle?.signal?.replace(/_/g, ' ') || '--'}
+              <span className={`text-sm font-bold ${getSignalColor(prophet?.signal)}`}>
+                {prophet?.signal?.replace(/_/g, ' ') || '--'}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-xs text-gray-500">Confidence</span>
-              <span className="text-sm text-white">{oracle?.confidence ? `${(oracle.confidence * 100).toFixed(0)}%` : '--'}</span>
+              <span className="text-sm text-white">{prophet?.confidence ? `${(prophet.confidence * 100).toFixed(0)}%` : '--'}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-xs text-gray-500">Win Prob</span>
-              <span className={`text-sm ${(oracle?.win_probability || 0) >= 0.55 ? 'text-green-400' : 'text-red-400'}`}>
-                {oracle?.win_probability ? `${(oracle.win_probability * 100).toFixed(0)}%` : '--'}
+              <span className={`text-sm ${(prophet?.win_probability || 0) >= 0.55 ? 'text-green-400' : 'text-red-400'}`}>
+                {prophet?.win_probability ? `${(prophet.win_probability * 100).toFixed(0)}%` : '--'}
               </span>
             </div>
           </div>
-          {oracle?.reasoning && (
+          {prophet?.reasoning && (
             <p className="mt-2 text-xs text-gray-400 italic border-t border-gray-700 pt-2">
-              {oracle.reasoning}
+              {prophet.reasoning}
             </p>
           )}
         </div>
@@ -688,7 +688,7 @@ export default function ScanDetailCard({ scan, botName, defaultExpanded = false 
 
           {/* Signal Comparison */}
           <SignalComparisonPanel
-            oracle={scan.oracle_signal}
+            prophet={scan.oracle_signal}
             ml={scan.ml_signal}
             winner={scan.winning_signal}
             override={scan.override_occurred}

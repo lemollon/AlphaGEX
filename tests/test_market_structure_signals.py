@@ -1,5 +1,5 @@
 """
-Tests for ARGUS Market Structure Signals
+Tests for WATCHTOWER Market Structure Signals
 
 Tests the 9 market structure signals that compare today vs prior day:
 1. Flip Point Movement
@@ -347,12 +347,12 @@ class TestCombinedSignal:
         # produce CALL_WALL_BREAK_IMMINENT signal
 
 
-class TestPersistArgusSnapshot:
+class TestPersistWatchtowerSnapshot:
     """Test snapshot persistence to database"""
 
-    @patch('backend.api.routes.argus_routes.get_connection')
+    @patch('backend.api.routes.watchtower_routes.get_connection')
     def test_snapshot_persisted_with_all_fields(self, mock_get_conn):
-        """Verify all required fields are saved to argus_snapshots"""
+        """Verify all required fields are saved to watchtower_snapshots"""
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_conn.cursor.return_value = mock_cursor

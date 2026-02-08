@@ -79,42 +79,42 @@ def main():
         traceback.print_exc()
         return
 
-    # Step 3: Get Oracle advice
-    print_section("STEP 3: Get Oracle Advice")
+    # Step 3: Get Prophet advice
+    print_section("STEP 3: Get Prophet Advice")
     try:
-        oracle_data = signals.get_oracle_advice(market_data)
-        if oracle_data:
-            print_ok("Oracle advice fetched")
-            print_info(f"advice: {oracle_data.get('advice', 'UNKNOWN')}")
-            print_info(f"win_probability: {oracle_data.get('win_probability', 0):.1%}")
-            print_info(f"confidence: {oracle_data.get('confidence', 0):.1%}")
-            print_info(f"reasoning: {oracle_data.get('reasoning', 'N/A')[:100]}...")
+        prophet_data = signals.get_oracle_advice(market_data)
+        if prophet_data:
+            print_ok("Prophet advice fetched")
+            print_info(f"advice: {prophet_data.get('advice', 'UNKNOWN')}")
+            print_info(f"win_probability: {prophet_data.get('win_probability', 0):.1%}")
+            print_info(f"confidence: {prophet_data.get('confidence', 0):.1%}")
+            print_info(f"reasoning: {prophet_data.get('reasoning', 'N/A')[:100]}...")
 
-            top_factors = oracle_data.get('top_factors', [])
+            top_factors = prophet_data.get('top_factors', [])
             if top_factors:
                 print_info("Top factors:")
                 for f in top_factors[:3]:
                     print_info(f"  - {f.get('factor')}: {f.get('impact', 0):.3f}")
 
-            # Check if Oracle says trade
-            advice = oracle_data.get('advice', '')
+            # Check if Prophet says trade
+            advice = prophet_data.get('advice', '')
             oracle_says_trade = advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
             if oracle_says_trade:
-                print_ok(f"Oracle says TRADE! ({advice})")
+                print_ok(f"Prophet says TRADE! ({advice})")
             else:
-                print_fail(f"Oracle says NO TRADE ({advice})")
+                print_fail(f"Prophet says NO TRADE ({advice})")
         else:
-            print_fail("Oracle returned None!")
+            print_fail("Prophet returned None!")
     except Exception as e:
-        print_fail(f"Oracle error: {e}")
+        print_fail(f"Prophet error: {e}")
         import traceback
         traceback.print_exc()
 
     # Step 4: Generate signal
     print_section("STEP 4: Generate Signal")
     try:
-        # Pass oracle_data to avoid double call
-        signal = signals.generate_signal(oracle_data=oracle_data)
+        # Pass prophet_data to avoid double call
+        signal = signals.generate_signal(prophet_data=prophet_data)
 
         if signal:
             print_ok("Signal generated")
@@ -151,7 +151,7 @@ def main():
 
                 # Diagnose why
                 if not oracle_approved and signal.confidence < 0.5:
-                    print_fail("  REASON: Oracle not approved AND confidence < 50%")
+                    print_fail("  REASON: Prophet not approved AND confidence < 50%")
                 if signal.total_credit <= 0:
                     print_fail("  REASON: Total credit is $0 or negative")
                 if not (signal.put_short > signal.put_long > 0):

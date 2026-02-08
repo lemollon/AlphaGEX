@@ -401,9 +401,9 @@ def run_diagnostic():
             else:
                 print(f"  {bot:10} : Error - {e}")
 
-    # 4. Recent Oracle Predictions
+    # 4. Recent Prophet Predictions
     print("\n" + "-" * 60)
-    print("ORACLE PREDICTIONS TODAY")
+    print("PROPHET PREDICTIONS TODAY")
     print("-" * 60)
 
     try:
@@ -412,7 +412,7 @@ def run_diagnostic():
                    AVG(win_probability::numeric),
                    AVG(confidence::numeric),
                    MAX(prediction_time)
-            FROM oracle_predictions
+            FROM prophet_predictions
             WHERE trade_date = %s
             GROUP BY bot_name
             ORDER BY bot_name
@@ -424,9 +424,9 @@ def run_diagnostic():
                 avg_conf = float(avg_conf) if avg_conf else 0
                 print(f"  {bot:10} : {count:3} predictions | Avg WP: {avg_wp:.0%} | Avg Conf: {avg_conf:.0%}")
         else:
-            print("  [INFO] No Oracle predictions stored today")
+            print("  [INFO] No Prophet predictions stored today")
     except Exception as e:
-        print(f"  [ERROR] Could not check Oracle predictions: {e}")
+        print(f"  [ERROR] Could not check Prophet predictions: {e}")
 
     # 5. Latest NO_TRADE Reasons
     print("\n" + "-" * 60)
@@ -457,7 +457,7 @@ def run_diagnostic():
                 oracle_wp = float(oracle_wp) if oracle_wp else 0
                 ml_wp = float(ml_wp) if ml_wp else 0
                 threshold = float(threshold) if threshold else 0
-                print(f"  {bot:8} @ {time_ct:>10} | Oracle:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
+                print(f"  {bot:8} @ {time_ct:>10} | Prophet:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
                 if decision:
                     print(f"           Reason: {decision[:60]}")
         else:
@@ -690,7 +690,7 @@ def run_diagnostic():
             avg_wp = float(rows[0][0])
             avg_thresh = float(rows[0][1]) if rows[0][1] else 0.42
             if avg_wp < avg_thresh:
-                issues.append(f"Avg Oracle win prob ({avg_wp:.0%}) below threshold ({avg_thresh:.0%})")
+                issues.append(f"Avg Prophet win prob ({avg_wp:.0%}) below threshold ({avg_thresh:.0%})")
     except:
         pass
 

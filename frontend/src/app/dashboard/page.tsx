@@ -4,7 +4,7 @@ import Navigation from '@/components/Navigation'
 import IntelligenceDashboard from '@/components/IntelligenceDashboard'
 import GammaExpirationWidget from '@/components/GammaExpirationWidget'
 import DailyMannaWidget from '@/components/DailyMannaWidget'
-import ARGUSAlertsWidget from '@/components/ARGUSAlertsWidget'
+import WATCHTOWERAlertsWidget from '@/components/WATCHTOWERAlertsWidget'
 import DashboardScanFeed from '@/components/DashboardScanFeed'
 import TodaysActivityFeed from '@/components/dashboard/TodaysActivityFeed'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -35,10 +35,10 @@ export default function Dashboard() {
             <GammaExpirationWidget />
           </div>
 
-          {/* Row 2: Activity + ARGUS + Scan Feed (Monitoring) */}
+          {/* Row 2: Activity + WATCHTOWER + Scan Feed (Monitoring) */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
             <TodaysActivityFeed />
-            <ARGUSAlertsWidget />
+            <WATCHTOWERAlertsWidget />
             <DashboardScanFeed />
           </div>
 

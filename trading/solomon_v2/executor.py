@@ -120,26 +120,26 @@ try:
 except ImportError:
     AutonomousAIReasoning = None
 
-# GEXIS Extended Thinking - deeper reasoning for complex decisions
+# COUNSELOR Extended Thinking - deeper reasoning for complex decisions
 GEXIS_THINKING_AVAILABLE = False
 try:
-    from ai.gexis_extended_thinking import ExtendedThinking
+    from ai.counselor_extended_thinking import ExtendedThinking
     GEXIS_THINKING_AVAILABLE = True
 except ImportError:
     ExtendedThinking = None
 
-# GEXIS Knowledge - context management for decisions
+# COUNSELOR Knowledge - context management for decisions
 GEXIS_KNOWLEDGE_AVAILABLE = False
 try:
-    from ai.gexis_knowledge import GEXISKnowledge
+    from ai.counselor_knowledge import GEXISKnowledge
     GEXIS_KNOWLEDGE_AVAILABLE = True
 except ImportError:
     GEXISKnowledge = None
 
-# GEXIS Learning Memory - persistent learning
+# COUNSELOR Learning Memory - persistent learning
 GEXIS_MEMORY_AVAILABLE = False
 try:
-    from ai.gexis_learning_memory import GEXISLearningMemory
+    from ai.counselor_learning_memory import GEXISLearningMemory
     GEXIS_MEMORY_AVAILABLE = True
 except ImportError:
     GEXISLearningMemory = None
@@ -279,7 +279,7 @@ class OrderExecutor:
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
                 vix_at_entry=signal.vix,
-                # Kronos GEX context (FULL audit trail)
+                # Chronicles GEX context (FULL audit trail)
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 # ML context (FULL audit trail)
@@ -397,7 +397,7 @@ class OrderExecutor:
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
                 vix_at_entry=signal.vix,
-                # Kronos GEX context (FULL audit trail)
+                # Chronicles GEX context (FULL audit trail)
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 # ML context (FULL audit trail)

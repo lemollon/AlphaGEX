@@ -1071,11 +1071,11 @@ async def score_trade_and_log(
 
 
 # ============================================================================
-# SAGE (FORTRESS ML ADVISOR) ENDPOINTS - Trading Bot ML Intelligence
+# WISDOM (FORTRESS ML ADVISOR) ENDPOINTS - Trading Bot ML Intelligence
 # ============================================================================
 
 class SagePredictRequest(BaseModel):
-    """Request for SAGE (FORTRESS ML Advisor) prediction"""
+    """Request for WISDOM (FORTRESS ML Advisor) prediction"""
     vix: float
     day_of_week: int = None  # 0-6, defaults to today
     price: float = None  # SPY price
@@ -1090,12 +1090,12 @@ class SagePredictRequest(BaseModel):
     win_rate_30d: float = 0.7
 
 
-@router.get("/sage/status")
-async def get_sage_status():
+@router.get("/wisdom/status")
+async def get_wisdom_status():
     """
-    Get SAGE (FORTRESS ML Advisor) status - the PRIMARY ML system for trading bots.
+    Get WISDOM (FORTRESS ML Advisor) status - the PRIMARY ML system for trading bots.
 
-    SAGE provides ML-driven predictions for Iron Condor and directional strategies.
+    WISDOM provides ML-driven predictions for Iron Condor and directional strategies.
     Used by FORTRESS, SOLOMON, GIDEON, ANCHOR, and SAMSON bots.
     """
     try:
@@ -1160,7 +1160,7 @@ async def get_sage_status():
             "what_ml_can_do": [
                 "Identify favorable market conditions from historical patterns",
                 "Adjust position sizing based on win probability",
-                "Learn from KRONOS backtest results and live trades",
+                "Learn from CHRONICLES backtest results and live trades",
                 "Provide calibrated probability estimates",
                 "Integrate GEX regime signals for better timing"
             ],
@@ -1174,16 +1174,16 @@ async def get_sage_status():
         }
 
     except ImportError as e:
-        logger.error(f"SAGE import error: {e}")
+        logger.error(f"WISDOM import error: {e}")
         return {
             "success": True,
             "ml_library_available": False,
             "model_trained": False,
-            "error": f"SAGE module not available: {str(e)}",
-            "honest_assessment": "SAGE (FORTRESS ML Advisor) module not available. Using fallback rules."
+            "error": f"WISDOM module not available: {str(e)}",
+            "honest_assessment": "WISDOM (FORTRESS ML Advisor) module not available. Using fallback rules."
         }
     except Exception as e:
-        logger.error(f"SAGE status error: {e}")
+        logger.error(f"WISDOM status error: {e}")
         return {
             "success": False,
             "error": str(e)
@@ -1191,23 +1191,23 @@ async def get_sage_status():
 
 
 def _get_sage_assessment(model_trained: bool, data_count: int) -> str:
-    """Provide honest assessment of SAGE readiness"""
+    """Provide honest assessment of WISDOM readiness"""
     if not model_trained and data_count < 30:
-        return f"SAGE needs training data. Currently have {data_count} outcomes, need 30 minimum. Using conservative fallback rules."
+        return f"WISDOM needs training data. Currently have {data_count} outcomes, need 30 minimum. Using conservative fallback rules."
     elif not model_trained and data_count >= 30:
-        return "SAGE can be trained. Sufficient data available. Call POST /api/ml/sage/train to train."
+        return "WISDOM can be trained. Sufficient data available. Call POST /api/ml/wisdom/train to train."
     elif model_trained and data_count < 50:
-        return f"SAGE trained on {data_count} trades. Predictions available but may have limited reliability. Consider as secondary signal."
+        return f"WISDOM trained on {data_count} trades. Predictions available but may have limited reliability. Consider as secondary signal."
     elif model_trained and data_count < 100:
-        return f"SAGE trained on {data_count} trades. Reasonably reliable for filtering trade opportunities."
+        return f"WISDOM trained on {data_count} trades. Reasonably reliable for filtering trade opportunities."
     else:
-        return f"SAGE trained on {data_count} trades. Should provide useful ML-driven predictions for trading decisions."
+        return f"WISDOM trained on {data_count} trades. Should provide useful ML-driven predictions for trading decisions."
 
 
-@router.post("/sage/predict")
+@router.post("/wisdom/predict")
 async def sage_predict(request: SagePredictRequest):
     """
-    Get SAGE (FORTRESS ML Advisor) prediction for current market conditions.
+    Get WISDOM (FORTRESS ML Advisor) prediction for current market conditions.
 
     Returns win probability, trading advice, and suggested position sizing.
     """
@@ -1261,7 +1261,7 @@ async def sage_predict(request: SagePredictRequest):
             },
             ml_score=prediction_dict.get('win_probability'),
             recommendation=prediction_dict.get('advice'),
-            reasoning=f"SAGE prediction for VIX={request.vix}, DOW={day_of_week}"
+            reasoning=f"WISDOM prediction for VIX={request.vix}, DOW={day_of_week}"
         )
 
         return {
@@ -1272,7 +1272,7 @@ async def sage_predict(request: SagePredictRequest):
         }
 
     except Exception as e:
-        logger.error(f"SAGE predict error: {e}")
+        logger.error(f"WISDOM predict error: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -1281,11 +1281,11 @@ async def sage_predict(request: SagePredictRequest):
         }
 
 
-def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) -> dict:
+def train_wisdom_model_internal(min_samples: int = 30, use_kronos: bool = True) -> dict:
     """
-    Internal (non-async) SAGE training function for scheduler use.
+    Internal (non-async) WISDOM training function for scheduler use.
 
-    FIX (Jan 2026): Added for scheduled SAGE training - previously only
+    FIX (Jan 2026): Added for scheduled WISDOM training - previously only
     available via async API endpoint.
 
     Returns:
@@ -1297,7 +1297,7 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
         advisor = get_advisor()
 
         if use_kronos:
-            # Train from KRONOS backtests
+            # Train from CHRONICLES backtests
             from backtest.zero_dte_backtest import ZeroDTEBacktester
 
             backtester = ZeroDTEBacktester()
@@ -1306,8 +1306,8 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
             if not results or len(results) < min_samples:
                 return {
                     "success": False,
-                    "message": f"Not enough KRONOS data. Have {len(results) if results else 0}, need {min_samples}",
-                    "training_method": "kronos",
+                    "message": f"Not enough CHRONICLES data. Have {len(results) if results else 0}, need {min_samples}",
+                    "training_method": "chronicles",
                     "samples_used": len(results) if results else 0
                 }
 
@@ -1315,8 +1315,8 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
 
             return {
                 "success": True,
-                "message": f"SAGE trained on {len(results)} KRONOS results",
-                "training_method": "kronos",
+                "message": f"WISDOM trained on {len(results)} CHRONICLES results",
+                "training_method": "chronicles",
                 "samples_used": len(results),
                 "accuracy": metrics.accuracy if metrics else None,
                 "model_version": advisor.model_version
@@ -1335,7 +1335,7 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
 
             return {
                 "success": True,
-                "message": "SAGE trained on live outcomes",
+                "message": "WISDOM trained on live outcomes",
                 "training_method": "live",
                 "samples_used": min_samples,
                 "accuracy": metrics.accuracy if metrics else None,
@@ -1343,7 +1343,7 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
             }
 
     except Exception as e:
-        logger.error(f"SAGE internal train error: {e}")
+        logger.error(f"WISDOM internal train error: {e}")
         return {
             "success": False,
             "message": f"Training error: {str(e)}",
@@ -1352,13 +1352,13 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
         }
 
 
-@router.post("/sage/train")
+@router.post("/wisdom/train")
 async def train_sage(min_samples: int = 30, use_kronos: bool = True):
     """
-    Train SAGE (FORTRESS ML Advisor) model.
+    Train WISDOM (FORTRESS ML Advisor) model.
 
     Can train from:
-    1. KRONOS backtest results (default)
+    1. CHRONICLES backtest results (default)
     2. Live trade outcomes
     """
     try:
@@ -1367,7 +1367,7 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
         advisor = get_advisor()
 
         if use_kronos:
-            # Train from KRONOS backtests
+            # Train from CHRONICLES backtests
             from backtest.zero_dte_backtest import ZeroDTEBacktester
 
             backtester = ZeroDTEBacktester()
@@ -1376,7 +1376,7 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
             if not results or len(results) < min_samples:
                 return {
                     "success": False,
-                    "error": f"Not enough KRONOS backtest data. Have {len(results) if results else 0}, need {min_samples}"
+                    "error": f"Not enough CHRONICLES backtest data. Have {len(results) if results else 0}, need {min_samples}"
                 }
 
             metrics = advisor.train_from_kronos(results, min_samples=min_samples)
@@ -1386,12 +1386,12 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
                 details={"samples": len(results), "min_samples": min_samples},
                 ml_score=metrics.accuracy if metrics else None,
                 recommendation="TRAINED" if metrics else "FAILED",
-                reasoning="Trained SAGE from KRONOS backtest results"
+                reasoning="Trained WISDOM from CHRONICLES backtest results"
             )
 
             return {
                 "success": True,
-                "message": f"SAGE trained on {len(results)} KRONOS backtest results",
+                "message": f"WISDOM trained on {len(results)} CHRONICLES backtest results",
                 "data": {
                     "accuracy": metrics.accuracy if metrics else None,
                     "precision": metrics.precision if metrics else None,
@@ -1414,12 +1414,12 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
                 details={"min_samples": min_samples},
                 ml_score=metrics.accuracy if metrics else None,
                 recommendation="TRAINED",
-                reasoning="Trained SAGE from live trade outcomes"
+                reasoning="Trained WISDOM from live trade outcomes"
             )
 
             return {
                 "success": True,
-                "message": "SAGE trained on live trade outcomes",
+                "message": "WISDOM trained on live trade outcomes",
                 "data": {
                     "accuracy": metrics.accuracy,
                     "precision": metrics.precision,
@@ -1428,7 +1428,7 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
             }
 
     except Exception as e:
-        logger.error(f"SAGE train error: {e}")
+        logger.error(f"WISDOM train error: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -1437,10 +1437,10 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
         }
 
 
-@router.get("/sage/feature-importance")
+@router.get("/wisdom/feature-importance")
 async def get_sage_feature_importance():
     """
-    Get SAGE feature importance - which factors drive predictions.
+    Get WISDOM feature importance - which factors drive predictions.
     """
     try:
         from quant.fortress_ml_advisor import get_advisor
@@ -1453,7 +1453,7 @@ async def get_sage_feature_importance():
                 "data": {
                     "model_trained": False,
                     "features": [],
-                    "message": "Train SAGE to see feature importance"
+                    "message": "Train WISDOM to see feature importance"
                 }
             }
 
@@ -1491,7 +1491,7 @@ async def get_sage_feature_importance():
         }
 
     except Exception as e:
-        logger.error(f"SAGE feature importance error: {e}")
+        logger.error(f"WISDOM feature importance error: {e}")
         return {
             "success": False,
             "error": str(e)
@@ -1499,7 +1499,7 @@ async def get_sage_feature_importance():
 
 
 def _get_sage_feature_meaning(feature: str) -> str:
-    """Get plain English meaning of SAGE features"""
+    """Get plain English meaning of WISDOM features"""
     meanings = {
         'vix': 'Market fear gauge - higher VIX means more premium but more risk',
         'vix_percentile_30d': 'VIX compared to 30-day history - identifies elevated volatility',
@@ -1521,7 +1521,7 @@ async def get_bot_ml_status():
     """
     Get ML integration status for all trading bots.
 
-    Shows which bots use SAGE as primary prediction source,
+    Shows which bots use WISDOM as primary prediction source,
     their minimum win probability thresholds, and last prediction.
     """
     try:
@@ -1563,7 +1563,7 @@ async def get_bot_ml_status():
             bot_statuses.append({
                 "bot_name": bot["name"],
                 "ml_enabled": True,
-                "ml_source": "SAGE (ARES_ML_ADVISOR)",
+                "ml_source": "WISDOM (ARES_ML_ADVISOR)",
                 "min_win_probability": bot["min_win_prob"],
                 "description": bot["description"],
                 "last_prediction": last_prediction
@@ -1573,8 +1573,8 @@ async def get_bot_ml_status():
             "success": True,
             "data": {
                 "bots": bot_statuses,
-                "primary_source": "SAGE (FORTRESS ML Advisor)",
-                "backup_source": "Oracle (when ML unavailable)"
+                "primary_source": "WISDOM (FORTRESS ML Advisor)",
+                "backup_source": "Prophet (when ML unavailable)"
             }
         }
 
@@ -1587,13 +1587,13 @@ async def get_bot_ml_status():
 
 
 # ============================================================================
-# GEX PROBABILITY MODELS - For ARGUS/HYPERION
+# GEX PROBABILITY MODELS - For WATCHTOWER/GLORY
 # ============================================================================
 
 @router.get("/gex-models/status")
 async def get_gex_models_status():
     """
-    Get status of GEX Probability Models used by ARGUS and HYPERION.
+    Get status of GEX Probability Models used by WATCHTOWER and GLORY.
 
     Returns:
         - is_trained: Whether models are loaded and ready
@@ -1625,8 +1625,8 @@ async def get_gex_models_status():
                 "pin_zone": models._generator.pin_zone_model.is_trained if models._generator else False
             },
             "usage": {
-                "argus": "60% ML + 40% distance-weighted probability",
-                "hyperion": "60% ML + 40% distance-weighted probability"
+                "watchtower": "60% ML + 40% distance-weighted probability",
+                "glory": "60% ML + 40% distance-weighted probability"
             }
         }
 
@@ -1894,7 +1894,7 @@ async def get_gex_training_data_status():
 @router.get("/gex-models/data-preview")
 async def get_gex_training_data_preview(limit: int = 10):
     """
-    Preview sample training data that will be used for ORION model training.
+    Preview sample training data that will be used for STARS model training.
 
     Shows actual records from gex_structure_daily (primary) or gex_history (fallback)
     so users can verify data quality before training.
@@ -2045,7 +2045,7 @@ async def get_gex_training_data_preview(limit: int = 10):
 @router.get("/gex-models/data-diagnostic")
 async def diagnose_gex_training_data():
     """
-    Comprehensive diagnostic for ORION training data availability.
+    Comprehensive diagnostic for STARS training data availability.
 
     Checks all possible data sources and provides actionable recommendations.
     """
@@ -2597,9 +2597,9 @@ async def get_all_model_metadata():
     Get metadata for all ML models (active versions only).
 
     Returns information about currently deployed models:
-    - SAGE: Trade outcome predictor
-    - ORACLE: Strategy advisor
-    - GEX_PROBABILITY: GEX probability models (ORION)
+    - WISDOM: Trade outcome predictor
+    - PROPHET: Strategy advisor
+    - GEX_PROBABILITY: GEX probability models (STARS)
     - GEX_DIRECTIONAL: GEX directional predictor
 
     Part of the Complete Loop: Database → Backend API → Frontend
@@ -2698,7 +2698,7 @@ async def get_model_metadata(model_name: str):
     Get metadata for a specific ML model.
 
     Args:
-        model_name: One of SAGE, ORACLE, GEX_PROBABILITY, GEX_DIRECTIONAL
+        model_name: One of WISDOM, PROPHET, GEX_PROBABILITY, GEX_DIRECTIONAL
 
     Returns detailed model information including feature importance
     and hyperparameters if available.

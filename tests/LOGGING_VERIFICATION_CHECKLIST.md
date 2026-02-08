@@ -209,8 +209,8 @@ conn.close()
 ```
 
 ### Checklist - Data NOT Fake:
-- [ ] claude_prompt contains REAL prompt (not "Oracle advice for...")
-- [ ] claude_response contains REAL response (not Oracle reasoning)
+- [ ] claude_prompt contains REAL prompt (not "Prophet advice for...")
+- [ ] claude_response contains REAL response (not Prophet reasoning)
 - [ ] claude_tokens_used > 0
 - [ ] claude_response_time_ms > 0
 - [ ] scan_cycle > 0
@@ -250,11 +250,11 @@ grep -n "log_bot_decision" /home/user/AlphaGEX/trading/spx_wheel_system.py | hea
 - [ ] SPX Wheel calls log_bot_decision()
 - [ ] SPX Wheel passes REAL data
 
-### Oracle
+### Prophet
 ```bash
-grep -n "log_bot_decision" /home/user/AlphaGEX/quant/oracle_advisor.py | head -10
+grep -n "log_bot_decision" /home/user/AlphaGEX/quant/prophet_advisor.py | head -10
 ```
-- [ ] Oracle calls log_bot_decision()
+- [ ] Prophet calls log_bot_decision()
 
 ---
 
@@ -291,7 +291,7 @@ ls -la /home/user/AlphaGEX/frontend/src/components/logs/
 - [ ] /atlas/logs/page.tsx exists and imports BotLogsPage
 - [ ] /phoenix/logs/page.tsx exists and imports BotLogsPage
 - [ ] /hermes/logs/page.tsx exists and imports BotLogsPage
-- [ ] /oracle/logs/page.tsx exists and imports BotLogsPage
+- [ ] /prophet/logs/page.tsx exists and imports BotLogsPage
 - [ ] BotLogsPage.tsx is complete
 - [ ] ClaudeConversationViewer.tsx is complete
 - [ ] ExecutionTimeline.tsx is complete
@@ -353,7 +353,7 @@ c.execute('SELECT bot_name, COUNT(*) FROM bot_decision_logs GROUP BY bot_name')
 by_bot = c.fetchall()
 
 # Check for fake data
-c.execute(\"SELECT COUNT(*) FROM bot_decision_logs WHERE claude_prompt LIKE '%Oracle advice%'\")
+c.execute(\"SELECT COUNT(*) FROM bot_decision_logs WHERE claude_prompt LIKE '%Prophet advice%'\")
 fake_prompts = c.fetchone()[0]
 
 c.execute('SELECT COUNT(*) FROM bot_decision_logs WHERE scan_cycle = 0 OR scan_cycle IS NULL')

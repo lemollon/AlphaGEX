@@ -273,7 +273,7 @@ class GEXDirectionalPredictor:
         """
         Calculate GEX directly from ORAT options data if gex_daily doesn't exist.
         """
-        from quant.kronos_gex_calculator import KronosGEXCalculator
+        from quant.chronicles_gex_calculator import KronosGEXCalculator
 
         calc = KronosGEXCalculator(self.ticker)
 

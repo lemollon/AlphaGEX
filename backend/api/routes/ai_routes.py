@@ -1,7 +1,7 @@
 """
 AI Copilot API routes - Claude AI integration for market analysis and trade advice.
 
-Powered by GEXIS (Gamma Exposure eXpert Intelligence System)
+Powered by COUNSELOR (Gamma Exposure eXpert Intelligence System)
 """
 
 import os
@@ -26,9 +26,9 @@ import asyncio
 
 from backend.api.dependencies import api_client, claude_ai, get_connection
 
-# Import GEXIS personality system
+# Import COUNSELOR personality system
 try:
-    from ai.gexis_personality import (
+    from ai.counselor_personality import (
         build_gexis_conversation_prompt,
         build_gexis_system_prompt,
         get_gexis_welcome_message,
@@ -40,11 +40,11 @@ try:
 except ImportError:
     GEXIS_AVAILABLE = False
     USER_NAME = "Optionist Prime"
-    GEXIS_NAME = "GEXIS"
+    GEXIS_NAME = "COUNSELOR"
 
-# Import GEXIS agentic tools
+# Import COUNSELOR agentic tools
 try:
-    from ai.gexis_tools import (
+    from ai.counselor_tools import (
         GEXIS_TOOLS,
         execute_tool,
         get_upcoming_events,
@@ -63,7 +63,7 @@ except ImportError:
 
 # Import comprehensive knowledge
 try:
-    from ai.gexis_knowledge import GEXIS_COMMANDS
+    from ai.counselor_knowledge import GEXIS_COMMANDS
     GEXIS_KNOWLEDGE_AVAILABLE = True
 except ImportError:
     GEXIS_KNOWLEDGE_AVAILABLE = False
@@ -71,7 +71,7 @@ except ImportError:
 
 # Import Extended Thinking for complex analysis
 try:
-    from ai.gexis_extended_thinking import (
+    from ai.counselor_extended_thinking import (
         analyze_with_extended_thinking,
         analyze_strike_selection,
         evaluate_trade_setup,
@@ -84,7 +84,7 @@ except ImportError:
 
 # Import Learning Memory for self-improvement
 try:
-    from ai.gexis_learning_memory import (
+    from ai.counselor_learning_memory import (
         GEXISLearningMemory,
         get_learning_memory,
         record_prediction as lm_record_prediction,
@@ -152,7 +152,7 @@ def extract_symbol_from_query(query: str, default: str = 'SPY') -> str:
 
 def detect_slash_command(query: str) -> tuple:
     """
-    Detect if query is a GEXIS slash command.
+    Detect if query is a COUNSELOR slash command.
 
     Returns:
         (command_name, args) if slash command detected
@@ -199,13 +199,13 @@ def detect_slash_command(query: str) -> tuple:
 
 async def execute_gexis_command(command: str, args: str = None) -> dict:
     """
-    Execute a GEXIS slash command using agentic tools.
+    Execute a COUNSELOR slash command using agentic tools.
 
     Returns:
         Dictionary with command result
     """
     if not GEXIS_TOOLS_AVAILABLE:
-        return {"error": "GEXIS tools not available", "data": None}
+        return {"error": "COUNSELOR tools not available", "data": None}
 
     try:
         if command == 'help':
@@ -341,7 +341,7 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
                             COUNT(*) as total_predictions,
                             SUM(CASE WHEN was_correct THEN 1 ELSE 0 END) as correct,
                             ROUND(AVG(CASE WHEN was_correct THEN 100.0 ELSE 0 END), 1) as accuracy_pct
-                        FROM oracle_training_outcomes
+                        FROM prophet_training_outcomes
                         WHERE created_at > NOW() - INTERVAL '30 days'
                     """)
                     row = cursor.fetchone()
@@ -457,8 +457,8 @@ async def ai_analyze_with_image(request: dict):
             except Exception:
                 pass  # Continue without market data
 
-        # Build GEXIS context for image analysis
-        context = f"""You are GEXIS (Gamma Exposure eXpert Intelligence System), the AI assistant for AlphaGEX.
+        # Build COUNSELOR context for image analysis
+        context = f"""You are COUNSELOR (Gamma Exposure eXpert Intelligence System), the AI assistant for AlphaGEX.
 You address the user as "{USER_NAME}" and speak with the wit and professionalism of J.A.R.V.I.S.
 
 Current Market Context for {symbol}:
@@ -475,7 +475,7 @@ Please analyze the image thoroughly and provide:
 3. Trading implications based on current market context
 4. Specific actionable recommendations if applicable
 
-Maintain GEXIS personality - professional, helpful, and address {USER_NAME} naturally."""
+Maintain COUNSELOR personality - professional, helpful, and address {USER_NAME} naturally."""
 
         # Call Claude API with vision
         client = anthropic.Anthropic(api_key=api_key)
@@ -557,7 +557,7 @@ async def ai_analyze_market(request: dict):
             # Execute the command
             command_result = await execute_gexis_command(command, args)
 
-            # Format the response in GEXIS style
+            # Format the response in COUNSELOR style
             if command_result.get('error'):
                 formatted_response = f"I apologize, {USER_NAME}. I encountered an issue executing that command: {command_result['error']}"
             else:
@@ -643,7 +643,7 @@ async def ai_analyze_market(request: dict):
                         formatted_response += f"- Correct: {data.get('correct', 0)}\n"
                         formatted_response += f"- Accuracy: {data.get('accuracy_pct', 0)}%"
                     else:
-                        formatted_response = f"No prediction accuracy data available yet, {USER_NAME}. The Oracle is still learning."
+                        formatted_response = f"No prediction accuracy data available yet, {USER_NAME}. The Prophet is still learning."
 
                 elif cmd_type == 'bot_control':
                     action = command_result.get('action', 'unknown')
@@ -719,7 +719,7 @@ async def ai_analyze_market(request: dict):
             except Exception:
                 pass  # Continue without market data
 
-        # Build context using GEXIS personality
+        # Build context using COUNSELOR personality
         if GEXIS_AVAILABLE:
             market_context = {
                 'symbol': symbol,
@@ -731,8 +731,8 @@ async def ai_analyze_market(request: dict):
             }
             context = build_gexis_conversation_prompt(market_data=market_context)
         else:
-            # Fallback to GEXIS-style prompt without full module
-            context = f"""You are GEXIS (Gamma Exposure eXpert Intelligence System), the AI assistant for AlphaGEX.
+            # Fallback to COUNSELOR-style prompt without full module
+            context = f"""You are COUNSELOR (Gamma Exposure eXpert Intelligence System), the AI assistant for AlphaGEX.
 
 You address the user as "{USER_NAME}" and speak with the wit and professionalism of J.A.R.V.I.S. from Iron Man.
 You are loyal, helpful, and have deep expertise in options trading and gamma exposure analysis.
@@ -819,7 +819,7 @@ async def optimize_strategy(request: dict):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail="AI Strategy Optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="AI Strategy Optimizer has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -846,7 +846,7 @@ async def analyze_all_strategies(api_key: str = None):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail="AI Strategy Optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="AI Strategy Optimizer has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -886,7 +886,7 @@ async def get_trade_advice(signal_data: dict):
     except ImportError:
         raise HTTPException(
             status_code=503,
-            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="Smart Trade Advisor has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -922,7 +922,7 @@ async def provide_ai_feedback(feedback: dict):
     except ImportError:
         raise HTTPException(
             status_code=503,
-            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="Smart Trade Advisor has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -947,7 +947,7 @@ async def get_learning_insights():
     except ImportError:
         raise HTTPException(
             status_code=503,
-            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="Smart Trade Advisor has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -972,7 +972,7 @@ async def get_ai_track_record(days: int = 30):
     except ImportError:
         raise HTTPException(
             status_code=503,
-            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="Smart Trade Advisor has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1061,15 +1061,15 @@ async def get_conversation_detail(conversation_id: int):
 
 
 # =============================================================================
-# GEXIS-SPECIFIC ENDPOINTS
+# COUNSELOR-SPECIFIC ENDPOINTS
 # =============================================================================
 
-@router.get("/gexis/info")
+@router.get("/counselor/info")
 async def get_gexis_info():
-    """Get GEXIS system information"""
+    """Get COUNSELOR system information"""
     try:
         if GEXIS_AVAILABLE:
-            from ai.gexis_personality import (
+            from ai.counselor_personality import (
                 GEXIS_NAME,
                 GEXIS_FULL_NAME,
                 USER_NAME,
@@ -1077,7 +1077,7 @@ async def get_gexis_info():
             )
             return {
                 "success": True,
-                "gexis": {
+                "counselor": {
                     "name": GEXIS_NAME,
                     "full_name": GEXIS_FULL_NAME,
                     "user_name": USER_NAME,
@@ -1089,11 +1089,11 @@ async def get_gexis_info():
         else:
             return {
                 "success": True,
-                "gexis": {
-                    "name": "GEXIS",
+                "counselor": {
+                    "name": "COUNSELOR",
                     "full_name": "Gamma Exposure eXpert Intelligence System",
                     "user_name": "Optionist Prime",
-                    "greeting": "Good evening, Optionist Prime. GEXIS at your service.",
+                    "greeting": "Good evening, Optionist Prime. COUNSELOR at your service.",
                     "status": "online",
                     "version": "1.0.0"
                 }
@@ -1102,10 +1102,10 @@ async def get_gexis_info():
         return {"success": False, "error": str(e)}
 
 
-@router.get("/gexis/welcome")
+@router.get("/counselor/welcome")
 async def get_gexis_welcome():
     """
-    Get GEXIS proactive welcome message for new chat sessions.
+    Get COUNSELOR proactive welcome message for new chat sessions.
     Includes real-time market data, position status, and economic calendar.
     """
     try:
@@ -1118,7 +1118,7 @@ async def get_gexis_welcome():
                 "proactive": True
             }
         elif GEXIS_AVAILABLE:
-            from ai.gexis_personality import get_gexis_welcome_message
+            from ai.counselor_personality import get_gexis_welcome_message
             return {
                 "success": True,
                 "message": get_gexis_welcome_message(),
@@ -1150,7 +1150,7 @@ async def get_gexis_welcome():
 
             return {
                 "success": True,
-                "message": f"""{greeting}, Optionist Prime. GEXIS online.
+                "message": f"""{greeting}, Optionist Prime. COUNSELOR online.
 
 **━━━ SYSTEM STATUS ━━━**
 ◉ Neural Core: Active
@@ -1170,13 +1170,13 @@ Full access to AlphaGEX confirmed—gamma analytics, dealer positioning, bot per
 
 
 # =============================================================================
-# GEXIS DAILY BRIEFING
+# COUNSELOR DAILY BRIEFING
 # =============================================================================
 
-@router.get("/gexis/daily-briefing")
+@router.get("/counselor/daily-briefing")
 async def get_daily_briefing():
     """
-    Generate GEXIS morning market briefing.
+    Generate COUNSELOR morning market briefing.
     Provides comprehensive market overview, bot status, and recommendations.
     """
     try:
@@ -1266,7 +1266,7 @@ async def get_daily_briefing():
 
         conn.close()
 
-        # Build GEXIS briefing prompt
+        # Build COUNSELOR briefing prompt
         hour = datetime.now().hour
         if 5 <= hour < 12:
             time_context = "morning"
@@ -1278,7 +1278,7 @@ async def get_daily_briefing():
             time_context = "evening"
             greeting = "Good evening"
 
-        briefing_prompt = f"""You are GEXIS generating a {time_context} market briefing for {USER_NAME}.
+        briefing_prompt = f"""You are COUNSELOR generating a {time_context} market briefing for {USER_NAME}.
 
 MARKET DATA:
 - SPY Spot: ${briefing_data['market'].get('spot_price', 'N/A')}
@@ -1311,7 +1311,7 @@ Generate a concise {time_context} briefing that:
 6. Provides 2-3 key recommendations for the day
 7. Ends with an offer to dive deeper into any area
 
-Keep it professional, concise, and actionable. Use GEXIS personality (J.A.R.V.I.S.-style).
+Keep it professional, concise, and actionable. Use COUNSELOR personality (J.A.R.V.I.S.-style).
 No emojis. Format with clear sections."""
 
         # Call Claude for briefing generation
@@ -1356,7 +1356,7 @@ Shall I elaborate on any specific area, {USER_NAME}?"""
 
 
 # =============================================================================
-# GEXIS QUICK COMMANDS
+# COUNSELOR QUICK COMMANDS
 # =============================================================================
 
 QUICK_COMMANDS = {
@@ -1370,10 +1370,10 @@ QUICK_COMMANDS = {
 }
 
 
-@router.post("/gexis/command")
+@router.post("/counselor/command")
 async def execute_quick_command(request: dict):
     """
-    Execute a GEXIS quick command.
+    Execute a COUNSELOR quick command.
 
     Commands:
     - /status - System and bot status
@@ -1647,13 +1647,13 @@ async def execute_quick_command(request: dict):
 
 
 # =============================================================================
-# GEXIS PROACTIVE ALERTS
+# COUNSELOR PROACTIVE ALERTS
 # =============================================================================
 
-@router.get("/gexis/alerts")
+@router.get("/counselor/alerts")
 async def get_active_alerts():
     """
-    Get proactive alerts from GEXIS.
+    Get proactive alerts from COUNSELOR.
     Checks for regime changes, position alerts, and market conditions.
     """
     try:
@@ -1754,13 +1754,13 @@ async def get_active_alerts():
 
 
 # =============================================================================
-# GEXIS CONVERSATION MEMORY
+# COUNSELOR CONVERSATION MEMORY
 # =============================================================================
 
-@router.post("/gexis/conversation/save")
+@router.post("/counselor/conversation/save")
 async def save_conversation(request: dict):
     """
-    Save a conversation to GEXIS memory for context retention.
+    Save a conversation to COUNSELOR memory for context retention.
     """
     try:
         conn = get_connection()
@@ -1791,7 +1791,7 @@ async def save_conversation(request: dict):
         return {"success": False, "error": str(e)}
 
 
-@router.get("/gexis/conversation/context/{session_id}")
+@router.get("/counselor/conversation/context/{session_id}")
 async def get_conversation_context(session_id: str, limit: int = 5):
     """
     Get recent conversation context for a session.
@@ -1833,7 +1833,7 @@ async def get_conversation_context(session_id: str, limit: int = 5):
         return {"success": False, "error": str(e), "messages": []}
 
 
-@router.post("/gexis/analyze-with-context")
+@router.post("/counselor/analyze-with-context")
 async def ai_analyze_with_context(request: dict):
     """
     Generate AI analysis with conversation context.
@@ -1885,7 +1885,7 @@ async def ai_analyze_with_context(request: dict):
             }
             system_prompt = build_gexis_conversation_prompt(market_data=market_context)
         else:
-            system_prompt = f"""You are GEXIS, the AI assistant for AlphaGEX.
+            system_prompt = f"""You are COUNSELOR, the AI assistant for AlphaGEX.
 Address the user as "{USER_NAME}". Be helpful, witty, and professional."""
 
         # Build message history for Claude
@@ -1942,7 +1942,7 @@ Address the user as "{USER_NAME}". Be helpful, witty, and professional."""
 
 
 # =============================================================================
-# GEXIS AGENTIC CHAT - Tool Use Enabled
+# COUNSELOR AGENTIC CHAT - Tool Use Enabled
 # =============================================================================
 
 # Define tools in Claude's format
@@ -2115,7 +2115,7 @@ def set_cached_result(cache_key: str, result: str):
 
 
 def execute_gexis_tool(tool_name: str, tool_input: dict) -> str:
-    """Execute a GEXIS tool and return the result as a string (with caching)."""
+    """Execute a COUNSELOR tool and return the result as a string (with caching)."""
     # Generate cache key
     cache_key = f"{tool_name}:{json.dumps(tool_input, sort_keys=True)}"
 
@@ -2126,34 +2126,34 @@ def execute_gexis_tool(tool_name: str, tool_input: dict) -> str:
 
     try:
         if tool_name == "get_gex_data":
-            from ai.gexis_tools import fetch_market_data
+            from ai.counselor_tools import fetch_market_data
             result = fetch_market_data(tool_input.get("symbol", "SPY"))
         elif tool_name == "get_market_data":
-            from ai.gexis_tools import fetch_ares_market_data
+            from ai.counselor_tools import fetch_ares_market_data
             result = fetch_ares_market_data()
         elif tool_name == "get_vix_data":
-            from ai.gexis_tools import fetch_vix_data
+            from ai.counselor_tools import fetch_vix_data
             result = fetch_vix_data()
         elif tool_name == "get_bot_status":
-            from ai.gexis_tools import get_bot_status
+            from ai.counselor_tools import get_bot_status
             result = get_bot_status(tool_input.get("bot_name", "fortress"))
         elif tool_name == "get_positions":
-            from ai.gexis_tools import get_fortress_positions
+            from ai.counselor_tools import get_fortress_positions
             result = get_fortress_positions()
         elif tool_name == "get_upcoming_events":
-            from ai.gexis_tools import get_upcoming_events
+            from ai.counselor_tools import get_upcoming_events
             result = get_upcoming_events(tool_input.get("days_ahead", 7))
         elif tool_name == "get_system_status":
-            from ai.gexis_tools import get_system_status
+            from ai.counselor_tools import get_system_status
             result = get_system_status()
         elif tool_name == "get_trading_stats":
-            from ai.gexis_tools import get_trading_stats
+            from ai.counselor_tools import get_trading_stats
             result = get_trading_stats(tool_input.get("days", 30))
         elif tool_name == "analyze_trade_opportunity":
-            from ai.gexis_tools import analyze_trade_opportunity
+            from ai.counselor_tools import analyze_trade_opportunity
             result = analyze_trade_opportunity(tool_input.get("symbol", "SPY"))
         elif tool_name == "request_bot_action":
-            from ai.gexis_tools import request_bot_action
+            from ai.counselor_tools import request_bot_action
             result = request_bot_action(
                 action=tool_input.get("action"),
                 bot_name=tool_input.get("bot_name"),
@@ -2170,12 +2170,12 @@ def execute_gexis_tool(tool_name: str, tool_input: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
-@router.post("/gexis/agentic-chat")
+@router.post("/counselor/agentic-chat")
 async def gexis_agentic_chat(request: dict):
     """
-    GEXIS Agentic Chat - AI assistant with tool use capabilities.
+    COUNSELOR Agentic Chat - AI assistant with tool use capabilities.
 
-    GEXIS can now:
+    COUNSELOR can now:
     - Fetch real-time GEX data
     - Get market prices and VIX
     - Check bot status and positions
@@ -2241,7 +2241,7 @@ async def gexis_agentic_chat(request: dict):
         if GEXIS_AVAILABLE:
             base_prompt = build_gexis_system_prompt()
         else:
-            base_prompt = f"You are GEXIS, the AI assistant for AlphaGEX. Address the user as '{USER_NAME}'."
+            base_prompt = f"You are COUNSELOR, the AI assistant for AlphaGEX. Address the user as '{USER_NAME}'."
 
         agentic_instructions = """
 
@@ -2333,7 +2333,7 @@ IMPORTANT RULES:
         # Check for pending bot confirmations
         pending_confirmation = None
         try:
-            from ai.gexis_tools import PENDING_CONFIRMATIONS
+            from ai.counselor_tools import PENDING_CONFIRMATIONS
             if session_id in PENDING_CONFIRMATIONS:
                 pending = PENDING_CONFIRMATIONS[session_id]
                 pending_confirmation = {
@@ -2389,16 +2389,16 @@ IMPORTANT RULES:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/gexis/agentic-chat/stream")
+@router.post("/counselor/agentic-chat/stream")
 async def gexis_agentic_chat_stream(request: dict):
     """
-    GEXIS Agentic Chat with Streaming - Stream responses as they're generated.
+    COUNSELOR Agentic Chat with Streaming - Stream responses as they're generated.
 
     Uses Server-Sent Events (SSE) to stream:
     - Tool execution status
     - Final response text
 
-    Request same as /gexis/agentic-chat
+    Request same as /counselor/agentic-chat
     """
     async def generate():
         try:
@@ -2415,7 +2415,7 @@ async def gexis_agentic_chat_stream(request: dict):
             if GEXIS_AVAILABLE:
                 base_prompt = build_gexis_system_prompt()
             else:
-                base_prompt = f"You are GEXIS, the AI assistant for AlphaGEX. Address the user as '{USER_NAME}'."
+                base_prompt = f"You are COUNSELOR, the AI assistant for AlphaGEX. Address the user as '{USER_NAME}'."
 
             agentic_instructions = """
 
@@ -2521,7 +2521,7 @@ You have access to real-time tools. When the user asks about market data, positi
     )
 
 
-@router.post("/gexis/confirm-action")
+@router.post("/counselor/confirm-action")
 async def confirm_bot_action_endpoint(request: dict):
     """
     Confirm or cancel a pending bot control action.
@@ -2536,7 +2536,7 @@ async def confirm_bot_action_endpoint(request: dict):
         session_id = request.get("session_id", "default")
         confirm = request.get("confirm", False)
 
-        from ai.gexis_tools import confirm_bot_action, PENDING_CONFIRMATIONS
+        from ai.counselor_tools import confirm_bot_action, PENDING_CONFIRMATIONS
 
         if session_id not in PENDING_CONFIRMATIONS:
             return {
@@ -2561,13 +2561,13 @@ async def confirm_bot_action_endpoint(request: dict):
 
 
 # =============================================================================
-# GEXIS TRADE EXECUTION ASSISTANT
+# COUNSELOR TRADE EXECUTION ASSISTANT
 # =============================================================================
 
-@router.post("/gexis/trade-assistant")
+@router.post("/counselor/trade-assistant")
 async def trade_execution_assistant(request: dict):
     """
-    GEXIS Trade Execution Assistant.
+    COUNSELOR Trade Execution Assistant.
     Helps validate and execute trades with guidance.
 
     Request:
@@ -2686,7 +2686,7 @@ Put Wall: ${gex_data.get('put_wall', 'N/A')}
             if not api_key:
                 return {"success": False, "error": "Claude API key not configured"}
 
-            explain_prompt = f"""You are GEXIS explaining a trade to {USER_NAME}.
+            explain_prompt = f"""You are COUNSELOR explaining a trade to {USER_NAME}.
 
 {trade_context}
 
@@ -2696,7 +2696,7 @@ Explain this trade setup in 3-4 concise paragraphs:
 3. How current GEX positioning affects this trade
 4. Key risks and what to watch for
 
-Use GEXIS personality - professional, helpful, occasional dry wit. Address {USER_NAME} naturally."""
+Use COUNSELOR personality - professional, helpful, occasional dry wit. Address {USER_NAME} naturally."""
 
             client = anthropic.Anthropic(api_key=api_key)
             message = client.messages.create(
@@ -2738,10 +2738,10 @@ Use GEXIS personality - professional, helpful, occasional dry wit. Address {USER
 
 
 # =============================================================================
-# GEXIS EXPORT CONVERSATION
+# COUNSELOR EXPORT CONVERSATION
 # =============================================================================
 
-@router.get("/gexis/export/{session_id}")
+@router.get("/counselor/export/{session_id}")
 async def export_conversation(session_id: str, format: str = "json"):
     """
     Export conversation history for a session.
@@ -2779,14 +2779,14 @@ async def export_conversation(session_id: str, format: str = "json"):
             }
 
         elif format == "markdown":
-            md = f"# GEXIS Conversation Export\n\n"
+            md = f"# COUNSELOR Conversation Export\n\n"
             md += f"**Session:** {session_id}\n"
             md += f"**Exported:** {datetime.now().isoformat()}\n\n---\n\n"
 
             for msg in messages:
                 ts = msg.get("timestamp", "")
                 md += f"### {USER_NAME} ({ts})\n{msg['user']}\n\n"
-                md += f"### GEXIS\n{msg['assistant']}\n\n---\n\n"
+                md += f"### COUNSELOR\n{msg['assistant']}\n\n---\n\n"
 
             return {
                 "success": True,
@@ -2796,7 +2796,7 @@ async def export_conversation(session_id: str, format: str = "json"):
             }
 
         elif format == "text":
-            txt = f"GEXIS Conversation Export\n"
+            txt = f"COUNSELOR Conversation Export\n"
             txt += f"Session: {session_id}\n"
             txt += f"Exported: {datetime.now().isoformat()}\n"
             txt += "=" * 50 + "\n\n"
@@ -2804,7 +2804,7 @@ async def export_conversation(session_id: str, format: str = "json"):
             for msg in messages:
                 ts = msg.get("timestamp", "")
                 txt += f"[{ts}] {USER_NAME}:\n{msg['user']}\n\n"
-                txt += f"GEXIS:\n{msg['assistant']}\n\n"
+                txt += f"COUNSELOR:\n{msg['assistant']}\n\n"
                 txt += "-" * 30 + "\n\n"
 
             return {
@@ -2825,10 +2825,10 @@ async def export_conversation(session_id: str, format: str = "json"):
 # EXTENDED THINKING ENDPOINTS
 # =============================================================================
 
-@router.post("/gexis/extended-thinking")
-async def gexis_extended_thinking_analysis(request: dict):
+@router.post("/counselor/extended-thinking")
+async def counselor_extended_thinking_analysis(request: dict):
     """
-    GEXIS Extended Thinking - Deep reasoning for complex trading decisions.
+    COUNSELOR Extended Thinking - Deep reasoning for complex trading decisions.
     
     Uses Claude's Extended Thinking capability for:
     - Complex strike selection analysis
@@ -2851,7 +2851,7 @@ async def gexis_extended_thinking_analysis(request: dict):
     if not EXTENDED_THINKING_AVAILABLE:
         return {
             "success": False,
-            "error": "Extended Thinking not available - check ai/gexis_extended_thinking.py"
+            "error": "Extended Thinking not available - check ai/counselor_extended_thinking.py"
         }
     
     try:
@@ -2891,7 +2891,7 @@ async def gexis_extended_thinking_analysis(request: dict):
         return {"success": False, "error": str(e)}
 
 
-@router.post("/gexis/analyze-strike")
+@router.post("/counselor/analyze-strike")
 async def gexis_analyze_strike_selection(request: dict):
     """
     Analyze strike selection using Extended Thinking.
@@ -2937,7 +2937,7 @@ async def gexis_analyze_strike_selection(request: dict):
         return {"success": False, "error": str(e)}
 
 
-@router.post("/gexis/evaluate-trade")
+@router.post("/counselor/evaluate-trade")
 async def gexis_evaluate_trade_setup(request: dict):
     """
     Evaluate a trade setup using Extended Thinking.
@@ -2988,9 +2988,9 @@ async def gexis_evaluate_trade_setup(request: dict):
 # LEARNING MEMORY ENDPOINTS
 # =============================================================================
 
-@router.get("/gexis/learning-memory/stats")
+@router.get("/counselor/learning-memory/stats")
 async def get_learning_memory_stats():
-    """Get GEXIS learning memory statistics and accuracy by regime."""
+    """Get COUNSELOR learning memory statistics and accuracy by regime."""
     if not LEARNING_MEMORY_AVAILABLE or not get_learning_memory:
         return {
             "success": False,
@@ -3017,10 +3017,10 @@ async def get_learning_memory_stats():
         return {"success": False, "error": str(e)}
 
 
-@router.post("/gexis/learning-memory/record-prediction")
+@router.post("/counselor/learning-memory/record-prediction")
 async def record_gexis_prediction(request: dict):
     """
-    Record a GEXIS prediction for tracking.
+    Record a COUNSELOR prediction for tracking.
 
     Request:
     {
@@ -3058,7 +3058,7 @@ async def record_gexis_prediction(request: dict):
         return {"success": False, "error": str(e)}
 
 
-@router.post("/gexis/learning-memory/record-outcome")
+@router.post("/counselor/learning-memory/record-outcome")
 async def record_gexis_outcome(request: dict):
     """
     Record the outcome of a prediction.
@@ -3103,13 +3103,13 @@ async def record_gexis_outcome(request: dict):
 # AI CAPABILITIES STATUS
 # =============================================================================
 
-@router.get("/gexis/capabilities")
+@router.get("/counselor/capabilities")
 async def get_gexis_capabilities():
-    """Get status of all GEXIS AI capabilities."""
+    """Get status of all COUNSELOR AI capabilities."""
     return {
         "success": True,
         "capabilities": {
-            "gexis_personality": GEXIS_AVAILABLE,
+            "counselor_personality": GEXIS_AVAILABLE,
             "agentic_tools": GEXIS_TOOLS_AVAILABLE,
             "knowledge_base": GEXIS_KNOWLEDGE_AVAILABLE,
             "extended_thinking": EXTENDED_THINKING_AVAILABLE,
@@ -3130,9 +3130,9 @@ async def get_gexis_capabilities():
     }
 
 
-@router.get("/gexis/health")
+@router.get("/counselor/health")
 async def gexis_health_check():
-    """Health check for GEXIS AI system."""
+    """Health check for COUNSELOR AI system."""
     import os
     
     # Check API key

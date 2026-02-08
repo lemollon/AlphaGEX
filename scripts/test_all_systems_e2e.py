@@ -9,7 +9,7 @@ Tests all major systems to ensure they are properly configured and working:
 3. Trading bots - SOLOMON, FORTRESS, LAZARUS status
 4. API endpoints - health and data flow
 5. Data providers - Tradier, VIX sources
-6. ARGUS live data feed
+6. WATCHTOWER live data feed
 
 Usage:
     python scripts/test_all_systems_e2e.py [--url BASE_URL]
@@ -105,11 +105,11 @@ def test_database_tables():
             'solomon_spread_positions',
             'solomon_signals',
             'solomon_logs',
-            # ARGUS
-            'argus_commentary',
+            # WATCHTOWER
+            'watchtower_commentary',
             # VIX
             'vix_hedge_signals',
-            # Oracle
+            # Prophet
             'oracle_analysis_cache',
             # Scheduler
             'scheduler_state',
@@ -176,7 +176,7 @@ def test_scheduler_config():
         log_info("  CORNERSTONE:  9:05 AM daily")
         log_info("  FORTRESS:   8:30 AM - 3:30 PM, every 5 min")
         log_info("  SOLOMON: Every 5 min (8:35 AM - 2:30 PM)")
-        log_info("  ARGUS:  Every 5 min (8:30 AM - 3:00 PM)")
+        log_info("  WATCHTOWER:  Every 5 min (8:30 AM - 3:00 PM)")
 
         return True
 
@@ -204,9 +204,9 @@ def test_trading_bots(base_url):
                 mode = data.get('mode', 'unknown')
                 capital = data.get('capital', 0)
                 gex_ml = data.get('gex_ml_available', False)
-                oracle = data.get('oracle_available', False)
+                prophet = data.get('oracle_available', False)
                 log_pass(section, "SOLOMON status", f"mode={mode}, capital=${capital:,.0f}")
-                log_info(f"  GEX ML: {'✓' if gex_ml else '✗'}, Oracle: {'✓' if oracle else '✗'}")
+                log_info(f"  GEX ML: {'✓' if gex_ml else '✗'}, Prophet: {'✓' if prophet else '✗'}")
             else:
                 log_fail(section, "SOLOMON status", f"HTTP {r.status_code}")
         except Exception as e:
@@ -237,18 +237,18 @@ def test_trading_bots(base_url):
 
 
 # =============================================================================
-# TEST 4: ARGUS LIVE DATA
+# TEST 4: WATCHTOWER LIVE DATA
 # =============================================================================
 def test_argus_live_data(base_url):
-    """Test ARGUS gamma data feed"""
-    section = "ARGUS"
-    section_header("TEST 4: ARGUS Live Data Feed")
+    """Test WATCHTOWER gamma data feed"""
+    section = "WATCHTOWER"
+    section_header("TEST 4: WATCHTOWER Live Data Feed")
 
     try:
         import requests
 
         # Test gamma endpoint
-        r = requests.get(f"{base_url}/api/argus/gamma", timeout=30)
+        r = requests.get(f"{base_url}/api/watchtower/gamma", timeout=30)
         if r.status_code == 200:
             data = r.json()
             if data.get('success'):
@@ -271,7 +271,7 @@ def test_argus_live_data(base_url):
 
         # Test commentary history
         try:
-            r = requests.get(f"{base_url}/api/argus/commentary", timeout=30)
+            r = requests.get(f"{base_url}/api/watchtower/commentary", timeout=30)
             if r.status_code == 200:
                 data = r.json()
                 entries = data.get('data', [])
@@ -287,7 +287,7 @@ def test_argus_live_data(base_url):
         return True
 
     except Exception as e:
-        log_fail(section, "ARGUS", str(e))
+        log_fail(section, "WATCHTOWER", str(e))
         return False
 
 
@@ -362,7 +362,7 @@ def test_decision_logging(base_url):
                 what = latest.get('what', '')[:50]
                 log_info(f"  Latest: {what}...")
                 # Check for detailed logging
-                if 'ML:' in what or 'Oracle:' in what or '$' in what:
+                if 'ML:' in what or 'Prophet:' in what or '$' in what:
                     log_pass(section, "SOLOMON detailed logs", "Contains market context")
                 else:
                     log_warn(section, "SOLOMON detailed logs", "May be old format")
@@ -423,12 +423,12 @@ def test_data_providers():
 
 
 # =============================================================================
-# TEST 8: ML AND ORACLE SYSTEMS
+# TEST 8: ML AND PROPHET SYSTEMS
 # =============================================================================
 def test_ml_and_oracle(base_url):
-    """Test ML signal and Oracle systems"""
+    """Test ML signal and Prophet systems"""
     section = "AI"
-    section_header("TEST 8: ML & Oracle Systems")
+    section_header("TEST 8: ML & Prophet Systems")
 
     try:
         import requests
@@ -447,24 +447,24 @@ def test_ml_and_oracle(base_url):
         else:
             log_warn(section, "GEX ML Signal", f"HTTP {r.status_code}")
 
-        # Test SOLOMON Oracle
-        r = requests.get(f"{base_url}/api/solomon/oracle-advice", timeout=30)
+        # Test SOLOMON Prophet
+        r = requests.get(f"{base_url}/api/solomon/prophet-advice", timeout=30)
         if r.status_code == 200:
             data = r.json()
             if data.get('success') and data.get('data'):
-                oracle = data.get('data', {})
-                advice = oracle.get('advice', 'N/A')
-                win_prob = oracle.get('win_probability', 0)
-                log_pass(section, "Oracle Advice", f"advice={advice}, win_prob={win_prob:.0%}")
+                prophet = data.get('data', {})
+                advice = prophet.get('advice', 'N/A')
+                win_prob = prophet.get('win_probability', 0)
+                log_pass(section, "Prophet Advice", f"advice={advice}, win_prob={win_prob:.0%}")
             else:
-                log_warn(section, "Oracle Advice", "No advice available")
+                log_warn(section, "Prophet Advice", "No advice available")
         else:
-            log_warn(section, "Oracle Advice", f"HTTP {r.status_code}")
+            log_warn(section, "Prophet Advice", f"HTTP {r.status_code}")
 
         return True
 
     except Exception as e:
-        log_fail(section, "ML/Oracle", str(e))
+        log_fail(section, "ML/Prophet", str(e))
         return False
 
 

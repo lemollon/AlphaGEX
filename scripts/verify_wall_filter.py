@@ -86,23 +86,23 @@ except Exception as e:
     print("  (Run this on production to see actual values)")
 
 # ============================================================================
-# 3. CHECK ORACLE DEFAULT
+# 3. CHECK PROPHET DEFAULT
 # ============================================================================
-print("\n[3] ORACLE ADVISOR DEFAULT")
+print("\n[3] PROPHET ADVISOR DEFAULT")
 print("-" * 70)
 
 try:
-    from quant.oracle_advisor import OracleAdvisor
+    from quant.prophet_advisor import ProphetAdvisor
     import inspect
 
     # Get the default from the function signature
-    sig = inspect.signature(OracleAdvisor.get_solomon_advice)
+    sig = inspect.signature(ProphetAdvisor.get_solomon_advice)
     for param_name, param in sig.parameters.items():
         if param_name == 'wall_filter_pct':
-            print(f"  Oracle get_solomon_advice default: {param.default}%")
+            print(f"  Prophet get_solomon_advice default: {param.default}%")
             break
 except Exception as e:
-    print(f"  Oracle error: {e}")
+    print(f"  Prophet error: {e}")
 
 # ============================================================================
 # 4. TEST DIRECTION LOGIC

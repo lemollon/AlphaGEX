@@ -8,7 +8,7 @@ Provides:
 - Error tracking with context
 - Rate calculation auditing
 
-Follows the same pattern as ai/gexis_tracing.py for consistency.
+Follows the same pattern as ai/counselor_tracing.py for consistency.
 """
 
 import time

@@ -8,7 +8,7 @@ interface SignalConflict {
   scan_id?: string
   ml_said: string
   oracle_said: string
-  winner: 'ML' | 'Oracle'
+  winner: 'ML' | 'Prophet'
   outcome: 'correct' | 'wrong' | 'pending'
   actual_result?: string
 }
@@ -20,7 +20,7 @@ interface SignalConflictTrackerProps {
   mlWins: number
   oracleWins: number
   mlAccuracy?: number  // Win rate when ML wins conflicts
-  oracleAccuracy?: number  // Win rate when Oracle wins conflicts
+  oracleAccuracy?: number  // Win rate when Prophet wins conflicts
   isLoading: boolean
 }
 
@@ -41,9 +41,9 @@ export default function SignalConflictTracker({
 
   // Calculate correct decisions
   const mlCorrect = conflicts.filter(c => c.winner === 'ML' && c.outcome === 'correct').length
-  const oracleCorrect = conflicts.filter(c => c.winner === 'Oracle' && c.outcome === 'correct').length
+  const oracleCorrect = conflicts.filter(c => c.winner === 'Prophet' && c.outcome === 'correct').length
   const mlWrong = conflicts.filter(c => c.winner === 'ML' && c.outcome === 'wrong').length
-  const oracleWrong = conflicts.filter(c => c.winner === 'Oracle' && c.outcome === 'wrong').length
+  const oracleWrong = conflicts.filter(c => c.winner === 'Prophet' && c.outcome === 'wrong').length
 
   if (isLoading) {
     return (
@@ -60,7 +60,7 @@ export default function SignalConflictTracker({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <Scale className="w-5 h-5 text-amber-400" />
-          <h3 className="text-lg font-bold text-white">ML vs ORACLE CONFLICTS</h3>
+          <h3 className="text-lg font-bold text-white">ML vs PROPHET CONFLICTS</h3>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-500">{conflictRate}% of scans had conflicts</span>
@@ -75,7 +75,7 @@ export default function SignalConflictTracker({
       {totalConflicts === 0 ? (
         <div className="text-center py-6 text-gray-500">
           <CheckCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
-          <p>ML and Oracle are in agreement today</p>
+          <p>ML and Prophet are in agreement today</p>
           <p className="text-xs mt-1">No signal conflicts detected</p>
         </div>
       ) : (
@@ -108,11 +108,11 @@ export default function SignalConflictTracker({
               )}
             </div>
 
-            {/* Oracle Stats */}
+            {/* Prophet Stats */}
             <div className="bg-purple-900/20 rounded-lg p-4 border border-purple-700/30">
               <div className="flex items-center gap-2 mb-3">
                 <Zap className="w-5 h-5 text-purple-400" />
-                <span className="text-purple-400 font-bold">ORACLE WINS</span>
+                <span className="text-purple-400 font-bold">PROPHET WINS</span>
               </div>
               <div className="text-3xl font-bold text-white mb-1">{oracleWins}</div>
               <div className="text-sm text-gray-400">
@@ -126,7 +126,7 @@ export default function SignalConflictTracker({
               </div>
               {oracleAccuracy !== undefined && (
                 <div className="mt-2 text-xs">
-                  <span className="text-gray-500">Accuracy when Oracle wins:</span>
+                  <span className="text-gray-500">Accuracy when Prophet wins:</span>
                   <span className={`ml-2 font-bold ${oracleAccuracy >= 50 ? 'text-green-400' : 'text-red-400'}`}>
                     {oracleAccuracy.toFixed(0)}%
                   </span>
@@ -149,7 +149,7 @@ export default function SignalConflictTracker({
             </div>
             <div className="flex justify-between text-xs text-gray-500 mt-1">
               <span>ML: {totalConflicts > 0 ? ((mlWins / totalConflicts) * 100).toFixed(0) : 0}%</span>
-              <span>Oracle: {totalConflicts > 0 ? ((oracleWins / totalConflicts) * 100).toFixed(0) : 0}%</span>
+              <span>Prophet: {totalConflicts > 0 ? ((oracleWins / totalConflicts) * 100).toFixed(0) : 0}%</span>
             </div>
           </div>
 
@@ -200,7 +200,7 @@ export default function SignalConflictTracker({
                         </div>
                         <div className="flex items-center gap-1">
                           <Zap className="w-3 h-3 text-purple-400" />
-                          <span className={conflict.winner === 'Oracle' ? 'text-white' : 'text-gray-500 line-through'}>
+                          <span className={conflict.winner === 'Prophet' ? 'text-white' : 'text-gray-500 line-through'}>
                             {conflict.oracle_said}
                           </span>
                         </div>
@@ -225,10 +225,10 @@ export default function SignalConflictTracker({
                 <span className="text-amber-400 font-medium">INSIGHT: </span>
                 <span className="text-gray-300">
                   {oracleWins > mlWins
-                    ? `Oracle is overriding ML ${((oracleWins / totalConflicts) * 100).toFixed(0)}% of the time. `
+                    ? `Prophet is overriding ML ${((oracleWins / totalConflicts) * 100).toFixed(0)}% of the time. `
                     : `ML is winning ${((mlWins / totalConflicts) * 100).toFixed(0)}% of conflicts. `}
                   {oracleAccuracy !== undefined && oracleAccuracy > (mlAccuracy || 0)
-                    ? 'Oracle overrides are more accurate - trust the Oracle.'
+                    ? 'Prophet overrides are more accurate - trust the Prophet.'
                     : mlAccuracy !== undefined && mlAccuracy > (oracleAccuracy || 0)
                     ? 'ML is more accurate when it wins conflicts.'
                     : 'Monitor both signals for patterns.'}

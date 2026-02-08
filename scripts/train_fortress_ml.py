@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Train FORTRESS ML Advisor from KRONOS Backtest Data
+Train FORTRESS ML Advisor from CHRONICLES Backtest Data
 ================================================
 
 This script demonstrates the ML feedback loop:
-1. Run KRONOS backtest to generate historical trade data
+1. Run CHRONICLES backtest to generate historical trade data
 2. Extract features and train ML model
 3. Show pattern insights
 4. Demo predictions for FORTRESS
@@ -56,10 +56,10 @@ def main():
         print("  pip install scikit-learn pandas numpy")
         return 1
 
-    # Step 1: Run KRONOS backtest
+    # Step 1: Run CHRONICLES backtest
     if not args.skip_backtest:
         print("\n" + "-" * 70)
-        print("STEP 1: Running KRONOS Backtest")
+        print("STEP 1: Running CHRONICLES Backtest")
         print("-" * 70)
 
         try:

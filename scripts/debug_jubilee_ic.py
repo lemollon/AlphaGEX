@@ -264,20 +264,20 @@ def main():
         check_result("Cooldown check", False, str(e))
 
     # =====================================================
-    # SECTION 8: Oracle Check
+    # SECTION 8: Prophet Check
     # =====================================================
-    print_section("8. ORACLE APPROVAL")
+    print_section("8. PROPHET APPROVAL")
 
     if not config.require_oracle_approval:
-        check_result("Oracle approval", True, "Not required (require_oracle_approval=False)")
+        check_result("Prophet approval", True, "Not required (require_oracle_approval=False)")
     else:
         try:
-            from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+            from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-            oracle = OracleAdvisor()
-            check_result("Oracle initialized", True)
+            prophet = ProphetAdvisor()
+            check_result("Prophet initialized", True)
 
-            # Get market data for Oracle
+            # Get market data for Prophet
             try:
                 from data.tradier_data_fetcher import TradierClient
                 tradier = TradierClient(sandbox=False)
@@ -298,8 +298,8 @@ def main():
                     expected_move_pct=0,
                 )
 
-                # Get Oracle advice
-                prediction = oracle.get_anchor_advice(
+                # Get Prophet advice
+                prediction = prophet.get_anchor_advice(
                     context=context,
                     use_gex_walls=True,
                     use_claude_validation=False,
@@ -313,23 +313,23 @@ def main():
 
                     oracle_approved = advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 
-                    print(f"       Oracle Advice: {advice}")
+                    print(f"       Prophet Advice: {advice}")
                     print(f"       Confidence: {confidence:.0%}")
                     print(f"       Win Probability: {win_prob:.0%}")
                     print(f"       Reasoning: {prediction.reasoning[:100] if prediction.reasoning else 'N/A'}...")
 
                     if not oracle_approved:
-                        check_result("Oracle says TRADE", False, f"Oracle says {advice}")
+                        check_result("Prophet says TRADE", False, f"Prophet says {advice}")
                         all_checks_passed = False
                     else:
-                        check_result("Oracle says TRADE", True, f"Oracle says {advice}")
+                        check_result("Prophet says TRADE", True, f"Prophet says {advice}")
 
                     if confidence < config.min_oracle_confidence:
-                        check_result("Oracle confidence", False,
+                        check_result("Prophet confidence", False,
                                     f"{confidence:.0%} < min {config.min_oracle_confidence:.0%}")
                         all_checks_passed = False
                     else:
-                        check_result("Oracle confidence", True,
+                        check_result("Prophet confidence", True,
                                     f"{confidence:.0%} >= min {config.min_oracle_confidence:.0%}")
 
                     if win_prob < config.min_win_probability:
@@ -340,18 +340,18 @@ def main():
                         check_result("Win probability", True,
                                     f"{win_prob:.0%} >= min {config.min_win_probability:.0%}")
                 else:
-                    check_result("Oracle prediction", False, "No prediction returned")
+                    check_result("Prophet prediction", False, "No prediction returned")
                     all_checks_passed = False
 
             except Exception as e:
-                check_result("Oracle market data", False, str(e))
+                check_result("Prophet market data", False, str(e))
                 all_checks_passed = False
 
         except ImportError as e:
-            check_result("Oracle module", False, str(e))
+            check_result("Prophet module", False, str(e))
             all_checks_passed = False
         except Exception as e:
-            check_result("Oracle check", False, str(e))
+            check_result("Prophet check", False, str(e))
             all_checks_passed = False
 
     # =====================================================
@@ -407,7 +407,7 @@ def main():
                 sig_id, sig_time, is_valid, skip_reason, oracle_conf = sig
                 status = "VALID" if is_valid else "SKIPPED"
                 reason = f" - {skip_reason}" if skip_reason else ""
-                conf = f" (Oracle: {oracle_conf:.0%})" if oracle_conf else ""
+                conf = f" (Prophet: {oracle_conf:.0%})" if oracle_conf else ""
                 print(f"       - {sig_time.strftime('%Y-%m-%d %H:%M')}: {status}{reason}{conf}")
         else:
             print("       No recent signals found")

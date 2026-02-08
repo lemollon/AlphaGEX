@@ -117,17 +117,17 @@ try:
 except ImportError:
     WALK_FORWARD_AVAILABLE = False
 
-# Oracle AI advisor for intelligent trading decisions
+# Prophet AI advisor for intelligent trading decisions
 try:
-    from quant.oracle_advisor import (
-        OracleAdvisor, MarketContext as OracleMarketContext,
+    from quant.prophet_advisor import (
+        ProphetAdvisor, MarketContext as OracleMarketContext,
         TradingAdvice, GEXRegime, OraclePrediction, TradeOutcome,
         BotName as OracleBotName
     )
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleMarketContext = None
     TradingAdvice = None
     TradeOutcome = None
@@ -606,20 +606,20 @@ class SPXWheelTrader(MathOptimizerMixin):
         if DECISION_LOGGING_AVAILABLE:
             self.decision_logger = DecisionLogger()
 
-        # Initialize Oracle AI advisor
-        self.oracle = None
+        # Initialize Prophet AI advisor
+        self.prophet = None
         if ORACLE_AVAILABLE:
             try:
-                self.oracle = OracleAdvisor()
-                logger.info("CORNERSTONE: Oracle AI advisor initialized")
+                self.prophet = ProphetAdvisor()
+                logger.info("CORNERSTONE: Prophet AI advisor initialized")
             except Exception as e:
-                logger.warning(f"CORNERSTONE: Failed to initialize Oracle AI: {e}")
+                logger.warning(f"CORNERSTONE: Failed to initialize Prophet AI: {e}")
 
-        # Math Optimizers DISABLED - Oracle is the sole decision maker
+        # Math Optimizers DISABLED - Prophet is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
                 self._init_math_optimizers("CORNERSTONE", enabled=False)
-                logger.info("CORNERSTONE: Math optimizers DISABLED - Oracle controls all trading decisions")
+                logger.info("CORNERSTONE: Math optimizers DISABLED - Prophet controls all trading decisions")
             except Exception as e:
                 logger.warning(f"CORNERSTONE: Math optimizer init failed: {e}")
 
@@ -1044,7 +1044,7 @@ class SPXWheelTrader(MathOptimizerMixin):
                 )
                 return False, reason
 
-        # Check if market is open FIRST (before Oracle)
+        # Check if market is open FIRST (before Prophet)
         now = datetime.now(CENTRAL_TZ)
         if now.weekday() > 4:  # Weekend
             reason = "Weekend - market closed"
@@ -1062,50 +1062,50 @@ class SPXWheelTrader(MathOptimizerMixin):
             return False, reason
 
         # =========================================================================
-        # CONSULT ORACLE AI FIRST (SUPERSEDES VIX FILTER)
+        # CONSULT PROPHET AI FIRST (SUPERSEDES VIX FILTER)
         #
-        # CRITICAL: Oracle already accounts for VIX in its predictions.
-        # If Oracle provides a good win probability, we TRADE regardless of VIX.
+        # CRITICAL: Prophet already accounts for VIX in its predictions.
+        # If Prophet provides a good win probability, we TRADE regardless of VIX.
         # =========================================================================
         oracle_advice = self.consult_oracle(spot, vix)
         min_win_prob = 0.55  # CORNERSTONE minimum win probability
 
         if oracle_advice and oracle_advice.win_probability >= min_win_prob:
-            # Oracle says trade - bypass VIX filter
+            # Prophet says trade - bypass VIX filter
             vix_ok = self.params.min_vix <= vix <= self.params.max_vix
             if not vix_ok:
-                print(f"  CORNERSTONE: Oracle SUPERSEDES VIX filter - Oracle predicts {oracle_advice.win_probability:.1%} win prob")
-                print(f"         VIX {vix:.1f} outside {self.params.min_vix}-{self.params.max_vix} but Oracle says TRADE")
+                print(f"  CORNERSTONE: Prophet SUPERSEDES VIX filter - Prophet predicts {oracle_advice.win_probability:.1%} win prob")
+                print(f"         VIX {vix:.1f} outside {self.params.min_vix}-{self.params.max_vix} but Prophet says TRADE")
 
             if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
-                reason = f"Oracle advises SKIP despite {oracle_advice.win_probability:.1%} win prob: {oracle_advice.reasoning}"
+                reason = f"Prophet advises SKIP despite {oracle_advice.win_probability:.1%} win prob: {oracle_advice.reasoning}"
                 print(f"  {reason}")
                 self._log_decision(
                     decision_type="NO_TRADE",
                     action="SKIP",
-                    what=f"NO TRADE for SPX - Oracle advised SKIP",
-                    why=f"Oracle win probability: {oracle_advice.win_probability:.1%}. {oracle_advice.reasoning}",
-                    how="Consulted Oracle AI advisor. Conditions unfavorable.",
+                    what=f"NO TRADE for SPX - Prophet advised SKIP",
+                    why=f"Prophet win probability: {oracle_advice.win_probability:.1%}. {oracle_advice.reasoning}",
+                    how="Consulted Prophet AI advisor. Conditions unfavorable.",
                     spot_price=spot,
                     vix=vix
                 )
                 return False, reason
 
-            # Store oracle advice for position sizing
+            # Store prophet advice for position sizing
             self._last_oracle_advice = oracle_advice
-            print(f"  Oracle: {oracle_advice.advice.value} (Win Prob: {oracle_advice.win_probability:.1%})")
+            print(f"  Prophet: {oracle_advice.advice.value} (Win Prob: {oracle_advice.win_probability:.1%})")
         else:
-            # Oracle win probability below threshold - trust Oracle's decision
-            # REMOVED: Redundant VIX filter - Oracle already analyzed VIX in MarketContext
+            # Prophet win probability below threshold - trust Prophet's decision
+            # REMOVED: Redundant VIX filter - Prophet already analyzed VIX in MarketContext
             oracle_win_prob = oracle_advice.win_probability if oracle_advice else 0
-            reason = f"Oracle win prob {oracle_win_prob:.1%} below threshold {min_win_prob:.1%}"
+            reason = f"Prophet win prob {oracle_win_prob:.1%} below threshold {min_win_prob:.1%}"
             print(f"  CORNERSTONE: {reason}")
             self._log_decision(
                 decision_type="NO_TRADE",
                 action="SKIP",
-                what=f"NO TRADE for SPX - Oracle win probability insufficient",
-                why=f"Oracle win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}. Oracle already analyzed VIX, GEX, and market conditions.",
-                how=f"Oracle is the authority - no additional VIX filtering needed.",
+                what=f"NO TRADE for SPX - Prophet win probability insufficient",
+                why=f"Prophet win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}. Prophet already analyzed VIX, GEX, and market conditions.",
+                how=f"Prophet is the authority - no additional VIX filtering needed.",
                 spot_price=spot,
                 vix=vix
             )
@@ -1131,14 +1131,14 @@ class SPXWheelTrader(MathOptimizerMixin):
 
     def _build_oracle_context(self, spot: float, vix: float) -> Optional['OracleMarketContext']:
         """
-        Build Oracle MarketContext from current market data.
+        Build Prophet MarketContext from current market data.
 
         Args:
             spot: Current SPX price
             vix: Current VIX level
 
         Returns:
-            OracleMarketContext for Oracle consultation
+            OracleMarketContext for Prophet consultation
         """
         if not ORACLE_AVAILABLE or OracleMarketContext is None:
             return None
@@ -1206,50 +1206,50 @@ class SPXWheelTrader(MathOptimizerMixin):
             )
 
         except Exception as e:
-            logger.error(f"CORNERSTONE: Error building Oracle context: {e}")
+            logger.error(f"CORNERSTONE: Error building Prophet context: {e}")
             return None
 
     def consult_oracle(self, spot: float, vix: float) -> Optional['OraclePrediction']:
         """
-        Consult Oracle AI for trading advice.
+        Consult Prophet AI for trading advice.
 
         Args:
             spot: Current SPX price
             vix: Current VIX level
 
         Returns:
-            OraclePrediction with advice, or None if Oracle unavailable
+            OraclePrediction with advice, or None if Prophet unavailable
         """
-        if not self.oracle:
-            logger.debug("CORNERSTONE: Oracle not available, proceeding without advice")
+        if not self.prophet:
+            logger.debug("CORNERSTONE: Prophet not available, proceeding without advice")
             return None
 
         context = self._build_oracle_context(spot, vix)
         if not context:
-            logger.debug("CORNERSTONE: Could not build Oracle context")
+            logger.debug("CORNERSTONE: Could not build Prophet context")
             return None
 
         try:
-            # Get advice from Oracle
-            advice = self.oracle.get_atlas_advice(context)
+            # Get advice from Prophet
+            advice = self.prophet.get_atlas_advice(context)
 
-            logger.info(f"CORNERSTONE Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+            logger.info(f"CORNERSTONE Prophet: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
                        f"Risk: {advice.suggested_risk_pct:.1%}")
 
             if advice.reasoning:
-                logger.info(f"CORNERSTONE Oracle Reasoning: {advice.reasoning}")
+                logger.info(f"CORNERSTONE Prophet Reasoning: {advice.reasoning}")
 
             # Store prediction for feedback loop
             try:
                 today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
-                self.oracle.store_prediction(advice, context, today)
+                self.prophet.store_prediction(advice, context, today)
             except Exception as e:
-                logger.debug(f"CORNERSTONE: Could not store Oracle prediction: {e}")
+                logger.debug(f"CORNERSTONE: Could not store Prophet prediction: {e}")
 
             return advice
 
         except Exception as e:
-            logger.error(f"CORNERSTONE: Error consulting Oracle: {e}")
+            logger.error(f"CORNERSTONE: Error consulting Prophet: {e}")
             return None
 
     def record_trade_outcome(
@@ -1259,7 +1259,7 @@ class SPXWheelTrader(MathOptimizerMixin):
         actual_pnl: float
     ) -> bool:
         """
-        Record trade outcome back to Oracle for feedback loop.
+        Record trade outcome back to Prophet for feedback loop.
 
         Args:
             trade_date: Date of the trade (YYYY-MM-DD)
@@ -1269,18 +1269,18 @@ class SPXWheelTrader(MathOptimizerMixin):
         Returns:
             True if recorded successfully
         """
-        if not self.oracle or not ORACLE_AVAILABLE:
+        if not self.prophet or not ORACLE_AVAILABLE:
             return False
 
         try:
             outcome = TradeOutcome[outcome_type]
-            self.oracle.update_outcome(
+            self.prophet.update_outcome(
                 trade_date,
                 OracleBotName.CORNERSTONE,
                 outcome,
                 actual_pnl
             )
-            logger.info(f"CORNERSTONE: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            logger.info(f"CORNERSTONE: Recorded outcome to Prophet: {outcome_type}, PnL=${actual_pnl:,.2f}")
             return True
         except Exception as e:
             logger.error(f"CORNERSTONE: Failed to record outcome: {e}")

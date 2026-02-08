@@ -120,26 +120,26 @@ try:
 except ImportError:
     AutonomousAIReasoning = None
 
-# GEXIS Extended Thinking - deeper reasoning for complex decisions
+# COUNSELOR Extended Thinking - deeper reasoning for complex decisions
 GEXIS_THINKING_AVAILABLE = False
 try:
-    from ai.gexis_extended_thinking import ExtendedThinking
+    from ai.counselor_extended_thinking import ExtendedThinking
     GEXIS_THINKING_AVAILABLE = True
 except ImportError:
     ExtendedThinking = None
 
-# GEXIS Knowledge - context management for decisions
+# COUNSELOR Knowledge - context management for decisions
 GEXIS_KNOWLEDGE_AVAILABLE = False
 try:
-    from ai.gexis_knowledge import GEXISKnowledge
+    from ai.counselor_knowledge import GEXISKnowledge
     GEXIS_KNOWLEDGE_AVAILABLE = True
 except ImportError:
     GEXISKnowledge = None
 
-# GEXIS Learning Memory - persistent learning
+# COUNSELOR Learning Memory - persistent learning
 GEXIS_MEMORY_AVAILABLE = False
 try:
-    from ai.gexis_learning_memory import GEXISLearningMemory
+    from ai.counselor_learning_memory import GEXISLearningMemory
     GEXIS_MEMORY_AVAILABLE = True
 except ImportError:
     GEXISLearningMemory = None
@@ -550,7 +550,7 @@ class OrderExecutor:
             max_profit = signal.total_credit * 100 * contracts
             max_loss = (spread_width - signal.total_credit) * 100 * contracts
 
-            # Convert Oracle top_factors to JSON string for DB storage
+            # Convert Prophet top_factors to JSON string for DB storage
             import json
             oracle_factors_json = json.dumps(signal.oracle_top_factors) if signal.oracle_top_factors else ""
 
@@ -575,10 +575,10 @@ class OrderExecutor:
                 call_wall=signal.call_wall,
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
-                # Kronos context
+                # Chronicles context
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
-                # Oracle context (FULL audit trail)
+                # Prophet context (FULL audit trail)
                 oracle_confidence=signal.oracle_confidence,
                 oracle_win_probability=signal.oracle_win_probability,
                 oracle_advice=signal.oracle_advice,
@@ -649,7 +649,7 @@ class OrderExecutor:
             max_profit = actual_credit * 100 * contracts
             max_loss = (spread_width - actual_credit) * 100 * contracts
 
-            # Convert Oracle top_factors to JSON string for DB storage
+            # Convert Prophet top_factors to JSON string for DB storage
             import json
             oracle_factors_json = json.dumps(signal.oracle_top_factors) if signal.oracle_top_factors else ""
 
@@ -674,10 +674,10 @@ class OrderExecutor:
                 call_wall=signal.call_wall,
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
-                # Kronos context
+                # Chronicles context
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
-                # Oracle context (FULL audit trail)
+                # Prophet context (FULL audit trail)
                 oracle_confidence=signal.oracle_confidence,
                 oracle_win_probability=signal.oracle_win_probability,
                 oracle_advice=signal.oracle_advice,

@@ -83,7 +83,7 @@ class TestScanExplainer:
         print(f"  Market insight: {result['market_insight']}")
 
     def test_fallback_explanation_oracle_skip(self):
-        """Test fallback when Oracle recommends SKIP"""
+        """Test fallback when Prophet recommends SKIP"""
         from trading.scan_explainer import (
             _generate_fallback_explanation, ScanContext, MarketContext,
             SignalContext, DecisionType
@@ -99,7 +99,7 @@ class TestScanExplainer:
                 vix=18.5
             ),
             signal=SignalContext(
-                source="Oracle",
+                source="Prophet",
                 direction="NEUTRAL",
                 confidence=0.45,
                 win_probability=0.52,
@@ -110,9 +110,9 @@ class TestScanExplainer:
 
         result = _generate_fallback_explanation(context)
 
-        assert "Oracle" in result["summary"] or "advised" in result["summary"]
+        assert "Prophet" in result["summary"] or "advised" in result["summary"]
         assert result["what_would_trigger"]
-        print(f"\n[PASS] Oracle SKIP explanation: {result['summary']}")
+        print(f"\n[PASS] Prophet SKIP explanation: {result['summary']}")
 
     def test_fallback_explanation_traded(self):
         """Test explanation when trade is executed"""

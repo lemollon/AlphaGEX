@@ -68,11 +68,11 @@ class SpreadPosition:
     gex_regime: str = ""
     vix_at_entry: float = 0.0
 
-    # Kronos context (for audit trail)
+    # Chronicles context (for audit trail)
     flip_point: float = 0.0
     net_gex: float = 0.0
 
-    # Oracle/ML context (FULL for audit)
+    # Prophet/ML context (FULL for audit)
     oracle_confidence: float = 0.0
     oracle_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
     ml_direction: str = ""
@@ -132,10 +132,10 @@ class SpreadPosition:
             'put_wall': self.put_wall,
             'gex_regime': self.gex_regime,
             'vix_at_entry': self.vix_at_entry,
-            # Kronos context
+            # Chronicles context
             'flip_point': self.flip_point,
             'net_gex': self.net_gex,
-            # ML/Oracle context (FULL for audit)
+            # ML/Prophet context (FULL for audit)
             'oracle_confidence': self.oracle_confidence,
             'ml_direction': self.ml_direction,
             'ml_confidence': self.ml_confidence,
@@ -175,7 +175,7 @@ class SolomonConfig:
     wall_filter_pct: float = 1.0  # Trade within 1% of GEX wall (Apache backtest optimal)
     min_rr_ratio: float = 1.5  # Min risk:reward (need edge to be profitable)
 
-    # Win probability thresholds - aligned with Oracle's low_confidence_threshold (0.45)
+    # Win probability thresholds - aligned with Prophet's low_confidence_threshold (0.45)
     # Using 0.50 as minimum to ensure positive expectancy while allowing more trades
     min_win_probability: float = 0.50  # Minimum win probability to trade (50%)
     min_confidence: float = 0.50  # Minimum signal confidence (50%)
@@ -286,7 +286,7 @@ class TradeSignal:
     gex_regime: str
     vix: float
 
-    # Kronos GEX context
+    # Chronicles GEX context
     flip_point: float = 0
     net_gex: float = 0
 
@@ -310,7 +310,7 @@ class TradeSignal:
     ml_win_probability: float = 0
     ml_top_features: str = ""  # JSON string of top features
 
-    # Oracle details (for audit)
+    # Prophet details (for audit)
     oracle_win_probability: float = 0
     oracle_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
     oracle_direction: str = ""  # BULLISH, BEARISH, FLAT
@@ -324,11 +324,11 @@ class TradeSignal:
     @property
     def is_valid(self) -> bool:
         """Check if signal passes basic validation (Apache backtest thresholds)"""
-        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        # PROPHET IS GOD: When Prophet says TRADE, nothing blocks it
         oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 
         if oracle_approved:
-            # Only check basic strike validity when Oracle approves
+            # Only check basic strike validity when Prophet approves
             return self.max_profit > 0 and self.long_strike > 0 and self.short_strike > 0
 
         return (

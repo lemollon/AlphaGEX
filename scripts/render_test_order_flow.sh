@@ -94,7 +94,7 @@ LIMIT 1;
 echo ""
 echo "TEST 7: API Endpoint Test"
 echo "-------------------------"
-API_RESPONSE=$(curl -s "https://alphagex-api.onrender.com/api/argus/gamma?symbol=SPY" 2>/dev/null)
+API_RESPONSE=$(curl -s "https://alphagex-api.onrender.com/api/watchtower/gamma?symbol=SPY" 2>/dev/null)
 if echo "$API_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('data',{}).get('order_flow') else 1)" 2>/dev/null; then
     pass "API returns order_flow"
 
@@ -168,7 +168,7 @@ fi
 # Test data_unavailable handling
 echo ""
 echo "  GAP #2-3: spot_price validation (API error handling)"
-ERROR_RESPONSE=$(curl -s "https://alphagex-api.onrender.com/api/argus/gamma?symbol=INVALID" 2>/dev/null)
+ERROR_RESPONSE=$(curl -s "https://alphagex-api.onrender.com/api/watchtower/gamma?symbol=INVALID" 2>/dev/null)
 if echo "$ERROR_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if 'success' in d or 'detail' in d else 1)" 2>/dev/null; then
     pass "API returns proper error structure for invalid symbol"
 else

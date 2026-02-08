@@ -490,9 +490,9 @@ def analyze_bot(conn, bot_name, config):
     else:
         print("  No losing trades found")
 
-    # 9. Oracle Confidence vs Outcome
+    # 9. Prophet Confidence vs Outcome
     print("\n" + "-" * 60)
-    print("8. ORACLE CONFIDENCE VS OUTCOME")
+    print("8. PROPHET CONFIDENCE VS OUTCOME")
     print("-" * 60)
 
     cursor.execute(f"""
@@ -534,7 +534,7 @@ def analyze_bot(conn, bot_name, config):
             wr = (wins / count * 100) if count > 0 else 0
             print(f"  {bucket:<20} {count:>6} {wins:>6} {losses:>6} {wr:>6.1f}% ${float(total_pnl):>10,.2f} ${float(avg_pnl):>8,.2f}")
     else:
-        print("  No oracle confidence data available")
+        print("  No prophet confidence data available")
 
     # 10. Recent Trend (Last 20 trades)
     print("\n" + "-" * 60)
@@ -577,13 +577,13 @@ def analyze_bot(conn, bot_name, config):
     else:
         print("  No recent closed trades")
 
-    # 11. Oracle Win Probability Correlation
+    # 11. Prophet Win Probability Correlation
     print("\n" + "-" * 60)
-    print("10. ORACLE WIN PROBABILITY VS ACTUAL OUTCOME")
+    print("10. PROPHET WIN PROBABILITY VS ACTUAL OUTCOME")
     print("-" * 60)
 
     try:
-        # Correlate Oracle win probability predictions with actual outcomes
+        # Correlate Prophet win probability predictions with actual outcomes
         cursor.execute(f"""
             SELECT
                 CASE
@@ -627,7 +627,7 @@ def analyze_bot(conn, bot_name, config):
                 calibration = "✅" if abs(actual_wr - avg_wp_pct) < 10 else "⚠️"
                 print(f"  {bucket:<18} {count:>6} {wins:>6} {losses:>6} {actual_wr:>8.1f}% {avg_wp_pct:>8.1f}% ${float(avg_pnl):>8,.2f} {calibration}")
         else:
-            print("  No Oracle win probability data available")
+            print("  No Prophet win probability data available")
     except Exception as e:
         print(f"  Error: {e}")
 

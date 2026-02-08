@@ -420,7 +420,7 @@ function PortfolioTab({
                     <p className="text-gray-300">{pos.funding_regime_at_entry}</p>
                   </div>
                   <div>
-                    <span className="text-gray-500">Oracle</span>
+                    <span className="text-gray-500">Prophet</span>
                     <p className="text-gray-300">
                       {pos.oracle_advice || 'Advisory'}
                       {pos.oracle_win_probability ? ` (${(pos.oracle_win_probability * 100).toFixed(0)}%)` : ''}
@@ -575,7 +575,7 @@ function OverviewTab({
             <p className="text-white font-mono">{status?.cooldown_minutes || 5} min</p>
           </div>
           <div>
-            <span className="text-gray-500">Oracle</span>
+            <span className="text-gray-500">Prophet</span>
             <p className="text-white font-mono">{status?.require_oracle ? 'Required' : 'Advisory'}</p>
           </div>
           <div>
@@ -790,7 +790,7 @@ function ActivityTab({ data, brand }: { data: any[]; brand: typeof BOT_BRANDS.AG
               <th className="text-left px-4 py-3 text-gray-500 font-medium">ETH</th>
               <th className="text-left px-4 py-3 text-gray-500 font-medium">Funding</th>
               <th className="text-left px-4 py-3 text-gray-500 font-medium">Signal</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Oracle</th>
+              <th className="text-left px-4 py-3 text-gray-500 font-medium">Prophet</th>
               <th className="text-left px-4 py-3 text-gray-500 font-medium">Outcome</th>
             </tr>
           </thead>
@@ -941,7 +941,7 @@ function ConfigTab({ status, mappingData, brand }: { status: any; mappingData: a
             <p className="text-white font-mono">{status?.cooldown_minutes || 5} min</p>
           </div>
           <div>
-            <span className="text-gray-500">Oracle</span>
+            <span className="text-gray-500">Prophet</span>
             <p className="text-white font-mono">{status?.require_oracle ? 'Required' : 'Advisory'}</p>
           </div>
           <div>

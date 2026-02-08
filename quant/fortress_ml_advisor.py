@@ -3,8 +3,8 @@ FORTRESS ML Advisor - Machine Learning Feedback Loop for Iron Condor Trading
 =========================================================================
 
 PURPOSE:
-This module creates a feedback loop between KRONOS (backtester) and FORTRESS (live trader).
-KRONOS historical data trains an ML model that advises FORTRESS on:
+This module creates a feedback loop between CHRONICLES (backtester) and FORTRESS (live trader).
+CHRONICLES historical data trains an ML model that advises FORTRESS on:
 1. Should I trade today? (probability of success)
 2. How much should I risk? (dynamic position sizing)
 3. What SD multiplier to use? (strike selection optimization)
@@ -16,7 +16,7 @@ HONEST LIMITATIONS:
 - Past performance doesn't guarantee future results
 
 FEEDBACK LOOP:
-    KRONOS Backtests --> Extract Features --> Train Model
+    CHRONICLES Backtests --> Extract Features --> Train Model
             ^                                      |
             |                                      v
     Store Outcome <-- FORTRESS Live Trade <-- Query Model
@@ -168,7 +168,7 @@ class FortressMLAdvisor:
     """
     ML Advisor for FORTRESS Iron Condor Trading
 
-    Uses KRONOS backtest data to train a model that predicts:
+    Uses CHRONICLES backtest data to train a model that predicts:
     - Probability of trade success
     - Optimal position size
     - Whether to skip today's trade
@@ -342,7 +342,7 @@ class FortressMLAdvisor:
         include_gex: bool = True
     ) -> pd.DataFrame:
         """
-        Extract ML features from KRONOS backtest results.
+        Extract ML features from CHRONICLES backtest results.
 
         Args:
             backtest_results: Results dict from HybridFixedBacktester.run()
@@ -365,7 +365,7 @@ class FortressMLAdvisor:
         if include_gex and not has_gex:
             logger.info("GEX data not found in backtest results. Enriching with GEX...")
             try:
-                from quant.kronos_gex_calculator import enrich_trades_with_gex
+                from quant.chronicles_gex_calculator import enrich_trades_with_gex
                 backtest_results = enrich_trades_with_gex(backtest_results)
                 trades = backtest_results.get('all_trades', [])
                 has_gex = 'gex_normalized' in trades[0] if trades else False
@@ -474,7 +474,7 @@ class FortressMLAdvisor:
         min_samples: int = 100
     ) -> TrainingMetrics:
         """
-        Train ML model from KRONOS backtest results.
+        Train ML model from CHRONICLES backtest results.
 
         Uses walk-forward validation to avoid look-ahead bias.
 
@@ -495,7 +495,7 @@ class FortressMLAdvisor:
         if len(df) < min_samples:
             raise ValueError(f"Insufficient data: {len(df)} samples < {min_samples} required")
 
-        logger.info(f"Training on {len(df)} trades from KRONOS backtest")
+        logger.info(f"Training on {len(df)} trades from CHRONICLES backtest")
 
         # Prepare features and target
         X = df[self.FEATURE_COLS].values
@@ -1128,7 +1128,7 @@ def get_trading_advice(
 
 def train_from_backtest(backtest_results: Dict[str, Any]) -> TrainingMetrics:
     """
-    Train the ML advisor from KRONOS backtest results.
+    Train the ML advisor from CHRONICLES backtest results.
 
     Example:
         from backtest.zero_dte_hybrid_fixed import HybridFixedBacktester
@@ -1155,7 +1155,7 @@ if __name__ == "__main__":
     advisor = get_advisor()
 
     if not advisor.is_trained:
-        print("\nModel not trained. Run a KRONOS backtest first:")
+        print("\nModel not trained. Run a CHRONICLES backtest first:")
         print("  python backtest/zero_dte_hybrid_fixed.py --start 2021-01-01")
         print("  Then call train_from_backtest(results)")
 

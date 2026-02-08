@@ -1,5 +1,5 @@
 /**
- * Custom debounce hooks for ARGUS and HYPERION
+ * Custom debounce hooks for WATCHTOWER and GLORY
  *
  * Provides debounced values and callbacks to reduce UI reactivity
  * and prevent excessive re-renders during rapid data updates.

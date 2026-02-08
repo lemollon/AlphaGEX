@@ -250,26 +250,26 @@ class TestGEXCalculationWorkflow:
 
 
 class TestOracleWorkflow:
-    """End-to-end tests for Oracle AI advisor workflow"""
+    """End-to-end tests for Prophet AI advisor workflow"""
 
-    @patch('quant.oracle_advisor.get_connection')
+    @patch('quant.prophet_advisor.get_connection')
     def test_oracle_prediction_workflow(self, mock_conn):
-        """Test Oracle prediction workflow"""
+        """Test Prophet prediction workflow"""
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = []
         mock_conn.return_value.cursor.return_value = mock_cursor
 
         try:
-            from quant.oracle_advisor import OracleAdvisor
+            from quant.prophet_advisor import ProphetAdvisor
 
-            # Step 1: Initialize Oracle
-            oracle = OracleAdvisor()
+            # Step 1: Initialize Prophet
+            prophet = ProphetAdvisor()
 
             # Step 2: Verify it's ready
-            assert oracle is not None
+            assert prophet is not None
 
         except ImportError:
-            pytest.skip("Oracle not available")
+            pytest.skip("Prophet not available")
 
 
 class TestPositionManagementWorkflow:

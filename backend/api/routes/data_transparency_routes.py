@@ -1084,11 +1084,11 @@ async def get_ml_model_details():
         conn.close()
 
 
-@router.get("/argus-gamma-details")
+@router.get("/watchtower-gamma-details")
 async def get_argus_gamma_details(
     limit: int = Query(50, ge=1, le=500)
 ):
-    """Get ARGUS gamma flip details and predictions"""
+    """Get WATCHTOWER gamma flip details and predictions"""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1169,7 +1169,7 @@ async def get_argus_gamma_details(
         }
 
     except Exception as e:
-        logger.error(f"Error getting ARGUS details: {e}")
+        logger.error(f"Error getting WATCHTOWER details: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
@@ -1427,7 +1427,7 @@ async def export_data(
         "patterns": "pattern_learning",
         "vol-surface": "volatility_surface_snapshots",
         "ml-predictions": "ml_predictions",
-        "argus-flips": "argus_gamma_flips"
+        "watchtower-flips": "argus_gamma_flips"
     }
 
     if category not in table_map:

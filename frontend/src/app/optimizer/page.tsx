@@ -207,17 +207,17 @@ export default function StrategyOptimizer() {
               <AlertCircle className="w-16 h-16 text-warning mx-auto mb-4" />
               <h1 className="text-2xl font-bold text-text-primary mb-2">Strategy Optimizer Removed</h1>
               <p className="text-text-secondary mb-4">
-                This feature has been consolidated into the GEXIS AI assistant.
+                This feature has been consolidated into the COUNSELOR AI assistant.
               </p>
               <p className="text-text-muted text-sm mb-6">
-                Use GEXIS for trade analysis, strategy recommendations, and optimization insights.
+                Use COUNSELOR for trade analysis, strategy recommendations, and optimization insights.
               </p>
               <a
-                href="/gexis-commands"
+                href="/counselor-commands"
                 className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
               >
                 <Brain className="w-5 h-5" />
-                Open GEXIS Commands
+                Open COUNSELOR Commands
               </a>
             </div>
           </div>

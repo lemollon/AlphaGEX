@@ -286,12 +286,12 @@ def calc_prob(sym, strike, exp):
 ### Error Handling Pattern
 ```python
 # For optional dependencies - graceful fallback
-OracleAdvisor = None
+ProphetAdvisor = None
 try:
-    from quant.oracle_advisor import OracleAdvisor
-    logger.info("OracleAdvisor loaded successfully")
+    from quant.prophet_advisor import ProphetAdvisor
+    logger.info("ProphetAdvisor loaded successfully")
 except ImportError as e:
-    logger.warning(f"OracleAdvisor not available: {e}")
+    logger.warning(f"ProphetAdvisor not available: {e}")
 
 # For API endpoints - meaningful errors
 @router.get("/api/feature/data")
@@ -1075,8 +1075,8 @@ curl https://alphagex-api.onrender.com/api/system-health
 curl https://alphagex-api.onrender.com/api/ares/status
 curl https://alphagex-api.onrender.com/api/titan/status
 
-# Oracle health (includes staleness)
-curl https://alphagex-api.onrender.com/api/oracle/health
+# Prophet health (includes staleness)
+curl https://alphagex-api.onrender.com/api/prophet/health
 ```
 
 ### What to Monitor
@@ -1087,7 +1087,7 @@ curl https://alphagex-api.onrender.com/api/oracle/health
 | Error rate | >1% | >5% |
 | Database connections | >80% pool | >95% pool |
 | Worker uptime | Restart in last hour | Multiple restarts |
-| Oracle model age | >24 hours | >72 hours |
+| Prophet model age | >24 hours | >72 hours |
 | Data freshness | >15 min stale | >1 hour stale |
 
 ### Log Patterns to Watch For
@@ -1273,7 +1273,7 @@ return {
 ### Must Update CLAUDE.md When:
 
 - [ ] Adding a new trading bot
-- [ ] Adding a new ML system (like SAGE, Oracle)
+- [ ] Adding a new ML system (like WISDOM, Prophet)
 - [ ] Adding a new major dashboard page
 - [ ] Changing database schema significantly
 - [ ] Removing or deprecating a system

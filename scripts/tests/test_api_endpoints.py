@@ -184,30 +184,30 @@ def test_pythia_endpoints():
 
 
 def test_oracle_endpoints():
-    """Test ORACLE AI endpoints"""
-    print_header("ORACLE AI ENDPOINTS")
+    """Test PROPHET AI endpoints"""
+    print_header("PROPHET AI ENDPOINTS")
     results = []
 
     # Get status
-    resp = api_request('/api/zero-dte/oracle/status')
+    resp = api_request('/api/zero-dte/prophet/status')
     passed = resp['success'] and resp['data'].get('success', False)
     results.append(passed or resp['status'] == 200)
-    print_result("GET /api/zero-dte/oracle/status", passed or resp['status'] == 200,
-                f"model_trained: {resp['data'].get('oracle', {}).get('model_trained', 'N/A')}" if passed else '',
+    print_result("GET /api/zero-dte/prophet/status", passed or resp['status'] == 200,
+                f"model_trained: {resp['data'].get('prophet', {}).get('model_trained', 'N/A')}" if passed else '',
                 response_time=resp.get('response_time'))
 
     # Get logs
-    resp = api_request('/api/zero-dte/oracle/logs')
+    resp = api_request('/api/zero-dte/prophet/logs')
     passed = resp['success'] and resp['data'].get('success', False)
     results.append(passed or resp['status'] == 200)
-    print_result("GET /api/zero-dte/oracle/logs", passed or resp['status'] == 200,
+    print_result("GET /api/zero-dte/prophet/logs", passed or resp['status'] == 200,
                 response_time=resp.get('response_time'))
 
     # Get predictions history
-    resp = api_request('/api/logs/oracle?limit=10')
+    resp = api_request('/api/logs/prophet?limit=10')
     passed = resp['success']
     results.append(passed or resp['status'] == 200)
-    print_result("GET /api/logs/oracle", passed or resp['status'] == 200,
+    print_result("GET /api/logs/prophet", passed or resp['status'] == 200,
                 response_time=resp.get('response_time'))
 
     return all(results)
@@ -329,8 +329,8 @@ def test_trader_endpoints():
 
 
 def test_backtest_endpoints():
-    """Test KRONOS backtest endpoints"""
-    print_header("KRONOS BACKTEST ENDPOINTS")
+    """Test CHRONICLES backtest endpoints"""
+    print_header("CHRONICLES BACKTEST ENDPOINTS")
     results = []
 
     # Get jobs list
@@ -351,15 +351,15 @@ def test_backtest_endpoints():
 
 
 def test_gexis_endpoints():
-    """Test GEXIS chatbot endpoints"""
-    print_header("GEXIS CHATBOT ENDPOINTS")
+    """Test COUNSELOR chatbot endpoints"""
+    print_header("COUNSELOR CHATBOT ENDPOINTS")
     results = []
 
     # Get alerts
-    resp = api_request('/api/ai/gexis/alerts')
+    resp = api_request('/api/ai/counselor/alerts')
     passed = resp['success']
     results.append(passed or resp['status'] == 200)
-    print_result("GET /api/ai/gexis/alerts", passed or resp['status'] == 200,
+    print_result("GET /api/ai/counselor/alerts", passed or resp['status'] == 200,
                 response_time=resp.get('response_time'))
 
     # Get conversations
@@ -385,7 +385,7 @@ def test_decision_log_endpoints():
                 response_time=resp.get('response_time'))
 
     # Get logs for specific bot
-    for bot in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'LAZARUS', 'SHEPHERD', 'ORACLE']:
+    for bot in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'LAZARUS', 'SHEPHERD', 'PROPHET']:
         resp = api_request(f'/api/logs/decisions?bot_name={bot}&limit=5')
         passed = resp['success']
         results.append(passed or resp['status'] == 200)
@@ -436,12 +436,12 @@ def main():
         "health": test_health_endpoints(),
         "market_data": test_market_data_endpoints(),
         "pythia": test_pythia_endpoints(),
-        "oracle": test_oracle_endpoints(),
+        "prophet": test_oracle_endpoints(),
         "jubilee": test_ml_endpoints(),
         "wheel": test_wheel_endpoints(),
         "trader": test_trader_endpoints(),
-        "kronos": test_backtest_endpoints(),
-        "gexis": test_gexis_endpoints(),
+        "chronicles": test_backtest_endpoints(),
+        "counselor": test_gexis_endpoints(),
         "decision_logs": test_decision_log_endpoints(),
         "optimizer": test_optimizer_endpoints(),
     }

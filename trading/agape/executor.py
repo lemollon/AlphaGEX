@@ -138,7 +138,7 @@ class AgapeExecutor:
                 max_pain_at_entry=signal.max_pain,
                 crypto_gex_at_entry=signal.crypto_gex,
                 crypto_gex_regime_at_entry=signal.crypto_gex_regime,
-                # Oracle context
+                # Prophet context
                 oracle_advice=signal.oracle_advice,
                 oracle_win_probability=signal.oracle_win_probability,
                 oracle_confidence=signal.oracle_confidence,

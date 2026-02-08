@@ -134,8 +134,8 @@ def test_signal_generation(trader):
             print(f"    Spread Type: {signal.spread_type.value if signal.spread_type else 'N/A'}")
             print(f"    Confidence: {signal.confidence:.1%}")
             print(f"    Is Valid: {signal.is_valid}")
-            print(f"    Oracle Advice: {signal.oracle_advice}")
-            print(f"    Oracle Win Prob: {signal.oracle_win_probability:.1%}")
+            print(f"    Prophet Advice: {signal.oracle_advice}")
+            print(f"    Prophet Win Prob: {signal.oracle_win_probability:.1%}")
             print(f"    Long Strike: ${signal.long_strike}")
             print(f"    Short Strike: ${signal.short_strike}")
 
@@ -185,10 +185,10 @@ def test_position_save(trader):
             put_wall=585.0,
             gex_regime="NEUTRAL",
             vix_at_entry=15.5,
-            # Kronos context (fields that were missing)
+            # Chronicles context (fields that were missing)
             flip_point=590.0,
             net_gex=1500000.0,
-            # Oracle context (fields that were missing)
+            # Prophet context (fields that were missing)
             oracle_confidence=0.75,
             oracle_advice="TRADE_FULL",
             ml_direction="BULLISH",
@@ -209,7 +209,7 @@ def test_position_save(trader):
         print(f"\n  Created test position: {test_id}")
         print(f"    Spread: {test_position.spread_type.value}")
         print(f"    Strikes: {test_position.long_strike}/{test_position.short_strike}")
-        print(f"    Oracle Advice: {test_position.oracle_advice}")
+        print(f"    Prophet Advice: {test_position.oracle_advice}")
 
         # Save to database
         success = trader.db.save_position(test_position)
@@ -228,7 +228,7 @@ def test_position_save(trader):
             if found:
                 print(f"\n  Retrieved position from database:")
                 print(f"    Position ID: {found.position_id}")
-                print(f"    Oracle Advice: {found.oracle_advice}")
+                print(f"    Prophet Advice: {found.oracle_advice}")
                 print(f"    ML Model: {found.ml_model_name}")
                 print(f"    Wall Type: {found.wall_type}")
                 print(f"    Trade Reasoning: {found.trade_reasoning[:50]}...")

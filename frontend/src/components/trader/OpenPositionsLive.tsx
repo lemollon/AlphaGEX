@@ -164,7 +164,7 @@ function SolomonPositionCard({ position, underlyingPrice, onClick }: { position:
           )}
           {position.oracle_confidence && (
             <span className="px-2 py-1 bg-purple-900/30 text-purple-400 text-xs rounded">
-              Oracle: {(position.oracle_confidence * 100).toFixed(0)}%
+              Prophet: {(position.oracle_confidence * 100).toFixed(0)}%
             </span>
           )}
         </div>

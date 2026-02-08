@@ -44,7 +44,7 @@ class BotName(Enum):
     LAZARUS = "LAZARUS"  # AutonomousPaperTrader - 0DTE SPY/SPX
     CORNERSTONE = "CORNERSTONE"      # SPXWheelTrader - SPX Cash-Secured Put Wheel
     SHEPHERD = "SHEPHERD"    # WheelStrategyManager - Manual Wheel via UI
-    ORACLE = "ORACLE"    # MultiStrategyOptimizer - Advisory/Recommendations
+    PROPHET = "PROPHET"    # MultiStrategyOptimizer - Advisory/Recommendations
     FORTRESS = "FORTRESS"        # FortressTrader - Aggressive Iron Condor (10% monthly target)
     SOLOMON = "SOLOMON"    # SolomonTrader - Directional Spreads (Bull/Bear Call Spreads)
     ANCHOR = "ANCHOR"  # AnchorTrader - SPX Iron Condor ($10 spreads, weekly)
@@ -302,8 +302,8 @@ class TradeDecision:
     # Backtest backing
     backtest_reference: Optional[BacktestReference] = None
 
-    # Oracle AI advice (from OracleAdvisor)
-    oracle_advice: Optional[Dict] = None  # Full oracle prediction with win_prob, confidence, factors
+    # Prophet AI advice (from ProphetAdvisor)
+    oracle_advice: Optional[Dict] = None  # Full prophet prediction with win_prob, confidence, factors
 
     # ML Predictions (for SOLOMON - GEX ML signal)
     ml_predictions: Optional[MLPredictions] = None
@@ -778,7 +778,7 @@ def export_decisions_json(
     Export decision logs as JSON list.
 
     Args:
-        bot_name: Filter by bot (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
+        bot_name: Filter by bot (LAZARUS, CORNERSTONE, SHEPHERD, PROPHET)
         start_date: Filter from date (YYYY-MM-DD)
         end_date: Filter to date (YYYY-MM-DD)
         decision_type: Filter by type (ENTRY_SIGNAL, STAY_FLAT, etc.)
@@ -853,25 +853,25 @@ def export_decisions_json(
                 record['legs'] = full_dec.get('legs', [])
 
                 # =========================================================
-                # ORACLE AI ADVICE - Full prediction data
+                # PROPHET AI ADVICE - Full prediction data
                 # =========================================================
-                oracle = full_dec.get('oracle_advice') or full_dec.get('oracle_prediction') or {}
-                if oracle:
+                prophet = full_dec.get('oracle_advice') or full_dec.get('oracle_prediction') or {}
+                if prophet:
                     record['oracle_advice'] = {
-                        'advice': oracle.get('advice', ''),
-                        'win_probability': oracle.get('win_probability', 0),
-                        'confidence': oracle.get('confidence', 0),
-                        'suggested_risk_pct': oracle.get('suggested_risk_pct', 0),
-                        'suggested_sd_multiplier': oracle.get('suggested_sd_multiplier', 0),
-                        'use_gex_walls': oracle.get('use_gex_walls', False),
-                        'suggested_put_strike': oracle.get('suggested_put_strike'),
-                        'suggested_call_strike': oracle.get('suggested_call_strike'),
-                        'top_factors': oracle.get('top_factors', []),
-                        'reasoning': oracle.get('reasoning', ''),
-                        'model_version': oracle.get('model_version', ''),
+                        'advice': prophet.get('advice', ''),
+                        'win_probability': prophet.get('win_probability', 0),
+                        'confidence': prophet.get('confidence', 0),
+                        'suggested_risk_pct': prophet.get('suggested_risk_pct', 0),
+                        'suggested_sd_multiplier': prophet.get('suggested_sd_multiplier', 0),
+                        'use_gex_walls': prophet.get('use_gex_walls', False),
+                        'suggested_put_strike': prophet.get('suggested_put_strike'),
+                        'suggested_call_strike': prophet.get('suggested_call_strike'),
+                        'top_factors': prophet.get('top_factors', []),
+                        'reasoning': prophet.get('reasoning', ''),
+                        'model_version': prophet.get('model_version', ''),
                     }
                     # Claude AI analysis if available
-                    claude = oracle.get('claude_analysis', {})
+                    claude = prophet.get('claude_analysis', {})
                     if claude:
                         record['oracle_advice']['claude_analysis'] = {
                             'analysis': claude.get('analysis', ''),
@@ -1301,10 +1301,10 @@ def get_hermes_logger() -> DecisionLogger:
 
 
 def get_oracle_logger() -> DecisionLogger:
-    """Get logger for ORACLE (Advisor)"""
-    if 'ORACLE' not in _bot_loggers:
-        _bot_loggers['ORACLE'] = DecisionLogger()
-    return _bot_loggers['ORACLE']
+    """Get logger for PROPHET (Advisor)"""
+    if 'PROPHET' not in _bot_loggers:
+        _bot_loggers['PROPHET'] = DecisionLogger()
+    return _bot_loggers['PROPHET']
 
 
 def get_ares_logger() -> DecisionLogger:

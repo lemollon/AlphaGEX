@@ -139,7 +139,7 @@ def store_market_data(symbol: str, data: List[Dict], source: str = "yahoo") -> i
     """
     Store market data in BOTH database tables:
     1. market_data_daily - Primary storage for daily OHLC
-    2. price_history - Used by Argus pattern similarity (with timeframe='1d')
+    2. price_history - Used by Watchtower pattern similarity (with timeframe='1d')
 
     Args:
         symbol: Normalized symbol (e.g., SPX, VIX)
@@ -186,7 +186,7 @@ def store_market_data(symbol: str, data: List[Dict], source: str = "yahoo") -> i
             ))
             total_inserted += 1
 
-            # Also store in price_history table (used by Argus pattern similarity)
+            # Also store in price_history table (used by Watchtower pattern similarity)
             # This ensures pattern matching has access to real OHLC data
             try:
                 cursor.execute("""

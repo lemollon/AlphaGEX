@@ -42,7 +42,7 @@ interface PositionEntryContextProps {
   currentDelta?: number
 
   // Signal source
-  signalSource?: string  // "ML", "Oracle", "Oracle (override)"
+  signalSource?: string  // "ML", "Prophet", "Prophet (override)"
   wasOverride?: boolean
 }
 
@@ -157,11 +157,11 @@ export default function PositionEntryContext({
             )}
           </div>
 
-          {/* Oracle Signal */}
+          {/* Prophet Signal */}
           <div className="bg-purple-900/10 rounded-lg p-3 border border-purple-700/30">
             <div className="flex items-center gap-2 mb-2">
               <Zap className="w-4 h-4 text-purple-400" />
-              <span className="text-purple-400 text-sm font-bold">ORACLE AT ENTRY</span>
+              <span className="text-purple-400 text-sm font-bold">PROPHET AT ENTRY</span>
             </div>
             {oracleAdviceAtEntry ? (
               <div className="space-y-1">
@@ -180,7 +180,7 @@ export default function PositionEntryContext({
                 </div>
               </div>
             ) : (
-              <span className="text-gray-500 text-sm">No Oracle data</span>
+              <span className="text-gray-500 text-sm">No Prophet data</span>
             )}
           </div>
         </div>
@@ -302,7 +302,7 @@ export default function PositionEntryContext({
               Entered {spreadType?.replace(/_/g, ' ')}
               {mlDirectionAtEntry && ` on ${mlDirectionAtEntry} ML signal`}
               {mlConfidenceAtEntry && ` (${(mlConfidenceAtEntry * 100).toFixed(0)}% confidence)`}
-              {oracleAdviceAtEntry && `, Oracle said ${oracleAdviceAtEntry}`}
+              {oracleAdviceAtEntry && `, Prophet said ${oracleAdviceAtEntry}`}
               {vixAtEntry && `. VIX was ${vixAtEntry.toFixed(1)}`}
               {gexRegimeAtEntry && `, GEX ${gexRegimeAtEntry}`}
               {distToPutWall && `, ${distToPutWall.toFixed(0)} pts above put wall`}.

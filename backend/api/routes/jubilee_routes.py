@@ -1196,8 +1196,8 @@ class ICConfigUpdateRequest(BaseModel):
     short_call_delta: Optional[float] = Field(None, description="Target delta for short call")
     max_positions: Optional[int] = Field(None, description="Max concurrent IC positions")
     max_trades_per_day: Optional[int] = Field(None, description="Max daily IC trades")
-    require_oracle_approval: Optional[bool] = Field(None, description="Require Oracle approval")
-    min_oracle_confidence: Optional[float] = Field(None, description="Min Oracle confidence")
+    require_oracle_approval: Optional[bool] = Field(None, description="Require Prophet approval")
+    min_oracle_confidence: Optional[float] = Field(None, description="Min Prophet confidence")
     stop_loss_pct: Optional[float] = Field(None, description="Stop loss % of max loss")
     profit_target_pct: Optional[float] = Field(None, description="Profit target % of max profit")
 
@@ -1356,7 +1356,7 @@ async def get_ic_positions():
     - Strikes and expiration
     - Entry credit and current value
     - Unrealized P&L
-    - Oracle confidence at entry
+    - Prophet confidence at entry
     """
     if not JubileeICTrader:
         raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
@@ -1781,7 +1781,7 @@ async def get_full_reconciliation():
     Returns:
     - Per-position box spread reconciliation (strikes, expiration, capital math)
     - Cost accrual with remaining cost to accrue
-    - IC positions with full Oracle reasoning
+    - IC positions with full Prophet reasoning
     - Net profit reconciliation with all components
     - Config values (no hardcoded 15% reserve, etc.)
     """
@@ -1949,7 +1949,7 @@ async def get_full_reconciliation():
             total_cost_accrued += cost_accrued
             total_cost_remaining += cost_remaining
 
-        # Build IC reconciliation with Oracle details
+        # Build IC reconciliation with Prophet details
         ic_reconciliation = []
         total_ic_unrealized = 0
         total_ic_credit = 0
@@ -1986,7 +1986,7 @@ async def get_full_reconciliation():
                 'unrealized_pnl': unrealized,
                 'pnl_pct': pos.get('pnl_pct', 0),
 
-                # Oracle details - FULL transparency
+                # Prophet details - FULL transparency
                 'oracle_confidence': pos.get('oracle_confidence', 0),
                 'oracle_reasoning': pos.get('oracle_reasoning', ''),
 
@@ -2121,7 +2121,7 @@ async def get_full_reconciliation():
                 "reconciles": abs((reserved_capital + capital_in_ic_trades + available_capital) - total_borrowed) < 0.01,
             },
 
-            # IC Trading Reconciliation (per position with Oracle)
+            # IC Trading Reconciliation (per position with Prophet)
             "ic_trading": {
                 "positions": ic_reconciliation,
                 "count": len(ic_reconciliation),

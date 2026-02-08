@@ -2,14 +2,14 @@
 GIDEON - Signal Generation
 ===========================
 
-Clean signal generation using GEX data, Oracle, and ML models.
+Clean signal generation using GEX data, Prophet, and ML models.
 
 GIDEON uses AGGRESSIVE Apache GEX backtest parameters (vs SOLOMON):
 - 2% wall filter (vs 1%) - more room to trade
 - 48% min win probability (vs 55%) - lower threshold
 - VIX range 12-30 (vs 15-25) - wider volatility range
 - GEX ratio 1.3/0.77 (vs 1.5/0.67) - weaker asymmetry allowed
-- Uses Tradier LIVE GEX data only (no stale Kronos)
+- Uses Tradier LIVE GEX data only (no stale Chronicles)
 
 Safety filters ARE ENABLED with aggressive thresholds.
 """
@@ -31,20 +31,20 @@ except ImportError:
     DB_AVAILABLE = False
     get_connection = None
 
-# Oracle is the god of all trade decisions
+# Prophet is the god of all trade decisions
 
 # Optional imports with clear fallbacks
 try:
-    from quant.oracle_advisor import OracleAdvisor, OraclePrediction, TradingAdvice, MarketContext as OracleMarketContext, GEXRegime
+    from quant.prophet_advisor import ProphetAdvisor, OraclePrediction, TradingAdvice, MarketContext as OracleMarketContext, GEXRegime
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleMarketContext = None
     GEXRegime = None
 
 try:
-    from quant.kronos_gex_calculator import KronosGEXCalculator
+    from quant.chronicles_gex_calculator import KronosGEXCalculator
     KRONOS_AVAILABLE = True
 except ImportError:
     KRONOS_AVAILABLE = False
@@ -70,7 +70,7 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
-# REMOVED: GEX Directional ML, Ensemble Strategy, ML Regime Classifier - redundant with Oracle
+# REMOVED: GEX Directional ML, Ensemble Strategy, ML Regime Classifier - redundant with Prophet
 
 # IV Solver - accurate implied volatility calculation
 IV_SOLVER_AVAILABLE = False
@@ -113,7 +113,7 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Use Tradier for LIVE data (Kronos is for backtesting only)
+        # GEX Calculator - Use Tradier for LIVE data (Chronicles is for backtesting only)
         self.gex_calculator = None
 
         if TRADIER_GEX_AVAILABLE:
@@ -143,14 +143,14 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"ML init failed: {e}")
 
-        # Oracle Advisor
-        self.oracle = None
+        # Prophet Advisor
+        self.prophet = None
         if ORACLE_AVAILABLE:
             try:
-                self.oracle = OracleAdvisor()
-                logger.info("GIDEON SignalGenerator: Oracle initialized")
+                self.prophet = ProphetAdvisor()
+                logger.info("GIDEON SignalGenerator: Prophet initialized")
             except Exception as e:
-                logger.warning(f"Oracle init failed: {e}")
+                logger.warning(f"Prophet init failed: {e}")
 
     def _init_price_provider(self) -> None:
         """Initialize price data provider for historical data (VIX/price history)."""
@@ -164,13 +164,13 @@ class SignalGenerator:
 
     def _get_ml_features(self, spot_price: float, vix: float) -> Dict[str, Any]:
         """
-        Calculate the 4 remaining Oracle ML features:
+        Calculate the 4 remaining Prophet ML features:
         - vix_percentile_30d: Where current VIX sits in 30-day range (0-100)
         - vix_change_1d: % change in VIX from yesterday
         - price_change_1d: % change in underlying price from yesterday
         - win_rate_30d: Win rate of closed trades in last 30 days (0-1)
 
-        These complete the full 11-feature Oracle ML model.
+        These complete the full 11-feature Prophet ML model.
         """
         features = {
             'vix_percentile_30d': 50.0,  # Default: middle of range
@@ -282,7 +282,7 @@ class SignalGenerator:
             call_wall = gex.get('call_wall', gex.get('major_call_wall', 0))
             put_wall = gex.get('put_wall', gex.get('major_put_wall', 0))
 
-            # Calculate derived fields for Oracle ML model
+            # Calculate derived fields for Prophet ML model
             gex_normalized = gex.get('gex_normalized', 0)
             distance_to_flip_pct = 0.0
             if flip_point > 0 and spot > 0:
@@ -305,7 +305,7 @@ class SignalGenerator:
                 'flip_point': flip_point,
                 'vix': vix,
                 'timestamp': datetime.now(CENTRAL_TZ),
-                # Additional fields for Oracle ML model (7 features)
+                # Additional fields for Prophet ML model (7 features)
                 'gex_normalized': gex_normalized,
                 'distance_to_flip_pct': distance_to_flip_pct,
                 'between_walls': between_walls,
@@ -315,7 +315,7 @@ class SignalGenerator:
                 'vix_change_1d': ml_features['vix_change_1d'],
                 'price_change_1d': ml_features['price_change_1d'],
                 'win_rate_30d': ml_features['win_rate_30d'],
-                # Raw Kronos data for audit
+                # Raw Chronicles data for audit
                 'kronos_raw': gex,
             }
         except Exception as e:
@@ -354,24 +354,24 @@ class SignalGenerator:
 
     def get_oracle_advice(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
         """
-        Get Oracle ML advice for GIDEON directional trades.
+        Get Prophet ML advice for GIDEON directional trades.
 
         Returns FULL prediction context for audit trail.
         """
-        if not self.oracle or not ORACLE_AVAILABLE:
+        if not self.prophet or not ORACLE_AVAILABLE:
             return None
 
-        # Validate required market data before calling Oracle
+        # Validate required market data before calling Prophet
         spot_price = gex_data.get('spot_price', 0)
         if not spot_price or spot_price <= 0:
-            logger.debug("GIDEON Oracle skipped: No valid spot price available")
+            logger.debug("GIDEON Prophet skipped: No valid spot price available")
             return {
                 'confidence': 0,
                 'win_probability': 0,
                 'advice': 'NO_DATA',
                 'direction': 'FLAT',
                 'top_factors': [],
-                'reasoning': 'No valid spot price available for Oracle analysis',
+                'reasoning': 'No valid spot price available for Prophet analysis',
             }
 
         try:
@@ -382,7 +382,7 @@ class SignalGenerator:
             except (KeyError, AttributeError):
                 gex_regime = GEXRegime.NEUTRAL
 
-            # Build context for Oracle
+            # Build context for Prophet
             # CRITICAL: Include ALL fields for proper ML predictions
             from datetime import datetime
             import pytz
@@ -411,12 +411,12 @@ class SignalGenerator:
             )
 
             # Call SOLOMON-specific advice method (GIDEON uses same model)
-            prediction = self.oracle.get_solomon_advice(
+            prediction = self.prophet.get_solomon_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=True,  # Enable Claude for transparency logging
                 wall_filter_pct=self.config.wall_filter_pct,  # Uses GIDEON's 6%
-                bot_name="GIDEON",  # Log as GIDEON in Oracle Data Flow
+                bot_name="GIDEON",  # Log as GIDEON in Prophet Data Flow
             )
 
             if not prediction:
@@ -457,7 +457,7 @@ class SignalGenerator:
                 'wall_filter_passed': getattr(prediction, 'wall_filter_passed', False),
             }
         except Exception as e:
-            logger.warning(f"GIDEON Oracle error: {e}")
+            logger.warning(f"GIDEON Prophet error: {e}")
             import traceback
             traceback.print_exc()
             # Return fallback values instead of None so scan activity shows meaningful data
@@ -467,7 +467,7 @@ class SignalGenerator:
                 'advice': 'ERROR',
                 'direction': 'FLAT',
                 'top_factors': [{'factor': 'error', 'impact': 0}],
-                'reasoning': f"Oracle error: {str(e)[:100]}",
+                'reasoning': f"Prophet error: {str(e)[:100]}",
             }
 
     def adjust_confidence_from_top_factors(
@@ -477,7 +477,7 @@ class SignalGenerator:
         gex_data: Dict
     ) -> Tuple[float, List[str]]:
         """
-        Adjust confidence based on Oracle's top contributing factors.
+        Adjust confidence based on Prophet's top contributing factors.
 
         GIDEON is more aggressive - smaller adjustments.
         """
@@ -490,9 +490,9 @@ class SignalGenerator:
         gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
 
         # REMOVED: VIX, GEX regime, day of week adjustments
-        # Oracle already analyzed all these factors in MarketContext.
+        # Prophet already analyzed all these factors in MarketContext.
         # Re-adjusting confidence based on the same factors is redundant.
-        # Trust Oracle's win_probability output directly.
+        # Trust Prophet's win_probability output directly.
 
         # Clamp confidence - GIDEON allows lower confidence
         confidence = max(0.35, min(0.95, confidence))
@@ -605,7 +605,7 @@ class SignalGenerator:
 
         return round(debit, 2), round(max_profit, 2), round(max_loss, 2)
 
-    def generate_signal(self, oracle_data: Optional[Dict[str, Any]] = None) -> Optional[TradeSignal]:
+    def generate_signal(self, prophet_data: Optional[Dict[str, Any]] = None) -> Optional[TradeSignal]:
         """
         Generate a trading signal.
 
@@ -615,8 +615,8 @@ class SignalGenerator:
         - 0.5 min R:R ratio
 
         Args:
-            oracle_data: Pre-fetched Oracle advice (optional). If provided, uses this
-                        instead of making a new Oracle call for consistency.
+            prophet_data: Pre-fetched Prophet advice (optional). If provided, uses this
+                        instead of making a new Prophet call for consistency.
         """
         # Step 1: Get GEX data
         gex_data = self.get_gex_data()
@@ -628,11 +628,11 @@ class SignalGenerator:
         vix = gex_data['vix']
 
         # ============================================================
-        # STEP 2: GET ORACLE PREDICTION (ORACLE IS THE GOD OF ALL DECISIONS)
+        # STEP 2: GET PROPHET PREDICTION (PROPHET IS THE GOD OF ALL DECISIONS)
         #
-        # CRITICAL: When Oracle says TRADE, we TRADE. Period.
-        # Oracle already analyzed VIX, GEX, walls, regime, day of week.
-        # Bot's min_win_probability threshold does NOT override Oracle.
+        # CRITICAL: When Prophet says TRADE, we TRADE. Period.
+        # Prophet already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Prophet.
         # ============================================================
 
         # Step 2a: Get ML signal from 5 GEX probability models (PRIMARY SOURCE)
@@ -641,59 +641,59 @@ class SignalGenerator:
         ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
         ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
 
-        # Step 2b: Get Oracle advice (BACKUP SOURCE)
-        # Use pre-fetched oracle_data if provided to avoid double Oracle calls
-        if oracle_data is not None:
-            oracle = oracle_data
-            logger.info(f"[GIDEON] Using pre-fetched Oracle data: advice={oracle.get('advice', 'UNKNOWN')}")
+        # Step 2b: Get Prophet advice (BACKUP SOURCE)
+        # Use pre-fetched prophet_data if provided to avoid double Prophet calls
+        if prophet_data is not None:
+            prophet = prophet_data
+            logger.info(f"[GIDEON] Using pre-fetched Prophet data: advice={prophet.get('advice', 'UNKNOWN')}")
         else:
-            oracle = self.get_oracle_advice(gex_data)
-        oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
-        oracle_confidence = oracle.get('confidence', 0) if oracle else 0
-        oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
-        oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
+            prophet = self.get_oracle_advice(gex_data)
+        oracle_direction = prophet.get('direction', 'FLAT') if prophet else 'FLAT'
+        oracle_confidence = prophet.get('confidence', 0) if prophet else 0
+        oracle_win_prob = prophet.get('win_probability', 0) if prophet else 0
+        oracle_advice = prophet.get('advice', 'SKIP_TODAY') if prophet else 'SKIP_TODAY'
 
         # Determine which source to use for WIN PROBABILITY
         use_ml_prediction = ml_signal is not None and ml_win_prob > 0
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
-        prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
+        prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "PROPHET"
 
-        # DIRECTION: Oracle is the SOLE AUTHORITY for GIDEON
-        # Oracle decides both trade/no-trade AND direction
-        # ML is backup only when Oracle direction is FLAT
+        # DIRECTION: Prophet is the SOLE AUTHORITY for GIDEON
+        # Prophet decides both trade/no-trade AND direction
+        # ML is backup only when Prophet direction is FLAT
         if oracle_direction in ('BULLISH', 'BEARISH'):
             effective_direction = oracle_direction
             if ml_direction and ml_direction != oracle_direction:
-                logger.info(f"[GIDEON] ORACLE DIRECTION: {oracle_direction} (ML said {ml_direction} - Oracle overrides)")
+                logger.info(f"[GIDEON] PROPHET DIRECTION: {oracle_direction} (ML said {ml_direction} - Prophet overrides)")
             else:
-                logger.info(f"[GIDEON] ORACLE DIRECTION: {oracle_direction}")
+                logger.info(f"[GIDEON] PROPHET DIRECTION: {oracle_direction}")
         elif ml_direction in ('BULLISH', 'BEARISH'):
-            # Fallback to ML only if Oracle direction is FLAT
+            # Fallback to ML only if Prophet direction is FLAT
             effective_direction = ml_direction
-            logger.info(f"[GIDEON] Oracle direction FLAT, using ML backup: {ml_direction}")
+            logger.info(f"[GIDEON] Prophet direction FLAT, using ML backup: {ml_direction}")
         else:
             effective_direction = "FLAT"
-            logger.info(f"[GIDEON] No clear direction from Oracle or ML")
+            logger.info(f"[GIDEON] No clear direction from Prophet or ML")
 
         # ============================================================
-        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
-        # No min_win_probability threshold check - Oracle's word is final
+        # PROPHET IS THE GOD: If Prophet says TRADE, we TRADE
+        # No min_win_probability threshold check - Prophet's word is final
         # ============================================================
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 
-        # FLAT/NEUTRAL is NOT an excuse for blocking trades when Oracle says TRADE
-        # Use Oracle's suitability scores to derive direction, fallback to GEX walls
+        # FLAT/NEUTRAL is NOT an excuse for blocking trades when Prophet says TRADE
+        # Use Prophet's suitability scores to derive direction, fallback to GEX walls
         if oracle_says_trade and effective_direction not in ('BULLISH', 'BEARISH'):
-            # First try Oracle's suitability scores (Oracle already analyzed the market)
-            bullish_suit = oracle.get('bullish_suitability', 0) if oracle else 0
-            bearish_suit = oracle.get('bearish_suitability', 0) if oracle else 0
+            # First try Prophet's suitability scores (Prophet already analyzed the market)
+            bullish_suit = prophet.get('bullish_suitability', 0) if prophet else 0
+            bearish_suit = prophet.get('bearish_suitability', 0) if prophet else 0
 
             if bullish_suit > bearish_suit:
                 effective_direction = "BULLISH"
-                logger.info(f"[GIDEON] Direction from Oracle suitability: BULLISH ({bullish_suit:.0%} > {bearish_suit:.0%})")
+                logger.info(f"[GIDEON] Direction from Prophet suitability: BULLISH ({bullish_suit:.0%} > {bearish_suit:.0%})")
             elif bearish_suit > bullish_suit:
                 effective_direction = "BEARISH"
-                logger.info(f"[GIDEON] Direction from Oracle suitability: BEARISH ({bearish_suit:.0%} > {bullish_suit:.0%})")
+                logger.info(f"[GIDEON] Direction from Prophet suitability: BEARISH ({bearish_suit:.0%} > {bullish_suit:.0%})")
             else:
                 # Tie-breaker: use GEX wall proximity
                 call_wall = gex_data.get('call_wall', 0)
@@ -709,17 +709,17 @@ class SignalGenerator:
 
         ml_oracle_says_trade = oracle_says_trade and effective_direction in ('BULLISH', 'BEARISH')
 
-        # Log Oracle decision
+        # Log Prophet decision
         if ml_oracle_says_trade:
-            logger.info(f"[GIDEON] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_direction} @ {effective_win_prob:.0%}")
+            logger.info(f"[GIDEON] PROPHET SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_direction} @ {effective_win_prob:.0%}")
         else:
-            logger.info(f"[GIDEON] Oracle advice: {oracle_advice}, direction: {effective_direction} @ {effective_win_prob:.0%}")
+            logger.info(f"[GIDEON] Prophet advice: {oracle_advice}, direction: {effective_direction} @ {effective_win_prob:.0%}")
 
         # ============================================================
-        # STEP 3: IF ML/ORACLE SAYS TRADE, BYPASS TRADITIONAL FILTERS
+        # STEP 3: IF ML/PROPHET SAYS TRADE, BYPASS TRADITIONAL FILTERS
         # ============================================================
         if ml_oracle_says_trade:
-            # ML/Oracle supersedes all traditional filters for GIDEON
+            # ML/Prophet supersedes all traditional filters for GIDEON
             filters_bypassed = []
 
             if vix < self.config.min_vix or vix > self.config.max_vix:
@@ -737,26 +737,26 @@ class SignalGenerator:
                 filters_bypassed.append(f"GEX_ratio={gex_ratio:.2f}")
 
             if filters_bypassed:
-                logger.info(f"[GIDEON] ML/Oracle BYPASSES: {', '.join(filters_bypassed)}")
+                logger.info(f"[GIDEON] ML/Prophet BYPASSES: {', '.join(filters_bypassed)}")
 
-            # Use ML/Oracle direction
+            # Use ML/Prophet direction
             gex_bias = effective_direction
             wall_direction = effective_direction
-            logger.info(f"[GIDEON] Using ML/Oracle direction: {gex_bias}")
+            logger.info(f"[GIDEON] Using ML/Prophet direction: {gex_bias}")
 
         else:
             # ============================================================
-            # STEP 4: ORACLE SAYS NO TRADE - RESPECT ORACLE'S DECISION
+            # STEP 4: PROPHET SAYS NO TRADE - RESPECT PROPHET'S DECISION
             # ============================================================
-            # Oracle is the god of all trade decisions.
-            # If Oracle says SKIP_TODAY, we don't trade. Period.
-            logger.info(f"[GIDEON SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+            # Prophet is the god of all trade decisions.
+            # If Prophet says SKIP_TODAY, we don't trade. Period.
+            logger.info(f"[GIDEON SKIP] Prophet says {oracle_advice} - respecting Prophet's decision")
 
-            # Convert Oracle top_factors to JSON string for blocked signal audit trail
+            # Convert Prophet top_factors to JSON string for blocked signal audit trail
             import json
             oracle_top_factors_json = ""
-            if oracle and oracle.get('top_factors'):
-                oracle_top_factors_json = json.dumps(oracle['top_factors'])
+            if prophet and prophet.get('top_factors'):
+                oracle_top_factors_json = json.dumps(prophet['top_factors'])
 
             return TradeSignal(
                 direction=effective_direction if effective_direction in ('BULLISH', 'BEARISH') else "UNKNOWN",
@@ -768,9 +768,9 @@ class SignalGenerator:
                 gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
                 vix=vix,
                 source="BLOCKED_ORACLE_NO_TRADE",
-                reasoning=f"BLOCKED: Oracle advice={oracle_advice}, direction={effective_direction}, win_prob={effective_win_prob:.0%}",
+                reasoning=f"BLOCKED: Prophet advice={oracle_advice}, direction={effective_direction}, win_prob={effective_win_prob:.0%}",
                 ml_win_probability=effective_win_prob,
-                # BUG FIX: Include Oracle fields for audit trail
+                # BUG FIX: Include Prophet fields for audit trail
                 oracle_advice=oracle_advice,
                 oracle_win_probability=oracle_win_prob,
                 oracle_direction=oracle_direction,
@@ -778,10 +778,10 @@ class SignalGenerator:
                 oracle_top_factors=oracle_top_factors_json,
             )
 
-        # Get wall info for logging only (Oracle already provided direction above)
+        # Get wall info for logging only (Prophet already provided direction above)
         near_wall, _, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
-            wall_reason = f"Oracle overriding wall proximity (direction: {effective_direction})"
+            wall_reason = f"Prophet overriding wall proximity (direction: {effective_direction})"
 
         # Log ML analysis FIRST (it's the preferred source for GIDEON)
         if ml_signal:
@@ -797,39 +797,39 @@ class SignalGenerator:
                 logger.info(f"    Magnet Attraction: {preds.get('magnet_attraction', 0):.1%}")
                 logger.info(f"    Pin Zone: {preds.get('pin_zone', 0):.1%}")
         else:
-            logger.info(f"[GIDEON] ML models not available, falling back to Oracle")
+            logger.info(f"[GIDEON] ML models not available, falling back to Prophet")
 
-        # Log Oracle analysis (backup source)
-        if oracle:
-            logger.info(f"[GIDEON ORACLE ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
+        # Log Prophet analysis (backup source)
+        if prophet:
+            logger.info(f"[GIDEON PROPHET ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
             logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
             logger.info(f"  Confidence: {oracle_confidence:.1%}")
             logger.info(f"  Direction: {oracle_direction}")
-            logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
+            logger.info(f"  Advice: {prophet.get('advice', 'N/A')}")
 
-            if oracle.get('top_factors'):
+            if prophet.get('top_factors'):
                 logger.info(f"  Top Factors:")
-                for i, factor in enumerate(oracle['top_factors'][:3], 1):
+                for i, factor in enumerate(prophet['top_factors'][:3], 1):
                     factor_name = factor.get('factor', 'unknown')
                     impact = factor.get('impact', 0)
                     direction_sign = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction_sign}{impact:.3f}")
 
-            # Oracle SKIP_TODAY is informational only - GIDEON trusts ML
-            if oracle.get('advice') == 'SKIP_TODAY':
+            # Prophet SKIP_TODAY is informational only - GIDEON trusts ML
+            if prophet.get('advice') == 'SKIP_TODAY':
                 if use_ml_prediction:
-                    logger.info(f"[GIDEON] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"[GIDEON] Prophet advises SKIP_TODAY but ML override active")
                     logger.info(f"  GIDEON trusts ML: {ml_win_prob:.1%} win probability")
                 else:
-                    logger.info(f"[GIDEON] Oracle SKIP_TODAY - using aggressive 48% threshold")
+                    logger.info(f"[GIDEON] Prophet SKIP_TODAY - using aggressive 48% threshold")
 
         # Win probability threshold already checked in Step 2/3 above
         logger.info(f"[GIDEON] Proceeding with {prediction_source}: {effective_win_prob:.1%} win prob")
 
         # Step 4: Determine final direction
-        # Oracle is the SOLE AUTHORITY - wall_direction was set to effective_direction (Oracle's direction)
-        direction = wall_direction  # wall_direction = effective_direction = ORACLE direction (set at line 744)
-        direction_source = "ORACLE" if oracle_direction in ('BULLISH', 'BEARISH') else "ML_BACKUP"
+        # Prophet is the SOLE AUTHORITY - wall_direction was set to effective_direction (Prophet's direction)
+        direction = wall_direction  # wall_direction = effective_direction = PROPHET direction (set at line 744)
+        direction_source = "PROPHET" if oracle_direction in ('BULLISH', 'BEARISH') else "ML_BACKUP"
         logger.info(f"[GIDEON] Final direction: {direction} (source: {direction_source})")
 
         # Calculate confidence
@@ -842,8 +842,8 @@ class SignalGenerator:
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
                 confidence -= 0.08  # Smaller penalty for GIDEON
 
-        # Oracle adjustments (when not overriding)
-        if oracle and direction_source != "ORACLE_OVERRIDE":
+        # Prophet adjustments (when not overriding)
+        if prophet and direction_source != "ORACLE_OVERRIDE":
             if oracle_direction == direction and oracle_confidence > 0.6:
                 boost = oracle_confidence * 0.20
                 confidence = min(0.95, confidence + boost)
@@ -852,9 +852,9 @@ class SignalGenerator:
                 confidence -= penalty
             # NOTE: SKIP_TODAY does NOT block here - bot uses its own min_win_probability threshold
 
-            if oracle.get('top_factors'):
+            if prophet.get('top_factors'):
                 confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
-                    confidence, oracle['top_factors'], gex_data
+                    confidence, prophet['top_factors'], gex_data
                 )
 
         # Confidence check - warning only (no blocking)
@@ -898,10 +898,10 @@ class SignalGenerator:
             if ml_signal.get('win_probability'):
                 reasoning_parts.append(f"ML Win Prob: {ml_signal['win_probability']:.0%}")
 
-        if oracle:
-            reasoning_parts.append(f"Oracle: {oracle.get('advice', 'N/A')} ({oracle_direction}, {oracle_confidence:.0%})")
+        if prophet:
+            reasoning_parts.append(f"Prophet: {prophet.get('advice', 'N/A')} ({oracle_direction}, {oracle_confidence:.0%})")
             if oracle_win_prob:
-                reasoning_parts.append(f"Oracle Win Prob: {oracle_win_prob:.0%}")
+                reasoning_parts.append(f"Prophet Win Prob: {oracle_win_prob:.0%}")
 
         reasoning_parts.append(f"R:R = {rr_ratio:.2f}:1")
         reasoning = " | ".join(reasoning_parts)
@@ -917,20 +917,20 @@ class SignalGenerator:
             wall_distance = abs(((gex_data['call_wall'] - spot_price) / spot_price) * 100)
 
         # Determine source
-        if oracle and ml_signal:
+        if prophet and ml_signal:
             source = "GEX_ML_ORACLE"
-        elif oracle:
+        elif prophet:
             source = "GEX_ORACLE"
         elif ml_signal:
             source = "GEX_ML"
         else:
             source = "GEX_WALL"
 
-        # Convert Oracle top_factors to JSON string
+        # Convert Prophet top_factors to JSON string
         import json
         oracle_top_factors_json = ""
-        if oracle and oracle.get('top_factors'):
-            oracle_top_factors_json = json.dumps(oracle['top_factors'])
+        if prophet and prophet.get('top_factors'):
+            oracle_top_factors_json = json.dumps(prophet['top_factors'])
 
         signal = TradeSignal(
             direction=direction,
@@ -956,7 +956,7 @@ class SignalGenerator:
             ml_win_probability=ml_signal.get('win_probability', 0) if ml_signal else 0,
             ml_top_features='',
             oracle_win_probability=oracle_win_prob,
-            oracle_advice=oracle.get('advice', '') if oracle else '',
+            oracle_advice=prophet.get('advice', '') if prophet else '',
             oracle_direction=oracle_direction,
             oracle_confidence=oracle_confidence,
             oracle_top_factors=oracle_top_factors_json,
@@ -965,5 +965,5 @@ class SignalGenerator:
         )
 
         logger.info(f"GIDEON Signal generated: {direction} {spread_type.value} @ {spot_price}")
-        logger.info(f"Context: Wall={wall_type} ({wall_distance:.2f}%), ML={ml_direction or 'N/A'} ({ml_confidence:.0%}), Oracle={oracle_direction or 'N/A'} ({oracle_confidence:.0%})")
+        logger.info(f"Context: Wall={wall_type} ({wall_distance:.2f}%), ML={ml_direction or 'N/A'} ({ml_confidence:.0%}), Prophet={oracle_direction or 'N/A'} ({oracle_confidence:.0%})")
         return signal

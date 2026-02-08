@@ -338,25 +338,25 @@ async def comprehensive_system_health():
     except Exception as e:
         health["components"]["market"] = {"status": "error", "message": str(e)}
 
-    # 8. ORACLE ML SYSTEM (Model staleness and training status)
+    # 8. PROPHET ML SYSTEM (Model staleness and training status)
     try:
-        from quant.oracle_advisor import get_oracle, get_pending_outcomes_count
-        oracle = get_oracle()
+        from quant.prophet_advisor import get_oracle, get_pending_outcomes_count
+        prophet = get_oracle()
 
-        hours_since_training = oracle._get_hours_since_training() if hasattr(oracle, '_get_hours_since_training') else 0.0
-        is_model_fresh = oracle._is_model_fresh() if hasattr(oracle, '_is_model_fresh') else True
+        hours_since_training = prophet._get_hours_since_training() if hasattr(prophet, '_get_hours_since_training') else 0.0
+        is_model_fresh = prophet._is_model_fresh() if hasattr(prophet, '_is_model_fresh') else True
         pending_outcomes = get_pending_outcomes_count()
 
-        oracle_status = "healthy"
-        if not oracle.is_trained:
-            oracle_status = "untrained"
+        prophet_status = "healthy"
+        if not prophet.is_trained:
+            prophet_status = "untrained"
         elif not is_model_fresh:
-            oracle_status = "stale"
+            prophet_status = "stale"
 
-        health["components"]["oracle"] = {
-            "status": oracle_status,
-            "is_trained": oracle.is_trained,
-            "model_version": oracle.model_version,
+        health["components"]["prophet"] = {
+            "status": prophet_status,
+            "is_trained": prophet.is_trained,
+            "model_version": prophet.model_version,
             "hours_since_training": round(hours_since_training, 2),
             "is_model_fresh": is_model_fresh,
             "pending_outcomes": pending_outcomes,
@@ -364,18 +364,18 @@ async def comprehensive_system_health():
             "needs_retraining": pending_outcomes >= 20 or not is_model_fresh
         }
 
-        if not oracle.is_trained:
-            health["issues"].append("Oracle ML model is NOT trained - predictions will use default values")
+        if not prophet.is_trained:
+            health["issues"].append("Prophet ML model is NOT trained - predictions will use default values")
         elif not is_model_fresh:
-            health["warnings"].append(f"Oracle model is {hours_since_training:.1f} hours old - retraining recommended")
+            health["warnings"].append(f"Prophet model is {hours_since_training:.1f} hours old - retraining recommended")
 
         if pending_outcomes >= 20:
-            health["warnings"].append(f"Oracle has {pending_outcomes} pending outcomes - auto-training should trigger")
+            health["warnings"].append(f"Prophet has {pending_outcomes} pending outcomes - auto-training should trigger")
 
     except ImportError:
-        health["components"]["oracle"] = {"status": "not_available", "message": "Oracle module not loaded"}
+        health["components"]["prophet"] = {"status": "not_available", "message": "Prophet module not loaded"}
     except Exception as e:
-        health["components"]["oracle"] = {"status": "error", "message": str(e)}
+        health["components"]["prophet"] = {"status": "error", "message": str(e)}
 
     # OVERALL STATUS CALCULATION
     if len(health["issues"]) > 0:
@@ -784,9 +784,9 @@ async def verify_holiday_fixes():
 
     This endpoint checks:
     1. GEX collection health tracking
-    2. Apollo outcome tracking
-    3. SAGE ML training schedule
-    4. Oracle ML training schedule
+    2. Discernment outcome tracking
+    3. WISDOM ML training schedule
+    4. Prophet ML training schedule
     5. Startup recovery mechanism
     """
     from zoneinfo import ZoneInfo
@@ -864,12 +864,12 @@ async def verify_holiday_fixes():
         results["checks"]["gex_history"] = {"status": "error", "message": str(e)}
         results["failed"] += 1
 
-    # 3. Apollo Outcome Tracking
+    # 3. Discernment Outcome Tracking
     try:
         cursor.execute('''
             SELECT
-                (SELECT COUNT(*) FROM apollo_predictions) as predictions,
-                (SELECT COUNT(*) FROM apollo_outcomes) as outcomes
+                (SELECT COUNT(*) FROM discernment_predictions) as predictions,
+                (SELECT COUNT(*) FROM discernment_outcomes) as outcomes
         ''')
         row = cursor.fetchone()
         predictions = row[0] if row else 0
@@ -877,7 +877,7 @@ async def verify_holiday_fixes():
 
         tracking_rate = (outcomes / predictions * 100) if predictions > 0 else 0
 
-        results["checks"]["apollo_tracking"] = {
+        results["checks"]["discernment_tracking"] = {
             "status": "pass" if outcomes > 0 or predictions == 0 else "pending",
             "predictions": predictions,
             "outcomes_tracked": outcomes,
@@ -885,21 +885,21 @@ async def verify_holiday_fixes():
         }
         results["passed"] += 1 if outcomes > 0 or predictions == 0 else 0
     except Exception as e:
-        results["checks"]["apollo_tracking"] = {"status": "error", "message": str(e)}
+        results["checks"]["discernment_tracking"] = {"status": "error", "message": str(e)}
         results["failed"] += 1
 
-    # 4. SAGE Training
+    # 4. WISDOM Training
     try:
         cursor.execute('''
             SELECT COUNT(*), MAX(timestamp)
             FROM quant_training_history
-            WHERE model_name = 'SAGE'
+            WHERE model_name = 'WISDOM'
         ''')
         row = cursor.fetchone()
         training_count = row[0] if row else 0
         last_training = row[1]
 
-        results["checks"]["sage_training"] = {
+        results["checks"]["wisdom_training"] = {
             "status": "pass" if training_count > 0 else "pending",
             "training_count": training_count,
             "last_training": str(last_training) if last_training else None,
@@ -907,21 +907,21 @@ async def verify_holiday_fixes():
         }
         results["passed"] += 1 if training_count > 0 else 0
     except Exception as e:
-        results["checks"]["sage_training"] = {"status": "error", "message": str(e)}
+        results["checks"]["wisdom_training"] = {"status": "error", "message": str(e)}
         results["failed"] += 1
 
-    # 5. Oracle Training
+    # 5. Prophet Training
     try:
         cursor.execute('''
             SELECT COUNT(*), MAX(timestamp)
             FROM quant_training_history
-            WHERE model_name = 'ORACLE'
+            WHERE model_name = 'PROPHET'
         ''')
         row = cursor.fetchone()
         training_count = row[0] if row else 0
         last_training = row[1]
 
-        results["checks"]["oracle_training"] = {
+        results["checks"]["prophet_training"] = {
             "status": "pass" if training_count > 0 else "pending",
             "training_count": training_count,
             "last_training": str(last_training) if last_training else None,
@@ -929,7 +929,7 @@ async def verify_holiday_fixes():
         }
         results["passed"] += 1 if training_count > 0 else 0
     except Exception as e:
-        results["checks"]["oracle_training"] = {"status": "error", "message": str(e)}
+        results["checks"]["prophet_training"] = {"status": "error", "message": str(e)}
         results["failed"] += 1
 
     conn.close()

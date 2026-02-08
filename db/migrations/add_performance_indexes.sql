@@ -77,7 +77,7 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_gex_history_symbol_timestamp
     ON gex_history(symbol, timestamp DESC);
 
--- gamma_history: Used in ARGUS gamma visualization (check column name)
+-- gamma_history: Used in WATCHTOWER gamma visualization (check column name)
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns

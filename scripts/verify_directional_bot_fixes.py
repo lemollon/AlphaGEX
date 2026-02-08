@@ -9,7 +9,7 @@ Usage:
     python scripts/verify_directional_bot_fixes.py
 
 Checks:
-1. Oracle confidence scale (0-1, not 0-100)
+1. Prophet confidence scale (0-1, not 0-100)
 2. Day of week passed correctly (Friday = 4)
 3. All 11 ML features populated (not defaults)
 4. Flip distance filter active
@@ -28,19 +28,19 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def test_oracle_confidence_scale():
-    """Test 1: Oracle confidence should be 0-1, not 0-100"""
+    """Test 1: Prophet confidence should be 0-1, not 0-100"""
     print("\n" + "="*60)
-    print("TEST 1: Oracle Confidence Scale (0-1)")
+    print("TEST 1: Prophet Confidence Scale (0-1)")
     print("="*60)
 
     try:
-        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+        from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
         import pytz
 
         ct = pytz.timezone('America/Chicago')
         now_ct = datetime.now(ct)
 
-        oracle = OracleAdvisor()
+        prophet = ProphetAdvisor()
 
         # Create test context
         context = MarketContext(
@@ -62,7 +62,7 @@ def test_oracle_confidence_scale():
             win_rate_30d=0.55,
         )
 
-        prediction = oracle.get_solomon_advice(
+        prediction = prophet.get_solomon_advice(
             context=context,
             use_gex_walls=True,
             wall_filter_pct=6.0,
@@ -197,16 +197,16 @@ def test_ml_features_complete():
 
 
 def test_flip_distance_filter():
-    """Test 4: Flip distance filter should be in Oracle"""
+    """Test 4: Flip distance filter should be in Prophet"""
     print("\n" + "="*60)
     print("TEST 4: Flip Distance Filter Active")
     print("="*60)
 
     try:
         import inspect
-        from quant.oracle_advisor import OracleAdvisor
+        from quant.prophet_advisor import ProphetAdvisor
 
-        source = inspect.getsource(OracleAdvisor.get_solomon_advice)
+        source = inspect.getsource(ProphetAdvisor.get_solomon_advice)
 
         checks = [
             ('flip_distance_pct', 'Flip distance calculation'),
@@ -238,16 +238,16 @@ def test_flip_distance_filter():
 
 
 def test_friday_filter():
-    """Test 5: Friday size reduction filter should be in Oracle"""
+    """Test 5: Friday size reduction filter should be in Prophet"""
     print("\n" + "="*60)
     print("TEST 5: Friday Size Reduction Filter Active")
     print("="*60)
 
     try:
         import inspect
-        from quant.oracle_advisor import OracleAdvisor
+        from quant.prophet_advisor import ProphetAdvisor
 
-        source = inspect.getsource(OracleAdvisor.get_solomon_advice)
+        source = inspect.getsource(ProphetAdvisor.get_solomon_advice)
 
         checks = [
             ('is_friday', 'Friday detection'),
@@ -318,7 +318,7 @@ def main():
     print("="*60)
 
     tests = [
-        ("Oracle Confidence Scale", test_oracle_confidence_scale),
+        ("Prophet Confidence Scale", test_oracle_confidence_scale),
         ("Day of Week", test_day_of_week),
         ("ML Features Complete", test_ml_features_complete),
         ("Flip Distance Filter", test_flip_distance_filter),

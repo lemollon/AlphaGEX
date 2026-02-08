@@ -17,7 +17,7 @@ from core_classes_and_engines import TradingVolatilityAPI
 # Backtest refresh interval (in days)
 BACKTEST_REFRESH_INTERVAL_DAYS = 7
 
-# Oracle auto-training settings
+# Prophet auto-training settings
 # Updated: Daily training instead of weekly for faster learning
 ORACLE_TRAINING_DAY = None  # None = daily training (previously: 6 for Sunday only)
 ORACLE_TRAINING_HOUR = 0  # Midnight CT
@@ -171,7 +171,7 @@ def check_and_refresh_backtests():
 
 def check_and_train_oracle(force: bool = False):
     """
-    Check if Oracle ML model needs training and train if necessary.
+    Check if Prophet ML model needs training and train if necessary.
 
     Training triggers:
     1. Weekly on Sunday midnight CT
@@ -184,14 +184,14 @@ def check_and_train_oracle(force: bool = False):
     ct_now = get_central_time()
 
     try:
-        from quant.oracle_advisor import auto_train, get_pending_outcomes_count, get_oracle
+        from quant.prophet_advisor import auto_train, get_pending_outcomes_count, get_oracle
 
-        oracle = get_oracle()
+        prophet = get_oracle()
         pending_count = get_pending_outcomes_count()
 
-        print(f"\n🔮 Oracle Training Check ({ct_now.strftime('%Y-%m-%d %I:%M %p CT')})")
-        print(f"   Model trained: {oracle.is_trained}")
-        print(f"   Model version: {oracle.model_version}")
+        print(f"\n🔮 Prophet Training Check ({ct_now.strftime('%Y-%m-%d %I:%M %p CT')})")
+        print(f"   Model trained: {prophet.is_trained}")
+        print(f"   Model version: {prophet.model_version}")
         print(f"   Pending outcomes: {pending_count}")
         print(f"   Threshold: {ORACLE_OUTCOME_THRESHOLD}")
 
@@ -210,7 +210,7 @@ def check_and_train_oracle(force: bool = False):
         threshold_reached = pending_count >= ORACLE_OUTCOME_THRESHOLD
 
         # Check if model needs initial training
-        needs_initial = not oracle.is_trained
+        needs_initial = not prophet.is_trained
 
         if force or is_scheduled_train_time or threshold_reached or needs_initial:
             reason = "Forced" if force else (
@@ -242,10 +242,10 @@ def check_and_train_oracle(force: bool = False):
             return {"success": True, "triggered": False, "reason": "No training needed"}
 
     except ImportError as e:
-        print(f"⚠️ Oracle module not available: {e}")
+        print(f"⚠️ Prophet module not available: {e}")
         return {"success": False, "error": str(e)}
     except Exception as e:
-        print(f"❌ Oracle training check failed: {e}")
+        print(f"❌ Prophet training check failed: {e}")
         traceback.print_exc()
         return {"success": False, "error": str(e)}
 
@@ -450,7 +450,7 @@ def run_continuous_scheduler(check_interval_minutes: int = 5, symbols: list = No
                 check_and_refresh_backtests()
                 last_backtest_check_date = current_date
 
-            # Check Oracle training once per hour (or at midnight on Sundays)
+            # Check Prophet training once per hour (or at midnight on Sundays)
             if last_oracle_check_hour != current_hour:
                 check_and_train_oracle(force=False)
                 last_oracle_check_hour = current_hour

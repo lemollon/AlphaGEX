@@ -153,7 +153,7 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
       'LAZARUS': 'text-orange-400',
       'CORNERSTONE': 'text-blue-400',
       'SHEPHERD': 'text-purple-400',
-      'ORACLE': 'text-green-400',
+      'PROPHET': 'text-green-400',
       'FORTRESS': 'text-red-400'
     }
     return colors[botName] || 'text-gray-400'
@@ -190,7 +190,7 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
               <option value="SOLOMON">SOLOMON (Spreads)</option>
               <option value="ANCHOR">ANCHOR (SPX IC)</option>
               <option value="SHEPHERD">SHEPHERD (Manual)</option>
-              <option value="ORACLE">ORACLE (Advisory)</option>
+              <option value="PROPHET">PROPHET (Advisory)</option>
             </select>
           )}
 

@@ -117,10 +117,10 @@ class GideonDatabase:
                         put_wall DECIMAL(10, 2),
                         gex_regime VARCHAR(30),
                         vix_at_entry DECIMAL(6, 2),
-                        -- Kronos GEX context
+                        -- Chronicles GEX context
                         flip_point DECIMAL(10, 2),
                         net_gex DECIMAL(15, 2),
-                        -- Oracle/ML context (FULL audit trail)
+                        -- Prophet/ML context (FULL audit trail)
                         oracle_confidence DECIMAL(8, 4),
                         oracle_advice VARCHAR(50),
                         ml_direction VARCHAR(20),
@@ -191,7 +191,7 @@ class GideonDatabase:
 
                 conn.commit()
 
-                # Ensure new ML/Kronos context columns exist (migration)
+                # Ensure new ML/Chronicles context columns exist (migration)
                 self._ensure_ml_columns(c)
                 conn.commit()
 
@@ -201,12 +201,12 @@ class GideonDatabase:
 
     def _ensure_ml_columns(self, cursor) -> None:
         """
-        Add new ML/Kronos context columns if they don't exist (migration).
+        Add new ML/Chronicles context columns if they don't exist (migration).
 
         These columns provide FULL audit trail for trade decisions.
         """
         columns_to_add = [
-            # Kronos GEX context
+            # Chronicles GEX context
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
             # ML model context
@@ -218,10 +218,10 @@ class GideonDatabase:
             ("wall_distance_pct", "DECIMAL(6, 4)"),
             # Full trade reasoning
             ("trade_reasoning", "TEXT"),
-            # Oracle advice (for audit trail)
+            # Prophet advice (for audit trail)
             ("oracle_advice", "VARCHAR(50)"),
             # Migration 023: Feedback loop enhancements
-            ("oracle_prediction_id", "INTEGER"),  # Links to oracle_predictions.id
+            ("oracle_prediction_id", "INTEGER"),  # Links to prophet_predictions.id
             ("direction_taken", "VARCHAR(10)"),   # BULLISH or BEARISH
         ]
 
@@ -254,14 +254,14 @@ class GideonDatabase:
 
     def update_oracle_prediction_id(self, position_id: str, oracle_prediction_id: int, direction_taken: str = None) -> bool:
         """
-        Update the oracle_prediction_id for a position after Oracle prediction is stored.
+        Update the oracle_prediction_id for a position after Prophet prediction is stored.
 
-        Migration 023: This links the position to the specific oracle prediction for
+        Migration 023: This links the position to the specific prophet prediction for
         accurate outcome tracking in the feedback loop.
 
         Args:
             position_id: The position to update
-            oracle_prediction_id: The ID from oracle_predictions table
+            oracle_prediction_id: The ID from prophet_predictions table
             direction_taken: BULLISH or BEARISH (for directional bots)
         """
         try:
@@ -367,7 +367,7 @@ class GideonDatabase:
                         put_wall=float(row[12] or 0),
                         gex_regime=row[13] or "",
                         vix_at_entry=float(row[14] or 0),
-                        # Kronos context
+                        # Chronicles context
                         flip_point=float(row[15] or 0),
                         net_gex=float(row[16] or 0),
                         # ML context (FULL audit trail)
@@ -440,7 +440,7 @@ class GideonDatabase:
                     _to_python(pos.put_wall) if pos.put_wall else None,
                     pos.gex_regime or None,
                     _to_python(pos.vix_at_entry) if pos.vix_at_entry else None,
-                    # Kronos context
+                    # Chronicles context
                     _to_python(pos.flip_point) if pos.flip_point else None,
                     _to_python(pos.net_gex) if pos.net_gex else None,
                     # ML context (FULL audit trail) - normalize confidence to 0-1 range

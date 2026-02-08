@@ -7,7 +7,7 @@ This script analyzes BEAR_PUT trades in detail to understand:
 2. Price movement direction after entry
 3. Flip point relationship
 4. Timing patterns
-5. Oracle confidence correlation
+5. Prophet confidence correlation
 
 Run in Render shell by copying sections.
 """
@@ -77,7 +77,7 @@ print("  Top 20 BEAR_PUT Winners:")
 for row in cur.fetchall():
     dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][int(row[2])]
     conf = row[7] if row[7] else 'N/A'
-    print(f"    {row[0]} {row[1]} {dow} {int(row[3])}:00 | P&L: ${row[6]:.0f} | Oracle: {conf}")
+    print(f"    {row[0]} {row[1]} {dow} {int(row[3])}:00 | P&L: ${row[6]:.0f} | Prophet: {conf}")
 
 conn.close()
 print("\\nPart 1 complete.")
@@ -237,7 +237,7 @@ print("\\nPart 3 complete.")
 '''
 
 # =============================================================================
-# PART 4: BEAR_PUT ORACLE CONFIDENCE ANALYSIS
+# PART 4: BEAR_PUT PROPHET CONFIDENCE ANALYSIS
 # =============================================================================
 PART_4 = '''
 import psycopg2
@@ -246,7 +246,7 @@ import os
 conn = psycopg2.connect(os.environ['DATABASE_URL'])
 cur = conn.cursor()
 
-print("\\n6. BEAR_PUT BY ORACLE CONFIDENCE BUCKET")
+print("\\n6. BEAR_PUT BY PROPHET CONFIDENCE BUCKET")
 print("-" * 50)
 print("  (Note: values over 100 are likely stored as 6500 instead of 0.65)")
 
@@ -282,7 +282,7 @@ cur.execute("""
 for row in cur.fetchall():
     print(f"  {row[0]}: {row[1]} trades, {row[2]} wins ({row[3]}% WR), P&L: ${row[4]}")
 
-print("\\n7. BEAR_PUT BY ORACLE ADVICE TYPE")
+print("\\n7. BEAR_PUT BY PROPHET ADVICE TYPE")
 print("-" * 50)
 cur.execute("""
     SELECT
@@ -659,7 +659,7 @@ cur.execute("""
     SELECT
         bot_name,
         CASE
-            WHEN oracle_confidence IS NULL THEN 'No Oracle'
+            WHEN oracle_confidence IS NULL THEN 'No Prophet'
             WHEN oracle_confidence > 100 THEN 'Bug (>100)'
             WHEN oracle_confidence >= 80 THEN 'Strong (80+)'
             WHEN oracle_confidence >= 65 THEN 'Medium (65-80)'
@@ -673,7 +673,7 @@ cur.execute("""
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY bot_name, CASE
-            WHEN oracle_confidence IS NULL THEN 'No Oracle'
+            WHEN oracle_confidence IS NULL THEN 'No Prophet'
             WHEN oracle_confidence > 100 THEN 'Bug (>100)'
             WHEN oracle_confidence >= 80 THEN 'Strong (80+)'
             WHEN oracle_confidence >= 65 THEN 'Medium (65-80)'
@@ -784,7 +784,7 @@ if __name__ == '__main__':
     print("  PART 1: Overview and Success Patterns")
     print("  PART 2: Timing Analysis (Day/Hour)")
     print("  PART 3: Flip Point Position Analysis")
-    print("  PART 4: Oracle Confidence Analysis")
+    print("  PART 4: Prophet Confidence Analysis")
     print("  PART 5: Price Movement & Time to Exit")
     print("  PART 6: BEAR_PUT vs BULL_CALL Comparison")
     print("  PART 7: Market Condition Analysis")

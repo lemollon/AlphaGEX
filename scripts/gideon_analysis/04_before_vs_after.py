@@ -89,8 +89,8 @@ print(f"  {'-'*8} {'-'*12} {'-'*7} {'-'*6} {'-'*7} {'-'*12}")
 for row in r:
     print(f"  {row[0]:<8} {row[1]:<12} {row[2]:>7} {row[3]:>6} {row[4]:>6}% ${row[5]:>11,.2f}")
 
-# 4. Oracle Confidence Before vs After
-section("4. ORACLE CONFIDENCE BEFORE VS AFTER")
+# 4. Prophet Confidence Before vs After
+section("4. PROPHET CONFIDENCE BEFORE VS AFTER")
 r = query(f"""
     SELECT
         CASE WHEN open_time < '{FIX_DATE}' THEN 'BEFORE' ELSE 'AFTER' END as period,

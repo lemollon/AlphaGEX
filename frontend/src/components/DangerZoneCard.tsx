@@ -4,7 +4,7 @@
  * Shared Danger Zone Card Component
  *
  * Displays gamma danger zones (BUILDING, COLLAPSING, SPIKE) for both
- * ARGUS (0DTE) and HYPERION (Weekly) visualizations.
+ * WATCHTOWER (0DTE) and GLORY (Weekly) visualizations.
  */
 
 import React, { useMemo } from 'react'

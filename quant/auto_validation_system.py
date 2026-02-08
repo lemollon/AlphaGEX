@@ -167,31 +167,31 @@ class MLModelRegistry:
         # =====================================================================
         self.register_model(
             name="fortress_ml_advisor",
-            description="Predicts iron condor win probability from KRONOS backtest data",
+            description="Predicts iron condor win probability from CHRONICLES backtest data",
             validate_func=self._validate_ares_advisor,
             retrain_func=self._retrain_ares_advisor,
             degradation_threshold=0.20
         )
 
         # =====================================================================
-        # 5. ORACLE ADVISOR (Multi-Strategy)
+        # 5. PROPHET ADVISOR (Multi-Strategy)
         # =====================================================================
         self.register_model(
-            name="oracle_advisor",
+            name="prophet_advisor",
             description="Central advisory system for FORTRESS, CORNERSTONE, LAZARUS - aggregates signals",
-            validate_func=self._validate_oracle_advisor,
-            retrain_func=self._retrain_oracle_advisor,
+            validate_func=self._validate_prophet_advisor,
+            retrain_func=self._retrain_prophet_advisor,
             degradation_threshold=0.20
         )
 
         # =====================================================================
-        # 6. APOLLO ML ENGINE (Live Scanner)
+        # 6. DISCERNMENT ML ENGINE (Live Scanner)
         # =====================================================================
         self.register_model(
-            name="apollo_ml_engine",
+            name="discernment_ml_engine",
             description="AI-powered live options scanner with direction/magnitude/timing predictions",
-            validate_func=self._validate_apollo_ml,
-            retrain_func=self._retrain_apollo_ml,
+            validate_func=self._validate_discernment_ml,
+            retrain_func=self._retrain_discernment_ml,
             degradation_threshold=0.25
         )
 
@@ -491,16 +491,16 @@ class MLModelRegistry:
             return False
 
     # =========================================================================
-    # ORACLE ADVISOR
+    # PROPHET ADVISOR
     # =========================================================================
 
-    def _validate_oracle_advisor(self) -> ModelValidationResult:
-        """Validate Oracle Advisor"""
+    def _validate_prophet_advisor(self) -> ModelValidationResult:
+        """Validate Prophet Advisor"""
         try:
-            from quant.oracle_advisor import OracleAdvisor
+            from quant.prophet_advisor import ProphetAdvisor
 
-            oracle = OracleAdvisor()
-            metrics = oracle.get_model_performance() if hasattr(oracle, 'get_model_performance') else {}
+            prophet = ProphetAdvisor()
+            metrics = prophet.get_model_performance() if hasattr(prophet, 'get_model_performance') else {}
 
             is_accuracy = metrics.get('train_accuracy', 0.60)
             oos_accuracy = metrics.get('test_accuracy', 0.50)
@@ -509,7 +509,7 @@ class MLModelRegistry:
             is_robust = degradation < 0.20
 
             return ModelValidationResult(
-                model_name="oracle_advisor",
+                model_name="prophet_advisor",
                 validated_at=datetime.now(CENTRAL_TZ).isoformat(),
                 in_sample_accuracy=is_accuracy,
                 out_of_sample_accuracy=oos_accuracy,
@@ -520,36 +520,36 @@ class MLModelRegistry:
                 details=metrics
             )
         except Exception as e:
-            logger.warning(f"Oracle Advisor validation failed: {e}")
-            return self._failed_validation("oracle_advisor", str(e))
+            logger.warning(f"Prophet Advisor validation failed: {e}")
+            return self._failed_validation("prophet_advisor", str(e))
 
-    def _retrain_oracle_advisor(self) -> bool:
-        """Retrain Oracle Advisor"""
+    def _retrain_prophet_advisor(self) -> bool:
+        """Retrain Prophet Advisor"""
         try:
-            from quant.oracle_advisor import OracleAdvisor
+            from quant.prophet_advisor import ProphetAdvisor
 
-            oracle = OracleAdvisor()
-            train_func = getattr(oracle, 'retrain', getattr(oracle, 'train', None))
+            prophet = ProphetAdvisor()
+            train_func = getattr(prophet, 'retrain', getattr(prophet, 'train', None))
             if train_func:
                 train_func()
-                logger.info("Oracle Advisor retrained successfully")
+                logger.info("Prophet Advisor retrained successfully")
                 return True
             return False
         except Exception as e:
-            logger.error(f"Oracle Advisor retrain failed: {e}")
+            logger.error(f"Prophet Advisor retrain failed: {e}")
             return False
 
     # =========================================================================
-    # APOLLO ML ENGINE
+    # DISCERNMENT ML ENGINE
     # =========================================================================
 
-    def _validate_apollo_ml(self) -> ModelValidationResult:
-        """Validate Apollo ML Engine"""
+    def _validate_discernment_ml(self) -> ModelValidationResult:
+        """Validate Discernment ML Engine"""
         try:
-            from core.apollo_ml_engine import ApolloMLEngine
+            from core.discernment_ml_engine import DiscernmentMLEngine
 
-            apollo = ApolloMLEngine()
-            metrics = apollo.get_metrics() if hasattr(apollo, 'get_metrics') else {}
+            discernment = DiscernmentMLEngine()
+            metrics = discernment.get_metrics() if hasattr(discernment, 'get_metrics') else {}
 
             is_accuracy = metrics.get('train_accuracy', 0.55)
             oos_accuracy = metrics.get('test_accuracy', 0.45)
@@ -558,7 +558,7 @@ class MLModelRegistry:
             is_robust = degradation < 0.25
 
             return ModelValidationResult(
-                model_name="apollo_ml_engine",
+                model_name="discernment_ml_engine",
                 validated_at=datetime.now(CENTRAL_TZ).isoformat(),
                 in_sample_accuracy=is_accuracy,
                 out_of_sample_accuracy=oos_accuracy,
@@ -569,22 +569,22 @@ class MLModelRegistry:
                 details=metrics
             )
         except Exception as e:
-            logger.warning(f"Apollo ML Engine validation failed: {e}")
-            return self._failed_validation("apollo_ml_engine", str(e))
+            logger.warning(f"Discernment ML Engine validation failed: {e}")
+            return self._failed_validation("discernment_ml_engine", str(e))
 
-    def _retrain_apollo_ml(self) -> bool:
-        """Retrain Apollo ML Engine"""
+    def _retrain_discernment_ml(self) -> bool:
+        """Retrain Discernment ML Engine"""
         try:
-            from core.apollo_ml_engine import ApolloMLEngine
+            from core.discernment_ml_engine import DiscernmentMLEngine
 
-            apollo = ApolloMLEngine()
-            if hasattr(apollo, 'train_models'):
-                apollo.train_models()
-                logger.info("Apollo ML Engine retrained successfully")
+            discernment = DiscernmentMLEngine()
+            if hasattr(discernment, 'train_models'):
+                discernment.train_models()
+                logger.info("Discernment ML Engine retrained successfully")
                 return True
             return False
         except Exception as e:
-            logger.error(f"Apollo ML Engine retrain failed: {e}")
+            logger.error(f"Discernment ML Engine retrain failed: {e}")
             return False
 
     # =========================================================================

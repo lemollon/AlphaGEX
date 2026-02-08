@@ -107,11 +107,11 @@ class IronCondorPosition:
     put_wall: float = 0
     gex_regime: str = ""
 
-    # Kronos context (flip point, net GEX)
+    # Chronicles context (flip point, net GEX)
     flip_point: float = 0
     net_gex: float = 0
 
-    # Oracle context (FULL audit trail)
+    # Prophet context (FULL audit trail)
     oracle_confidence: float = 0
     oracle_win_probability: float = 0
     oracle_advice: str = ""
@@ -157,10 +157,10 @@ class IronCondorPosition:
             'call_wall': self.call_wall,
             'put_wall': self.put_wall,
             'gex_regime': self.gex_regime,
-            # Kronos context
+            # Chronicles context
             'flip_point': self.flip_point,
             'net_gex': self.net_gex,
-            # Oracle context (FULL audit trail)
+            # Prophet context (FULL audit trail)
             'oracle_confidence': self.oracle_confidence,
             'oracle_win_probability': self.oracle_win_probability,
             'oracle_advice': self.oracle_advice,
@@ -213,7 +213,7 @@ class SamsonConfig:
     max_open_positions: int = 10  # More positions (ANCHOR: 5)
     min_ic_suitability: float = 0.2  # Lower bar (ANCHOR: 0.3)
 
-    # Oracle thresholds - RELAXED
+    # Prophet thresholds - RELAXED
     min_win_probability: float = 0.40  # Lower threshold (ANCHOR: 50%)
 
     # Exit rules - FASTER EXITS
@@ -267,7 +267,7 @@ class SamsonConfig:
         if self.max_open_positions <= 0:
             errors.append(f"max_open_positions must be > 0, got {self.max_open_positions}")
 
-        # Oracle suitability
+        # Prophet suitability
         if self.min_ic_suitability < 0 or self.min_ic_suitability > 1:
             errors.append(f"min_ic_suitability must be 0-1, got {self.min_ic_suitability}")
 
@@ -314,7 +314,7 @@ class IronCondorSignal:
     put_wall: float
     gex_regime: str
 
-    # Kronos GEX context
+    # Chronicles GEX context
     flip_point: float = 0
     net_gex: float = 0
 
@@ -335,12 +335,12 @@ class IronCondorSignal:
     # Signal quality
     confidence: float = 0
     reasoning: str = ""
-    source: str = "GEX"  # GEX, ORACLE, or SD
+    source: str = "GEX"  # GEX, PROPHET, or SD
 
-    # Oracle prediction details (CRITICAL for audit)
+    # Prophet prediction details (CRITICAL for audit)
     oracle_win_probability: float = 0
     oracle_advice: str = ""  # ENTER, HOLD, EXIT
-    oracle_confidence: float = 0  # Oracle's confidence in its prediction
+    oracle_confidence: float = 0  # Prophet's confidence in its prediction
     oracle_top_factors: List[Dict[str, Any]] = field(default_factory=list)
     oracle_suggested_sd: float = 0.8  # SAMSON default
     oracle_use_gex_walls: bool = False
@@ -348,11 +348,11 @@ class IronCondorSignal:
 
     @property
     def is_valid(self) -> bool:
-        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        # PROPHET IS GOD: When Prophet says TRADE, nothing blocks it
         oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 
         if oracle_approved:
-            # Only check basic strike validity when Oracle approves
+            # Only check basic strike validity when Prophet approves
             return (
                 self.put_short > self.put_long > 0 and
                 self.call_short < self.call_long and

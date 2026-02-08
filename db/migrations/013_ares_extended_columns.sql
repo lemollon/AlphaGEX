@@ -1,6 +1,6 @@
 -- Migration: Add extended columns to FORTRESS positions + Fresh Start Reset
 -- Version: 013
--- Description: Adds GEX context, Oracle context, and metadata columns for full audit trail
+-- Description: Adds GEX context, Prophet context, and metadata columns for full audit trail
 --              Also resets FORTRESS to fresh state for clean deployment
 -- Date: 2024-12-31
 
@@ -39,14 +39,14 @@ ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS flip_point REAL;
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS net_gex REAL;
 
 -- =============================================================================
--- PART 3: ORACLE CONTEXT COLUMNS (AI prediction context)
+-- PART 3: PROPHET CONTEXT COLUMNS (AI prediction context)
 -- =============================================================================
 
--- Oracle confidence and win probability
+-- Prophet confidence and win probability
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_confidence REAL;
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_win_probability REAL;
 
--- Oracle advice and reasoning
+-- Prophet advice and reasoning
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_advice TEXT;
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_reasoning TEXT;
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_top_factors TEXT;

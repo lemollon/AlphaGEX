@@ -161,7 +161,7 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     name: 'ANCHOR',
     displayName: BOT_DISPLAY_NAMES.ANCHOR,  // ANCHOR - Hebrews 6:19
     fullName: `${BOT_DISPLAY_NAMES.ANCHOR} SPX Iron Condor`,
-    description: 'SPX Iron Condor Trading with Oracle Intelligence',
+    description: 'SPX Iron Condor Trading with Prophet Intelligence',
     strategy: 'SPX Iron Condor Strategy',
     // Primary - Blue/Indigo (protection, stability, SPX)
     primaryColor: 'blue',

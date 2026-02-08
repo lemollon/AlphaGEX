@@ -259,9 +259,9 @@ function generateTradeExplanation(position: EnhancedPosition): string {
     }
   }
 
-  // Oracle Signal
+  // Prophet Signal
   if (position.oracle_confidence && position.oracle_confidence > 70) {
-    parts.push('Oracle confirmed directional bias')
+    parts.push('Prophet confirmed directional bias')
   }
 
   // Gamma Walls
@@ -346,7 +346,7 @@ function WhyThisTrade({ position, isExpanded, onToggle }: {
             )}
             {position.oracle_confidence && (
               <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded">
-                Oracle: {position.oracle_confidence}%
+                Prophet: {position.oracle_confidence}%
               </span>
             )}
           </div>
@@ -539,7 +539,7 @@ function EntryContext({
           )}
           {oracleConfidence && (
             <div>
-              <span className="text-gray-600 block">Oracle</span>
+              <span className="text-gray-600 block">Prophet</span>
               <span className="text-purple-400 font-medium">
                 {(oracleConfidence * 100).toFixed(0)}% conf
               </span>

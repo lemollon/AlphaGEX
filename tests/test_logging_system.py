@@ -256,7 +256,7 @@ def test_bot_specific_logging():
             'CORNERSTONE': get_atlas_logger(),
             'FORTRESS': get_ares_logger(),
             'SHEPHERD': get_hermes_logger(),
-            'ORACLE': get_oracle_logger(),
+            'PROPHET': get_oracle_logger(),
         }
 
         for bot_name, logger in bots.items():

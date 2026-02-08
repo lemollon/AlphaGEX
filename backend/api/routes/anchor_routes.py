@@ -700,7 +700,7 @@ async def get_anchor_positions():
                     underlying_at_entry, vix_at_entry, status,
                     -- GEX context
                     gex_regime, call_wall, put_wall, flip_point, net_gex,
-                    -- Oracle audit trail
+                    -- Prophet audit trail
                     oracle_confidence, oracle_win_probability, oracle_advice,
                     oracle_reasoning, oracle_top_factors,
                     -- Timing
@@ -721,7 +721,7 @@ async def get_anchor_positions():
                     underlying_at_entry, vix_at_entry, status, close_reason,
                     -- GEX context
                     gex_regime, call_wall, put_wall, flip_point, net_gex,
-                    -- Oracle audit trail
+                    -- Prophet audit trail
                     oracle_confidence, oracle_win_probability, oracle_advice,
                     oracle_reasoning, oracle_top_factors,
                     -- Timing
@@ -789,7 +789,7 @@ async def get_anchor_positions():
                     "put_wall": float(put_wall) if put_wall else 0,
                     "flip_point": float(flip_point) if flip_point else 0,
                     "net_gex": float(net_gex) if net_gex else 0,
-                    # Oracle context (AUDIT TRAIL - why this trade was chosen)
+                    # Prophet context (AUDIT TRAIL - why this trade was chosen)
                     "oracle_confidence": float(oracle_confidence) if oracle_confidence else 0,
                     "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else 0,
                     "oracle_advice": oracle_advice or "",
@@ -855,7 +855,7 @@ async def get_anchor_positions():
                     "put_wall": float(put_wall) if put_wall else 0,
                     "flip_point": float(flip_point) if flip_point else 0,
                     "net_gex": float(net_gex) if net_gex else 0,
-                    # Oracle context (AUDIT TRAIL - why this trade was chosen)
+                    # Prophet context (AUDIT TRAIL - why this trade was chosen)
                     "oracle_confidence": float(oracle_confidence) if oracle_confidence else 0,
                     "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else 0,
                     "oracle_advice": oracle_advice or "",

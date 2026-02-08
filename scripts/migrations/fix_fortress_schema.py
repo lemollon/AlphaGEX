@@ -53,7 +53,7 @@ def fix_ares_schema(cursor):
         ("flip_point", "DECIMAL(10, 2)"),
         ("net_gex", "DECIMAL(15, 2)"),
 
-        # Oracle context
+        # Prophet context
         ("oracle_confidence", "DECIMAL(8, 4)"),
         ("oracle_win_probability", "DECIMAL(8, 4)"),
         ("oracle_advice", "VARCHAR(20)"),

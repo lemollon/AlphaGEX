@@ -18,7 +18,7 @@ TRADING BOTS:
 - FORTRESS: Aggressive Iron Condor targeting 10% monthly (every 5 min 8:30 AM - 2:55 PM CT)
 - SOLOMON: GEX Directional Spreads (every 5 min 8:35 AM - 2:30 PM CT)
 - ALL EOD: Process expired positions at 3:01 PM CT (all bots run simultaneously for <5 min reconciliation)
-- ARGUS: Gamma Commentary Generation (every 5 min 8:30 AM - 3:00 PM CT)
+- WATCHTOWER: Gamma Commentary Generation (every 5 min 8:30 AM - 3:00 PM CT)
 
 All bots now scan every 5 minutes for optimal entry timing and log NO_TRADE
 decisions with full context when they scan but don't take a trade.
@@ -215,9 +215,9 @@ except ImportError:
     run_feedback_loop = None
     print("Warning: Proverbs not available. Feedback loop will be disabled.")
 
-# REMOVED: ML Regime Classifier - Oracle is god
+# REMOVED: ML Regime Classifier - Prophet is god
 # The MLRegimeClassifier import and training code has been removed.
-# Oracle decides all trades.
+# Prophet decides all trades.
 REGIME_CLASSIFIER_AVAILABLE = False
 
 try:
@@ -228,7 +228,7 @@ except ImportError:
     GEXDirectionalPredictor = None
     print("Warning: GEXDirectionalPredictor not available. Directional ML training will be disabled.")
 
-# Import GEX Probability Models for ARGUS/HYPERION ML training
+# Import GEX Probability Models for WATCHTOWER/GLORY ML training
 try:
     from quant.gex_probability_models import GEXSignalGenerator
     GEX_PROBABILITY_MODELS_AVAILABLE = True
@@ -242,7 +242,7 @@ def populate_recent_gex_structures(days: int = 30) -> dict:
     """
     Populate recent gex_structure_daily from options_chain_snapshots.
 
-    This ensures ORION has fresh training data before ML model training.
+    This ensures STARS has fresh training data before ML model training.
     Runs automatically before GEX ML training on Sundays.
 
     Args:
@@ -341,17 +341,17 @@ except ImportError:
     AUTO_VALIDATION_AVAILABLE = False
     get_auto_validation_system = None
 
-# Import OracleAdvisor for LAZARUS signal generation and feedback loop
+# Import ProphetAdvisor for LAZARUS signal generation and feedback loop
 try:
-    from quant.oracle_advisor import (
-        OracleAdvisor, MarketContext as OracleMarketContext, GEXRegime, TradingAdvice,
+    from quant.prophet_advisor import (
+        ProphetAdvisor, MarketContext as OracleMarketContext, GEXRegime, TradingAdvice,
         BotName as OracleBotName, TradeOutcome,  # Issue #2: LAZARUS feedback loop
         auto_train as oracle_auto_train  # Migration 023: Feedback loop integration
     )
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleMarketContext = None
     GEXRegime = None
     TradingAdvice = None
@@ -367,7 +367,7 @@ except ImportError:
     ProverbsEnhanced = None
     OracleBotName = None
     TradeOutcome = None
-    print("Warning: OracleAdvisor not available for LAZARUS.")
+    print("Warning: ProphetAdvisor not available for LAZARUS.")
     run_validation = None
     get_validation_status = None
     print("Warning: AutoValidationSystem not available. ML validation will be disabled.")
@@ -444,19 +444,19 @@ class AutonomousTraderScheduler:
         # CRITICAL: Wrap in try-except to prevent scheduler crash if LAZARUS init fails
         self.trader = None
         self.api_client = None
-        self.phoenix_oracle = None  # Oracle for LAZARUS signal validation
+        self.phoenix_oracle = None  # Prophet for LAZARUS signal validation
         try:
             self.trader = AutonomousPaperTrader(
                 symbol='SPY',
                 capital=CAPITAL_ALLOCATION['LAZARUS']
             )
             self.api_client = TradingVolatilityAPI()
-            # Initialize Oracle for LAZARUS signal validation
+            # Initialize Prophet for LAZARUS signal validation
             if ORACLE_AVAILABLE:
-                self.phoenix_oracle = OracleAdvisor()
-                logger.info(f"✅ LAZARUS initialized with ${CAPITAL_ALLOCATION['LAZARUS']:,} capital + Oracle")
+                self.phoenix_oracle = ProphetAdvisor()
+                logger.info(f"✅ LAZARUS initialized with ${CAPITAL_ALLOCATION['LAZARUS']:,} capital + Prophet")
             else:
-                logger.info(f"✅ LAZARUS initialized with ${CAPITAL_ALLOCATION['LAZARUS']:,} capital (no Oracle)")
+                logger.info(f"✅ LAZARUS initialized with ${CAPITAL_ALLOCATION['LAZARUS']:,} capital (no Prophet)")
         except Exception as e:
             logger.error(f"LAZARUS initialization failed: {e}")
             logger.error("Scheduler will continue without LAZARUS - other bots will still run")
@@ -848,18 +848,18 @@ class AutonomousTraderScheduler:
         logger.info("Market is OPEN. Running autonomous trading logic...")
 
         try:
-            # Step 0: Consult Oracle for trade signal (if available)
-            oracle_approved = True  # Default to True if Oracle unavailable
+            # Step 0: Consult Prophet for trade signal (if available)
+            oracle_approved = True  # Default to True if Prophet unavailable
             oracle_prediction = None
             if self.phoenix_oracle and ORACLE_AVAILABLE:
                 try:
-                    # Get GEX data for Oracle context
+                    # Get GEX data for Prophet context
                     gex_data = self.api_client.get_gex_data() if self.api_client else {}
                     spot_price = gex_data.get('spot_price', 0)
                     vix = gex_data.get('vix', 20)
 
                     if spot_price > 0:
-                        # Build Oracle context
+                        # Build Prophet context
                         gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL').upper()
                         try:
                             gex_regime = GEXRegime[gex_regime_str] if gex_regime_str in GEXRegime.__members__ else GEXRegime.NEUTRAL
@@ -877,19 +877,19 @@ class AutonomousTraderScheduler:
                             day_of_week=now.weekday(),
                         )
 
-                        # Get LAZARUS advice from Oracle
+                        # Get LAZARUS advice from Prophet
                         oracle_prediction = self.phoenix_oracle.get_phoenix_advice(
                             context=context,
                             use_claude_validation=True  # Enable Claude for transparency logging
                         )
 
                         if oracle_prediction:
-                            logger.info(f"LAZARUS Oracle: {oracle_prediction.advice.value} "
+                            logger.info(f"LAZARUS Prophet: {oracle_prediction.advice.value} "
                                        f"(win_prob={oracle_prediction.win_probability:.1%})")
 
                             # =========================================================
-                            # Issue #2 fix: Store LAZARUS prediction in Oracle feedback loop
-                            # This enables Oracle to learn from LAZARUS outcomes
+                            # Issue #2 fix: Store LAZARUS prediction in Prophet feedback loop
+                            # This enables Prophet to learn from LAZARUS outcomes
                             # =========================================================
                             try:
                                 trade_date = now.strftime('%Y-%m-%d')
@@ -898,32 +898,32 @@ class AutonomousTraderScheduler:
                                     context=context,
                                     trade_date=trade_date
                                 )
-                                logger.info(f"LAZARUS: Stored Oracle prediction for feedback loop (date={trade_date})")
+                                logger.info(f"LAZARUS: Stored Prophet prediction for feedback loop (date={trade_date})")
                             except Exception as store_e:
                                 logger.warning(f"LAZARUS: Failed to store prediction: {store_e}")
 
-                            # Oracle must approve with at least TRADE_REDUCED advice
+                            # Prophet must approve with at least TRADE_REDUCED advice
                             if oracle_prediction.advice in [TradingAdvice.SKIP_TODAY, TradingAdvice.STAY_OUT]:
                                 oracle_approved = False
-                                logger.info(f"LAZARUS Oracle says SKIP: {oracle_prediction.reasoning}")
-                                self._log_no_trade_decision('LAZARUS', f'Oracle: {oracle_prediction.reasoning}', {
+                                logger.info(f"LAZARUS Prophet says SKIP: {oracle_prediction.reasoning}")
+                                self._log_no_trade_decision('LAZARUS', f'Prophet: {oracle_prediction.reasoning}', {
                                     'symbol': 'SPY',
                                     'oracle_advice': oracle_prediction.advice.value,
                                     'win_probability': oracle_prediction.win_probability,
                                     'market': {'spot': spot_price, 'vix': vix, 'time': now.isoformat()}
                                 })
                     else:
-                        logger.warning("LAZARUS: No spot price for Oracle - proceeding without Oracle validation")
+                        logger.warning("LAZARUS: No spot price for Prophet - proceeding without Prophet validation")
                 except Exception as oracle_e:
-                    logger.warning(f"LAZARUS Oracle check failed: {oracle_e} - proceeding without Oracle")
+                    logger.warning(f"LAZARUS Prophet check failed: {oracle_e} - proceeding without Prophet")
 
-            # Skip trading if Oracle says no
+            # Skip trading if Prophet says no
             if not oracle_approved:
                 self._save_heartbeat('LAZARUS', 'ORACLE_SKIP', {
                     'oracle_advice': oracle_prediction.advice.value if oracle_prediction else 'UNKNOWN',
                     'win_probability': oracle_prediction.win_probability if oracle_prediction else 0
                 })
-                logger.info("LAZARUS skipping trade due to Oracle advice")
+                logger.info("LAZARUS skipping trade due to Prophet advice")
                 logger.info(f"=" * 80)
                 return
 
@@ -959,7 +959,7 @@ class AutonomousTraderScheduler:
                     logger.info(f"  - {result.get('symbol', 'Unknown')}: {result.get('action', 'N/A')}")
 
                     # =========================================================
-                    # Issue #2 fix: Record LAZARUS outcomes in Oracle feedback loop
+                    # Issue #2 fix: Record LAZARUS outcomes in Prophet feedback loop
                     # When positions are closed, record the outcome for ML training
                     # =========================================================
                     if self.phoenix_oracle and ORACLE_AVAILABLE and OracleBotName and TradeOutcome:
@@ -985,7 +985,7 @@ class AutonomousTraderScheduler:
                                     actual_pnl=float(pnl),
                                     spot_at_exit=gex_data.get('spot_price', 0) if 'gex_data' in dir() else 0
                                 )
-                                logger.info(f"LAZARUS: Recorded outcome {outcome.value} (PnL=${pnl:.2f}) for Oracle feedback")
+                                logger.info(f"LAZARUS: Recorded outcome {outcome.value} (PnL=${pnl:.2f}) for Prophet feedback")
                             except Exception as outcome_e:
                                 logger.warning(f"LAZARUS: Failed to record outcome: {outcome_e}")
             else:
@@ -1214,9 +1214,9 @@ class AutonomousTraderScheduler:
 
             # NOTE: Removed duplicate "BACKUP" logging here.
             # The FORTRESS V2 trader.py already logs comprehensive scan activity
-            # with full Oracle/ML data via _log_scan_activity().
+            # with full Prophet/ML data via _log_scan_activity().
             # The old backup created duplicate entries with incomplete data
-            # (Oracle:0%, ML:0%, Thresh:0%) which caused diagnostic confusion.
+            # (Prophet:0%, ML:0%, Thresh:0%) which caused diagnostic confusion.
 
             logger.info(f"FORTRESS V2 scan #{self.ares_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1246,7 +1246,7 @@ class AutonomousTraderScheduler:
         Processes expired 0DTE Iron Condor positions:
         - Calculates realized P&L based on closing price
         - Updates position status to 'expired'
-        - Feeds Oracle for ML training feedback loop
+        - Feeds Prophet for ML training feedback loop
         - Updates daily performance metrics
         """
         now = datetime.now(CENTRAL_TZ)
@@ -1379,7 +1379,7 @@ class AutonomousTraderScheduler:
                     'how': 'Next scan in 5 minutes',
                     'market': context.get('market', {}) if context else {},
                     'gex': context.get('gex', {}) if context else {},
-                    'oracle': context.get('oracle', {}) if context else {},
+                    'prophet': context.get('prophet', {}) if context else {},
                     'ml': context.get('ml', {}) if context else {}
                 })
             ))
@@ -1541,7 +1541,7 @@ class AutonomousTraderScheduler:
 
             # NOTE: Removed duplicate "BACKUP" logging here.
             # SOLOMON V2 trader already logs comprehensive scan activity
-            # with full Oracle/ML data via _log_scan_activity().
+            # with full Prophet/ML data via _log_scan_activity().
 
             logger.info(f"SOLOMON V2 scan #{self.solomon_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1663,7 +1663,7 @@ class AutonomousTraderScheduler:
 
             # NOTE: Removed duplicate "BACKUP" logging here.
             # ANCHOR trader already logs comprehensive scan activity
-            # with full Oracle/ML data via its internal logger.
+            # with full Prophet/ML data via its internal logger.
 
             logger.info(f"ANCHOR scan #{self.anchor_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1824,7 +1824,7 @@ class AutonomousTraderScheduler:
 
             # NOTE: Removed duplicate "BACKUP" logging here.
             # GIDEON trader already logs comprehensive scan activity
-            # with full Oracle/ML data via its internal logger.
+            # with full Prophet/ML data via its internal logger.
 
             logger.info(f"GIDEON scan #{self.gideon_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1995,7 +1995,7 @@ class AutonomousTraderScheduler:
 
             # NOTE: Removed duplicate "BACKUP" logging here.
             # SAMSON trader already logs comprehensive scan activity
-            # with full Oracle/ML data via its internal logger.
+            # with full Prophet/ML data via its internal logger.
 
             logger.info(f"SAMSON scan #{self.titan_execution_count} completed")
             logger.info(f"=" * 80)
@@ -2505,7 +2505,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_argus_logic(self):
         """
-        ARGUS (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
+        WATCHTOWER (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
 
         Generates AI-powered market commentary based on current gamma structure:
         - Gamma regime analysis
@@ -2513,23 +2513,23 @@ class AutonomousTraderScheduler:
         - Danger zone alerts
         - Expected move changes
 
-        Commentary is stored in the argus_commentary table for the Live Log.
+        Commentary is stored in the watchtower_commentary table for the Live Log.
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"ARGUS (Commentary) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"WATCHTOWER (Commentary) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if not self.is_market_open():
-            logger.info("Market is CLOSED. Skipping ARGUS commentary generation.")
+            logger.info("Market is CLOSED. Skipping WATCHTOWER commentary generation.")
             return
 
-        logger.info("Market is OPEN. Generating ARGUS gamma commentary...")
+        logger.info("Market is OPEN. Generating WATCHTOWER gamma commentary...")
 
         try:
             self.last_argus_check = now
 
-            # Call the ARGUS commentary generation endpoint via HTTP
+            # Call the WATCHTOWER commentary generation endpoint via HTTP
             # This ensures we use the same logic as manual generation
             import requests
 
@@ -2543,16 +2543,16 @@ class AutonomousTraderScheduler:
             for base_url in base_urls:
                 try:
                     response = requests.post(
-                        f"{base_url}/api/argus/commentary/generate",
+                        f"{base_url}/api/watchtower/commentary/generate",
                         json={"force": False},
                         timeout=60
                     )
                     if response.status_code == 200:
                         result = response.json()
-                        logger.info(f"ARGUS: Commentary generated via {base_url}")
+                        logger.info(f"WATCHTOWER: Commentary generated via {base_url}")
                         break
                 except requests.exceptions.RequestException as e:
-                    logger.debug(f"ARGUS: Could not reach {base_url}: {e}")
+                    logger.debug(f"WATCHTOWER: Could not reach {base_url}: {e}")
                     continue
 
             if result and result.get('success'):
@@ -2562,21 +2562,21 @@ class AutonomousTraderScheduler:
 
                 # Log success with preview of commentary
                 preview = commentary[:100] + '...' if len(commentary) > 100 else commentary
-                logger.info(f"ARGUS commentary generated:")
+                logger.info(f"WATCHTOWER commentary generated:")
                 logger.info(f"  Time: {generated_at}")
                 logger.info(f"  Preview: {preview}")
             else:
-                logger.warning("ARGUS: Commentary generation returned no result")
+                logger.warning("WATCHTOWER: Commentary generation returned no result")
 
             self.argus_execution_count += 1
-            logger.info(f"ARGUS commentary #{self.argus_execution_count} completed (next in 5 min)")
+            logger.info(f"WATCHTOWER commentary #{self.argus_execution_count} completed (next in 5 min)")
 
-            # Also check and update ARGUS signal outcomes (intraday checks for profit/stop)
+            # Also check and update WATCHTOWER signal outcomes (intraday checks for profit/stop)
             try:
                 for base_url in base_urls:
                     try:
                         response = requests.post(
-                            f"{base_url}/api/argus/signals/update-outcomes?symbol=SPY",
+                            f"{base_url}/api/watchtower/signals/update-outcomes?symbol=SPY",
                             timeout=30
                         )
                         if response.status_code == 200:
@@ -2584,39 +2584,39 @@ class AutonomousTraderScheduler:
                             if outcome_result.get('success'):
                                 updates = outcome_result.get('data', {}).get('updates', {})
                                 if updates.get('closed', 0) > 0:
-                                    logger.info(f"ARGUS Signals: {updates.get('wins', 0)} wins, {updates.get('losses', 0)} losses closed")
+                                    logger.info(f"WATCHTOWER Signals: {updates.get('wins', 0)} wins, {updates.get('losses', 0)} losses closed")
                             break
                     except requests.exceptions.RequestException:
                         continue
             except Exception as sig_err:
-                logger.debug(f"ARGUS signal outcome check skipped: {sig_err}")
+                logger.debug(f"WATCHTOWER signal outcome check skipped: {sig_err}")
 
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in ARGUS commentary generation: {str(e)}"
+            error_msg = f"ERROR in WATCHTOWER commentary generation: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("ARGUS will retry next interval")
+            logger.info("WATCHTOWER will retry next interval")
             logger.info(f"=" * 80)
 
     def scheduled_argus_eod_logic(self):
         """
-        ARGUS End-of-Day processing - runs daily at 3:01 PM CT
+        WATCHTOWER End-of-Day processing - runs daily at 3:01 PM CT
 
         Updates pin prediction accuracy tracking:
         1. Updates today's pin prediction with actual closing price
-        2. Calculates and stores ARGUS prediction accuracy metrics
+        2. Calculates and stores WATCHTOWER prediction accuracy metrics
 
         This enables the pin accuracy tracking feature to work end-to-end.
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"ARGUS EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"WATCHTOWER EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         try:
-            # Call the ARGUS EOD processing endpoint via HTTP
+            # Call the WATCHTOWER EOD processing endpoint via HTTP
             import requests
 
             # Try local FastAPI server first, then production
@@ -2629,15 +2629,15 @@ class AutonomousTraderScheduler:
             for base_url in base_urls:
                 try:
                     response = requests.post(
-                        f"{base_url}/api/argus/eod-processing?symbol=SPY",
+                        f"{base_url}/api/watchtower/eod-processing?symbol=SPY",
                         timeout=60
                     )
                     if response.status_code == 200:
                         result = response.json()
-                        logger.info(f"ARGUS EOD: Processing completed via {base_url}")
+                        logger.info(f"WATCHTOWER EOD: Processing completed via {base_url}")
                         break
                 except requests.exceptions.RequestException as e:
-                    logger.debug(f"ARGUS EOD: Could not reach {base_url}: {e}")
+                    logger.debug(f"WATCHTOWER EOD: Could not reach {base_url}: {e}")
                     continue
 
             if result and result.get('success'):
@@ -2647,35 +2647,35 @@ class AutonomousTraderScheduler:
                     status = "✓" if action.get('success') else "✗"
                     logger.info(f"  {status} {action.get('action')}: {action.get('description')}")
             else:
-                logger.warning("ARGUS EOD: Processing returned no result")
+                logger.warning("WATCHTOWER EOD: Processing returned no result")
 
-            # Force close all open ARGUS signals at market close (0DTE expiration)
-            logger.info("ARGUS EOD: Closing all open signals (0DTE expiration)...")
+            # Force close all open WATCHTOWER signals at market close (0DTE expiration)
+            logger.info("WATCHTOWER EOD: Closing all open signals (0DTE expiration)...")
             for base_url in base_urls:
                 try:
                     response = requests.post(
-                        f"{base_url}/api/argus/signals/update-outcomes?symbol=SPY&force_close=true",
+                        f"{base_url}/api/watchtower/signals/update-outcomes?symbol=SPY&force_close=true",
                         timeout=60
                     )
                     if response.status_code == 200:
                         outcome_result = response.json()
                         if outcome_result.get('success'):
                             updates = outcome_result.get('data', {}).get('updates', {})
-                            logger.info(f"ARGUS EOD Signals: Closed {updates.get('closed', 0)} signals "
+                            logger.info(f"WATCHTOWER EOD Signals: Closed {updates.get('closed', 0)} signals "
                                        f"({updates.get('wins', 0)} wins, {updates.get('losses', 0)} losses)")
                         break
                 except requests.exceptions.RequestException as e:
-                    logger.debug(f"ARGUS EOD: Could not reach {base_url} for signal updates: {e}")
+                    logger.debug(f"WATCHTOWER EOD: Could not reach {base_url} for signal updates: {e}")
                     continue
 
-            logger.info(f"ARGUS EOD processing completed")
+            logger.info(f"WATCHTOWER EOD processing completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in ARGUS EOD processing: {str(e)}"
+            error_msg = f"ERROR in WATCHTOWER EOD processing: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("ARGUS EOD will retry next trading day")
+            logger.info("WATCHTOWER EOD will retry next trading day")
             logger.info(f"=" * 80)
 
     def scheduled_vix_signal_logic(self):
@@ -2742,13 +2742,13 @@ class AutonomousTraderScheduler:
         """
         PROVERBS (Feedback Loop Intelligence) - runs DAILY at 4:00 PM CT
 
-        Migration 023: Enhanced with Oracle-Proverbs integration for complete feedback loop.
+        Migration 023: Enhanced with Prophet-Proverbs integration for complete feedback loop.
 
         Orchestrates the autonomous feedback loop for all trading bots:
-        1. Trains Oracle from new trade outcomes (auto_train)
+        1. Trains Prophet from new trade outcomes (auto_train)
         2. Runs Proverbs feedback loop (parameter proposals, A/B testing)
         3. Analyzes strategy-level performance (IC vs Directional)
-        4. Tracks Oracle recommendation accuracy
+        4. Tracks Prophet recommendation accuracy
 
         Bots: FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON
 
@@ -2765,27 +2765,27 @@ class AutonomousTraderScheduler:
 
         try:
             # ================================================================
-            # STEP 1: Train Oracle from new trade outcomes
-            # Migration 023: Oracle learns from outcomes before Proverbs analyzes
+            # STEP 1: Train Prophet from new trade outcomes
+            # Migration 023: Prophet learns from outcomes before Proverbs analyzes
             # ================================================================
             if ORACLE_AVAILABLE and oracle_auto_train:
-                logger.info("PROVERBS: Step 1 - Training Oracle from new outcomes...")
+                logger.info("PROVERBS: Step 1 - Training Prophet from new outcomes...")
                 try:
                     train_result = oracle_auto_train(threshold_outcomes=10)  # Lower threshold for daily runs
                     if train_result.get('triggered'):
-                        logger.info(f"  Oracle training triggered: {train_result.get('reason')}")
+                        logger.info(f"  Prophet training triggered: {train_result.get('reason')}")
                         if train_result.get('success'):
                             metrics = train_result.get('training_metrics')
                             if metrics:
                                 logger.info(f"  Training metrics: accuracy={metrics.get('accuracy', 'N/A')}, samples={metrics.get('samples', 'N/A')}")
                         else:
-                            logger.warning(f"  Oracle training failed: {train_result.get('error', 'Unknown error')}")
+                            logger.warning(f"  Prophet training failed: {train_result.get('error', 'Unknown error')}")
                     else:
-                        logger.info(f"  Oracle training skipped: {train_result.get('reason')}")
+                        logger.info(f"  Prophet training skipped: {train_result.get('reason')}")
                 except Exception as e:
-                    logger.warning(f"  Oracle auto_train failed: {e}")
+                    logger.warning(f"  Prophet auto_train failed: {e}")
             else:
-                logger.info("PROVERBS: Step 1 - Oracle training skipped (not available)")
+                logger.info("PROVERBS: Step 1 - Prophet training skipped (not available)")
 
             # ================================================================
             # STEP 2: Run Proverbs feedback loop
@@ -2820,7 +2820,7 @@ class AutonomousTraderScheduler:
             # STEP 3: Analyze strategy-level performance (Migration 023)
             # ================================================================
             strategy_analysis = None
-            oracle_accuracy = None
+            prophet_accuracy = None
 
             if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
                 logger.info("PROVERBS: Step 3 - Analyzing strategy-level performance...")
@@ -2839,12 +2839,12 @@ class AutonomousTraderScheduler:
                         if rec:
                             logger.info(f"  Strategy Recommendation: {rec}")
 
-                    # Get Oracle accuracy
-                    oracle_accuracy = enhanced.get_oracle_accuracy(days=30)
-                    if oracle_accuracy.get('status') == 'analyzed':
-                        summary = oracle_accuracy.get('summary', '')
+                    # Get Prophet accuracy
+                    prophet_accuracy = enhanced.get_prophet_accuracy(days=30)
+                    if prophet_accuracy.get('status') == 'analyzed':
+                        summary = prophet_accuracy.get('summary', '')
                         if summary:
-                            logger.info(f"  Oracle Accuracy: {summary}")
+                            logger.info(f"  Prophet Accuracy: {summary}")
 
                 except Exception as e:
                     logger.warning(f"  Strategy analysis failed: {e}")
@@ -2859,7 +2859,7 @@ class AutonomousTraderScheduler:
                 'proposals_applied': len(result.proposals_applied) if hasattr(result, 'proposals_applied') else 0,
                 'alerts_raised': len(result.alerts_raised),
                 'strategy_analysis': strategy_analysis.get('recommendation') if strategy_analysis else None,
-                'oracle_accuracy': oracle_accuracy.get('summary') if oracle_accuracy else None
+                'prophet_accuracy': prophet_accuracy.get('summary') if prophet_accuracy else None
             })
 
             logger.info(f"PROVERBS: Next run tomorrow at 4:00 PM CT")
@@ -2897,9 +2897,9 @@ class AutonomousTraderScheduler:
         }
 
         # =================================================================
-        # REMOVED: ML Regime Classifier - Oracle is god
+        # REMOVED: ML Regime Classifier - Prophet is god
         # The REGIME_CLASSIFIER training code has been removed.
-        # Oracle decides all trades.
+        # Prophet decides all trades.
         # =================================================================
 
         # =================================================================
@@ -2964,96 +2964,96 @@ class AutonomousTraderScheduler:
         logger.info(f"QUANT: Next training scheduled for next Sunday at 5:00 PM CT")
         logger.info(f"=" * 80)
 
-    def scheduled_sage_training_logic(self):
+    def scheduled_wisdom_training_logic(self):
         """
-        SAGE (Strategic Algorithmic Guidance Engine) Training - runs WEEKLY on Sunday at 4:30 PM CT
+        WISDOM (Strategic Algorithmic Guidance Engine) Training - runs WEEKLY on Sunday at 4:30 PM CT
 
-        FIX (Jan 2026): SAGE was previously only available via manual API calls.
-        This scheduled training ensures SAGE models stay fresh and the Oracle
+        FIX (Jan 2026): WISDOM was previously only available via manual API calls.
+        This scheduled training ensures WISDOM models stay fresh and the Prophet
         receives updated probability predictions.
 
         Training order on Sundays:
         - 4:00 PM: PROVERBS (feedback loop)
-        - 4:30 PM: SAGE (this job)
+        - 4:30 PM: WISDOM (this job)
         - 5:00 PM: QUANT (GEX Directional)
         - 6:00 PM: GEX ML (Probability Models)
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"SAGE (ML Advisor) Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"WISDOM (ML Advisor) Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         try:
-            # Try to import SAGE training module
-            from backend.api.routes.ml_routes import train_sage_model_internal
+            # Try to import WISDOM training module
+            from backend.api.routes.ml_routes import train_wisdom_model_internal
 
-            logger.info("SAGE: Starting weekly model training...")
+            logger.info("WISDOM: Starting weekly model training...")
 
-            # Train SAGE with KRONOS data as fallback
-            result = train_sage_model_internal(
+            # Train WISDOM with CHRONICLES data as fallback
+            result = train_wisdom_model_internal(
                 min_samples=30,
                 use_kronos=True
             )
 
             if result.get('success'):
-                logger.info(f"SAGE: ✅ Training completed successfully")
+                logger.info(f"WISDOM: ✅ Training completed successfully")
                 logger.info(f"  Training method: {result.get('training_method', 'unknown')}")
                 logger.info(f"  Samples used: {result.get('samples_used', 0)}")
                 logger.info(f"  Model accuracy: {result.get('accuracy', 'N/A')}")
 
-                self._save_heartbeat('SAGE', 'TRAINING_COMPLETE', result)
+                self._save_heartbeat('WISDOM', 'TRAINING_COMPLETE', result)
                 self._record_training_history(
-                    model_name='SAGE',
+                    model_name='WISDOM',
                     status='COMPLETED',
                     accuracy_after=result.get('accuracy', 0) * 100 if result.get('accuracy') else None,
                     training_samples=result.get('samples_used', 0),
                     triggered_by='SCHEDULED'
                 )
             else:
-                logger.warning(f"SAGE: ⚠️ Training not completed: {result.get('message', 'Unknown reason')}")
-                self._save_heartbeat('SAGE', 'TRAINING_SKIPPED', result)
+                logger.warning(f"WISDOM: ⚠️ Training not completed: {result.get('message', 'Unknown reason')}")
+                self._save_heartbeat('WISDOM', 'TRAINING_SKIPPED', result)
 
         except ImportError as e:
-            logger.warning(f"SAGE: Training module not available: {e}")
-            logger.info("SAGE: Skipping scheduled training - module import failed")
+            logger.warning(f"WISDOM: Training module not available: {e}")
+            logger.info("WISDOM: Skipping scheduled training - module import failed")
         except Exception as e:
-            logger.error(f"SAGE: ❌ Training failed with error: {e}")
+            logger.error(f"WISDOM: ❌ Training failed with error: {e}")
             logger.error(traceback.format_exc())
-            self._save_heartbeat('SAGE', 'ERROR', {'error': str(e)})
+            self._save_heartbeat('WISDOM', 'ERROR', {'error': str(e)})
             self._record_training_history(
-                model_name='SAGE',
+                model_name='WISDOM',
                 status='FAILED',
                 triggered_by='SCHEDULED',
                 error=str(e)
             )
 
-        logger.info(f"SAGE: Next training scheduled for next Sunday at 4:30 PM CT")
+        logger.info(f"WISDOM: Next training scheduled for next Sunday at 4:30 PM CT")
         logger.info(f"=" * 80)
 
-    def scheduled_oracle_training_logic(self):
+    def scheduled_prophet_training_logic(self):
         """
-        ORACLE Training - runs DAILY at midnight CT
+        PROPHET Training - runs DAILY at midnight CT
 
-        FIX (Jan 2026): Oracle training was previously only triggered via PROVERBS
-        feedback loop at 4 PM. This standalone job ensures Oracle gets trained
+        FIX (Jan 2026): Prophet training was previously only triggered via PROVERBS
+        feedback loop at 4 PM. This standalone job ensures Prophet gets trained
         even if PROVERBS has issues.
 
-        Oracle learns from:
+        Prophet learns from:
         1. Live trade outcomes (primary)
         2. Database backtests (fallback)
-        3. KRONOS backtest data (final fallback)
+        3. CHRONICLES backtest data (final fallback)
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"ORACLE Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"PROPHET Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if not ORACLE_AVAILABLE or not oracle_auto_train:
-            logger.warning("ORACLE: Training module not available - skipping")
+            logger.warning("PROPHET: Training module not available - skipping")
             return
 
         try:
-            logger.info("ORACLE: Starting daily model training...")
+            logger.info("PROPHET: Starting daily model training...")
 
             # Use lower threshold for daily training (10 outcomes)
             result = oracle_auto_train(threshold_outcomes=10, force=False)
@@ -3061,39 +3061,39 @@ class AutonomousTraderScheduler:
             if result.get('triggered'):
                 if result.get('success'):
                     metrics = result.get('training_metrics', {})
-                    logger.info(f"ORACLE: ✅ Training completed successfully")
+                    logger.info(f"PROPHET: ✅ Training completed successfully")
                     logger.info(f"  Method: {result.get('method', 'unknown')}")
                     logger.info(f"  Accuracy: {metrics.get('accuracy', 'N/A')}")
                     logger.info(f"  AUC-ROC: {metrics.get('auc_roc', 'N/A')}")
                     logger.info(f"  Samples: {metrics.get('total_samples', 0)}")
 
-                    self._save_heartbeat('ORACLE', 'TRAINING_COMPLETE', result)
+                    self._save_heartbeat('PROPHET', 'TRAINING_COMPLETE', result)
                     self._record_training_history(
-                        model_name='ORACLE',
+                        model_name='PROPHET',
                         status='COMPLETED',
                         accuracy_after=metrics.get('accuracy', 0) * 100 if metrics.get('accuracy') else None,
                         training_samples=metrics.get('total_samples', 0),
                         triggered_by='SCHEDULED'
                     )
                 else:
-                    logger.warning(f"ORACLE: ⚠️ Training triggered but failed: {result.get('error')}")
-                    self._save_heartbeat('ORACLE', 'TRAINING_FAILED', result)
+                    logger.warning(f"PROPHET: ⚠️ Training triggered but failed: {result.get('error')}")
+                    self._save_heartbeat('PROPHET', 'TRAINING_FAILED', result)
             else:
-                logger.info(f"ORACLE: ℹ️ Training not needed: {result.get('reason', 'No new outcomes')}")
-                self._save_heartbeat('ORACLE', 'TRAINING_SKIPPED', result)
+                logger.info(f"PROPHET: ℹ️ Training not needed: {result.get('reason', 'No new outcomes')}")
+                self._save_heartbeat('PROPHET', 'TRAINING_SKIPPED', result)
 
         except Exception as e:
-            logger.error(f"ORACLE: ❌ Training failed with error: {e}")
+            logger.error(f"PROPHET: ❌ Training failed with error: {e}")
             logger.error(traceback.format_exc())
-            self._save_heartbeat('ORACLE', 'ERROR', {'error': str(e)})
+            self._save_heartbeat('PROPHET', 'ERROR', {'error': str(e)})
             self._record_training_history(
-                model_name='ORACLE',
+                model_name='PROPHET',
                 status='FAILED',
                 triggered_by='SCHEDULED',
                 error=str(e)
             )
 
-        logger.info(f"ORACLE: Next training tomorrow at midnight CT")
+        logger.info(f"PROPHET: Next training tomorrow at midnight CT")
         logger.info(f"=" * 80)
 
     def _ensure_required_tables(self):
@@ -3142,9 +3142,9 @@ class AutonomousTraderScheduler:
                 )
             """)
 
-            # Create apollo_outcomes table if not exists
+            # Create discernment_outcomes table if not exists
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS apollo_outcomes (
+                CREATE TABLE IF NOT EXISTS discernment_outcomes (
                     id SERIAL PRIMARY KEY,
                     prediction_id INTEGER,
                     symbol VARCHAR(10),
@@ -3259,29 +3259,29 @@ class AutonomousTraderScheduler:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Check SAGE (weekly - should have run within 7 days)
+            # Check WISDOM (weekly - should have run within 7 days)
             cursor.execute("""
                 SELECT MAX(timestamp) FROM quant_training_history
-                WHERE model_name = 'SAGE' AND status = 'COMPLETED'
+                WHERE model_name = 'WISDOM' AND status = 'COMPLETED'
             """)
             row = cursor.fetchone()
             sage_last = row[0] if row and row[0] else None
             if not sage_last or (now.replace(tzinfo=None) - sage_last).days > 7:
                 days_since = (now.replace(tzinfo=None) - sage_last).days if sage_last else 999
-                logger.warning(f"SAGE: Last trained {days_since} days ago - OVERDUE")
-                recovery_needed.append(('SAGE', days_since))
+                logger.warning(f"WISDOM: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('WISDOM', days_since))
 
-            # Check ORACLE (daily - should have run within 2 days)
+            # Check PROPHET (daily - should have run within 2 days)
             cursor.execute("""
                 SELECT MAX(timestamp) FROM quant_training_history
-                WHERE model_name = 'ORACLE' AND status = 'COMPLETED'
+                WHERE model_name = 'PROPHET' AND status = 'COMPLETED'
             """)
             row = cursor.fetchone()
             oracle_last = row[0] if row and row[0] else None
             if not oracle_last or (now.replace(tzinfo=None) - oracle_last).days > 2:
                 days_since = (now.replace(tzinfo=None) - oracle_last).days if oracle_last else 999
-                logger.warning(f"ORACLE: Last trained {days_since} days ago - OVERDUE")
-                recovery_needed.append(('ORACLE', days_since))
+                logger.warning(f"PROPHET: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('PROPHET', days_since))
 
             # Check GEX_DIRECTIONAL (weekly - should have run within 8 days)
             cursor.execute("""
@@ -3327,10 +3327,10 @@ class AutonomousTraderScheduler:
             logger.info(f"STARTUP RECOVERY: Running catch-up training for {model_name}...")
 
             try:
-                if model_name == 'ORACLE':
-                    self.scheduled_oracle_training_logic()
-                elif model_name == 'SAGE':
-                    self.scheduled_sage_training_logic()
+                if model_name == 'PROPHET':
+                    self.scheduled_prophet_training_logic()
+                elif model_name == 'WISDOM':
+                    self.scheduled_wisdom_training_logic()
                 elif model_name == 'GEX_DIRECTIONAL':
                     self.scheduled_quant_training_logic()
                 elif model_name == 'GEX_ML':
@@ -3348,7 +3348,7 @@ class AutonomousTraderScheduler:
         """
         GEX ML (Probability Models) - runs WEEKLY on Sunday at 6:00 PM CT
 
-        Retrains the 5 GEX probability models used by ARGUS and HYPERION:
+        Retrains the 5 GEX probability models used by WATCHTOWER and GLORY:
         1. Direction Probability (UP/DOWN/FLAT classification)
         2. Flip Gravity (probability of moving toward flip point)
         3. Magnet Attraction (probability of reaching magnets)
@@ -3480,8 +3480,8 @@ class AutonomousTraderScheduler:
         - GEX Directional ML
         - ML Regime Classifier
         - FORTRESS ML Advisor
-        - Oracle Advisor
-        - Apollo ML Engine
+        - Prophet Advisor
+        - Discernment ML Engine
         - Jubilee ML
         - SPX Wheel ML
         - Market Regime Classifier
@@ -4033,7 +4033,7 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: LAZARUS, CORNERSTONE, FORTRESS (SPY IC), ANCHOR (SPX IC), SOLOMON, ARGUS, VIX_SIGNAL, PROVERBS, QUANT")
+        logger.info(f"Bots: LAZARUS, CORNERSTONE, FORTRESS (SPY IC), ANCHOR (SPX IC), SOLOMON, WATCHTOWER, VIX_SIGNAL, PROVERBS, QUANT")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"LAZARUS Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"CORNERSTONE Schedule: Daily at 9:05 AM CT, Mon-Fri")
@@ -4042,7 +4042,7 @@ class AutonomousTraderScheduler:
         logger.info(f"SOLOMON Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"GIDEON Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"SAMSON Schedule: Every 5 min (runs 24/7, market hours checked internally)")
-        logger.info(f"ARGUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"WATCHTOWER Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"VIX_SIGNAL Schedule: HOURLY (9 AM - 3 PM CT), Hedge Signal Generation")
         logger.info(f"PROVERBS Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"QUANT Schedule: WEEKLY on Sunday at 5:00 PM CT (ML model training)")
@@ -4466,7 +4466,7 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ JUBILEE IC not available - IC trading with borrowed capital disabled")
 
         # =================================================================
-        # ARGUS JOB: Commentary Generation - runs every 5 minutes
+        # WATCHTOWER JOB: Commentary Generation - runs every 5 minutes
         # Generates AI-powered gamma commentary for the Live Log
         # Jobs run immediately on startup and every 5 min thereafter.
         # Market hours are checked inside the job.
@@ -4477,14 +4477,14 @@ class AutonomousTraderScheduler:
                 minutes=5,
                 timezone='America/Chicago'
             ),
-            id='argus_commentary',
-            name='ARGUS - Gamma Commentary (5-min intervals)',
+            id='watchtower_commentary',
+            name='WATCHTOWER - Gamma Commentary (5-min intervals)',
             replace_existing=True
         )
-        logger.info("✅ ARGUS job scheduled (every 5 min, checks market hours internally)")
+        logger.info("✅ WATCHTOWER job scheduled (every 5 min, checks market hours internally)")
 
         # =================================================================
-        # ARGUS EOD JOB: Pin Prediction Accuracy Processing - runs at 3:01 PM CT
+        # WATCHTOWER EOD JOB: Pin Prediction Accuracy Processing - runs at 3:01 PM CT
         # Updates pin predictions with actual closing prices and calculates
         # accuracy metrics for the pin accuracy tracking feature.
         # =================================================================
@@ -4497,10 +4497,10 @@ class AutonomousTraderScheduler:
                 timezone='America/Chicago'
             ),
             id='argus_eod',
-            name='ARGUS - EOD Pin Accuracy Processing',
+            name='WATCHTOWER - EOD Pin Accuracy Processing',
             replace_existing=True
         )
-        logger.info("✅ ARGUS EOD job scheduled (3:01 PM CT daily)")
+        logger.info("✅ WATCHTOWER EOD job scheduled (3:01 PM CT daily)")
 
         # =================================================================
         # VIX SIGNAL JOB: VIX Hedge Signal Generation - runs HOURLY during market hours
@@ -4552,43 +4552,43 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ PROVERBS not available - Feedback loop disabled")
 
         # =================================================================
-        # ORACLE JOB: ML Training - runs DAILY at midnight CT
-        # FIX (Jan 2026): Standalone Oracle training, not dependent on PROVERBS
+        # PROPHET JOB: ML Training - runs DAILY at midnight CT
+        # FIX (Jan 2026): Standalone Prophet training, not dependent on PROVERBS
         # =================================================================
         if ORACLE_AVAILABLE:
             self.scheduler.add_job(
-                self.scheduled_oracle_training_logic,
+                self.scheduled_prophet_training_logic,
                 trigger=CronTrigger(
                     hour=0,        # Midnight CT
                     minute=0,
                     day_of_week='mon-sun',  # Every day
                     timezone='America/Chicago'
                 ),
-                id='oracle_training',
-                name='ORACLE - Daily ML Training',
+                id='prophet_training',
+                name='PROPHET - Daily ML Training',
                 replace_existing=True
             )
-            logger.info("✅ ORACLE job scheduled (DAILY at midnight CT)")
+            logger.info("✅ PROPHET job scheduled (DAILY at midnight CT)")
         else:
-            logger.warning("⚠️ ORACLE not available - training disabled")
+            logger.warning("⚠️ PROPHET not available - training disabled")
 
         # =================================================================
-        # SAGE JOB: ML Training - runs WEEKLY on Sunday at 4:30 PM CT
-        # FIX (Jan 2026): SAGE was previously manual-only via API
+        # WISDOM JOB: ML Training - runs WEEKLY on Sunday at 4:30 PM CT
+        # FIX (Jan 2026): WISDOM was previously manual-only via API
         # =================================================================
         self.scheduler.add_job(
-            self.scheduled_sage_training_logic,
+            self.scheduled_wisdom_training_logic,
             trigger=CronTrigger(
                 hour=16,       # 4:30 PM CT
                 minute=30,
                 day_of_week='sun',  # Every Sunday
                 timezone='America/Chicago'
             ),
-            id='sage_training',
-            name='SAGE - Weekly ML Advisor Training',
+            id='wisdom_training',
+            name='WISDOM - Weekly ML Advisor Training',
             replace_existing=True
         )
-        logger.info("✅ SAGE job scheduled (WEEKLY on Sunday at 4:30 PM CT)")
+        logger.info("✅ WISDOM job scheduled (WEEKLY on Sunday at 4:30 PM CT)")
 
         # =================================================================
         # QUANT JOB: ML Model Training - runs WEEKLY on Sunday
@@ -4615,7 +4615,7 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ QUANT not available - ML model training disabled")
 
         # =================================================================
-        # GEX ML (Probability Models for ARGUS/HYPERION)
+        # GEX ML (Probability Models for WATCHTOWER/GLORY)
         # =================================================================
         # Trains the 5 XGBoost models used for strike probability calculations:
         # - Direction, Flip Gravity, Magnet Attraction, Volatility, Pin Zone
@@ -4978,7 +4978,7 @@ class AutonomousTraderScheduler:
             'available': GEX_PROBABILITY_MODELS_AVAILABLE,
             'schedule': 'Sunday 6:00 PM CT (weekly)',
             'models': ['direction', 'flip_gravity', 'magnet_attraction', 'volatility', 'pin_zone'],
-            'used_by': ['ARGUS', 'HYPERION']
+            'used_by': ['WATCHTOWER', 'GLORY']
         }
 
         return status

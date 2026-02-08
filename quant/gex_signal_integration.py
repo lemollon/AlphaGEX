@@ -140,7 +140,7 @@ class GEXSignalIntegration:
         Extract ML features from live GEX data.
 
         Args:
-            gex_data: Dict from Kronos GEX calculator with:
+            gex_data: Dict from Chronicles GEX calculator with:
                 - net_gex, call_gex, put_gex
                 - call_wall, put_wall, flip_point
                 - spot_price, regime, etc.
@@ -265,7 +265,7 @@ class GEXSignalIntegration:
         Get enhanced trading signal from GEX probability models.
 
         Args:
-            gex_data: Current GEX data from Kronos
+            gex_data: Current GEX data from Chronicles
             vix: Current VIX level
             prev_gex_data: Previous day's GEX data (optional, for momentum)
 

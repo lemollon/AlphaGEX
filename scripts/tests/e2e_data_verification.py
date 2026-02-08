@@ -139,7 +139,7 @@ def main():
         print_header("3. AI/ML PREDICTIONS")
 
         ai_tables = [
-            ("oracle_predictions", "created_at", "Oracle predictions"),
+            ("prophet_predictions", "created_at", "Prophet predictions"),
             ("probability_weights", "timestamp", "Probability weights"),
             ("ml_predictions", "created_at", "ML predictions"),
             ("regime_classifications", "created_at", "Regime classifications"),

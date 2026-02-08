@@ -116,7 +116,7 @@ echo ""
 echo "STRATEGY ANALYSIS ENDPOINTS"
 echo "---------------------------"
 test_endpoint "GET" "/api/proverbs/strategy-analysis?days=30" "200"
-test_endpoint "GET" "/api/proverbs/oracle-accuracy?days=30" "200"
+test_endpoint "GET" "/api/proverbs/prophet-accuracy?days=30" "200"
 
 # =====================================================
 # ENHANCED ANALYTICS ENDPOINTS
@@ -157,13 +157,13 @@ echo "--------------------"
 test_endpoint "GET" "/api/proverbs/validation/status" "200"
 
 # =====================================================
-# ORACLE ENDPOINTS (Cross-check)
+# PROPHET ENDPOINTS (Cross-check)
 # =====================================================
 echo ""
-echo "ORACLE ENDPOINTS (Cross-check)"
+echo "PROPHET ENDPOINTS (Cross-check)"
 echo "------------------------------"
-test_endpoint "GET" "/api/oracle/health" "200"
-test_endpoint "GET" "/api/oracle/strategy-recommendation" "200"
+test_endpoint "GET" "/api/prophet/health" "200"
+test_endpoint "GET" "/api/prophet/strategy-recommendation" "200"
 
 # =====================================================
 # SUMMARY

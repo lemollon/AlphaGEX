@@ -19,7 +19,7 @@ This script analyzes:
 6. Performance by entry hour
 7. Performance by close reason
 8. Wall distance analysis on losing trades
-9. Oracle confidence vs outcome
+9. Prophet confidence vs outcome
 10. Consecutive loss patterns
 """
 
@@ -281,7 +281,7 @@ def analyze_bot(db, bot_name: str, table_name: str):
             print(f"\n  Position: {pos_id}")
             print(f"    {spread}: {long_s}/{short_s} (spot: ${spot:.2f})")
             print(f"    VIX: {vix:.1f}, Regime: {regime}")
-            print(f"    Oracle: {advice} ({conf:.0%} conf)" if conf else f"    Oracle: {advice}")
+            print(f"    Prophet: {advice} ({conf:.0%} conf)" if conf else f"    Prophet: {advice}")
             print(f"    P&L: ${pnl:,.2f} ({reason})")
             print(f"    Entry: {open_t}, Exit: {close_t}")
             if reasoning:
@@ -314,8 +314,8 @@ def analyze_bot(db, bot_name: str, table_name: str):
     for spread, avg_dist, avg_pct, trades in rows:
         print(f"  {spread}: avg ${avg_dist:.2f} ({avg_pct:.2f}%) from wall on {trades} losing trades")
 
-    # 12. Oracle Confidence vs Outcome
-    print(f"\n--- Oracle Confidence vs Outcome ---")
+    # 12. Prophet Confidence vs Outcome
+    print(f"\n--- Prophet Confidence vs Outcome ---")
     cursor.execute(f"""
         SELECT
             CASE

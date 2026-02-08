@@ -125,17 +125,17 @@ def test_ml_signal():
         return test_result("ML Signal", False, str(e))
 
 def test_oracle_advice():
-    """Test 4: Oracle Advice Endpoint"""
+    """Test 4: Prophet Advice Endpoint"""
     try:
-        resp = requests.get(f"{API_URL}/api/solomon/oracle-advice", timeout=15)
+        resp = requests.get(f"{API_URL}/api/solomon/prophet-advice", timeout=15)
         if resp.status_code != 200:
-            return test_result("Oracle Advice", False, f"Status: {resp.status_code}")
+            return test_result("Prophet Advice", False, f"Status: {resp.status_code}")
 
         result = resp.json()
         data = result.get('data')
 
         if data is None:
-            return test_result("Oracle Advice", True, "No oracle advice available")
+            return test_result("Prophet Advice", True, "No prophet advice available")
 
         details = {
             'advice': data.get('advice'),
@@ -144,9 +144,9 @@ def test_oracle_advice():
             'reasoning': data.get('reasoning', '')[:100] + '...' if data.get('reasoning') else 'N/A'
         }
 
-        return test_result("Oracle Advice", True, details)
+        return test_result("Prophet Advice", True, details)
     except Exception as e:
-        return test_result("Oracle Advice", False, str(e))
+        return test_result("Prophet Advice", False, str(e))
 
 def test_signals_history():
     """Test 5: Signals History Endpoint"""
@@ -301,8 +301,8 @@ def test_diagnostics():
 
         details = {
             'solomon_available': data.get('solomon_available'),
-            'kronos': subsystems.get('kronos', {}).get('available'),
-            'oracle': subsystems.get('oracle', {}).get('available'),
+            'chronicles': subsystems.get('chronicles', {}).get('available'),
+            'prophet': subsystems.get('prophet', {}).get('available'),
             'gex_ml': subsystems.get('gex_ml', {}).get('available'),
             'gex_data_source': data_avail.get('gex_data', {}).get('source'),
             'ml_model_exists': data_avail.get('ml_model_file', {}).get('exists'),

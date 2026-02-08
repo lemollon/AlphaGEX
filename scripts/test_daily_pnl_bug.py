@@ -121,7 +121,7 @@ def main():
 
     print(f"\n{BLUE}Files with the fix:{RESET}")
     print("  - backend/services/bot_metrics_service.py (unified endpoint)")
-    print("  - backend/api/routes/events_routes.py (combined/Oracle page)")
+    print("  - backend/api/routes/events_routes.py (combined/Prophet page)")
     print("  - backend/api/routes/fortress_routes.py")
     print("  - backend/api/routes/samson_routes.py")
     print("  - backend/api/routes/anchor_routes.py")

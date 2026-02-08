@@ -183,14 +183,14 @@ def main():
     except Exception as e:
         print(f"  Error: {e}")
 
-    # 8. Oracle predictions today
-    print(f"\n8. ORACLE PREDICTIONS TODAY")
+    # 8. Prophet predictions today
+    print(f"\n8. PROPHET PREDICTIONS TODAY")
     print("-" * 60)
     try:
         cursor.execute('''
             SELECT bot_name, timestamp, advice, win_probability,
                    confidence, reasoning
-            FROM oracle_predictions
+            FROM prophet_predictions
             WHERE DATE(timestamp) = %s
             ORDER BY timestamp DESC
             LIMIT 10
@@ -204,7 +204,7 @@ def main():
                 if reasoning:
                     print(f"           {reasoning[:70]}")
         else:
-            print("  No oracle predictions logged today")
+            print("  No prophet predictions logged today")
     except Exception as e:
         print(f"  Error (table may not exist): {e}")
 

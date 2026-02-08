@@ -471,7 +471,7 @@ def test_quant_modules():
     except Exception as e:
         print(f"  ⚠️ Walk-Forward Optimizer: {e}")
 
-    # Note: ensemble_strategy and ml_regime_classifier removed - Oracle is sole authority
+    # Note: ensemble_strategy and ml_regime_classifier removed - Prophet is sole authority
     print(f"\n  Loaded: {modules_loaded}/2 quant modules")
     print("\n✅ QUANT MODULES: PASSED")
     return True

@@ -1464,7 +1464,7 @@ class GEXSignalGenerator:
 
 class GEXProbabilityModels:
     """
-    Wrapper class for ARGUS/HYPERION integration.
+    Wrapper class for WATCHTOWER/GLORY integration.
 
     Auto-loads trained models from database on initialization.
     Provides simplified interface for probability predictions.

@@ -461,7 +461,7 @@ class JubileeDatabase:
                     vix_at_entry DECIMAL(6, 2),
                     gamma_regime_at_entry VARCHAR(20),
 
-                    -- Oracle decision context
+                    -- Prophet decision context
                     oracle_confidence DECIMAL(5, 4),
                     oracle_reasoning TEXT,
 
@@ -554,7 +554,7 @@ class JubileeDatabase:
                     margin_required DECIMAL(15, 2),
                     capital_at_risk DECIMAL(15, 2),
 
-                    -- Oracle decision
+                    -- Prophet decision
                     oracle_approved BOOLEAN,
                     oracle_confidence DECIMAL(5, 4),
                     oracle_reasoning TEXT,

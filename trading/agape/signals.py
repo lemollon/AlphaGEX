@@ -11,7 +11,7 @@ Signal Flow:
   1. Fetch crypto market snapshot (CryptoDataProvider)
   2. Analyze microstructure signals
   3. Direction Tracker check (cooldown after losses, nimble reversals)
-  4. Consult Oracle for advisory (non-blocking)
+  4. Consult Prophet for advisory (non-blocking)
   5. Calculate position size and risk levels
   6. Return AgapeSignal with full audit trail
 """
@@ -46,14 +46,14 @@ try:
 except ImportError as e:
     logger.warning(f"AGAPE Signals: CryptoDataProvider not available: {e}")
 
-OracleAdvisor = None
+ProphetAdvisor = None
 MarketContext = None
 GEXRegime = None
 try:
-    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
-    logger.info("AGAPE Signals: OracleAdvisor loaded")
+    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
+    logger.info("AGAPE Signals: ProphetAdvisor loaded")
 except ImportError as e:
-    logger.warning(f"AGAPE Signals: OracleAdvisor not available: {e}")
+    logger.warning(f"AGAPE Signals: ProphetAdvisor not available: {e}")
 
 
 # ============================================================================
@@ -204,11 +204,11 @@ class AgapeSignalGenerator:
     """Generates directional trade signals for /MET based on crypto microstructure.
 
     GEX → Crypto Signal Mapping Applied:
-        ARGUS gamma regime   → Funding rate regime
-        ARGUS gamma walls    → OI clusters + liquidation zones
-        ARGUS flip point     → Max pain level
-        ARGUS net GEX        → Crypto GEX from Deribit
-        ARGUS market signals → Combined crypto signals (6 inputs)
+        WATCHTOWER gamma regime   → Funding rate regime
+        WATCHTOWER gamma walls    → OI clusters + liquidation zones
+        WATCHTOWER flip point     → Max pain level
+        WATCHTOWER net GEX        → Crypto GEX from Deribit
+        WATCHTOWER market signals → Combined crypto signals (6 inputs)
     """
 
     def __init__(self, config: AgapeConfig):
@@ -222,11 +222,11 @@ class AgapeSignalGenerator:
             except Exception as e:
                 logger.warning(f"AGAPE Signals: Crypto provider init failed: {e}")
 
-        if OracleAdvisor:
+        if ProphetAdvisor:
             try:
-                self._oracle = OracleAdvisor()
+                self._oracle = ProphetAdvisor()
             except Exception as e:
-                logger.warning(f"AGAPE Signals: Oracle init failed: {e}")
+                logger.warning(f"AGAPE Signals: Prophet init failed: {e}")
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Fetch current market snapshot - equivalent to FORTRESS's get_market_data().
@@ -277,13 +277,13 @@ class AgapeSignalGenerator:
             return None
 
     def get_oracle_advice(self, market_data: Dict) -> Dict[str, Any]:
-        """Consult Oracle for trade approval.
+        """Consult Prophet for trade approval.
 
-        Adapts the Oracle call for crypto context - passes crypto microstructure
-        data where Oracle expects GEX/VIX data.
+        Adapts the Prophet call for crypto context - passes crypto microstructure
+        data where Prophet expects GEX/VIX data.
         """
         if not self._oracle:
-            logger.info("AGAPE Signals: Oracle not available, using signal-only mode")
+            logger.info("AGAPE Signals: Prophet not available, using signal-only mode")
             return {
                 "advice": "UNAVAILABLE",
                 "win_probability": 0.5,
@@ -292,11 +292,11 @@ class AgapeSignalGenerator:
             }
 
         try:
-            # Map crypto data to Oracle's MarketContext dataclass
+            # Map crypto data to Prophet's MarketContext dataclass
             vix_proxy = self._funding_to_vix_proxy(market_data.get("funding_rate", 0))
             crypto_gex_regime = market_data.get("crypto_gex_regime", "NEUTRAL")
 
-            # Map crypto GEX regime to Oracle's GEXRegime enum
+            # Map crypto GEX regime to Prophet's GEXRegime enum
             gex_regime_map = {
                 "POSITIVE": GEXRegime.POSITIVE,
                 "NEGATIVE": GEXRegime.NEGATIVE,
@@ -330,7 +330,7 @@ class AgapeSignalGenerator:
                     ],
                 }
         except Exception as e:
-            logger.error(f"AGAPE Signals: Oracle call failed: {e}")
+            logger.error(f"AGAPE Signals: Prophet call failed: {e}")
 
         return {
             "advice": "UNAVAILABLE",
@@ -340,7 +340,7 @@ class AgapeSignalGenerator:
         }
 
     def generate_signal(
-        self, oracle_data: Optional[Dict] = None
+        self, prophet_data: Optional[Dict] = None
     ) -> AgapeSignal:
         """Generate a trade signal - main entry point.
 
@@ -349,7 +349,7 @@ class AgapeSignalGenerator:
         Flow:
           1. Fetch crypto market microstructure
           2. Evaluate combined signal strength
-          3. Consult Oracle (if not pre-fetched)
+          3. Consult Prophet (if not pre-fetched)
           4. Calculate position sizing and risk levels
           5. Return AgapeSignal with full context
         """
@@ -367,13 +367,13 @@ class AgapeSignalGenerator:
 
         spot = market_data["spot_price"]
 
-        # Step 2: Get Oracle advice
-        if oracle_data is None:
-            oracle_data = self.get_oracle_advice(market_data)
+        # Step 2: Get Prophet advice
+        if prophet_data is None:
+            prophet_data = self.get_oracle_advice(market_data)
 
-        # Step 3: Check Oracle advice (ADVISORY ONLY - does not block trades)
-        oracle_advice = oracle_data.get("advice", "UNAVAILABLE")
-        oracle_win_prob = oracle_data.get("win_probability", 0.5)
+        # Step 3: Check Prophet advice (ADVISORY ONLY - does not block trades)
+        oracle_advice = prophet_data.get("advice", "UNAVAILABLE")
+        oracle_win_prob = prophet_data.get("win_probability", 0.5)
 
         if self.config.require_oracle_approval:
             oracle_approved = oracle_advice in (
@@ -397,13 +397,13 @@ class AgapeSignalGenerator:
                     reasoning=f"BLOCKED_ORACLE_{oracle_advice}",
                     oracle_advice=oracle_advice,
                     oracle_win_probability=oracle_win_prob,
-                    oracle_confidence=oracle_data.get("confidence", 0),
-                    oracle_top_factors=oracle_data.get("top_factors", []),
+                    oracle_confidence=prophet_data.get("confidence", 0),
+                    oracle_top_factors=prophet_data.get("top_factors", []),
                 )
         else:
-            # Oracle is advisory only - log advice but never block
+            # Prophet is advisory only - log advice but never block
             logger.info(
-                f"AGAPE Signal: Oracle advisory (non-blocking): {oracle_advice} "
+                f"AGAPE Signal: Prophet advisory (non-blocking): {oracle_advice} "
                 f"win_prob={oracle_win_prob:.2%}"
             )
 
@@ -433,8 +433,8 @@ class AgapeSignalGenerator:
                 reasoning=reasoning,
                 oracle_advice=oracle_advice,
                 oracle_win_probability=oracle_win_prob,
-                oracle_confidence=oracle_data.get("confidence", 0),
-                oracle_top_factors=oracle_data.get("top_factors", []),
+                oracle_confidence=prophet_data.get("confidence", 0),
+                oracle_top_factors=prophet_data.get("top_factors", []),
             )
 
         # Step 5: Calculate position sizing and levels
@@ -460,8 +460,8 @@ class AgapeSignalGenerator:
             reasoning=reasoning,
             oracle_advice=oracle_advice,
             oracle_win_probability=oracle_win_prob,
-            oracle_confidence=oracle_data.get("confidence", 0),
-            oracle_top_factors=oracle_data.get("top_factors", []),
+            oracle_confidence=prophet_data.get("confidence", 0),
+            oracle_top_factors=prophet_data.get("top_factors", []),
             side=side,
             entry_price=spot,
             stop_loss=stop_loss,
@@ -729,7 +729,7 @@ class AgapeSignalGenerator:
 
     @staticmethod
     def _funding_to_vix_proxy(funding_rate: float) -> float:
-        """Convert funding rate to a VIX-like proxy for Oracle compatibility.
+        """Convert funding rate to a VIX-like proxy for Prophet compatibility.
 
         Mapping:
           |funding| < 0.005  → VIX ~15 (calm)

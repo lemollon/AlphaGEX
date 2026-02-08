@@ -600,7 +600,7 @@ Call Wall: {call_wall}
 Put Wall: {put_wall}
 Flip Point: {flip_point}
 GEX Regime: {gex_regime}
-Oracle Reasoning: {oracle_reasoning}
+Prophet Reasoning: {oracle_reasoning}
 
 ## INTRADAY PRICE DATA (selected candles)
 {tick_summary}

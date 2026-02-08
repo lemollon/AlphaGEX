@@ -96,7 +96,7 @@ interface SpreadPosition {
   spot_at_entry: number
   vix_at_entry?: number
   gex_regime: string
-  // Oracle audit trail
+  // Prophet audit trail
   oracle_confidence: number
   oracle_win_probability?: number
   oracle_advice?: string
@@ -115,7 +115,7 @@ interface SpreadPosition {
   exit_time?: string
 }
 
-// Helper to parse Oracle top factors
+// Helper to parse Prophet top factors
 function parseOracleTopFactors(factorsJson: string | undefined): Array<{factor: string, impact: number}> {
   if (!factorsJson) return []
   try {
@@ -232,11 +232,11 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
 
       {expanded && (
         <div className="border-t border-gray-700 p-4 space-y-4">
-          {/* Oracle Decision - WHY this trade */}
+          {/* Prophet Decision - WHY this trade */}
           <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Zap className="w-4 h-4 text-purple-400" />
-              <span className="text-purple-400 font-medium text-sm">Oracle Decision</span>
+              <span className="text-purple-400 font-medium text-sm">Prophet Decision</span>
             </div>
             <div className="grid grid-cols-3 gap-3 text-xs">
               <div>
@@ -693,7 +693,7 @@ export default function IcarusPage() {
                     </span>
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
-                    <span className="text-gray-500 text-sm block">Oracle</span>
+                    <span className="text-gray-500 text-sm block">Prophet</span>
                     <span className={`text-xl font-bold ${status?.oracle_available ? 'text-green-400' : 'text-gray-400'}`}>
                       {status?.oracle_available ? 'ONLINE' : 'OFFLINE'}
                     </span>
@@ -829,7 +829,7 @@ export default function IcarusPage() {
                     <span className="text-xl font-bold text-orange-400">{config?.ticker || 'SPY'}</span>
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
-                    <span className="text-gray-500 text-sm block">Oracle</span>
+                    <span className="text-gray-500 text-sm block">Prophet</span>
                     <span className={`text-xl font-bold ${status?.oracle_available ? 'text-green-400' : 'text-gray-400'}`}>
                       {status?.oracle_available ? 'ENABLED' : 'DISABLED'}
                     </span>

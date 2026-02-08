@@ -15,15 +15,15 @@ from .models import IronCondorSignal, SamsonConfig, CENTRAL_TZ
 
 logger = logging.getLogger(__name__)
 
-# Oracle is the god of all trade decisions
+# Prophet is the god of all trade decisions
 
 # Optional imports
 try:
-    from quant.oracle_advisor import OracleAdvisor
+    from quant.prophet_advisor import ProphetAdvisor
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
 
 try:
     from quant.fortress_ml_advisor import FortressMLAdvisor
@@ -33,7 +33,7 @@ except ImportError:
     FortressMLAdvisor = None
 
 try:
-    from quant.kronos_gex_calculator import KronosGEXCalculator
+    from quant.chronicles_gex_calculator import KronosGEXCalculator
     KRONOS_AVAILABLE = True
 except ImportError:
     KRONOS_AVAILABLE = False
@@ -71,7 +71,7 @@ except ImportError:
     WalkForwardOptimizer = None
     WalkForwardResult = None
 
-# REMOVED: GEX Directional ML - redundant with Oracle
+# REMOVED: GEX Directional ML - redundant with Prophet
 
 
 class SignalGenerator:
@@ -84,7 +84,7 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         # GEX Calculator - Use Tradier for LIVE trading data
-        # Kronos uses ORAT database (EOD) - only for backtesting, NOT live trading
+        # Chronicles uses ORAT database (EOD) - only for backtesting, NOT live trading
         self.gex_calculator = None
 
         if TRADIER_GEX_AVAILABLE:
@@ -116,14 +116,14 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"SAMSON: ML Advisor init failed: {e}")
 
-        # Oracle (BACKUP - used when ML not available)
-        self.oracle = None
+        # Prophet (BACKUP - used when ML not available)
+        self.prophet = None
         if ORACLE_AVAILABLE:
             try:
-                self.oracle = OracleAdvisor()
-                logger.info("SAMSON: Oracle initialized (BACKUP)")
+                self.prophet = ProphetAdvisor()
+                logger.info("SAMSON: Prophet initialized (BACKUP)")
             except Exception as e:
-                logger.warning(f"SAMSON: Oracle init failed: {e}")
+                logger.warning(f"SAMSON: Prophet init failed: {e}")
 
     def _init_tradier(self) -> None:
         """Initialize Tradier for real option quotes.
@@ -200,7 +200,7 @@ class SignalGenerator:
                 'call_wall': gex_data.get('call_wall', 0) * scale if gex_data else 0,
                 'put_wall': gex_data.get('put_wall', 0) * scale if gex_data else 0,
                 'gex_regime': gex_data.get('regime', 'NEUTRAL') if gex_data else 'NEUTRAL',
-                # Kronos GEX context (scaled if from SPY)
+                # Chronicles GEX context (scaled if from SPY)
                 'flip_point': gex_data.get('flip_point', 0) * scale if gex_data else 0,
                 'net_gex': gex_data.get('net_gex', 0) if gex_data else 0,
                 'timestamp': datetime.now(CENTRAL_TZ),
@@ -227,7 +227,7 @@ class SignalGenerator:
                         'flip_point': getattr(gex_data, 'gamma_flip', 0) or 0,
                         'net_gex': getattr(gex_data, 'net_gex', 0) or 0,
                     }
-                    from_spy = False  # Kronos uses SPX options data
+                    from_spy = False  # Chronicles uses SPX options data
 
             # TradierGEXCalculator uses get_gex(symbol) - try SPX first, fallback to SPY
             elif hasattr(self.gex_calculator, 'get_gex'):
@@ -242,7 +242,7 @@ class SignalGenerator:
                     'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
                     'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
                     'regime': gex.get('regime', 'NEUTRAL'),
-                    # Kronos GEX context for audit
+                    # Chronicles GEX context for audit
                     'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                     'net_gex': gex.get('net_gex', 0),
                     'from_spy': from_spy,  # Track source for scaling
@@ -315,7 +315,7 @@ class SignalGenerator:
         Get prediction from FORTRESS ML Advisor (PRIMARY source for Iron Condors).
 
         SAMSON is aggressive - uses 40% win probability threshold.
-        ML model trained on KRONOS backtests with ~70% win rate.
+        ML model trained on CHRONICLES backtests with ~70% win rate.
         """
         if not self.ares_ml:
             return None
@@ -374,16 +374,16 @@ class SignalGenerator:
 
     def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
-        Get Oracle prediction with FULL context for audit trail (BACKUP SOURCE).
+        Get Prophet prediction with FULL context for audit trail (BACKUP SOURCE).
 
         SAMSON uses relaxed thresholds but ML takes precedence.
         """
-        if not self.oracle:
+        if not self.prophet:
             return None
 
         try:
-            # Build MarketContext for Oracle
-            from quant.oracle_advisor import MarketContext, GEXRegime
+            # Build MarketContext for Prophet
+            from quant.prophet_advisor import MarketContext, GEXRegime
 
             # Determine GEX regime
             gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
@@ -404,7 +404,7 @@ class SignalGenerator:
             )
 
             # Call ANCHOR-specific advice method (SAMSON inherits SPX IC strategy)
-            prediction = self.oracle.get_anchor_advice(
+            prediction = self.prophet.get_anchor_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=True,  # Enable Claude for transparency logging
@@ -445,7 +445,7 @@ class SignalGenerator:
                 'wall_filter_passed': getattr(prediction, 'wall_filter_passed', False),
             }
         except Exception as e:
-            logger.warning(f"SAMSON Oracle error: {e}")
+            logger.warning(f"SAMSON Prophet error: {e}")
             return None
 
     def _calculate_expected_move(self, spot: float, vix: float) -> float:
@@ -465,7 +465,7 @@ class SignalGenerator:
         market_data: Dict
     ) -> Tuple[float, List[str]]:
         """
-        Adjust confidence based on Oracle's top contributing factors.
+        Adjust confidence based on Prophet's top contributing factors.
 
         SAMSON uses smaller adjustments since it's more aggressive.
         """
@@ -478,9 +478,9 @@ class SignalGenerator:
         gex_regime = market_data.get('gex_regime', 'NEUTRAL')
 
         # REMOVED: VIX, GEX regime, day of week adjustments
-        # Oracle already analyzed all these factors in MarketContext.
+        # Prophet already analyzed all these factors in MarketContext.
         # Re-adjusting confidence based on the same factors is redundant.
-        # Trust Oracle's win_probability output directly.
+        # Trust Prophet's win_probability output directly.
 
         # Clamp confidence to reasonable range - LOWER minimum for SAMSON
         confidence = max(0.35, min(0.95, confidence))  # Lower min (ANCHOR: 0.4)
@@ -503,12 +503,12 @@ class SignalGenerator:
     ) -> Dict[str, float]:
         """Calculate SPX strikes with $5 rounding - CLOSER strikes for SAMSON
 
-        FIX (Feb 2026): Now validates Oracle/GEX strikes against minimum SD distance.
+        FIX (Feb 2026): Now validates Prophet/GEX strikes against minimum SD distance.
         SAMSON is aggressive (0.8 SD) but must still enforce minimum distance.
         Previously had NO validation on GEX walls - could accept 0.1 SD strikes!
 
         Priority:
-        1. Oracle suggested strikes (if provided AND >= 0.8 SD away)
+        1. Prophet suggested strikes (if provided AND >= 0.8 SD away)
         2. GEX walls (if available AND >= 0.8 SD away)
         3. SD-based strikes (fallback) - uses 0.8 SD
         """
@@ -542,16 +542,16 @@ class SignalGenerator:
         put_short = 0
         call_short = 0
 
-        # Priority 1: Oracle suggested strikes (ONLY if >= 0.8 SD away)
+        # Priority 1: Prophet suggested strikes (ONLY if >= 0.8 SD away)
         if oracle_put_strike and oracle_call_strike:
             is_valid, put_sd, call_sd = is_valid_sd_distance(oracle_put_strike, oracle_call_strike)
             if is_valid:
                 put_short = round_to_5(oracle_put_strike)
                 call_short = round_to_5(oracle_call_strike)
                 use_oracle = True
-                logger.info(f"[SAMSON STRIKES] Using Oracle: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
+                logger.info(f"[SAMSON STRIKES] Using Prophet: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
             else:
-                logger.warning(f"[SAMSON STRIKES] Oracle TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
+                logger.warning(f"[SAMSON STRIKES] Prophet TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
         # Priority 2: GEX walls (ONLY if >= 0.8 SD away)
         if not use_oracle and call_wall > 0 and put_wall > 0:
@@ -583,7 +583,7 @@ class SignalGenerator:
             'call_long': call_long,
             'using_gex': use_gex,
             'using_oracle': use_oracle,
-            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'SD'),
+            'source': 'PROPHET' if use_oracle else ('GEX' if use_gex else 'SD'),
         }
 
     def get_real_credits(
@@ -706,12 +706,12 @@ class SignalGenerator:
             'source': 'ESTIMATED',
         }
 
-    def generate_signal(self, oracle_data: Optional[Dict[str, Any]] = None) -> Optional[IronCondorSignal]:
+    def generate_signal(self, prophet_data: Optional[Dict[str, Any]] = None) -> Optional[IronCondorSignal]:
         """Generate aggressive SPX Iron Condor signal for SAMSON
 
         Args:
-            oracle_data: Pre-fetched Oracle advice (optional). If provided, uses this
-                        instead of making a new Oracle call for consistency.
+            prophet_data: Pre-fetched Prophet advice (optional). If provided, uses this
+                        instead of making a new Prophet call for consistency.
         """
         market = self.get_market_data()
         if not market:
@@ -720,11 +720,11 @@ class SignalGenerator:
         vix = market['vix']
 
         # ============================================================
-        # ORACLE IS THE GOD OF ALL DECISIONS
+        # PROPHET IS THE GOD OF ALL DECISIONS
         #
-        # CRITICAL: When Oracle says TRADE, we TRADE. Period.
-        # Oracle already analyzed VIX, GEX, walls, regime, day of week.
-        # Bot's min_win_probability threshold does NOT override Oracle.
+        # CRITICAL: When Prophet says TRADE, we TRADE. Period.
+        # Prophet already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Prophet.
         # ============================================================
 
         # Get ML prediction first (PRIMARY SOURCE)
@@ -732,39 +732,39 @@ class SignalGenerator:
         ml_win_prob = ml_prediction.get('win_probability', 0) if ml_prediction else 0
         ml_confidence = ml_prediction.get('confidence', 0) if ml_prediction else 0
 
-        # Get Oracle advice (BACKUP SOURCE)
-        # Use pre-fetched oracle_data if provided to avoid double Oracle calls
-        if oracle_data is not None:
-            oracle = oracle_data
-            logger.info(f"[SAMSON] Using pre-fetched Oracle data: advice={oracle.get('advice', 'UNKNOWN')}")
+        # Get Prophet advice (BACKUP SOURCE)
+        # Use pre-fetched prophet_data if provided to avoid double Prophet calls
+        if prophet_data is not None:
+            prophet = prophet_data
+            logger.info(f"[SAMSON] Using pre-fetched Prophet data: advice={prophet.get('advice', 'UNKNOWN')}")
         else:
-            oracle = self.get_oracle_advice(market)
-        oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
-        oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
-        oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
+            prophet = self.get_oracle_advice(market)
+        oracle_win_prob = prophet.get('win_probability', 0) if prophet else 0
+        oracle_confidence = prophet.get('confidence', 0.7) if prophet else 0.7
+        oracle_advice = prophet.get('advice', 'SKIP_TODAY') if prophet else 'SKIP_TODAY'
 
         # Determine which source to use
         use_ml_prediction = ml_prediction is not None and ml_win_prob > 0
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
         confidence = ml_confidence if use_ml_prediction else oracle_confidence
-        prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
+        prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "PROPHET"
 
         # ============================================================
-        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
-        # No min_win_probability threshold check - Oracle's word is final
+        # PROPHET IS THE GOD: If Prophet says TRADE, we TRADE
+        # No min_win_probability threshold check - Prophet's word is final
         # ============================================================
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
         ml_oracle_says_trade = oracle_says_trade
 
-        # Log Oracle decision
+        # Log Prophet decision
         if ml_oracle_says_trade:
-            logger.info(f"[SAMSON] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
+            logger.info(f"[SAMSON] PROPHET SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
             # Check what VIX would have done (for logging only)
             can_trade, vix_reason = self.check_vix_filter(vix)
             if not can_trade:
-                logger.info(f"[SAMSON] VIX would have blocked ({vix_reason}) but ORACLE SAYS TRADE - proceeding")
+                logger.info(f"[SAMSON] VIX would have blocked ({vix_reason}) but PROPHET SAYS TRADE - proceeding")
         else:
-            logger.info(f"[SAMSON SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+            logger.info(f"[SAMSON SKIP] Prophet says {oracle_advice} - respecting Prophet's decision")
             return None
 
         # Log ML analysis FIRST (PRIMARY source)
@@ -783,18 +783,18 @@ class SignalGenerator:
                     impact = factor.get('impact', 0)
                     logger.info(f"    {i}. {factor_name}: {impact:.3f}")
         else:
-            logger.info(f"[SAMSON] ML Advisor not available, falling back to Oracle")
+            logger.info(f"[SAMSON] ML Advisor not available, falling back to Prophet")
 
-        # Log Oracle analysis (BACKUP source)
-        if oracle:
-            logger.info(f"[SAMSON ORACLE ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
+        # Log Prophet analysis (BACKUP source)
+        if prophet:
+            logger.info(f"[SAMSON PROPHET ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
             logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
             logger.info(f"  Confidence: {oracle_confidence:.1%}")
-            logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
+            logger.info(f"  Advice: {prophet.get('advice', 'N/A')}")
 
-            if oracle.get('top_factors'):
+            if prophet.get('top_factors'):
                 logger.info(f"  Top Factors:")
-                for i, factor in enumerate(oracle['top_factors'][:3], 1):
+                for i, factor in enumerate(prophet['top_factors'][:3], 1):
                     factor_name = factor.get('factor', 'unknown')
                     impact = factor.get('impact', 0)
                     direction = "+" if impact > 0 else ""
@@ -802,16 +802,16 @@ class SignalGenerator:
 
                 if not use_ml_prediction:
                     oracle_confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
-                        oracle_confidence, oracle['top_factors'], market
+                        oracle_confidence, prophet['top_factors'], market
                     )
                     confidence = oracle_confidence
 
-            if oracle.get('advice') == 'SKIP_TODAY':
+            if prophet.get('advice') == 'SKIP_TODAY':
                 if use_ml_prediction:
-                    logger.info(f"[SAMSON] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"[SAMSON] Prophet advises SKIP_TODAY but ML override active")
                     logger.info(f"  ML Win Prob: {ml_win_prob:.1%} will be used instead")
                 else:
-                    logger.info(f"[SAMSON ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
+                    logger.info(f"[SAMSON PROPHET INFO] Prophet advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own aggressive threshold: {self.config.min_win_probability:.1%}")
 
         # Win probability threshold check DISABLED - always trade
@@ -821,9 +821,9 @@ class SignalGenerator:
             effective_win_prob = 0.50  # Default to 50% if no prediction
         logger.info(f"[SAMSON PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
 
-        # Get Oracle suggested strikes if available
-        oracle_put = oracle.get('suggested_put_strike') if oracle else None
-        oracle_call = oracle.get('suggested_call_strike') if oracle else None
+        # Get Prophet suggested strikes if available
+        oracle_put = prophet.get('suggested_put_strike') if prophet else None
+        oracle_call = prophet.get('suggested_call_strike') if prophet else None
         strikes = self.calculate_strikes(
             market['spot_price'],
             market['expected_move'],
@@ -872,29 +872,29 @@ class SignalGenerator:
         reasoning_parts = []
         reasoning_parts.append(f"SPX VIX={market['vix']:.1f}, EM=${market['expected_move']:.0f}")
         if strikes.get('using_oracle'):
-            reasoning_parts.append(f"Oracle Strikes")
+            reasoning_parts.append(f"Prophet Strikes")
         elif strikes['using_gex']:
             reasoning_parts.append("GEX-Protected")
         else:
             reasoning_parts.append(f"{self.config.sd_multiplier} SD (Aggressive)")
 
-        # Oracle context for reasoning
-        if oracle:
-            reasoning_parts.append(f"Oracle: {oracle['advice']} ({oracle['confidence']:.0%})")
-            if oracle['win_probability']:
-                reasoning_parts.append(f"Win Prob: {oracle['win_probability']:.0%}")
-            if oracle['top_factors']:
-                top = oracle['top_factors'][0]
+        # Prophet context for reasoning
+        if prophet:
+            reasoning_parts.append(f"Prophet: {prophet['advice']} ({prophet['confidence']:.0%})")
+            if prophet['win_probability']:
+                reasoning_parts.append(f"Win Prob: {prophet['win_probability']:.0%}")
+            if prophet['top_factors']:
+                top = prophet['top_factors'][0]
                 reasoning_parts.append(f"Top Factor: {top['factor']}")
 
         reasoning = " | ".join(reasoning_parts)
 
         # SAMSON: Higher base confidence, easier boost
         confidence = 0.65  # Higher base (ANCHOR: 0.7 but stricter)
-        if oracle:
-            if oracle['advice'] == 'ENTER' and oracle['confidence'] > 0.5:  # Lower threshold
-                confidence = min(0.9, confidence + oracle['confidence'] * 0.25)
-            elif oracle['advice'] == 'EXIT':
+        if prophet:
+            if prophet['advice'] == 'ENTER' and prophet['confidence'] > 0.5:  # Lower threshold
+                confidence = min(0.9, confidence + prophet['confidence'] * 0.25)
+            elif prophet['advice'] == 'EXIT':
                 confidence -= 0.15  # Smaller penalty
 
         return IronCondorSignal(
@@ -904,7 +904,7 @@ class SignalGenerator:
             call_wall=market['call_wall'],
             put_wall=market['put_wall'],
             gex_regime=market['gex_regime'],
-            # Kronos GEX context
+            # Chronicles GEX context
             flip_point=market.get('flip_point', 0),
             net_gex=market.get('net_gex', 0),
             # Strike recommendations
@@ -923,12 +923,12 @@ class SignalGenerator:
             confidence=confidence,
             reasoning=reasoning,
             source=strikes.get('source', 'SD'),
-            # Oracle context (CRITICAL for audit)
-            oracle_win_probability=oracle['win_probability'] if oracle else 0,
-            oracle_advice=oracle['advice'] if oracle else '',
-            oracle_confidence=oracle['confidence'] if oracle else 0,
-            oracle_top_factors=oracle['top_factors'] if oracle else [],
-            oracle_suggested_sd=oracle['suggested_sd_multiplier'] if oracle else self.config.sd_multiplier,
-            oracle_use_gex_walls=oracle['use_gex_walls'] if oracle else False,
-            oracle_probabilities=oracle['probabilities'] if oracle else {},
+            # Prophet context (CRITICAL for audit)
+            oracle_win_probability=prophet['win_probability'] if prophet else 0,
+            oracle_advice=prophet['advice'] if prophet else '',
+            oracle_confidence=prophet['confidence'] if prophet else 0,
+            oracle_top_factors=prophet['top_factors'] if prophet else [],
+            oracle_suggested_sd=prophet['suggested_sd_multiplier'] if prophet else self.config.sd_multiplier,
+            oracle_use_gex_walls=prophet['use_gex_walls'] if prophet else False,
+            oracle_probabilities=prophet['probabilities'] if prophet else {},
         )

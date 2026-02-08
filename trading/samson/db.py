@@ -142,7 +142,7 @@ class SamsonDatabase:
 
                 conn.commit()
 
-                # Ensure new Oracle/Kronos context columns exist (migration)
+                # Ensure new Prophet/Chronicles context columns exist (migration)
                 self._ensure_oracle_columns(c)
                 conn.commit()
 
@@ -152,21 +152,21 @@ class SamsonDatabase:
 
     def _ensure_oracle_columns(self, cursor) -> None:
         """
-        Add new Oracle/Kronos context columns if they don't exist (migration).
+        Add new Prophet/Chronicles context columns if they don't exist (migration).
 
         These columns provide FULL audit trail for trade decisions.
         """
         columns_to_add = [
-            # Kronos GEX context
+            # Chronicles GEX context
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
-            # Oracle context
+            # Prophet context
             ("oracle_win_probability", "DECIMAL(8, 4)"),
             ("oracle_advice", "VARCHAR(20)"),
             ("oracle_top_factors", "TEXT"),
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
             # Migration 023: Feedback loop enhancements
-            ("oracle_prediction_id", "INTEGER"),  # Links to oracle_predictions.id
+            ("oracle_prediction_id", "INTEGER"),  # Links to prophet_predictions.id
         ]
 
         for col_name, col_type in columns_to_add:
@@ -180,9 +180,9 @@ class SamsonDatabase:
 
     def update_oracle_prediction_id(self, position_id: str, oracle_prediction_id: int) -> bool:
         """
-        Update the oracle_prediction_id for a position after Oracle prediction is stored.
+        Update the oracle_prediction_id for a position after Prophet prediction is stored.
 
-        Migration 023: This links the position to the specific oracle prediction for
+        Migration 023: This links the position to the specific prophet prediction for
         accurate outcome tracking in the feedback loop.
         """
         try:
@@ -266,10 +266,10 @@ class SamsonDatabase:
                         call_wall=float(row[17] or 0),
                         put_wall=float(row[18] or 0),
                         gex_regime=row[19] or "",
-                        # Kronos context
+                        # Chronicles context
                         flip_point=float(row[20] or 0),
                         net_gex=float(row[21] or 0),
-                        # Oracle context (FULL audit trail)
+                        # Prophet context (FULL audit trail)
                         oracle_confidence=float(row[22] or 0),
                         oracle_win_probability=float(row[23] or 0),
                         oracle_advice=row[24] or "",
@@ -323,10 +323,10 @@ class SamsonDatabase:
                     _to_python(pos.expected_move) if pos.expected_move else None,
                     _to_python(pos.call_wall) if pos.call_wall else None,
                     _to_python(pos.put_wall) if pos.put_wall else None, pos.gex_regime or None,
-                    # Kronos context
+                    # Chronicles context
                     _to_python(pos.flip_point) if pos.flip_point else None,
                     _to_python(pos.net_gex) if pos.net_gex else None,
-                    # Oracle context (FULL audit trail)
+                    # Prophet context (FULL audit trail)
                     _to_python(pos.oracle_confidence) if pos.oracle_confidence else None,
                     _to_python(pos.oracle_win_probability) if pos.oracle_win_probability else None,
                     pos.oracle_advice or None, pos.oracle_reasoning or None,
@@ -859,10 +859,10 @@ class SamsonDatabase:
                         call_wall=float(row[17]) if row[17] else 0,
                         put_wall=float(row[18]) if row[18] else 0,
                         gex_regime=row[19] or "",
-                        # Kronos context
+                        # Chronicles context
                         flip_point=float(row[20]) if row[20] else 0,
                         net_gex=float(row[21]) if row[21] else 0,
-                        # Oracle context (FULL audit trail)
+                        # Prophet context (FULL audit trail)
                         oracle_confidence=float(row[22]) if row[22] else 0,
                         oracle_win_probability=float(row[23]) if row[23] else 0,
                         oracle_advice=row[24] or "",

@@ -35,23 +35,23 @@ class TestGEXProtectedStrategy:
     def test_gex_calculator_import(self):
         """Test KronosGEXCalculator can be imported"""
         try:
-            from quant.kronos_gex_calculator import KronosGEXCalculator, GEXData
+            from quant.chronicles_gex_calculator import KronosGEXCalculator, GEXData
             assert KronosGEXCalculator is not None
             assert GEXData is not None
         except ImportError as e:
             pytest.skip(f"GEX calculator not available: {e}")
 
-    def test_oracle_advisor_import(self):
-        """Test OracleAdvisor can be imported"""
+    def test_prophet_advisor_import(self):
+        """Test ProphetAdvisor can be imported"""
         try:
-            from quant.oracle_advisor import (
-                OracleAdvisor, MarketContext, OraclePrediction,
+            from quant.prophet_advisor import (
+                ProphetAdvisor, MarketContext, OraclePrediction,
                 TradingAdvice, GEXRegime, BotName
             )
-            assert OracleAdvisor is not None
+            assert ProphetAdvisor is not None
             assert MarketContext is not None
         except ImportError as e:
-            pytest.skip(f"Oracle advisor not available: {e}")
+            pytest.skip(f"Prophet advisor not available: {e}")
 
     def test_gex_protected_strategy_import(self):
         """Test GEX-Protected strategy type is available in backtester"""
@@ -72,7 +72,7 @@ class TestGEXProtectedStrategy:
     def test_gex_data_class_structure(self):
         """Test GEXData dataclass has required fields"""
         try:
-            from quant.kronos_gex_calculator import GEXData
+            from quant.chronicles_gex_calculator import GEXData
 
             # Create test GEX data
             gex = GEXData(
@@ -103,7 +103,7 @@ class TestGEXProtectedStrategy:
 
     def test_oracle_market_context_structure(self):
         """Test MarketContext dataclass has required fields"""
-        from quant.oracle_advisor import MarketContext, GEXRegime
+        from quant.prophet_advisor import MarketContext, GEXRegime
 
         ctx = MarketContext(
             spot_price=5000.0,
@@ -120,7 +120,7 @@ class TestGEXProtectedStrategy:
 
     def test_oracle_prediction_structure(self):
         """Test OraclePrediction dataclass has required fields"""
-        from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+        from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
 
         pred = OraclePrediction(
             bot_name=BotName.FORTRESS,
@@ -226,14 +226,14 @@ class TestGEXProtectedStrategy:
         assert trade.gex_regime == 'POSITIVE'
 
 
-class TestOracleAdvisor:
-    """Test Oracle Advisor functionality"""
+class TestProphetAdvisor:
+    """Test Prophet Advisor functionality"""
 
     def test_oracle_fallback_prediction_no_model(self):
-        """Test Oracle provides fallback predictions when model not trained"""
-        from quant.oracle_advisor import get_oracle, MarketContext, GEXRegime
+        """Test Prophet provides fallback predictions when model not trained"""
+        from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
         # Create market context
         ctx = MarketContext(
@@ -244,17 +244,17 @@ class TestOracleAdvisor:
         )
 
         # Should work even without trained model
-        advice = oracle.get_ares_advice(ctx)
+        advice = prophet.get_ares_advice(ctx)
 
         assert advice is not None
         assert advice.win_probability > 0
         assert advice.suggested_risk_pct > 0
 
     def test_oracle_vix_impact_on_advice(self):
-        """Test Oracle adjusts advice based on VIX level"""
-        from quant.oracle_advisor import get_oracle, MarketContext, GEXRegime, TradingAdvice
+        """Test Prophet adjusts advice based on VIX level"""
+        from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime, TradingAdvice
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
         # Low VIX context
         low_vix_ctx = MarketContext(
@@ -272,8 +272,8 @@ class TestOracleAdvisor:
             day_of_week=2
         )
 
-        low_vix_advice = oracle.get_ares_advice(low_vix_ctx)
-        high_vix_advice = oracle.get_ares_advice(high_vix_ctx)
+        low_vix_advice = prophet.get_ares_advice(low_vix_ctx)
+        high_vix_advice = prophet.get_ares_advice(high_vix_ctx)
 
         # High VIX should suggest higher risk (more premium available)
         # or skip (if too volatile)
@@ -281,10 +281,10 @@ class TestOracleAdvisor:
         assert high_vix_advice is not None
 
     def test_oracle_gex_regime_impact(self):
-        """Test Oracle adjusts advice based on GEX regime"""
-        from quant.oracle_advisor import get_oracle, MarketContext, GEXRegime
+        """Test Prophet adjusts advice based on GEX regime"""
+        from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
         # Positive GEX (good for Iron Condors)
         pos_gex_ctx = MarketContext(
@@ -306,8 +306,8 @@ class TestOracleAdvisor:
             day_of_week=2
         )
 
-        pos_advice = oracle.get_ares_advice(pos_gex_ctx)
-        neg_advice = oracle.get_ares_advice(neg_gex_ctx)
+        pos_advice = prophet.get_ares_advice(pos_gex_ctx)
+        neg_advice = prophet.get_ares_advice(neg_gex_ctx)
 
         # Positive GEX should have higher win probability
         assert pos_advice.win_probability >= neg_advice.win_probability
@@ -326,36 +326,36 @@ class TestComparisonScript:
 
 
 class TestOracleClaudeIntegration:
-    """Test Oracle Claude AI integration"""
+    """Test Prophet Claude AI integration"""
 
     def test_oracle_claude_enhancer_import(self):
         """Test OracleClaudeEnhancer can be imported"""
         try:
-            from quant.oracle_advisor import OracleClaudeEnhancer, ClaudeAnalysis
+            from quant.prophet_advisor import OracleClaudeEnhancer, ClaudeAnalysis
             assert OracleClaudeEnhancer is not None
             assert ClaudeAnalysis is not None
         except ImportError as e:
-            pytest.skip(f"Oracle Claude not available: {e}")
+            pytest.skip(f"Prophet Claude not available: {e}")
 
     def test_oracle_claude_available_property(self):
-        """Test Oracle has claude_available property"""
-        from quant.oracle_advisor import get_oracle
+        """Test Prophet has claude_available property"""
+        from quant.prophet_advisor import get_oracle
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
         # Should have the property even if Claude is not configured
-        assert hasattr(oracle, 'claude_available')
-        assert isinstance(oracle.claude_available, bool)
+        assert hasattr(prophet, 'claude_available')
+        assert isinstance(prophet.claude_available, bool)
 
     def test_oracle_explain_prediction_fallback(self):
         """Test explain_prediction returns fallback when Claude unavailable"""
-        from quant.oracle_advisor import (
-            OracleAdvisor, MarketContext, GEXRegime,
+        from quant.prophet_advisor import (
+            ProphetAdvisor, MarketContext, GEXRegime,
             OraclePrediction, BotName, TradingAdvice
         )
 
-        # Create Oracle with Claude disabled
-        oracle = OracleAdvisor(enable_claude=False)
+        # Create Prophet with Claude disabled
+        prophet = ProphetAdvisor(enable_claude=False)
 
         context = MarketContext(
             spot_price=5000.0,
@@ -374,7 +374,7 @@ class TestOracleClaudeIntegration:
             reasoning="Test reasoning"
         )
 
-        explanation = oracle.explain_prediction(prediction, context)
+        explanation = prophet.explain_prediction(prediction, context)
 
         # Should return a string even without Claude
         assert isinstance(explanation, str)
@@ -383,9 +383,9 @@ class TestOracleClaudeIntegration:
 
     def test_oracle_get_claude_analysis_returns_none_when_disabled(self):
         """Test get_claude_analysis returns None when Claude disabled"""
-        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+        from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-        oracle = OracleAdvisor(enable_claude=False)
+        prophet = ProphetAdvisor(enable_claude=False)
 
         context = MarketContext(
             spot_price=5000.0,
@@ -394,16 +394,16 @@ class TestOracleClaudeIntegration:
             day_of_week=2
         )
 
-        analysis = oracle.get_claude_analysis(context)
+        analysis = prophet.get_claude_analysis(context)
         assert analysis is None
 
     def test_oracle_analyze_patterns_returns_error_when_disabled(self):
         """Test analyze_patterns returns error when Claude disabled"""
-        from quant.oracle_advisor import OracleAdvisor
+        from quant.prophet_advisor import ProphetAdvisor
 
-        oracle = OracleAdvisor(enable_claude=False)
+        prophet = ProphetAdvisor(enable_claude=False)
 
-        result = oracle.analyze_patterns()
+        result = prophet.analyze_patterns()
 
         assert result['success'] is False
         assert 'error' in result
@@ -411,9 +411,9 @@ class TestOracleClaudeIntegration:
 
     def test_oracle_ares_advice_with_claude_validation_disabled(self):
         """Test FORTRESS advice works with Claude validation explicitly disabled"""
-        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+        from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-        oracle = OracleAdvisor(enable_claude=False)
+        prophet = ProphetAdvisor(enable_claude=False)
 
         context = MarketContext(
             spot_price=5000.0,
@@ -426,7 +426,7 @@ class TestOracleClaudeIntegration:
         )
 
         # Should work without Claude
-        advice = oracle.get_ares_advice(
+        advice = prophet.get_ares_advice(
             context,
             use_gex_walls=True,
             use_claude_validation=False
@@ -438,7 +438,7 @@ class TestOracleClaudeIntegration:
 
     def test_claude_analysis_dataclass(self):
         """Test ClaudeAnalysis dataclass structure"""
-        from quant.oracle_advisor import ClaudeAnalysis
+        from quant.prophet_advisor import ClaudeAnalysis
 
         analysis = ClaudeAnalysis(
             analysis="Test analysis",
@@ -456,11 +456,11 @@ class TestOracleClaudeIntegration:
 
 
 class TestOracleConvenienceFunctions:
-    """Test Oracle convenience functions"""
+    """Test Prophet convenience functions"""
 
     def test_explain_oracle_advice_function(self):
         """Test explain_oracle_advice convenience function"""
-        from quant.oracle_advisor import (
+        from quant.prophet_advisor import (
             explain_oracle_advice, MarketContext, GEXRegime,
             OraclePrediction, BotName, TradingAdvice
         )
@@ -488,7 +488,7 @@ class TestOracleConvenienceFunctions:
 
     def test_analyze_kronos_patterns_function(self):
         """Test analyze_kronos_patterns convenience function"""
-        from quant.oracle_advisor import analyze_kronos_patterns
+        from quant.prophet_advisor import analyze_kronos_patterns
 
         # Should return error dict when Claude not available
         result = analyze_kronos_patterns({})

@@ -190,14 +190,14 @@ def main():
         print(f"  {r[1].strip():<12} {r[2]:>8} {r[3]:>6} {r[4]:>7}% ${r[5]:>11,.2f}{flag}")
 
     # =========================================================================
-    # 6. ORACLE CONFIDENCE ANALYSIS
+    # 6. PROPHET CONFIDENCE ANALYSIS
     # =========================================================================
-    section("6. ORACLE CONFIDENCE ANALYSIS")
+    section("6. PROPHET CONFIDENCE ANALYSIS")
 
     query = """
         SELECT
             CASE
-                WHEN oracle_confidence IS NULL THEN 'No Oracle'
+                WHEN oracle_confidence IS NULL THEN 'No Prophet'
                 WHEN oracle_confidence > 1 THEN 'BAD SCALE (>1)'
                 WHEN oracle_confidence >= 0.8 THEN '80-100%'
                 WHEN oracle_confidence >= 0.6 THEN '60-80%'
@@ -214,7 +214,7 @@ def main():
         WHERE status = 'closed' AND realized_pnl IS NOT NULL
         GROUP BY
             CASE
-                WHEN oracle_confidence IS NULL THEN 'No Oracle'
+                WHEN oracle_confidence IS NULL THEN 'No Prophet'
                 WHEN oracle_confidence > 1 THEN 'BAD SCALE (>1)'
                 WHEN oracle_confidence >= 0.8 THEN '80-100%'
                 WHEN oracle_confidence >= 0.6 THEN '60-80%'
@@ -379,7 +379,7 @@ def main():
     # =========================================================================
     section("12. KEY DIAGNOSTIC QUESTIONS")
 
-    # Check for bad oracle confidence scale
+    # Check for bad prophet confidence scale
     query = """
         SELECT COUNT(*) FROM gideon_positions
         WHERE oracle_confidence > 1 AND status = 'closed'
@@ -410,7 +410,7 @@ def main():
     bull_neutral = results[0] if results else (0, 0)
 
     print(f"""
-  Q1: Are there trades with BAD Oracle confidence (>1)?
+  Q1: Are there trades with BAD Prophet confidence (>1)?
       → {bad_conf} trades with confidence > 1.0 {'⚠️ SCALE BUG STILL EXISTS' if bad_conf > 0 else '✅ Fixed'}
 
   Q2: BEAR_PUT trades in NEUTRAL regime (wrong regime)?
@@ -440,7 +440,7 @@ def main():
   4. If Friday trades are losing:
      → Friday filter may not be active yet (pre-fix trades)
 
-  5. If Oracle confidence >1 exists:
+  5. If Prophet confidence >1 exists:
      → Scale bug still present in some code path
     """)
 

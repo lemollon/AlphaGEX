@@ -118,26 +118,26 @@ try:
 except ImportError:
     AutonomousAIReasoning = None
 
-# GEXIS Extended Thinking - deeper reasoning for complex decisions
+# COUNSELOR Extended Thinking - deeper reasoning for complex decisions
 GEXIS_THINKING_AVAILABLE = False
 try:
-    from ai.gexis_extended_thinking import ExtendedThinking
+    from ai.counselor_extended_thinking import ExtendedThinking
     GEXIS_THINKING_AVAILABLE = True
 except ImportError:
     ExtendedThinking = None
 
-# GEXIS Knowledge - context management for decisions
+# COUNSELOR Knowledge - context management for decisions
 GEXIS_KNOWLEDGE_AVAILABLE = False
 try:
-    from ai.gexis_knowledge import GEXISKnowledge
+    from ai.counselor_knowledge import GEXISKnowledge
     GEXIS_KNOWLEDGE_AVAILABLE = True
 except ImportError:
     GEXISKnowledge = None
 
-# GEXIS Learning Memory - persistent learning
+# COUNSELOR Learning Memory - persistent learning
 GEXIS_MEMORY_AVAILABLE = False
 try:
-    from ai.gexis_learning_memory import GEXISLearningMemory
+    from ai.counselor_learning_memory import GEXISLearningMemory
     GEXIS_MEMORY_AVAILABLE = True
 except ImportError:
     GEXISLearningMemory = None
@@ -273,7 +273,7 @@ class OrderExecutor:
                 net_gex=signal.net_gex,
                 oracle_confidence=signal.oracle_confidence,
                 oracle_advice=signal.oracle_advice,
-                ml_direction=signal.oracle_direction,  # Use oracle direction since ML doesn't predict direction
+                ml_direction=signal.oracle_direction,  # Use prophet direction since ML doesn't predict direction
                 ml_confidence=signal.ml_win_probability,  # Use ML win probability as confidence proxy
                 ml_model_name=signal.ml_model_name,
                 ml_win_probability=signal.ml_win_probability,
@@ -376,7 +376,7 @@ class OrderExecutor:
                 net_gex=signal.net_gex,
                 oracle_confidence=signal.oracle_confidence,
                 oracle_advice=signal.oracle_advice,
-                ml_direction=signal.oracle_direction,  # Use oracle direction since ML doesn't predict direction
+                ml_direction=signal.oracle_direction,  # Use prophet direction since ML doesn't predict direction
                 ml_confidence=signal.ml_win_probability,  # Use ML win probability as confidence proxy
                 ml_model_name=signal.ml_model_name,
                 ml_win_probability=signal.ml_win_probability,

@@ -196,7 +196,7 @@ export default function ActivityTimeline({ activities, maxDisplay = 10, isLoadin
                       )}
                       {activity.details.oracle_advice && (
                         <div className="flex items-center gap-2">
-                          <span className="text-gray-400">Oracle:</span>
+                          <span className="text-gray-400">Prophet:</span>
                           <span className={activity.details.oracle_advice === 'SKIP_TODAY' ? 'text-red-400' : 'text-green-400'}>
                             {typeof activity.details.oracle_advice === 'object' ? JSON.stringify(activity.details.oracle_advice) : activity.details.oracle_advice}
                           </span>

@@ -1960,7 +1960,7 @@ async def get_decision_logs(
     Get decision logs for all bots or a specific bot.
 
     Args:
-        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, PROPHET)
         start_date: Filter from date (YYYY-MM-DD)
         end_date: Filter to date (YYYY-MM-DD)
         decision_type: Filter by type (ENTRY_SIGNAL, STAY_FLAT, etc.)
@@ -2045,7 +2045,7 @@ async def get_decision_summary(bot: str = None, days: int = 7):
     Get summary statistics for bot decisions.
 
     Args:
-        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, PROPHET)
         days: Number of days to look back (default 7)
 
     Returns:
@@ -2076,7 +2076,7 @@ async def get_recent_decision_logs(bot: str = None, limit: int = 20):
     Get recent decisions for dashboard display.
 
     Args:
-        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, PROPHET)
         limit: Number of recent decisions (default 20)
 
     Returns simplified decision records for quick viewing.
@@ -2108,7 +2108,7 @@ async def get_all_bots_status():
     Returns status for all 10 bots:
     - LIVE: FORTRESS, SOLOMON, ANCHOR
     - PAPER: SAMSON, GIDEON, JUBILEE
-    - LEGACY/MANUAL: LAZARUS, CORNERSTONE, SHEPHERD, ORACLE
+    - LEGACY/MANUAL: LAZARUS, CORNERSTONE, SHEPHERD, PROPHET
     """
     try:
         from trading.decision_logger import get_bot_decision_summary
@@ -2124,7 +2124,7 @@ async def get_all_bots_status():
                 "schedule": "8:30 AM - 3:30 PM CT, every 5 min",
                 "strategy": "0DTE Iron Condor at 1 SD",
                 "symbol": "SPY",
-                "data_sources": ["VIX", "Oracle", "GEX Regime"]
+                "data_sources": ["VIX", "Prophet", "GEX Regime"]
             },
             "SOLOMON": {
                 "name": "SOLOMON",
@@ -2135,7 +2135,7 @@ async def get_all_bots_status():
                 "schedule": "8:35 AM - 2:30 PM CT, every 5 min",
                 "strategy": "GEX-based directional spreads",
                 "symbol": "SPY",
-                "data_sources": ["GEX Walls", "Oracle", "VIX"]
+                "data_sources": ["GEX Walls", "Prophet", "VIX"]
             },
             "ANCHOR": {
                 "name": "ANCHOR",
@@ -2146,7 +2146,7 @@ async def get_all_bots_status():
                 "schedule": "Every 5 min during market hours",
                 "strategy": "SPX Iron Condor, conservative strikes",
                 "symbol": "SPX",
-                "data_sources": ["VIX", "Oracle", "Expected Move"]
+                "data_sources": ["VIX", "Prophet", "Expected Move"]
             },
 
             # === PAPER TRADING BOTS ===
@@ -2159,7 +2159,7 @@ async def get_all_bots_status():
                 "schedule": "Multiple trades daily, 30-min cooldown",
                 "strategy": "Aggressive SPX IC, 15% risk/trade",
                 "symbol": "SPX",
-                "data_sources": ["VIX", "Oracle", "GEX"]
+                "data_sources": ["VIX", "Prophet", "GEX"]
             },
             "GIDEON": {
                 "name": "GIDEON",
@@ -2170,7 +2170,7 @@ async def get_all_bots_status():
                 "schedule": "Every 5 min during market hours",
                 "strategy": "Aggressive directional, relaxed GEX filters",
                 "symbol": "SPY",
-                "data_sources": ["GEX", "Oracle", "VIX"]
+                "data_sources": ["GEX", "Prophet", "VIX"]
             },
             "JUBILEE": {
                 "name": "JUBILEE",
@@ -2181,7 +2181,7 @@ async def get_all_bots_status():
                 "schedule": "Box: Daily 9:30 AM CT | IC: Every 10 min",
                 "strategy": "Borrow via box spreads, trade ICs with borrowed capital",
                 "symbol": "SPX",
-                "data_sources": ["Fed Funds Rate", "Oracle (ANCHOR rules)", "Tradier Production"]
+                "data_sources": ["Fed Funds Rate", "Prophet (ANCHOR rules)", "Tradier Production"]
             },
 
             # === LEGACY / PARTIAL IMPLEMENTATION ===
@@ -2218,8 +2218,8 @@ async def get_all_bots_status():
                 "symbol": "Various",
                 "data_sources": []
             },
-            "ORACLE": {
-                "name": "ORACLE",
+            "PROPHET": {
+                "name": "PROPHET",
                 "description": "ML Advisory System",
                 "type": "advisory",
                 "mode": "N/A",
@@ -2227,7 +2227,7 @@ async def get_all_bots_status():
                 "schedule": "On-demand",
                 "strategy": "ML-based trade recommendations for all bots",
                 "symbol": "N/A",
-                "data_sources": ["SAGE ML", "VIX", "GEX", "Historical outcomes"]
+                "data_sources": ["WISDOM ML", "VIX", "GEX", "Historical outcomes"]
             }
         }
 

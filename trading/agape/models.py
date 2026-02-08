@@ -43,7 +43,7 @@ class AgapeConfig:
     - High position limits for frequent trading
     - Short cooldown to avoid missing opportunities
     - Low confidence threshold to trade on any signal
-    - Oracle advisory only (not blocking)
+    - Prophet advisory only (not blocking)
     - No-loss trailing to let winners run
     - SAR to reverse losing positions
     """
@@ -99,8 +99,8 @@ class AgapeConfig:
     min_ls_ratio_extreme: float = 1.1       # Lower extreme threshold
     min_liquidation_proximity_pct: float = 5.0  # Wider liquidation zone
 
-    # Oracle integration - ADVISORY ONLY (not blocking)
-    require_oracle_approval: bool = False   # Don't let Oracle block trades
+    # Prophet integration - ADVISORY ONLY (not blocking)
+    require_oracle_approval: bool = False   # Don't let Prophet block trades
     min_oracle_win_probability: float = 0.35  # Lower threshold when advisory
 
     # Cooldown - AGGRESSIVE
@@ -175,7 +175,7 @@ class AgapeSignal:
     reasoning: str = ""
     source: str = "agape"
 
-    # Oracle context (audit trail)
+    # Prophet context (audit trail)
     oracle_advice: str = "UNKNOWN"
     oracle_win_probability: float = 0.0
     oracle_confidence: float = 0.0
@@ -254,7 +254,7 @@ class AgapePosition:
     crypto_gex_at_entry: float
     crypto_gex_regime_at_entry: str
 
-    # Oracle context (full audit)
+    # Prophet context (full audit)
     oracle_advice: str
     oracle_win_probability: float
     oracle_confidence: float

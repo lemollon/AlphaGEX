@@ -1,10 +1,10 @@
 """
-Shared Gamma Engine - Common calculations for ARGUS and HYPERION
+Shared Gamma Engine - Common calculations for WATCHTOWER and GLORY
 ================================================================
 
 Provides shared gamma calculation logic used by both:
-- ARGUS (0DTE gamma visualization)
-- HYPERION (Weekly gamma visualization)
+- WATCHTOWER (0DTE gamma visualization)
+- GLORY (Weekly gamma visualization)
 
 This module reduces code duplication and ensures consistent calculations
 across both systems.
@@ -67,7 +67,7 @@ class AlertPriority(Enum):
 
 @dataclass
 class StrikeData:
-    """Data for a single strike - shared between Argus and Hyperion"""
+    """Data for a single strike - shared between Watchtower and Glory"""
     strike: float
     net_gamma: float
     call_gamma: float = 0.0
@@ -257,7 +257,7 @@ class MarketStructureSignals:
 
 class SharedGammaEngine:
     """
-    Shared gamma calculation engine used by both ARGUS and HYPERION.
+    Shared gamma calculation engine used by both WATCHTOWER and GLORY.
 
     Provides:
     - ROC calculations (1m, 5m, 30m, 1hr, 4hr, trading day)

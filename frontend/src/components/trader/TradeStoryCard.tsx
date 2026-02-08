@@ -46,7 +46,7 @@ export interface TradeDecision {
     reasoning?: string
   }
 
-  // Oracle advice
+  // Prophet advice
   oracle_advice?: {
     advice: string
     win_probability: number
@@ -155,7 +155,7 @@ function OverrideBadge({ details }: { details: TradeDecision['override_details']
         </div>
         <div>
           <span className="text-gray-500">Override By:</span>
-          <span className="ml-2 text-purple-400">{details.override_by || 'Oracle'}</span>
+          <span className="ml-2 text-purple-400">{details.override_by || 'Prophet'}</span>
         </div>
         {details.override_reason && (
           <div className="col-span-2">
@@ -171,9 +171,9 @@ function OverrideBadge({ details }: { details: TradeDecision['override_details']
 // Signal Sources Display
 function SignalSourcesDisplay({ decision }: { decision: TradeDecision }) {
   const ml = decision.ml_predictions
-  const oracle = decision.oracle_advice
+  const prophet = decision.oracle_advice
 
-  if (!ml && !oracle) return null
+  if (!ml && !prophet) return null
 
   return (
     <div className="grid grid-cols-2 gap-3 mt-3">
@@ -209,34 +209,34 @@ function SignalSourcesDisplay({ decision }: { decision: TradeDecision }) {
         </div>
       )}
 
-      {/* Oracle Signal */}
-      {oracle && (
+      {/* Prophet Signal */}
+      {prophet && (
         <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
           <div className="flex items-center gap-2 mb-2">
             <Zap className="w-4 h-4 text-purple-400" />
-            <span className="text-purple-400 font-medium text-sm">Oracle</span>
+            <span className="text-purple-400 font-medium text-sm">Prophet</span>
           </div>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
               <span className="text-gray-500">Advice:</span>
-              <span className={oracle.advice === 'TRADE' ? 'text-green-400' : 'text-yellow-400'}>{oracle.advice}</span>
+              <span className={prophet.advice === 'TRADE' ? 'text-green-400' : 'text-yellow-400'}>{prophet.advice}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Confidence:</span>
-              <span className="text-white">{((oracle.confidence || 0) * 100).toFixed(0)}%</span>
+              <span className="text-white">{((prophet.confidence || 0) * 100).toFixed(0)}%</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Win Prob:</span>
-              <span className={oracle.win_probability >= 0.55 ? 'text-green-400' : 'text-red-400'}>
-                {((oracle.win_probability || 0) * 100).toFixed(0)}%
+              <span className={prophet.win_probability >= 0.55 ? 'text-green-400' : 'text-red-400'}>
+                {((prophet.win_probability || 0) * 100).toFixed(0)}%
               </span>
             </div>
           </div>
-          {oracle.top_factors && oracle.top_factors.length > 0 && (
+          {prophet.top_factors && prophet.top_factors.length > 0 && (
             <div className="mt-2 pt-2 border-t border-purple-500/20">
               <span className="text-gray-500 text-xs">Top Factors:</span>
               <div className="mt-1 space-y-0.5">
-                {oracle.top_factors.slice(0, 3).map((f, i) => (
+                {prophet.top_factors.slice(0, 3).map((f, i) => (
                   <div key={i} className="text-xs text-gray-400 flex justify-between">
                     <span>{Array.isArray(f) ? f[0] : f.factor}</span>
                     <span className="text-purple-300">{Array.isArray(f) ? f[1].toFixed(2) : f.importance.toFixed(2)}</span>
@@ -482,7 +482,7 @@ export default function TradeStoryCard({
                 {/* Signal source badge */}
                 {decision.signal_source && (
                   <span className={`text-xs px-2 py-0.5 rounded ${
-                    decision.signal_source.includes('Oracle')
+                    decision.signal_source.includes('Prophet')
                       ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
                       : decision.signal_source.includes('ML')
                         ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30'
@@ -565,7 +565,7 @@ export default function TradeStoryCard({
             )}
           </div>
 
-          {/* Signal Sources - ML vs Oracle */}
+          {/* Signal Sources - ML vs Prophet */}
           <SignalSourcesDisplay decision={decision} />
 
           {/* Override Details */}

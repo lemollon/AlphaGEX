@@ -130,7 +130,7 @@ class ProductionVerifier:
         print("🦾 BOT SYSTEMS")
         self.check("FORTRESS status", "/api/fortress/status")
         self.check("SOLOMON status", "/api/solomon/status")
-        self.check("APOLLO status", "/api/apollo/status")
+        self.check("DISCERNMENT status", "/api/discernment/status")
         print()
 
         # 5. Core API Routes

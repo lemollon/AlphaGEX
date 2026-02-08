@@ -4,7 +4,7 @@ Comprehensive Logs API Routes
 Provides unified access to ALL logging tables in AlphaGEX:
 - Trading Decisions (trading_decisions)
 - ML Logs (ml_decision_logs, ml_predictions, fortress_ml_outcomes, spx_wheel_ml_outcomes)
-- Oracle Predictions (oracle_predictions)
+- Prophet Predictions (prophet_predictions)
 - Psychology Analysis (psychology_analysis, pattern_learning)
 - System Logs (autonomous_trader_logs, spx_debug_logs, data_collection_log)
 - AI Analysis (ai_analysis_history, ai_predictions, ai_performance, ai_recommendations)
@@ -50,7 +50,7 @@ async def get_all_logs_summary(days: int = 7):
             ('autonomous_trader_logs', 'Autonomous Trader', 'timestamp'),
             ('ml_decision_logs', 'ML Decision Logs', 'timestamp'),
             ('ml_predictions', 'ML Predictions', 'timestamp'),
-            ('oracle_predictions', 'Oracle Predictions', 'created_at'),
+            ('prophet_predictions', 'Prophet Predictions', 'created_at'),
             ('fortress_ml_outcomes', 'FORTRESS ML Outcomes', 'trade_date'),
             ('spx_wheel_ml_outcomes', 'SPX Wheel ML', 'trade_date'),
             ('psychology_analysis', 'Psychology Analysis', 'timestamp'),
@@ -230,16 +230,16 @@ async def get_ml_logs(
 
 
 # ============================================================================
-# ORACLE PREDICTIONS
+# PROPHET PREDICTIONS
 # ============================================================================
 
-@router.get("/oracle")
-async def get_oracle_predictions(
+@router.get("/prophet")
+async def get_prophet_predictions(
     limit: int = Query(50, le=500),
     bot_name: Optional[str] = None,
     days: int = 30
 ):
-    """Get Oracle ML predictions with outcomes."""
+    """Get Prophet ML predictions with outcomes."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -247,7 +247,7 @@ async def get_oracle_predictions(
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'oracle_predictions'
+                WHERE table_name = 'prophet_predictions'
             )
         """)
         if not cursor.fetchone()[0]:
@@ -266,7 +266,7 @@ async def get_oracle_predictions(
             SELECT id, trade_date, bot_name, advice, win_probability, confidence,
                    suggested_risk_pct, reasoning, model_version, top_factors,
                    actual_outcome, actual_pnl, created_at
-            FROM oracle_predictions
+            FROM prophet_predictions
             {where_sql}
             ORDER BY created_at DESC
             LIMIT %s
@@ -288,7 +288,7 @@ async def get_oracle_predictions(
                 COUNT(*) as total,
                 SUM(CASE WHEN actual_outcome = 'WIN' THEN 1 ELSE 0 END) as wins,
                 AVG(confidence) as avg_confidence
-            FROM oracle_predictions
+            FROM prophet_predictions
             WHERE actual_outcome IS NOT NULL
         """)
         stats = cursor.fetchone()
@@ -312,7 +312,7 @@ async def get_oracle_predictions(
     except Exception as e:
         cursor.close()
         conn.close()
-        logger.error(f"Error getting Oracle predictions: {e}")
+        logger.error(f"Error getting Prophet predictions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -766,7 +766,7 @@ async def export_logs(
     log_type options:
     - trading_decisions
     - ml_logs
-    - oracle
+    - prophet
     - psychology
     - autonomous
     - ai_recommendations

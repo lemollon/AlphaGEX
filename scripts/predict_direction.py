@@ -28,7 +28,7 @@ load_dotenv()
 
 def get_current_gex(ticker: str = 'SPY') -> dict:
     """Fetch current GEX from database or calculate from ORAT"""
-    from quant.kronos_gex_calculator import KronosGEXCalculator
+    from quant.chronicles_gex_calculator import KronosGEXCalculator
 
     calc = KronosGEXCalculator(ticker)
     today = datetime.now().strftime('%Y-%m-%d')

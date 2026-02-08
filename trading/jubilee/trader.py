@@ -905,7 +905,7 @@ class JubileeICTrader:
     - Uses borrowed capital from box spreads
     - All returns are tracked against specific box positions
     - Conservative sizing to protect borrowed capital
-    - Requires Oracle approval before trading
+    - Requires Prophet approval before trading
     """
 
     def __init__(self, config: Optional[PrometheusICConfig] = None):
@@ -1416,7 +1416,7 @@ class JubileeICTrader:
             # Status and timing
             'status': position.status.value,
             'open_time': position.open_time.isoformat() if position.open_time else None,
-            # Oracle details - FULL reasoning for transparency
+            # Prophet details - FULL reasoning for transparency
             'oracle_confidence': position.oracle_confidence_at_entry,
             'oracle_reasoning': position.oracle_reasoning,
             # Market context at entry

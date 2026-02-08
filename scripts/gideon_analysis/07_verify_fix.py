@@ -2,7 +2,7 @@
 """
 GIDEON Fix Verification Script
 ==============================
-Verifies that the ML → Oracle → GIDEON direction chain is working correctly.
+Verifies that the ML → Prophet → GIDEON direction chain is working correctly.
 
 Run this after deploying the fix to check:
 1. Trades are being generated
@@ -71,12 +71,12 @@ def run_verification():
 
         if total_trades == 0:
             print("\n  ⚠️  WARNING: No trades since fix date!")
-            print("      Check if Oracle is returning TRADE signals")
+            print("      Check if Prophet is returning TRADE signals")
     else:
         print(f"\n  ⚠️  NO TRADES since {FIX_DATE}")
         print("      This could mean:")
         print("      - Bot hasn't run yet")
-        print("      - Oracle is blocking all trades")
+        print("      - Prophet is blocking all trades")
         print("      - Market was closed")
 
     # 2. DIRECTION MISMATCH CHECK
@@ -179,9 +179,9 @@ def run_verification():
         period, trades, wins, wr, pnl, mismatches = row
         print(f"  {period:<10} {trades or 0:>8} {wins or 0:>6} {wr or 0:>7.1f}% ${pnl or 0:>13,.2f} {mismatches or 0:>12}")
 
-    # 4. CHECK ORACLE DIRECTION SOURCE
+    # 4. CHECK PROPHET DIRECTION SOURCE
     print("\n" + "=" * 70)
-    print("4. ORACLE DIRECTION SOURCE CHECK")
+    print("4. PROPHET DIRECTION SOURCE CHECK")
     print("=" * 70)
 
     cur.execute("""
@@ -200,8 +200,8 @@ def run_verification():
 
     rows = cur.fetchall()
     if rows:
-        print(f"\n  Oracle vs ML direction alignment:")
-        print(f"  {'Oracle Dir':<12} {'ML Dir':<12} {'Trades':>8} {'Status':<12}")
+        print(f"\n  Prophet vs ML direction alignment:")
+        print(f"  {'Prophet Dir':<12} {'ML Dir':<12} {'Trades':>8} {'Status':<12}")
         print(f"  {'-'*12} {'-'*12} {'-'*8} {'-'*12}")
 
         aligned = 0
@@ -215,12 +215,12 @@ def run_verification():
             print(f"  {oracle_dir:<12} {ml_dir:<12} {trades:>8} {status}")
 
         if different == 0 and aligned > 0:
-            print(f"\n  ✅ SUCCESS: Oracle direction matches ML in all {aligned} trades!")
+            print(f"\n  ✅ SUCCESS: Prophet direction matches ML in all {aligned} trades!")
             print("      The fix is working correctly.")
         elif aligned > 0:
-            print(f"\n  ⚠️  {different} trades where Oracle != ML direction")
+            print(f"\n  ⚠️  {different} trades where Prophet != ML direction")
     else:
-        print(f"\n  No trades with both Oracle and ML direction since {FIX_DATE}")
+        print(f"\n  No trades with both Prophet and ML direction since {FIX_DATE}")
 
     # 5. LAST 5 TRADES DETAIL
     print("\n" + "=" * 70)
@@ -242,7 +242,7 @@ def run_verification():
 
     rows = cur.fetchall()
     if rows:
-        print(f"\n  {'Entry Time':<20} {'Spread':<12} {'ML Dir':<10} {'Oracle':<10} {'P&L':>10} {'Close Reason':<20}")
+        print(f"\n  {'Entry Time':<20} {'Spread':<12} {'ML Dir':<10} {'Prophet':<10} {'P&L':>10} {'Close Reason':<20}")
         print(f"  {'-'*20} {'-'*12} {'-'*10} {'-'*10} {'-'*10} {'-'*20}")
         for row in rows:
             entry, spread, ml_dir, oracle_dir, pnl, reason = row

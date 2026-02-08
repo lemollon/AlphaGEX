@@ -806,7 +806,7 @@ class PrometheusICSignal:
     margin_required: float        # Margin for this position
     capital_at_risk: float        # Max loss × contracts
 
-    # Oracle/SAGE recommendation
+    # Prophet/WISDOM recommendation
     oracle_approved: bool
     oracle_confidence: float
     oracle_reasoning: str
@@ -922,7 +922,7 @@ class PrometheusICPosition:
     vix_at_entry: float = 0.0
     gamma_regime_at_entry: str = ""
 
-    # Oracle decision context
+    # Prophet decision context
     oracle_confidence_at_entry: float = 0.0
     oracle_reasoning: str = ""
 
@@ -1022,8 +1022,8 @@ class PrometheusICConfig:
     profit_target_pct: float = 50.0 # Close if profit = 50% of credit
     time_stop_dte: int = 0          # Close at expiration
 
-    # Oracle integration - EXACT SAME thresholds as ANCHOR
-    # Uses get_anchor_advice() - same Oracle endpoint as ANCHOR
+    # Prophet integration - EXACT SAME thresholds as ANCHOR
+    # Uses get_anchor_advice() - same Prophet endpoint as ANCHOR
     require_oracle_approval: bool = True
     min_oracle_confidence: float = 0.3   # Same as ANCHOR min_ic_suitability
     min_win_probability: float = 0.42    # Same as ANCHOR (42%)
@@ -1038,7 +1038,7 @@ class PrometheusICConfig:
     exit_by: str = "14:50"        # 2:50 PM CT (same as ANCHOR force_exit)
 
     # Cooldown - MATCH ANCHOR exactly (NO COOLDOWNS)
-    # ANCHOR has no cooldown logic - it trades as often as Oracle approves (every 5 min)
+    # ANCHOR has no cooldown logic - it trades as often as Prophet approves (every 5 min)
     cooldown_after_loss_minutes: int = 0   # No pause after loss (like ANCHOR)
     cooldown_after_win_minutes: int = 0    # No pause after win (like ANCHOR)
     cooldown_minutes_after_trade: int = 0  # No cooldown between trades (like ANCHOR)
@@ -1078,7 +1078,7 @@ class PrometheusICConfig:
                 'profit_target_pct': self.profit_target_pct,
                 'time_stop_dte': self.time_stop_dte,
             },
-            'oracle': {
+            'prophet': {
                 'require_approval': self.require_oracle_approval,
                 'min_confidence': self.min_oracle_confidence,
                 'min_win_probability': self.min_win_probability,
@@ -1134,10 +1134,10 @@ class PrometheusICConfig:
             config.profit_target_pct = data['risk'].get('profit_target_pct', 50.0)
             config.time_stop_dte = data['risk'].get('time_stop_dte', 0)
 
-        if 'oracle' in data:
-            config.require_oracle_approval = data['oracle'].get('require_approval', True)
-            config.min_oracle_confidence = data['oracle'].get('min_confidence', 0.6)
-            config.min_win_probability = data['oracle'].get('min_win_probability', 0.50)
+        if 'prophet' in data:
+            config.require_oracle_approval = data['prophet'].get('require_approval', True)
+            config.min_oracle_confidence = data['prophet'].get('min_confidence', 0.6)
+            config.min_win_probability = data['prophet'].get('min_win_probability', 0.50)
 
         return config
 

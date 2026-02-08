@@ -9,7 +9,7 @@ work together correctly:
 2. Proverbs Integration (safety layer)
 3. Ensemble Weighting (market context)
 4. ML Advisor (primary decision)
-5. Oracle Adaptation (bot-specific)
+5. Prophet Adaptation (bot-specific)
 6. Gap Implementations (1, 2, 5, 6, 9, 10)
 
 Author: AlphaGEX Quant Team
@@ -361,26 +361,26 @@ class TestGap10EquityCompoundScaler:
 
 
 # =============================================================================
-# ORACLE OMEGA MODE TESTS
+# PROPHET OMEGA MODE TESTS
 # =============================================================================
 
 class TestOracleOmegaMode:
-    """Tests for Oracle OMEGA mode (trust ML Advisor)"""
+    """Tests for Prophet OMEGA mode (trust ML Advisor)"""
 
     def test_oracle_omega_mode_initialization(self):
-        """Test Oracle can be initialized in OMEGA mode"""
-        from quant.oracle_advisor import OracleAdvisor
+        """Test Prophet can be initialized in OMEGA mode"""
+        from quant.prophet_advisor import ProphetAdvisor
 
-        oracle = OracleAdvisor(enable_claude=False, omega_mode=True)
+        prophet = ProphetAdvisor(enable_claude=False, omega_mode=True)
 
-        assert oracle.omega_mode is True
+        assert prophet.omega_mode is True
 
     def test_oracle_omega_mode_disables_vix_skip(self):
         """Test that OMEGA mode disables VIX skip rules"""
         # This test verifies the code path, not the full prediction
-        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+        from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-        oracle = OracleAdvisor(enable_claude=False, omega_mode=True)
+        prophet = ProphetAdvisor(enable_claude=False, omega_mode=True)
 
         # Create high VIX context that would normally trigger skip
         context = MarketContext(
@@ -392,7 +392,7 @@ class TestOracleOmegaMode:
 
         # In OMEGA mode, VIX skip rules should be bypassed
         # The test verifies the mode is set correctly
-        assert oracle.omega_mode is True
+        assert prophet.omega_mode is True
 
 
 # =============================================================================

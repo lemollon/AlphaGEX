@@ -36,7 +36,7 @@ This document tracks the migration of all AlphaGEX pages from useState/useEffect
 | /gamma | ✅ Done | useVIX (VIX data), existing cache | VIX data now via SWR, gamma uses WebSocket |
 | /gex | ⏳ Pending | Hooks available | useGEX, useGEXLevels, useGEXHistory |
 | /ml | ⏳ Pending | Hooks available | useMLStatus, useMLFeatureImportance |
-| /oracle | ✅ Done | useOracleStatus, useOracleLogs, useOraclePredictions | Oracle AI predictions with caching |
+| /prophet | ✅ Done | useProphetStatus, useOracleLogs, useOraclePredictions | Prophet AI predictions with caching |
 
 ### System Pages
 | Page | Status | Hooks Used | Notes |
@@ -77,8 +77,8 @@ This document tracks the migration of all AlphaGEX pages from useState/useEffect
 - `useATHENAStatus()`, `useATHENAPositions()`, `useATHENASignals()`, `useATHENAPerformance()`, `useATHENAOracleAdvice()`, `useATHENAMLSignal()`, `useATHENALogs()`
 - `useTraderStatus()`, `useTraderPerformance()`, `useTraderPositions()`
 
-### Oracle & ML Hooks
-- `useOracleStatus()`, `useOracleLogs()`, `useOraclePredictions()`
+### Prophet & ML Hooks
+- `useProphetStatus()`, `useOracleLogs()`, `useOraclePredictions()`
 - `useMLStatus()`, `useMLFeatureImportance()`, `useMLDataQuality()`, `useMLStrategy()`
 
 ### System Hooks
@@ -143,7 +143,7 @@ Run: `npx playwright test swr-caching.spec.ts`
 2. **/vix** - VIX dashboard with hedge signals
 3. **/ares** - ARES Iron Condor bot
 4. **/solomon** - SOLOMON directional spread bot
-5. **/oracle** - Oracle AI predictions
+5. **/prophet** - Prophet AI predictions
 6. **/logs** - Master logs dashboard
 7. **/gamma** - VIX data via SWR (gamma intelligence uses WebSocket)
 

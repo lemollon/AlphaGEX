@@ -1,9 +1,9 @@
 'use client'
 
 /**
- * HYPERION Enhanced Features Components
+ * GLORY Enhanced Features Components
  *
- * Additional visualization components for HYPERION (Weekly Gamma):
+ * Additional visualization components for GLORY (Weekly Gamma):
  * - Weekly Setup Scanner
  * - Multi-Day Gamma Trend
  * - OPEX Week Analysis
@@ -103,7 +103,7 @@ export function WeeklySetupScanner({ symbol = 'AAPL' }: { symbol?: string }) {
   useEffect(() => {
     const fetchSetups = async () => {
       try {
-        const response = await api.get(`/api/hyperion/weekly-setups?symbol=${symbol}`)
+        const response = await api.get(`/api/glory/weekly-setups?symbol=${symbol}`)
         if (response.data?.success && response.data?.data?.setups) {
           setSetups(response.data.data.setups)
         }
@@ -232,7 +232,7 @@ export function GammaTrend({ symbol = 'AAPL', days = 5 }: { symbol?: string, day
   useEffect(() => {
     const fetchTrend = async () => {
       try {
-        const response = await api.get(`/api/hyperion/gamma-trend?symbol=${symbol}&days=${days}`)
+        const response = await api.get(`/api/glory/gamma-trend?symbol=${symbol}&days=${days}`)
         if (response.data?.success) {
           setTrend(response.data.data)
         }
@@ -362,7 +362,7 @@ export function OPEXAnalysisPanel({ symbol = 'AAPL' }: { symbol?: string }) {
   useEffect(() => {
     const fetchOpex = async () => {
       try {
-        const response = await api.get(`/api/hyperion/opex-analysis?symbol=${symbol}`)
+        const response = await api.get(`/api/glory/opex-analysis?symbol=${symbol}`)
         if (response.data?.success) {
           setOpex(response.data.data)
         }
@@ -501,7 +501,7 @@ export function OPEXAnalysisPanel({ symbol = 'AAPL' }: { symbol?: string }) {
 }
 
 // ============================================================================
-// Combined Panel for HYPERION Page
+// Combined Panel for GLORY Page
 // ============================================================================
 
 export function HyperionEnhancedPanel({ symbol = 'AAPL' }: { symbol?: string }) {

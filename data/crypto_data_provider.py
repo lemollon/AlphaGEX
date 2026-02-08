@@ -169,7 +169,7 @@ class CryptoGEX:
 class CryptoMarketSnapshot:
     """Complete market microstructure snapshot for ETH.
 
-    This is the crypto equivalent of ARGUS's GammaSnapshot.
+    This is the crypto equivalent of WATCHTOWER's GammaSnapshot.
     """
     symbol: str
     spot_price: float
@@ -194,7 +194,7 @@ class CryptoMarketSnapshot:
     # Crypto GEX (→ Direct GEX)
     crypto_gex: Optional[CryptoGEX] = None
 
-    # Derived signals (equivalent to ARGUS MarketStructureSignals)
+    # Derived signals (equivalent to WATCHTOWER MarketStructureSignals)
     leverage_regime: str = "UNKNOWN"        # OVERLEVERAGED / BALANCED / DELEVERAGED
     directional_bias: str = "NEUTRAL"       # BULLISH / BEARISH / NEUTRAL
     volatility_regime: str = "NORMAL"       # LOW / NORMAL / ELEVATED / HIGH / EXTREME
@@ -599,7 +599,7 @@ class CryptoDataProvider:
     def get_snapshot(self, symbol: str = "ETH") -> CryptoMarketSnapshot:
         """Get complete market microstructure snapshot.
 
-        This is the main entry point - equivalent to ARGUS's process_options_chain().
+        This is the main entry point - equivalent to WATCHTOWER's process_options_chain().
         Returns a CryptoMarketSnapshot with all signals derived.
         """
         now = time.time()
@@ -767,7 +767,7 @@ class CryptoDataProvider:
     def _derive_signals(self, snapshot: CryptoMarketSnapshot):
         """Derive combined trading signals from all data sources.
 
-        This is the equivalent of ARGUS's calculate_market_structure() -
+        This is the equivalent of WATCHTOWER's calculate_market_structure() -
         combines all individual signals into actionable trade recommendations.
         """
         # 1. Leverage Regime (from funding rate)

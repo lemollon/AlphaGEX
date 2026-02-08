@@ -9,8 +9,8 @@ Tests:
 2. A/B test persistence (create, record, evaluate, persist)
 3. Proposal validation trade recording
 4. Version tracking on proposal apply
-5. Oracle returns Proverbs info in reasoning
-6. Oracle scores are NOT modified by Proverbs
+5. Prophet returns Proverbs info in reasoning
+6. Prophet scores are NOT modified by Proverbs
 7. All API endpoints return real data
 8. Frontend API client coverage
 """
@@ -331,12 +331,12 @@ class ProverbsTestSuite:
             self.record("Version Tracking", False, str(e))
 
     def test_7_oracle_proverbs_info(self):
-        print(f"\n{BOLD}TEST 7: ORACLE RETURNS PROVERBS INFO{RESET}")
+        print(f"\n{BOLD}TEST 7: PROPHET RETURNS PROVERBS INFO{RESET}")
 
         try:
-            from quant.oracle_advisor import get_oracle, MarketContext, GEXRegime
+            from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
 
-            oracle = get_oracle()
+            prophet = get_oracle()
 
             context = MarketContext(
                 spot_price=590.0,
@@ -349,7 +349,7 @@ class ProverbsTestSuite:
                 day_of_week=1  # Tuesday
             )
 
-            rec = oracle.get_strategy_recommendation(context)
+            rec = prophet.get_strategy_recommendation(context)
 
             ok(f"Strategy: {rec.recommended_strategy.value}")
             ok(f"IC Score: {rec.ic_suitability:.2f}")
@@ -367,23 +367,23 @@ class ProverbsTestSuite:
                 ok(f"Proverbs info found in reasoning: {len(proverbs_parts)} part(s)")
                 for p in proverbs_parts:
                     info(f"  → {p}")
-                self.record("Oracle Proverbs Info", True, f"{len(proverbs_parts)} parts")
+                self.record("Prophet Proverbs Info", True, f"{len(proverbs_parts)} parts")
             else:
                 warn("No PROVERBS INFO in reasoning (may be OK if no historical data)")
                 info("This is expected if Proverbs has no historical trade data yet")
-                self.record("Oracle Proverbs Info", True, "No data yet (expected)")
+                self.record("Prophet Proverbs Info", True, "No data yet (expected)")
 
         except Exception as e:
-            fail(f"Oracle test failed: {e}")
-            self.record("Oracle Proverbs Info", False, str(e))
+            fail(f"Prophet test failed: {e}")
+            self.record("Prophet Proverbs Info", False, str(e))
 
     def test_8_oracle_no_interference(self):
-        print(f"\n{BOLD}TEST 8: ORACLE SCORES NOT MODIFIED BY PROVERBS{RESET}")
+        print(f"\n{BOLD}TEST 8: PROPHET SCORES NOT MODIFIED BY PROVERBS{RESET}")
 
         try:
-            from quant.oracle_advisor import get_oracle, MarketContext, GEXRegime
+            from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
 
-            oracle = get_oracle()
+            prophet = get_oracle()
 
             # Same context for both calls
             context = MarketContext(
@@ -398,8 +398,8 @@ class ProverbsTestSuite:
             )
 
             # Call twice
-            rec1 = oracle.get_strategy_recommendation(context)
-            rec2 = oracle.get_strategy_recommendation(context)
+            rec1 = prophet.get_strategy_recommendation(context)
+            rec2 = prophet.get_strategy_recommendation(context)
 
             # Compare scores
             ic_match = rec1.ic_suitability == rec2.ic_suitability
@@ -430,15 +430,15 @@ class ProverbsTestSuite:
             all_match = ic_match and dir_match and size_match and strategy_match
 
             if all_match:
-                ok("CONFIRMED: Proverbs does NOT affect Oracle scores (deterministic)")
-                self.record("Oracle No Interference", True)
+                ok("CONFIRMED: Proverbs does NOT affect Prophet scores (deterministic)")
+                self.record("Prophet No Interference", True)
             else:
-                fail("Oracle scores are NOT deterministic!")
-                self.record("Oracle No Interference", False, "Scores differ")
+                fail("Prophet scores are NOT deterministic!")
+                self.record("Prophet No Interference", False, "Scores differ")
 
         except Exception as e:
-            fail(f"Oracle interference test failed: {e}")
-            self.record("Oracle No Interference", False, str(e))
+            fail(f"Prophet interference test failed: {e}")
+            self.record("Prophet No Interference", False, str(e))
 
     def test_9_api_endpoints(self):
         print(f"\n{BOLD}TEST 9: API ENDPOINTS{RESET}")
@@ -454,10 +454,10 @@ class ProverbsTestSuite:
                 ("/api/proverbs/enhanced/digest", "GET"),
                 ("/api/proverbs/enhanced/correlations", "GET"),
                 ("/api/proverbs/strategy-analysis?days=30", "GET"),
-                ("/api/proverbs/oracle-accuracy?days=30", "GET"),
+                ("/api/proverbs/prophet-accuracy?days=30", "GET"),
                 ("/api/proverbs/enhanced/ab-test", "GET"),
                 ("/api/proverbs/validation/status", "GET"),
-                ("/api/oracle/strategy-recommendation", "GET"),
+                ("/api/prophet/strategy-recommendation", "GET"),
             ]
 
             passed = 0

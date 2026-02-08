@@ -550,7 +550,7 @@ class TestProverbsPerformance:
 
 
 # =============================================================================
-# 10. MIGRATION 023 TESTS - Strategy Analysis & Oracle Accuracy
+# 10. MIGRATION 023 TESTS - Strategy Analysis & Prophet Accuracy
 # =============================================================================
 
 class TestMigration023StrategyAnalysis:
@@ -649,8 +649,8 @@ class TestMigration023StrategyAnalysis:
             assert 'direction_accuracy' in result['directional']
             assert 'SOLOMON' in result['directional']['bots']
 
-    def test_get_oracle_accuracy_structure(self):
-        """Test get_oracle_accuracy returns correct structure"""
+    def test_get_prophet_accuracy_structure(self):
+        """Test get_prophet_accuracy returns correct structure"""
         from quant.proverbs_enhancements import ProverbsEnhanced
         import quant.proverbs_enhancements as se_module
 
@@ -673,7 +673,7 @@ class TestMigration023StrategyAnalysis:
             enhanced.proverbs = MagicMock()
             enhanced.proposal_validator = MagicMock()
 
-            result = enhanced.get_oracle_accuracy(days=30)
+            result = enhanced.get_prophet_accuracy(days=30)
 
             assert result['status'] == 'analyzed'
             assert result['period_days'] == 30
@@ -762,12 +762,12 @@ class TestMigration023APIRoutes:
         routes = [r.path for r in router.routes]
         assert '/strategy-analysis' in routes
 
-    def test_oracle_accuracy_route_exists(self):
-        """Test that /oracle-accuracy route is defined"""
+    def test_prophet_accuracy_route_exists(self):
+        """Test that /prophet-accuracy route is defined"""
         from backend.api.routes.proverbs_routes import router
 
         routes = [r.path for r in router.routes]
-        assert '/oracle-accuracy' in routes
+        assert '/prophet-accuracy' in routes
 
 
 class TestMigration023FrontendContract:
@@ -798,7 +798,7 @@ class TestMigration023FrontendContract:
 
         # Check they call the correct endpoints
         assert '/api/proverbs/strategy-analysis' in api_content
-        assert '/api/proverbs/oracle-accuracy' in api_content
+        assert '/api/proverbs/prophet-accuracy' in api_content
 
 
 if __name__ == '__main__':

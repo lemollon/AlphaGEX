@@ -196,8 +196,8 @@ def check_ml_status(backend_url: str):
 
     ml_endpoints = [
         ("/api/valor/ml/status", "VALOR ML"),
-        ("/api/ml/sage/status", "SAGE ML"),
-        ("/api/ml/gex-models/status", "ORION GEX ML"),
+        ("/api/ml/wisdom/status", "WISDOM ML"),
+        ("/api/ml/gex-models/status", "STARS GEX ML"),
     ]
 
     for endpoint, name in ml_endpoints:

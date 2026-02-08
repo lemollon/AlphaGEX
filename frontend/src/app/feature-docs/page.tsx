@@ -164,7 +164,7 @@ const CALCULATIONS: Calculation[] = [
     name: 'Distance to Flip %',
     formula: '(spot - flip_point) / spot × 100',
     purpose: 'Measure how far price is from the gamma flip point',
-    file: 'quant/kronos_gex_calculator.py',
+    file: 'quant/chronicles_gex_calculator.py',
     line: 78,
     category: 'GEX',
     subcategory: 'Distance Metrics',
@@ -186,7 +186,7 @@ const CALCULATIONS: Calculation[] = [
     name: 'GEX Normalized',
     formula: 'gex_normalized = net_gex / spot²',
     purpose: 'Scale-independent GEX for comparison across different stock prices',
-    file: 'quant/kronos_gex_calculator.py',
+    file: 'quant/chronicles_gex_calculator.py',
     line: 92,
     category: 'GEX',
     subcategory: 'Normalized Metrics',
@@ -1164,17 +1164,17 @@ def ares_strike_distance(spot, vix):
     tags: ['solomon', 'scale-out', 'profit-taking', 'exit']
   },
 
-  // ==================== ARGUS 0DTE ====================
+  // ==================== WATCHTOWER 0DTE ====================
   {
     id: 43,
     name: 'ROC 1-Min (Gamma)',
     formula: 'roc_1m = (gamma_now - gamma_1min_ago) / |gamma_1min_ago| × 100',
     purpose: 'Short-term gamma momentum',
-    file: 'core/argus_engine.py',
+    file: 'core/watchtower_engine.py',
     line: 178,
-    category: 'ARGUS',
+    category: 'WATCHTOWER',
     subcategory: 'Gamma Momentum',
-    description: 'ARGUS tracks 1-minute rate of change in gamma to detect rapid shifts in market maker positioning. Spikes > 15% indicate significant hedging activity.',
+    description: 'WATCHTOWER tracks 1-minute rate of change in gamma to detect rapid shifts in market maker positioning. Spikes > 15% indicate significant hedging activity.',
     codeSnippet: `def gamma_roc_1min(current_gamma, gamma_1min_ago):
     """Calculate 1-minute gamma rate of change"""
     if gamma_1min_ago == 0:
@@ -1185,18 +1185,18 @@ def ares_strike_distance(spot, vix):
       output: 'ROC = (1.8-1.5)/1.5 × 100 = +20% (gamma spike)'
     },
     related: ['ROC 5-Min', 'Danger Zone Detection', 'Gamma Flip Detection'],
-    tags: ['argus', 'roc', 'gamma', 'momentum', '0dte']
+    tags: ['watchtower', 'roc', 'gamma', 'momentum', '0dte']
   },
   {
     id: 44,
     name: 'Danger Zone Detection',
     formula: 'SPIKE: >15% 1min ROC; BUILDING: >25% 5min ROC; COLLAPSING: <-25% 5min ROC',
     purpose: 'Identify dangerous gamma conditions',
-    file: 'core/argus_engine.py',
+    file: 'core/watchtower_engine.py',
     line: 256,
-    category: 'ARGUS',
+    category: 'WATCHTOWER',
     subcategory: 'Risk Detection',
-    description: 'ARGUS danger zone detection identifies extreme gamma conditions that could lead to explosive moves. SPIKE means sudden hedging activity, BUILDING/COLLAPSING mean sustained pressure.',
+    description: 'WATCHTOWER danger zone detection identifies extreme gamma conditions that could lead to explosive moves. SPIKE means sudden hedging activity, BUILDING/COLLAPSING mean sustained pressure.',
     codeSnippet: `def detect_danger_zone(roc_1min, roc_5min):
     """Detect dangerous gamma conditions"""
     danger_zones = []
@@ -1227,7 +1227,7 @@ def ares_strike_distance(spot, vix):
       output: 'Danger: SPIKE (18% 1min) + BUILDING (32% 5min)'
     },
     related: ['ROC 1-Min', 'ROC 5-Min', 'Gamma Flip Detection'],
-    tags: ['argus', 'danger', 'risk', 'alert', '0dte']
+    tags: ['watchtower', 'danger', 'risk', 'alert', '0dte']
   },
 
   // ==================== VALIDATION ====================
@@ -1404,7 +1404,7 @@ def ares_strike_distance(spot, vix):
 
 // Add remaining GEX calculations
 for (let i = 46; i <= 268; i++) {
-  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'FORTRESS', 'SOLOMON', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation', 'Proverbs']
+  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'FORTRESS', 'SOLOMON', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'WATCHTOWER', 'Validation', 'Proverbs']
   const subcategories: { [key: string]: string[] } = {
     'GEX': ['Core Gamma', 'Distance Metrics', 'Normalized Metrics', 'Wall Analysis', 'Ratios', 'Changes'],
     'Greeks': ['Black-Scholes', 'First-Order Greeks', 'Second-Order Greeks', 'Volatility'],
@@ -1423,7 +1423,7 @@ for (let i = 46; i <= 268; i++) {
     'ML': ['Predictions', 'Preprocessing', 'Features'],
     'Wheel': ['Premium', 'Assignment', 'Rolling'],
     'Ensemble': ['Weighting', 'Signals', 'Performance'],
-    'ARGUS': ['Gamma Momentum', 'Risk Detection', 'Real-time'],
+    'WATCHTOWER': ['Gamma Momentum', 'Risk Detection', 'Real-time'],
     'Validation': ['Probability Calibration', 'Regression', 'Classification'],
     'Proverbs': ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop']
   }
@@ -1451,7 +1451,7 @@ const CATEGORIES = [
   { name: 'ML', icon: Brain, color: 'text-sky-400', bgColor: 'bg-sky-500/20', subcategories: ['Predictions', 'Preprocessing', 'Features'] },
   { name: 'Wheel', icon: ArrowUpDown, color: 'text-lime-400', bgColor: 'bg-lime-500/20', subcategories: ['Premium', 'Assignment', 'Rolling'] },
   { name: 'Ensemble', icon: Layers, color: 'text-teal-400', bgColor: 'bg-teal-500/20', subcategories: ['Weighting', 'Signals', 'Performance'] },
-  { name: 'ARGUS', icon: Eye, color: 'text-orange-400', bgColor: 'bg-orange-500/20', subcategories: ['Gamma Momentum', 'Risk Detection', 'Real-time'] },
+  { name: 'WATCHTOWER', icon: Eye, color: 'text-orange-400', bgColor: 'bg-orange-500/20', subcategories: ['Gamma Momentum', 'Risk Detection', 'Real-time'] },
   { name: 'Validation', icon: Check, color: 'text-green-400', bgColor: 'bg-green-500/20', subcategories: ['Probability Calibration', 'Regression', 'Classification'] },
   { name: 'Proverbs', icon: BookOpen, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop'] },
 ]

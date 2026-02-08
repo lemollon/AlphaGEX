@@ -120,7 +120,7 @@ async def get_positions():
     Each position includes:
     - Entry details (price, side, contracts)
     - Market context at entry (funding, L/S, squeeze risk)
-    - Oracle context (advice, win probability)
+    - Prophet context (advice, win probability)
     - Current unrealized P&L
     """
     trader = _get_trader()
@@ -613,7 +613,7 @@ async def get_scan_activity(
     """Get AGAPE scan history - every cycle is logged.
 
     Shows what the bot saw, what it decided, and why.
-    Includes crypto microstructure data, Oracle advice, and signal reasoning.
+    Includes crypto microstructure data, Prophet advice, and signal reasoning.
     """
     trader = _get_trader()
     if not trader:
@@ -642,7 +642,7 @@ async def get_crypto_snapshot(
 ):
     """Get current crypto market microstructure snapshot.
 
-    Returns the crypto equivalent of ARGUS's gamma snapshot:
+    Returns the crypto equivalent of WATCHTOWER's gamma snapshot:
     - Funding rate and regime (→ gamma regime)
     - Liquidation clusters (→ gamma walls)
     - Long/Short ratio (→ directional bias)
@@ -745,7 +745,7 @@ async def generate_signal():
 
     Returns the full signal with:
     - Crypto microstructure analysis
-    - Oracle consultation result
+    - Prophet consultation result
     - Recommended action (LONG/SHORT/WAIT)
     - Position sizing and risk levels
     """
@@ -783,7 +783,7 @@ async def get_gex_mapping():
             "title": "AGAPE: GEX → Crypto Signal Mapping",
             "description": (
                 "AGAPE uses crypto market microstructure signals as equivalents "
-                "to the GEX-based analysis used by equity bots (FORTRESS, ARGUS, etc.)"
+                "to the GEX-based analysis used by equity bots (FORTRESS, WATCHTOWER, etc.)"
             ),
             "mappings": [
                 {
@@ -843,7 +843,7 @@ async def get_gex_mapping():
                     "data_source": "CoinGlass (aggregated L/S ratio)",
                 },
                 {
-                    "gex_concept": "ARGUS Market Structure (9 signals)",
+                    "gex_concept": "WATCHTOWER Market Structure (9 signals)",
                     "crypto_equivalent": "Combined Crypto Signals (6 inputs)",
                     "explanation": (
                         "Funding regime + L/S ratio + Liquidation proximity + "

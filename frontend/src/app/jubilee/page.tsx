@@ -1250,7 +1250,7 @@ export default function PrometheusBoxDashboard() {
                     </div>
                   </div>
                   <div className="mt-4 text-sm text-gray-400 bg-gray-700/30 rounded-lg p-3">
-                    IC trading runs every 10 minutes when Oracle approves. See the <strong>IC Trading</strong> tab for details.
+                    IC trading runs every 10 minutes when Prophet approves. See the <strong>IC Trading</strong> tab for details.
                   </div>
                 </div>
 
@@ -1513,7 +1513,7 @@ export default function PrometheusBoxDashboard() {
                       </div>
                     </div>
 
-                    {/* SECTION 3: IC Trading Reconciliation with Oracle */}
+                    {/* SECTION 3: IC Trading Reconciliation with Prophet */}
                     {reconciliation.ic_trading?.positions?.length > 0 && (
                       <div className="mb-8">
                         <h3 className="text-lg font-bold mb-4 text-orange-400 flex items-center gap-2">
@@ -1560,10 +1560,10 @@ export default function PrometheusBoxDashboard() {
                                 </div>
                               </div>
 
-                              {/* Oracle Reasoning - FULL transparency */}
+                              {/* Prophet Reasoning - FULL transparency */}
                               <div className="bg-purple-900/20 rounded-lg p-3 border border-purple-600/30">
                                 <div className="flex items-center gap-2 mb-2">
-                                  <span className="text-purple-400 font-medium">🔮 Oracle Decision</span>
+                                  <span className="text-purple-400 font-medium">🔮 Prophet Decision</span>
                                   <span className={`px-2 py-0.5 rounded text-xs ${
                                     pos.oracle_confidence >= 0.7 ? 'bg-green-500/20 text-green-400' :
                                     pos.oracle_confidence >= 0.5 ? 'bg-yellow-500/20 text-yellow-400' :
@@ -1895,7 +1895,7 @@ export default function PrometheusBoxDashboard() {
                             <span className="ml-2 text-red-400">{reconciliation.config?.ic_stop_loss_pct}%</span>
                           </div>
                           <div>
-                            <span className="text-gray-500">Oracle Required:</span>
+                            <span className="text-gray-500">Prophet Required:</span>
                             <span className="ml-2">{reconciliation.config?.require_oracle_approval ? 'Yes' : 'No'}</span>
                           </div>
                           <div>
@@ -1978,11 +1978,11 @@ export default function PrometheusBoxDashboard() {
                         </div>
                       )}
 
-                      {/* ORACLE SCAN ACTIVITY */}
+                      {/* PROPHET SCAN ACTIVITY */}
                       {icSignals?.available && icSignals.signals?.length > 0 && (
                         <div className="mt-6 bg-gray-900/50 rounded-lg p-4 border border-purple-700/30">
                           <div className="text-sm font-medium text-purple-400 mb-3">
-                            🔮 Oracle Scan Activity (Recent IC Signals)
+                            🔮 Prophet Scan Activity (Recent IC Signals)
                           </div>
                           <div className="space-y-2 max-h-80 overflow-y-auto">
                             {icSignals.signals.slice(0, 10).map((signal: any) => (
@@ -2018,10 +2018,10 @@ export default function PrometheusBoxDashboard() {
                                 <div className="text-xs text-gray-400 mb-1">
                                   {signal.signal_time ? new Date(signal.signal_time).toLocaleString() : 'N/A'}
                                 </div>
-                                {/* Oracle reasoning */}
+                                {/* Prophet reasoning */}
                                 {signal.oracle_reasoning && (
                                   <div className="mt-2 p-2 bg-purple-900/30 rounded text-sm text-purple-300">
-                                    <span className="text-purple-400 font-medium">Oracle ({(signal.oracle_confidence * 100 || 0).toFixed(0)}%): </span>
+                                    <span className="text-purple-400 font-medium">Prophet ({(signal.oracle_confidence * 100 || 0).toFixed(0)}%): </span>
                                     {signal.oracle_reasoning}
                                   </div>
                                 )}
@@ -2358,7 +2358,7 @@ export default function PrometheusBoxDashboard() {
                             <th className="text-right py-2 px-3">Credit</th>
                             <th className="text-right py-2 px-3">Current</th>
                             <th className="text-right py-2 px-3">P&L</th>
-                            <th className="text-left py-2 px-3">Oracle</th>
+                            <th className="text-left py-2 px-3">Prophet</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -2413,7 +2413,7 @@ export default function PrometheusBoxDashboard() {
                       ) : !icStatus?.status?.in_trading_window ? (
                         <div className="mt-4 p-4 bg-blue-900/30 border border-blue-600/50 rounded-lg inline-block">
                           <p className="text-blue-400 font-medium">⏰ Outside trading hours</p>
-                          <p className="text-sm text-gray-400 mt-1">IC trades are generated 8:35 AM - 2:30 PM CT when Oracle approves</p>
+                          <p className="text-sm text-gray-400 mt-1">IC trades are generated 8:35 AM - 2:30 PM CT when Prophet approves</p>
                         </div>
                       ) : (
                         <div className="mt-4 p-4 bg-green-900/30 border border-green-600/50 rounded-lg inline-block">
@@ -2421,7 +2421,7 @@ export default function PrometheusBoxDashboard() {
                           <p className="text-sm text-gray-400 mt-1">
                             {formatCurrency(icStatus?.status?.available_capital || 0)} available from {positions?.positions?.length || 0} box spread(s)
                           </p>
-                          <p className="text-xs text-gray-500 mt-1">Waiting for Oracle-approved signal...</p>
+                          <p className="text-xs text-gray-500 mt-1">Waiting for Prophet-approved signal...</p>
                         </div>
                       )}
                     </div>
@@ -2655,7 +2655,7 @@ export default function PrometheusBoxDashboard() {
                             <th className="text-left py-2 px-3">Time</th>
                             <th className="text-left py-2 px-3">Structure</th>
                             <th className="text-right py-2 px-3">Credit</th>
-                            <th className="text-right py-2 px-3">Oracle</th>
+                            <th className="text-right py-2 px-3">Prophet</th>
                             <th className="text-left py-2 px-3">Status</th>
                           </tr>
                         </thead>
@@ -3228,7 +3228,7 @@ export default function PrometheusBoxDashboard() {
                               </div>
                             </div>
                             <div className="text-xs text-gray-400 mt-2 space-y-1">
-                              <div>• Oracle-approved trades only</div>
+                              <div>• Prophet-approved trades only</div>
                               <div>• 10 delta short strikes</div>
                               <div>• Every 10 minutes</div>
                               <div>• Max 3 positions</div>
@@ -3588,7 +3588,7 @@ export default function PrometheusBoxDashboard() {
                       <div className="font-medium text-orange-400 mb-2">Part 2: IC Trading</div>
                       <ul className="text-gray-400 space-y-1">
                         <li>3. IC Trading Cycle</li>
-                        <li>4. Oracle Scan Activity</li>
+                        <li>4. Prophet Scan Activity</li>
                         <li>11. IC Exit Flow</li>
                       </ul>
                     </div>
@@ -3809,7 +3809,7 @@ export default function PrometheusBoxDashboard() {
 │  │         Skip scan                          │                              │
 │  │                                            ▼                              │
 │  │                              ┌─────────────────────────────┐             │
-│  │                              │       ORACLE CHECK          │             │
+│  │                              │       PROPHET CHECK          │             │
 │  │                              │                             │             │
 │  │                              │  get_anchor_advice()       │             │
 │  │                              │                             │             │
@@ -3839,7 +3839,7 @@ export default function PrometheusBoxDashboard() {
 │  │                                │            │                            │
 │  │                    NO ◀────────┘            │                            │
 │  │                    │                       YES                           │
-│  │         Log: "Oracle says SKIP"             │                            │
+│  │         Log: "Prophet says SKIP"             │                            │
 │  │         or "Confidence 45% < 60%"           ▼                            │
 │  │                              ┌─────────────────────────────┐             │
 │  │                              │     EXECUTE IC TRADE        │             │
@@ -3867,7 +3867,7 @@ export default function PrometheusBoxDashboard() {
                           <li>• Trading hours: 8:35 AM - 2:30 PM CT</li>
                           <li>• VIX range: 12-35 (12-30 Mon/Fri)</li>
                           <li>• Max 3 open positions</li>
-                          <li>• Oracle confidence ≥ 60%</li>
+                          <li>• Prophet confidence ≥ 60%</li>
                           <li>• Win probability ≥ 55%</li>
                         </ul>
                       </div>
@@ -3877,7 +3877,7 @@ export default function PrometheusBoxDashboard() {
                           <li>• Target delta: ~10 (both sides)</li>
                           <li>• SPX $25 spread width</li>
                           <li>• Round to nearest $5</li>
-                          <li>• Priority: Oracle → GEX → Delta</li>
+                          <li>• Priority: Prophet → GEX → Delta</li>
                           <li>• 0DTE or 1DTE expiration</li>
                         </ul>
                       </div>
@@ -3894,26 +3894,26 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* PART 4: ORACLE SCAN ACTIVITY FORMAT */}
+                {/* PART 4: PROPHET SCAN ACTIVITY FORMAT */}
                 <div className="bg-gray-800 rounded-xl p-6 border border-green-500/30">
                   <h2 className="text-2xl font-bold mb-6 flex items-center gap-3">
                     <span className="w-10 h-10 bg-green-600 rounded-lg flex items-center justify-center text-xl">4</span>
-                    <span className="text-green-400">Oracle Scan Activity Display</span>
+                    <span className="text-green-400">Prophet Scan Activity Display</span>
                   </h2>
 
                   {/* ASCII Wireframe */}
                   <div className="bg-black rounded-lg p-4 font-mono text-xs overflow-x-auto mb-6 flex justify-center">
                     <pre className="text-green-400 whitespace-pre">{`
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  JUBILEE IC - ORACLE SCAN ACTIVITY LOG                                   │
+│  JUBILEE IC - PROPHET SCAN ACTIVITY LOG                                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│  TIME        SPX     VIX   ORACLE   CONF   WIN%   DECISION    REASON        │
+│  TIME        SPX     VIX   PROPHET   CONF   WIN%   DECISION    REASON        │
 │  ────────────────────────────────────────────────────────────────────────── │
 │  10:35:22   5982   18.4   TRADE    72%    68%    ✅ OPENED    IC 5945/6020  │
 │  10:20:15   5978   18.6   TRADE    65%    62%    ⏸️ SKIP      Max positions │
 │  10:05:08   5975   18.9   HOLD     52%    55%    ⏸️ SKIP      Conf < 60%    │
-│  09:50:01   5972   19.1   SKIP     45%    48%    ⏸️ SKIP      Oracle: HOLD  │
+│  09:50:01   5972   19.1   SKIP     45%    48%    ⏸️ SKIP      Prophet: HOLD  │
 │  09:35:44   5968   19.4   TRADE    78%    71%    ✅ OPENED    IC 5935/6010  │
 │  09:20:37   5965   19.2   TRADE    71%    65%    ✅ OPENED    IC 5930/6005  │
 │  09:05:30   5962   19.5   SKIP     42%    45%    ⏸️ SKIP      VIX spike     │
@@ -3922,11 +3922,11 @@ export default function PrometheusBoxDashboard() {
 │  ────────────────────────────────────────────────────────────────────────── │
 │  TODAY'S STATS:  8 scans | 3 trades | 5 skips | 37.5% trade rate           │
 │                                                                             │
-│  CLICK ROW FOR FULL ORACLE REASONING:                                       │
+│  CLICK ROW FOR FULL PROPHET REASONING:                                       │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │  10:35:22 - TRADE_FULL Decision                                       │  │
 │  │                                                                       │  │
-│  │  Oracle says: "Strong IC conditions. VIX 18.4 in sweet spot.          │  │
+│  │  Prophet says: "Strong IC conditions. VIX 18.4 in sweet spot.          │  │
 │  │  Gamma regime POSITIVE = mean reversion favorable.                    │  │
 │  │  Call wall at 6050, put wall at 5920 provide cushion.                 │  │
 │  │  Day: Wednesday (best IC day historically)."                          │  │
@@ -3936,7 +3936,7 @@ export default function PrometheusBoxDashboard() {
 │  │  2. gex_regime: +12% (positive gamma)                                 │  │
 │  │  3. day_of_week: +8% (mid-week)                                       │  │
 │  │                                                                       │  │
-│  │  Suggested Strikes: 5945P / 6020C (from Oracle)                       │  │
+│  │  Suggested Strikes: 5945P / 6020C (from Prophet)                       │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -4055,7 +4055,7 @@ export default function PrometheusBoxDashboard() {
 │         │  │ Box Spread    │   │ IC Signal         │  │                    │
 │         │  │ Manager       │   │ Generator         │  │                    │
 │         │  │               │   │                   │  │                    │
-│         │  │ • Open/Close  │   │ • Uses Oracle     │  │                    │
+│         │  │ • Open/Close  │   │ • Uses Prophet     │  │                    │
 │         │  │ • MTM Calc    │   │ • ANCHOR rules   │  │                    │
 │         │  │ • Roll Logic  │   │ • Strike select   │  │                    │
 │         │  └───────┬───────┘   └─────────┬─────────┘  │                    │
@@ -4081,7 +4081,7 @@ export default function PrometheusBoxDashboard() {
 │         │  • jubilee_closed (historical)       │                    │
 │         │  • jubilee_ic_positions (open ICs)       │                    │
 │         │  • prometheus_ic_closed (IC history)        │                    │
-│         │  • jubilee_scan_activity (Oracle logs)   │                    │
+│         │  • jubilee_scan_activity (Prophet logs)   │                    │
 │         │  • jubilee_equity_snapshots              │                    │
 │         └─────────────────────────────────────────────┘                    │
 │                               │                                            │
@@ -4130,7 +4130,7 @@ export default function PrometheusBoxDashboard() {
                         <tr className="border-b border-gray-800">
                           <td className="py-2 px-3 font-mono text-blue-400">8:35 AM</td>
                           <td className="py-2 px-3">IC Trading Starts</td>
-                          <td className="py-2 px-3 text-gray-400">First Oracle check, begin 5-15 min scan cycle</td>
+                          <td className="py-2 px-3 text-gray-400">First Prophet check, begin 5-15 min scan cycle</td>
                         </tr>
                         <tr className="border-b border-gray-800">
                           <td className="py-2 px-3 font-mono text-orange-400">9:30 AM</td>
@@ -4140,7 +4140,7 @@ export default function PrometheusBoxDashboard() {
                         <tr className="border-b border-gray-800">
                           <td className="py-2 px-3 font-mono text-purple-400">Ongoing</td>
                           <td className="py-2 px-3">IC Scan Cycle</td>
-                          <td className="py-2 px-3 text-gray-400">Every 5-15 min: Oracle check, trade if approved</td>
+                          <td className="py-2 px-3 text-gray-400">Every 5-15 min: Prophet check, trade if approved</td>
                         </tr>
                         <tr className="border-b border-gray-800">
                           <td className="py-2 px-3 font-mono text-blue-400">2:30 PM</td>

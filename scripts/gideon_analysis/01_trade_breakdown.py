@@ -133,8 +133,8 @@ print(f"  {'-'*12} {'-'*7} {'-'*6} {'-'*7} {'-'*12}")
 for row in r:
     print(f"  {row[0]} {row[1]:>7} {row[2]:>6} {row[3]:>6}% ${row[4]:>11,.2f}")
 
-# 7. By Oracle Confidence Bucket
-section("7. BY ORACLE CONFIDENCE")
+# 7. By Prophet Confidence Bucket
+section("7. BY PROPHET CONFIDENCE")
 r, _ = query("""
     SELECT
         CASE

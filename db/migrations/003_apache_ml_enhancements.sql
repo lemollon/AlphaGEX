@@ -7,8 +7,8 @@
 -- ============================================================================
 
 -- Add signal source tracking
-ALTER TABLE apache_signals ADD COLUMN IF NOT EXISTS signal_source VARCHAR(10) DEFAULT 'oracle';
--- 'ml' or 'oracle'
+ALTER TABLE apache_signals ADD COLUMN IF NOT EXISTS signal_source VARCHAR(10) DEFAULT 'prophet';
+-- 'ml' or 'prophet'
 
 -- Add ML model predictions (stored as JSONB for flexibility)
 ALTER TABLE apache_signals ADD COLUMN IF NOT EXISTS ml_predictions JSONB;

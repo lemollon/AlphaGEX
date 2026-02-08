@@ -35,11 +35,11 @@ for mod in ["fastapi", "uvicorn", "psycopg2", "pydantic"]:
 # AI modules
 print("\n-- AI Modules --")
 ai_modules = [
-    "ai.gexis_personality",
-    "ai.gexis_tools",
-    "ai.gexis_extended_thinking",
-    "ai.gexis_learning_memory",
-    "ai.gexis_knowledge",
+    "ai.counselor_personality",
+    "ai.counselor_tools",
+    "ai.counselor_extended_thinking",
+    "ai.counselor_learning_memory",
+    "ai.counselor_knowledge",
 ]
 for mod in ai_modules:
     try:
@@ -82,7 +82,7 @@ for mod in bots:
 # Quant modules
 print("\n-- Quant Modules --")
 quant = [
-    "quant.oracle_advisor",
+    "quant.prophet_advisor",
 ]
 for mod in quant:
     try:

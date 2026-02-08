@@ -2307,7 +2307,7 @@ def init_database():
 
             -- IDENTIFICATION
             decision_id TEXT UNIQUE NOT NULL,
-            bot_name TEXT NOT NULL,  -- LAZARUS, CORNERSTONE, FORTRESS, SHEPHERD, ORACLE
+            bot_name TEXT NOT NULL,  -- LAZARUS, CORNERSTONE, FORTRESS, SHEPHERD, PROPHET
             session_id TEXT,
             scan_cycle INTEGER,
             decision_sequence INTEGER,
@@ -3125,11 +3125,11 @@ def init_database():
     ''')
 
     # =========================================================================
-    # APOLLO ML SCANNER TABLES
+    # DISCERNMENT ML SCANNER TABLES
     # =========================================================================
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_scans (
+        CREATE TABLE IF NOT EXISTS discernment_scans (
             id SERIAL PRIMARY KEY,
             scan_id VARCHAR(50) UNIQUE NOT NULL,
             timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -3142,7 +3142,7 @@ def init_database():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_predictions (
+        CREATE TABLE IF NOT EXISTS discernment_predictions (
             id SERIAL PRIMARY KEY,
             prediction_id VARCHAR(50) UNIQUE NOT NULL,
             scan_id VARCHAR(50),
@@ -3163,7 +3163,7 @@ def init_database():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_outcomes (
+        CREATE TABLE IF NOT EXISTS discernment_outcomes (
             id SERIAL PRIMARY KEY,
             outcome_id VARCHAR(50) UNIQUE NOT NULL,
             prediction_id VARCHAR(50),
@@ -3183,7 +3183,7 @@ def init_database():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_model_performance (
+        CREATE TABLE IF NOT EXISTS discernment_model_performance (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             model_version VARCHAR(20),
@@ -3243,10 +3243,10 @@ def init_database():
     safe_index("CREATE INDEX IF NOT EXISTS idx_vol_surface_symbol_time ON volatility_surface_snapshots(symbol, snapshot_time)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_vol_surface_skew_regime ON volatility_surface_snapshots(skew_regime)")
 
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_scans_timestamp ON apollo_scans(timestamp)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_symbol ON apollo_predictions(symbol)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_scan ON apollo_predictions(scan_id)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_outcomes_symbol ON apollo_outcomes(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_scans_timestamp ON discernment_scans(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_predictions_symbol ON discernment_predictions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_predictions_scan ON discernment_predictions(scan_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_outcomes_symbol ON discernment_outcomes(symbol)")
 
     # ----- Indexes for consolidated tables -----
     safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_symbol_date ON gamma_history(symbol, date)")

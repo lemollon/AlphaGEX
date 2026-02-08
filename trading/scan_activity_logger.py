@@ -17,7 +17,7 @@ Usage:
     log_scan_activity(
         bot_name="FORTRESS",
         outcome=ScanOutcome.NO_TRADE,
-        decision_summary="Oracle confidence too low (45%)",
+        decision_summary="Prophet confidence too low (45%)",
         market_data={"underlying_price": 5980, "vix": 18.5},
         ...
     )
@@ -99,7 +99,7 @@ class ScanActivity:
     signal_confidence: float = 0
     signal_win_probability: float = 0
 
-    # Oracle - FULL context for frontend visibility
+    # Prophet - FULL context for frontend visibility
     oracle_advice: str = ""
     oracle_reasoning: str = ""
     oracle_win_probability: float = 0
@@ -189,7 +189,7 @@ class ScanActivity:
     kelly_prob_ruin: float = 0
     kelly_recommendation: str = ""
 
-    # ARGUS Pattern Similarity / ROC Analysis
+    # WATCHTOWER Pattern Similarity / ROC Analysis
     argus_pattern_match: str = ""
     argus_similarity_score: float = 0
     argus_historical_outcome: str = ""
@@ -320,7 +320,7 @@ def log_scan_activity(
     signal_direction: str = "",
     signal_confidence: float = 0,
     signal_win_probability: float = 0,
-    # Oracle data - FULL context for frontend visibility
+    # Prophet data - FULL context for frontend visibility
     oracle_advice: str = "",
     oracle_reasoning: str = "",
     oracle_win_probability: float = 0,
@@ -398,7 +398,7 @@ def log_scan_activity(
     kelly_conservative: float = 0,
     kelly_prob_ruin: float = 0,
     kelly_recommendation: str = "",
-    # === NEW: ARGUS Pattern Analysis ===
+    # === NEW: WATCHTOWER Pattern Analysis ===
     argus_pattern_match: str = "",
     argus_similarity_score: float = 0,
     argus_historical_outcome: str = "",
@@ -472,12 +472,12 @@ def log_scan_activity(
         full_reasoning: Detailed reasoning for the decision
         market_data: Current market conditions
         gex_data: GEX context if available
-        signal_source: Where the signal came from (ML, Oracle, etc.)
+        signal_source: Where the signal came from (ML, Prophet, etc.)
         signal_direction: BULLISH, BEARISH, NEUTRAL
         signal_confidence: 0-1 confidence score
         signal_win_probability: 0-1 win probability
-        oracle_advice: What Oracle recommended
-        oracle_reasoning: Why Oracle made that recommendation
+        oracle_advice: What Prophet recommended
+        oracle_reasoning: Why Prophet made that recommendation
         checks: List of checks performed
         trade_executed: Whether a trade was executed
         position_id: Position ID if traded
@@ -660,7 +660,7 @@ def log_scan_activity(
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS risk_reward_ratio DECIMAL(10, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS what_would_trigger TEXT")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS market_insight TEXT")
-            # Oracle context columns
+            # Prophet context columns
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_win_probability DECIMAL(5, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_confidence DECIMAL(5, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_top_factors JSONB")
@@ -715,7 +715,7 @@ def log_scan_activity(
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_conservative DECIMAL(5, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_prob_ruin DECIMAL(5, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_recommendation TEXT")
-            # === NEW: ARGUS Pattern Analysis columns ===
+            # === NEW: WATCHTOWER Pattern Analysis columns ===
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_pattern_match VARCHAR(100)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_similarity_score DECIMAL(5, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_historical_outcome VARCHAR(50)")
@@ -868,7 +868,7 @@ def log_scan_activity(
                 psychology_pattern, liberation_setup, false_floor_detected, forward_magnets,
                 -- NEW: Monte Carlo Kelly
                 kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
-                -- NEW: ARGUS Pattern Analysis
+                -- NEW: WATCHTOWER Pattern Analysis
                 argus_pattern_match, argus_similarity_score, argus_historical_outcome,
                 argus_roc_value, argus_roc_signal,
                 -- NEW: IV Context
@@ -956,7 +956,7 @@ def log_scan_activity(
             json.dumps(_convert_dict_numpy(forward_magnets)) if forward_magnets else None,
             # NEW: Monte Carlo Kelly
             _clamp_decimal(kelly_optimal), _clamp_decimal(kelly_safe), _clamp_decimal(kelly_conservative), _clamp_decimal(kelly_prob_ruin), kelly_recommendation,
-            # NEW: ARGUS Pattern Analysis
+            # NEW: WATCHTOWER Pattern Analysis
             argus_pattern_match, _clamp_decimal(argus_similarity_score), argus_historical_outcome,
             _convert_numpy(argus_roc_value), argus_roc_signal,
             # NEW: IV Context
@@ -1064,7 +1064,7 @@ def get_recent_scans(
                 psychology_pattern, liberation_setup, false_floor_detected, forward_magnets,
                 -- NEW: Monte Carlo Kelly
                 kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
-                -- NEW: ARGUS Pattern Analysis
+                -- NEW: WATCHTOWER Pattern Analysis
                 argus_pattern_match, argus_similarity_score, argus_historical_outcome,
                 argus_roc_value, argus_roc_signal,
                 -- NEW: IV Context
@@ -1145,7 +1145,7 @@ def get_recent_scans(
             'psychology_pattern', 'liberation_setup', 'false_floor_detected', 'forward_magnets',
             # NEW: Monte Carlo Kelly
             'kelly_optimal', 'kelly_safe', 'kelly_conservative', 'kelly_prob_ruin', 'kelly_recommendation',
-            # NEW: ARGUS Pattern Analysis
+            # NEW: WATCHTOWER Pattern Analysis
             'argus_pattern_match', 'argus_similarity_score', 'argus_historical_outcome',
             'argus_roc_value', 'argus_roc_signal',
             # NEW: IV Context
@@ -1644,7 +1644,7 @@ def log_phoenix_scan(
     Convenience function to log LAZARUS (0DTE SPY/SPX directional) scan activity.
 
     LAZARUS is the 0DTE options trader that uses GEX-based directional plays.
-    Logs every scan attempt with full Oracle context for frontend visibility.
+    Logs every scan attempt with full Prophet context for frontend visibility.
     """
     action_taken = ""
     full_reasoning = ""
@@ -1719,7 +1719,7 @@ def log_atlas_scan(
     Convenience function to log CORNERSTONE (SPX Wheel) scan activity.
 
     CORNERSTONE is the SPX cash-secured put wheel strategy.
-    Logs every scan attempt with full Oracle context for frontend visibility.
+    Logs every scan attempt with full Prophet context for frontend visibility.
     """
     action_taken = ""
     full_reasoning = ""

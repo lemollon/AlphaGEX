@@ -34,7 +34,7 @@ else:
 # Learning Memory
 print("\n-- Learning Memory --")
 try:
-    from ai.gexis_learning_memory import get_learning_memory, GEXISLearningMemory
+    from ai.counselor_learning_memory import get_learning_memory, GEXISLearningMemory
 
     memory = get_learning_memory()
     ok("Learning Memory instance created")
@@ -82,7 +82,7 @@ except Exception as e:
 # Extended Thinking
 print("\n-- Extended Thinking --")
 try:
-    from ai.gexis_extended_thinking import (
+    from ai.counselor_extended_thinking import (
         analyze_with_extended_thinking,
         analyze_strike_selection,
         evaluate_trade_setup
@@ -98,31 +98,31 @@ except Exception as e:
     fail(f"Extended Thinking error: {e}")
     errors.append("Extended Thinking")
 
-# GEXIS Personality
-print("\n-- GEXIS Personality --")
+# COUNSELOR Personality
+print("\n-- COUNSELOR Personality --")
 try:
-    from ai.gexis_personality import (
+    from ai.counselor_personality import (
         build_gexis_system_prompt,
         get_gexis_welcome_message,
         GEXIS_NAME,
         USER_NAME
     )
-    ok(f"GEXIS Personality loaded")
-    info(f"GEXIS Name: {GEXIS_NAME}")
+    ok(f"COUNSELOR Personality loaded")
+    info(f"COUNSELOR Name: {GEXIS_NAME}")
     info(f"User Name: {USER_NAME}")
 
     prompt = build_gexis_system_prompt()
     ok(f"System prompt: {len(prompt)} chars")
 
 except Exception as e:
-    fail(f"GEXIS Personality error: {e}")
-    errors.append("GEXIS Personality")
+    fail(f"COUNSELOR Personality error: {e}")
+    errors.append("COUNSELOR Personality")
 
-# GEXIS Tools
-print("\n-- GEXIS Tools --")
+# COUNSELOR Tools
+print("\n-- COUNSELOR Tools --")
 try:
-    from ai.gexis_tools import GEXIS_TOOLS, get_system_status
-    ok(f"GEXIS Tools loaded: {len(GEXIS_TOOLS)} tools")
+    from ai.counselor_tools import GEXIS_TOOLS, get_system_status
+    ok(f"COUNSELOR Tools loaded: {len(GEXIS_TOOLS)} tools")
 
     # List tools
     for name in list(GEXIS_TOOLS.keys())[:5]:
@@ -131,8 +131,8 @@ try:
         info(f"  ... and {len(GEXIS_TOOLS) - 5} more")
 
 except Exception as e:
-    fail(f"GEXIS Tools error: {e}")
-    errors.append("GEXIS Tools")
+    fail(f"COUNSELOR Tools error: {e}")
+    errors.append("COUNSELOR Tools")
 
 # Bot Learning Memory Integration
 print("\n-- Bot Learning Memory Integration --")

@@ -1415,7 +1415,7 @@ async def get_fortress_positions():
     """
     Get FORTRESS open and recently closed positions.
 
-    Returns Iron Condor positions with full details including GEX and Oracle context.
+    Returns Iron Condor positions with full details including GEX and Prophet context.
     Field names match frontend IronCondorPosition interface.
     """
     # Always read from database for reliability
@@ -1574,7 +1574,7 @@ async def get_fortress_positions():
                 "put_wall": float(put_wall) if put_wall else None,
                 "flip_point": float(flip_point) if flip_point else None,
                 "net_gex": float(net_gex) if net_gex else None,
-                # Oracle Context (audit trail)
+                # Prophet Context (audit trail)
                 "oracle_confidence": float(oracle_conf) if oracle_conf else None,
                 "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else None,
                 "oracle_advice": oracle_advice,
@@ -1653,7 +1653,7 @@ async def get_fortress_positions():
                 "put_wall": float(put_wall) if put_wall else None,
                 "flip_point": float(flip_point) if flip_point else None,
                 "net_gex": float(net_gex) if net_gex else None,
-                # Oracle Context (audit trail)
+                # Prophet Context (audit trail)
                 "oracle_confidence": float(oracle_conf) if oracle_conf else None,
                 "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else None,
                 "oracle_advice": oracle_advice,
@@ -3923,7 +3923,7 @@ def _enrich_scan_for_frontend(scan: dict) -> dict:
             oracle_advice = scan.get('oracle_advice', '')
             if oracle_advice in ['HOLD', 'SKIP_TODAY', 'REDUCE_SIZE']:
                 unlock_conditions.append({
-                    'condition': 'Oracle Advice',
+                    'condition': 'Prophet Advice',
                     'current_value': oracle_advice,
                     'required_value': 'TRADE',
                     'met': False,
@@ -3941,7 +3941,7 @@ def _enrich_scan_for_frontend(scan: dict) -> dict:
             'top_factors': []  # Could add ML-specific factors
         }
 
-    # Structure Oracle signal
+    # Structure Prophet signal
     if scan.get('oracle_advice') or scan.get('signal_win_probability'):
         enriched['oracle_signal'] = {
             'advice': scan.get('oracle_advice', 'HOLD'),
@@ -3967,7 +3967,7 @@ def _enrich_scan_for_frontend(scan: dict) -> dict:
     if 'Override' in str(signal_source) or 'override' in str(signal_source):
         enriched['override_occurred'] = True
         enriched['override_details'] = {
-            'winner': 'Oracle' if 'Oracle' in signal_source else 'ML',
+            'winner': 'Prophet' if 'Prophet' in signal_source else 'ML',
             'overridden_signal': scan.get('signal_direction', 'Unknown'),
             'override_reason': scan.get('decision_summary', 'Override applied')
         }
@@ -3988,7 +3988,7 @@ async def get_fortress_scan_activity(
 
     Each scan shows:
     - Market conditions at time of scan
-    - Oracle advice and reasoning
+    - Prophet advice and reasoning
     - Why trade was/wasn't taken
     - All checks performed
     - GEX regime and signal quality

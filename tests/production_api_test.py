@@ -157,10 +157,10 @@ def run_endpoint_existence_tests(base_url: str):
         ("/api/gideon/equity-curve/intraday", "GET", 200),
     ]
 
-    # Oracle & ML endpoints
+    # Prophet & ML endpoints
     oracle_endpoints = [
-        ("/api/zero-dte/oracle/status", "GET", 200),
-        ("/api/ml/sage/status", "GET", 200),
+        ("/api/zero-dte/prophet/status", "GET", 200),
+        ("/api/ml/wisdom/status", "GET", 200),
         ("/api/ml/gex-models/status", "GET", 200),
     ]
 
@@ -210,8 +210,8 @@ def run_response_shape_tests(base_url: str):
         # FORTRESS
         ("/api/fortress/status", ["status"]),
 
-        # Oracle
-        ("/api/zero-dte/oracle/status", ["status"]),
+        # Prophet
+        ("/api/zero-dte/prophet/status", ["status"]),
 
         # Metrics (unified)
         ("/api/metrics/VALOR/summary", ["bot_name"]),

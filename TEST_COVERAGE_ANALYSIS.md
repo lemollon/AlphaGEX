@@ -228,7 +228,7 @@ class TestDataQualityDashboard:
 **Current State:** Only `test_quant_modules.py` exists (22 tests).
 
 **Under-tested Modules:**
-- `oracle_advisor.py` (132 KB) - Probability advisor
+- `prophet_advisor.py` (132 KB) - Probability advisor
 - `gex_probability_models.py` (45 KB) - GEX modeling
 - `ares_ml_advisor.py` (39 KB) - IC ML advisor
 - `gex_directional_ml.py` (29 KB) - Directional ML
@@ -237,7 +237,7 @@ class TestDataQualityDashboard:
 
 **Recommended Tests:**
 ```python
-class TestOracleAdvisor:
+class TestProphetAdvisor:
     def test_probability_calculation_accuracy(self):
         """Test probability calculations match expected values"""
 
@@ -330,7 +330,7 @@ class TestBacktestFramework:
 **Under-tested Modules:**
 - `psychology_trap_detector.py` (108 KB) - Only 2 tests
 - `apollo_ml_engine.py` (56 KB) - ML predictions
-- `argus_engine.py` (32 KB) - 0DTE analysis
+- `watchtower_engine.py` (32 KB) - 0DTE analysis
 - `autonomous_paper_trader.py` (125 KB) - Paper bot
 - `vix_hedge_manager.py` (26 KB) - VIX hedging
 - `volatility_surface_integration.py` - Vol surface
@@ -349,7 +349,7 @@ class TestBacktestFramework:
 
 ### Current State
 - 1 Jest unit test file (method existence checks only)
-- 4 Playwright E2E specs (oracle, argus, live-pnl, swr-caching)
+- 4 Playwright E2E specs (prophet, watchtower, live-pnl, swr-caching)
 
 ### Recommended Testing Pyramid
 
@@ -469,7 +469,7 @@ test:
 | 5 | Add tests for `gamma_tracking_database.py` | Medium | Low |
 | 6 | Add tests for `alerts_system.py` | Medium | Low |
 | 7 | Set up pytest-cov for coverage reporting | Medium | Low |
-| 8 | Add tests for `oracle_advisor.py` | Medium | Medium |
+| 8 | Add tests for `prophet_advisor.py` | Medium | Medium |
 | 9 | Add tests for `polygon_data_fetcher.py` | Medium | Medium |
 | 10 | Create shared test fixtures in `conftest.py` | Low | Low |
 

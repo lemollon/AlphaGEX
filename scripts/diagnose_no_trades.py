@@ -118,16 +118,16 @@ def diagnose():
                     oracle_wp = float(oracle_wp) if oracle_wp else 0
                     ml_wp = float(ml_wp) if ml_wp else 0
                     threshold = float(threshold) if threshold else 0
-                    print(f"    {time_ct} | {outcome:10} | Oracle:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
+                    print(f"    {time_ct} | {outcome:10} | Prophet:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
                     print(f"      → {decision[:70]}")
         else:
             print("  No scan activity found for today")
     except Exception as e:
         print(f"  Could not fetch scan activity: {e}")
 
-    # 5. Check Oracle predictions
+    # 5. Check Prophet predictions
     print("\n" + "=" * 60)
-    print("🔮 ORACLE PREDICTIONS TODAY")
+    print("🔮 PROPHET PREDICTIONS TODAY")
     print("=" * 60)
 
     try:
@@ -139,7 +139,7 @@ def diagnose():
                 win_probability,
                 confidence,
                 reasoning
-            FROM oracle_predictions
+            FROM prophet_predictions
             WHERE trade_date = %s
             ORDER BY prediction_time DESC
             LIMIT 20
@@ -155,10 +155,10 @@ def diagnose():
                 if reason:
                     print(f"    → {reason[:80]}")
         else:
-            print("  ⚠️ NO ORACLE PREDICTIONS STORED TODAY")
+            print("  ⚠️ NO PROPHET PREDICTIONS STORED TODAY")
             print("  This confirms the visibility issue - predictions only stored on trade execution")
     except Exception as e:
-        print(f"  Could not fetch oracle predictions: {e}")
+        print(f"  Could not fetch prophet predictions: {e}")
 
     # 6. Summary
     print("\n" + "=" * 80)

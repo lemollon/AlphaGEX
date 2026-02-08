@@ -1068,13 +1068,13 @@ margin for smaller positions.
 # the returns that (should) exceed the box spread borrowing costs.
 # ==============================================================================
 
-# Oracle import for IC trading decisions
+# Prophet import for IC trading decisions
 try:
-    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     MarketContext = None
     GEXRegime = None
 
@@ -1097,7 +1097,7 @@ class PrometheusICSignalGenerator:
     Signal generation involves:
 
     1. Check market conditions (VIX, gamma regime)
-    2. Get Oracle approval for IC trading
+    2. Get Prophet approval for IC trading
     3. Select strikes based on delta targeting (~10 delta)
     4. Calculate position size based on available capital
     5. Generate signal with full audit trail
@@ -1111,15 +1111,15 @@ class PrometheusICSignalGenerator:
         self._init_components()
 
     def _init_components(self) -> None:
-        """Initialize Oracle and GEX components"""
-        # Oracle for IC trade approval
-        self.oracle = None
+        """Initialize Prophet and GEX components"""
+        # Prophet for IC trade approval
+        self.prophet = None
         if ORACLE_AVAILABLE:
             try:
-                self.oracle = OracleAdvisor()
-                logger.info("JUBILEE IC: Oracle initialized")
+                self.prophet = ProphetAdvisor()
+                logger.info("JUBILEE IC: Prophet initialized")
             except Exception as e:
-                logger.warning(f"JUBILEE IC: Oracle init failed: {e}")
+                logger.warning(f"JUBILEE IC: Prophet init failed: {e}")
 
         # GEX calculator for gamma regime
         self.gex_calculator = None
@@ -1195,13 +1195,13 @@ class PrometheusICSignalGenerator:
 
     def get_oracle_advice(self, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
-        Get Oracle advice for IC trading.
+        Get Prophet advice for IC trading.
 
-        JUBILEE requires Oracle approval before opening IC positions.
+        JUBILEE requires Prophet approval before opening IC positions.
         This ensures we only trade when conditions are favorable.
         """
-        if not self.oracle or not ORACLE_AVAILABLE:
-            logger.warning("JUBILEE IC: Oracle not available")
+        if not self.prophet or not ORACLE_AVAILABLE:
+            logger.warning("JUBILEE IC: Prophet not available")
             return None
 
         try:
@@ -1224,8 +1224,8 @@ class PrometheusICSignalGenerator:
                 expected_move_pct=(market_data.get('expected_move', 0) / spot * 100) if spot else 0,
             )
 
-            # Get IC advice from Oracle (using ANCHOR method since we're trading SPX ICs)
-            prediction = self.oracle.get_anchor_advice(
+            # Get IC advice from Prophet (using ANCHOR method since we're trading SPX ICs)
+            prediction = self.prophet.get_anchor_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=False,  # Skip Claude for speed
@@ -1254,7 +1254,7 @@ class PrometheusICSignalGenerator:
             }
 
         except Exception as e:
-            logger.error(f"JUBILEE IC: Oracle error: {e}")
+            logger.error(f"JUBILEE IC: Prophet error: {e}")
             return None
 
     def check_vix_filter(self, vix: float) -> Tuple[bool, str]:
@@ -1278,7 +1278,7 @@ class PrometheusICSignalGenerator:
         Calculate IC strikes with SPX $5 rounding.
 
         Priority:
-        1. Oracle suggested strikes (if valid)
+        1. Prophet suggested strikes (if valid)
         2. GEX walls (if available)
         3. Delta-based strikes (fallback)
         """
@@ -1290,7 +1290,7 @@ class PrometheusICSignalGenerator:
         use_oracle = False
         use_gex = False
 
-        # Priority 1: Oracle suggested strikes
+        # Priority 1: Prophet suggested strikes
         if oracle_put_strike and oracle_call_strike:
             put_dist = (spot - oracle_put_strike) / spot
             call_dist = (oracle_call_strike - spot) / spot
@@ -1324,7 +1324,7 @@ class PrometheusICSignalGenerator:
             'call_long': call_long,
             'using_gex': use_gex,
             'using_oracle': use_oracle,
-            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'DELTA'),
+            'source': 'PROPHET' if use_oracle else ('GEX' if use_gex else 'DELTA'),
         }
 
     def estimate_credits(
@@ -1440,24 +1440,24 @@ class PrometheusICSignalGenerator:
                 now, source_box_position_id, market, vix_reason
             )
 
-        # Get Oracle advice
-        oracle = self.get_oracle_advice(market)
-        if not oracle:
-            logger.warning("JUBILEE IC: No Oracle advice available")
+        # Get Prophet advice
+        prophet = self.get_oracle_advice(market)
+        if not prophet:
+            logger.warning("JUBILEE IC: No Prophet advice available")
             return self._create_skip_signal(
-                now, source_box_position_id, market, "Oracle not available"
+                now, source_box_position_id, market, "Prophet not available"
             )
 
-        oracle_advice = oracle.get('advice', 'HOLD')
-        oracle_confidence = oracle.get('confidence', 0)
-        oracle_win_prob = oracle.get('win_probability', 0)
+        oracle_advice = prophet.get('advice', 'HOLD')
+        oracle_confidence = prophet.get('confidence', 0)
+        oracle_win_prob = prophet.get('win_probability', 0)
 
-        # Log Oracle advice (informational - ANCHOR style)
-        logger.info(f"JUBILEE IC Oracle: advice={oracle_advice}, confidence={oracle_confidence:.0%}, win_prob={oracle_win_prob:.0%}")
+        # Log Prophet advice (informational - ANCHOR style)
+        logger.info(f"JUBILEE IC Prophet: advice={oracle_advice}, confidence={oracle_confidence:.0%}, win_prob={oracle_win_prob:.0%}")
 
-        # Check Oracle thresholds if required
+        # Check Prophet thresholds if required
         # NOTE: Like ANCHOR, we only check win_probability threshold, NOT the advice string
-        # Oracle advice string (TRADE_FULL/SKIP_TODAY) is informational only
+        # Prophet advice string (TRADE_FULL/SKIP_TODAY) is informational only
         oracle_approved = True  # Will be set to False only if we fail the threshold check
         if self.config.require_oracle_approval:
             # Only check win probability - this is how ANCHOR works
@@ -1465,10 +1465,10 @@ class PrometheusICSignalGenerator:
                 skip_reason = f"Win probability {oracle_win_prob:.0%} below min {self.config.min_win_probability:.0%}"
                 logger.info(f"JUBILEE IC: {skip_reason}")
                 return self._create_skip_signal(
-                    now, source_box_position_id, market, skip_reason, oracle
+                    now, source_box_position_id, market, skip_reason, prophet
                 )
-            # If we pass the threshold, Oracle approved
-            logger.info(f"JUBILEE IC: Oracle APPROVED (win_prob {oracle_win_prob:.0%} >= {self.config.min_win_probability:.0%})")
+            # If we pass the threshold, Prophet approved
+            logger.info(f"JUBILEE IC: Prophet APPROVED (win_prob {oracle_win_prob:.0%} >= {self.config.min_win_probability:.0%})")
 
         # Calculate strikes
         strikes = self.calculate_strikes(
@@ -1476,8 +1476,8 @@ class PrometheusICSignalGenerator:
             market['expected_move'],
             market.get('call_wall', 0),
             market.get('put_wall', 0),
-            oracle.get('suggested_put_strike'),
-            oracle.get('suggested_call_strike'),
+            prophet.get('suggested_put_strike'),
+            prophet.get('suggested_call_strike'),
         )
 
         # Estimate credits
@@ -1522,13 +1522,13 @@ class PrometheusICSignalGenerator:
 
         # Build reasoning
         reasoning_parts = [
-            f"Oracle: {oracle_advice} ({oracle_confidence:.0%})",
+            f"Prophet: {oracle_advice} ({oracle_confidence:.0%})",
             f"Win Prob: {oracle_win_prob:.0%}",
             f"VIX: {vix:.1f}",
             f"Strikes via {strikes['source']}",
         ]
-        if oracle.get('top_factors'):
-            top_factor = oracle['top_factors'][0]
+        if prophet.get('top_factors'):
+            top_factor = prophet['top_factors'][0]
             reasoning_parts.append(f"Top: {top_factor['factor']}")
 
         logger.info(
@@ -1568,7 +1568,7 @@ class PrometheusICSignalGenerator:
             contracts=contracts,
             margin_required=margin_required,
             capital_at_risk=max_loss,
-            # Oracle
+            # Prophet
             oracle_approved=oracle_approved,
             oracle_confidence=oracle_confidence,
             oracle_reasoning=" | ".join(reasoning_parts),
@@ -1587,7 +1587,7 @@ class PrometheusICSignalGenerator:
         source_box_position_id: str,
         market: Dict[str, Any],
         skip_reason: str,
-        oracle: Dict[str, Any] = None,
+        prophet: Dict[str, Any] = None,
     ) -> PrometheusICSignal:
         """Create a signal that was skipped (for audit trail)"""
         return PrometheusICSignal(
@@ -1616,10 +1616,10 @@ class PrometheusICSignalGenerator:
             contracts=0,
             margin_required=0,
             capital_at_risk=0,
-            # Oracle context
+            # Prophet context
             oracle_approved=False,
-            oracle_confidence=oracle.get('confidence', 0) if oracle else 0,
-            oracle_reasoning=oracle.get('reasoning', '') if oracle else '',
+            oracle_confidence=prophet.get('confidence', 0) if prophet else 0,
+            oracle_reasoning=prophet.get('reasoning', '') if prophet else '',
             # Market context
             vix_level=market.get('vix', 0),
             gamma_regime=market.get('gex_regime', 'NEUTRAL'),

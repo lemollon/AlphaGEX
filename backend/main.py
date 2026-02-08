@@ -61,15 +61,15 @@ from backend.api.routes import (
     samson_routes,  # SAMSON Aggressive SPX Iron Condor bot endpoints
     logs_routes,  # Comprehensive logs API for ALL 22 logging tables
     scan_activity_routes,  # Scan Activity - EVERY scan with full reasoning for FORTRESS/SOLOMON
-    apollo_routes,  # APOLLO ML-powered scanner
+    discernment_routes,  # DISCERNMENT ML-powered scanner
     daily_manna_routes,  # Daily Manna - Economic news with faith-based devotionals
-    argus_routes,  # ARGUS - 0DTE Gamma Live real-time visualization
-    hyperion_routes,  # HYPERION - Weekly Gamma visualization for stocks/ETFs
+    watchtower_routes,  # WATCHTOWER - 0DTE Gamma Live real-time visualization
+    glory_routes,  # GLORY - Weekly Gamma visualization for stocks/ETFs
     data_transparency_routes,  # Data Transparency - expose ALL hidden collected data
     docs_routes,  # Documentation - codebase search and source code retrieval
     proverbs_routes,  # PROVERBS - Feedback Loop Intelligence System for bot learning
     events_routes,  # Trading Events - auto-detected events for equity curves
-    oracle_routes,  # ORACLE - ML Advisory System for strategy recommendations
+    prophet_routes,  # PROPHET - ML Advisory System for strategy recommendations
     quant_routes,  # QUANT - ML Models Dashboard (Regime Classifier, Directional ML, Ensemble)
     math_optimizer_routes,  # Mathematical Optimization - HMM, Kalman, Thompson, Convex, HJB, MDP algorithms
     validation_routes,  # AutoValidation - ML model health monitoring, Thompson allocation, auto-retrain
@@ -313,15 +313,15 @@ app.include_router(anchor_routes.router)
 app.include_router(samson_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(scan_activity_routes.router)
-app.include_router(apollo_routes.router)
+app.include_router(discernment_routes.router)
 app.include_router(daily_manna_routes.router)
-app.include_router(argus_routes.router)
-app.include_router(hyperion_routes.router)
+app.include_router(watchtower_routes.router)
+app.include_router(glory_routes.router)
 app.include_router(data_transparency_routes.router)
 app.include_router(docs_routes.router)
 app.include_router(proverbs_routes.router)
 app.include_router(events_routes.router)
-app.include_router(oracle_routes.router)
+app.include_router(prophet_routes.router)
 app.include_router(quant_routes.router)
 app.include_router(math_optimizer_routes.router)
 app.include_router(validation_routes.router)
@@ -332,7 +332,7 @@ app.include_router(jubilee_routes.router)
 app.include_router(tastytrade_routes.router)
 app.include_router(valor_routes.router)
 app.include_router(agape_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, argus, docs, proverbs, events, oracle, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape")
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded
@@ -908,11 +908,11 @@ async def websocket_positions(websocket: WebSocket):
 
 
 # ============================================================================
-# KRONOS WebSocket - Real-Time Backtest Progress and GEX Updates
+# CHRONICLES WebSocket - Real-Time Backtest Progress and GEX Updates
 # ============================================================================
 
 class KronosConnectionManager:
-    """Manage KRONOS WebSocket connections for backtest progress and GEX data"""
+    """Manage CHRONICLES WebSocket connections for backtest progress and GEX data"""
 
     def __init__(self):
         self.active_connections: dict[str, list[WebSocket]] = {}  # job_id -> connections
@@ -963,10 +963,10 @@ class KronosConnectionManager:
 kronos_manager = KronosConnectionManager()
 
 
-@app.websocket("/ws/kronos/job/{job_id}")
+@app.websocket("/ws/chronicles/job/{job_id}")
 async def websocket_kronos_job(websocket: WebSocket, job_id: str):
     """
-    WebSocket endpoint for real-time KRONOS backtest progress updates.
+    WebSocket endpoint for real-time CHRONICLES backtest progress updates.
 
     Clients subscribe to a specific job_id to receive progress updates.
     Much faster than SSE or polling for high-frequency updates.
@@ -976,7 +976,7 @@ async def websocket_kronos_job(websocket: WebSocket, job_id: str):
     try:
         # Import job store
         try:
-            from backend.services.kronos_infrastructure import job_store
+            from backend.services.chronicles_infrastructure import job_store
         except ImportError:
             job_store = None
 
@@ -1044,16 +1044,16 @@ async def websocket_kronos_job(websocket: WebSocket, job_id: str):
     except Exception as e:
         kronos_manager.disconnect(websocket, job_id)
         if str(e):
-            print(f"KRONOS WebSocket error: {e}")
+            print(f"CHRONICLES WebSocket error: {e}")
 
 
-@app.websocket("/ws/kronos/gex")
+@app.websocket("/ws/chronicles/gex")
 async def websocket_kronos_gex(websocket: WebSocket):
     """
     WebSocket endpoint for real-time GEX data updates.
 
     Clients receive live GEX calculations as they're computed.
-    Useful for the KRONOS dashboard to show current market gamma exposure.
+    Useful for the CHRONICLES dashboard to show current market gamma exposure.
     """
     await kronos_manager.connect(websocket, None)
 
@@ -1067,7 +1067,7 @@ async def websocket_kronos_gex(websocket: WebSocket):
                 elif message == "get_gex":
                     # Fetch and send current GEX data
                     try:
-                        from quant.kronos_gex_calculator import KronosGEXCalculator
+                        from quant.chronicles_gex_calculator import KronosGEXCalculator
                         calculator = KronosGEXCalculator()
                         gex_data = calculator.calculate_gex_for_date(datetime.now().strftime('%Y-%m-%d'))
                         if gex_data:
@@ -1097,14 +1097,14 @@ async def websocket_kronos_gex(websocket: WebSocket):
     except Exception as e:
         kronos_manager.disconnect(websocket, None)
         if str(e):
-            print(f"KRONOS GEX WebSocket error: {e}")
+            print(f"CHRONICLES GEX WebSocket error: {e}")
 
 
-@app.get("/api/kronos/infrastructure")
-async def get_kronos_infrastructure_status():
-    """Get status of KRONOS infrastructure components"""
+@app.get("/api/chronicles/infrastructure")
+async def get_chronicles_infrastructure_status():
+    """Get status of CHRONICLES infrastructure components"""
     try:
-        from backend.services.kronos_infrastructure import get_infrastructure_status
+        from backend.services.chronicles_infrastructure import get_infrastructure_status
         return {
             "success": True,
             "infrastructure": get_infrastructure_status(),
@@ -1117,7 +1117,7 @@ async def get_kronos_infrastructure_status():
         return {
             "success": True,
             "infrastructure": {
-                "job_store": {"type": "memory", "note": "kronos_infrastructure not loaded"},
+                "job_store": {"type": "memory", "note": "chronicles_infrastructure not loaded"},
                 "connection_pool": {"available": False},
                 "orat_cache": {"hits": 0, "misses": 0},
             },
@@ -1685,15 +1685,15 @@ async def startup_event():
         print(f"⚠️  Initialization check failed: {e}")
         print("📊 App will create tables as needed during operation")
 
-    # Initialize ARGUS engine with ML models pre-loaded for faster first request
-    print("\n👁️  Initializing ARGUS engine...")
+    # Initialize WATCHTOWER engine with ML models pre-loaded for faster first request
+    print("\n👁️  Initializing WATCHTOWER engine...")
     try:
-        from core.argus_engine import initialize_argus_engine
-        initialize_argus_engine()
-        print("✅ ARGUS engine initialized with ML models pre-loaded")
+        from core.watchtower_engine import initialize_watchtower_engine
+        initialize_watchtower_engine()
+        print("✅ WATCHTOWER engine initialized with ML models pre-loaded")
     except Exception as e:
-        print(f"⚠️  ARGUS initialization warning: {e}")
-        print("   ARGUS will lazy-load on first request")
+        print(f"⚠️  WATCHTOWER initialization warning: {e}")
+        print("   WATCHTOWER will lazy-load on first request")
 
     # Pre-check Math Optimizer availability (lazy initialization, but check dependencies)
     print("\n🧮 Checking Math Optimizer dependencies...")
@@ -1931,7 +1931,7 @@ async def startup_event():
     print("   • LAZARUS: 0DTE SPY/SPX options - every 5 min during market hours")
     print("   • FORTRESS: Aggressive Iron Condor - 8:30 AM - 3:30 PM CT (targets 10% monthly)")
     print("   • CORNERSTONE: SPX Cash-Secured Put Wheel - 9:05 AM CT daily")
-    print("   • Oracle AI: Provides recommendations to FORTRESS for trade decisions")
+    print("   • Prophet AI: Provides recommendations to FORTRESS for trade decisions")
     print("")
     print("💰 CAPITAL ALLOCATION:")
     print("   • LAZARUS: $300,000 (30%)")

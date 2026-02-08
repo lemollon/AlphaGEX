@@ -28,14 +28,14 @@ ARCHITECTURE:
 │                                    ↓                                            │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐│
 │  │ LAYER 3: ML ADVISOR - PRIMARY DECISION MAKER                                ││
-│  │ • XGBoost model trained on KRONOS backtest data                             ││
+│  │ • XGBoost model trained on CHRONICLES backtest data                             ││
 │  │ • Win probability prediction                                                ││
 │  │ • Position sizing recommendation                                            ││
 │  │ • Auto-retrain when performance degrades                                    ││
 │  └─────────────────────────────────────────────────────────────────────────────┘│
 │                                    ↓                                            │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐│
-│  │ LAYER 4: ORACLE - BOT-SPECIFIC ADAPTATION                                   ││
+│  │ LAYER 4: PROPHET - BOT-SPECIFIC ADAPTATION                                   ││
 │  │ • Adapts ML decision for specific bot (FORTRESS, SOLOMON, etc.)                  ││
 │  │ • Strike selection, risk percentage                                         ││
 │  │ • NO veto power over ML Advisor                                             ││
@@ -86,7 +86,7 @@ class DecisionAuthority(Enum):
     PROVERBS = "PROVERBS"           # Safety layer - ABSOLUTE
     ENSEMBLE = "ENSEMBLE"         # Market context - INFORMATIONAL
     ML_ADVISOR = "ML_ADVISOR"     # Win probability - PRIMARY
-    ORACLE = "ORACLE"             # Bot-specific - ADAPTATION
+    PROPHET = "PROPHET"             # Bot-specific - ADAPTATION
 
 
 class TradingDecision(Enum):
@@ -170,14 +170,14 @@ class MLAdvisorDecision:
 
 @dataclass
 class OracleAdaptation:
-    """Oracle bot-specific adaptation"""
+    """Prophet bot-specific adaptation"""
     bot_name: str
     suggested_put_strike: Optional[float] = None
     suggested_call_strike: Optional[float] = None
     use_gex_walls: bool = False
     risk_adjustment: float = 1.0  # Multiplier for risk
     reasoning: str = ""
-    authority: DecisionAuthority = DecisionAuthority.ORACLE
+    authority: DecisionAuthority = DecisionAuthority.PROPHET
 
     def to_dict(self) -> Dict:
         return {
@@ -812,7 +812,7 @@ class OmegaOrchestrator:
     The OMEGA Orchestrator - Central Trading Decision Coordination Hub.
 
     Provides a single entry point for all trading decisions with:
-    - Layered decision authority (Proverbs → Ensemble → ML → Oracle)
+    - Layered decision authority (Proverbs → Ensemble → ML → Prophet)
     - Full transparency on WHO made each decision and WHY
     - Gap implementations for enhanced profitability
     """
@@ -838,7 +838,7 @@ class OmegaOrchestrator:
         # ML Advisor
         self._ml_advisor = None
 
-        # Oracle
+        # Prophet
         self._oracle = None
 
         # Decision history
@@ -858,7 +858,7 @@ class OmegaOrchestrator:
         return self._proverbs_enhanced
 
     def _get_ensemble_weighter(self, symbol: str = "SPY"):
-        # REMOVED: Ensemble Strategy - Oracle is god
+        # REMOVED: Ensemble Strategy - Prophet is god
         return None
 
     def _get_ml_advisor(self):
@@ -950,7 +950,7 @@ class OmegaOrchestrator:
 
     # =========================================================================
     # LAYER 2: ENSEMBLE - INFORMATIONAL
-    # REMOVED: Ensemble Strategy - Oracle is god
+    # REMOVED: Ensemble Strategy - Prophet is god
     # =========================================================================
 
     def _get_ensemble_context(
@@ -962,8 +962,8 @@ class OmegaOrchestrator:
         ml_prediction: Optional[Dict] = None,
         current_regime: str = "UNKNOWN"
     ) -> EnsembleContext:
-        # REMOVED: Ensemble Strategy - Oracle is god
-        # Returns neutral context - Oracle decides all trades
+        # REMOVED: Ensemble Strategy - Prophet is god
+        # Returns neutral context - Prophet decides all trades
         return EnsembleContext(
             signal="NEUTRAL",
             confidence=50.0,
@@ -971,7 +971,7 @@ class OmegaOrchestrator:
             bearish_weight=0.33,
             neutral_weight=0.34,
             component_signals={},
-            position_size_multiplier=1.0,  # Full size - let Oracle decide
+            position_size_multiplier=1.0,  # Full size - let Prophet decide
             regime=current_regime
         )
 
@@ -1084,7 +1084,7 @@ class OmegaOrchestrator:
             )
 
     # =========================================================================
-    # LAYER 4: ORACLE - BOT-SPECIFIC ADAPTATION
+    # LAYER 4: PROPHET - BOT-SPECIFIC ADAPTATION
     # =========================================================================
 
     def _get_oracle_adaptation(
@@ -1095,7 +1095,7 @@ class OmegaOrchestrator:
         gex_data: Dict
     ) -> OracleAdaptation:
         """
-        Get Oracle bot-specific adaptation.
+        Get Prophet bot-specific adaptation.
 
         NO veto power over ML Advisor decision.
         Only adapts the decision for the specific bot.
@@ -1220,16 +1220,16 @@ class OmegaOrchestrator:
         )
 
         # =====================================================================
-        # LAYER 4: ORACLE ADAPTATION (BOT-SPECIFIC)
+        # LAYER 4: PROPHET ADAPTATION (BOT-SPECIFIC)
         # =====================================================================
-        decision_path.append("LAYER 4: Getting Oracle bot-specific adaptation...")
+        decision_path.append("LAYER 4: Getting Prophet bot-specific adaptation...")
         oracle_adaptation = self._get_oracle_adaptation(
             bot_name=bot_name,
             ml_decision=ml_decision,
             ensemble_context=ensemble_context,
             gex_data=gex_data
         )
-        decision_path.append(f"Oracle: Risk adjustment {oracle_adaptation.risk_adjustment:.0%}")
+        decision_path.append(f"Prophet: Risk adjustment {oracle_adaptation.risk_adjustment:.0%}")
 
         # =====================================================================
         # GAP IMPLEMENTATIONS
@@ -1422,9 +1422,9 @@ class OmegaOrchestrator:
             'recent_decisions': len(self.decision_history),
             'layers': {
                 'proverbs': 'ACTIVE',
-                'ensemble': 'REMOVED',  # REMOVED: Ensemble Strategy - Oracle is god
+                'ensemble': 'REMOVED',  # REMOVED: Ensemble Strategy - Prophet is god
                 'ml_advisor': 'ACTIVE' if self._get_ml_advisor() and self._get_ml_advisor().is_trained else 'FALLBACK',
-                'oracle': 'ACTIVE'
+                'prophet': 'ACTIVE'
             }
         }
 

@@ -111,7 +111,7 @@ async def proverbs_health():
             "status": "healthy",
             "session_id": proverbs.session_id,
             "database_connected": health.get('database', False),
-            "oracle_connected": health.get('oracle', False),
+            "oracle_connected": health.get('prophet', False),
             "last_feedback_run": health.get('last_feedback_run'),
             "pending_proposals": health.get('pending_proposals_count', 0),
             "degradation_alerts_24h": health.get('degradation_alerts', 0),
@@ -1055,14 +1055,14 @@ async def get_strategy_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/oracle-accuracy")
-async def get_oracle_accuracy(
+@router.get("/prophet-accuracy")
+async def get_prophet_accuracy(
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze")
 ):
     """
-    Get Oracle advice accuracy analysis.
+    Get Prophet advice accuracy analysis.
 
-    Migration 023: Analyzes how well Oracle's recommendations correlate
+    Migration 023: Analyzes how well Prophet's recommendations correlate
     with actual trade outcomes.
 
     Returns:
@@ -1075,14 +1075,14 @@ async def get_oracle_accuracy(
 
     try:
         enhanced = get_proverbs_enhanced()
-        accuracy = enhanced.get_oracle_accuracy(days=days)
+        accuracy = enhanced.get_prophet_accuracy(days=days)
 
         return {
             "success": True,
             **accuracy
         }
     except Exception as e:
-        logger.error(f"Failed to get oracle accuracy: {e}")
+        logger.error(f"Failed to get prophet accuracy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

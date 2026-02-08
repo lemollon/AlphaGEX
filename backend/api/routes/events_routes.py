@@ -391,7 +391,7 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
             last_version = {}
 
             for event_date, version, bot in versions:
-                key = bot or 'ORACLE'
+                key = bot or 'PROPHET'
                 if key in last_version and last_version[key] != version:
                     events.append({
                         'date': str(event_date),

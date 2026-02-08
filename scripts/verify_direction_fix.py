@@ -12,7 +12,7 @@ What it checks:
 1. Database config values (SOLOMON_wall_filter_pct, ICARUS_wall_filter_pct)
 2. Config loading in bot code
 3. Direction logic in price_trend_tracker
-4. Oracle integration
+4. Prophet integration
 5. Simulated scenarios matching Apache backtest
 
 Expected output: All checks should show green checkmarks.
@@ -273,15 +273,15 @@ except Exception as e:
     traceback.print_exc()
 
 # ============================================================================
-# TEST 4: ORACLE INTEGRATION
+# TEST 4: PROPHET INTEGRATION
 # ============================================================================
-print("\n[4] ORACLE INTEGRATION")
+print("\n[4] PROPHET INTEGRATION")
 print("-" * 70)
 
 try:
-    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-    oracle = OracleAdvisor()
+    prophet = ProphetAdvisor()
 
     # Create context for near-put-wall scenario (dataclass)
     context = MarketContext(
@@ -294,20 +294,20 @@ try:
         gex_flip_point=588.0,
     )
 
-    # Call Oracle with wall_filter_pct
-    prediction = oracle.get_solomon_advice(
+    # Call Prophet with wall_filter_pct
+    prediction = prophet.get_solomon_advice(
         context=context,
         use_gex_walls=True,
         wall_filter_pct=1.0
     )
 
     if prediction:
-        check("Oracle returns prediction",
+        check("Prophet returns prediction",
               prediction is not None,
-              "Oracle returned None")
+              "Prophet returned None")
 
         neutral_dir = getattr(prediction, 'neutral_derived_direction', '')
-        check("Oracle uses neutral_derived_direction",
+        check("Prophet uses neutral_derived_direction",
               neutral_dir != '',
               f"Got: '{neutral_dir}' (empty means not set)")
 
@@ -316,10 +316,10 @@ try:
         print(f"      wall_filter_passed: {wall_passed}")
         print(f"      advice: {prediction.advice.value if prediction.advice else 'N/A'}")
     else:
-        print("  WARNING: Oracle returned None - may need market data")
+        print("  WARNING: Prophet returned None - may need market data")
 
 except Exception as e:
-    print(f"  ERROR: Oracle integration test failed: {e}")
+    print(f"  ERROR: Prophet integration test failed: {e}")
     import traceback
     traceback.print_exc()
 

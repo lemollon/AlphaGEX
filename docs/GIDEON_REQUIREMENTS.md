@@ -96,7 +96,7 @@ GIDEON: {
 |-----|------|---------|
 | **Portfolio** | Wallet | Status Banner + Open Positions + Equity Curve |
 | **Overview** | LayoutDashboard | Bot status grid (mode, ticker, window, scans) |
-| **Activity** | Activity | Scan Activity Feed with Oracle decisions |
+| **Activity** | Activity | Scan Activity Feed with Prophet decisions |
 | **History** | History | Closed positions + CSV export |
 | **Config** | Settings | Configuration values + Reset button |
 
@@ -126,7 +126,7 @@ GIDEON: {
 | `useICARUSSignals` | Generated signals |
 | `useICARUSLogs` | Log entries |
 | `useICARUSDecisions` | Decision history |
-| `useICARUSOracleAdvice` | Oracle advice |
+| `useICARUSOracleAdvice` | Prophet advice |
 | `useScanActivityIcarus` | Scan activity feed |
 
 ---
@@ -162,7 +162,7 @@ backend/api/routes/gideon_routes.py  # API endpoints
 | `/api/gideon/signals` | GET | Generated signals |
 | `/api/gideon/logs` | GET | Bot logs |
 | `/api/gideon/decisions` | GET | Decision history |
-| `/api/gideon/oracle-advice` | GET | Oracle advice |
+| `/api/gideon/prophet-advice` | GET | Prophet advice |
 | `/api/gideon/reset` | POST | Reset all data |
 
 ### Database Tables

@@ -57,21 +57,21 @@ class TestProverbsEndpoints:
         response = test_client.get("/api/proverbs/strategy-analysis?days=7")
         assert response.status_code in [200, 500]
 
-    def test_proverbs_oracle_accuracy(self, test_client):
-        """Test Proverbs Oracle accuracy endpoint (Migration 023)"""
+    def test_proverbs_prophet_accuracy(self, test_client):
+        """Test Proverbs Prophet accuracy endpoint (Migration 023)"""
         if test_client is None:
             pytest.skip("Test client not available")
-        response = test_client.get("/api/proverbs/oracle-accuracy")
+        response = test_client.get("/api/proverbs/prophet-accuracy")
         assert response.status_code in [200, 500]
         if response.status_code == 200:
             data = response.json()
             assert 'success' in data or 'status' in data
 
-    def test_proverbs_oracle_accuracy_with_days(self, test_client):
-        """Test Proverbs Oracle accuracy with custom days parameter"""
+    def test_proverbs_prophet_accuracy_with_days(self, test_client):
+        """Test Proverbs Prophet accuracy with custom days parameter"""
         if test_client is None:
             pytest.skip("Test client not available")
-        response = test_client.get("/api/proverbs/oracle-accuracy?days=14")
+        response = test_client.get("/api/proverbs/prophet-accuracy?days=14")
         assert response.status_code in [200, 500]
 
     def test_proverbs_analysis(self, test_client):

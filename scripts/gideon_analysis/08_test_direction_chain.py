@@ -2,7 +2,7 @@
 """
 GIDEON Direction Chain Test
 ===========================
-Tests that ML → Oracle → GIDEON direction chain works correctly.
+Tests that ML → Prophet → GIDEON direction chain works correctly.
 
 This script simulates the signal generation flow and verifies
 that directions are consistent throughout the chain.
@@ -21,7 +21,7 @@ def test_direction_chain():
     print("=" * 70)
 
     # Test 1: Check GEX Signal Generator
-    print("\n1. Testing GEX Signal Generator (ORION)...")
+    print("\n1. Testing GEX Signal Generator (STARS)...")
     try:
         from quant.gex_signal_integration import GEXSignalGenerator
         generator = GEXSignalGenerator()
@@ -43,24 +43,24 @@ def test_direction_chain():
     except Exception as e:
         print(f"   ❌ Error: {e}")
 
-    # Test 2: Check Oracle imports GEX ML
-    print("\n2. Testing Oracle GEX ML Integration...")
+    # Test 2: Check Prophet imports GEX ML
+    print("\n2. Testing Prophet GEX ML Integration...")
     try:
-        from quant.oracle_advisor import GEX_ML_AVAILABLE, GEXSignalGenerator as OracleGEX
+        from quant.prophet_advisor import GEX_ML_AVAILABLE, GEXSignalGenerator as OracleGEX
         print(f"   GEX_ML_AVAILABLE: {GEX_ML_AVAILABLE}")
         if GEX_ML_AVAILABLE:
-            print("   ✅ Oracle can use ML direction")
+            print("   ✅ Prophet can use ML direction")
         else:
-            print("   ❌ Oracle cannot use ML direction - fix may not work!")
+            print("   ❌ Prophet cannot use ML direction - fix may not work!")
     except Exception as e:
-        print(f"   ❌ Error importing Oracle: {e}")
+        print(f"   ❌ Error importing Prophet: {e}")
 
-    # Test 3: Check Oracle get_solomon_advice
-    print("\n3. Testing Oracle.get_solomon_advice()...")
+    # Test 3: Check Prophet get_solomon_advice
+    print("\n3. Testing Prophet.get_solomon_advice()...")
     try:
-        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+        from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-        oracle = OracleAdvisor()
+        prophet = ProphetAdvisor()
 
         # Create test context
         context = MarketContext(
@@ -83,7 +83,7 @@ def test_direction_chain():
             win_rate_30d=0.55,
         )
 
-        prediction = oracle.get_solomon_advice(
+        prediction = prophet.get_solomon_advice(
             context=context,
             use_gex_walls=True,
             use_claude_validation=False,
@@ -97,19 +97,19 @@ def test_direction_chain():
             if not direction or direction == "FLAT":
                 direction = prediction.reasoning.split("ML DIRECTION:")[1].split()[0] if "ML DIRECTION:" in prediction.reasoning else "UNKNOWN"
 
-            print(f"   Oracle Prediction:")
+            print(f"   Prophet Prediction:")
             print(f"   - Direction: {direction}")
             print(f"   - Confidence: {prediction.confidence:.0%}")
             print(f"   - Win Probability: {prediction.win_probability:.0%}")
             print(f"   - Advice: {prediction.advice}")
 
             if "ML DIRECTION" in prediction.reasoning:
-                print("   ✅ Oracle is using ML direction!")
+                print("   ✅ Prophet is using ML direction!")
             else:
-                print("   ⚠️  Oracle may not be using ML direction")
+                print("   ⚠️  Prophet may not be using ML direction")
                 print(f"   Reasoning: {prediction.reasoning[:200]}...")
         else:
-            print("   ❌ Oracle returned no prediction")
+            print("   ❌ Prophet returned no prediction")
 
     except Exception as e:
         import traceback
@@ -125,8 +125,8 @@ def test_direction_chain():
 
         source = inspect.getsource(SignalGenerator.generate_signal)
 
-        if "Oracle is the SOLE AUTHORITY" in source:
-            print("   ✅ GIDEON uses Oracle as sole authority")
+        if "Prophet is the SOLE AUTHORITY" in source:
+            print("   ✅ GIDEON uses Prophet as sole authority")
         else:
             print("   ⚠️  GIDEON direction logic may not be updated")
 
@@ -144,9 +144,9 @@ def test_direction_chain():
     print("=" * 70)
     print("""
   Expected Flow:
-  1. ML (ORION) → get_combined_signal() → BULLISH/BEARISH
-  2. Oracle → get_solomon_advice() → Uses ML direction
-  3. GIDEON → generate_signal() → Follows Oracle direction
+  1. ML (STARS) → get_combined_signal() → BULLISH/BEARISH
+  2. Prophet → get_solomon_advice() → Uses ML direction
+  3. GIDEON → generate_signal() → Follows Prophet direction
   4. Trade → BULL_CALL (if BULLISH) or BEAR_PUT (if BEARISH)
 
   If all tests pass (✅), the direction chain is working correctly.

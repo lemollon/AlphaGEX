@@ -67,7 +67,7 @@ A comprehensive code audit was performed on all live trading bots. Critical issu
 **Entry Logic:**
 - Win probability threshold **DISABLED** at `signals.py:960-962`
 - VIX filter **DISABLED** at `signals.py:497-498`
-- Signal defaults to 50% confidence if ML and Oracle both fail
+- Signal defaults to 50% confidence if ML and Prophet both fail
 
 **Exit Logic:**
 - Position valuation failure returns `(False, "")` - position won't close
@@ -135,7 +135,7 @@ if current_value is None:
 
 **Entry Logic:**
 - Win probability threshold **DISABLED** (same as ARES)
-- Effective win prob defaults to 50% when ML/Oracle fail
+- Effective win prob defaults to 50% when ML/Prophet fail
 
 **Exit Logic:**
 - Same valuation failure issue - returns (False, "")
@@ -362,7 +362,7 @@ All critical issues have been fixed:
 - **Fixed timezone bug** - Now uses Central Time (8:30 AM - 3:00 PM CT)
 - **Added buy-to-close verification** - Returns False if order fails before updating DB
 
-### Oracle Advisor Improvements
+### Prophet Advisor Improvements
 - **Removed Monday/Friday penalties** - Day of week no longer penalizes Monday (-8%→0%) or Friday (-5%→0%)
 - **Disabled VIX day-specific skips** - `vix_monday_friday_skip` set to 0 (was 30.0) to allow daily trading
 - **Reduced win probability penalties** - Less aggressive penalty stack for realistic trading
@@ -375,7 +375,7 @@ All critical issues have been fixed:
 - `trading/solomon_v2/trader.py` - Pricing fallback
 - `trading/gideon/trader.py` - Pricing fallback
 - `trading/spx_wheel_system.py` - Timezone fix, order verification
-- `quant/oracle_advisor.py` - Removed Monday/Friday penalties, reduced penalty stack
+- `quant/prophet_advisor.py` - Removed Monday/Friday penalties, reduced penalty stack
 - `quant/ares_ml_advisor.py` - Reduced fallback prediction penalties
 
 ---

@@ -9,7 +9,7 @@ import PortfolioSummaryCard from '@/components/dashboard/PortfolioSummaryCard'
 import AllOpenPositionsTable from '@/components/dashboard/AllOpenPositionsTable'
 import MarketConditionsBanner from '@/components/dashboard/MarketConditionsBanner'
 import AllBotReportsSummary from '@/components/dashboard/AllBotReportsSummary'
-import SAGEStatusWidget from '@/components/SAGEStatusWidget'
+import WisdomStatusWidget from '@/components/WisdomStatusWidget'
 import QuantStatusWidget from '@/components/QuantStatusWidget'
 import MathOptimizerWidget from '@/components/MathOptimizerWidget'
 import SyncStatusWidget from '@/components/SyncStatusWidget'
@@ -62,7 +62,7 @@ export default function LiveTradingDashboard() {
 
           {/* Row 5: AI/ML Systems that advise the bots */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <SAGEStatusWidget />
+            <WisdomStatusWidget />
             <QuantStatusWidget />
             <MathOptimizerWidget />
             <SyncStatusWidget />

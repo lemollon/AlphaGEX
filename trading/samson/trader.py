@@ -54,16 +54,16 @@ except ImportError:
     log_bot_decision = None
     BotDecision = None
 
-# Oracle for outcome recording
+# Prophet for outcome recording
 try:
-    from quant.oracle_advisor import (
-        OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
+    from quant.prophet_advisor import (
+        ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
         MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
     )
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleBotName = None
     OracleTradeOutcome = None
     OracleMarketContext = None
@@ -73,7 +73,7 @@ except ImportError:
 
 # Learning Memory for self-improvement tracking
 try:
-    from ai.gexis_learning_memory import get_learning_memory
+    from ai.counselor_learning_memory import get_learning_memory
     LEARNING_MEMORY_AVAILABLE = True
 except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
@@ -147,11 +147,11 @@ class SamsonTrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
-        # Math Optimizers DISABLED - Oracle is the sole decision maker
+        # Math Optimizers DISABLED - Prophet is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
                 self._init_math_optimizers("SAMSON", enabled=False)
-                logger.info("SAMSON: Math optimizers DISABLED - Oracle controls all trading decisions")
+                logger.info("SAMSON: Math optimizers DISABLED - Prophet controls all trading decisions")
             except Exception as e:
                 logger.warning(f"SAMSON: Math optimizer init failed: {e}")
 
@@ -183,7 +183,7 @@ class SamsonTrader(MathOptimizerMixin):
             'gex_data': None,
             'signal': None,
             'checks': [],
-            'oracle_data': None,
+            'prophet_data': None,
             'position': None
         }
 
@@ -211,7 +211,7 @@ class SamsonTrader(MathOptimizerMixin):
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
             try:
-                # Use get_market_data() which includes expected_move (required for Oracle)
+                # Use get_market_data() which includes expected_move (required for Prophet)
                 market_data = self.signals.get_market_data() if hasattr(self, 'signals') else None
                 gex_data = self.signals.get_gex_data() if hasattr(self, 'signals') else None
 
@@ -231,14 +231,14 @@ class SamsonTrader(MathOptimizerMixin):
                         'put_wall': gex_data.get('put_wall', gex_data.get('major_put_wall', 0)),
                         'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
                     }
-                    # Fetch Oracle advice using FULL market_data (includes expected_move)
+                    # Fetch Prophet advice using FULL market_data (includes expected_move)
                     try:
                         if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
                             oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
                             if oracle_advice:
-                                scan_context['oracle_data'] = oracle_advice
+                                scan_context['prophet_data'] = oracle_advice
                     except Exception as e:
-                        logger.debug(f"Oracle fetch skipped: {e}")
+                        logger.debug(f"Prophet fetch skipped: {e}")
             except Exception as e:
                 logger.warning(f"Market data fetch failed: {e}")
 
@@ -260,8 +260,8 @@ class SamsonTrader(MathOptimizerMixin):
             result['realized_pnl'] = pnl
 
             # Try new entry (SAMSON allows multiple per day)
-            # Pass early-fetched oracle_data to avoid double Oracle call (bug fix)
-            position, signal = self._try_entry_with_context(oracle_data=scan_context.get('oracle_data'))
+            # Pass early-fetched prophet_data to avoid double Prophet call (bug fix)
+            position, signal = self._try_entry_with_context(prophet_data=scan_context.get('prophet_data'))
             if position:
                 result['trade_opened'] = True
                 result['action'] = 'opened'
@@ -382,7 +382,7 @@ class SamsonTrader(MathOptimizerMixin):
                     closed += 1
                     total_pnl += pnl
 
-                    # Record outcome to Oracle for ML feedback
+                    # Record outcome to Prophet for ML feedback
                     self._record_oracle_outcome(pos, reason, pnl)
 
                     # Record outcome to Proverbs Enhanced for feedback loops
@@ -422,7 +422,7 @@ class SamsonTrader(MathOptimizerMixin):
 
     def _record_oracle_outcome(self, pos: IronCondorPosition, close_reason: str, pnl: float):
         """
-        Record trade outcome to Oracle for ML feedback loop.
+        Record trade outcome to Prophet for ML feedback loop.
 
         Migration 023: Enhanced to pass prediction_id and outcome_type for
         accurate feedback loop tracking.
@@ -431,7 +431,7 @@ class SamsonTrader(MathOptimizerMixin):
             return
 
         try:
-            oracle = OracleAdvisor()
+            prophet = ProphetAdvisor()
 
             # Determine outcome type
             if pnl > 0:
@@ -460,8 +460,8 @@ class SamsonTrader(MathOptimizerMixin):
             # Migration 023: Get prediction_id from database for accurate linking
             prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
 
-            # Record to Oracle using SAMSON bot name with enhanced feedback data
-            success = oracle.update_outcome(
+            # Record to Prophet using SAMSON bot name with enhanced feedback data
+            success = prophet.update_outcome(
                 trade_date=trade_date,
                 bot_name=OracleBotName.SAMSON,
                 outcome=outcome,
@@ -473,12 +473,12 @@ class SamsonTrader(MathOptimizerMixin):
             )
 
             if success:
-                logger.info(f"SAMSON: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}, prediction_id={prediction_id}")
+                logger.info(f"SAMSON: Recorded outcome to Prophet - {outcome.value}, P&L=${pnl:.2f}, prediction_id={prediction_id}")
             else:
-                logger.warning(f"SAMSON: Failed to record outcome to Oracle")
+                logger.warning(f"SAMSON: Failed to record outcome to Prophet")
 
         except Exception as e:
-            logger.warning(f"SAMSON: Oracle outcome recording failed: {e}")
+            logger.warning(f"SAMSON: Prophet outcome recording failed: {e}")
 
     def _record_proverbs_outcome(
         self,
@@ -616,7 +616,7 @@ class SamsonTrader(MathOptimizerMixin):
 
     def _store_oracle_prediction(self, signal, position: IronCondorPosition) -> int | None:
         """
-        Store Oracle prediction to database AFTER position opens.
+        Store Prophet prediction to database AFTER position opens.
 
         Migration 023 (Option C): This is called ONLY when a position is opened,
         not during every scan. This ensures 1:1 prediction-to-position mapping.
@@ -628,9 +628,9 @@ class SamsonTrader(MathOptimizerMixin):
             return None
 
         try:
-            oracle = OracleAdvisor()
+            prophet = ProphetAdvisor()
 
-            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
 
             gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
             try:
@@ -650,7 +650,7 @@ class SamsonTrader(MathOptimizerMixin):
                 expected_move_pct=(signal.expected_move / signal.spot_price * 100) if signal.spot_price else 0,
             )
 
-            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
 
             advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
             try:
@@ -675,7 +675,7 @@ class SamsonTrader(MathOptimizerMixin):
 
             # Store to database with position_id and strategy_recommendation (Migration 023)
             trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-            prediction_id = oracle.store_prediction(
+            prediction_id = prophet.store_prediction(
                 prediction,
                 context,
                 trade_date,
@@ -684,19 +684,19 @@ class SamsonTrader(MathOptimizerMixin):
             )
 
             if prediction_id and isinstance(prediction_id, int):
-                logger.info(f"SAMSON: Oracle prediction stored for {trade_date} (id={prediction_id}, Win Prob: {prediction.win_probability:.0%})")
+                logger.info(f"SAMSON: Prophet prediction stored for {trade_date} (id={prediction_id}, Win Prob: {prediction.win_probability:.0%})")
                 # Update position in database with the oracle_prediction_id
                 self.db.update_oracle_prediction_id(position.position_id, prediction_id)
                 return prediction_id
             elif prediction_id:  # True (backward compatibility)
-                logger.info(f"SAMSON: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+                logger.info(f"SAMSON: Prophet prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
                 return None
             else:
-                logger.warning(f"SAMSON: Failed to store Oracle prediction for {trade_date}")
+                logger.warning(f"SAMSON: Failed to store Prophet prediction for {trade_date}")
                 return None
 
         except Exception as e:
-            logger.warning(f"SAMSON: Oracle prediction storage failed: {e}")
+            logger.warning(f"SAMSON: Prophet prediction storage failed: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -783,11 +783,11 @@ class SamsonTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_entry_with_context(self, oracle_data: dict = None) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
+    def _try_entry_with_context(self, prophet_data: dict = None) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
         """Try to open a new Iron Condor, returning both position and signal for logging
 
         Args:
-            oracle_data: Pre-fetched Oracle advice from run_cycle(). Passed to generate_signal()
+            prophet_data: Pre-fetched Prophet advice from run_cycle(). Passed to generate_signal()
                         to ensure consistency between scan logs and trade decision.
         """
         from typing import Any
@@ -804,8 +804,8 @@ class SamsonTrader(MathOptimizerMixin):
             except Exception as e:
                 logger.debug(f"Regime check skipped: {e}")
 
-        # Generate signal - pass pre-fetched oracle_data to avoid double Oracle call
-        signal = self.signals.generate_signal(oracle_data=oracle_data)
+        # Generate signal - pass pre-fetched prophet_data to avoid double Prophet call
+        signal = self.signals.generate_signal(prophet_data=prophet_data)
         if not signal:
             self.db.log("INFO", "No valid signal generated")
             return None, None
@@ -862,7 +862,7 @@ class SamsonTrader(MathOptimizerMixin):
             note=f"Opened {position.position_id}"
         )
 
-        # Store Oracle prediction for ML feedback loop
+        # Store Prophet prediction for ML feedback loop
         self._store_oracle_prediction(signal, position)
 
         # Record prediction to Learning Memory
@@ -915,7 +915,7 @@ class SamsonTrader(MathOptimizerMixin):
                 decision = "No valid signal"
 
             signal = context.get('signal')
-            oracle_data = context.get('oracle_data', {})
+            prophet_data = context.get('prophet_data', {})
             signal_source = ""
             signal_confidence = 0
             oracle_advice = ""
@@ -925,7 +925,7 @@ class SamsonTrader(MathOptimizerMixin):
             oracle_top_factors = None
             min_win_prob_threshold = self.config.min_win_probability
 
-            # Extract Oracle data from context FIRST (fetched early for all scans)
+            # Extract Prophet data from context FIRST (fetched early for all scans)
             # Initialize NEUTRAL regime analysis fields
             neutral_derived_direction = ""
             neutral_confidence = 0
@@ -938,30 +938,30 @@ class SamsonTrader(MathOptimizerMixin):
             position_in_range_pct = 50.0
             wall_filter_passed = False
 
-            if oracle_data:
-                oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
-                oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
-                oracle_win_probability = oracle_data.get('win_probability', 0)
-                oracle_confidence = oracle_data.get('confidence', 0)
-                oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
+            if prophet_data:
+                oracle_advice = prophet_data.get('advice', prophet_data.get('recommendation', ''))
+                oracle_reasoning = prophet_data.get('reasoning', prophet_data.get('full_reasoning', ''))
+                oracle_win_probability = prophet_data.get('win_probability', 0)
+                oracle_confidence = prophet_data.get('confidence', 0)
+                oracle_top_factors = prophet_data.get('top_factors', prophet_data.get('factors', []))
                 # Extract NEUTRAL regime analysis fields
-                neutral_derived_direction = oracle_data.get('neutral_derived_direction', '')
-                neutral_confidence = oracle_data.get('neutral_confidence', 0)
-                neutral_reasoning = oracle_data.get('neutral_reasoning', '')
-                ic_suitability = oracle_data.get('ic_suitability', 0)
-                bullish_suitability = oracle_data.get('bullish_suitability', 0)
-                bearish_suitability = oracle_data.get('bearish_suitability', 0)
-                trend_direction = oracle_data.get('trend_direction', '')
-                trend_strength = oracle_data.get('trend_strength', 0)
-                position_in_range_pct = oracle_data.get('position_in_range_pct', 50.0)
-                wall_filter_passed = oracle_data.get('wall_filter_passed', False)
+                neutral_derived_direction = prophet_data.get('neutral_derived_direction', '')
+                neutral_confidence = prophet_data.get('neutral_confidence', 0)
+                neutral_reasoning = prophet_data.get('neutral_reasoning', '')
+                ic_suitability = prophet_data.get('ic_suitability', 0)
+                bullish_suitability = prophet_data.get('bullish_suitability', 0)
+                bearish_suitability = prophet_data.get('bearish_suitability', 0)
+                trend_direction = prophet_data.get('trend_direction', '')
+                trend_strength = prophet_data.get('trend_strength', 0)
+                position_in_range_pct = prophet_data.get('position_in_range_pct', 50.0)
+                wall_filter_passed = prophet_data.get('wall_filter_passed', False)
 
-            # If we have a signal, use signal data (but don't override Oracle data with zeros)
+            # If we have a signal, use signal data (but don't override Prophet data with zeros)
             if signal:
                 signal_source = signal.source
                 signal_confidence = signal.confidence
 
-                # Only override Oracle data if signal has it
+                # Only override Prophet data if signal has it
                 signal_oracle_advice = getattr(signal, 'oracle_advice', '')
                 if signal_oracle_advice:
                     oracle_advice = signal_oracle_advice

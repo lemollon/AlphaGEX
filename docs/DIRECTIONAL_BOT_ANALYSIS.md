@@ -60,9 +60,9 @@ short_strike = round(spot_price) + 2 # $2 OTM
 - Gamma exposure without theta compensation
 - Higher probability of max loss
 
-### 5. ORACLE OVERRIDE IS TOO AGGRESSIVE
+### 5. PROPHET OVERRIDE IS TOO AGGRESSIVE
 
-When Oracle says TRADE, ALL filters are bypassed:
+When Prophet says TRADE, ALL filters are bypassed:
 ```python
 oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 if oracle_says_trade:
@@ -71,7 +71,7 @@ if oracle_says_trade:
     # GEX ratio bypassed
 ```
 
-**Problem:** If Oracle model is stale or miscalibrated, bad trades get through.
+**Problem:** If Prophet model is stale or miscalibrated, bad trades get through.
 
 ### 6. BACKTEST PARAMETERS DON'T MATCH LIVE
 
@@ -151,14 +151,14 @@ max_vix: float = 25.0  # Skip extreme vol (too risky)
 entry_end: str = "12:00"  # Was 14:30 - stop at noon
 ```
 
-### Fix 5: Add Oracle Confidence Floor
+### Fix 5: Add Prophet Confidence Floor
 
 ```python
-# Even when Oracle says TRADE, require minimum confidence
+# Even when Prophet says TRADE, require minimum confidence
 if oracle_says_trade and oracle_confidence >= 0.60:
     # Proceed with trade
 else:
-    # Skip even if Oracle said trade
+    # Skip even if Prophet said trade
 ```
 
 ### Fix 6: Add Daily Loss Circuit Breaker
@@ -178,7 +178,7 @@ max_daily_loss_pct: float = 5.0
 2. **HIGH:** Add VIX filter 15-25 (match backtest optimal)
 3. **HIGH:** Limit entry window to morning
 4. **MEDIUM:** Implement MAGNET theory direction
-5. **MEDIUM:** Add Oracle confidence floor
+5. **MEDIUM:** Add Prophet confidence floor
 6. **LOW:** Add daily loss circuit breaker
 
 ---

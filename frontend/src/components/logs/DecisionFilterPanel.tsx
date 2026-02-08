@@ -29,7 +29,7 @@ const BOTS = [
   { id: 'ANCHOR', name: 'ANCHOR', color: 'text-cyan-400' },
   { id: 'LAZARUS', name: 'LAZARUS', color: 'text-orange-400' },
   { id: 'SHEPHERD', name: 'SHEPHERD', color: 'text-green-400' },
-  { id: 'ORACLE', name: 'ORACLE', color: 'text-purple-400' },
+  { id: 'PROPHET', name: 'PROPHET', color: 'text-purple-400' },
 ]
 
 const DECISION_TYPES = [

@@ -75,7 +75,7 @@ def main():
             if details.get('strategy_suggestion'):
                 print(f"    Strategy Suggestion: {details['strategy_suggestion']}")
             if details.get('oracle_suggests_solomon'):
-                print(f"    Oracle Suggests SOLOMON: {details['oracle_suggests_solomon']}")
+                print(f"    Prophet Suggests SOLOMON: {details['oracle_suggests_solomon']}")
             if details.get('position'):
                 print(f"    Position: {json.dumps(details['position'], indent=6)}")
         print()

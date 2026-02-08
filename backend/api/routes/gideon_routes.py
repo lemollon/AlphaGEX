@@ -1059,9 +1059,9 @@ async def skip_icarus_today(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/oracle-advice")
+@router.get("/prophet-advice")
 async def get_current_oracle_advice():
-    """Get current Oracle advice for GIDEON."""
+    """Get current Prophet advice for GIDEON."""
     gideon = get_icarus_instance()
 
     if not gideon:
@@ -1074,7 +1074,7 @@ async def get_current_oracle_advice():
             return {
                 "success": True,
                 "data": None,
-                "message": "No Oracle advice available"
+                "message": "No Prophet advice available"
             }
 
         return {
@@ -1082,7 +1082,7 @@ async def get_current_oracle_advice():
             "data": advice
         }
     except Exception as e:
-        logger.error(f"Error getting Oracle advice: {e}")
+        logger.error(f"Error getting Prophet advice: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1304,7 +1304,7 @@ async def get_gideon_scan_activity(
 
     Each scan shows:
     - Market conditions at time of scan
-    - ML signals and Oracle advice
+    - ML signals and Prophet advice
     - Risk/Reward ratio analysis
     - GEX regime and wall positions
     - Why trade was/wasn't taken

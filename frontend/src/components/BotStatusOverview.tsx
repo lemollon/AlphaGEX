@@ -353,11 +353,11 @@ export default function BotStatusOverview() {
           {/* Quick Links */}
           <div className="mt-4 flex flex-wrap gap-2">
             <Link
-              href="/nexus"
+              href="/covenant"
               className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 rounded-lg hover:bg-primary/20 transition-colors"
             >
               <Zap className="w-3 h-3" />
-              NEXUS View
+              COVENANT View
             </Link>
             <Link
               href="/proverbs"

@@ -356,7 +356,7 @@ class DecisionBridge:
                         call_wall=gex_data.get('call_wall', 0) or 0,
                         put_wall=gex_data.get('put_wall', 0) or 0,
                     ),
-                    claude_context=claude_ctx,  # REAL Claude data from Oracle
+                    claude_context=claude_ctx,  # REAL Claude data from Prophet
                     entry_reasoning=trade_data.get('signal_reason', 'Automated signal'),
                     strike_reasoning=f"Strike ${strike} selected based on delta {option_data.get('delta', 0):.2f}",
                     size_reasoning=f"{contracts} contracts @ ${entry_price:.2f}",
@@ -475,7 +475,7 @@ class DecisionBridge:
                         net_gex=gex_data.get('net_gex', 0) if gex_data else 0,
                         gex_regime=gex_data.get('mm_state', '') if gex_data else '',
                     ),
-                    claude_context=claude_ctx,  # REAL Claude data from Oracle
+                    claude_context=claude_ctx,  # REAL Claude data from Prophet
                     entry_reasoning=reason,
                     passed_all_checks=False,
                     blocked_reason=reason,

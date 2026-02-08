@@ -7,7 +7,7 @@ interface SkipReason {
   id: string
   timestamp: string
   reason: string
-  category: 'market' | 'signal' | 'risk' | 'oracle' | 'ml' | 'config' | 'other'
+  category: 'market' | 'signal' | 'risk' | 'prophet' | 'ml' | 'config' | 'other'
   details?: {
     ml_advice?: string
     ml_confidence?: number
@@ -43,8 +43,8 @@ const getCategoryConfig = (category: SkipReason['category']) => {
       return { icon: Brain, color: 'text-blue-400', bg: 'bg-blue-900/20', label: 'Signal' }
     case 'risk':
       return { icon: AlertCircle, color: 'text-red-400', bg: 'bg-red-900/20', label: 'Risk' }
-    case 'oracle':
-      return { icon: Target, color: 'text-purple-400', bg: 'bg-purple-900/20', label: 'Oracle' }
+    case 'prophet':
+      return { icon: Target, color: 'text-purple-400', bg: 'bg-purple-900/20', label: 'Prophet' }
     case 'ml':
       return { icon: Brain, color: 'text-cyan-400', bg: 'bg-cyan-900/20', label: 'ML' }
     case 'config':
@@ -153,7 +153,7 @@ export default function WhyNotTrading({ skipReasons, isLoading = false, maxDispl
                     )}
                     {skip.details.oracle_advice && (
                       <div className="col-span-2">
-                        <span className="text-gray-500">Oracle:</span>
+                        <span className="text-gray-500">Prophet:</span>
                         <span className={`ml-1 ${skip.details.oracle_advice === 'SKIP_TODAY' ? 'text-red-400' : 'text-green-400'}`}>
                           {skip.details.oracle_advice}
                         </span>
@@ -176,7 +176,7 @@ export default function WhyNotTrading({ skipReasons, isLoading = false, maxDispl
                         )}
                       </div>
                     )}
-                    {/* Oracle Top Factors */}
+                    {/* Prophet Top Factors */}
                     {skip.details.oracle_top_factors && skip.details.oracle_top_factors.length > 0 && (
                       <div className="col-span-2">
                         <span className="text-gray-500">Top Factors:</span>
@@ -191,7 +191,7 @@ export default function WhyNotTrading({ skipReasons, isLoading = false, maxDispl
                         </div>
                       </div>
                     )}
-                    {/* Oracle Reasoning */}
+                    {/* Prophet Reasoning */}
                     {skip.details.oracle_reasoning && (
                       <div className="col-span-2 text-gray-400 italic">
                         {skip.details.oracle_reasoning}

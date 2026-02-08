@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
 
-from quant.kronos_gex_calculator import KronosGEXCalculator
+from quant.chronicles_gex_calculator import KronosGEXCalculator
 
 
 def debug_gex_walls(ticker: str = 'SPY', num_days: int = 10):

@@ -10,7 +10,7 @@ Orchestrates:
 - Position management with trailing stops
 - Tastytrade order execution
 - Win probability tracking (Bayesian → ML)
-- Oracle ML feedback loop (outcomes recorded for training)
+- Prophet ML feedback loop (outcomes recorded for training)
 """
 
 import logging
@@ -39,16 +39,16 @@ except ImportError:
     MARKET_CALENDAR = None
     MARKET_CALENDAR_AVAILABLE = False
 
-# Oracle for outcome recording and strategy recommendations
+# Prophet for outcome recording and strategy recommendations
 try:
-    from quant.oracle_advisor import (
-        OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
+    from quant.prophet_advisor import (
+        ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
         MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
     )
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleBotName = None
     OracleTradeOutcome = None
     OracleMarketContext = None
@@ -58,7 +58,7 @@ except ImportError:
 
 # Learning Memory for self-improvement tracking
 try:
-    from ai.gexis_learning_memory import get_learning_memory
+    from ai.counselor_learning_memory import get_learning_memory
     LEARNING_MEMORY_AVAILABLE = True
 except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
@@ -1031,7 +1031,7 @@ class ValorTrader:
                         f"status={direction_tracker.get_status()}"
                     )
 
-                    # Record outcome to Oracle ML for feedback loop
+                    # Record outcome to Prophet ML for feedback loop
                     self._record_oracle_outcome(position, reason, realized_pnl)
 
                     # Record outcome to Proverbs Enhanced for feedback loops
@@ -1512,16 +1512,16 @@ class ValorTrader:
 
     def _record_oracle_outcome(self, pos: FuturesPosition, close_reason: str, pnl: float):
         """
-        Record trade outcome to Oracle for ML feedback loop.
+        Record trade outcome to Prophet for ML feedback loop.
 
-        This enables Oracle to learn from VALOR futures trades and
+        This enables Prophet to learn from VALOR futures trades and
         improve future predictions.
         """
         if not ORACLE_AVAILABLE:
             return
 
         try:
-            oracle = OracleAdvisor()
+            prophet = ProphetAdvisor()
 
             # Determine outcome type based on close reason and P&L
             if pnl > 0:
@@ -1538,17 +1538,17 @@ class ValorTrader:
             # Get trade date
             trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
-            # Record to Oracle - use VALOR bot name (might need to add to Oracle enum)
-            # For now, log to info - Oracle integration for futures bot pending
+            # Record to Prophet - use VALOR bot name (might need to add to Prophet enum)
+            # For now, log to info - Prophet integration for futures bot pending
             logger.info(
-                f"VALOR: Recording outcome to Oracle - {outcome.value if hasattr(outcome, 'value') else outcome}, "
+                f"VALOR: Recording outcome to Prophet - {outcome.value if hasattr(outcome, 'value') else outcome}, "
                 f"P&L=${pnl:.2f}, Regime={pos.gamma_regime.value}"
             )
 
-            # Future: Call oracle.update_outcome() when BotName.VALOR is added
+            # Future: Call prophet.update_outcome() when BotName.VALOR is added
 
         except Exception as e:
-            logger.warning(f"VALOR: Oracle outcome recording failed: {e}")
+            logger.warning(f"VALOR: Prophet outcome recording failed: {e}")
 
     def _record_proverbs_outcome(
         self,

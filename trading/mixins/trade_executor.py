@@ -21,7 +21,7 @@ from database_adapter import get_connection
 
 logger = logging.getLogger('autonomous_paper_trader.trade_executor')
 
-# Oracle is the god of all trade decisions - validation is informational only
+# Prophet is the god of all trade decisions - validation is informational only
 
 # Central Time timezone
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -111,12 +111,12 @@ class TradeExecutorMixin:
             )
             return None
 
-        # BACKTEST VALIDATION: Historical performance check (informational only - Oracle decides)
+        # BACKTEST VALIDATION: Historical performance check (informational only - Prophet decides)
         strategy_name = trade.get('strategy', '')
         backtest_validation = self.get_backtest_validation_for_pattern(strategy_name)
 
         if not backtest_validation['should_trade']:
-            logger.info(f"Backtest validation note for '{strategy_name}': {backtest_validation['reason']} (proceeding - Oracle decides)")
+            logger.info(f"Backtest validation note for '{strategy_name}': {backtest_validation['reason']} (proceeding - Prophet decides)")
 
         # Check for duplicate trades
         now = datetime.now(CENTRAL_TZ)

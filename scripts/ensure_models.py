@@ -96,7 +96,7 @@ def ensure_models():
 
         if count < 100:
             print(f"[ensure_models] Not enough training data ({count} records, need 100+)")
-            print("[ensure_models] Skipping model training - Oracle will be used instead")
+            print("[ensure_models] Skipping model training - Prophet will be used instead")
             return False
 
         print(f"[ensure_models] Found {count} training records")
@@ -111,7 +111,7 @@ def ensure_models():
 
     except Exception as e:
         print(f"[ensure_models] Training failed: {e}")
-        print("[ensure_models] Apache will use Oracle fallback (no ML)")
+        print("[ensure_models] Apache will use Prophet fallback (no ML)")
         return False
 
 

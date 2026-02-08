@@ -44,7 +44,7 @@ class BotName(Enum):
     CORNERSTONE = "CORNERSTONE"
     FORTRESS = "FORTRESS"
     SHEPHERD = "SHEPHERD"
-    ORACLE = "ORACLE"
+    PROPHET = "PROPHET"
     SOLOMON = "SOLOMON"    # Directional Spreads (Bull Call / Bear Call)
     GIDEON = "GIDEON"    # Aggressive Directional Spreads (relaxed GEX filters)
     ANCHOR = "ANCHOR"  # SPX Iron Condor ($10 spreads, weekly)
@@ -188,7 +188,7 @@ class BotDecision:
     This is the main data structure that captures everything about a decision.
     """
     # IDENTIFICATION
-    bot_name: str  # LAZARUS, CORNERSTONE, FORTRESS, SHEPHERD, ORACLE
+    bot_name: str  # LAZARUS, CORNERSTONE, FORTRESS, SHEPHERD, PROPHET
     decision_type: str  # ENTRY, EXIT, SKIP, ADJUSTMENT
     action: str  # BUY, SELL, HOLD
     symbol: str = "SPY"
@@ -196,12 +196,12 @@ class BotDecision:
 
     # SIGNAL SOURCE & OVERRIDE TRACKING
     # Captures where the signal came from and if any override happened
-    # Examples: "ML", "Oracle", "Oracle (override ML)", "ML+Oracle", "Manual"
+    # Examples: "ML", "Prophet", "Prophet (override ML)", "ML+Prophet", "Manual"
     signal_source: str = ""
     # If True, trade was made despite one signal saying SKIP
     override_occurred: bool = False
     # Detailed override info: {"overridden_signal": "ML", "overridden_advice": "STAY_OUT",
-    #                         "override_reason": "Oracle high confidence", "override_confidence": 0.85}
+    #                         "override_reason": "Prophet high confidence", "override_confidence": 0.85}
     override_details: Dict[str, Any] = field(default_factory=dict)
 
     # TRADE DETAILS
@@ -894,8 +894,8 @@ def get_hermes_logger():
 
 
 def get_oracle_logger():
-    """Get a pre-configured logger for ORACLE"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ORACLE" else None
+    """Get a pre-configured logger for PROPHET"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "PROPHET" else None
 
 
 def get_solomon_logger():

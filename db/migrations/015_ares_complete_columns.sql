@@ -43,7 +43,7 @@ ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS flip_point DECIMAL(10, 2
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS net_gex DECIMAL(15, 2);
 
 -- =============================================================================
--- ORACLE CONTEXT COLUMNS
+-- PROPHET CONTEXT COLUMNS
 -- =============================================================================
 
 ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_confidence DECIMAL(5, 4);

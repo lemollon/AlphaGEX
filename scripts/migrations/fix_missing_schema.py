@@ -183,11 +183,11 @@ def create_missing_tables(cursor):
         )
     """, "Create bot_trades table")
 
-    # oracle_training_outcomes
+    # prophet_training_outcomes
     execute_sql(cursor, """
-        CREATE TABLE IF NOT EXISTS oracle_training_outcomes (
+        CREATE TABLE IF NOT EXISTS prophet_training_outcomes (
             id SERIAL PRIMARY KEY,
-            prediction_id INTEGER REFERENCES oracle_predictions(id),
+            prediction_id INTEGER REFERENCES prophet_predictions(id),
             trade_date DATE NOT NULL,
             bot_name VARCHAR(50),
             predicted_advice VARCHAR(50),
@@ -201,7 +201,7 @@ def create_missing_tables(cursor):
             model_version VARCHAR(50),
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
-    """, "Create oracle_training_outcomes table")
+    """, "Create prophet_training_outcomes table")
 
     # conversation_history
     execute_sql(cursor, """
@@ -242,7 +242,7 @@ def add_missing_columns(cursor):
     """Add missing columns to existing tables"""
     print_header("ADDING MISSING COLUMNS")
 
-    # oracle_predictions missing columns
+    # prophet_predictions missing columns
     oracle_columns = [
         ("confidence", "DECIMAL(5, 2)"),
         ("reasoning", "TEXT"),
@@ -258,9 +258,9 @@ def add_missing_columns(cursor):
 
     for col_name, col_type in oracle_columns:
         execute_sql(cursor, f"""
-            ALTER TABLE oracle_predictions
+            ALTER TABLE prophet_predictions
             ADD COLUMN IF NOT EXISTS {col_name} {col_type}
-        """, f"Add oracle_predictions.{col_name}")
+        """, f"Add prophet_predictions.{col_name}")
 
     # probability_weights missing columns
     execute_sql(cursor, """

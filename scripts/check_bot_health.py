@@ -244,7 +244,7 @@ def check_trading_window():
         'ANCHOR': ('08:30', '14:45'),
         'SAMSON': ('08:30', '14:45'),
         'CORNERSTONE': ('09:05', '09:10'),  # Daily run
-        'ARGUS': ('08:30', '14:45'),
+        'WATCHTOWER': ('08:30', '14:45'),
     }
 
     print(f"\nCurrent time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")

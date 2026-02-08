@@ -2086,7 +2086,7 @@ class ProverbsEnhanced:
         outcome_type: str = None,  # MAX_PROFIT, CALL_BREACHED, PUT_BREACHED, WIN, LOSS
         oracle_advice: str = None,  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
         strategy_type: str = None,  # IRON_CONDOR, DIRECTIONAL
-        oracle_prediction_id: int = None,  # Link to oracle_predictions
+        oracle_prediction_id: int = None,  # Link to prophet_predictions
         direction_predicted: str = None,  # BULLISH, BEARISH (for directional)
         direction_correct: bool = None  # Was direction right?
     ) -> List[Dict]:
@@ -2094,7 +2094,7 @@ class ProverbsEnhanced:
         Record a trade outcome and check all triggers.
 
         Migration 023: Enhanced to track strategy-level performance and
-        link to Oracle predictions for accurate feedback loop.
+        link to Prophet predictions for accurate feedback loop.
 
         Returns list of any alerts triggered.
         """
@@ -2255,7 +2255,7 @@ class ProverbsEnhanced:
         Analyze performance by strategy type (Iron Condor vs Directional).
 
         Migration 023: This enables Proverbs to understand which strategy works
-        best in different market conditions and provide insights to Oracle.
+        best in different market conditions and provide insights to Prophet.
 
         Fix: Now queries unified_trades directly instead of proverbs_performance
         to ensure we're analyzing actual trade data.
@@ -2423,14 +2423,14 @@ class ProverbsEnhanced:
         else:
             return "Strategies performing similarly - no allocation change recommended"
 
-    def get_oracle_accuracy(self, days: int = 30) -> Dict:
+    def get_prophet_accuracy(self, days: int = 30) -> Dict:
         """
-        Analyze Oracle recommendation accuracy by correlating oracle_advice with trade outcomes.
+        Analyze Prophet recommendation accuracy by correlating oracle_advice with trade outcomes.
 
-        Migration 023: This measures how well Oracle's advice correlates with actual outcomes.
+        Migration 023: This measures how well Prophet's advice correlates with actual outcomes.
 
         Enhancement: Now queries the oracle_advice column directly from position tables to
-        measure how often Oracle's TAKE_TRADE vs SKIP advice led to wins or losses.
+        measure how often Prophet's TAKE_TRADE vs SKIP advice led to wins or losses.
         """
         if not DB_AVAILABLE:
             return {'status': 'database_unavailable'}
@@ -2452,7 +2452,7 @@ class ProverbsEnhanced:
             ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
             dir_bots = ['SOLOMON', 'GIDEON']
 
-            # Step 1: Get Oracle advice accuracy from actual positions tables
+            # Step 1: Get Prophet advice accuracy from actual positions tables
             by_advice = {}
             by_strategy = {
                 'IRON_CONDOR': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}},
@@ -2482,7 +2482,7 @@ class ProverbsEnhanced:
                         if not advice or advice == '' or advice == 'UNKNOWN':
                             advice = 'NO_ADVICE'
 
-                        # Aggregate by Oracle advice type
+                        # Aggregate by Prophet advice type
                         if advice not in by_advice:
                             by_advice[advice] = {'count': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
                         by_advice[advice]['count'] += trades or 0
@@ -2536,7 +2536,7 @@ class ProverbsEnhanced:
             total_wins = sum(s['wins'] for s in by_strategy.values())
             overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
 
-            # Check Oracle advice effectiveness
+            # Check Prophet advice effectiveness
             take_trade = by_advice.get('TAKE_TRADE', {})
             skip = by_advice.get('SKIP', {})
             take_accuracy = take_trade.get('accuracy', 0)
@@ -2544,7 +2544,7 @@ class ProverbsEnhanced:
 
             summary_text = f"Analyzed {total_trades} trades over {days} days. "
             if take_count > 0:
-                summary_text += f"When Oracle advised TAKE_TRADE: {take_accuracy:.1f}% win rate ({take_count} trades). "
+                summary_text += f"When Prophet advised TAKE_TRADE: {take_accuracy:.1f}% win rate ({take_count} trades). "
             if overall_win_rate >= 60:
                 summary_text += f"Overall win rate of {overall_win_rate:.1f}% is strong."
             elif overall_win_rate >= 50:
@@ -2568,11 +2568,11 @@ class ProverbsEnhanced:
             }
 
         except Exception as e:
-            logger.error(f"Proverbs: Failed to analyze Oracle accuracy: {e}")
+            logger.error(f"Proverbs: Failed to analyze Prophet accuracy: {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def _generate_oracle_accuracy_summary(self, advice_analysis: Dict) -> Dict:
-        """Generate summary of Oracle accuracy."""
+    def _generate_prophet_accuracy_summary(self, advice_analysis: Dict) -> Dict:
+        """Generate summary of Prophet accuracy."""
         summary = {
             'trade_full_effective': False,
             'trade_reduced_effective': False,
@@ -2615,7 +2615,7 @@ class ProverbsEnhanced:
         if summary['recommendations']:
             summary_parts.extend(summary['recommendations'])
 
-        summary['summary_text'] = ' | '.join(summary_parts) if summary_parts else 'Insufficient data for Oracle accuracy analysis'
+        summary['summary_text'] = ' | '.join(summary_parts) if summary_parts else 'Insufficient data for Prophet accuracy analysis'
 
         return summary
 

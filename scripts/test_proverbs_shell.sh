@@ -97,26 +97,26 @@ else
 fi
 
 # =====================================================
-# TEST 4: Oracle Strategy Recommendation
+# TEST 4: Prophet Strategy Recommendation
 # =====================================================
 echo ""
-echo "TEST 4: ORACLE STRATEGY RECOMMENDATION"
+echo "TEST 4: PROPHET STRATEGY RECOMMENDATION"
 echo "--------------------------------------"
 
-ORACLE=$(curl -s http://localhost:8000/api/oracle/strategy-recommendation 2>/dev/null)
-if echo "$ORACLE" | grep -q '"recommended_strategy"'; then
-    STRATEGY=$(echo "$ORACLE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('recommended_strategy','unknown'))" 2>/dev/null)
-    pass "Oracle returning strategy: $STRATEGY"
+PROPHET=$(curl -s http://localhost:8000/api/prophet/strategy-recommendation 2>/dev/null)
+if echo "$PROPHET" | grep -q '"recommended_strategy"'; then
+    STRATEGY=$(echo "$PROPHET" | python3 -c "import sys,json; print(json.load(sys.stdin).get('recommended_strategy','unknown'))" 2>/dev/null)
+    pass "Prophet returning strategy: $STRATEGY"
 
     # Check for Proverbs info in reasoning
-    HAS_PROVERBS=$(echo "$ORACLE" | python3 -c "import sys,json; d=json.load(sys.stdin); print('YES' if 'PROVERBS' in d.get('reasoning','') else 'NO')" 2>/dev/null)
+    HAS_PROVERBS=$(echo "$PROPHET" | python3 -c "import sys,json; d=json.load(sys.stdin); print('YES' if 'PROVERBS' in d.get('reasoning','') else 'NO')" 2>/dev/null)
     if [ "$HAS_PROVERBS" = "YES" ]; then
-        pass "Proverbs info present in Oracle reasoning"
+        pass "Proverbs info present in Prophet reasoning"
     else
         warn "No Proverbs info in reasoning (may be expected if no historical data)"
     fi
 else
-    warn "Oracle endpoint not responding (server may not be running)"
+    warn "Prophet endpoint not responding (server may not be running)"
 fi
 
 # =====================================================
@@ -193,7 +193,7 @@ ENDPOINTS=(
     "/api/proverbs/enhanced/digest"
     "/api/proverbs/enhanced/correlations"
     "/api/proverbs/strategy-analysis?days=30"
-    "/api/proverbs/oracle-accuracy?days=30"
+    "/api/proverbs/prophet-accuracy?days=30"
     "/api/proverbs/realtime-status?days=7"
 )
 

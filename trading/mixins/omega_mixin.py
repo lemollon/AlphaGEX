@@ -3,7 +3,7 @@ OMEGA Integration Mixin for Trading Bots
 =========================================
 
 This mixin provides OMEGA Orchestrator integration for all trading bots.
-It replaces direct calls to Oracle, ML Advisor, and CircuitBreaker with
+It replaces direct calls to Prophet, ML Advisor, and CircuitBreaker with
 the unified OMEGA decision flow.
 
 USAGE:
@@ -27,7 +27,7 @@ USAGE:
 MIGRATION FROM OLD SYSTEM:
     OLD:
         if self.circuit_breaker.can_trade():
-            advice = oracle.get_ares_advice(context)
+            advice = prophet.get_ares_advice(context)
             if advice.advice != TradingAdvice.SKIP_TODAY:
                 self.execute_trade(advice)
 
@@ -66,7 +66,7 @@ class OmegaIntegrationMixin:
 
     This mixin replaces:
         - CircuitBreaker checks (now handled by Proverbs layer in OMEGA)
-        - Direct Oracle calls (now routed through OMEGA's layered decision)
+        - Direct Prophet calls (now routed through OMEGA's layered decision)
         - ML Advisor calls (now the PRIMARY decision in OMEGA)
     """
 
@@ -100,7 +100,7 @@ class OmegaIntegrationMixin:
         This is the main entry point for all trading decisions.
         It replaces direct calls to:
             - circuit_breaker.can_trade()
-            - oracle.get_ares_advice()
+            - prophet.get_ares_advice()
             - ml_advisor.predict()
 
         Args:
@@ -367,13 +367,13 @@ class OmegaIntegrationMixin:
         **kwargs
     ) -> Optional[Any]:
         """
-        Helper to migrate from direct Oracle calls to OMEGA.
+        Helper to migrate from direct Prophet calls to OMEGA.
 
         Converts MarketContext to OMEGA format and returns decision.
         """
         import warnings
         warnings.warn(
-            "Direct Oracle calls are deprecated. Use omega_get_trading_decision() instead.",
+            "Direct Prophet calls are deprecated. Use omega_get_trading_decision() instead.",
             DeprecationWarning,
             stacklevel=2
         )

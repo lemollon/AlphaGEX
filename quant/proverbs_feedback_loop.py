@@ -108,11 +108,11 @@ def get_db_connection():
             except Exception:
                 pass
 
-# Oracle integration
+# Prophet integration
 try:
-    from quant.oracle_advisor import (
+    from quant.prophet_advisor import (
         get_oracle, auto_train, get_pending_outcomes_count,
-        OracleAdvisor, BotName as OracleBotName, TrainingMetrics
+        ProphetAdvisor, BotName as OracleBotName, TrainingMetrics
     )
     ORACLE_AVAILABLE = True
 except ImportError:
@@ -733,7 +733,7 @@ class ProverbsFeedbackLoop:
 
         logger.info(f"[PROVERBS] Initialized new session: {self.session_id}")
         logger.info(f"[PROVERBS] Database available: {DB_AVAILABLE}")
-        logger.info(f"[PROVERBS] Oracle available: {ORACLE_AVAILABLE}")
+        logger.info(f"[PROVERBS] Prophet available: {ORACLE_AVAILABLE}")
         logger.info(f"[PROVERBS] Math Optimizer available: {MATH_OPTIMIZER_AVAILABLE}")
 
     def _generate_session_id(self) -> str:
@@ -759,8 +759,8 @@ class ProverbsFeedbackLoop:
                 logger.error(f"Failed to create Proverbs schema: {e}")
 
     @property
-    def oracle(self):
-        """Lazy-load Oracle advisor"""
+    def prophet(self):
+        """Lazy-load Prophet advisor"""
         if self._oracle is None and ORACLE_AVAILABLE:
             self._oracle = get_oracle()
         return self._oracle
@@ -1234,7 +1234,7 @@ class ProverbsFeedbackLoop:
 
     def _apply_model_update(self, bot_name: str, proposed_value: Any, proposal_id: str) -> bool:
         """Apply a model update from a proposal"""
-        # Trigger Oracle retraining
+        # Trigger Prophet retraining
         if ORACLE_AVAILABLE:
             result = auto_train(force=True)
             if result.get('success'):
@@ -1242,7 +1242,7 @@ class ProverbsFeedbackLoop:
                 self.save_version(
                     bot_name=bot_name,
                     version_type=VersionType.MODEL,
-                    artifact_name="oracle_model",
+                    artifact_name="prophet_model",
                     artifact_data={
                         'training_metrics': result.get('training_metrics', {}),
                         'model_version': result.get('model_version', 'unknown'),
@@ -1919,7 +1919,7 @@ class ProverbsFeedbackLoop:
         if not perf:
             return None
 
-        version_id = self._get_active_version_id(bot_name, VersionType.MODEL, "oracle_model")
+        version_id = self._get_active_version_id(bot_name, VersionType.MODEL, "prophet_model")
 
         if not DB_AVAILABLE:
             return snapshot_id
@@ -2461,21 +2461,21 @@ class ProverbsFeedbackLoop:
                     errors.append(f"{bot_name}: {str(e)}")
                     logger.error(f"[PROVERBS FEEDBACK LOOP]   {bot_name} - ERROR: {e}")
 
-            # Step 6: Check if Oracle retraining is needed
-            logger.info(f"[PROVERBS FEEDBACK LOOP] Step 6: Checking Oracle retraining requirements...")
+            # Step 6: Check if Prophet retraining is needed
+            logger.info(f"[PROVERBS FEEDBACK LOOP] Step 6: Checking Prophet retraining requirements...")
             if ORACLE_AVAILABLE:
                 pending_outcomes = get_pending_outcomes_count()
                 outcomes_processed = pending_outcomes
-                logger.info(f"[PROVERBS FEEDBACK LOOP]   Oracle pending outcomes: {pending_outcomes} (threshold: {GUARDRAILS['min_sample_size']})")
+                logger.info(f"[PROVERBS FEEDBACK LOOP]   Prophet pending outcomes: {pending_outcomes} (threshold: {GUARDRAILS['min_sample_size']})")
 
                 if pending_outcomes >= GUARDRAILS['min_sample_size']:
                     logger.info(f"[PROVERBS FEEDBACK LOOP]   Creating retraining proposal...")
                     # Create proposal for retraining
                     proposal_id = self.create_proposal(
-                        bot_name="ORACLE",
+                        bot_name="PROPHET",
                         proposal_type=ProposalType.MODEL_UPDATE,
-                        title=f"Oracle Model Retraining ({pending_outcomes} new outcomes)",
-                        description=f"Oracle has accumulated {pending_outcomes} new trade outcomes since last training. "
+                        title=f"Prophet Model Retraining ({pending_outcomes} new outcomes)",
+                        description=f"Prophet has accumulated {pending_outcomes} new trade outcomes since last training. "
                                     f"Retraining will incorporate this new data to improve predictions.",
                         current_value={'outcomes_since_training': 0, 'model_version': 'current'},
                         proposed_value={'outcomes_to_incorporate': pending_outcomes, 'model_version': 'new'},
@@ -2633,7 +2633,7 @@ class ProverbsFeedbackLoop:
         """Get overall system health"""
         health = {
             'database': DB_AVAILABLE,
-            'oracle': ORACLE_AVAILABLE,
+            'prophet': ORACLE_AVAILABLE,
             'last_feedback_run': None,
             'pending_proposals_count': 0,
             'degradation_alerts': 0

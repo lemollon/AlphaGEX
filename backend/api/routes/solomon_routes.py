@@ -6,7 +6,7 @@ API endpoints for the SOLOMON directional spread trading bot.
 Provides status, positions, signals, logs, and performance metrics.
 
 SOLOMON trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish)
-based on GEX signals from KRONOS and ML advice from ORACLE.
+based on GEX signals from CHRONICLES and ML advice from PROPHET.
 """
 
 import logging
@@ -825,7 +825,7 @@ async def get_solomon_signals(
     direction: Optional[str] = Query(None, description="Filter by direction: BULLISH, BEARISH")
 ):
     """
-    Get SOLOMON signals from Oracle.
+    Get SOLOMON signals from Prophet.
 
     Returns recent signals with direction, confidence, and reasoning.
     """
@@ -1049,7 +1049,7 @@ async def get_solomon_config():
         "max_daily_trades": {"value": "5", "description": "Maximum trades per day"},
         "ticker": {"value": "SPY", "description": "Trading ticker symbol"},
         "wall_filter_pct": {"value": "1.0", "description": "GEX wall filter percentage"},
-        "min_oracle_confidence": {"value": "0.6", "description": "Minimum Oracle confidence to trade"},
+        "min_oracle_confidence": {"value": "0.6", "description": "Minimum Prophet confidence to trade"},
         "stop_loss_pct": {"value": "50", "description": "Stop loss percentage of max loss"},
         "take_profit_pct": {"value": "50", "description": "Take profit percentage of max profit"},
         "entry_start_time": {"value": "08:35", "description": "Trading window start time CT"},
@@ -1227,12 +1227,12 @@ async def skip_solomon_today(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/oracle-advice")
+@router.get("/prophet-advice")
 async def get_current_oracle_advice():
     """
-    Get current Oracle advice for SOLOMON without executing a trade.
+    Get current Prophet advice for SOLOMON without executing a trade.
 
-    Useful for monitoring what Oracle would recommend right now.
+    Useful for monitoring what Prophet would recommend right now.
     """
     solomon = get_solomon_instance()
 
@@ -1246,7 +1246,7 @@ async def get_current_oracle_advice():
             return {
                 "success": True,
                 "data": None,
-                "message": "No Oracle advice available (check GEX data)"
+                "message": "No Prophet advice available (check GEX data)"
             }
 
         return {
@@ -1261,7 +1261,7 @@ async def get_current_oracle_advice():
             }
         }
     except Exception as e:
-        logger.error(f"Error getting Oracle advice: {e}")
+        logger.error(f"Error getting Prophet advice: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1291,7 +1291,7 @@ async def get_current_ml_signal():
             return {
                 "success": True,
                 "data": None,
-                "message": "No GEX data available - Kronos may be unavailable"
+                "message": "No GEX data available - Chronicles may be unavailable"
             }
 
         # Get ML signal
@@ -1335,8 +1335,8 @@ async def get_solomon_diagnostics():
     Diagnostic endpoint for troubleshooting Apache issues.
 
     Returns detailed status of all subsystems:
-    - Kronos (GEX calculator)
-    - Oracle (ML advisor)
+    - Chronicles (GEX calculator)
+    - Prophet (ML advisor)
     - GEX ML models
     - Tradier (execution)
     - Database connectivity
@@ -1357,18 +1357,18 @@ async def get_solomon_diagnostics():
 
     if solomon:
         # Subsystem status - access through proper component paths
-        kronos = getattr(solomon.signals, 'gex_calculator', None) if hasattr(solomon, 'signals') else None
-        oracle = getattr(solomon.signals, 'oracle', None) if hasattr(solomon, 'signals') else None
+        chronicles = getattr(solomon.signals, 'gex_calculator', None) if hasattr(solomon, 'signals') else None
+        prophet = getattr(solomon.signals, 'prophet', None) if hasattr(solomon, 'signals') else None
         gex_ml = getattr(solomon.signals, 'ml_signal', None) if hasattr(solomon, 'signals') else None
         tradier = getattr(solomon.executor, 'tradier', None) if hasattr(solomon, 'executor') else None
 
-        diagnostics["subsystems"]["kronos"] = {
-            "available": kronos is not None,
-            "type": type(kronos).__name__ if kronos else None
+        diagnostics["subsystems"]["chronicles"] = {
+            "available": chronicles is not None,
+            "type": type(chronicles).__name__ if chronicles else None
         }
-        diagnostics["subsystems"]["oracle"] = {
-            "available": oracle is not None,
-            "type": type(oracle).__name__ if oracle else None
+        diagnostics["subsystems"]["prophet"] = {
+            "available": prophet is not None,
+            "type": type(prophet).__name__ if prophet else None
         }
         diagnostics["subsystems"]["gex_ml"] = {
             "available": gex_ml is not None,
@@ -1484,7 +1484,7 @@ async def get_solomon_decisions(
     Get SOLOMON decision logs with full audit trail.
 
     Returns comprehensive decision data including:
-    - Oracle/ML advice with win probability and confidence
+    - Prophet/ML advice with win probability and confidence
     - GEX context (walls, flip point, regime)
     - Trade legs with strikes, prices, Greeks
     - Position sizing breakdown
@@ -1962,7 +1962,7 @@ def _enrich_scan_for_frontend(scan: dict) -> dict:
             'top_factors': []
         }
 
-    # Structure Oracle signal
+    # Structure Prophet signal
     if scan.get('oracle_advice') or scan.get('signal_win_probability'):
         enriched['oracle_signal'] = {
             'advice': scan.get('oracle_advice', 'HOLD'),
@@ -1988,7 +1988,7 @@ def _enrich_scan_for_frontend(scan: dict) -> dict:
     if 'Override' in str(signal_source) or 'override' in str(signal_source):
         enriched['override_occurred'] = True
         enriched['override_details'] = {
-            'winner': 'Oracle' if 'Oracle' in signal_source else 'ML',
+            'winner': 'Prophet' if 'Prophet' in signal_source else 'ML',
             'overridden_signal': scan.get('signal_direction', 'Unknown'),
             'override_reason': scan.get('decision_summary', 'Override applied')
         }
@@ -2009,7 +2009,7 @@ async def get_solomon_scan_activity(
 
     Each scan shows:
     - Market conditions at time of scan
-    - ML signals and Oracle advice
+    - ML signals and Prophet advice
     - Risk/Reward ratio analysis
     - GEX regime and wall positions
     - Why trade was/wasn't taken

@@ -54,16 +54,16 @@ except ImportError:
     log_bot_decision = None
     BotDecision = None
 
-# Oracle for outcome recording and strategy recommendations
+# Prophet for outcome recording and strategy recommendations
 try:
-    from quant.oracle_advisor import (
-        OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
+    from quant.prophet_advisor import (
+        ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
         MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
     )
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleBotName = None
     OracleTradeOutcome = None
     OracleMarketContext = None
@@ -73,7 +73,7 @@ except ImportError:
 
 # Learning Memory for self-improvement tracking
 try:
-    from ai.gexis_learning_memory import get_learning_memory
+    from ai.counselor_learning_memory import get_learning_memory
     LEARNING_MEMORY_AVAILABLE = True
 except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
@@ -144,11 +144,11 @@ class AnchorTrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
-        # Math Optimizers DISABLED - Oracle is the sole decision maker
+        # Math Optimizers DISABLED - Prophet is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
                 self._init_math_optimizers("ANCHOR", enabled=False)
-                logger.info("ANCHOR: Math optimizers DISABLED - Oracle controls all trading decisions")
+                logger.info("ANCHOR: Math optimizers DISABLED - Prophet controls all trading decisions")
             except Exception as e:
                 logger.warning(f"ANCHOR: Math optimizer init failed: {e}")
 
@@ -181,7 +181,7 @@ class AnchorTrader(MathOptimizerMixin):
             'gex_data': None,
             'signal': None,
             'checks': [],
-            'oracle_data': None,
+            'prophet_data': None,
             'position': None
         }
 
@@ -209,7 +209,7 @@ class AnchorTrader(MathOptimizerMixin):
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
             try:
-                # Use get_market_data() which includes expected_move (required for Oracle)
+                # Use get_market_data() which includes expected_move (required for Prophet)
                 market_data = self.signals.get_market_data() if hasattr(self, 'signals') else None
                 gex_data = self.signals.get_gex_data() if hasattr(self, 'signals') else None
 
@@ -229,14 +229,14 @@ class AnchorTrader(MathOptimizerMixin):
                         'put_wall': gex_data.get('put_wall', gex_data.get('major_put_wall', 0)),
                         'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
                     }
-                    # Fetch Oracle advice using FULL market_data (includes expected_move)
+                    # Fetch Prophet advice using FULL market_data (includes expected_move)
                     try:
                         if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
                             oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
                             if oracle_advice:
-                                scan_context['oracle_data'] = oracle_advice
+                                scan_context['prophet_data'] = oracle_advice
                     except Exception as e:
-                        logger.debug(f"Oracle fetch skipped: {e}")
+                        logger.debug(f"Prophet fetch skipped: {e}")
             except Exception as e:
                 logger.warning(f"Market data fetch failed: {e}")
 
@@ -252,8 +252,8 @@ class AnchorTrader(MathOptimizerMixin):
                 self._log_bot_decision(result, scan_context, skip_reason=reason)
                 return result
 
-            # Check Oracle strategy recommendation
-            # Oracle may suggest SOLOMON (directional) instead of ANCHOR (IC) in high VIX
+            # Check Prophet strategy recommendation
+            # Prophet may suggest SOLOMON (directional) instead of ANCHOR (IC) in high VIX
             strategy_rec = self._check_strategy_recommendation()
             if strategy_rec:
                 scan_context['strategy_recommendation'] = {
@@ -264,14 +264,14 @@ class AnchorTrader(MathOptimizerMixin):
                 }
 
                 # NOTE: Strategy recommendation is INFORMATIONAL ONLY
-                # Oracle's final trade advice in signals.py is the ONLY decision maker
+                # Prophet's final trade advice in signals.py is the ONLY decision maker
                 if hasattr(strategy_rec, 'recommended_strategy'):
                     if strategy_rec.recommended_strategy == StrategyType.SKIP:
-                        # Log but DON'T block - let signals.py Oracle check decide
-                        self.db.log("INFO", f"Oracle strategy suggests SKIP: {strategy_rec.reasoning} (proceeding to trade check)")
+                        # Log but DON'T block - let signals.py Prophet check decide
+                        self.db.log("INFO", f"Prophet strategy suggests SKIP: {strategy_rec.reasoning} (proceeding to trade check)")
                         result['details']['strategy_suggestion'] = f"SKIP: {strategy_rec.reasoning}"
                     elif strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                        self.db.log("INFO", f"Oracle suggests SOLOMON: {strategy_rec.reasoning} (ANCHOR will still check)")
+                        self.db.log("INFO", f"Prophet suggests SOLOMON: {strategy_rec.reasoning} (ANCHOR will still check)")
                         result['details']['oracle_suggests_solomon'] = True
                         result['details']['ic_suitability'] = strategy_rec.ic_suitability
 
@@ -281,8 +281,8 @@ class AnchorTrader(MathOptimizerMixin):
             result['realized_pnl'] = pnl
 
             # Try new entry (position limits already checked in _check_conditions)
-            # Pass early-fetched oracle_data to avoid double Oracle call (bug fix)
-            position, signal = self._try_entry_with_context(oracle_data=scan_context.get('oracle_data'))
+            # Pass early-fetched prophet_data to avoid double Prophet call (bug fix)
+            position, signal = self._try_entry_with_context(prophet_data=scan_context.get('prophet_data'))
             if position:
                 result['trade_opened'] = True
                 result['action'] = 'opened'
@@ -361,21 +361,21 @@ class AnchorTrader(MathOptimizerMixin):
 
     def _check_strategy_recommendation(self):
         """
-        Check Oracle for strategy recommendation.
+        Check Prophet for strategy recommendation.
 
-        Oracle determines if current conditions favor:
+        Prophet determines if current conditions favor:
         - IRON_CONDOR: Price will stay pinned (good for ANCHOR)
         - DIRECTIONAL: Price will move (better for SOLOMON)
         - SKIP: Too risky to trade
 
         Returns:
-            StrategyRecommendation or None if Oracle unavailable
+            StrategyRecommendation or None if Prophet unavailable
         """
         if not ORACLE_AVAILABLE or not get_oracle:
             return None
 
         try:
-            oracle = get_oracle()
+            prophet = get_oracle()
 
             # Get current market data using SignalGenerator's method (proper SPX data)
             market_data = self.signals.get_market_data()
@@ -410,10 +410,10 @@ class AnchorTrader(MathOptimizerMixin):
             )
 
             # Get strategy recommendation
-            recommendation = oracle.get_strategy_recommendation(context)
+            recommendation = prophet.get_strategy_recommendation(context)
 
             logger.info(
-                f"Oracle strategy rec: {recommendation.recommended_strategy.value}, "
+                f"Prophet strategy rec: {recommendation.recommended_strategy.value}, "
                 f"VIX regime: {recommendation.vix_regime.value}, "
                 f"IC suitability: {recommendation.ic_suitability:.0%}"
             )
@@ -421,7 +421,7 @@ class AnchorTrader(MathOptimizerMixin):
             return recommendation
 
         except Exception as e:
-            logger.warning(f"Oracle strategy check failed: {e}")
+            logger.warning(f"Prophet strategy check failed: {e}")
             return None
 
     def _manage_positions(self) -> tuple[int, float]:
@@ -461,7 +461,7 @@ class AnchorTrader(MathOptimizerMixin):
                     closed += 1
                     total_pnl += pnl
 
-                    # Record outcome to Oracle for ML feedback loop
+                    # Record outcome to Prophet for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
 
                     # Record outcome to Proverbs Enhanced for feedback loops
@@ -501,7 +501,7 @@ class AnchorTrader(MathOptimizerMixin):
 
     def _record_oracle_outcome(self, pos: IronCondorPosition, close_reason: str, pnl: float):
         """
-        Record trade outcome to Oracle for ML feedback loop.
+        Record trade outcome to Prophet for ML feedback loop.
 
         Migration 023: Enhanced to pass prediction_id and outcome_type for
         accurate feedback loop tracking.
@@ -510,7 +510,7 @@ class AnchorTrader(MathOptimizerMixin):
             return
 
         try:
-            oracle = OracleAdvisor()
+            prophet = ProphetAdvisor()
 
             # Determine outcome type based on close reason and P&L
             if pnl > 0:
@@ -540,8 +540,8 @@ class AnchorTrader(MathOptimizerMixin):
             # Migration 023: Get prediction_id from database for accurate linking
             prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
 
-            # Record to Oracle using ANCHOR bot name with enhanced feedback data
-            success = oracle.update_outcome(
+            # Record to Prophet using ANCHOR bot name with enhanced feedback data
+            success = prophet.update_outcome(
                 trade_date=trade_date,
                 bot_name=OracleBotName.ANCHOR,
                 outcome=outcome,
@@ -553,12 +553,12 @@ class AnchorTrader(MathOptimizerMixin):
             )
 
             if success:
-                logger.info(f"ANCHOR: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}, prediction_id={prediction_id}")
+                logger.info(f"ANCHOR: Recorded outcome to Prophet - {outcome.value}, P&L=${pnl:.2f}, prediction_id={prediction_id}")
             else:
-                logger.warning(f"ANCHOR: Failed to record outcome to Oracle")
+                logger.warning(f"ANCHOR: Failed to record outcome to Prophet")
 
         except Exception as e:
-            logger.warning(f"ANCHOR: Oracle outcome recording failed: {e}")
+            logger.warning(f"ANCHOR: Prophet outcome recording failed: {e}")
 
     def _record_proverbs_outcome(
         self,
@@ -658,7 +658,7 @@ class AnchorTrader(MathOptimizerMixin):
                 "day_of_week": datetime.now(CENTRAL_TZ).weekday()
             }
 
-            # Note: signal.confidence is already 0-1 from Oracle, not 0-100
+            # Note: signal.confidence is already 0-1 from Prophet, not 0-100
             prediction_id = memory.record_prediction(
                 prediction_type="spx_iron_condor_outcome",
                 prediction=f"SPX IC profitable: {pos.put_short_strike}/{pos.call_short_strike}",
@@ -696,7 +696,7 @@ class AnchorTrader(MathOptimizerMixin):
 
     def _store_oracle_prediction(self, signal, position: IronCondorPosition) -> int | None:
         """
-        Store Oracle prediction to database AFTER position opens.
+        Store Prophet prediction to database AFTER position opens.
 
         Migration 023 (Option C): This is called ONLY when a position is opened,
         not during every scan. This ensures 1:1 prediction-to-position mapping.
@@ -708,10 +708,10 @@ class AnchorTrader(MathOptimizerMixin):
             return None
 
         try:
-            oracle = OracleAdvisor()
+            prophet = ProphetAdvisor()
 
             # Build MarketContext from signal
-            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
 
             gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
             try:
@@ -731,8 +731,8 @@ class AnchorTrader(MathOptimizerMixin):
                 expected_move_pct=(signal.expected_move / signal.spot_price * 100) if signal.spot_price else 0,
             )
 
-            # Build OraclePrediction from signal's Oracle context
-            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+            # Build OraclePrediction from signal's Prophet context
+            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
 
             # Determine advice from signal
             advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
@@ -758,7 +758,7 @@ class AnchorTrader(MathOptimizerMixin):
 
             # Store to database with position_id and strategy_recommendation (Migration 023)
             trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-            prediction_id = oracle.store_prediction(
+            prediction_id = prophet.store_prediction(
                 prediction,
                 context,
                 trade_date,
@@ -767,19 +767,19 @@ class AnchorTrader(MathOptimizerMixin):
             )
 
             if prediction_id and isinstance(prediction_id, int):
-                logger.info(f"ANCHOR: Oracle prediction stored for {trade_date} (id={prediction_id}, Win Prob: {prediction.win_probability:.0%})")
+                logger.info(f"ANCHOR: Prophet prediction stored for {trade_date} (id={prediction_id}, Win Prob: {prediction.win_probability:.0%})")
                 # Update position in database with the oracle_prediction_id
                 self.db.update_oracle_prediction_id(position.position_id, prediction_id)
                 return prediction_id
             elif prediction_id:  # True (backward compatibility)
-                logger.info(f"ANCHOR: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+                logger.info(f"ANCHOR: Prophet prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
                 return None
             else:
-                logger.warning(f"ANCHOR: Failed to store Oracle prediction for {trade_date}")
+                logger.warning(f"ANCHOR: Failed to store Prophet prediction for {trade_date}")
                 return None
 
         except Exception as e:
-            logger.warning(f"ANCHOR: Oracle prediction storage failed: {e}")
+            logger.warning(f"ANCHOR: Prophet prediction storage failed: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -876,11 +876,11 @@ class AnchorTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_entry_with_context(self, oracle_data: dict = None) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
+    def _try_entry_with_context(self, prophet_data: dict = None) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
         """Try to open a new Iron Condor, returning both position and signal for logging
 
         Args:
-            oracle_data: Pre-fetched Oracle advice from run_cycle(). Passed to generate_signal()
+            prophet_data: Pre-fetched Prophet advice from run_cycle(). Passed to generate_signal()
                         to ensure consistency between scan logs and trade decision.
         """
         from typing import Any
@@ -898,8 +898,8 @@ class AnchorTrader(MathOptimizerMixin):
             except Exception as e:
                 logger.debug(f"Regime check skipped: {e}")
 
-        # Generate signal - pass pre-fetched oracle_data to avoid double Oracle call
-        signal = self.signals.generate_signal(oracle_data=oracle_data)
+        # Generate signal - pass pre-fetched prophet_data to avoid double Prophet call
+        signal = self.signals.generate_signal(prophet_data=prophet_data)
         if not signal:
             self.db.log("INFO", "No valid signal generated")
             return None, None
@@ -956,7 +956,7 @@ class AnchorTrader(MathOptimizerMixin):
             note=f"Opened {position.position_id}"
         )
 
-        # CRITICAL: Store Oracle prediction for ML feedback loop
+        # CRITICAL: Store Prophet prediction for ML feedback loop
         # This enables update_outcome to find and update the prediction record
         self._store_oracle_prediction(signal, position)
 
@@ -1007,9 +1007,9 @@ class AnchorTrader(MathOptimizerMixin):
                 outcome = ScanOutcome.NO_TRADE
                 decision = "No valid signal"
 
-            # Build signal context with FULL Oracle data for frontend visibility
+            # Build signal context with FULL Prophet data for frontend visibility
             signal = context.get('signal')
-            oracle_data = context.get('oracle_data', {})
+            prophet_data = context.get('prophet_data', {})
             signal_source = ""
             signal_confidence = 0
             oracle_advice = ""
@@ -1029,7 +1029,7 @@ class AnchorTrader(MathOptimizerMixin):
                 'vix_monday_friday_skip': getattr(self.config, 'vix_monday_friday_skip', 30.0),
             }
 
-            # Extract Oracle data from context FIRST (fetched early for all scans)
+            # Extract Prophet data from context FIRST (fetched early for all scans)
             # Initialize NEUTRAL regime analysis fields
             neutral_derived_direction = ""
             neutral_confidence = 0
@@ -1042,30 +1042,30 @@ class AnchorTrader(MathOptimizerMixin):
             position_in_range_pct = 50.0
             wall_filter_passed = False
 
-            if oracle_data:
-                oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
-                oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
-                oracle_win_probability = oracle_data.get('win_probability', 0)
-                oracle_confidence = oracle_data.get('confidence', 0)
-                oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
+            if prophet_data:
+                oracle_advice = prophet_data.get('advice', prophet_data.get('recommendation', ''))
+                oracle_reasoning = prophet_data.get('reasoning', prophet_data.get('full_reasoning', ''))
+                oracle_win_probability = prophet_data.get('win_probability', 0)
+                oracle_confidence = prophet_data.get('confidence', 0)
+                oracle_top_factors = prophet_data.get('top_factors', prophet_data.get('factors', []))
                 # Extract NEUTRAL regime analysis fields
-                neutral_derived_direction = oracle_data.get('neutral_derived_direction', '')
-                neutral_confidence = oracle_data.get('neutral_confidence', 0)
-                neutral_reasoning = oracle_data.get('neutral_reasoning', '')
-                ic_suitability = oracle_data.get('ic_suitability', 0)
-                bullish_suitability = oracle_data.get('bullish_suitability', 0)
-                bearish_suitability = oracle_data.get('bearish_suitability', 0)
-                trend_direction = oracle_data.get('trend_direction', '')
-                trend_strength = oracle_data.get('trend_strength', 0)
-                position_in_range_pct = oracle_data.get('position_in_range_pct', 50.0)
-                wall_filter_passed = oracle_data.get('wall_filter_passed', False)
+                neutral_derived_direction = prophet_data.get('neutral_derived_direction', '')
+                neutral_confidence = prophet_data.get('neutral_confidence', 0)
+                neutral_reasoning = prophet_data.get('neutral_reasoning', '')
+                ic_suitability = prophet_data.get('ic_suitability', 0)
+                bullish_suitability = prophet_data.get('bullish_suitability', 0)
+                bearish_suitability = prophet_data.get('bearish_suitability', 0)
+                trend_direction = prophet_data.get('trend_direction', '')
+                trend_strength = prophet_data.get('trend_strength', 0)
+                position_in_range_pct = prophet_data.get('position_in_range_pct', 50.0)
+                wall_filter_passed = prophet_data.get('wall_filter_passed', False)
 
-            # If we have a signal, use signal data (but don't override Oracle data with zeros)
+            # If we have a signal, use signal data (but don't override Prophet data with zeros)
             if signal:
                 signal_source = signal.source
                 signal_confidence = signal.confidence
 
-                # Only override Oracle data if signal has it
+                # Only override Prophet data if signal has it
                 signal_oracle_advice = getattr(signal, 'oracle_advice', '')
                 if signal_oracle_advice:
                     oracle_advice = signal_oracle_advice
@@ -1240,7 +1240,7 @@ class AnchorTrader(MathOptimizerMixin):
                 net_gex=gex.get('net_gex', 0),
             )
 
-            # Build Oracle context
+            # Build Prophet context
             oracle_ctx = OracleContext(
                 advice=signal.oracle_advice if signal else "",
                 confidence=signal.confidence if signal else 0,
@@ -1333,7 +1333,7 @@ class AnchorTrader(MathOptimizerMixin):
                 db_success = self.db.close_position(pos.position_id, price, pnl, reason)
                 if not db_success:
                     logger.error(f"CRITICAL: Failed to close {pos.position_id} in database! P&L ${pnl:.2f} not recorded.")
-                # Record outcome to Oracle for ML feedback
+                # Record outcome to Prophet for ML feedback
                 self._record_oracle_outcome(pos, reason, pnl)
                 # Record outcome to Learning Memory for self-improvement
                 if pos.position_id in self._prediction_ids:

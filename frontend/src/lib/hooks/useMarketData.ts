@@ -162,7 +162,7 @@ const fetchers = {
   },
   solomonOracleAdvice: async () => {
     try {
-      const response = await api.get('/api/solomon/oracle-advice')
+      const response = await api.get('/api/solomon/prophet-advice')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -268,7 +268,7 @@ const fetchers = {
   },
   icarusOracleAdvice: async () => {
     try {
-      const response = await api.get('/api/gideon/oracle-advice')
+      const response = await api.get('/api/gideon/prophet-advice')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -401,9 +401,9 @@ const fetchers = {
     return response.data
   },
 
-  // Oracle
+  // Prophet
   oracleStatus: async () => {
-    const response = await apiClient.getOracleStatus()
+    const response = await apiClient.getProphetStatus()
     return response.data
   },
   oracleLogs: async () => {
@@ -1222,7 +1222,7 @@ export function useATHENAPerformance(days: number = 30, options?: SWRConfigurati
 }
 
 export function useATHENAOracleAdvice(options?: SWRConfiguration) {
-  return useSWR('solomon-oracle-advice', fetchers.solomonOracleAdvice, {
+  return useSWR('solomon-prophet-advice', fetchers.solomonOracleAdvice, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1338,7 +1338,7 @@ export function useICARUSPerformance(days: number = 30, options?: SWRConfigurati
 }
 
 export function useICARUSOracleAdvice(options?: SWRConfiguration) {
-  return useSWR('gideon-oracle-advice', fetchers.icarusOracleAdvice, {
+  return useSWR('gideon-prophet-advice', fetchers.icarusOracleAdvice, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1875,11 +1875,11 @@ export function useScannerHistory(limit: number = 10, options?: SWRConfiguration
 }
 
 // =============================================================================
-// ORACLE HOOKS
+// PROPHET HOOKS
 // =============================================================================
 
-export function useOracleStatus(options?: SWRConfiguration) {
-  return useSWR('oracle-status', fetchers.oracleStatus, {
+export function useProphetStatus(options?: SWRConfiguration) {
+  return useSWR('prophet-status', fetchers.oracleStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,  // Refresh every 30 seconds for fresher heartbeats
     ...options,
@@ -1887,7 +1887,7 @@ export function useOracleStatus(options?: SWRConfiguration) {
 }
 
 export function useOracleLogs(options?: SWRConfiguration) {
-  return useSWR('oracle-logs', fetchers.oracleLogs, {
+  return useSWR('prophet-logs', fetchers.oracleLogs, {
     ...swrConfig,
     refreshInterval: 15 * 1000,  // Refresh every 15 seconds for live logs
     ...options,
@@ -1896,7 +1896,7 @@ export function useOracleLogs(options?: SWRConfiguration) {
 
 export function useOraclePredictions(days: number = 30, limit: number = 100, options?: SWRConfiguration) {
   return useSWR(
-    `oracle-predictions-${days}-${limit}`,
+    `prophet-predictions-${days}-${limit}`,
     () => fetchers.oraclePredictions({ days, limit }),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
@@ -1905,7 +1905,7 @@ export function useOraclePredictions(days: number = 30, limit: number = 100, opt
 // NEW: Full transparency hooks with auto-refresh
 export function useOracleDataFlows(limit: number = 50, bot_name?: string, options?: SWRConfiguration) {
   return useSWR(
-    `oracle-data-flows-${limit}-${bot_name || 'all'}`,
+    `prophet-data-flows-${limit}-${bot_name || 'all'}`,
     () => fetchers.oracleDataFlows({ limit, bot_name }),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -1913,7 +1913,7 @@ export function useOracleDataFlows(limit: number = 50, bot_name?: string, option
 
 export function useOracleClaudeExchanges(limit: number = 20, bot_name?: string, options?: SWRConfiguration) {
   return useSWR(
-    `oracle-claude-exchanges-${limit}-${bot_name || 'all'}`,
+    `prophet-claude-exchanges-${limit}-${bot_name || 'all'}`,
     () => fetchers.oracleClaudeExchanges({ limit, bot_name }),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -1921,7 +1921,7 @@ export function useOracleClaudeExchanges(limit: number = 20, bot_name?: string, 
 
 export function useOracleFullTransparency(bot_name?: string, options?: SWRConfiguration) {
   return useSWR(
-    `oracle-full-transparency-${bot_name || 'all'}`,
+    `prophet-full-transparency-${bot_name || 'all'}`,
     () => fetchers.oracleFullTransparency(bot_name),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )

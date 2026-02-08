@@ -91,7 +91,7 @@ def analyze_scan_activity():
             threshold = float(threshold) if threshold else 0
             print(f"  {bot_name:10}")
             print(f"    ML Win Prob (avg):     {ml_prob:.1%}")
-            print(f"    Oracle Win Prob (avg): {oracle_prob:.1%}")
+            print(f"    Prophet Win Prob (avg): {oracle_prob:.1%}")
             print(f"    Min Threshold:         {threshold:.1%}")
             print(f"    Sample size: {count} scans")
             if ml_prob > 0 and threshold > 0:
@@ -158,11 +158,11 @@ def analyze_scan_activity():
                 time_ct, outcome, decision, ml_prob, oracle_prob, ml_advice, oracle_advice, vix, gex = row
                 ml_prob = float(ml_prob) if ml_prob else 0
                 oracle_prob = float(oracle_prob) if oracle_prob else 0
-                print(f"    {time_ct} | {outcome:10} | ML:{ml_prob:.1%} | Oracle:{oracle_prob:.1%}")
-                print(f"                | ML:{ml_advice or 'N/A':15} | Oracle:{oracle_advice or 'N/A'}")
+                print(f"    {time_ct} | {outcome:10} | ML:{ml_prob:.1%} | Prophet:{oracle_prob:.1%}")
+                print(f"                | ML:{ml_advice or 'N/A':15} | Prophet:{oracle_advice or 'N/A'}")
                 print(f"                | {decision[:70]}")
 
-    # 6. Check Oracle/ML model status
+    # 6. Check Prophet/ML model status
     print("\n\n🤖 MODEL STATUS CHECK")
     print("-" * 60)
 
@@ -171,7 +171,7 @@ def analyze_scan_activity():
         SELECT
             bot_name,
             COUNT(CASE WHEN quant_ml_win_probability > 0 THEN 1 END) as ml_predictions,
-            COUNT(CASE WHEN oracle_win_probability > 0 THEN 1 END) as oracle_predictions,
+            COUNT(CASE WHEN oracle_win_probability > 0 THEN 1 END) as prophet_predictions,
             COUNT(*) as total_scans
         FROM scan_activity
         WHERE date = %s
@@ -182,11 +182,11 @@ def analyze_scan_activity():
         bot, ml_count, oracle_count, total = row
         ml_pct = (ml_count / total * 100) if total > 0 else 0
         oracle_pct = (oracle_count / total * 100) if total > 0 else 0
-        print(f"  {bot:10} | ML predicting: {ml_pct:5.1f}% | Oracle predicting: {oracle_pct:5.1f}%")
+        print(f"  {bot:10} | ML predicting: {ml_pct:5.1f}% | Prophet predicting: {oracle_pct:5.1f}%")
         if ml_pct < 50:
             print(f"    ⚠️ ML model may not be loaded/trained for {bot}")
         if oracle_pct < 50:
-            print(f"    ⚠️ Oracle may not be available for {bot}")
+            print(f"    ⚠️ Prophet may not be available for {bot}")
 
     conn.close()
 

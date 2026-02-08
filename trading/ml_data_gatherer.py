@@ -13,7 +13,7 @@ Systems Gathered:
 - Volatility Regime (from psychology trap detector)
 - Psychology Patterns (Liberation, False Floor, Forward Magnets)
 - Monte Carlo Kelly (position sizing)
-- ARGUS Pattern Analysis (pattern similarity)
+- WATCHTOWER Pattern Analysis (pattern similarity)
 - IV Context (IV rank, percentile, ratios)
 - Time Context (day of week, OPEX timing, economic events)
 - Recent Performance (win rates, streaks, P&L)
@@ -84,7 +84,7 @@ try:
     ARGUS_AVAILABLE = True
 except ImportError as e:
     ARGUS_AVAILABLE = False
-    logger.debug(f"ARGUS not available: {e}")
+    logger.debug(f"WATCHTOWER not available: {e}")
 
 try:
     from database_adapter import get_connection
@@ -153,7 +153,7 @@ class MLDataBundle:
     kelly_prob_ruin: float = 0
     kelly_recommendation: str = ""
 
-    # ARGUS Pattern Analysis
+    # WATCHTOWER Pattern Analysis
     argus_pattern_match: str = ""
     argus_similarity_score: float = 0
     argus_historical_outcome: str = ""
@@ -283,7 +283,7 @@ class MLDataGatherer:
         self._gather_quant_ml(bundle, symbol, spot_price, vix, gex_data)
         self._gather_regime_classifier(bundle, symbol, spot_price, vix, gex_data)
         self._gather_gex_ml(bundle, symbol, spot_price, vix, gex_data)
-        # REMOVED: Ensemble gathering - Oracle is god
+        # REMOVED: Ensemble gathering - Prophet is god
         # self._gather_ensemble(bundle, symbol, spot_price, vix, gex_data)
         self._gather_volatility_regime(bundle, spot_price, vix, gex_data)
         self._gather_psychology(bundle, symbol, spot_price, gex_data)
@@ -427,7 +427,7 @@ class MLDataGatherer:
         vix: float,
         gex_data: Dict
     ):
-        # REMOVED: Ensemble gathering - Oracle is god
+        # REMOVED: Ensemble gathering - Prophet is god
         # Ensemble fields in MLDataBundle will remain empty/default
         pass
 
@@ -551,7 +551,7 @@ class MLDataGatherer:
         spot_price: float,
         gex_data: Dict
     ):
-        """Gather ARGUS pattern analysis data"""
+        """Gather WATCHTOWER pattern analysis data"""
         if not ARGUS_AVAILABLE:
             return
 
@@ -571,7 +571,7 @@ class MLDataGatherer:
                 bundle.argus_roc_value = getattr(result, 'roc_value', 0)
                 bundle.argus_roc_signal = getattr(result, 'roc_signal', '')
         except Exception as e:
-            logger.debug(f"ARGUS gather failed: {e}")
+            logger.debug(f"WATCHTOWER gather failed: {e}")
 
     def _gather_iv_context(
         self,

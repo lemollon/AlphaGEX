@@ -6,7 +6,7 @@ Tests:
 2. Monte Carlo Kelly Stress Testing
 
 Note: ML Regime Classifier and Ensemble Strategy tests removed - modules deprecated.
-Oracle is now the sole decision authority.
+Prophet is now the sole decision authority.
 
 Run with: pytest tests/test_quant_modules.py -v
 """

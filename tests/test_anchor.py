@@ -314,28 +314,28 @@ class TestAnchorDatabase:
 
 
 class TestOracleIntegration:
-    """Tests for ANCHOR Oracle integration"""
+    """Tests for ANCHOR Prophet integration"""
 
     def test_oracle_anchor_advice(self):
-        """Test that Oracle has get_anchor_advice method"""
+        """Test that Prophet has get_anchor_advice method"""
         try:
-            from quant.oracle_advisor import OracleAdvisor
+            from quant.prophet_advisor import ProphetAdvisor
 
-            # Oracle should have get_anchor_advice method
-            assert hasattr(OracleAdvisor, 'get_anchor_advice')
+            # Prophet should have get_anchor_advice method
+            assert hasattr(ProphetAdvisor, 'get_anchor_advice')
 
         except ImportError:
-            pytest.skip("OracleAdvisor not available")
+            pytest.skip("ProphetAdvisor not available")
 
     def test_oracle_botname_enum(self):
         """Test that ANCHOR is in BotName enum"""
         try:
-            from quant.oracle_advisor import BotName
+            from quant.prophet_advisor import BotName
 
             assert 'ANCHOR' in [b.name for b in BotName]
 
         except ImportError:
-            pytest.skip("Oracle BotName enum not available")
+            pytest.skip("Prophet BotName enum not available")
 
 
 class TestProverbsIntegration:
@@ -420,16 +420,16 @@ class TestANCHORStrikeDistance:
     """Tests for ANCHOR minimum 1 SD strike distance (January 2025)"""
 
     def test_oracle_enforces_min_strike_distance(self):
-        """Test that Oracle get_anchor_advice enforces minimum 1 SD strike distance"""
+        """Test that Prophet get_anchor_advice enforces minimum 1 SD strike distance"""
         try:
             import inspect
-            from quant.oracle_advisor import OracleAdvisor
-            source = inspect.getsource(OracleAdvisor.get_anchor_advice)
+            from quant.prophet_advisor import ProphetAdvisor
+            source = inspect.getsource(ProphetAdvisor.get_anchor_advice)
             # Check that the method calculates expected_move and enforces minimum distance
-            assert 'expected_move' in source, "Oracle should calculate expected_move for min distance"
-            assert 'min_put_strike' in source or 'min_call_strike' in source, "Oracle should enforce min strike distance"
+            assert 'expected_move' in source, "Prophet should calculate expected_move for min distance"
+            assert 'min_put_strike' in source or 'min_call_strike' in source, "Prophet should enforce min strike distance"
         except ImportError:
-            pytest.skip("OracleAdvisor not available")
+            pytest.skip("ProphetAdvisor not available")
 
     def test_signals_enforces_min_strike_distance(self):
         """Test that ANCHOR signals.py enforces minimum 1 SD strike distance"""
