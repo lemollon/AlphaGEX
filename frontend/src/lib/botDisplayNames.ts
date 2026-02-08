@@ -203,7 +203,7 @@ export const ADVISOR_SCRIPTURES: Record<string, BotScripture> = {
     reference: 'Philippians 1:9-10',
     why: 'The ML Scanner discerns trading opportunities from noise, separating signal from static.',
   },
-  SOLOMON: {
+  PROVERBS: {
     displayName: 'PROVERBS',
     verse: '"The proverbs of Solomon son of David, king of Israel: for gaining wisdom and instruction; for understanding words of insight."',
     reference: 'Proverbs 1:1-2',
@@ -222,31 +222,33 @@ export const ADVISOR_SCRIPTURES: Record<string, BotScripture> = {
 // =============================================================================
 
 export const BOT_DISPLAY_NAMES = {
-  ARES: BOT_SCRIPTURES.ARES.displayName,
-  ATHENA: BOT_SCRIPTURES.ATHENA.displayName,
-  ICARUS: BOT_SCRIPTURES.ICARUS.displayName,
-  PEGASUS: BOT_SCRIPTURES.PEGASUS.displayName,
-  TITAN: BOT_SCRIPTURES.TITAN.displayName,
-  PHOENIX: BOT_SCRIPTURES.PHOENIX.displayName,
-  ATLAS: BOT_SCRIPTURES.ATLAS.displayName,
-  HERMES: BOT_SCRIPTURES.HERMES.displayName,
-  PROMETHEUS: BOT_SCRIPTURES.PROMETHEUS.displayName,
-  HERACLES: BOT_SCRIPTURES.HERACLES.displayName,
+  // New biblical names (used in navigation and UI)
+  FORTRESS: BOT_SCRIPTURES.ARES.displayName,
+  SOLOMON: BOT_SCRIPTURES.ATHENA.displayName,
+  GIDEON: BOT_SCRIPTURES.ICARUS.displayName,
+  ANCHOR: BOT_SCRIPTURES.PEGASUS.displayName,
+  SAMSON: BOT_SCRIPTURES.TITAN.displayName,
+  LAZARUS: BOT_SCRIPTURES.PHOENIX.displayName,
+  CORNERSTONE: BOT_SCRIPTURES.ATLAS.displayName,
+  SHEPHERD: BOT_SCRIPTURES.HERMES.displayName,
+  JUBILEE: BOT_SCRIPTURES.PROMETHEUS.displayName,
+  VALOR: BOT_SCRIPTURES.HERACLES.displayName,
   AGAPE: BOT_SCRIPTURES.AGAPE.displayName,
   AGAPE_SPOT: BOT_SCRIPTURES.AGAPE_SPOT.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {
-  ORACLE: ADVISOR_SCRIPTURES.ORACLE.displayName,
-  SAGE: ADVISOR_SCRIPTURES.SAGE.displayName,
-  ARGUS: ADVISOR_SCRIPTURES.ARGUS.displayName,
-  ORION: ADVISOR_SCRIPTURES.ORION.displayName,
-  GEXIS: ADVISOR_SCRIPTURES.GEXIS.displayName,
-  KRONOS: ADVISOR_SCRIPTURES.KRONOS.displayName,
-  HYPERION: ADVISOR_SCRIPTURES.HYPERION.displayName,
-  APOLLO: ADVISOR_SCRIPTURES.APOLLO.displayName,
-  SOLOMON: ADVISOR_SCRIPTURES.SOLOMON.displayName,
-  NEXUS: ADVISOR_SCRIPTURES.NEXUS.displayName,
+  // New biblical names (used in navigation and UI)
+  PROPHET: ADVISOR_SCRIPTURES.ORACLE.displayName,
+  WISDOM: ADVISOR_SCRIPTURES.SAGE.displayName,
+  WATCHTOWER: ADVISOR_SCRIPTURES.ARGUS.displayName,
+  STARS: ADVISOR_SCRIPTURES.ORION.displayName,
+  COUNSELOR: ADVISOR_SCRIPTURES.GEXIS.displayName,
+  CHRONICLES: ADVISOR_SCRIPTURES.KRONOS.displayName,
+  GLORY: ADVISOR_SCRIPTURES.HYPERION.displayName,
+  DISCERNMENT: ADVISOR_SCRIPTURES.APOLLO.displayName,
+  PROVERBS: ADVISOR_SCRIPTURES.PROVERBS.displayName,
+  COVENANT: ADVISOR_SCRIPTURES.NEXUS.displayName,
 } as const
 
 // =============================================================================

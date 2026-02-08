@@ -90,11 +90,11 @@ def run_diagnostic():
                 conn.rollback()
                 return False
 
-        # ARES positions table
+        # FORTRESS positions table
         try:
-            existed = table_exists('ares_positions')
+            existed = table_exists('fortress_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ares_positions (
+                CREATE TABLE IF NOT EXISTS fortress_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
@@ -128,15 +128,15 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('ares_positions')
+                tables_created.append('fortress_positions')
         except Exception as e:
             conn.rollback()
 
-        # ATHENA positions table
+        # SOLOMON positions table
         try:
-            existed = table_exists('athena_positions')
+            existed = table_exists('solomon_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS athena_positions (
+                CREATE TABLE IF NOT EXISTS solomon_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
@@ -163,15 +163,15 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('athena_positions')
+                tables_created.append('solomon_positions')
         except Exception as e:
             conn.rollback()
 
-        # PEGASUS positions table (SPX Iron Condors)
+        # ANCHOR positions table (SPX Iron Condors)
         try:
-            existed = table_exists('pegasus_positions')
+            existed = table_exists('anchor_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pegasus_positions (
+                CREATE TABLE IF NOT EXISTS anchor_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
@@ -194,15 +194,15 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('pegasus_positions')
+                tables_created.append('anchor_positions')
         except Exception as e:
             conn.rollback()
 
-        # ICARUS positions table (Aggressive directional)
+        # GIDEON positions table (Aggressive directional)
         try:
-            existed = table_exists('icarus_positions')
+            existed = table_exists('gideon_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS icarus_positions (
+                CREATE TABLE IF NOT EXISTS gideon_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
@@ -225,15 +225,15 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('icarus_positions')
+                tables_created.append('gideon_positions')
         except Exception as e:
             conn.rollback()
 
-        # TITAN positions table (Aggressive SPX IC)
+        # SAMSON positions table (Aggressive SPX IC)
         try:
-            existed = table_exists('titan_positions')
+            existed = table_exists('samson_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS titan_positions (
+                CREATE TABLE IF NOT EXISTS samson_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
@@ -256,7 +256,7 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('titan_positions')
+                tables_created.append('samson_positions')
         except Exception as e:
             conn.rollback()
 
@@ -351,11 +351,11 @@ def run_diagnostic():
 
     # Correct table names matching actual database schema
     position_tables = [
-        ('ares_positions', 'ARES'),
-        ('athena_positions', 'ATHENA'),
-        ('pegasus_positions', 'PEGASUS'),
-        ('icarus_positions', 'ICARUS'),
-        ('titan_positions', 'TITAN'),
+        ('fortress_positions', 'FORTRESS'),
+        ('solomon_positions', 'SOLOMON'),
+        ('anchor_positions', 'ANCHOR'),
+        ('gideon_positions', 'GIDEON'),
+        ('samson_positions', 'SAMSON'),
     ]
 
     for table, bot in position_tables:
@@ -401,9 +401,9 @@ def run_diagnostic():
             else:
                 print(f"  {bot:10} : Error - {e}")
 
-    # 4. Recent Oracle Predictions
+    # 4. Recent Prophet Predictions
     print("\n" + "-" * 60)
-    print("ORACLE PREDICTIONS TODAY")
+    print("PROPHET PREDICTIONS TODAY")
     print("-" * 60)
 
     try:
@@ -412,7 +412,7 @@ def run_diagnostic():
                    AVG(win_probability::numeric),
                    AVG(confidence::numeric),
                    MAX(prediction_time)
-            FROM oracle_predictions
+            FROM prophet_predictions
             WHERE trade_date = %s
             GROUP BY bot_name
             ORDER BY bot_name
@@ -424,9 +424,9 @@ def run_diagnostic():
                 avg_conf = float(avg_conf) if avg_conf else 0
                 print(f"  {bot:10} : {count:3} predictions | Avg WP: {avg_wp:.0%} | Avg Conf: {avg_conf:.0%}")
         else:
-            print("  [INFO] No Oracle predictions stored today")
+            print("  [INFO] No Prophet predictions stored today")
     except Exception as e:
-        print(f"  [ERROR] Could not check Oracle predictions: {e}")
+        print(f"  [ERROR] Could not check Prophet predictions: {e}")
 
     # 5. Latest NO_TRADE Reasons
     print("\n" + "-" * 60)
@@ -457,7 +457,7 @@ def run_diagnostic():
                 oracle_wp = float(oracle_wp) if oracle_wp else 0
                 ml_wp = float(ml_wp) if ml_wp else 0
                 threshold = float(threshold) if threshold else 0
-                print(f"  {bot:8} @ {time_ct:>10} | Oracle:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
+                print(f"  {bot:8} @ {time_ct:>10} | Prophet:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
                 if decision:
                     print(f"           Reason: {decision[:60]}")
         else:
@@ -547,21 +547,21 @@ def run_diagnostic():
     except Exception as e:
         print(f"  [ERROR] {e}")
 
-    # 9. Solomon Kill Switch
+    # 9. Proverbs Kill Switch
     print("\n" + "-" * 60)
-    print("SOLOMON FEEDBACK LOOP")
+    print("PROVERBS FEEDBACK LOOP")
     print("-" * 60)
 
     try:
-        from quant.solomon_feedback_loop import get_solomon
-        solomon = get_solomon()
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN']:
+        from quant.proverbs_feedback_loop import get_proverbs
+        proverbs = get_proverbs()
+        for bot in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'GIDEON', 'SAMSON']:
             # Check if bot is killed via kill switch
-            is_killed = solomon.is_bot_killed(bot) if hasattr(solomon, 'is_bot_killed') else False
+            is_killed = proverbs.is_bot_killed(bot) if hasattr(proverbs, 'is_bot_killed') else False
             status_icon = "🔴" if is_killed else "🟢"
             print(f"  {status_icon} {bot:10} : {'KILLED' if is_killed else 'Active'}")
     except ImportError:
-        print("  [INFO] Solomon module not available")
+        print("  [INFO] Proverbs module not available")
     except Exception as e:
         print(f"  [ERROR] {e}")
 
@@ -690,7 +690,7 @@ def run_diagnostic():
             avg_wp = float(rows[0][0])
             avg_thresh = float(rows[0][1]) if rows[0][1] else 0.42
             if avg_wp < avg_thresh:
-                issues.append(f"Avg Oracle win prob ({avg_wp:.0%}) below threshold ({avg_thresh:.0%})")
+                issues.append(f"Avg Prophet win prob ({avg_wp:.0%}) below threshold ({avg_thresh:.0%})")
     except:
         pass
 

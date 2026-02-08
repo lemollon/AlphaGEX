@@ -1,7 +1,7 @@
 """
-ORION - GEX Probability Models Tests
+STARS - GEX Probability Models Tests
 
-Tests for the 5 XGBoost models used by ARGUS and HYPERION for strike probability.
+Tests for the 5 XGBoost models used by WATCHTOWER and GLORY for strike probability.
 
 Models:
 1. Direction Probability - UP/DOWN/FLAT classification
@@ -25,8 +25,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import Tests
 # ============================================================================
 
-class TestOrionImports:
-    """Test that all ORION components can be imported"""
+class TestStarsImports:
+    """Test that all STARS components can be imported"""
 
     def test_import_gex_probability_models(self):
         """Test GEXProbabilityModels wrapper can be imported"""
@@ -277,16 +277,16 @@ class TestPredictions:
 
 
 # ============================================================================
-# Integration with ARGUS/HYPERION
+# Integration with WATCHTOWER/GLORY
 # ============================================================================
 
 class TestIntegration:
-    """Tests for ARGUS/HYPERION integration"""
+    """Tests for WATCHTOWER/GLORY integration"""
 
-    def test_argus_engine_import(self):
-        """Test ARGUS engine can import GEXProbabilityModels"""
+    def test_watchtower_engine_import(self):
+        """Test WATCHTOWER engine can import GEXProbabilityModels"""
         try:
-            from core.argus_engine import ARGUSEngine
+            from core.watchtower_engine import ARGUSEngine
 
             engine = ARGUSEngine()
 

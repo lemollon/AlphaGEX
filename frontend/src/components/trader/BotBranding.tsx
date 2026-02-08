@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES' | 'AGAPE' | 'AGAPE_SPOT'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'AGAPE' | 'AGAPE_SPOT'
 
 export interface BotBrand {
   name: BotName
@@ -49,10 +49,10 @@ export interface BotBrand {
 }
 
 export const BOT_BRANDS: Record<BotName, BotBrand> = {
-  ARES: {
-    name: 'ARES',
-    displayName: BOT_DISPLAY_NAMES.ARES,  // FORTRESS - Psalm 18:2
-    fullName: `${BOT_DISPLAY_NAMES.ARES} Iron Condor`,
+  FORTRESS: {
+    name: 'FORTRESS',
+    displayName: BOT_DISPLAY_NAMES.FORTRESS,  // FORTRESS - Psalm 18:2
+    fullName: `${BOT_DISPLAY_NAMES.FORTRESS} Iron Condor`,
     description: 'Paper Trading with Real Market Data',
     strategy: '0DTE Iron Condor Strategy',
     // Primary - Amber/Gold (professional, not aggressive red)
@@ -85,10 +85,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#FCD34D',
     hexDark: '#D97706',
   },
-  ATHENA: {
-    name: 'ATHENA',
-    displayName: BOT_DISPLAY_NAMES.ATHENA,  // SOLOMON - 1 Kings 4:29
-    fullName: `${BOT_DISPLAY_NAMES.ATHENA} Directional`,
+  SOLOMON: {
+    name: 'SOLOMON',
+    displayName: BOT_DISPLAY_NAMES.SOLOMON,  // SOLOMON - 1 Kings 4:29
+    fullName: `${BOT_DISPLAY_NAMES.SOLOMON} Directional`,
     description: 'GEX-Based Directional Spreads',
     strategy: 'Directional Spread Trading',
     // Primary - Cyan/Teal (wisdom, strategy)
@@ -121,10 +121,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#67E8F9',
     hexDark: '#0891B2',
   },
-  ICARUS: {
-    name: 'ICARUS',
-    displayName: BOT_DISPLAY_NAMES.ICARUS,  // GIDEON - Judges 6:14
-    fullName: `${BOT_DISPLAY_NAMES.ICARUS} Aggressive Directional`,
+  GIDEON: {
+    name: 'GIDEON',
+    displayName: BOT_DISPLAY_NAMES.GIDEON,  // GIDEON - Judges 6:14
+    fullName: `${BOT_DISPLAY_NAMES.GIDEON} Aggressive Directional`,
     description: 'Aggressive GEX-Based Directional Spreads',
     strategy: 'Aggressive Directional Spread Trading',
     // Primary - Orange (bold, aggressive, flying toward the sun)
@@ -157,11 +157,11 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#FDBA74',
     hexDark: '#EA580C',
   },
-  PEGASUS: {
-    name: 'PEGASUS',
-    displayName: BOT_DISPLAY_NAMES.PEGASUS,  // ANCHOR - Hebrews 6:19
-    fullName: `${BOT_DISPLAY_NAMES.PEGASUS} SPX Iron Condor`,
-    description: 'SPX Iron Condor Trading with Oracle Intelligence',
+  ANCHOR: {
+    name: 'ANCHOR',
+    displayName: BOT_DISPLAY_NAMES.ANCHOR,  // ANCHOR - Hebrews 6:19
+    fullName: `${BOT_DISPLAY_NAMES.ANCHOR} SPX Iron Condor`,
+    description: 'SPX Iron Condor Trading with Prophet Intelligence',
     strategy: 'SPX Iron Condor Strategy',
     // Primary - Blue/Indigo (protection, stability, SPX)
     primaryColor: 'blue',
@@ -193,10 +193,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#93C5FD',
     hexDark: '#1D4ED8',
   },
-  TITAN: {
-    name: 'TITAN',
-    displayName: BOT_DISPLAY_NAMES.TITAN,  // SAMSON - Judges 16:28
-    fullName: `${BOT_DISPLAY_NAMES.TITAN} Aggressive SPX Iron Condor`,
+  SAMSON: {
+    name: 'SAMSON',
+    displayName: BOT_DISPLAY_NAMES.SAMSON,  // SAMSON - Judges 16:28
+    fullName: `${BOT_DISPLAY_NAMES.SAMSON} Aggressive SPX Iron Condor`,
     description: 'Aggressive Daily SPX Iron Condor Trading',
     strategy: 'Aggressive SPX Iron Condor Strategy',
     // Primary - Violet/Purple (powerful, aggressive, primordial)
@@ -229,13 +229,13 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#C4B5FD',
     hexDark: '#6D28D9',
   },
-  PHOENIX: {
-    name: 'PHOENIX',
-    displayName: BOT_DISPLAY_NAMES.PHOENIX,  // LAZARUS - John 11:43-44
-    fullName: `${BOT_DISPLAY_NAMES.PHOENIX} Momentum`,
+  LAZARUS: {
+    name: 'LAZARUS',
+    displayName: BOT_DISPLAY_NAMES.LAZARUS,  // LAZARUS - John 11:43-44
+    fullName: `${BOT_DISPLAY_NAMES.LAZARUS} Momentum`,
     description: 'Momentum Continuation with GEX-Confirmed Bias',
     strategy: 'Momentum Continuation Strategy',
-    // Primary - Rose/Red (phoenix rising from flames)
+    // Primary - Rose/Red (lazarus rising from flames)
     primaryColor: 'rose',
     primaryBg: 'bg-rose-600',
     primaryBorder: 'border-rose-500',
@@ -265,10 +265,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#FDA4AF',
     hexDark: '#E11D48',
   },
-  ATLAS: {
-    name: 'ATLAS',
-    displayName: BOT_DISPLAY_NAMES.ATLAS,  // CORNERSTONE - Psalm 118:22
-    fullName: `${BOT_DISPLAY_NAMES.ATLAS} Mean-Reversion`,
+  CORNERSTONE: {
+    name: 'CORNERSTONE',
+    displayName: BOT_DISPLAY_NAMES.CORNERSTONE,  // CORNERSTONE - Psalm 118:22
+    fullName: `${BOT_DISPLAY_NAMES.CORNERSTONE} Mean-Reversion`,
     description: 'Mean-Reversion Trading at Key GEX Levels',
     strategy: 'Mean-Reversion Strategy',
     // Primary - Indigo/Deep Blue (strength, stability, holding the world)
@@ -301,10 +301,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#A5B4FC',
     hexDark: '#4F46E5',
   },
-  PROMETHEUS: {
-    name: 'PROMETHEUS',
-    displayName: BOT_DISPLAY_NAMES.PROMETHEUS,  // JUBILEE - Leviticus 25:10
-    fullName: `${BOT_DISPLAY_NAMES.PROMETHEUS} Box Spread + IC`,
+  JUBILEE: {
+    name: 'JUBILEE',
+    displayName: BOT_DISPLAY_NAMES.JUBILEE,  // JUBILEE - Leviticus 25:10
+    fullName: `${BOT_DISPLAY_NAMES.JUBILEE} Box Spread + IC`,
     description: 'Synthetic Borrowing via Box Spreads + Iron Condor Trading',
     strategy: 'Box Spread Synthetic Borrowing + IC Strategy',
     // Primary - Emerald/Green (wealth, growth, fire-bringer)
@@ -337,10 +337,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#6EE7B7',
     hexDark: '#059669',
   },
-  HERACLES: {
-    name: 'HERACLES',
-    displayName: BOT_DISPLAY_NAMES.HERACLES,  // VALOR - Joshua 1:9
-    fullName: `${BOT_DISPLAY_NAMES.HERACLES} MES Futures Scalping`,
+  VALOR: {
+    name: 'VALOR',
+    displayName: BOT_DISPLAY_NAMES.VALOR,  // VALOR - Joshua 1:9
+    fullName: `${BOT_DISPLAY_NAMES.VALOR} MES Futures Scalping`,
     description: 'MES Futures Scalping with GEX Signals',
     strategy: 'GEX-Based MES Futures Scalping',
     // Primary - Yellow/Gold (strength, heroic, sun-like power)

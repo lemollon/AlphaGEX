@@ -13,7 +13,7 @@
 #
 
 BASE_URL="${1:-http://localhost:8000}"
-BOT="ares"  # Test with ARES
+BOT="fortress"  # Test with FORTRESS
 
 echo "=============================================="
 echo "  Bot Reports API Test"

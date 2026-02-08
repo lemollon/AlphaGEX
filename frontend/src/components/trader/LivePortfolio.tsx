@@ -18,7 +18,7 @@ export interface LivePnLData {
 
 export interface LivePosition {
   position_id: string
-  spread_type?: string  // For Athena
+  spread_type?: string  // For Solomon
   long_strike?: number
   short_strike?: number
   expiration: string
@@ -36,7 +36,7 @@ export interface LivePosition {
   // Timestamps
   entry_time?: string
   created_at?: string
-  // For ARES Iron Condors
+  // For FORTRESS Iron Condors
   put_short_strike?: number
   put_long_strike?: number
   call_short_strike?: number
@@ -65,7 +65,7 @@ export interface EquityDataPoint {
 export type TimePeriod = '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL'
 
 interface LivePortfolioProps {
-  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botName: 'SOLOMON' | 'FORTRESS' | 'ANCHOR'
   totalValue: number
   startingCapital: number
   livePnL: LivePnLData | null

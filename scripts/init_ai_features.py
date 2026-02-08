@@ -3,9 +3,9 @@
 AlphaGEX AI Features Initialization and Health Check
 
 This script verifies all AI features are properly initialized and working:
-- GEXIS Extended Thinking
-- GEXIS Learning Memory
-- Oracle integration
+- COUNSELOR Extended Thinking
+- COUNSELOR Learning Memory
+- Prophet integration
 - API endpoints
 
 Run this after deployment to ensure all AI features are production-ready.
@@ -42,7 +42,7 @@ def test_learning_memory():
     logger.info("\n--- Testing Learning Memory ---")
 
     try:
-        from ai.gexis_learning_memory import get_learning_memory, GEXISLearningMemory
+        from ai.counselor_learning_memory import get_learning_memory, GEXISLearningMemory
 
         # Get global instance
         memory = get_learning_memory()
@@ -95,7 +95,7 @@ def test_extended_thinking():
     logger.info("\n--- Testing Extended Thinking ---")
 
     try:
-        from ai.gexis_extended_thinking import (
+        from ai.counselor_extended_thinking import (
             analyze_with_extended_thinking,
             analyze_strike_selection,
             evaluate_trade_setup,
@@ -138,20 +138,20 @@ def test_extended_thinking():
         return False
 
 
-def test_gexis_personality():
-    """Test GEXIS personality system."""
-    logger.info("\n--- Testing GEXIS Personality ---")
+def test_counselor_personality():
+    """Test COUNSELOR personality system."""
+    logger.info("\n--- Testing COUNSELOR Personality ---")
 
     try:
-        from ai.gexis_personality import (
+        from ai.counselor_personality import (
             build_gexis_system_prompt,
             get_gexis_welcome_message,
             GEXIS_NAME,
             USER_NAME
         )
 
-        logger.info(f"{check_mark(True)} GEXIS personality module imported")
-        logger.info(f"    GEXIS Name: {GEXIS_NAME}")
+        logger.info(f"{check_mark(True)} COUNSELOR personality module imported")
+        logger.info(f"    COUNSELOR Name: {GEXIS_NAME}")
         logger.info(f"    User Name: {USER_NAME}")
 
         # Test system prompt generation
@@ -165,25 +165,25 @@ def test_gexis_personality():
         return True
 
     except ImportError as e:
-        logger.error(f"[FAIL] GEXIS personality import failed: {e}")
+        logger.error(f"[FAIL] COUNSELOR personality import failed: {e}")
         return False
     except Exception as e:
-        logger.error(f"[FAIL] GEXIS personality error: {e}")
+        logger.error(f"[FAIL] COUNSELOR personality error: {e}")
         return False
 
 
-def test_gexis_tools():
-    """Test GEXIS agentic tools."""
-    logger.info("\n--- Testing GEXIS Tools ---")
+def test_counselor_tools():
+    """Test COUNSELOR agentic tools."""
+    logger.info("\n--- Testing COUNSELOR Tools ---")
 
     try:
-        from ai.gexis_tools import (
+        from ai.counselor_tools import (
             GEXIS_TOOLS,
             get_system_status,
             get_gexis_briefing
         )
 
-        logger.info(f"{check_mark(True)} GEXIS tools module imported")
+        logger.info(f"{check_mark(True)} COUNSELOR tools module imported")
         logger.info(f"    Available tools: {len(GEXIS_TOOLS)}")
 
         # List tool names
@@ -199,32 +199,32 @@ def test_gexis_tools():
         return True
 
     except ImportError as e:
-        logger.error(f"[FAIL] GEXIS tools import failed: {e}")
+        logger.error(f"[FAIL] COUNSELOR tools import failed: {e}")
         return False
     except Exception as e:
-        logger.error(f"[FAIL] GEXIS tools error: {e}")
+        logger.error(f"[FAIL] COUNSELOR tools error: {e}")
         return False
 
 
 def test_oracle_integration():
-    """Test Oracle advisor integration."""
-    logger.info("\n--- Testing Oracle Integration ---")
+    """Test Prophet advisor integration."""
+    logger.info("\n--- Testing Prophet Integration ---")
 
     try:
-        from quant.oracle_advisor import OracleAdvisor, get_oracle
+        from quant.prophet_advisor import ProphetAdvisor, get_oracle
 
-        logger.info(f"{check_mark(True)} Oracle module imported")
+        logger.info(f"{check_mark(True)} Prophet module imported")
 
-        oracle = get_oracle()
-        logger.info(f"{check_mark(oracle is not None)} Oracle instance created")
+        prophet = get_oracle()
+        logger.info(f"{check_mark(prophet is not None)} Prophet instance created")
 
         return True
 
     except ImportError as e:
-        logger.error(f"[FAIL] Oracle import failed: {e}")
+        logger.error(f"[FAIL] Prophet import failed: {e}")
         return False
     except Exception as e:
-        logger.error(f"[FAIL] Oracle error: {e}")
+        logger.error(f"[FAIL] Prophet error: {e}")
         return False
 
 
@@ -234,33 +234,33 @@ def test_bot_learning_memory_integration():
 
     results = []
 
-    # Test ARES
+    # Test FORTRESS
     try:
-        from trading.ares_v2.trader import ARESTrader, LEARNING_MEMORY_AVAILABLE
-        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} ARES Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
+        from trading.fortress_v2.trader import FortressTrader, LEARNING_MEMORY_AVAILABLE
+        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} FORTRESS Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
 
         # Check if methods exist
-        has_prediction = hasattr(ARESTrader, '_record_learning_memory_prediction')
-        has_outcome = hasattr(ARESTrader, '_record_learning_memory_outcome')
-        logger.info(f"{check_mark(has_prediction)} ARES _record_learning_memory_prediction method exists")
-        logger.info(f"{check_mark(has_outcome)} ARES _record_learning_memory_outcome method exists")
+        has_prediction = hasattr(FortressTrader, '_record_learning_memory_prediction')
+        has_outcome = hasattr(FortressTrader, '_record_learning_memory_outcome')
+        logger.info(f"{check_mark(has_prediction)} FORTRESS _record_learning_memory_prediction method exists")
+        logger.info(f"{check_mark(has_outcome)} FORTRESS _record_learning_memory_outcome method exists")
         results.append(LEARNING_MEMORY_AVAILABLE and has_prediction and has_outcome)
     except ImportError as e:
-        logger.error(f"[FAIL] ARES import failed: {e}")
+        logger.error(f"[FAIL] FORTRESS import failed: {e}")
         results.append(False)
 
-    # Test ATHENA
+    # Test SOLOMON
     try:
-        from trading.athena_v2.trader import ATHENATrader, LEARNING_MEMORY_AVAILABLE
-        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} ATHENA Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
+        from trading.solomon_v2.trader import SolomonTrader, LEARNING_MEMORY_AVAILABLE
+        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} SOLOMON Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
 
-        has_prediction = hasattr(ATHENATrader, '_record_learning_memory_prediction')
-        has_outcome = hasattr(ATHENATrader, '_record_learning_memory_outcome')
-        logger.info(f"{check_mark(has_prediction)} ATHENA _record_learning_memory_prediction method exists")
-        logger.info(f"{check_mark(has_outcome)} ATHENA _record_learning_memory_outcome method exists")
+        has_prediction = hasattr(SolomonTrader, '_record_learning_memory_prediction')
+        has_outcome = hasattr(SolomonTrader, '_record_learning_memory_outcome')
+        logger.info(f"{check_mark(has_prediction)} SOLOMON _record_learning_memory_prediction method exists")
+        logger.info(f"{check_mark(has_outcome)} SOLOMON _record_learning_memory_outcome method exists")
         results.append(LEARNING_MEMORY_AVAILABLE and has_prediction and has_outcome)
     except ImportError as e:
-        logger.error(f"[FAIL] ATHENA import failed: {e}")
+        logger.error(f"[FAIL] SOLOMON import failed: {e}")
         results.append(False)
 
     return all(results)
@@ -278,9 +278,9 @@ def main():
     # Run all tests
     results['learning_memory'] = test_learning_memory()
     results['extended_thinking'] = test_extended_thinking()
-    results['gexis_personality'] = test_gexis_personality()
-    results['gexis_tools'] = test_gexis_tools()
-    results['oracle'] = test_oracle_integration()
+    results['counselor_personality'] = test_counselor_personality()
+    results['counselor_tools'] = test_counselor_tools()
+    results['prophet'] = test_oracle_integration()
     results['bot_integration'] = test_bot_learning_memory_integration()
 
     # Summary

@@ -40,7 +40,7 @@ class TestScanActivityEndpoints:
         """Test get scan activity by bot"""
         if test_client is None:
             pytest.skip("Test client not available")
-        response = test_client.get("/api/scan-activity/bot/ARES")
+        response = test_client.get("/api/scan-activity/bot/FORTRESS")
         assert response.status_code in [200, 404, 500]
 
     def test_get_recent_scans(self, test_client):

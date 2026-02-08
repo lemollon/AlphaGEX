@@ -56,7 +56,7 @@ interface PositionDetailModalProps {
     entry_theta?: number
     entry_vega?: number
 
-    // Oracle/ML data
+    // Prophet/ML data
     oracle_confidence?: number
     oracle_reasoning?: string
     ml_direction?: string
@@ -89,7 +89,7 @@ interface PositionDetailModalProps {
     exit_reason?: string
   }
   underlyingPrice?: number
-  botType?: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botType?: 'SOLOMON' | 'FORTRESS' | 'ANCHOR'
 }
 
 export default function PositionDetailModal({
@@ -97,13 +97,13 @@ export default function PositionDetailModal({
   onClose,
   position,
   underlyingPrice,
-  botType = 'ATHENA'
+  botType = 'SOLOMON'
 }: PositionDetailModalProps) {
   if (!position) return null
 
   const isOpen_ = position.status === 'open'
   const isBullish = position.spread_type?.includes('BULL')
-  const isIronCondor = position.spread_type?.includes('IRON_CONDOR') || botType === 'ARES'
+  const isIronCondor = position.spread_type?.includes('IRON_CONDOR') || botType === 'FORTRESS'
   const ticker = position.ticker || (isIronCondor ? 'SPX' : 'SPY')
 
   // Calculate position age
@@ -143,10 +143,10 @@ export default function PositionDetailModal({
   // Signal source styling
   const getSignalSourceStyle = () => {
     const source = position.signal_source || ''
-    if (source.includes('Oracle') && position.override_occurred) {
+    if (source.includes('Prophet') && position.override_occurred) {
       return { bg: 'bg-amber-500/20', border: 'border-amber-500/50', text: 'text-amber-400' }
     }
-    if (source.includes('Oracle')) {
+    if (source.includes('Prophet')) {
       return { bg: 'bg-purple-500/20', border: 'border-purple-500/50', text: 'text-purple-400' }
     }
     if (source.includes('ML')) {
@@ -301,12 +301,12 @@ export default function PositionDetailModal({
               </div>
             </div>
 
-            {/* Oracle & ML Signals */}
+            {/* Prophet & ML Signals */}
             <div className="bg-gray-800/50 rounded-xl p-4">
               <h3 className="text-lg font-semibold text-white mb-4">AI Signals</h3>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <p className="text-gray-500">Oracle Confidence</p>
+                  <p className="text-gray-500">Prophet Confidence</p>
                   <p className={`font-semibold ${
                     (position.oracle_confidence || 0) >= 70 ? 'text-green-400' :
                     (position.oracle_confidence || 0) >= 50 ? 'text-yellow-400' : 'text-red-400'
@@ -339,13 +339,13 @@ export default function PositionDetailModal({
               </div>
               {position.oracle_reasoning && (
                 <div className="mt-4 pt-4 border-t border-gray-700">
-                  <p className="text-gray-500 text-sm">Oracle Reasoning</p>
+                  <p className="text-gray-500 text-sm">Prophet Reasoning</p>
                   <p className="text-gray-300 text-sm mt-1">{position.oracle_reasoning}</p>
                 </div>
               )}
             </div>
 
-            {/* Override Details - when Oracle overrode ML */}
+            {/* Override Details - when Prophet overrode ML */}
             {position.override_occurred && position.override_details && (
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
                 <h3 className="text-lg font-semibold text-amber-400 mb-4 flex items-center gap-2">
@@ -371,7 +371,7 @@ export default function PositionDetailModal({
                   )}
                   {position.override_details.oracle_confidence !== undefined && (
                     <div className="flex justify-between">
-                      <span className="text-gray-400">Oracle Confidence:</span>
+                      <span className="text-gray-400">Prophet Confidence:</span>
                       <span className="text-purple-400">{(position.override_details.oracle_confidence * 100).toFixed(0)}%</span>
                     </div>
                   )}

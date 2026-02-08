@@ -1,13 +1,13 @@
 """
-GEX Signal Integration for ATHENA Strategy
+GEX Signal Integration for SOLOMON Strategy
 ===========================================
 
-Integrates the 5 GEX probability models with the ATHENA Directional Strategy.
+Integrates the 5 GEX probability models with the SOLOMON Directional Strategy.
 
 This module provides:
 1. Feature extraction from live GEX data
 2. Real-time predictions from all 5 models
-3. Combined trading signals for ATHENA
+3. Combined trading signals for SOLOMON
 
 Usage:
     from quant.gex_signal_integration import GEXSignalIntegration
@@ -61,7 +61,7 @@ class EnhancedTradingSignal:
     overall_conviction: float
     trade_recommendation: str  # LONG, SHORT, STAY_OUT
 
-    # ATHENA-specific
+    # SOLOMON-specific
     suggested_spread: str  # BULL_CALL_SPREAD, BEAR_PUT_SPREAD, NONE
     suggested_strikes: Dict[str, float]  # entry_strike, exit_strike
     risk_adjusted_score: float
@@ -89,7 +89,7 @@ class EnhancedTradingSignal:
 
 class GEXSignalIntegration:
     """
-    Integrates GEX probability models with ATHENA trading strategy.
+    Integrates GEX probability models with SOLOMON trading strategy.
 
     Extracts features from live GEX data and generates trading signals.
     """
@@ -140,7 +140,7 @@ class GEXSignalIntegration:
         Extract ML features from live GEX data.
 
         Args:
-            gex_data: Dict from Kronos GEX calculator with:
+            gex_data: Dict from Chronicles GEX calculator with:
                 - net_gex, call_gex, put_gex
                 - call_wall, put_wall, flip_point
                 - spot_price, regime, etc.
@@ -265,7 +265,7 @@ class GEXSignalIntegration:
         Get enhanced trading signal from GEX probability models.
 
         Args:
-            gex_data: Current GEX data from Kronos
+            gex_data: Current GEX data from Chronicles
             vix: Current VIX level
             prev_gex_data: Previous day's GEX data (optional, for momentum)
 
@@ -287,7 +287,7 @@ class GEXSignalIntegration:
             logger.error(f"Prediction failed: {e}")
             return self._create_fallback_signal(gex_data)
 
-        # Determine ATHENA-specific spread
+        # Determine SOLOMON-specific spread
         suggested_spread = "NONE"
         suggested_strikes = {'entry_strike': 0, 'exit_strike': 0}
         reasoning_parts = []
@@ -379,15 +379,15 @@ class GEXSignalIntegration:
             reasoning="Models not available - defaulting to STAY_OUT"
         )
 
-    def get_signal_for_athena(
+    def get_signal_for_solomon(
         self,
         gex_data: Dict[str, Any],
         vix: float = 20.0
     ) -> Dict[str, Any]:
         """
-        Get signal formatted for Athena strategy integration.
+        Get signal formatted for Solomon strategy integration.
 
-        Returns dict compatible with Athena's existing signal format.
+        Returns dict compatible with Solomon's existing signal format.
         """
         signal = self.get_trading_signal(gex_data, vix, self._prev_gex_data)
 
@@ -395,7 +395,7 @@ class GEXSignalIntegration:
         self._prev_gex_data = gex_data.copy()
         self._prev_date = datetime.now().strftime("%Y-%m-%d")
 
-        # Format for ATHENA
+        # Format for SOLOMON
         return {
             'advice': signal.trade_recommendation,
             'spread_type': signal.suggested_spread,
@@ -427,7 +427,7 @@ class GEXSignalIntegration:
         """
         Get combined ML signal from all 5 GEX probability models.
 
-        This is the method ATHENA/ICARUS call for ML predictions.
+        This is the method SOLOMON/GIDEON call for ML predictions.
         It runs all trained models and returns a unified signal.
 
         Args:
@@ -466,7 +466,7 @@ class GEXSignalIntegration:
         self._prev_gex_data = gex_data.copy()
         self._prev_date = datetime.now().strftime("%Y-%m-%d")
 
-        # Map direction to ATHENA format
+        # Map direction to SOLOMON format
         direction_map = {
             'UP': 'BULLISH',
             'DOWN': 'BEARISH',
@@ -559,11 +559,11 @@ def main():
     print(f"  Conviction: {signal.overall_conviction:.1%}")
     print(f"  Reasoning: {signal.reasoning}")
 
-    # Get Athena-formatted signal
-    athena_signal = integration.get_signal_for_athena(mock_gex_data, vix=18.0)
+    # Get Solomon-formatted signal
+    solomon_signal = integration.get_signal_for_solomon(mock_gex_data, vix=18.0)
 
     print("\nAthena-Formatted Signal:")
-    for k, v in athena_signal.items():
+    for k, v in solomon_signal.items():
         if isinstance(v, dict):
             print(f"  {k}:")
             for k2, v2 in v.items():

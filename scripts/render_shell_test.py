@@ -25,17 +25,17 @@ print("\n" + "="*60)
 print("QUICK VERIFICATION - DIRECTIONAL BOT FIXES")
 print("="*60)
 
-# Test 1: Oracle confidence scale
-print("\n1. Oracle Confidence Scale:")
+# Test 1: Prophet confidence scale
+print("\n1. Prophet Confidence Scale:")
 try:
-    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
     import pytz
     from datetime import datetime
 
     ct = pytz.timezone('America/Chicago')
     now_ct = datetime.now(ct)
 
-    oracle = OracleAdvisor()
+    prophet = ProphetAdvisor()
     context = MarketContext(
         spot_price=590.0, vix=18.0,
         gex_put_wall=580.0, gex_call_wall=600.0,
@@ -47,7 +47,7 @@ try:
         price_change_1d=0.3, win_rate_30d=0.55,
     )
 
-    pred = oracle.get_athena_advice(context=context, use_gex_walls=True, wall_filter_pct=6.0, bot_name="TEST")
+    pred = prophet.get_solomon_advice(context=context, use_gex_walls=True, wall_filter_pct=6.0, bot_name="TEST")
     if pred:
         conf = pred.confidence
         if conf > 1.0:
@@ -59,11 +59,11 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 2: ICARUS config
-print("\n2. ICARUS R:R Ratio:")
+# Test 2: GIDEON config
+print("\n2. GIDEON R:R Ratio:")
 try:
-    from trading.icarus.models import ICARUSConfig
-    cfg = ICARUSConfig()
+    from trading.gideon.models import GideonConfig
+    cfg = GideonConfig()
     if cfg.profit_target_pct == 50.0 and cfg.stop_loss_pct == 50.0:
         print(f"   ✅ PASS: 50/50 (1:1 ratio)")
     else:
@@ -71,24 +71,24 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 3: Day of week in ICARUS signals
-print("\n3. Day of Week in ICARUS:")
+# Test 3: Day of week in GIDEON signals
+print("\n3. Day of Week in GIDEON:")
 try:
     import inspect
-    from trading.icarus.signals import SignalGenerator
+    from trading.gideon.signals import SignalGenerator
     src = inspect.getsource(SignalGenerator.get_oracle_advice)
     if 'day_of_week=now_ct.weekday()' in src:
-        print("   ✅ PASS: day_of_week passed to Oracle")
+        print("   ✅ PASS: day_of_week passed to Prophet")
     else:
         print("   ❌ FAIL: day_of_week missing")
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 4: ML Features in ICARUS
-print("\n4. ML Features in ICARUS get_gex_data:")
+# Test 4: ML Features in GIDEON
+print("\n4. ML Features in GIDEON get_gex_data:")
 try:
     import inspect
-    from trading.icarus.signals import SignalGenerator
+    from trading.gideon.signals import SignalGenerator
     src = inspect.getsource(SignalGenerator.get_gex_data)
     features = ['vix_percentile_30d', 'vix_change_1d', 'price_change_1d', 'win_rate_30d']
     found = [f for f in features if f in src]
@@ -100,12 +100,12 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 5: Flip filter in Oracle
-print("\n5. Flip Distance Filter in Oracle:")
+# Test 5: Flip filter in Prophet
+print("\n5. Flip Distance Filter in Prophet:")
 try:
     import inspect
-    from quant.oracle_advisor import OracleAdvisor
-    src = inspect.getsource(OracleAdvisor.get_athena_advice)
+    from quant.prophet_advisor import ProphetAdvisor
+    src = inspect.getsource(ProphetAdvisor.get_solomon_advice)
     if 'flip_distance_pct' in src and 'FLIP_FILTER' in src:
         print("   ✅ PASS: Flip filter active")
     else:
@@ -113,12 +113,12 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 6: Friday filter in Oracle
-print("\n6. Friday Filter in Oracle:")
+# Test 6: Friday filter in Prophet
+print("\n6. Friday Filter in Prophet:")
 try:
     import inspect
-    from quant.oracle_advisor import OracleAdvisor
-    src = inspect.getsource(OracleAdvisor.get_athena_advice)
+    from quant.prophet_advisor import ProphetAdvisor
+    src = inspect.getsource(ProphetAdvisor.get_solomon_advice)
     if 'is_friday' in src and 'FRIDAY_FILTER' in src:
         print("   ✅ PASS: Friday filter active")
     else:
@@ -126,11 +126,11 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 7: ATHENA Features
-print("\n7. ML Features in ATHENA get_gex_data:")
+# Test 7: SOLOMON Features
+print("\n7. ML Features in SOLOMON get_gex_data:")
 try:
     import inspect
-    from trading.athena_v2.signals import SignalGenerator
+    from trading.solomon_v2.signals import SignalGenerator
     src = inspect.getsource(SignalGenerator.get_gex_data)
     features = ['vix_percentile_30d', 'vix_change_1d', 'price_change_1d', 'win_rate_30d']
     found = [f for f in features if f in src]

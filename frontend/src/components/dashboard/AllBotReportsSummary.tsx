@@ -49,11 +49,11 @@ interface ReportResponse {
 
 // Use lightweight summary endpoint - much faster than full report
 const LIVE_BOTS: { name: BotName; endpoint: string; reportLink: string; brandColor: string }[] = [
-  { name: 'ARES', endpoint: '/api/trader/ares/reports/today/summary', reportLink: '/ares/reports', brandColor: 'amber' },
-  { name: 'ATHENA', endpoint: '/api/trader/athena/reports/today/summary', reportLink: '/athena/reports', brandColor: 'cyan' },
-  { name: 'ICARUS', endpoint: '/api/trader/icarus/reports/today/summary', reportLink: '/icarus/reports', brandColor: 'orange' },
-  { name: 'PEGASUS', endpoint: '/api/trader/pegasus/reports/today/summary', reportLink: '/pegasus/reports', brandColor: 'blue' },
-  { name: 'TITAN', endpoint: '/api/trader/titan/reports/today/summary', reportLink: '/titan/reports', brandColor: 'violet' },
+  { name: 'FORTRESS', endpoint: '/api/trader/fortress/reports/today/summary', reportLink: '/fortress/reports', brandColor: 'amber' },
+  { name: 'SOLOMON', endpoint: '/api/trader/solomon/reports/today/summary', reportLink: '/solomon/reports', brandColor: 'cyan' },
+  { name: 'GIDEON', endpoint: '/api/trader/gideon/reports/today/summary', reportLink: '/gideon/reports', brandColor: 'orange' },
+  { name: 'ANCHOR', endpoint: '/api/trader/anchor/reports/today/summary', reportLink: '/anchor/reports', brandColor: 'blue' },
+  { name: 'SAMSON', endpoint: '/api/trader/samson/reports/today/summary', reportLink: '/samson/reports', brandColor: 'violet' },
 ]
 
 // Fetches cached report from database - NO Claude API call
@@ -68,28 +68,28 @@ const fetcher = async (url: string): Promise<ReportResponse> => {
 }
 
 export default function AllBotReportsSummary() {
-  const [selectedBot, setSelectedBot] = useState<BotName>('ARES')
+  const [selectedBot, setSelectedBot] = useState<BotName>('FORTRESS')
 
   // Fetch all reports using SWR (deduped, cached)
   // These are READ-ONLY calls to the database - no Claude API charges
   const { data: aresReport, isLoading: aresLoading } = useSWR(LIVE_BOTS[0].endpoint, fetcher, { refreshInterval: 300000 })
-  const { data: athenaReport, isLoading: athenaLoading } = useSWR(LIVE_BOTS[1].endpoint, fetcher, { refreshInterval: 300000 })
+  const { data: solomonReport, isLoading: solomonLoading } = useSWR(LIVE_BOTS[1].endpoint, fetcher, { refreshInterval: 300000 })
   const { data: icarusReport, isLoading: icarusLoading } = useSWR(LIVE_BOTS[2].endpoint, fetcher, { refreshInterval: 300000 })
-  const { data: pegasusReport, isLoading: pegasusLoading } = useSWR(LIVE_BOTS[3].endpoint, fetcher, { refreshInterval: 300000 })
+  const { data: anchorReport, isLoading: anchorLoading } = useSWR(LIVE_BOTS[3].endpoint, fetcher, { refreshInterval: 300000 })
   const { data: titanReport, isLoading: titanLoading } = useSWR(LIVE_BOTS[4].endpoint, fetcher, { refreshInterval: 300000 })
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading
 
   const reportMap: Record<BotName, ReportResponse | undefined> = {
-    ARES: aresReport,
-    ATHENA: athenaReport,
-    ICARUS: icarusReport,
-    PEGASUS: pegasusReport,
-    TITAN: titanReport,
-    PHOENIX: undefined,
-    ATLAS: undefined,
-    PROMETHEUS: undefined,
-    HERACLES: undefined,
+    FORTRESS: aresReport,
+    SOLOMON: solomonReport,
+    GIDEON: icarusReport,
+    ANCHOR: anchorReport,
+    SAMSON: titanReport,
+    LAZARUS: undefined,
+    CORNERSTONE: undefined,
+    JUBILEE: undefined,
+    VALOR: undefined,
     AGAPE: undefined,
     AGAPE_SPOT: undefined,
   }

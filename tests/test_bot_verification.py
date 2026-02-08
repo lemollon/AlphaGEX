@@ -2,7 +2,7 @@
 """
 BOT VERIFICATION TEST SUITE
 ============================
-Comprehensive tests to prove PHOENIX and ATLAS work with REAL data.
+Comprehensive tests to prove LAZARUS and CORNERSTONE work with REAL data.
 
 Tests are structured in 5 layers:
 1. Infrastructure: Database, APIs, imports
@@ -335,9 +335,9 @@ def test_vix_data():
 # ============================================================================
 
 def test_phoenix_market_regime():
-    """Test PHOENIX market regime classifier"""
+    """Test LAZARUS market regime classifier"""
     print("\n" + "="*60)
-    print("TEST 7: PHOENIX MARKET REGIME CLASSIFIER")
+    print("TEST 7: LAZARUS MARKET REGIME CLASSIFIER")
     print("="*60)
 
     try:
@@ -356,24 +356,24 @@ def test_phoenix_market_regime():
         if hasattr(classifier, 'GEX_STRONG_POSITIVE'):
             print(f"  ✅ GEX thresholds configured")
 
-        print("\n✅ PHOENIX MARKET REGIME: PASSED")
+        print("\n✅ LAZARUS MARKET REGIME: PASSED")
         return True
 
     except ImportError as e:
         print(f"  ⚠️ Import error: {e}")
         print("  ℹ️  This is expected in sandbox environments")
-        print("\n✅ PHOENIX MARKET REGIME: SKIPPED (sandbox)")
+        print("\n✅ LAZARUS MARKET REGIME: SKIPPED (sandbox)")
         return True
     except Exception as e:
         print(f"  ⚠️ Regime Error: {e}")
-        print("\n✅ PHOENIX MARKET REGIME: SKIPPED (error)")
+        print("\n✅ LAZARUS MARKET REGIME: SKIPPED (error)")
         return True
 
 
 def test_phoenix_psychology_rules():
-    """Test PHOENIX psychology trap detection"""
+    """Test LAZARUS psychology trap detection"""
     print("\n" + "="*60)
-    print("TEST 8: PHOENIX PSYCHOLOGY RULES")
+    print("TEST 8: LAZARUS PSYCHOLOGY RULES")
     print("="*60)
 
     try:
@@ -396,7 +396,7 @@ def test_phoenix_psychology_rules():
         else:
             print(f"  ⚠️ No traps detected or analysis unavailable")
 
-        print("\n✅ PHOENIX PSYCHOLOGY: PASSED")
+        print("\n✅ LAZARUS PSYCHOLOGY: PASSED")
         return True
 
     except ImportError as e:
@@ -408,9 +408,9 @@ def test_phoenix_psychology_rules():
 
 
 def test_atlas_ml_system():
-    """Test ATLAS wheel ML system"""
+    """Test CORNERSTONE wheel ML system"""
     print("\n" + "="*60)
-    print("TEST 9: ATLAS WHEEL ML SYSTEM")
+    print("TEST 9: CORNERSTONE WHEEL ML SYSTEM")
     print("="*60)
 
     try:
@@ -430,7 +430,7 @@ def test_atlas_ml_system():
         else:
             print(f"  ⚠️ Predictor returned no prediction")
 
-        print("\n✅ ATLAS ML SYSTEM: PASSED")
+        print("\n✅ CORNERSTONE ML SYSTEM: PASSED")
         return True
 
     except ImportError as e:
@@ -471,7 +471,7 @@ def test_quant_modules():
     except Exception as e:
         print(f"  ⚠️ Walk-Forward Optimizer: {e}")
 
-    # Note: ensemble_strategy and ml_regime_classifier removed - Oracle is sole authority
+    # Note: ensemble_strategy and ml_regime_classifier removed - Prophet is sole authority
     print(f"\n  Loaded: {modules_loaded}/2 quant modules")
     print("\n✅ QUANT MODULES: PASSED")
     return True
@@ -482,9 +482,9 @@ def test_quant_modules():
 # ============================================================================
 
 def test_phoenix_position_sizing():
-    """Test PHOENIX Kelly criterion position sizing"""
+    """Test LAZARUS Kelly criterion position sizing"""
     print("\n" + "="*60)
-    print("TEST 11: PHOENIX POSITION SIZING")
+    print("TEST 11: LAZARUS POSITION SIZING")
     print("="*60)
 
     try:
@@ -521,24 +521,24 @@ def test_phoenix_position_sizing():
         else:
             print(f"  ⚠️ Risk Check: ${actual_risk:,.0f} > ${max_risk:,.0f}")
 
-        print("\n✅ PHOENIX POSITION SIZING: PASSED")
+        print("\n✅ LAZARUS POSITION SIZING: PASSED")
         return True
 
     except ImportError as e:
         print(f"  ⚠️ Position sizer not available: {e}")
         print("  ℹ️  This is expected in sandbox environments")
-        print("\n✅ PHOENIX POSITION SIZING: SKIPPED (sandbox)")
+        print("\n✅ LAZARUS POSITION SIZING: SKIPPED (sandbox)")
         return True
     except Exception as e:
         print(f"  ⚠️ Sizing Error: {e}")
-        print("\n✅ PHOENIX POSITION SIZING: SKIPPED (error)")
+        print("\n✅ LAZARUS POSITION SIZING: SKIPPED (error)")
         return True
 
 
-def test_atlas_wheel_parameters():
-    """Test ATLAS wheel parameter calibration"""
+def test_cornerstone_wheel_parameters():
+    """Test CORNERSTONE wheel parameter calibration"""
     print("\n" + "="*60)
-    print("TEST 12: ATLAS WHEEL PARAMETERS")
+    print("TEST 12: CORNERSTONE WHEEL PARAMETERS")
     print("="*60)
 
     try:
@@ -554,23 +554,23 @@ def test_atlas_wheel_parameters():
 
         # Initialize trader (paper mode)
         trader = SPXWheelTrader(mode=TradingMode.PAPER)
-        print(f"  ✅ ATLAS Trader initialized in PAPER mode")
+        print(f"  ✅ CORNERSTONE Trader initialized in PAPER mode")
 
         # Check capital
         if hasattr(trader, 'capital'):
             print(f"  ✅ Capital: ${trader.capital:,.0f}")
 
-        print("\n✅ ATLAS WHEEL PARAMETERS: PASSED")
+        print("\n✅ CORNERSTONE WHEEL PARAMETERS: PASSED")
         return True
 
     except ImportError as e:
         print(f"  ⚠️ Wheel system not available: {e}")
         print("  ℹ️  This is expected in sandbox environments")
-        print("\n✅ ATLAS WHEEL PARAMETERS: SKIPPED (sandbox)")
+        print("\n✅ CORNERSTONE WHEEL PARAMETERS: SKIPPED (sandbox)")
         return True
     except Exception as e:
         print(f"  ⚠️ Wheel Error: {e}")
-        print("\n✅ ATLAS WHEEL PARAMETERS: SKIPPED (error)")
+        print("\n✅ CORNERSTONE WHEEL PARAMETERS: SKIPPED (error)")
         return True
 
 
@@ -590,7 +590,7 @@ def test_decision_logging():
 
         # Log a test decision
         log_trading_decision(
-            bot_name=BotName.PHOENIX.value,
+            bot_name=BotName.LAZARUS.value,
             symbol="SPY",
             decision_type="TEST",
             action="VERIFY_LOGGING",
@@ -606,7 +606,7 @@ def test_decision_logging():
         print(f"  ✅ Test decision logged")
 
         # Retrieve recent decisions
-        recent = get_recent_decisions(bot_name=BotName.PHOENIX.value, limit=5)
+        recent = get_recent_decisions(bot_name=BotName.LAZARUS.value, limit=5)
         print(f"  ✅ Recent decisions: {len(recent)} found")
 
         if recent:
@@ -618,7 +618,7 @@ def test_decision_logging():
             print(f"  ✅ Why: {why_val[:50]}...")
 
         # Test export
-        export = export_decisions_json(bot_name=BotName.PHOENIX.value, limit=3)
+        export = export_decisions_json(bot_name=BotName.LAZARUS.value, limit=3)
         print(f"  ✅ JSON export: {len(export)} records")
 
         print("\n✅ DECISION LOGGING: PASSED")
@@ -640,16 +640,16 @@ def test_decision_logging():
 # ============================================================================
 
 def test_phoenix_full_cycle():
-    """Test PHOENIX complete trading cycle (no actual trades)"""
+    """Test LAZARUS complete trading cycle (no actual trades)"""
     print("\n" + "="*60)
-    print("TEST 14: PHOENIX FULL TRADING CYCLE")
+    print("TEST 14: LAZARUS FULL TRADING CYCLE")
     print("="*60)
 
     try:
         from core.autonomous_paper_trader import AutonomousPaperTrader
 
         trader = AutonomousPaperTrader()
-        print(f"  ✅ PHOENIX initialized")
+        print(f"  ✅ LAZARUS initialized")
 
         # Check status
         status = trader.get_live_status()
@@ -675,31 +675,31 @@ def test_phoenix_full_cycle():
             if analysis:
                 print(f"  ✅ Market analysis complete")
 
-        print("\n✅ PHOENIX FULL CYCLE: PASSED")
+        print("\n✅ LAZARUS FULL CYCLE: PASSED")
         return True
 
     except ImportError as e:
         print(f"  ⚠️ Import failed: {e}")
         print("  ℹ️  This is expected in sandbox environments")
-        print("\n✅ PHOENIX FULL CYCLE: SKIPPED (sandbox)")
+        print("\n✅ LAZARUS FULL CYCLE: SKIPPED (sandbox)")
         return True
     except Exception as e:
-        print(f"  ⚠️ PHOENIX Cycle Error: {e}")
-        print("\n✅ PHOENIX FULL CYCLE: SKIPPED (error)")
+        print(f"  ⚠️ LAZARUS Cycle Error: {e}")
+        print("\n✅ LAZARUS FULL CYCLE: SKIPPED (error)")
         return True
 
 
 def test_atlas_full_cycle():
-    """Test ATLAS complete trading cycle (no actual trades)"""
+    """Test CORNERSTONE complete trading cycle (no actual trades)"""
     print("\n" + "="*60)
-    print("TEST 15: ATLAS FULL TRADING CYCLE")
+    print("TEST 15: CORNERSTONE FULL TRADING CYCLE")
     print("="*60)
 
     try:
         from trading.spx_wheel_system import SPXWheelTrader, TradingMode
 
         trader = SPXWheelTrader(mode=TradingMode.PAPER)
-        print(f"  ✅ ATLAS initialized (PAPER mode)")
+        print(f"  ✅ CORNERSTONE initialized (PAPER mode)")
 
         # Check open positions
         if hasattr(trader, 'get_open_positions'):
@@ -730,17 +730,17 @@ def test_atlas_full_cycle():
             else:
                 print(f"  ⚠️ No puts found (may be outside trading hours)")
 
-        print("\n✅ ATLAS FULL CYCLE: PASSED")
+        print("\n✅ CORNERSTONE FULL CYCLE: PASSED")
         return True
 
     except ImportError as e:
         print(f"  ⚠️ Import failed: {e}")
         print("  ℹ️  This is expected in sandbox environments")
-        print("\n✅ ATLAS FULL CYCLE: SKIPPED (sandbox)")
+        print("\n✅ CORNERSTONE FULL CYCLE: SKIPPED (sandbox)")
         return True
     except Exception as e:
-        print(f"  ⚠️ ATLAS Cycle Error: {e}")
-        print("\n✅ ATLAS FULL CYCLE: SKIPPED (error)")
+        print(f"  ⚠️ CORNERSTONE Cycle Error: {e}")
+        print("\n✅ CORNERSTONE FULL CYCLE: SKIPPED (error)")
         return True
 
 
@@ -756,17 +756,17 @@ def test_scheduler_integration():
         scheduler = TraderScheduler()
         print(f"  ✅ Scheduler initialized")
 
-        # Check PHOENIX
+        # Check LAZARUS
         if hasattr(scheduler, 'trader') and scheduler.trader:
-            print(f"  ✅ PHOENIX trader loaded")
+            print(f"  ✅ LAZARUS trader loaded")
         else:
-            print(f"  ⚠️ PHOENIX trader not loaded")
+            print(f"  ⚠️ LAZARUS trader not loaded")
 
-        # Check ATLAS
-        if hasattr(scheduler, 'atlas_trader') and scheduler.atlas_trader:
-            print(f"  ✅ ATLAS trader loaded")
+        # Check CORNERSTONE
+        if hasattr(scheduler, 'cornerstone_trader') and scheduler.cornerstone_trader:
+            print(f"  ✅ CORNERSTONE trader loaded")
         else:
-            print(f"  ⚠️ ATLAS trader not loaded")
+            print(f"  ⚠️ CORNERSTONE trader not loaded")
 
         # Check jobs
         if hasattr(scheduler, 'scheduler'):
@@ -797,7 +797,7 @@ def run_all_tests():
     """Run all verification tests and report summary"""
     print("\n" + "="*80)
     print("     BOT VERIFICATION TEST SUITE")
-    print("     PHOENIX (0DTE) + ATLAS (SPX Wheel)")
+    print("     LAZARUS (0DTE) + CORNERSTONE (SPX Wheel)")
     print("="*80)
     print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -813,19 +813,19 @@ def run_all_tests():
         ("2.3", "VIX Data", test_vix_data),
 
         # Layer 3: Decision Making
-        ("3.1", "PHOENIX Market Regime", test_phoenix_market_regime),
-        ("3.2", "PHOENIX Psychology Rules", test_phoenix_psychology_rules),
-        ("3.3", "ATLAS ML System", test_atlas_ml_system),
+        ("3.1", "LAZARUS Market Regime", test_phoenix_market_regime),
+        ("3.2", "LAZARUS Psychology Rules", test_phoenix_psychology_rules),
+        ("3.3", "CORNERSTONE ML System", test_atlas_ml_system),
         ("3.4", "Quant Modules", test_quant_modules),
 
         # Layer 4: Trade Execution
-        ("4.1", "PHOENIX Position Sizing", test_phoenix_position_sizing),
-        ("4.2", "ATLAS Wheel Parameters", test_atlas_wheel_parameters),
+        ("4.1", "LAZARUS Position Sizing", test_phoenix_position_sizing),
+        ("4.2", "CORNERSTONE Wheel Parameters", test_cornerstone_wheel_parameters),
         ("4.3", "Decision Logging", test_decision_logging),
 
         # Layer 5: End-to-End
-        ("5.1", "PHOENIX Full Cycle", test_phoenix_full_cycle),
-        ("5.2", "ATLAS Full Cycle", test_atlas_full_cycle),
+        ("5.1", "LAZARUS Full Cycle", test_phoenix_full_cycle),
+        ("5.2", "CORNERSTONE Full Cycle", test_atlas_full_cycle),
         ("5.3", "Scheduler Integration", test_scheduler_integration),
     ]
 

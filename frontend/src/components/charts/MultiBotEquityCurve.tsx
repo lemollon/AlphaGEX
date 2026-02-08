@@ -18,28 +18,28 @@ import { BOT_BRANDS, BotName } from '@/components/trader/BotBranding'
 // Default starting capitals - used ONLY if API doesn't return starting_capital
 // These should match the config table defaults in the backend
 const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
-  ARES: 100000,
-  ATHENA: 100000,
-  ICARUS: 100000,
-  PEGASUS: 200000,
-  TITAN: 200000,
-  PHOENIX: 100000,
-  ATLAS: 100000,
-  PROMETHEUS: 100000,
-  HERACLES: 100000,
+  FORTRESS: 100000,
+  SOLOMON: 100000,
+  GIDEON: 100000,
+  ANCHOR: 200000,
+  SAMSON: 200000,
+  LAZARUS: 100000,
+  CORNERSTONE: 100000,
+  JUBILEE: 100000,
+  VALOR: 100000,
   AGAPE: 5000,
   AGAPE_SPOT: 8000,
 }
 
 // Bot configuration with colors
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
-  { name: 'ARES', endpoint: '/api/ares/equity-curve' },
-  { name: 'ATHENA', endpoint: '/api/athena/equity-curve' },
-  { name: 'ICARUS', endpoint: '/api/icarus/equity-curve' },
-  { name: 'PEGASUS', endpoint: '/api/pegasus/equity-curve' },
-  { name: 'TITAN', endpoint: '/api/titan/equity-curve' },
-  { name: 'PROMETHEUS', endpoint: '/api/prometheus-box/ic/equity-curve' },
-  { name: 'HERACLES', endpoint: '/api/heracles/paper-equity-curve' },
+  { name: 'FORTRESS', endpoint: '/api/fortress/equity-curve' },
+  { name: 'SOLOMON', endpoint: '/api/solomon/equity-curve' },
+  { name: 'GIDEON', endpoint: '/api/gideon/equity-curve' },
+  { name: 'ANCHOR', endpoint: '/api/anchor/equity-curve' },
+  { name: 'SAMSON', endpoint: '/api/samson/equity-curve' },
+  { name: 'JUBILEE', endpoint: '/api/jubilee/ic/equity-curve' },
+  { name: 'VALOR', endpoint: '/api/valor/paper-equity-curve' },
   { name: 'AGAPE', endpoint: '/api/agape/equity-curve' },
   { name: 'AGAPE_SPOT', endpoint: '/api/agape-spot/equity-curve' },
 ]
@@ -85,17 +85,17 @@ export default function MultiBotEquityCurve({
   showPercentage = true,
 }: MultiBotEquityCurveProps) {
   const [visibleBots, setVisibleBots] = useState<Record<BotName, boolean>>({
-    ARES: true,
-    ATHENA: true,
-    ICARUS: true,
-    PEGASUS: true,
-    TITAN: true,
-    PROMETHEUS: true,
-    HERACLES: true,
+    FORTRESS: true,
+    SOLOMON: true,
+    GIDEON: true,
+    ANCHOR: true,
+    SAMSON: true,
+    JUBILEE: true,
+    VALOR: true,
     AGAPE: true,
     AGAPE_SPOT: true,
-    PHOENIX: false,
-    ATLAS: false,
+    LAZARUS: false,
+    CORNERSTONE: false,
   })
   const [selectedDays, setSelectedDays] = useState(days)
 
@@ -105,7 +105,7 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: athenaData, isLoading: athenaLoading } = useSWR<BotEquityData>(
+  const { data: solomonData, isLoading: solomonLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[1].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
@@ -115,7 +115,7 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: pegasusData, isLoading: pegasusLoading } = useSWR<BotEquityData>(
+  const { data: anchorData, isLoading: anchorLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[3].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
@@ -146,21 +146,21 @@ export default function MultiBotEquityCurve({
     { refreshInterval: 300000 }
   )
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading || agapeSpotLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading || agapeSpotLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
-    ARES: aresData,
-    ATHENA: athenaData,
-    ICARUS: icarusData,
-    PEGASUS: pegasusData,
-    TITAN: titanData,
-    PROMETHEUS: prometheusData,
-    HERACLES: heraclesData,
+    FORTRESS: aresData,
+    SOLOMON: solomonData,
+    GIDEON: icarusData,
+    ANCHOR: anchorData,
+    SAMSON: titanData,
+    JUBILEE: prometheusData,
+    VALOR: heraclesData,
     AGAPE: agapeData,
     AGAPE_SPOT: agapeSpotData,
-    PHOENIX: undefined,
-    ATLAS: undefined,
+    LAZARUS: undefined,
+    CORNERSTONE: undefined,
   }
 
   // Combine all data into a single chart dataset
@@ -206,22 +206,22 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData, showPercentage])
+  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
     const stats: Record<BotName, { totalReturn: number; currentEquity: number; startingCapital: number } | null> = {
-      ARES: null,
-      ATHENA: null,
-      ICARUS: null,
-      PEGASUS: null,
-      TITAN: null,
-      PROMETHEUS: null,
-      HERACLES: null,
+      FORTRESS: null,
+      SOLOMON: null,
+      GIDEON: null,
+      ANCHOR: null,
+      SAMSON: null,
+      JUBILEE: null,
+      VALOR: null,
       AGAPE: null,
       AGAPE_SPOT: null,
-      PHOENIX: null,
-      ATLAS: null,
+      LAZARUS: null,
+      CORNERSTONE: null,
     }
 
     LIVE_BOTS.forEach(bot => {
@@ -238,7 +238,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData])
+  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {

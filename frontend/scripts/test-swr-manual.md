@@ -55,7 +55,7 @@
 - `/gamma` - Gamma Intelligence
 - `/scanner` - Scanner
 - `/ares` - ARES Bot
-- `/athena` - ATHENA Bot
+- `/solomon` - SOLOMON Bot
 - All other pages...
 
 ---

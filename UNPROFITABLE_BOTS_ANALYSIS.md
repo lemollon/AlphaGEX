@@ -1,8 +1,8 @@
-# Why ATHENA, ICARUS, and TITAN Are Not Profitable
+# Why SOLOMON, GIDEON, and TITAN Are Not Profitable
 
 ## Analysis Date: January 25, 2026
 
-This document analyzes the root causes of unprofitability for the ATHENA, ICARUS, and TITAN trading bots based on a comprehensive code review and data structure analysis.
+This document analyzes the root causes of unprofitability for the SOLOMON, GIDEON, and TITAN trading bots based on a comprehensive code review and data structure analysis.
 
 ---
 
@@ -14,13 +14,13 @@ After analyzing the codebase, verification reports, and data structures, there a
 2. **Disabled Safety Thresholds** - Win probability and VIX filters weakened or disabled
 3. **Silent Exit Failures** - Positions not closing when they should
 4. **Data Integrity Issues** - NULL realized_pnl values making P&L tracking unreliable
-5. **Oracle Calibration Problems** - Predicted win probabilities not matching actual outcomes
+5. **Prophet Calibration Problems** - Predicted win probabilities not matching actual outcomes
 
 ---
 
 ## Detailed Analysis by Bot
 
-### ATHENA (Directional Spreads on SPY)
+### SOLOMON (Directional Spreads on SPY)
 
 **Strategy**: Bull Call Spreads (bullish) and Bear Put Spreads (bearish) based on GEX signals.
 
@@ -35,7 +35,7 @@ After analyzing the codebase, verification reports, and data structures, there a
 | Falsy value check skips zero prices | MEDIUM | Incomplete P&L reports |
 | Partial close retry missing | HIGH | One leg closed, other stays at risk |
 
-**Code Issues Found** (`trading/athena_v2/trader.py`):
+**Code Issues Found** (`trading/solomon_v2/trader.py`):
 ```python
 # Line 632-633: Silent exit failure
 if current_value is None:
@@ -44,15 +44,15 @@ if current_value is None:
 
 **Expected vs Actual Performance**:
 - Strategy requires **accurate direction prediction**
-- If Oracle's direction confidence is not well-calibrated, directional bets fail
+- If Prophet's direction confidence is not well-calibrated, directional bets fail
 - NEUTRAL GEX regime (where direction is uncertain) may still be trading
 
 ---
 
-### ICARUS (Aggressive Directional Spreads on SPY)
+### GIDEON (Aggressive Directional Spreads on SPY)
 
-**Strategy**: Same as ATHENA but with AGGRESSIVE parameters:
-- 48% min win probability (vs ATHENA's 55%)
+**Strategy**: Same as SOLOMON but with AGGRESSIVE parameters:
+- 48% min win probability (vs SOLOMON's 55%)
 - 3% risk per trade (vs 2%)
 - 8 max daily trades (vs 5)
 - Wider VIX range (12-30 vs 15-25)
@@ -68,13 +68,13 @@ if current_value is None:
 | Wider VIX acceptance | HIGH | Trades in unfavorable volatility |
 | No retry for failed closes | HIGH | Failed exits abandoned |
 
-**Why ICARUS Loses More Than ATHENA**:
+**Why GIDEON Loses More Than SOLOMON**:
 ```
-ATHENA thresholds:  55% win prob, 2% risk, max 5 trades/day, VIX 15-25
-ICARUS thresholds:  48% win prob, 3% risk, max 8 trades/day, VIX 12-30
+SOLOMON thresholds:  55% win prob, 2% risk, max 5 trades/day, VIX 15-25
+GIDEON thresholds:  48% win prob, 3% risk, max 8 trades/day, VIX 12-30
 ```
 
-ICARUS trades more often with lower conviction, creating **larger losses more frequently**.
+GIDEON trades more often with lower conviction, creating **larger losses more frequently**.
 
 ---
 
@@ -82,8 +82,8 @@ ICARUS trades more often with lower conviction, creating **larger losses more fr
 
 **Strategy**: Iron Condors on SPX with $12 spread widths, multiple trades daily.
 
-**TITAN vs PEGASUS Parameters**:
-| Parameter | TITAN (Aggressive) | PEGASUS (Standard) |
+**TITAN vs ANCHOR Parameters**:
+| Parameter | TITAN (Aggressive) | ANCHOR (Standard) |
 |-----------|-------------------|-------------------|
 | Risk per trade | 15% | 10% |
 | Min win probability | 40% | 50% |
@@ -121,9 +121,9 @@ SPX options require Tradier's **production API** - the sandbox doesn't support S
 
 The question isn't "which regime favors which strategy" - it's **"is the direction prediction correct?"**
 
-**Direction Determination Flow** (from `trading/athena_v2/signals.py`):
+**Direction Determination Flow** (from `trading/solomon_v2/signals.py`):
 1. ML 5-model ensemble provides direction (primary)
-2. Oracle provides direction (backup)
+2. Prophet provides direction (backup)
 3. If FLAT/NEUTRAL:
    - Compare `bullish_suitability` vs `bearish_suitability`
    - Tie-breaker: GEX wall proximity
@@ -137,7 +137,7 @@ The analysis script now includes:
 - **Direction Accuracy by GEX Regime** - Win rate for BULL/BEAR in each regime
 - **Wall Proximity vs Direction Choice** - Is the wall logic choosing the right direction?
 
-**Evidence from Code** (`quant/oracle_advisor.py`):
+**Evidence from Code** (`quant/prophet_advisor.py`):
 
 ```
 VIX Regime Impact:
@@ -146,7 +146,7 @@ VIX Regime Impact:
 ```
 
 **What's Happening**:
-- ATHENA/ICARUS may take directional trades during POSITIVE GEX (mean-reversion environment)
+- SOLOMON/GIDEON may take directional trades during POSITIVE GEX (mean-reversion environment)
 - TITAN may take Iron Condors during NEGATIVE GEX (trending environment)
 
 ### 2. Disabled Safety Thresholds
@@ -155,9 +155,9 @@ VIX Regime Impact:
 
 > - **Win probability threshold DISABLED** at `signals.py:960-962`
 > - **VIX filter DISABLED** at `signals.py:497-498`
-> - Signal defaults to 50% confidence if ML and Oracle both fail
+> - Signal defaults to 50% confidence if ML and Prophet both fail
 
-**Oracle Changes Made**:
+**Prophet Changes Made**:
 - Monday/Friday penalties REMOVED (these days have historically lower win rates)
 - `vix_monday_friday_skip` set to 0 (was 30.0)
 - Win probability penalties reduced
@@ -195,15 +195,15 @@ Common database problems:
 - Win rates appear artificially low
 - Equity curves incomplete
 
-### 5. Oracle Calibration Problems
+### 5. Prophet Calibration Problems
 
 **Expected Behavior**:
-- Oracle predicts 60% win probability → actual wins should be ~60%
+- Prophet predicts 60% win probability → actual wins should be ~60%
 
 **Potential Issue**:
-- Oracle predicts 60% → actual wins are only 40%
+- Prophet predicts 60% → actual wins are only 40%
 
-This means the Oracle is **overconfident** in its predictions, leading bots to take trades that look good on paper but fail in practice.
+This means the Prophet is **overconfident** in its predictions, leading bots to take trades that look good on paper but fail in practice.
 
 The analysis script includes this check:
 ```sql
@@ -213,23 +213,23 @@ SELECT
     COUNT(*) as trades,
     actual_win_rate,
     avg_predicted_win_probability
--- If actual_win_rate << avg_predicted, Oracle is miscalibrated
+-- If actual_win_rate << avg_predicted, Prophet is miscalibrated
 ```
 
 ---
 
 ## Specific Recommendations
 
-### For ATHENA
+### For SOLOMON
 
 1. **Raise win probability threshold back to 55%+**
 2. **Add direction confirmation** - require multiple signals to agree
 3. **Implement pricing fallback** - if MTM fails, use conservative estimates
 4. **Avoid NEUTRAL GEX regime** - direction is uncertain
 
-### For ICARUS
+### For GIDEON
 
-1. **Consider disabling entirely** until ATHENA is profitable
+1. **Consider disabling entirely** until SOLOMON is profitable
 2. If keeping active:
    - Raise win probability to 52%+ (not 48%)
    - Reduce risk to 2% (not 3%)
@@ -244,7 +244,7 @@ SELECT
 4. **Reduce risk per trade to 10%** (not 15%)
 5. **Add GEX regime filter** - skip when NEGATIVE GEX
 
-### For Oracle System
+### For Prophet System
 
 1. **Implement calibration monitoring**:
    ```sql
@@ -274,7 +274,7 @@ This will show:
 - P&L by day of week
 - P&L by VIX level
 - P&L by GEX regime
-- Oracle win probability vs actual outcomes
+- Prophet win probability vs actual outcomes
 - Scan activity (why trades are being skipped)
 
 ---
@@ -286,11 +286,11 @@ This will show:
 | P0 | Fix SPX pricing for TITAN | TITAN | DevOps |
 | P0 | Audit NULL realized_pnl rows and backfill | ALL | Backend |
 | P1 | Run analysis script on production | ALL | Quant |
-| P1 | Review Oracle calibration data | ALL | ML |
-| P1 | Raise win probability thresholds | ICARUS, TITAN | Config |
-| P2 | Restore Monday/Friday penalties | ALL (via Oracle) | Quant |
-| P2 | Add direction confirmation for ATHENA | ATHENA | Trading |
-| P3 | Consider disabling ICARUS until ATHENA profitable | ICARUS | PM |
+| P1 | Review Prophet calibration data | ALL | ML |
+| P1 | Raise win probability thresholds | GIDEON, TITAN | Config |
+| P2 | Restore Monday/Friday penalties | ALL (via Prophet) | Quant |
+| P2 | Add direction confirmation for SOLOMON | SOLOMON | Trading |
+| P3 | Consider disabling GIDEON until SOLOMON profitable | GIDEON | PM |
 
 ---
 
@@ -301,7 +301,7 @@ The bots are unprofitable due to a combination of:
 1. **Loosened safety filters** that allow marginal trades
 2. **Silent failures** preventing proper exit execution
 3. **Data integrity issues** obscuring true performance
-4. **Potential Oracle miscalibration** leading to overconfident predictions
+4. **Potential Prophet miscalibration** leading to overconfident predictions
 5. **Strategy-market mismatch** (trading against optimal conditions)
 
 The most impactful immediate fix is to **run the analysis script on production data** to get actual numbers, then adjust thresholds based on evidence.

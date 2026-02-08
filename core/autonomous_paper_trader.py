@@ -159,23 +159,23 @@ except ImportError as e:
     STRATEGY_STATS_AVAILABLE = False
     logger.warning(f"Strategy Stats not available: {e}")
 
-# CRITICAL: Import Oracle AI advisor for intelligent trading decisions
+# CRITICAL: Import Prophet AI advisor for intelligent trading decisions
 try:
-    from quant.oracle_advisor import (
-        OracleAdvisor, MarketContext as OracleMarketContext,
+    from quant.prophet_advisor import (
+        ProphetAdvisor, MarketContext as OracleMarketContext,
         TradingAdvice, GEXRegime, OraclePrediction, TradeOutcome,
         BotName as OracleBotName
     )
     ORACLE_AVAILABLE = True
-    logger.info("Oracle AI Advisor integrated - ML-based trade decisions")
+    logger.info("Prophet AI Advisor integrated - ML-based trade decisions")
 except ImportError as e:
     ORACLE_AVAILABLE = False
-    OracleAdvisor = None
+    ProphetAdvisor = None
     OracleMarketContext = None
     TradingAdvice = None
     TradeOutcome = None
     OracleBotName = None
-    logger.warning(f"Oracle AI not available: {e}")
+    logger.warning(f"Prophet AI not available: {e}")
 
 
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
@@ -376,7 +376,7 @@ class AutonomousPaperTrader(
     - PositionManagerMixin: Exit logic, position management
     - PerformanceTrackerMixin: Equity snapshots, statistics
 
-    MATH OPTIMIZER INTEGRATION (PHOENIX):
+    MATH OPTIMIZER INTEGRATION (LAZARUS):
     - HMM Regime Detection: Bayesian regime filtering for 0DTE entries
     - Thompson Sampling: Dynamic capital allocation across strategies
     - HJB Exit Optimizer: Optimal exit timing for short-dated options
@@ -447,15 +447,15 @@ class AutonomousPaperTrader(
             self.decision_bridge = None
             print("⚠️ Decision bridge not available - limited audit trail")
 
-        # Initialize Oracle AI advisor for ML-based decisions
-        self.oracle = None
+        # Initialize Prophet AI advisor for ML-based decisions
+        self.prophet = None
         self._last_oracle_advice = None
         if ORACLE_AVAILABLE:
             try:
-                self.oracle = OracleAdvisor()
-                print("✅ Oracle AI advisor initialized - ML-based trade decisions")
+                self.prophet = ProphetAdvisor()
+                print("✅ Prophet AI advisor initialized - ML-based trade decisions")
             except Exception as e:
-                print(f"⚠️ Oracle AI not available: {e}")
+                print(f"⚠️ Prophet AI not available: {e}")
 
         # CRITICAL: Initialize UNIFIED Market Regime Classifier
         # This is the SINGLE source of truth - NO more whiplash decisions
@@ -467,11 +467,11 @@ class AutonomousPaperTrader(
             self.regime_classifier = None
             self.iv_history = []
 
-        # Math Optimizers DISABLED - Oracle is the sole decision maker
+        # Math Optimizers DISABLED - Prophet is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("PHOENIX", enabled=False)
-                print("✅ PHOENIX: Math optimizers DISABLED - Oracle controls all trading decisions")
+                self._init_math_optimizers("LAZARUS", enabled=False)
+                print("✅ LAZARUS: Math optimizers DISABLED - Prophet controls all trading decisions")
             except Exception as e:
                 print(f"⚠️ Math optimizer init failed: {e}")
 
@@ -765,10 +765,10 @@ class AutonomousPaperTrader(
                     market_data = {'spot_price': spot, 'vix': vix, 'symbol': self.symbol}
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
-                        logger.info(f"PHOENIX: Math optimizer regime gate: {regime_reason}")
+                        logger.info(f"LAZARUS: Math optimizer regime gate: {regime_reason}")
                         return False
             except Exception as e:
-                logger.debug(f"PHOENIX: HMM regime check skipped: {e}")
+                logger.debug(f"LAZARUS: HMM regime check skipped: {e}")
 
         # All risk checks passed - can trade
         return True
@@ -1038,27 +1038,27 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             put_call_ratio = skew_data.get('put_call_ratio', 1.0) if skew_data else 1.0
 
             # ============================================================
-            # STEP 1c: CONSULT ORACLE AI FOR TRADING ADVICE
+            # STEP 1c: CONSULT PROPHET AI FOR TRADING ADVICE
             # ============================================================
             oracle_advice = self._consult_oracle(spot_price, vix, net_gex, gex_data)
             if oracle_advice:
                 self._last_oracle_advice = oracle_advice
 
-                # Honor Oracle's SKIP advice
+                # Honor Prophet's SKIP advice
                 if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
                     self.update_live_status(
                         status='ORACLE_SKIP',
-                        action=f'Oracle AI advises SKIP today',
+                        action=f'Prophet AI advises SKIP today',
                         decision=f'Win prob: {oracle_advice.win_probability:.1%} | {oracle_advice.reasoning}'
                     )
-                    self.log_action('ORACLE_SKIP', f'Oracle advises SKIP: {oracle_advice.reasoning}', success=True)
+                    self.log_action('ORACLE_SKIP', f'Prophet advises SKIP: {oracle_advice.reasoning}', success=True)
 
                     if self.decision_bridge:
                         try:
                             self.decision_bridge.log_no_trade(
                                 symbol=self.symbol,
                                 spot_price=spot_price,
-                                reason=f'Oracle SKIP: {oracle_advice.reasoning}',
+                                reason=f'Prophet SKIP: {oracle_advice.reasoning}',
                                 oracle_advice=oracle_advice  # Pass REAL Claude data for transparency
                             )
                         except Exception:
@@ -1068,12 +1068,12 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
 
                 self.log_action(
                     'ORACLE_ADVICE',
-                    f'Oracle: {oracle_advice.advice.value} | Win Prob: {oracle_advice.win_probability:.1%} | Risk: {oracle_advice.suggested_risk_pct:.1%}',
+                    f'Prophet: {oracle_advice.advice.value} | Win Prob: {oracle_advice.win_probability:.1%} | Risk: {oracle_advice.suggested_risk_pct:.1%}',
                     success=True
                 )
             else:
                 self._last_oracle_advice = None
-                self.log_action('ORACLE_UNAVAILABLE', 'Oracle AI not available, using default parameters', success=True)
+                self.log_action('ORACLE_UNAVAILABLE', 'Prophet AI not available, using default parameters', success=True)
 
             if spot_price == 0:
                 self.update_live_status(
@@ -1517,7 +1517,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                             contracts=contracts,
                             entry_price=entry_price,
                             regime=trade.get('regime'),
-                            oracle_advice=self._last_oracle_advice  # Pass REAL Oracle/Claude data for transparency
+                            oracle_advice=self._last_oracle_advice  # Pass REAL Prophet/Claude data for transparency
                         )
                         self.log_action('TRANSPARENCY', f'Decision logged: {decision_id}', success=True)
                     except Exception as e:
@@ -1571,7 +1571,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
 
     def _build_oracle_context(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OracleMarketContext']:
         """
-        Build Oracle MarketContext from PHOENIX market data.
+        Build Prophet MarketContext from LAZARUS market data.
 
         Args:
             spot: Current spot price
@@ -1580,7 +1580,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             gex_data: Full GEX data dict
 
         Returns:
-            OracleMarketContext for Oracle consultation
+            OracleMarketContext for Prophet consultation
         """
         if not ORACLE_AVAILABLE or OracleMarketContext is None:
             return None
@@ -1629,12 +1629,12 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             )
 
         except Exception as e:
-            logger.error(f"PHOENIX: Error building Oracle context: {e}")
+            logger.error(f"LAZARUS: Error building Prophet context: {e}")
             return None
 
     def _consult_oracle(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OraclePrediction']:
         """
-        Consult Oracle AI for trading advice.
+        Consult Prophet AI for trading advice.
 
         Args:
             spot: Current spot price
@@ -1643,43 +1643,43 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             gex_data: Full GEX data dict
 
         Returns:
-            OraclePrediction with advice, or None if Oracle unavailable
+            OraclePrediction with advice, or None if Prophet unavailable
         """
-        if not self.oracle:
-            logger.debug("PHOENIX: Oracle not available, proceeding without advice")
+        if not self.prophet:
+            logger.debug("LAZARUS: Prophet not available, proceeding without advice")
             return None
 
         context = self._build_oracle_context(spot, vix, net_gex, gex_data)
         if not context:
-            logger.debug("PHOENIX: Could not build Oracle context")
+            logger.debug("LAZARUS: Could not build Prophet context")
             return None
 
         try:
-            # Get advice from Oracle for directional trades
-            advice = self.oracle.get_phoenix_advice(context)
+            # Get advice from Prophet for directional trades
+            advice = self.prophet.get_phoenix_advice(context)
 
-            logger.info(f"PHOENIX Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+            logger.info(f"LAZARUS Prophet: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
                        f"Risk: {advice.suggested_risk_pct:.1%}")
 
             if advice.reasoning:
-                logger.info(f"PHOENIX Oracle Reasoning: {advice.reasoning}")
+                logger.info(f"LAZARUS Prophet Reasoning: {advice.reasoning}")
 
             # Store prediction for feedback loop
             try:
                 today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
-                self.oracle.store_prediction(advice, context, today)
+                self.prophet.store_prediction(advice, context, today)
             except Exception as e:
-                logger.debug(f"PHOENIX: Could not store Oracle prediction: {e}")
+                logger.debug(f"LAZARUS: Could not store Prophet prediction: {e}")
 
             return advice
 
         except Exception as e:
-            logger.error(f"PHOENIX: Error consulting Oracle: {e}")
+            logger.error(f"LAZARUS: Error consulting Prophet: {e}")
             return None
 
     def record_trade_outcome(self, trade_date: str, outcome_type: str, actual_pnl: float) -> bool:
         """
-        Record trade outcome back to Oracle for feedback loop.
+        Record trade outcome back to Prophet for feedback loop.
 
         Args:
             trade_date: Date of the trade (YYYY-MM-DD)
@@ -1689,21 +1689,21 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
         Returns:
             True if recorded successfully
         """
-        if not self.oracle or not ORACLE_AVAILABLE:
+        if not self.prophet or not ORACLE_AVAILABLE:
             return False
 
         try:
             outcome = TradeOutcome[outcome_type]
-            self.oracle.update_outcome(
+            self.prophet.update_outcome(
                 trade_date,
-                OracleBotName.PHOENIX,
+                OracleBotName.LAZARUS,
                 outcome,
                 actual_pnl
             )
-            logger.info(f"PHOENIX: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            logger.info(f"LAZARUS: Recorded outcome to Prophet: {outcome_type}, PnL=${actual_pnl:,.2f}")
             return True
         except Exception as e:
-            logger.error(f"PHOENIX: Failed to record outcome: {e}")
+            logger.error(f"LAZARUS: Failed to record outcome: {e}")
             return False
 
     def _get_momentum(self) -> Dict:
@@ -1867,7 +1867,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 # Failed to calculate, use fallback
                 logger.warning(f"Error getting price history for HV/MA: {e}")
 
-            # REMOVED: Ensemble and ML Regime Classifier - Oracle is god
+            # REMOVED: Ensemble and ML Regime Classifier - Prophet is god
 
             # ============================================================
             # RUN THE UNIFIED CLASSIFIER

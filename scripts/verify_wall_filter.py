@@ -32,18 +32,18 @@ print("\n[1] MODEL DEFAULTS (in code)")
 print("-" * 70)
 
 try:
-    from trading.athena_v2.models import ATHENAConfig
-    athena_default = ATHENAConfig()
-    print(f"  ATHENA default wall_filter_pct: {athena_default.wall_filter_pct}%")
+    from trading.solomon_v2.models import SolomonConfig
+    solomon_default = SolomonConfig()
+    print(f"  SOLOMON default wall_filter_pct: {solomon_default.wall_filter_pct}%")
 except Exception as e:
-    print(f"  ATHENA: Error loading - {e}")
+    print(f"  SOLOMON: Error loading - {e}")
 
 try:
-    from trading.icarus.models import ICARUSConfig
-    icarus_default = ICARUSConfig()
-    print(f"  ICARUS default wall_filter_pct: {icarus_default.wall_filter_pct}%")
+    from trading.gideon.models import GideonConfig
+    icarus_default = GideonConfig()
+    print(f"  GIDEON default wall_filter_pct: {icarus_default.wall_filter_pct}%")
 except Exception as e:
-    print(f"  ICARUS: Error loading - {e}")
+    print(f"  GIDEON: Error loading - {e}")
 
 # ============================================================================
 # 2. CHECK DATABASE CONFIG
@@ -57,52 +57,52 @@ try:
     with db_connection() as conn:
         c = conn.cursor()
 
-        # ATHENA config
+        # SOLOMON config
         c.execute("""
             SELECT config_key, config_value
             FROM autonomous_config
-            WHERE bot_name = 'ATHENA' AND config_key = 'wall_filter_pct'
+            WHERE bot_name = 'SOLOMON' AND config_key = 'wall_filter_pct'
         """)
         result = c.fetchone()
         if result:
-            print(f"  ATHENA database wall_filter_pct: {result[1]}%")
+            print(f"  SOLOMON database wall_filter_pct: {result[1]}%")
         else:
-            print(f"  ATHENA database wall_filter_pct: NOT SET (will use default {athena_default.wall_filter_pct}%)")
+            print(f"  SOLOMON database wall_filter_pct: NOT SET (will use default {solomon_default.wall_filter_pct}%)")
 
-        # ICARUS config
+        # GIDEON config
         c.execute("""
             SELECT config_key, config_value
             FROM autonomous_config
-            WHERE bot_name = 'ICARUS' AND config_key = 'wall_filter_pct'
+            WHERE bot_name = 'GIDEON' AND config_key = 'wall_filter_pct'
         """)
         result = c.fetchone()
         if result:
-            print(f"  ICARUS database wall_filter_pct: {result[1]}%")
+            print(f"  GIDEON database wall_filter_pct: {result[1]}%")
         else:
-            print(f"  ICARUS database wall_filter_pct: NOT SET (will use default)")
+            print(f"  GIDEON database wall_filter_pct: NOT SET (will use default)")
 
 except Exception as e:
     print(f"  Database error: {e}")
     print("  (Run this on production to see actual values)")
 
 # ============================================================================
-# 3. CHECK ORACLE DEFAULT
+# 3. CHECK PROPHET DEFAULT
 # ============================================================================
-print("\n[3] ORACLE ADVISOR DEFAULT")
+print("\n[3] PROPHET ADVISOR DEFAULT")
 print("-" * 70)
 
 try:
-    from quant.oracle_advisor import OracleAdvisor
+    from quant.prophet_advisor import ProphetAdvisor
     import inspect
 
     # Get the default from the function signature
-    sig = inspect.signature(OracleAdvisor.get_athena_advice)
+    sig = inspect.signature(ProphetAdvisor.get_solomon_advice)
     for param_name, param in sig.parameters.items():
         if param_name == 'wall_filter_pct':
-            print(f"  Oracle get_athena_advice default: {param.default}%")
+            print(f"  Prophet get_solomon_advice default: {param.default}%")
             break
 except Exception as e:
-    print(f"  Oracle error: {e}")
+    print(f"  Prophet error: {e}")
 
 # ============================================================================
 # 4. TEST DIRECTION LOGIC

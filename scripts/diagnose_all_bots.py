@@ -18,11 +18,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 BOTS = {
-    'ares': {'table': 'ares_positions', 'snapshots': 'ares_equity_snapshots', 'default_capital': 100000, 'type': 'ic'},
-    'athena': {'table': 'athena_positions', 'snapshots': 'athena_equity_snapshots', 'default_capital': 100000, 'type': 'spread'},
-    'titan': {'table': 'titan_positions', 'snapshots': 'titan_equity_snapshots', 'default_capital': 200000, 'type': 'ic'},
-    'pegasus': {'table': 'pegasus_positions', 'snapshots': 'pegasus_equity_snapshots', 'default_capital': 200000, 'type': 'ic'},
-    'icarus': {'table': 'icarus_positions', 'snapshots': 'icarus_equity_snapshots', 'default_capital': 100000, 'type': 'spread'},
+    'fortress': {'table': 'fortress_positions', 'snapshots': 'fortress_equity_snapshots', 'default_capital': 100000, 'type': 'ic'},
+    'solomon': {'table': 'solomon_positions', 'snapshots': 'solomon_equity_snapshots', 'default_capital': 100000, 'type': 'spread'},
+    'samson': {'table': 'samson_positions', 'snapshots': 'samson_equity_snapshots', 'default_capital': 200000, 'type': 'ic'},
+    'anchor': {'table': 'anchor_positions', 'snapshots': 'anchor_equity_snapshots', 'default_capital': 200000, 'type': 'ic'},
+    'gideon': {'table': 'gideon_positions', 'snapshots': 'gideon_equity_snapshots', 'default_capital': 100000, 'type': 'spread'},
 }
 
 def run_diagnostics():
@@ -323,7 +323,7 @@ def run_diagnostics():
 
    For positions that are closed but missing close_time:
 
-   UPDATE ares_positions
+   UPDATE fortress_positions
    SET close_time = updated_at  -- or open_time + interval '1 day'
    WHERE status IN ('closed', 'expired')
    AND close_time IS NULL;
@@ -337,9 +337,9 @@ def run_diagnostics():
 
    INSERT INTO autonomous_config (key, value) VALUES
    ('ares_starting_capital', '100000'),
-   ('athena_starting_capital', '100000'),
+   ('solomon_starting_capital', '100000'),
    ('titan_starting_capital', '200000'),
-   ('pegasus_starting_capital', '200000'),
+   ('anchor_starting_capital', '200000'),
    ('icarus_starting_capital', '100000')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 """)
@@ -357,13 +357,13 @@ def run_diagnostics():
 4. POPULATE MISSING realized_pnl VALUES:
 
    For Iron Condor bots (credit received):
-   UPDATE ares_positions
+   UPDATE fortress_positions
    SET realized_pnl = (total_credit - COALESCE(close_price, 0)) * contracts * 100
    WHERE status IN ('closed', 'expired')
    AND realized_pnl IS NULL;
 
    For Directional bots (debit paid):
-   UPDATE athena_positions
+   UPDATE solomon_positions
    SET realized_pnl = (COALESCE(close_price, 0) - entry_debit) * contracts * 100
    WHERE status IN ('closed', 'expired')
    AND realized_pnl IS NULL;

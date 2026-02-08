@@ -359,22 +359,22 @@ def test_code_structure(results: TestResult):
         else:
             results.fail("AGAPE in MultiBotEquityCurve", "Not in LIVE_BOTS array")
 
-    # Test Oracle integration uses correct method
+    # Test Prophet integration uses correct method
     signals_path = os.path.join(base, "trading/agape/signals.py")
     if os.path.exists(signals_path):
         with open(signals_path) as fh:
             content = fh.read()
         if "get_strategy_recommendation" in content:
-            results.ok("Oracle uses get_strategy_recommendation (correct)")
+            results.ok("Prophet uses get_strategy_recommendation (correct)")
         elif "get_recommendation" in content:
-            results.fail("Oracle method", "Uses get_recommendation (WRONG - should be get_strategy_recommendation)")
+            results.fail("Prophet method", "Uses get_recommendation (WRONG - should be get_strategy_recommendation)")
         else:
-            results.fail("Oracle method", "No Oracle call found")
+            results.fail("Prophet method", "No Prophet call found")
 
         if "MarketContext" in content:
-            results.ok("Oracle uses MarketContext dataclass (correct)")
+            results.ok("Prophet uses MarketContext dataclass (correct)")
         else:
-            results.fail("Oracle type", "Missing MarketContext import")
+            results.fail("Prophet type", "Missing MarketContext import")
 
     # Test intraday snapshots are saved
     trader_path = os.path.join(base, "trading/agape/trader.py")

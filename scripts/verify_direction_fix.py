@@ -3,16 +3,16 @@
 Verify Direction Fix - Complete End-to-End Test
 
 This script verifies the ENTIRE execution chain from database config
-to direction logic for the ATHENA/ICARUS direction fix.
+to direction logic for the SOLOMON/GIDEON direction fix.
 
 Run on Render:
     python scripts/verify_direction_fix.py
 
 What it checks:
-1. Database config values (ATHENA_wall_filter_pct, ICARUS_wall_filter_pct)
+1. Database config values (SOLOMON_wall_filter_pct, ICARUS_wall_filter_pct)
 2. Config loading in bot code
 3. Direction logic in price_trend_tracker
-4. Oracle integration
+4. Prophet integration
 5. Simulated scenarios matching Apache backtest
 
 Expected output: All checks should show green checkmarks.
@@ -60,21 +60,21 @@ try:
     if not DATABASE_URL:
         print("  WARNING: DATABASE_URL not set - skipping database tests")
         print("  (This is expected when running locally without .env)")
-        db_athena_value = None
+        db_solomon_value = None
         db_icarus_value = None
     else:
         conn = psycopg2.connect(DATABASE_URL)
         c = conn.cursor()
 
-        # Check ATHENA config
-        c.execute("SELECT value FROM autonomous_config WHERE key = 'ATHENA_wall_filter_pct'")
+        # Check SOLOMON config
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'SOLOMON_wall_filter_pct'")
         result = c.fetchone()
-        db_athena_value = result[0] if result else None
-        check("ATHENA_wall_filter_pct in database",
-              db_athena_value == '1.0',
-              f"Got: {db_athena_value}, Expected: 1.0")
+        db_solomon_value = result[0] if result else None
+        check("SOLOMON_wall_filter_pct in database",
+              db_solomon_value == '1.0',
+              f"Got: {db_solomon_value}, Expected: 1.0")
 
-        # Check ICARUS config
+        # Check GIDEON config
         c.execute("SELECT value FROM autonomous_config WHERE key = 'ICARUS_wall_filter_pct'")
         result = c.fetchone()
         db_icarus_value = result[0] if result else None
@@ -86,7 +86,7 @@ try:
 
 except Exception as e:
     print(f"  ERROR: Database check failed: {e}")
-    db_athena_value = None
+    db_solomon_value = None
     db_icarus_value = None
 
 # ============================================================================
@@ -96,52 +96,52 @@ print("\n[2] CONFIG LOADING IN BOT CODE")
 print("-" * 70)
 
 try:
-    from trading.athena_v2.db import ATHENADatabase
-    from trading.athena_v2.models import ATHENAConfig
+    from trading.solomon_v2.db import SolomonDatabase
+    from trading.solomon_v2.models import SolomonConfig
 
     # Test default config
-    default_config = ATHENAConfig()
-    check("ATHENA default wall_filter_pct is 1.0",
+    default_config = SolomonConfig()
+    check("SOLOMON default wall_filter_pct is 1.0",
           default_config.wall_filter_pct == 1.0,
           f"Got: {default_config.wall_filter_pct}, Expected: 1.0")
 
     # Test loading from database (if available)
     if DATABASE_URL:
         try:
-            db = ATHENADatabase()
+            db = SolomonDatabase()
             loaded_config = db.load_config()
-            check("ATHENA loaded wall_filter_pct is 1.0",
+            check("SOLOMON loaded wall_filter_pct is 1.0",
                   loaded_config.wall_filter_pct == 1.0,
                   f"Got: {loaded_config.wall_filter_pct}, Expected: 1.0")
         except Exception as e:
-            print(f"  WARNING: Could not load ATHENA config from DB: {e}")
+            print(f"  WARNING: Could not load SOLOMON config from DB: {e}")
 
 except Exception as e:
-    print(f"  ERROR: ATHENA config test failed: {e}")
+    print(f"  ERROR: SOLOMON config test failed: {e}")
 
 try:
-    from trading.icarus.db import ICARUSDatabase
-    from trading.icarus.models import ICARUSConfig
+    from trading.gideon.db import GideonDatabase
+    from trading.gideon.models import GideonConfig
 
     # Test default config
-    default_config = ICARUSConfig()
-    check("ICARUS default wall_filter_pct is 1.0",
+    default_config = GideonConfig()
+    check("GIDEON default wall_filter_pct is 1.0",
           default_config.wall_filter_pct == 1.0,
           f"Got: {default_config.wall_filter_pct}, Expected: 1.0")
 
     # Test loading from database (if available)
     if DATABASE_URL:
         try:
-            db = ICARUSDatabase()
+            db = GideonDatabase()
             loaded_config = db.load_config()
-            check("ICARUS loaded wall_filter_pct is 1.0",
+            check("GIDEON loaded wall_filter_pct is 1.0",
                   loaded_config.wall_filter_pct == 1.0,
                   f"Got: {loaded_config.wall_filter_pct}, Expected: 1.0")
         except Exception as e:
-            print(f"  WARNING: Could not load ICARUS config from DB: {e}")
+            print(f"  WARNING: Could not load GIDEON config from DB: {e}")
 
 except Exception as e:
-    print(f"  ERROR: ICARUS config test failed: {e}")
+    print(f"  ERROR: GIDEON config test failed: {e}")
 
 # ============================================================================
 # TEST 3: DIRECTION LOGIC IN PRICE_TREND_TRACKER
@@ -273,15 +273,15 @@ except Exception as e:
     traceback.print_exc()
 
 # ============================================================================
-# TEST 4: ORACLE INTEGRATION
+# TEST 4: PROPHET INTEGRATION
 # ============================================================================
-print("\n[4] ORACLE INTEGRATION")
+print("\n[4] PROPHET INTEGRATION")
 print("-" * 70)
 
 try:
-    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-    oracle = OracleAdvisor()
+    prophet = ProphetAdvisor()
 
     # Create context for near-put-wall scenario (dataclass)
     context = MarketContext(
@@ -294,20 +294,20 @@ try:
         gex_flip_point=588.0,
     )
 
-    # Call Oracle with wall_filter_pct
-    prediction = oracle.get_athena_advice(
+    # Call Prophet with wall_filter_pct
+    prediction = prophet.get_solomon_advice(
         context=context,
         use_gex_walls=True,
         wall_filter_pct=1.0
     )
 
     if prediction:
-        check("Oracle returns prediction",
+        check("Prophet returns prediction",
               prediction is not None,
-              "Oracle returned None")
+              "Prophet returned None")
 
         neutral_dir = getattr(prediction, 'neutral_derived_direction', '')
-        check("Oracle uses neutral_derived_direction",
+        check("Prophet uses neutral_derived_direction",
               neutral_dir != '',
               f"Got: '{neutral_dir}' (empty means not set)")
 
@@ -316,10 +316,10 @@ try:
         print(f"      wall_filter_passed: {wall_passed}")
         print(f"      advice: {prediction.advice.value if prediction.advice else 'N/A'}")
     else:
-        print("  WARNING: Oracle returned None - may need market data")
+        print("  WARNING: Prophet returned None - may need market data")
 
 except Exception as e:
-    print(f"  ERROR: Oracle integration test failed: {e}")
+    print(f"  ERROR: Prophet integration test failed: {e}")
     import traceback
     traceback.print_exc()
 
@@ -339,8 +339,8 @@ print("""
 """)
 
 try:
-    from trading.athena_v2.models import ATHENAConfig
-    config = ATHENAConfig()
+    from trading.solomon_v2.models import SolomonConfig
+    config = SolomonConfig()
 
     print(f"  - wall_filter_pct: {config.wall_filter_pct}%")
     print(f"  - min_win_probability: {config.min_win_probability}")

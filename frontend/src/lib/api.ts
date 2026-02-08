@@ -222,37 +222,37 @@ export const apiClient = {
     market_data?: any
   }) => api.post('/api/ai/analyze-with-image', data),
 
-  // GEXIS Chatbot - Session-based conversational AI
+  // COUNSELOR Chatbot - Session-based conversational AI
   gexisAnalyzeWithContext: (data: {
     query: string
     symbol?: string
     session_id: string
     market_data?: any
-  }) => api.post('/api/ai/gexis/analyze-with-context', data),
+  }) => api.post('/api/ai/counselor/analyze-with-context', data),
 
-  // GEXIS Agentic Chat - AI with tool use capabilities
+  // COUNSELOR Agentic Chat - AI with tool use capabilities
   gexisAgenticChat: (data: {
     query: string
     session_id: string
     market_data?: any
-  }) => api.post('/api/ai/gexis/agentic-chat', data),
+  }) => api.post('/api/ai/counselor/agentic-chat', data),
 
-  // GEXIS Bot Action Confirmation
+  // COUNSELOR Bot Action Confirmation
   gexisConfirmAction: (data: {
     session_id: string
     confirm: boolean
-  }) => api.post('/api/ai/gexis/confirm-action', data),
+  }) => api.post('/api/ai/counselor/confirm-action', data),
 
-  // GEXIS Streaming Agentic Chat - Returns EventSource URL (or null if API_URL not set)
-  getGexisStreamUrl: () => API_URL ? `${API_URL}/api/ai/gexis/agentic-chat/stream` : null,
+  // COUNSELOR Streaming Agentic Chat - Returns EventSource URL (or null if API_URL not set)
+  getGexisStreamUrl: () => API_URL ? `${API_URL}/api/ai/counselor/agentic-chat/stream` : null,
 
   gexisCommand: (command: string) =>
-    api.post('/api/ai/gexis/command', { command }),
+    api.post('/api/ai/counselor/command', { command }),
 
-  gexisAlerts: () => api.get('/api/ai/gexis/alerts'),
+  gexisAlerts: () => api.get('/api/ai/counselor/alerts'),
 
   gexisExportConversation: (sessionId: string, format: string = 'markdown') =>
-    api.get(`/api/ai/gexis/export/${sessionId}`, { params: { format } }),
+    api.get(`/api/ai/counselor/export/${sessionId}`, { params: { format } }),
 
   // Autonomous Trader
   getTraderStatus: () => api.get('/api/trader/status'),
@@ -335,98 +335,98 @@ export const apiClient = {
   resetBotData: (params?: { bot?: string, confirm?: boolean }) =>
     api.post('/api/trader/bots/reset', null, { params }),
 
-  // ARES - Aggressive Iron Condor Bot
-  getARESStatus: () => api.get('/api/trader/bots/ares/status'),
-  runARESCycle: () => api.post('/api/trader/bots/ares/run'),
+  // FORTRESS - Aggressive Iron Condor Bot
+  getARESStatus: () => api.get('/api/trader/bots/fortress/status'),
+  runARESCycle: () => api.post('/api/trader/bots/fortress/run'),
 
-  // ARES Page API endpoints
-  getARESPageStatus: () => api.get('/api/ares/status'),
-  getARESPerformance: () => api.get('/api/ares/performance'),
-  getARESEquityCurve: (days: number = 30) => api.get('/api/ares/equity-curve', { params: { days } }),
-  getARESIntradayEquity: (date?: string) => api.get('/api/ares/equity-curve/intraday', { params: date ? { date } : {} }),
-  getARESLiveEquity: () => api.get('/api/ares/equity-curve/live'),
-  getARESPositions: () => api.get('/api/ares/positions'),
-  getARESMarketData: () => api.get('/api/ares/market-data'),
-  getARESTradierStatus: () => api.get('/api/ares/tradier-status'),
-  getARESDecisions: (limit: number = 50) => api.get('/api/ares/decisions', { params: { limit } }),
-  getARESLogs: (level?: string, limit: number = 100) => api.get('/api/ares/logs', { params: { level, limit } }),
-  getARESConfig: () => api.get('/api/ares/config'),
-  resetARESData: (confirm: boolean = false) => api.post('/api/ares/reset', null, { params: { confirm } }),
+  // FORTRESS Page API endpoints
+  getARESPageStatus: () => api.get('/api/fortress/status'),
+  getARESPerformance: () => api.get('/api/fortress/performance'),
+  getARESEquityCurve: (days: number = 30) => api.get('/api/fortress/equity-curve', { params: { days } }),
+  getARESIntradayEquity: (date?: string) => api.get('/api/fortress/equity-curve/intraday', { params: date ? { date } : {} }),
+  getARESLiveEquity: () => api.get('/api/fortress/equity-curve/live'),
+  getARESPositions: () => api.get('/api/fortress/positions'),
+  getARESMarketData: () => api.get('/api/fortress/market-data'),
+  getARESTradierStatus: () => api.get('/api/fortress/tradier-status'),
+  getARESDecisions: (limit: number = 50) => api.get('/api/fortress/decisions', { params: { limit } }),
+  getARESLogs: (level?: string, limit: number = 100) => api.get('/api/fortress/logs', { params: { level, limit } }),
+  getFortressConfig: () => api.get('/api/fortress/config'),
+  resetARESData: (confirm: boolean = false) => api.post('/api/fortress/reset', null, { params: { confirm } }),
 
-  // ATHENA - Directional Spread Bot
-  getATHENAStatus: () => api.get('/api/athena/status'),
-  getATHENAPositions: (status?: string) => api.get('/api/athena/positions', { params: status ? { status_filter: status } : {} }),
-  getATHENASignals: (limit: number = 50) => api.get('/api/athena/signals', { params: { limit } }),
-  getATHENALogs: (level?: string, limit: number = 100) => api.get('/api/athena/logs', { params: { level, limit } }),
-  getATHENAPerformance: (days: number = 30) => api.get('/api/athena/performance', { params: { days } }),
-  getATHENAEquityCurve: (days: number = 30) => api.get('/api/athena/equity-curve', { params: { days } }),
-  getATHENAIntradayEquity: (date?: string) => api.get('/api/athena/equity-curve/intraday', { params: date ? { date } : {} }),
-  getATHENAConfig: () => api.get('/api/athena/config'),
-  updateATHENAConfig: (name: string, value: string) => api.post(`/api/athena/config/${name}`, null, { params: { value } }),
-  runATHENACycle: () => api.post('/api/athena/run'),
-  getATHENAOracleAdvice: () => api.get('/api/athena/oracle-advice'),
-  getATHENAMLSignal: () => api.get('/api/athena/ml-signal'),
-  getATHENALivePnL: () => api.get('/api/athena/live-pnl'),
-  processATHENAExpired: () => api.post('/api/athena/process-expired'),
-  skipATHENAToday: () => api.post('/api/athena/skip-today'),
-  resetATHENAData: (confirm: boolean = false) => api.post('/api/athena/reset', null, { params: { confirm } }),
+  // SOLOMON - Directional Spread Bot
+  getATHENAStatus: () => api.get('/api/solomon/status'),
+  getATHENAPositions: (status?: string) => api.get('/api/solomon/positions', { params: status ? { status_filter: status } : {} }),
+  getSolomonSignals: (limit: number = 50) => api.get('/api/solomon/signals', { params: { limit } }),
+  getATHENALogs: (level?: string, limit: number = 100) => api.get('/api/solomon/logs', { params: { level, limit } }),
+  getATHENAPerformance: (days: number = 30) => api.get('/api/solomon/performance', { params: { days } }),
+  getATHENAEquityCurve: (days: number = 30) => api.get('/api/solomon/equity-curve', { params: { days } }),
+  getATHENAIntradayEquity: (date?: string) => api.get('/api/solomon/equity-curve/intraday', { params: date ? { date } : {} }),
+  getSolomonConfig: () => api.get('/api/solomon/config'),
+  updateSolomonConfig: (name: string, value: string) => api.post(`/api/solomon/config/${name}`, null, { params: { value } }),
+  runATHENACycle: () => api.post('/api/solomon/run'),
+  getATHENAOracleAdvice: () => api.get('/api/solomon/prophet-advice'),
+  getATHENAMLSignal: () => api.get('/api/solomon/ml-signal'),
+  getATHENALivePnL: () => api.get('/api/solomon/live-pnl'),
+  processATHENAExpired: () => api.post('/api/solomon/process-expired'),
+  skipATHENAToday: () => api.post('/api/solomon/skip-today'),
+  resetATHENAData: (confirm: boolean = false) => api.post('/api/solomon/reset', null, { params: { confirm } }),
 
-  // ICARUS - Aggressive Directional Spread Bot
-  getICARUSStatus: () => api.get('/api/icarus/status'),
-  getICARUSPositions: (status?: string) => api.get('/api/icarus/positions', { params: status ? { status_filter: status } : {} }),
-  getICARUSSignals: (limit: number = 50) => api.get('/api/icarus/signals', { params: { limit } }),
-  getICARUSLogs: (level?: string, limit: number = 100) => api.get('/api/icarus/logs', { params: { level, limit } }),
-  getICARUSPerformance: (days: number = 30) => api.get('/api/icarus/performance', { params: { days } }),
-  getICARUSEquityCurve: (days: number = 30) => api.get('/api/icarus/equity-curve', { params: { days } }),
-  getICARUSIntradayEquity: (date?: string) => api.get('/api/icarus/equity-curve/intraday', { params: date ? { date } : {} }),
-  getICARUSConfig: () => api.get('/api/icarus/config'),
-  runICARUSCycle: () => api.post('/api/icarus/run'),
-  getICARUSOracleAdvice: () => api.get('/api/icarus/oracle-advice'),
-  getICARUSLivePnL: () => api.get('/api/icarus/live-pnl'),
-  getICARUSScanActivity: (limit: number = 50) => api.get('/api/icarus/scan-activity', { params: { limit } }),
-  skipICARUSToday: () => api.post('/api/icarus/skip-today'),
-  resetICARUSData: (confirm: boolean = false) => api.post('/api/icarus/reset', null, { params: { confirm } }),
+  // GIDEON - Aggressive Directional Spread Bot
+  getICARUSStatus: () => api.get('/api/gideon/status'),
+  getICARUSPositions: (status?: string) => api.get('/api/gideon/positions', { params: status ? { status_filter: status } : {} }),
+  getICARUSSignals: (limit: number = 50) => api.get('/api/gideon/signals', { params: { limit } }),
+  getICARUSLogs: (level?: string, limit: number = 100) => api.get('/api/gideon/logs', { params: { level, limit } }),
+  getICARUSPerformance: (days: number = 30) => api.get('/api/gideon/performance', { params: { days } }),
+  getICARUSEquityCurve: (days: number = 30) => api.get('/api/gideon/equity-curve', { params: { days } }),
+  getICARUSIntradayEquity: (date?: string) => api.get('/api/gideon/equity-curve/intraday', { params: date ? { date } : {} }),
+  getGideonConfig: () => api.get('/api/gideon/config'),
+  runICARUSCycle: () => api.post('/api/gideon/run'),
+  getICARUSOracleAdvice: () => api.get('/api/gideon/prophet-advice'),
+  getICARUSLivePnL: () => api.get('/api/gideon/live-pnl'),
+  getICARUSScanActivity: (limit: number = 50) => api.get('/api/gideon/scan-activity', { params: { limit } }),
+  skipICARUSToday: () => api.post('/api/gideon/skip-today'),
+  resetICARUSData: (confirm: boolean = false) => api.post('/api/gideon/reset', null, { params: { confirm } }),
 
-  // PEGASUS - SPX Iron Condor Bot
-  getPEGASUSStatus: () => api.get('/api/pegasus/status'),
-  getPEGASUSPositions: (status?: string) => api.get('/api/pegasus/positions', { params: status ? { status_filter: status } : {} }),
-  getPEGASUSLogs: (level?: string, limit: number = 100) => api.get('/api/pegasus/logs', { params: { level, limit } }),
-  getPEGASUSPerformance: (days: number = 30) => api.get('/api/pegasus/performance', { params: { days } }),
-  getPEGASUSEquityCurve: (days: number = 30) => api.get('/api/pegasus/equity-curve', { params: { days } }),
-  getPEGASUSIntradayEquity: (date?: string) => api.get('/api/pegasus/equity-curve/intraday', { params: date ? { date } : {} }),
-  getPEGASUSConfig: () => api.get('/api/pegasus/config'),
-  updatePEGASUSConfig: (name: string, value: string) => api.post(`/api/pegasus/config/${name}`, null, { params: { value } }),
-  runPEGASUSCycle: () => api.post('/api/pegasus/run'),
-  getPEGASUSLivePnL: () => api.get('/api/pegasus/live-pnl'),
-  processPEGASUSExpired: () => api.post('/api/pegasus/process-expired'),
-  skipPEGASUSToday: () => api.post('/api/pegasus/skip-today'),
-  resetPEGASUSData: (confirm: boolean = false) => api.post('/api/pegasus/reset', null, { params: { confirm } }),
+  // ANCHOR - SPX Iron Condor Bot
+  getANCHORStatus: () => api.get('/api/anchor/status'),
+  getANCHORPositions: (status?: string) => api.get('/api/anchor/positions', { params: status ? { status_filter: status } : {} }),
+  getANCHORLogs: (level?: string, limit: number = 100) => api.get('/api/anchor/logs', { params: { level, limit } }),
+  getANCHORPerformance: (days: number = 30) => api.get('/api/anchor/performance', { params: { days } }),
+  getANCHOREquityCurve: (days: number = 30) => api.get('/api/anchor/equity-curve', { params: { days } }),
+  getANCHORIntradayEquity: (date?: string) => api.get('/api/anchor/equity-curve/intraday', { params: date ? { date } : {} }),
+  getAnchorConfig: () => api.get('/api/anchor/config'),
+  updateAnchorConfig: (name: string, value: string) => api.post(`/api/anchor/config/${name}`, null, { params: { value } }),
+  runANCHORCycle: () => api.post('/api/anchor/run'),
+  getANCHORLivePnL: () => api.get('/api/anchor/live-pnl'),
+  processANCHORExpired: () => api.post('/api/anchor/process-expired'),
+  skipANCHORToday: () => api.post('/api/anchor/skip-today'),
+  resetANCHORData: (confirm: boolean = false) => api.post('/api/anchor/reset', null, { params: { confirm } }),
 
-  // TITAN - Aggressive SPX Iron Condor Bot (Daily Trading)
-  getTITANStatus: () => api.get('/api/titan/status'),
-  getTITANPositions: (status?: string) => api.get('/api/titan/positions', { params: status ? { status_filter: status } : {} }),
-  getTITANLogs: (level?: string, limit: number = 100) => api.get('/api/titan/logs', { params: { level, limit } }),
-  getTITANPerformance: (days: number = 30) => api.get('/api/titan/performance', { params: { days } }),
-  getTITANEquityCurve: (days: number = 30) => api.get('/api/titan/equity-curve', { params: { days } }),
-  getTITANIntradayEquity: (date?: string) => api.get('/api/titan/equity-curve/intraday', { params: date ? { date } : {} }),
-  getTITANConfig: () => api.get('/api/titan/config'),
-  updateTITANConfig: (name: string, value: string) => api.post(`/api/titan/config/${name}`, null, { params: { value } }),
-  runTITANCycle: () => api.post('/api/titan/run'),
-  getTITANLivePnL: () => api.get('/api/titan/live-pnl'),
-  processTITANExpired: () => api.post('/api/titan/process-expired'),
-  skipTITANToday: () => api.post('/api/titan/skip-today'),
-  resetTITANData: (confirm: boolean = false) => api.post('/api/titan/reset', null, { params: { confirm } }),
+  // SAMSON - Aggressive SPX Iron Condor Bot (Daily Trading)
+  getTITANStatus: () => api.get('/api/samson/status'),
+  getTITANPositions: (status?: string) => api.get('/api/samson/positions', { params: status ? { status_filter: status } : {} }),
+  getTITANLogs: (level?: string, limit: number = 100) => api.get('/api/samson/logs', { params: { level, limit } }),
+  getTITANPerformance: (days: number = 30) => api.get('/api/samson/performance', { params: { days } }),
+  getTITANEquityCurve: (days: number = 30) => api.get('/api/samson/equity-curve', { params: { days } }),
+  getTITANIntradayEquity: (date?: string) => api.get('/api/samson/equity-curve/intraday', { params: date ? { date } : {} }),
+  getSamsonConfig: () => api.get('/api/samson/config'),
+  updateSamsonConfig: (name: string, value: string) => api.post(`/api/samson/config/${name}`, null, { params: { value } }),
+  runTITANCycle: () => api.post('/api/samson/run'),
+  getTITANLivePnL: () => api.get('/api/samson/live-pnl'),
+  processTITANExpired: () => api.post('/api/samson/process-expired'),
+  skipTITANToday: () => api.post('/api/samson/skip-today'),
+  resetTITANData: (confirm: boolean = false) => api.post('/api/samson/reset', null, { params: { confirm } }),
 
-  // ARES - Live P&L
-  getARESLivePnL: () => api.get('/api/ares/live-pnl'),
-  processARESExpired: () => api.post('/api/ares/process-expired'),
-  skipARESToday: () => api.post('/api/ares/skip-today'),
-  updateARESConfig: (config: { risk_per_trade_pct?: number; sd_multiplier?: number }) =>
-    api.post('/api/ares/config', config),
+  // FORTRESS - Live P&L
+  getARESLivePnL: () => api.get('/api/fortress/live-pnl'),
+  processARESExpired: () => api.post('/api/fortress/process-expired'),
+  skipARESToday: () => api.post('/api/fortress/skip-today'),
+  updateFortressConfig: (config: { risk_per_trade_pct?: number; sd_multiplier?: number }) =>
+    api.post('/api/fortress/config', config),
 
-  // ARES Strategy Presets
-  getARESStrategyPresets: () => api.get('/api/ares/strategy/presets'),
-  setARESStrategyPreset: (preset: string) => api.post('/api/ares/strategy/preset', { preset }),
+  // FORTRESS Strategy Presets
+  getARESStrategyPresets: () => api.get('/api/fortress/strategy/presets'),
+  setARESStrategyPreset: (preset: string) => api.post('/api/fortress/strategy/preset', { preset }),
 
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {
@@ -551,7 +551,7 @@ export const apiClient = {
     trade_id?: string
   }) => api.post('/api/ml/score-and-log', null, { params: data }),
 
-  // GEX ML MODELS - For ARGUS/HYPERION
+  // GEX ML MODELS - For WATCHTOWER/GLORY
   getGexModelsStatus: () => api.get('/api/ml/gex-models/status'),
   getGexModelsDataStatus: () => api.get('/api/ml/gex-models/data-status'),
   getGexModelsDataPreview: (limit: number = 10) => api.get('/api/ml/gex-models/data-preview', { params: { limit } }),
@@ -720,12 +720,12 @@ export const apiClient = {
   exportZeroDTEEquityCurve: (jobId: string) => api.get(`/api/zero-dte/export/equity-curve/${jobId}`, { responseType: 'blob' }),
   compareZeroDTEBacktests: (jobIds: string[]) => api.get(`/api/zero-dte/compare?job_ids=${jobIds.join(',')}`),
 
-  // Oracle AI - Claude-powered prediction validation and analysis
-  getOracleStatus: () => api.get('/api/zero-dte/oracle/status'),
-  getOracleLogs: () => api.get('/api/zero-dte/oracle/logs'),
-  clearOracleLogs: () => api.delete('/api/zero-dte/oracle/logs'),
+  // Prophet AI - Claude-powered prediction validation and analysis
+  getProphetStatus: () => api.get('/api/zero-dte/prophet/status'),
+  getOracleLogs: () => api.get('/api/zero-dte/prophet/logs'),
+  clearOracleLogs: () => api.delete('/api/zero-dte/prophet/logs'),
   getOraclePredictions: (params?: { limit?: number, bot_name?: string, days?: number }) =>
-    api.get('/api/logs/oracle', { params }),
+    api.get('/api/logs/prophet', { params }),
   oracleAnalyze: (data: {
     spot_price: number
     vix: number
@@ -739,55 +739,55 @@ export const apiClient = {
     distance_to_call_wall?: number
     distance_to_put_wall?: number
     bot_name?: string
-  }) => api.post('/api/zero-dte/oracle/analyze', data),
+  }) => api.post('/api/zero-dte/prophet/analyze', data),
   oracleExplain: (data: {
     prediction: any
     market_context?: any
-  }) => api.post('/api/zero-dte/oracle/explain', data),
+  }) => api.post('/api/zero-dte/prophet/explain', data),
   oracleAnalyzePatterns: (data: {
     backtest_trades: any[]
     focus_area?: string
-  }) => api.post('/api/zero-dte/oracle/analyze-patterns', data),
+  }) => api.post('/api/zero-dte/prophet/analyze-patterns', data),
 
-  // Oracle Training & Bot Interactions
-  getOracleTrainingStatus: () => api.get('/api/zero-dte/oracle/training-status'),
+  // Prophet Training & Bot Interactions
+  getOracleTrainingStatus: () => api.get('/api/zero-dte/prophet/training-status'),
   triggerOracleTraining: (force: boolean = false) =>
-    api.post(`/api/zero-dte/oracle/trigger-training?force=${force}`),
+    api.post(`/api/zero-dte/prophet/trigger-training?force=${force}`),
   getOracleBotInteractions: (params?: { days?: number, limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.days) queryParams.append('days', String(params.days))
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
-    return api.get(`/api/zero-dte/oracle/bot-interactions?${queryParams.toString()}`)
+    return api.get(`/api/zero-dte/prophet/bot-interactions?${queryParams.toString()}`)
   },
   getOraclePerformance: (days: number = 90) =>
-    api.get(`/api/zero-dte/oracle/performance?days=${days}`),
+    api.get(`/api/zero-dte/prophet/performance?days=${days}`),
   getOraclePredictionsFull: (params?: { days?: number, limit?: number, bot_name?: string, include_claude?: boolean }) => {
     const queryParams = new URLSearchParams()
     if (params?.days) queryParams.append('days', String(params.days))
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
     if (params?.include_claude !== undefined) queryParams.append('include_claude', String(params.include_claude))
-    return api.get(`/api/zero-dte/oracle/predictions?${queryParams.toString()}`)
+    return api.get(`/api/zero-dte/prophet/predictions?${queryParams.toString()}`)
   },
 
-  // Oracle Full Transparency - NEW: Complete visibility into Oracle data flow
+  // Prophet Full Transparency - NEW: Complete visibility into Prophet data flow
   getOracleDataFlows: (params?: { limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
-    return api.get(`/api/zero-dte/oracle/data-flows?${queryParams.toString()}`)
+    return api.get(`/api/zero-dte/prophet/data-flows?${queryParams.toString()}`)
   },
   getOracleClaudeExchanges: (params?: { limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
-    return api.get(`/api/zero-dte/oracle/claude-exchanges?${queryParams.toString()}`)
+    return api.get(`/api/zero-dte/prophet/claude-exchanges?${queryParams.toString()}`)
   },
   getOracleFullTransparency: (bot_name?: string) => {
     const queryParams = new URLSearchParams()
     if (bot_name) queryParams.append('bot_name', bot_name)
-    return api.get(`/api/zero-dte/oracle/full-transparency?${queryParams.toString()}`)
+    return api.get(`/api/zero-dte/prophet/full-transparency?${queryParams.toString()}`)
   },
 
   // Export Routes
@@ -902,13 +902,13 @@ export const apiClient = {
     responseType: params.format === 'json' ? 'json' : 'blob' as const
   }),
 
-  // APOLLO - AI-Powered Live Options Scanner
-  apolloScan: (symbols: string[], includeChains: boolean = true) =>
-    api.post('/api/apollo/scan', { symbols, include_chains: includeChains }),
-  getApolloScan: (scanId: string) => api.get(`/api/apollo/scan/${scanId}`),
-  getApolloHistory: (limit: number = 20, symbol?: string) =>
-    api.get('/api/apollo/history', { params: { limit, symbol } }),
-  apolloFeedback: (data: {
+  // DISCERNMENT - AI-Powered Live Options Scanner
+  discernmentScan: (symbols: string[], includeChains: boolean = true) =>
+    api.post('/api/discernment/scan', { symbols, include_chains: includeChains }),
+  getDiscernmentScan: (scanId: string) => api.get(`/api/discernment/scan/${scanId}`),
+  getDiscernmentHistory: (limit: number = 20, symbol?: string) =>
+    api.get('/api/discernment/history', { params: { limit, symbol } }),
+  discernmentFeedback: (data: {
     scan_id: string
     symbol: string
     actual_direction: string
@@ -917,20 +917,20 @@ export const apiClient = {
     strategy_used?: string
     strategy_pnl?: number
     notes?: string
-  }) => api.post('/api/apollo/feedback', data),
-  getApolloPerformance: () => api.get('/api/apollo/performance'),
-  getApolloLiveQuote: (symbol: string) => api.get(`/api/apollo/live-quote/${symbol}`),
-  getApolloOptionsChain: (symbol: string, expiration?: string) =>
-    api.get(`/api/apollo/options-chain/${symbol}`, { params: { expiration } }),
-  getApolloFeatures: (symbol: string) => api.get(`/api/apollo/features/${symbol}`),
-  triggerApolloTraining: () => api.post('/api/apollo/train'),
-  getApolloPinRisk: (symbol: string) => api.get(`/api/apollo/pin-risk/${symbol}`),
-  getApolloPinRiskBatch: (symbols: string[]) =>
-    api.get('/api/apollo/pin-risk-batch', { params: { symbols: symbols.join(',') } }),
-  getApolloPinRiskHistory: (symbol: string, limit: number = 30) =>
-    api.get(`/api/apollo/pin-risk-history/${symbol}`, { params: { limit } }),
-  getApolloTrackingStatus: () => api.get('/api/apollo/tracking-status'),
-  triggerApolloOutcomeTracking: () => api.post('/api/apollo/track-outcomes'),
+  }) => api.post('/api/discernment/feedback', data),
+  getDiscernmentPerformance: () => api.get('/api/discernment/performance'),
+  getDiscernmentLiveQuote: (symbol: string) => api.get(`/api/discernment/live-quote/${symbol}`),
+  getDiscernmentOptionsChain: (symbol: string, expiration?: string) =>
+    api.get(`/api/discernment/options-chain/${symbol}`, { params: { expiration } }),
+  getDiscernmentFeatures: (symbol: string) => api.get(`/api/discernment/features/${symbol}`),
+  triggerDiscernmentTraining: () => api.post('/api/discernment/train'),
+  getDiscernmentPinRisk: (symbol: string) => api.get(`/api/discernment/pin-risk/${symbol}`),
+  getDiscernmentPinRiskBatch: (symbols: string[]) =>
+    api.get('/api/discernment/pin-risk-batch', { params: { symbols: symbols.join(',') } }),
+  getDiscernmentPinRiskHistory: (symbol: string, limit: number = 30) =>
+    api.get(`/api/discernment/pin-risk-history/${symbol}`, { params: { limit } }),
+  getDiscernmentTrackingStatus: () => api.get('/api/discernment/tracking-status'),
+  triggerDiscernmentOutcomeTracking: () => api.post('/api/discernment/track-outcomes'),
 
   // Daily Manna - Economic news with faith-based devotionals
   getDailyManna: (forceRefresh: boolean = false) =>
@@ -980,34 +980,34 @@ export const apiClient = {
   getPrayerStats: (userId: string = 'default_user') =>
     api.get('/api/daily-manna/prayer/stats', { params: { user_id: userId } }),
 
-  // ARGUS - 0DTE Gamma Live (Real-time gamma visualization)
+  // WATCHTOWER - 0DTE Gamma Live (Real-time gamma visualization)
   getArgusGamma: (symbol?: string, expiration?: string) =>
-    api.get('/api/argus/gamma', { params: { symbol, expiration } }),
+    api.get('/api/watchtower/gamma', { params: { symbol, expiration } }),
   getArgusHistory: (expiration?: string, minutes?: number) =>
-    api.get('/api/argus/history', { params: { expiration, minutes } }),
-  getArgusProbability: () => api.get('/api/argus/probability'),
+    api.get('/api/watchtower/history', { params: { expiration, minutes } }),
+  getArgusProbability: () => api.get('/api/watchtower/probability'),
   getArgusAlerts: (acknowledged?: boolean, priority?: string) =>
-    api.get('/api/argus/alerts', { params: { acknowledged, priority } }),
+    api.get('/api/watchtower/alerts', { params: { acknowledged, priority } }),
   acknowledgeArgusAlert: (alertId: number) =>
-    api.post(`/api/argus/alerts/${alertId}/acknowledge`),
+    api.post(`/api/watchtower/alerts/${alertId}/acknowledge`),
   getArgusCommentary: (limit?: number) =>
-    api.get('/api/argus/commentary', { params: { limit } }),
-  generateArgusCommentary: () => api.post('/api/argus/commentary/generate'),
-  getArgusBots: () => api.get('/api/argus/bots'),
-  getArgusAccuracy: () => api.get('/api/argus/accuracy'),
-  getArgusPatterns: () => api.get('/api/argus/patterns'),
+    api.get('/api/watchtower/commentary', { params: { limit } }),
+  generateArgusCommentary: () => api.post('/api/watchtower/commentary/generate'),
+  getArgusBots: () => api.get('/api/watchtower/bots'),
+  getArgusAccuracy: () => api.get('/api/watchtower/accuracy'),
+  getArgusPatterns: () => api.get('/api/watchtower/patterns'),
   exportArgusData: (format: 'csv' | 'xlsx' = 'xlsx') =>
-    api.get('/api/argus/export', { params: { format }, responseType: 'blob' }),
+    api.get('/api/watchtower/export', { params: { format }, responseType: 'blob' }),
   getArgusReplay: (date: string, time?: string) =>
-    api.get('/api/argus/replay', { params: { date, time } }),
-  getArgusReplayDates: () => api.get('/api/argus/replay/dates'),
-  getArgusExpirations: () => api.get('/api/argus/expirations'),
-  getArgusContext: () => api.get('/api/argus/context'),
-  getArgusDangerZoneLogs: () => api.get('/api/argus/danger-zones/log'),
-  getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
-  getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
+    api.get('/api/watchtower/replay', { params: { date, time } }),
+  getArgusReplayDates: () => api.get('/api/watchtower/replay/dates'),
+  getArgusExpirations: () => api.get('/api/watchtower/expirations'),
+  getArgusContext: () => api.get('/api/watchtower/context'),
+  getArgusDangerZoneLogs: () => api.get('/api/watchtower/danger-zones/log'),
+  getArgusStrikeTrends: () => api.get('/api/watchtower/strike-trends'),
+  getArgusGammaFlips: () => api.get('/api/watchtower/gamma-flips'),
   getArgusTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number, autoLog?: boolean) =>
-    api.get('/api/argus/trade-action', {
+    api.get('/api/watchtower/trade-action', {
       params: {
         symbol,
         account_size: accountSize,
@@ -1018,147 +1018,147 @@ export const apiClient = {
     }),
   // Signal tracking & performance
   logArgusSignal: (symbol: string, signalData: object) =>
-    api.post('/api/argus/signals/log', signalData, { params: { symbol } }),
+    api.post('/api/watchtower/signals/log', signalData, { params: { symbol } }),
   getArgusRecentSignals: (symbol?: string, limit?: number, status?: string) =>
-    api.get('/api/argus/signals/recent', { params: { symbol, limit, status } }),
+    api.get('/api/watchtower/signals/recent', { params: { symbol, limit, status } }),
   getArgusSignalPerformance: (symbol?: string, days?: number) =>
-    api.get('/api/argus/signals/performance', { params: { symbol, days } }),
+    api.get('/api/watchtower/signals/performance', { params: { symbol, days } }),
   updateArgusSignalOutcomes: (symbol?: string) =>
-    api.post('/api/argus/signals/update-outcomes', {}, { params: { symbol } }),
+    api.post('/api/watchtower/signals/update-outcomes', {}, { params: { symbol } }),
 
   // GEX Charts - Trading Volatility Style Analysis
   getArgusGexAnalysis: (symbol?: string, expiration?: string) =>
-    api.get('/api/argus/gex-analysis', { params: { symbol, expiration } }),
+    api.get('/api/watchtower/gex-analysis', { params: { symbol, expiration } }),
   getArgusFlowDiagnostics: (symbol?: string, expiration?: string) =>
-    api.get('/api/argus/flow-diagnostics', { params: { symbol, expiration } }),
+    api.get('/api/watchtower/flow-diagnostics', { params: { symbol, expiration } }),
   getArgusSymbolExpirations: (symbol?: string) =>
-    api.get('/api/argus/symbol-expirations', { params: { symbol } }),
+    api.get('/api/watchtower/symbol-expirations', { params: { symbol } }),
 
-  // HYPERION - Weekly Gamma visualization for stocks/ETFs (Enhanced)
+  // GLORY - Weekly Gamma visualization for stocks/ETFs (Enhanced)
   getHyperionGamma: (symbol?: string, expiration?: string) =>
-    api.get('/api/hyperion/gamma', { params: { symbol, expiration } }),
+    api.get('/api/glory/gamma', { params: { symbol, expiration } }),
   getHyperionExpirations: (symbol?: string, weeks?: number) =>
-    api.get('/api/hyperion/expirations', { params: { symbol, weeks } }),
-  getHyperionSymbols: () => api.get('/api/hyperion/symbols'),
-  // New enhanced endpoints (matching ARGUS feature parity)
+    api.get('/api/glory/expirations', { params: { symbol, weeks } }),
+  getHyperionSymbols: () => api.get('/api/glory/symbols'),
+  // New enhanced endpoints (matching WATCHTOWER feature parity)
   getHyperionAlerts: (symbol?: string, limit?: number, acknowledged?: boolean) =>
-    api.get('/api/hyperion/alerts', { params: { symbol, limit, acknowledged } }),
+    api.get('/api/glory/alerts', { params: { symbol, limit, acknowledged } }),
   acknowledgeHyperionAlert: (alertId: number) =>
-    api.post(`/api/hyperion/alerts/${alertId}/acknowledge`),
+    api.post(`/api/glory/alerts/${alertId}/acknowledge`),
   getHyperionPatterns: (symbol?: string, days?: number, minSimilarity?: number) =>
-    api.get('/api/hyperion/patterns', { params: { symbol, days, min_similarity: minSimilarity } }),
+    api.get('/api/glory/patterns', { params: { symbol, days, min_similarity: minSimilarity } }),
   getHyperionStrikeTrends: (symbol?: string, date?: string) =>
-    api.get('/api/hyperion/strike-trends', { params: { symbol, date_str: date } }),
+    api.get('/api/glory/strike-trends', { params: { symbol, date_str: date } }),
   getHyperionGammaFlips: (symbol?: string, minutes?: number) =>
-    api.get('/api/hyperion/gamma-flips', { params: { symbol, minutes } }),
+    api.get('/api/glory/gamma-flips', { params: { symbol, minutes } }),
   getHyperionDangerZoneLogs: (symbol?: string, limit?: number, activeOnly?: boolean) =>
-    api.get('/api/hyperion/danger-zones/log', { params: { symbol, limit, active_only: activeOnly } }),
+    api.get('/api/glory/danger-zones/log', { params: { symbol, limit, active_only: activeOnly } }),
   getHyperionContext: (symbol?: string) =>
-    api.get('/api/hyperion/context', { params: { symbol } }),
+    api.get('/api/glory/context', { params: { symbol } }),
   getHyperionAccuracy: (symbol?: string) =>
-    api.get('/api/hyperion/accuracy', { params: { symbol } }),
+    api.get('/api/glory/accuracy', { params: { symbol } }),
 
-  // SOLOMON - Feedback Loop Intelligence System
+  // PROVERBS - Feedback Loop Intelligence System
   // Core Dashboard & Health
-  getSolomonHealth: () => api.get('/api/solomon/health'),
-  getSolomonDashboard: () => api.get('/api/solomon/dashboard'),
-  getSolomonBotDashboard: (botName: string) => api.get(`/api/solomon/dashboard/bot/${botName}`),
+  getProverbsHealth: () => api.get('/api/proverbs/health'),
+  getProverbsDashboard: () => api.get('/api/proverbs/dashboard'),
+  getProverbsBotDashboard: (botName: string) => api.get(`/api/proverbs/dashboard/bot/${botName}`),
 
   // Audit & Compliance
-  getSolomonAudit: (params?: { bot_name?: string; action_type?: string; limit?: number; offset?: number }) =>
-    api.get('/api/solomon/audit', { params }),
-  getSolomonAuditActionTypes: () => api.get('/api/solomon/audit/action-types'),
+  getProverbsAudit: (params?: { bot_name?: string; action_type?: string; limit?: number; offset?: number }) =>
+    api.get('/api/proverbs/audit', { params }),
+  getProverbsAuditActionTypes: () => api.get('/api/proverbs/audit/action-types'),
 
   // Proposals & Approval
-  getSolomonProposals: (params?: { bot_name?: string; status?: string; limit?: number }) =>
-    api.get('/api/solomon/proposals', { params }),
-  getSolomonPendingProposals: () => api.get('/api/solomon/proposals/pending'),
-  getSolomonProposal: (proposalId: string) => api.get(`/api/solomon/proposals/${proposalId}`),
-  createSolomonProposal: (data: { bot_name: string; proposal_type: string; title: string; current_value: unknown; proposed_value: unknown; reason: string }) =>
-    api.post('/api/solomon/proposals', data),
-  approveSolomonProposal: (proposalId: string, data: { reviewer: string; notes?: string }) =>
-    api.post(`/api/solomon/proposals/${proposalId}/approve`, data),
-  rejectSolomonProposal: (proposalId: string, data: { reviewer: string; notes: string }) =>
-    api.post(`/api/solomon/proposals/${proposalId}/reject`, data),
+  getProverbsProposals: (params?: { bot_name?: string; status?: string; limit?: number }) =>
+    api.get('/api/proverbs/proposals', { params }),
+  getProverbsPendingProposals: () => api.get('/api/proverbs/proposals/pending'),
+  getProverbsProposal: (proposalId: string) => api.get(`/api/proverbs/proposals/${proposalId}`),
+  createProverbsProposal: (data: { bot_name: string; proposal_type: string; title: string; current_value: unknown; proposed_value: unknown; reason: string }) =>
+    api.post('/api/proverbs/proposals', data),
+  approveProverbsProposal: (proposalId: string, data: { reviewer: string; notes?: string }) =>
+    api.post(`/api/proverbs/proposals/${proposalId}/approve`, data),
+  rejectProverbsProposal: (proposalId: string, data: { reviewer: string; notes: string }) =>
+    api.post(`/api/proverbs/proposals/${proposalId}/reject`, data),
 
   // Version Management
-  getSolomonVersions: (botName: string) => api.get(`/api/solomon/versions/${botName}`),
-  activateSolomonVersion: (versionId: string, user: string) =>
-    api.post(`/api/solomon/versions/${versionId}/activate`, null, { params: { user } }),
-  getSolomonRollbacks: (params?: { bot_name?: string; limit?: number }) =>
-    api.get('/api/solomon/rollbacks', { params }),
-  rollbackSolomonBot: (botName: string, data: { to_version_id: string; reason: string; user?: string }) =>
-    api.post(`/api/solomon/rollback/${botName}`, data),
+  getProverbsVersions: (botName: string) => api.get(`/api/proverbs/versions/${botName}`),
+  activateProverbsVersion: (versionId: string, user: string) =>
+    api.post(`/api/proverbs/versions/${versionId}/activate`, null, { params: { user } }),
+  getProverbsRollbacks: (params?: { bot_name?: string; limit?: number }) =>
+    api.get('/api/proverbs/rollbacks', { params }),
+  rollbackProverbsBot: (botName: string, data: { to_version_id: string; reason: string; user?: string }) =>
+    api.post(`/api/proverbs/rollback/${botName}`, data),
 
   // Kill Switch Control
-  getSolomonKillswitchStatus: () => api.get('/api/solomon/killswitch'),
-  activateSolomonKillswitch: (botName: string, data: { reason: string; duration_hours?: number; user?: string }) =>
-    api.post(`/api/solomon/killswitch/${botName}/activate`, data),
-  deactivateSolomonKillswitch: (botName: string, data: { user?: string }) =>
-    api.post(`/api/solomon/killswitch/${botName}/deactivate`, data),
-  clearAllSolomonKillswitches: () => api.post('/api/solomon/killswitch/clear-all'),
+  getProverbsKillswitchStatus: () => api.get('/api/proverbs/killswitch'),
+  activateProverbsKillswitch: (botName: string, data: { reason: string; duration_hours?: number; user?: string }) =>
+    api.post(`/api/proverbs/killswitch/${botName}/activate`, data),
+  deactivateProverbsKillswitch: (botName: string, data: { user?: string }) =>
+    api.post(`/api/proverbs/killswitch/${botName}/deactivate`, data),
+  clearAllProverbsKillswitches: () => api.post('/api/proverbs/killswitch/clear-all'),
 
   // Feedback Loop Control
-  runSolomonFeedbackLoop: () => api.post('/api/solomon/feedback-loop/run'),
-  getSolomonFeedbackLoopStatus: () => api.get('/api/solomon/feedback-loop/status'),
+  runProverbsFeedbackLoop: () => api.post('/api/proverbs/feedback-loop/run'),
+  getProverbsFeedbackLoopStatus: () => api.get('/api/proverbs/feedback-loop/status'),
 
   // Performance Tracking
-  getSolomonPerformance: (botName: string, days: number = 30) =>
-    api.get(`/api/solomon/performance/${botName}`, { params: { days } }),
-  recordSolomonPerformanceSnapshot: (botName: string) =>
-    api.post(`/api/solomon/performance/${botName}/snapshot`),
-  getSolomonRealtimeStatus: (days: number = 7) =>
-    api.get('/api/solomon/realtime-status', { params: { days } }),
+  getProverbsPerformance: (botName: string, days: number = 30) =>
+    api.get(`/api/proverbs/performance/${botName}`, { params: { days } }),
+  recordProverbsPerformanceSnapshot: (botName: string) =>
+    api.post(`/api/proverbs/performance/${botName}/snapshot`),
+  getProverbsRealtimeStatus: (days: number = 7) =>
+    api.get('/api/proverbs/realtime-status', { params: { days } }),
 
-  // Strategy & Oracle Analysis
-  getSolomonStrategyAnalysis: (days: number = 30) => api.get('/api/solomon/strategy-analysis', { params: { days } }),
-  getSolomonOracleAccuracy: (days: number = 30) => api.get('/api/solomon/oracle-accuracy', { params: { days } }),
+  // Strategy & Prophet Analysis
+  getProverbsStrategyAnalysis: (days: number = 30) => api.get('/api/proverbs/strategy-analysis', { params: { days } }),
+  getProverbsOracleAccuracy: (days: number = 30) => api.get('/api/proverbs/prophet-accuracy', { params: { days } }),
 
   // Enhanced Analytics
-  getSolomonEnhancedAnalysis: (botName: string, days: number = 30) =>
-    api.get(`/api/solomon/enhanced/analysis/${botName}`, { params: { days } }),
-  getSolomonEnhancedCorrelations: () => api.get('/api/solomon/enhanced/correlations'),
-  getSolomonEnhancedTimeAnalysis: (bot: string) => api.get(`/api/solomon/enhanced/time-analysis/${bot}`),
-  getSolomonEnhancedRegime: (botName: string, days: number = 30) =>
-    api.get(`/api/solomon/enhanced/regime/${botName}`, { params: { days } }),
-  getSolomonEnhancedDigest: () => api.get('/api/solomon/enhanced/digest'),
-  getSolomonWeekendPrecheck: () => api.get('/api/solomon/enhanced/weekend-precheck'),
-  getSolomonVersionCompare: (botName: string, versionA: string, versionB: string) =>
-    api.get(`/api/solomon/enhanced/version-compare/${botName}`, { params: { version_a: versionA, version_b: versionB } }),
-  getSolomonVersionHistory: (botName: string, days: number = 90) =>
-    api.get(`/api/solomon/enhanced/version-history/${botName}`, { params: { days } }),
+  getProverbsEnhancedAnalysis: (botName: string, days: number = 30) =>
+    api.get(`/api/proverbs/enhanced/analysis/${botName}`, { params: { days } }),
+  getProverbsEnhancedCorrelations: () => api.get('/api/proverbs/enhanced/correlations'),
+  getProverbsEnhancedTimeAnalysis: (bot: string) => api.get(`/api/proverbs/enhanced/time-analysis/${bot}`),
+  getProverbsEnhancedRegime: (botName: string, days: number = 30) =>
+    api.get(`/api/proverbs/enhanced/regime/${botName}`, { params: { days } }),
+  getProverbsEnhancedDigest: () => api.get('/api/proverbs/enhanced/digest'),
+  getProverbsWeekendPrecheck: () => api.get('/api/proverbs/enhanced/weekend-precheck'),
+  getProverbsVersionCompare: (botName: string, versionA: string, versionB: string) =>
+    api.get(`/api/proverbs/enhanced/version-compare/${botName}`, { params: { version_a: versionA, version_b: versionB } }),
+  getProverbsVersionHistory: (botName: string, days: number = 90) =>
+    api.get(`/api/proverbs/enhanced/version-history/${botName}`, { params: { days } }),
 
   // A/B Testing
-  createSolomonABTest: (data: { bot_name: string; control_config: unknown; variant_config: unknown; allocation?: number }) =>
-    api.post('/api/solomon/enhanced/ab-test', data),
-  getSolomonABTests: (botName?: string) =>
-    api.get('/api/solomon/enhanced/ab-test', { params: { bot_name: botName } }),
-  evaluateSolomonABTest: (testId: string) =>
-    api.get(`/api/solomon/enhanced/ab-test/${testId}/evaluate`),
-  getSolomonRollbackCooldown: (botName: string) =>
-    api.get(`/api/solomon/enhanced/rollback-status/${botName}`),
+  createProverbsABTest: (data: { bot_name: string; control_config: unknown; variant_config: unknown; allocation?: number }) =>
+    api.post('/api/proverbs/enhanced/ab-test', data),
+  getProverbsABTests: (botName?: string) =>
+    api.get('/api/proverbs/enhanced/ab-test', { params: { bot_name: botName } }),
+  evaluateProverbsABTest: (testId: string) =>
+    api.get(`/api/proverbs/enhanced/ab-test/${testId}/evaluate`),
+  getProverbsRollbackCooldown: (botName: string) =>
+    api.get(`/api/proverbs/enhanced/rollback-status/${botName}`),
 
   // AI Analysis (Claude-powered)
-  aiAnalyzeSolomonPerformance: (botName: string) =>
-    api.get(`/api/solomon/ai/analyze-performance/${botName}`),
-  aiSolomonProposalReasoning: (proposalId: string) =>
-    api.get(`/api/solomon/ai/proposal-reasoning/${proposalId}`),
-  aiSolomonWeekendAnalysis: () => api.get('/api/solomon/ai/weekend-analysis'),
+  aiAnalyzeProverbsPerformance: (botName: string) =>
+    api.get(`/api/proverbs/ai/analyze-performance/${botName}`),
+  aiProverbsProposalReasoning: (proposalId: string) =>
+    api.get(`/api/proverbs/ai/proposal-reasoning/${proposalId}`),
+  aiProverbsWeekendAnalysis: () => api.get('/api/proverbs/ai/weekend-analysis'),
 
   // Proposal Validation (Proven Improvement)
-  createValidatedSolomonProposal: (data: { bot_name: string; config_change: unknown; reasoning: unknown }) =>
-    api.post('/api/solomon/validation/create-proposal', data),
-  getSolomonValidationStatus: () => api.get('/api/solomon/validation/status'),
-  getSolomonValidationStatusById: (proposalId: string) =>
-    api.get(`/api/solomon/validation/status/${proposalId}`),
-  getSolomonValidationCanApply: (proposalId: string) => api.get(`/api/solomon/validation/can-apply/${proposalId}`),
-  applySolomonValidatedProposal: (proposalId: string, data?: { user?: string }) =>
-    api.post(`/api/solomon/validation/apply/${proposalId}`, data),
-  getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
-  getSolomonTransparencyReport: (proposalId: string) =>
-    api.get(`/api/solomon/validation/transparency-report/${proposalId}`),
-  recordSolomonValidationTrade: (data: { validation_id: string; is_proposed: boolean; pnl: number }) =>
-    api.post('/api/solomon/validation/record-trade', data),
+  createValidatedProverbsProposal: (data: { bot_name: string; config_change: unknown; reasoning: unknown }) =>
+    api.post('/api/proverbs/validation/create-proposal', data),
+  getProverbsValidationStatus: () => api.get('/api/proverbs/validation/status'),
+  getProverbsValidationStatusById: (proposalId: string) =>
+    api.get(`/api/proverbs/validation/status/${proposalId}`),
+  getProverbsValidationCanApply: (proposalId: string) => api.get(`/api/proverbs/validation/can-apply/${proposalId}`),
+  applyProverbsValidatedProposal: (proposalId: string, data?: { user?: string }) =>
+    api.post(`/api/proverbs/validation/apply/${proposalId}`, data),
+  getProverbsProposalReasoning: (proposalId: string) => api.get(`/api/proverbs/validation/reasoning/${proposalId}`),
+  getProverbsTransparencyReport: (proposalId: string) =>
+    api.get(`/api/proverbs/validation/transparency-report/${proposalId}`),
+  recordProverbsValidationTrade: (data: { validation_id: string; is_proposed: boolean; pnl: number }) =>
+    api.post('/api/proverbs/validation/record-trade', data),
 
   // QUANT - ML Models Dashboard
   getQuantHealth: () => api.get('/api/quant/health'),

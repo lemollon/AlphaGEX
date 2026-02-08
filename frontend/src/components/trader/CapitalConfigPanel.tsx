@@ -26,7 +26,7 @@ import {
 import { useUnifiedBotSummary, useUnifiedBotCapital } from '@/lib/hooks/useMarketData'
 
 interface CapitalConfigPanelProps {
-  botName: 'ARES' | 'ATHENA' | 'ICARUS' | 'TITAN' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'SAMSON' | 'ANCHOR'
   brandColor?: string  // e.g., 'amber', 'cyan', 'orange', 'violet', 'blue'
 }
 
@@ -39,11 +39,11 @@ const BRAND_COLORS: Record<string, { bg: string; border: string; text: string; h
 }
 
 const BOT_BRAND_COLORS: Record<string, string> = {
-  ARES: 'amber',
-  ATHENA: 'cyan',
-  ICARUS: 'orange',
-  TITAN: 'violet',
-  PEGASUS: 'blue',
+  FORTRESS: 'amber',
+  SOLOMON: 'cyan',
+  GIDEON: 'orange',
+  SAMSON: 'violet',
+  ANCHOR: 'blue',
 }
 
 function formatCurrency(value: number): string {
@@ -298,7 +298,7 @@ export default function CapitalConfigPanel({
           Recapitalize Account
         </h4>
         <p className="text-gray-400 text-sm mb-4">
-          Add fresh capital after a drawdown while <strong className="text-green-400">preserving all historical data</strong> for Solomon learning.
+          Add fresh capital after a drawdown while <strong className="text-green-400">preserving all historical data</strong> for Proverbs learning.
           Use this instead of reset to keep valuable trade history.
         </p>
 

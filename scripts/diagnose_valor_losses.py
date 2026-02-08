@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database_adapter import DatabaseAdapter
 
 print("=" * 70)
-print("VALOR (HERACLES) LOSS DIAGNOSIS")
+print("VALOR (VALOR) LOSS DIAGNOSIS")
 print("=" * 70)
 
 db = DatabaseAdapter()
@@ -29,7 +29,7 @@ rows = db.fetchall("""
         realized_pnl,
         close_reason,
         close_time
-    FROM heracles_closed_trades
+    FROM valor_closed_trades
     ORDER BY close_time DESC
     LIMIT 20
 """)
@@ -79,7 +79,7 @@ rows = db.fetchall("""
         AVG(realized_pnl) as avg_pnl,
         SUM(CASE WHEN realized_pnl >= 0 THEN 1 ELSE 0 END) as wins,
         SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses
-    FROM heracles_closed_trades
+    FROM valor_closed_trades
     WHERE close_time > NOW() - INTERVAL '7 days'
     GROUP BY stop_type
 """)
@@ -102,7 +102,7 @@ else:
 print("\n3. CURRENT CONFIG")
 print("-" * 70)
 rows = db.fetchall("""
-    SELECT key, value FROM heracles_config
+    SELECT key, value FROM valor_config
     WHERE key IN ('initial_stop_points', 'profit_target_points', 'ab_test_stops_enabled', 'trade_overnight')
 """)
 if rows:
@@ -123,7 +123,7 @@ rows = db.fetchall("""
         action_type,
         COUNT(*) as count,
         MAX(timestamp) as last_seen
-    FROM heracles_scan_activity
+    FROM valor_scan_activity
     WHERE timestamp > NOW() - INTERVAL '1 hour'
     GROUP BY action_type
     ORDER BY count DESC
@@ -146,7 +146,7 @@ rows = db.fetchall("""
         stop_type,
         stop_points_used,
         open_time
-    FROM heracles_positions
+    FROM valor_positions
     WHERE status = 'OPEN'
 """)
 if rows:
@@ -169,6 +169,6 @@ If avg loss > $12.50 per contract:
 If position monitor shows no activity:
   → The 15-second monitor may not be running
 
-Run: curl https://alphagex-api.onrender.com/api/heracles/ab-test/status
+Run: curl https://alphagex-api.onrender.com/api/valor/ab-test/status
   → Verify ab_test_enabled = false
 """)

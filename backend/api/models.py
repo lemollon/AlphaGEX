@@ -1,5 +1,5 @@
 """
-Pydantic Request/Response Models for ARES and ATHENA APIs
+Pydantic Request/Response Models for FORTRESS and SOLOMON APIs
 
 Provides strict input validation for all API endpoints to ensure:
 - Type safety for all parameters
@@ -8,10 +8,10 @@ Provides strict input validation for all API endpoints to ensure:
 - Clear error messages for invalid input
 
 Usage:
-    from backend.api.models import ARESConfigUpdate, StrategyPresetRequest
+    from backend.api.models import FortressConfigUpdate, StrategyPresetRequest
 
     @router.post("/config")
-    async def update_config(request: ARESConfigUpdate):
+    async def update_config(request: FortressConfigUpdate):
         # request is already validated
         ...
 """
@@ -34,7 +34,7 @@ class TradingModeEnum(str, Enum):
 
 
 class StrategyPresetEnum(str, Enum):
-    """ARES strategy preset options"""
+    """FORTRESS strategy preset options"""
     BASELINE = "baseline"
     CONSERVATIVE = "conservative"
     MODERATE = "moderate"
@@ -43,7 +43,7 @@ class StrategyPresetEnum(str, Enum):
 
 
 class SpreadTypeEnum(str, Enum):
-    """ATHENA spread type options"""
+    """SOLOMON spread type options"""
     BULL_CALL_SPREAD = "BULL_CALL_SPREAD"
     BEAR_CALL_SPREAD = "BEAR_CALL_SPREAD"
 
@@ -58,11 +58,11 @@ class ScanOutcomeEnum(str, Enum):
 
 
 # =============================================================================
-# ARES Request Models
+# FORTRESS Request Models
 # =============================================================================
 
-class ARESConfigUpdate(BaseModel):
-    """Request model for updating ARES configuration"""
+class FortressConfigUpdate(BaseModel):
+    """Request model for updating FORTRESS configuration"""
 
     risk_per_trade_pct: Optional[float] = Field(
         None,
@@ -142,11 +142,11 @@ class ARESSkipDayRequest(BaseModel):
 
 
 # =============================================================================
-# ATHENA Request Models
+# SOLOMON Request Models
 # =============================================================================
 
-class ATHENAConfigUpdate(BaseModel):
-    """Request model for updating ATHENA configuration"""
+class SolomonConfigUpdate(BaseModel):
+    """Request model for updating SOLOMON configuration"""
 
     setting_name: str = Field(
         ...,
@@ -181,8 +181,8 @@ class ATHENAConfigUpdate(BaseModel):
         return v.lower()
 
 
-class ATHENATradeRequest(BaseModel):
-    """Request model for manual ATHENA trade"""
+class SOLOMONTradeRequest(BaseModel):
+    """Request model for manual SOLOMON trade"""
 
     direction: Literal["bullish", "bearish"] = Field(
         ...,
@@ -288,7 +288,7 @@ class PositionResponse(BaseModel):
     """Response model for position data"""
 
     position_id: str
-    bot: str = Field(..., description="Bot name (ARES or ATHENA)")
+    bot: str = Field(..., description="Bot name (FORTRESS or SOLOMON)")
     status: str = Field(..., description="Position status")
     open_date: str
     expiration: str
@@ -298,14 +298,14 @@ class PositionResponse(BaseModel):
     unrealized_pnl: Optional[float] = None
     realized_pnl: Optional[float] = None
 
-    # ARES-specific
+    # FORTRESS-specific
     put_short_strike: Optional[float] = None
     put_long_strike: Optional[float] = None
     call_short_strike: Optional[float] = None
     call_long_strike: Optional[float] = None
     total_credit: Optional[float] = None
 
-    # ATHENA-specific
+    # SOLOMON-specific
     spread_type: Optional[str] = None
     long_strike: Optional[float] = None
     short_strike: Optional[float] = None

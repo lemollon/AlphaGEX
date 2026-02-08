@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Close Expired ATHENA Positions
+Close Expired SOLOMON Positions
 
-This script finds all ATHENA positions that have expired (expiration <= today)
+This script finds all SOLOMON positions that have expired (expiration <= today)
 but are still marked as 'open', calculates their P&L, and updates:
 1. Position status to 'expired'
 2. Realized P&L based on closing price
@@ -340,7 +340,7 @@ def get_current_capital() -> float:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Close expired ATHENA positions')
+    parser = argparse.ArgumentParser(description='Close expired SOLOMON positions')
     parser.add_argument('--dry-run', action='store_true',
                        help='Show what would be done without making changes')
     parser.add_argument('--closing-price', type=float,
@@ -348,7 +348,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 80)
-    print("CLOSE EXPIRED ATHENA POSITIONS")
+    print("CLOSE EXPIRED SOLOMON POSITIONS")
     print("=" * 80)
 
     if args.dry_run:

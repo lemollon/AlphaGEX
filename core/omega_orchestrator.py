@@ -10,11 +10,11 @@ ARCHITECTURE:
 │                            OMEGA ORCHESTRATOR                                    │
 │                                                                                  │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐│
-│  │ LAYER 1: SOLOMON - ABSOLUTE AUTHORITY (Hard Safety Limits)                  ││
+│  │ LAYER 1: PROVERBS - ABSOLUTE AUTHORITY (Hard Safety Limits)                  ││
 │  │ • Consecutive loss tracking (kill after 3 in a row)                         ││
 │  │ • Daily loss limits (3% max)                                                ││
 │  │ • Kill switch management                                                    ││
-│  │ • IF SOLOMON SAYS STOP → FULL STOP. No override possible.                   ││
+│  │ • IF PROVERBS SAYS STOP → FULL STOP. No override possible.                   ││
 │  └─────────────────────────────────────────────────────────────────────────────┘│
 │                                    ↓                                            │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐│
@@ -28,15 +28,15 @@ ARCHITECTURE:
 │                                    ↓                                            │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐│
 │  │ LAYER 3: ML ADVISOR - PRIMARY DECISION MAKER                                ││
-│  │ • XGBoost model trained on KRONOS backtest data                             ││
+│  │ • XGBoost model trained on CHRONICLES backtest data                             ││
 │  │ • Win probability prediction                                                ││
 │  │ • Position sizing recommendation                                            ││
 │  │ • Auto-retrain when performance degrades                                    ││
 │  └─────────────────────────────────────────────────────────────────────────────┘│
 │                                    ↓                                            │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐│
-│  │ LAYER 4: ORACLE - BOT-SPECIFIC ADAPTATION                                   ││
-│  │ • Adapts ML decision for specific bot (ARES, ATHENA, etc.)                  ││
+│  │ LAYER 4: PROPHET - BOT-SPECIFIC ADAPTATION                                   ││
+│  │ • Adapts ML decision for specific bot (FORTRESS, SOLOMON, etc.)                  ││
 │  │ • Strike selection, risk percentage                                         ││
 │  │ • NO veto power over ML Advisor                                             ││
 │  └─────────────────────────────────────────────────────────────────────────────┘│
@@ -83,10 +83,10 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 class DecisionAuthority(Enum):
     """Who made the trading decision"""
-    SOLOMON = "SOLOMON"           # Safety layer - ABSOLUTE
+    PROVERBS = "PROVERBS"           # Safety layer - ABSOLUTE
     ENSEMBLE = "ENSEMBLE"         # Market context - INFORMATIONAL
     ML_ADVISOR = "ML_ADVISOR"     # Win probability - PRIMARY
-    ORACLE = "ORACLE"             # Bot-specific - ADAPTATION
+    PROPHET = "PROPHET"             # Bot-specific - ADAPTATION
 
 
 class TradingDecision(Enum):
@@ -94,7 +94,7 @@ class TradingDecision(Enum):
     TRADE_FULL = "TRADE_FULL"           # High confidence, full size
     TRADE_REDUCED = "TRADE_REDUCED"     # Medium confidence, reduce size
     SKIP_TODAY = "SKIP_TODAY"           # Low confidence or safety block
-    BLOCKED_BY_SOLOMON = "BLOCKED_BY_SOLOMON"  # Safety limit hit
+    BLOCKED_BY_PROVERBS = "BLOCKED_BY_PROVERBS"  # Safety limit hit
 
 
 class RegimeTransition(Enum):
@@ -113,14 +113,14 @@ class RegimeTransition(Enum):
 # =============================================================================
 
 @dataclass
-class SolomonVerdict:
-    """Solomon safety layer verdict"""
+class ProverbsVerdict:
+    """Proverbs safety layer verdict"""
     can_trade: bool
     reason: str
     consecutive_losses: int = 0
     daily_loss_pct: float = 0.0
     is_killed: bool = False
-    authority: DecisionAuthority = DecisionAuthority.SOLOMON
+    authority: DecisionAuthority = DecisionAuthority.PROVERBS
 
     def to_dict(self) -> Dict:
         return {
@@ -170,14 +170,14 @@ class MLAdvisorDecision:
 
 @dataclass
 class OracleAdaptation:
-    """Oracle bot-specific adaptation"""
+    """Prophet bot-specific adaptation"""
     bot_name: str
     suggested_put_strike: Optional[float] = None
     suggested_call_strike: Optional[float] = None
     use_gex_walls: bool = False
     risk_adjustment: float = 1.0  # Multiplier for risk
     reasoning: str = ""
-    authority: DecisionAuthority = DecisionAuthority.ORACLE
+    authority: DecisionAuthority = DecisionAuthority.PROPHET
 
     def to_dict(self) -> Dict:
         return {
@@ -202,7 +202,7 @@ class OmegaDecision:
     final_position_size_multiplier: float
 
     # Layer outputs (transparency)
-    solomon_verdict: SolomonVerdict
+    proverbs_verdict: ProverbsVerdict
     ensemble_context: EnsembleContext
     ml_decision: MLAdvisorDecision
     oracle_adaptation: OracleAdaptation
@@ -223,7 +223,7 @@ class OmegaDecision:
             'final_decision': self.final_decision.value,
             'final_risk_pct': self.final_risk_pct,
             'final_position_size_multiplier': self.final_position_size_multiplier,
-            'solomon_verdict': self.solomon_verdict.to_dict(),
+            'proverbs_verdict': self.proverbs_verdict.to_dict(),
             'ensemble_context': self.ensemble_context.to_dict(),
             'ml_decision': self.ml_decision.to_dict(),
             'oracle_adaptation': self.oracle_adaptation.to_dict(),
@@ -812,7 +812,7 @@ class OmegaOrchestrator:
     The OMEGA Orchestrator - Central Trading Decision Coordination Hub.
 
     Provides a single entry point for all trading decisions with:
-    - Layered decision authority (Solomon → Ensemble → ML → Oracle)
+    - Layered decision authority (Proverbs → Ensemble → ML → Prophet)
     - Full transparency on WHO made each decision and WHY
     - Gap implementations for enhanced profitability
     """
@@ -829,8 +829,8 @@ class OmegaOrchestrator:
         # Thompson Sampling allocator (Gap 2)
         self._thompson_allocator = None
 
-        # Solomon Enhanced (with ConsecutiveLossMonitor, DailyLossMonitor, etc.)
-        self._solomon_enhanced = None
+        # Proverbs Enhanced (with ConsecutiveLossMonitor, DailyLossMonitor, etc.)
+        self._proverbs_enhanced = None
 
         # Ensemble weighter
         self._ensemble_weighter = None
@@ -838,7 +838,7 @@ class OmegaOrchestrator:
         # ML Advisor
         self._ml_advisor = None
 
-        # Oracle
+        # Prophet
         self._oracle = None
 
         # Decision history
@@ -847,26 +847,26 @@ class OmegaOrchestrator:
 
         logger.info("OMEGA Orchestrator initialized")
 
-    def _get_solomon_enhanced(self):
-        """Lazy load Solomon Enhanced"""
-        if self._solomon_enhanced is None:
+    def _get_proverbs_enhanced(self):
+        """Lazy load Proverbs Enhanced"""
+        if self._proverbs_enhanced is None:
             try:
-                from quant.solomon_enhancements import get_solomon_enhanced
-                self._solomon_enhanced = get_solomon_enhanced()
+                from quant.proverbs_enhancements import get_proverbs_enhanced
+                self._proverbs_enhanced = get_proverbs_enhanced()
             except ImportError as e:
-                logger.warning(f"Could not load Solomon Enhanced: {e}")
-        return self._solomon_enhanced
+                logger.warning(f"Could not load Proverbs Enhanced: {e}")
+        return self._proverbs_enhanced
 
     def _get_ensemble_weighter(self, symbol: str = "SPY"):
-        # REMOVED: Ensemble Strategy - Oracle is god
+        # REMOVED: Ensemble Strategy - Prophet is god
         return None
 
     def _get_ml_advisor(self):
         """Lazy load ML Advisor"""
         if self._ml_advisor is None:
             try:
-                from quant.ares_ml_advisor import AresMLAdvisor
-                self._ml_advisor = AresMLAdvisor()
+                from quant.fortress_ml_advisor import FortressMLAdvisor
+                self._ml_advisor = FortressMLAdvisor()
             except ImportError as e:
                 logger.warning(f"Could not load ML Advisor: {e}")
         return self._ml_advisor
@@ -882,39 +882,39 @@ class OmegaOrchestrator:
         return self._thompson_allocator
 
     # =========================================================================
-    # LAYER 1: SOLOMON - ABSOLUTE AUTHORITY
+    # LAYER 1: PROVERBS - ABSOLUTE AUTHORITY
     # =========================================================================
 
-    def _check_solomon(self, bot_name: str) -> SolomonVerdict:
+    def _check_proverbs(self, bot_name: str) -> ProverbsVerdict:
         """
-        Check Solomon safety layer.
+        Check Proverbs safety layer.
 
-        IF SOLOMON SAYS STOP → FULL STOP. No override possible.
+        IF PROVERBS SAYS STOP → FULL STOP. No override possible.
         """
-        solomon = self._get_solomon_enhanced()
+        proverbs = self._get_proverbs_enhanced()
 
-        if solomon is None:
-            # Fallback: allow trading if Solomon not available
-            return SolomonVerdict(
+        if proverbs is None:
+            # Fallback: allow trading if Proverbs not available
+            return ProverbsVerdict(
                 can_trade=True,
-                reason="Solomon not available, proceeding with caution"
+                reason="Proverbs not available, proceeding with caution"
             )
 
         # Check consecutive losses
-        consec_status = solomon.consecutive_loss_monitor.get_status(bot_name)
+        consec_status = proverbs.consecutive_loss_monitor.get_status(bot_name)
         consecutive_losses = consec_status.get('consecutive_losses', 0)
 
         # Check daily loss
-        daily_status = solomon.daily_loss_monitor.get_status(bot_name)
+        daily_status = proverbs.daily_loss_monitor.get_status(bot_name)
         daily_pnl = daily_status.get('total_pnl', 0)
         daily_loss_pct = abs(daily_pnl / self.capital * 100) if daily_pnl < 0 else 0
 
         # Check kill switch
-        is_killed = solomon.solomon.is_bot_killed(bot_name)
+        is_killed = proverbs.proverbs.is_bot_killed(bot_name)
 
         # Determine if trading is allowed
         if is_killed:
-            return SolomonVerdict(
+            return ProverbsVerdict(
                 can_trade=False,
                 reason="Kill switch is active",
                 consecutive_losses=consecutive_losses,
@@ -923,7 +923,7 @@ class OmegaOrchestrator:
             )
 
         if consec_status.get('triggered_kill', False):
-            return SolomonVerdict(
+            return ProverbsVerdict(
                 can_trade=False,
                 reason=f"Consecutive loss limit reached: {consecutive_losses} losses",
                 consecutive_losses=consecutive_losses,
@@ -932,7 +932,7 @@ class OmegaOrchestrator:
             )
 
         if daily_status.get('triggered_kill', False):
-            return SolomonVerdict(
+            return ProverbsVerdict(
                 can_trade=False,
                 reason=f"Daily loss limit reached: {daily_loss_pct:.1f}%",
                 consecutive_losses=consecutive_losses,
@@ -940,7 +940,7 @@ class OmegaOrchestrator:
                 is_killed=False
             )
 
-        return SolomonVerdict(
+        return ProverbsVerdict(
             can_trade=True,
             reason="All safety checks passed",
             consecutive_losses=consecutive_losses,
@@ -950,7 +950,7 @@ class OmegaOrchestrator:
 
     # =========================================================================
     # LAYER 2: ENSEMBLE - INFORMATIONAL
-    # REMOVED: Ensemble Strategy - Oracle is god
+    # REMOVED: Ensemble Strategy - Prophet is god
     # =========================================================================
 
     def _get_ensemble_context(
@@ -962,8 +962,8 @@ class OmegaOrchestrator:
         ml_prediction: Optional[Dict] = None,
         current_regime: str = "UNKNOWN"
     ) -> EnsembleContext:
-        # REMOVED: Ensemble Strategy - Oracle is god
-        # Returns neutral context - Oracle decides all trades
+        # REMOVED: Ensemble Strategy - Prophet is god
+        # Returns neutral context - Prophet decides all trades
         return EnsembleContext(
             signal="NEUTRAL",
             confidence=50.0,
@@ -971,7 +971,7 @@ class OmegaOrchestrator:
             bearish_weight=0.33,
             neutral_weight=0.34,
             component_signals={},
-            position_size_multiplier=1.0,  # Full size - let Oracle decide
+            position_size_multiplier=1.0,  # Full size - let Prophet decide
             regime=current_regime
         )
 
@@ -1084,7 +1084,7 @@ class OmegaOrchestrator:
             )
 
     # =========================================================================
-    # LAYER 4: ORACLE - BOT-SPECIFIC ADAPTATION
+    # LAYER 4: PROPHET - BOT-SPECIFIC ADAPTATION
     # =========================================================================
 
     def _get_oracle_adaptation(
@@ -1095,7 +1095,7 @@ class OmegaOrchestrator:
         gex_data: Dict
     ) -> OracleAdaptation:
         """
-        Get Oracle bot-specific adaptation.
+        Get Prophet bot-specific adaptation.
 
         NO veto power over ML Advisor decision.
         Only adapts the decision for the specific bot.
@@ -1143,7 +1143,7 @@ class OmegaOrchestrator:
         This is the main entry point for all trading decisions.
 
         Args:
-            bot_name: Name of the bot requesting decision (ARES, ATHENA, etc.)
+            bot_name: Name of the bot requesting decision (FORTRESS, SOLOMON, etc.)
             gex_data: GEX analysis data
             features: ML features dict
             psychology_data: Optional psychology trap data
@@ -1158,21 +1158,21 @@ class OmegaOrchestrator:
         now = datetime.now(CENTRAL_TZ)
 
         # =====================================================================
-        # LAYER 1: SOLOMON CHECK (ABSOLUTE AUTHORITY)
+        # LAYER 1: PROVERBS CHECK (ABSOLUTE AUTHORITY)
         # =====================================================================
-        decision_path.append("LAYER 1: Checking Solomon safety limits...")
-        solomon_verdict = self._check_solomon(bot_name)
+        decision_path.append("LAYER 1: Checking Proverbs safety limits...")
+        proverbs_verdict = self._check_proverbs(bot_name)
 
-        if not solomon_verdict.can_trade:
-            decision_path.append(f"BLOCKED BY SOLOMON: {solomon_verdict.reason}")
+        if not proverbs_verdict.can_trade:
+            decision_path.append(f"BLOCKED BY PROVERBS: {proverbs_verdict.reason}")
 
             return OmegaDecision(
                 timestamp=now,
                 bot_name=bot_name,
-                final_decision=TradingDecision.BLOCKED_BY_SOLOMON,
+                final_decision=TradingDecision.BLOCKED_BY_PROVERBS,
                 final_risk_pct=0,
                 final_position_size_multiplier=0,
-                solomon_verdict=solomon_verdict,
+                proverbs_verdict=proverbs_verdict,
                 ensemble_context=EnsembleContext(
                     signal="NEUTRAL", confidence=0, bullish_weight=0,
                     bearish_weight=0, neutral_weight=1, component_signals={},
@@ -1190,7 +1190,7 @@ class OmegaOrchestrator:
                 decision_path=decision_path
             )
 
-        decision_path.append("Solomon: PASSED - Proceeding to Ensemble")
+        decision_path.append("Proverbs: PASSED - Proceeding to Ensemble")
 
         # =====================================================================
         # LAYER 2: ENSEMBLE CONTEXT (INFORMATIONAL)
@@ -1220,16 +1220,16 @@ class OmegaOrchestrator:
         )
 
         # =====================================================================
-        # LAYER 4: ORACLE ADAPTATION (BOT-SPECIFIC)
+        # LAYER 4: PROPHET ADAPTATION (BOT-SPECIFIC)
         # =====================================================================
-        decision_path.append("LAYER 4: Getting Oracle bot-specific adaptation...")
+        decision_path.append("LAYER 4: Getting Prophet bot-specific adaptation...")
         oracle_adaptation = self._get_oracle_adaptation(
             bot_name=bot_name,
             ml_decision=ml_decision,
             ensemble_context=ensemble_context,
             gex_data=gex_data
         )
-        decision_path.append(f"Oracle: Risk adjustment {oracle_adaptation.risk_adjustment:.0%}")
+        decision_path.append(f"Prophet: Risk adjustment {oracle_adaptation.risk_adjustment:.0%}")
 
         # =====================================================================
         # GAP IMPLEMENTATIONS
@@ -1327,7 +1327,7 @@ class OmegaOrchestrator:
             final_decision=final_decision,
             final_risk_pct=final_risk_pct,
             final_position_size_multiplier=final_multiplier,
-            solomon_verdict=solomon_verdict,
+            proverbs_verdict=proverbs_verdict,
             ensemble_context=ensemble_context,
             ml_decision=ml_decision,
             oracle_adaptation=oracle_adaptation,
@@ -1360,22 +1360,22 @@ class OmegaOrchestrator:
         Record trade outcome for all feedback loops.
 
         Updates:
-        - Solomon (consecutive loss tracking)
+        - Proverbs (consecutive loss tracking)
         - Auto-retrain monitor (Gap 1)
         - Thompson allocator (Gap 2)
         - Equity scaler (Gap 10)
         """
         results = {}
 
-        # Update Solomon
-        solomon = self._get_solomon_enhanced()
-        if solomon:
-            alerts = solomon.record_trade_outcome(
+        # Update Proverbs
+        proverbs = self._get_proverbs_enhanced()
+        if proverbs:
+            alerts = proverbs.record_trade_outcome(
                 bot_name=bot_name,
                 pnl=pnl,
                 trade_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
             )
-            results['solomon_alerts'] = alerts
+            results['proverbs_alerts'] = alerts
 
         # Update Auto-Retrain Monitor (Gap 1)
         retrain_check = self.auto_retrain_monitor.record_outcome(
@@ -1421,10 +1421,10 @@ class OmegaOrchestrator:
             },
             'recent_decisions': len(self.decision_history),
             'layers': {
-                'solomon': 'ACTIVE',
-                'ensemble': 'REMOVED',  # REMOVED: Ensemble Strategy - Oracle is god
+                'proverbs': 'ACTIVE',
+                'ensemble': 'REMOVED',  # REMOVED: Ensemble Strategy - Prophet is god
                 'ml_advisor': 'ACTIVE' if self._get_ml_advisor() and self._get_ml_advisor().is_trained else 'FALLBACK',
-                'oracle': 'ACTIVE'
+                'prophet': 'ACTIVE'
             }
         }
 
@@ -1459,7 +1459,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="OMEGA Orchestrator")
     parser.add_argument("command", choices=["status", "test", "decision"])
-    parser.add_argument("--bot", default="ARES")
+    parser.add_argument("--bot", default="FORTRESS")
     args = parser.parse_args()
 
     omega = get_omega_orchestrator()

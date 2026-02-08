@@ -579,7 +579,7 @@ CREATE TABLE bot_decision_logs (
     timestamp TIMESTAMP DEFAULT NOW(),
 
     -- Bot Identity
-    bot_name VARCHAR(20) NOT NULL,            -- ATLAS, PROMETHEUS, ATHENA
+    bot_name VARCHAR(20) NOT NULL,            -- ATLAS, PROMETHEUS, SOLOMON
     decision_type VARCHAR(30),                -- ENTRY, EXIT, SKIP, ROLL
 
     -- What/Why/How (Transparency)

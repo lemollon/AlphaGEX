@@ -325,14 +325,14 @@ class TestMarketRegimeIntegration:
 
 
 class TestOracleIntegration:
-    """Tests for Oracle AI integration"""
+    """Tests for Prophet AI integration"""
 
     @patch('core.autonomous_paper_trader.get_connection')
     @patch('core.autonomous_paper_trader.get_costs_calculator')
     @patch('core.autonomous_paper_trader.ORACLE_AVAILABLE', True)
-    @patch('core.autonomous_paper_trader.OracleAdvisor')
+    @patch('core.autonomous_paper_trader.ProphetAdvisor')
     def test_oracle_initialized(self, mock_oracle, mock_costs, mock_conn):
-        """Test that Oracle is initialized when available"""
+        """Test that Prophet is initialized when available"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
@@ -342,7 +342,7 @@ class TestOracleIntegration:
         from core.autonomous_paper_trader import AutonomousPaperTrader
         trader = AutonomousPaperTrader()
 
-        assert trader.oracle is not None
+        assert trader.prophet is not None
 
 
 class TestPositionManagement:

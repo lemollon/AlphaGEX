@@ -14,56 +14,56 @@
 -- =============================================================================
 
 -- Status filtering (15+ queries use WHERE status = 'open')
-CREATE INDEX IF NOT EXISTS idx_ares_positions_status
-    ON ares_positions(status);
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_status
+    ON fortress_positions(status);
 
 -- Recent positions lookup (ORDER BY open_time DESC)
-CREATE INDEX IF NOT EXISTS idx_ares_positions_open_time
-    ON ares_positions(open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_open_time
+    ON fortress_positions(open_time DESC);
 
 -- Combined: Most common query pattern "SELECT ... WHERE status = 'open' ORDER BY open_time DESC"
-CREATE INDEX IF NOT EXISTS idx_ares_positions_status_open_time
-    ON ares_positions(status, open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_status_open_time
+    ON fortress_positions(status, open_time DESC);
 
 -- Expiration management queries
-CREATE INDEX IF NOT EXISTS idx_ares_positions_expiration
-    ON ares_positions(expiration);
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_expiration
+    ON fortress_positions(expiration);
 
 -- =============================================================================
--- ATHENA_POSITIONS (Directional Spreads Bot) - Currently has NO indexes
+-- SOLOMON_POSITIONS (Directional Spreads Bot) - Currently has NO indexes
 -- =============================================================================
 
 -- Status filtering (12+ queries)
-CREATE INDEX IF NOT EXISTS idx_athena_positions_status
-    ON athena_positions(status);
+CREATE INDEX IF NOT EXISTS idx_solomon_positions_status
+    ON solomon_positions(status);
 
 -- Recent positions lookup
-CREATE INDEX IF NOT EXISTS idx_athena_positions_open_time
-    ON athena_positions(open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_solomon_positions_open_time
+    ON solomon_positions(open_time DESC);
 
 -- Combined status + time (most common pattern)
-CREATE INDEX IF NOT EXISTS idx_athena_positions_status_open_time
-    ON athena_positions(status, open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_solomon_positions_status_open_time
+    ON solomon_positions(status, open_time DESC);
 
 -- Expiration management
-CREATE INDEX IF NOT EXISTS idx_athena_positions_expiration
-    ON athena_positions(expiration);
+CREATE INDEX IF NOT EXISTS idx_solomon_positions_expiration
+    ON solomon_positions(expiration);
 
 -- =============================================================================
--- PEGASUS_POSITIONS (SPX Iron Condor Bot) - Currently has NO indexes
+-- ANCHOR_POSITIONS (SPX Iron Condor Bot) - Currently has NO indexes
 -- =============================================================================
 
 -- Status filtering (10+ queries)
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_status
-    ON pegasus_positions(status);
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_status
+    ON anchor_positions(status);
 
 -- Recent positions lookup
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_open_time
-    ON pegasus_positions(open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_open_time
+    ON anchor_positions(open_time DESC);
 
 -- Combined status + time
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_status_open_time
-    ON pegasus_positions(status, open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_status_open_time
+    ON anchor_positions(status, open_time DESC);
 
 -- =============================================================================
 -- GEX_HISTORY (GEX Data Snapshots) - Currently has NO indexes

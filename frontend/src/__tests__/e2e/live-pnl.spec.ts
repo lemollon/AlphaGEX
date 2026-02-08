@@ -2,12 +2,12 @@ import { test, expect } from '@playwright/test'
 
 /**
  * E2E Tests for Live P&L Features
- * Tests the Robinhood-style portfolio view for ATHENA and ARES bots
+ * Tests the Robinhood-style portfolio view for SOLOMON and FORTRESS bots
  */
 
-test.describe('ATHENA Live P&L', () => {
+test.describe('SOLOMON Live P&L', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/athena')
+    await page.goto('/solomon')
   })
 
   test('should display portfolio tab by default', async ({ page }) => {
@@ -44,7 +44,7 @@ test.describe('ATHENA Live P&L', () => {
   test('should display live P&L data', async ({ page }) => {
     // Wait for data to load
     await page.waitForResponse(response =>
-      response.url().includes('/api/athena/live-pnl') && response.status() === 200
+      response.url().includes('/api/solomon/live-pnl') && response.status() === 200
     , { timeout: 10000 }).catch(() => {
       // API may not be running in test environment
     })
@@ -79,9 +79,9 @@ test.describe('ATHENA Live P&L', () => {
   })
 })
 
-test.describe('ARES Live P&L', () => {
+test.describe('FORTRESS Live P&L', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/ares')
+    await page.goto('/fortress')
   })
 
   test('should display portfolio tab by default', async ({ page }) => {
@@ -148,8 +148,8 @@ test.describe('ARES Live P&L', () => {
 })
 
 test.describe('API Endpoints', () => {
-  test('ATHENA live-pnl endpoint should return valid response', async ({ request }) => {
-    const response = await request.get('/api/athena/live-pnl')
+  test('SOLOMON live-pnl endpoint should return valid response', async ({ request }) => {
+    const response = await request.get('/api/solomon/live-pnl')
 
     // Should return 200 or valid error response
     expect([200, 500, 503]).toContain(response.status())
@@ -165,8 +165,8 @@ test.describe('API Endpoints', () => {
     }
   })
 
-  test('ARES live-pnl endpoint should return valid response', async ({ request }) => {
-    const response = await request.get('/api/ares/live-pnl')
+  test('FORTRESS live-pnl endpoint should return valid response', async ({ request }) => {
+    const response = await request.get('/api/fortress/live-pnl')
 
     // Should return 200 or valid error response
     expect([200, 500, 503]).toContain(response.status())
@@ -182,15 +182,15 @@ test.describe('API Endpoints', () => {
     }
   })
 
-  test('ATHENA process-expired endpoint should work', async ({ request }) => {
-    const response = await request.post('/api/athena/process-expired')
+  test('SOLOMON process-expired endpoint should work', async ({ request }) => {
+    const response = await request.post('/api/solomon/process-expired')
 
     // Should return 200 or 503 if bot not initialized
     expect([200, 500, 503]).toContain(response.status())
   })
 
-  test('ARES process-expired endpoint should work', async ({ request }) => {
-    const response = await request.post('/api/ares/process-expired')
+  test('FORTRESS process-expired endpoint should work', async ({ request }) => {
+    const response = await request.post('/api/fortress/process-expired')
 
     // Should return 200 or 503 if bot not initialized
     expect([200, 500, 503]).toContain(response.status())
@@ -198,8 +198,8 @@ test.describe('API Endpoints', () => {
 })
 
 test.describe('Equity Chart', () => {
-  test('ATHENA should display equity chart', async ({ page }) => {
-    await page.goto('/athena')
+  test('SOLOMON should display equity chart', async ({ page }) => {
+    await page.goto('/solomon')
 
     // Chart container should exist
     const chartContainer = page.locator('.recharts-responsive-container')
@@ -208,8 +208,8 @@ test.describe('Equity Chart', () => {
     })
   })
 
-  test('ARES should display equity chart', async ({ page }) => {
-    await page.goto('/ares')
+  test('FORTRESS should display equity chart', async ({ page }) => {
+    await page.goto('/fortress')
 
     // Chart container should exist
     const chartContainer = page.locator('.recharts-responsive-container')

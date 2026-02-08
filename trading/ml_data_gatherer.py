@@ -3,17 +3,17 @@ ML Data Gatherer - Centralized Collection of All ML Analyses for Scan Activity
 ===============================================================================
 
 This module collects data from all ML systems in a single call, making it easy
-for bots (ARES, ATHENA, etc.) to log comprehensive ML context with each scan.
+for bots (FORTRESS, SOLOMON, etc.) to log comprehensive ML context with each scan.
 
 Systems Gathered:
-- Quant ML Advisor (ARES-specific ML feedback loop)
+- Quant ML Advisor (FORTRESS-specific ML feedback loop)
 - ML Regime Classifier (market regime prediction)
 - GEX Directional ML (direction prediction from GEX)
 - Ensemble Strategy (weighted combination of signals)
 - Volatility Regime (from psychology trap detector)
 - Psychology Patterns (Liberation, False Floor, Forward Magnets)
 - Monte Carlo Kelly (position sizing)
-- ARGUS Pattern Analysis (pattern similarity)
+- WATCHTOWER Pattern Analysis (pattern similarity)
 - IV Context (IV rank, percentile, ratios)
 - Time Context (day of week, OPEX timing, economic events)
 - Recent Performance (win rates, streaks, P&L)
@@ -37,11 +37,11 @@ logger = logging.getLogger(__name__)
 
 # Import ML systems with fallbacks
 try:
-    from quant.ares_ml_advisor import AresMLAdvisor, TradingAdvice
+    from quant.fortress_ml_advisor import FortressMLAdvisor, TradingAdvice
     ARES_ML_AVAILABLE = True
 except ImportError as e:
     ARES_ML_AVAILABLE = False
-    logger.debug(f"AresMLAdvisor not available: {e}")
+    logger.debug(f"FortressMLAdvisor not available: {e}")
 
 try:
     from quant.ml_regime_classifier import get_ml_classifier, MLRegimeAction
@@ -84,7 +84,7 @@ try:
     ARGUS_AVAILABLE = True
 except ImportError as e:
     ARGUS_AVAILABLE = False
-    logger.debug(f"ARGUS not available: {e}")
+    logger.debug(f"WATCHTOWER not available: {e}")
 
 try:
     from database_adapter import get_connection
@@ -153,7 +153,7 @@ class MLDataBundle:
     kelly_prob_ruin: float = 0
     kelly_recommendation: str = ""
 
-    # ARGUS Pattern Analysis
+    # WATCHTOWER Pattern Analysis
     argus_pattern_match: str = ""
     argus_similarity_score: float = 0
     argus_historical_outcome: str = ""
@@ -233,7 +233,7 @@ class MLDataGatherer:
             spot_price=585.50,
             vix=15.5,
             gex_data={'net_gex': 1.5e9, ...},
-            bot_name="ARES"
+            bot_name="FORTRESS"
         )
         # ml_data.to_kwargs() returns all fields ready for log_scan_activity()
     """
@@ -253,7 +253,7 @@ class MLDataGatherer:
         vix: float = 0,
         gex_data: Optional[Dict] = None,
         market_data: Optional[Dict] = None,
-        bot_name: str = "ARES",
+        bot_name: str = "FORTRESS",
         win_rate: float = 0.70,
         avg_win: float = 150,
         avg_loss: float = 350,
@@ -283,7 +283,7 @@ class MLDataGatherer:
         self._gather_quant_ml(bundle, symbol, spot_price, vix, gex_data)
         self._gather_regime_classifier(bundle, symbol, spot_price, vix, gex_data)
         self._gather_gex_ml(bundle, symbol, spot_price, vix, gex_data)
-        # REMOVED: Ensemble gathering - Oracle is god
+        # REMOVED: Ensemble gathering - Prophet is god
         # self._gather_ensemble(bundle, symbol, spot_price, vix, gex_data)
         self._gather_volatility_regime(bundle, spot_price, vix, gex_data)
         self._gather_psychology(bundle, symbol, spot_price, gex_data)
@@ -310,7 +310,7 @@ class MLDataGatherer:
 
         try:
             if self._ares_advisor is None:
-                self._ares_advisor = AresMLAdvisor(symbol=symbol)
+                self._ares_advisor = FortressMLAdvisor(symbol=symbol)
 
             # Build features for prediction
             features = {
@@ -427,7 +427,7 @@ class MLDataGatherer:
         vix: float,
         gex_data: Dict
     ):
-        # REMOVED: Ensemble gathering - Oracle is god
+        # REMOVED: Ensemble gathering - Prophet is god
         # Ensemble fields in MLDataBundle will remain empty/default
         pass
 
@@ -551,7 +551,7 @@ class MLDataGatherer:
         spot_price: float,
         gex_data: Dict
     ):
-        """Gather ARGUS pattern analysis data"""
+        """Gather WATCHTOWER pattern analysis data"""
         if not ARGUS_AVAILABLE:
             return
 
@@ -571,7 +571,7 @@ class MLDataGatherer:
                 bundle.argus_roc_value = getattr(result, 'roc_value', 0)
                 bundle.argus_roc_signal = getattr(result, 'roc_signal', '')
         except Exception as e:
-            logger.debug(f"ARGUS gather failed: {e}")
+            logger.debug(f"WATCHTOWER gather failed: {e}")
 
     def _gather_iv_context(
         self,
@@ -903,7 +903,7 @@ def gather_ml_data(
     vix: float = 0,
     gex_data: Optional[Dict] = None,
     market_data: Optional[Dict] = None,
-    bot_name: str = "ARES",
+    bot_name: str = "FORTRESS",
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -917,7 +917,7 @@ def gather_ml_data(
             spot_price=585.50,
             vix=15.5,
             gex_data={'net_gex': 1.5e9, ...},
-            bot_name="ARES"
+            bot_name="FORTRESS"
         )
         log_ares_scan(..., **ml_kwargs)
     """

@@ -10,7 +10,7 @@ Provides mathematical optimization capabilities for all trading bots:
 - HJB Exit Optimizer (exit timing)
 - MDP Trade Sequencer (trade ordering)
 
-All decisions are logged to Solomon's audit trail.
+All decisions are logged to Proverbs's audit trail.
 
 Usage:
     from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
@@ -81,7 +81,7 @@ class MathOptimizerMixin:
     5. HJB Exit Optimizer - Optimal exit timing
     6. MDP Trade Sequencer - Optimal trade ordering
 
-    All decisions are logged to Solomon for full audit trail.
+    All decisions are logged to Proverbs for full audit trail.
     """
 
     def _init_math_optimizers(self, bot_name: str, enabled: bool = True):
@@ -89,7 +89,7 @@ class MathOptimizerMixin:
         Initialize math optimizer integration for this bot.
 
         Args:
-            bot_name: The bot identifier (ARES, ATHENA, PHOENIX, ATLAS)
+            bot_name: The bot identifier (FORTRESS, SOLOMON, LAZARUS, CORNERSTONE)
             enabled: Whether to enable optimizers (default True)
         """
         self._math_bot_name = bot_name
@@ -281,7 +281,7 @@ class MathOptimizerMixin:
         Returns:
             Dict with bot -> allocation amount AND 'allocations' for percentage access
         """
-        bots = ['ARES', 'ATHENA', 'PHOENIX', 'ATLAS']
+        bots = ['FORTRESS', 'SOLOMON', 'LAZARUS', 'CORNERSTONE']
         equal_fallback = {bot: total_capital / len(bots) for bot in bots}
         equal_fallback['allocations'] = {bot: 1.0 / len(bots) for bot in bots}
 

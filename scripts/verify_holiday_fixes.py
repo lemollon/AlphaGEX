@@ -7,10 +7,10 @@ are now properly configured and operational.
 
 Systems Verified:
 1. GEX History Collection - hourly snapshots
-2. Apollo Outcome Tracking - automated outcome recording
-3. SAGE ML Training - weekly scheduled training
-4. Oracle ML Training - daily scheduled training
-5. GEX/ORION ML Training - weekly scheduled training
+2. Discernment Outcome Tracking - automated outcome recording
+3. WISDOM ML Training - weekly scheduled training
+4. Prophet ML Training - daily scheduled training
+5. GEX/STARS ML Training - weekly scheduled training
 6. Startup Recovery - missed training catch-up
 
 Usage:
@@ -175,9 +175,9 @@ def verify_gex_history():
         return result
 
 
-def verify_apollo_outcomes():
-    """Verify Apollo outcome tracking is configured"""
-    result = VerificationResult("Apollo Outcome Tracking")
+def verify_discernment_outcomes():
+    """Verify Discernment outcome tracking is configured"""
+    result = VerificationResult("Discernment Outcome Tracking")
 
     conn = get_connection()
     if not conn:
@@ -190,9 +190,9 @@ def verify_apollo_outcomes():
         # Check predictions vs outcomes
         c.execute('''
             SELECT
-                (SELECT COUNT(*) FROM apollo_predictions) as predictions,
-                (SELECT COUNT(*) FROM apollo_outcomes) as outcomes,
-                (SELECT COUNT(*) FROM apollo_predictions WHERE timestamp > NOW() - INTERVAL '7 days') as recent_predictions
+                (SELECT COUNT(*) FROM discernment_predictions) as predictions,
+                (SELECT COUNT(*) FROM discernment_outcomes) as outcomes,
+                (SELECT COUNT(*) FROM discernment_predictions WHERE timestamp > NOW() - INTERVAL '7 days') as recent_predictions
         ''')
         row = c.fetchone()
         predictions = row[0] if row else 0
@@ -210,7 +210,7 @@ def verify_apollo_outcomes():
         }
 
         if predictions == 0:
-            result.message = "No Apollo predictions yet (Oracle needs to make predictions)"
+            result.message = "No Discernment predictions yet (Prophet needs to make predictions)"
             result.passed = True  # OK if no predictions yet
         elif outcomes > 0:
             result.passed = True
@@ -228,9 +228,9 @@ def verify_apollo_outcomes():
         return result
 
 
-def verify_sage_training():
-    """Verify SAGE training is scheduled"""
-    result = VerificationResult("SAGE ML Training")
+def verify_wisdom_training():
+    """Verify WISDOM training is scheduled"""
+    result = VerificationResult("WISDOM ML Training")
 
     conn = get_connection()
     if not conn:
@@ -244,7 +244,7 @@ def verify_sage_training():
         c.execute('''
             SELECT COUNT(*), MAX(timestamp)
             FROM quant_training_history
-            WHERE model_name = 'SAGE'
+            WHERE model_name = 'WISDOM'
         ''')
         row = c.fetchone()
         count = row[0] if row else 0
@@ -256,7 +256,7 @@ def verify_sage_training():
             c.execute('''
                 SELECT model_version, accuracy, created_at
                 FROM ml_model_metadata
-                WHERE model_name = 'SAGE' AND is_active = TRUE
+                WHERE model_name = 'WISDOM' AND is_active = TRUE
                 ORDER BY created_at DESC
                 LIMIT 1
             ''')
@@ -293,9 +293,9 @@ def verify_sage_training():
         return result
 
 
-def verify_oracle_training():
-    """Verify Oracle training is scheduled"""
-    result = VerificationResult("Oracle ML Training")
+def verify_prophet_training():
+    """Verify Prophet training is scheduled"""
+    result = VerificationResult("Prophet ML Training")
 
     conn = get_connection()
     if not conn:
@@ -309,7 +309,7 @@ def verify_oracle_training():
         c.execute('''
             SELECT COUNT(*), MAX(timestamp)
             FROM quant_training_history
-            WHERE model_name = 'ORACLE'
+            WHERE model_name = 'PROPHET'
         ''')
         row = c.fetchone()
         count = row[0] if row else 0
@@ -322,7 +322,7 @@ def verify_oracle_training():
             # Try with timestamp column (common naming)
             c.execute('''
                 SELECT COUNT(*), MAX(timestamp)
-                FROM oracle_predictions
+                FROM prophet_predictions
             ''')
             pred_row = c.fetchone()
             predictions = pred_row[0] if pred_row else 0
@@ -359,8 +359,8 @@ def verify_oracle_training():
 
 
 def verify_gex_ml_training():
-    """Verify GEX/ORION ML training is scheduled"""
-    result = VerificationResult("GEX/ORION ML Training")
+    """Verify GEX/STARS ML training is scheduled"""
+    result = VerificationResult("GEX/STARS ML Training")
 
     conn = get_connection()
     if not conn:
@@ -370,11 +370,11 @@ def verify_gex_ml_training():
     try:
         c = conn.cursor()
 
-        # Check training history for GEX_ML or ORION or GEX_PROBABILITY_MODELS
+        # Check training history for GEX_ML or STARS or GEX_PROBABILITY_MODELS
         c.execute('''
             SELECT COUNT(*), MAX(timestamp)
             FROM quant_training_history
-            WHERE model_name IN ('GEX_ML', 'ORION', 'GEX_PROBABILITY', 'GEX_PROBABILITY_MODELS', 'GEX_DIRECTIONAL')
+            WHERE model_name IN ('GEX_ML', 'STARS', 'GEX_PROBABILITY', 'GEX_PROBABILITY_MODELS', 'GEX_DIRECTIONAL')
         ''')
         row = c.fetchone()
         count = row[0] if row else 0
@@ -386,7 +386,7 @@ def verify_gex_ml_training():
             c.execute('''
                 SELECT COUNT(*)
                 FROM ml_model_metadata
-                WHERE model_name LIKE '%GEX%' OR model_name LIKE '%ORION%'
+                WHERE model_name LIKE '%GEX%' OR model_name LIKE '%STARS%'
             ''')
             model_count = c.fetchone()[0]
         except Exception:
@@ -430,13 +430,13 @@ def verify_startup_recovery():
             content = f.read()
 
         has_recovery = '_check_startup_recovery' in content
-        has_sage_check = 'SAGE' in content and 'days_since' in content
-        has_oracle_check = 'ORACLE' in content and 'days_since' in content
+        has_sage_check = 'WISDOM' in content and 'days_since' in content
+        has_oracle_check = 'PROPHET' in content and 'days_since' in content
 
         result.details = {
             'recovery_function': has_recovery,
             'sage_staleness_check': has_sage_check,
-            'oracle_staleness_check': has_oracle_check,
+            'prophet_staleness_check': has_oracle_check,
             'file_checked': scheduler_path
         }
 
@@ -465,8 +465,8 @@ def verify_scheduled_jobs():
     )
 
     expected_jobs = [
-        ('SAGE Training', 'scheduled_sage_training'),
-        ('Oracle Training', 'scheduled_oracle_training'),
+        ('WISDOM Training', 'scheduled_wisdom_training'),
+        ('Prophet Training', 'scheduled_prophet_training'),
         ('GEX ML Training', 'scheduled_gex_ml_training'),
         ('GEX Directional Training', 'scheduled_gex_directional'),
     ]
@@ -516,9 +516,9 @@ def run_verification(verbose: bool = False):
     verifications = [
         verify_gex_collection_health,
         verify_gex_history,
-        verify_apollo_outcomes,
-        verify_sage_training,
-        verify_oracle_training,
+        verify_discernment_outcomes,
+        verify_wisdom_training,
+        verify_prophet_training,
         verify_gex_ml_training,
         verify_startup_recovery,
         verify_scheduled_jobs,
@@ -555,9 +555,9 @@ def run_verification(verbose: bool = False):
         print("\n✅ ALL SYSTEMS OPERATIONAL")
         print("   Scheduled jobs will run at their configured times:")
         print("   - GEX Collection: Hourly during market hours")
-        print("   - Apollo Tracking: Every 5 minutes after market close")
-        print("   - SAGE Training: Sunday 4:30 PM CT")
-        print("   - Oracle Training: Daily at midnight CT")
+        print("   - Discernment Tracking: Every 5 minutes after market close")
+        print("   - WISDOM Training: Sunday 4:30 PM CT")
+        print("   - Prophet Training: Daily at midnight CT")
         print("   - GEX ML Training: Sunday 6:00 PM CT")
     else:
         print("\n⚠️ SOME CHECKS FAILED")

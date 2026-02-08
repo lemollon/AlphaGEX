@@ -88,10 +88,10 @@ interface ReportData {
 }
 
 interface BotReportPageProps {
-  botName: 'ARES' | 'ATHENA' | 'ICARUS' | 'TITAN' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'SAMSON' | 'ANCHOR'
   botDisplayName: string
   brandColor: string  // e.g., 'amber', 'cyan', 'orange', 'violet', 'blue'
-  backLink: string    // e.g., '/ares'
+  backLink: string    // e.g., '/fortress'
   date?: string | null  // Optional date for viewing historical reports (YYYY-MM-DD format)
 }
 

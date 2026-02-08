@@ -88,20 +88,20 @@ def api_request(endpoint, method='GET', data=None, timeout=60):
 
 
 def test_oracle_prediction_flow():
-    """Test complete ORACLE prediction flow"""
-    print_header("ORACLE PREDICTION FLOW TEST")
+    """Test complete PROPHET prediction flow"""
+    print_header("PROPHET PREDICTION FLOW TEST")
     results = []
 
-    # Step 1: Check Oracle status
-    print("\n  Step 1: Check Oracle Status")
-    resp = api_request('/api/zero-dte/oracle/status')
+    # Step 1: Check Prophet status
+    print("\n  Step 1: Check Prophet Status")
+    resp = api_request('/api/zero-dte/prophet/status')
     oracle_ready = resp['success'] and resp['data'].get('success', False)
     results.append(oracle_ready)
-    print_result("Oracle status check", oracle_ready,
-                f"Claude: {resp['data'].get('oracle', {}).get('claude_available', 'N/A')}")
+    print_result("Prophet status check", oracle_ready,
+                f"Claude: {resp['data'].get('prophet', {}).get('claude_available', 'N/A')}")
 
     if not oracle_ready:
-        print("  ⚠️  Oracle not ready, skipping prediction test")
+        print("  ⚠️  Prophet not ready, skipping prediction test")
         return False
 
     # Step 2: Run test prediction
@@ -117,7 +117,7 @@ def test_oracle_prediction_flow():
         "distance_to_put_wall": 80
     }
 
-    resp = api_request('/api/zero-dte/oracle/analyze', method='POST', data=test_data)
+    resp = api_request('/api/zero-dte/prophet/analyze', method='POST', data=test_data)
     prediction_success = resp['success'] and resp['data'].get('success', False)
     results.append(prediction_success)
 
@@ -135,7 +135,7 @@ def test_oracle_prediction_flow():
 
     # Step 3: Verify prediction was logged
     print("\n  Step 3: Verify Prediction Logged")
-    resp = api_request('/api/zero-dte/oracle/logs')
+    resp = api_request('/api/zero-dte/prophet/logs')
     logs = resp['data'].get('logs', [])
     has_predict_log = any(log.get('type') == 'PREDICT' for log in logs)
     results.append(has_predict_log)
@@ -190,8 +190,8 @@ def test_pythia_calibration_flow():
 
 
 def test_ml_training_flow():
-    """Test PROMETHEUS ML training and prediction flow"""
-    print_header("PROMETHEUS ML FLOW TEST")
+    """Test JUBILEE ML training and prediction flow"""
+    print_header("JUBILEE ML FLOW TEST")
     results = []
 
     # Step 1: Check ML status
@@ -298,7 +298,7 @@ def test_trader_decision_flow():
     print_header("TRADER DECISION FLOW TEST")
     results = []
 
-    bots = ['ARES', 'ATLAS', 'PHOENIX', 'HERMES', 'ORACLE', 'ATHENA', 'PEGASUS']
+    bots = ['FORTRESS', 'CORNERSTONE', 'LAZARUS', 'SHEPHERD', 'PROPHET', 'SOLOMON', 'ANCHOR']
 
     # Check decision logs for each bot
     for bot in bots:
@@ -320,13 +320,13 @@ def test_trader_decision_flow():
 
 
 def test_gexis_conversation_flow():
-    """Test GEXIS chatbot conversation flow"""
-    print_header("GEXIS CONVERSATION FLOW TEST")
+    """Test COUNSELOR chatbot conversation flow"""
+    print_header("COUNSELOR CONVERSATION FLOW TEST")
     results = []
 
     # Step 1: Check alerts
     print("\n  Step 1: Check Alerts")
-    resp = api_request('/api/ai/gexis/alerts')
+    resp = api_request('/api/ai/counselor/alerts')
     alerts_success = resp['success']
     results.append(alerts_success)
 
@@ -344,7 +344,7 @@ def test_gexis_conversation_flow():
 
     # Step 3: Test command endpoint
     print("\n  Step 3: Test Command Endpoint")
-    resp = api_request('/api/ai/gexis/command', method='POST', data={"command": "/status"})
+    resp = api_request('/api/ai/counselor/command', method='POST', data={"command": "/status"})
     cmd_success = resp['success']
     results.append(cmd_success)
     print_result("Command endpoint", cmd_success)
@@ -353,8 +353,8 @@ def test_gexis_conversation_flow():
 
 
 def test_backtest_data_flow():
-    """Test KRONOS backtest data retrieval"""
-    print_header("KRONOS BACKTEST FLOW TEST")
+    """Test CHRONICLES backtest data retrieval"""
+    print_header("CHRONICLES BACKTEST FLOW TEST")
     results = []
 
     # Step 1: Get backtest jobs
@@ -413,7 +413,7 @@ def test_database_operations():
         tables_to_test = [
             ('gex_snapshots', 'GEX data'),
             ('decision_logs', 'Decision logs'),
-            ('oracle_predictions', 'Oracle predictions'),
+            ('prophet_predictions', 'Prophet predictions'),
             ('wheel_cycles', 'Wheel cycles'),
         ]
 

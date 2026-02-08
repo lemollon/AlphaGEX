@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Diagnostic script to test KRONOS backtest execution and identify failure points.
+Diagnostic script to test CHRONICLES backtest execution and identify failure points.
 This script runs a short backtest with debug mode enabled to trace where trades fail.
 """
 
@@ -36,7 +36,7 @@ def get_orat_connection():
 
 def main():
     print("=" * 70)
-    print("KRONOS BACKTEST DIAGNOSTIC TEST")
+    print("CHRONICLES BACKTEST DIAGNOSTIC TEST")
     print("=" * 70)
 
     # Check environment variables

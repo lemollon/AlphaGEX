@@ -4,7 +4,7 @@
 DIRECTIONAL BOTS PERFORMANCE ANALYZER
 =============================================================================
 
-Run this script in Render shell to analyze ATHENA and ICARUS performance.
+Run this script in Render shell to analyze SOLOMON and GIDEON performance.
 
 Usage (in Render shell):
     cd /opt/render/project/src
@@ -19,7 +19,7 @@ This script analyzes:
 6. Performance by entry hour
 7. Performance by close reason
 8. Wall distance analysis on losing trades
-9. Oracle confidence vs outcome
+9. Prophet confidence vs outcome
 10. Consecutive loss patterns
 """
 
@@ -281,7 +281,7 @@ def analyze_bot(db, bot_name: str, table_name: str):
             print(f"\n  Position: {pos_id}")
             print(f"    {spread}: {long_s}/{short_s} (spot: ${spot:.2f})")
             print(f"    VIX: {vix:.1f}, Regime: {regime}")
-            print(f"    Oracle: {advice} ({conf:.0%} conf)" if conf else f"    Oracle: {advice}")
+            print(f"    Prophet: {advice} ({conf:.0%} conf)" if conf else f"    Prophet: {advice}")
             print(f"    P&L: ${pnl:,.2f} ({reason})")
             print(f"    Entry: {open_t}, Exit: {close_t}")
             if reasoning:
@@ -314,8 +314,8 @@ def analyze_bot(db, bot_name: str, table_name: str):
     for spread, avg_dist, avg_pct, trades in rows:
         print(f"  {spread}: avg ${avg_dist:.2f} ({avg_pct:.2f}%) from wall on {trades} losing trades")
 
-    # 12. Oracle Confidence vs Outcome
-    print(f"\n--- Oracle Confidence vs Outcome ---")
+    # 12. Prophet Confidence vs Outcome
+    print(f"\n--- Prophet Confidence vs Outcome ---")
     cursor.execute(f"""
         SELECT
             CASE
@@ -342,9 +342,9 @@ def analyze_bot(db, bot_name: str, table_name: str):
 
 
 def compare_bots(db):
-    """Compare ATHENA and ICARUS head-to-head"""
+    """Compare SOLOMON and GIDEON head-to-head"""
     print(f"\n{'='*80}")
-    print(f" ATHENA vs ICARUS COMPARISON")
+    print(f" SOLOMON vs GIDEON COMPARISON")
     print(f"{'='*80}")
 
     conn = db.connect()
@@ -353,13 +353,13 @@ def compare_bots(db):
     # Get same-day performance comparison
     print(f"\n--- Same Day Performance (Last 30 Days) ---")
     cursor.execute("""
-        WITH athena_daily AS (
+        WITH solomon_daily AS (
             SELECT
                 DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
                 COUNT(*) as trades,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*) * 100 as win_rate,
                 SUM(realized_pnl) as pnl
-            FROM athena_positions
+            FROM solomon_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time >= NOW() - INTERVAL '30 days'
             GROUP BY 1
@@ -370,27 +370,27 @@ def compare_bots(db):
                 COUNT(*) as trades,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*) * 100 as win_rate,
                 SUM(realized_pnl) as pnl
-            FROM icarus_positions
+            FROM gideon_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time >= NOW() - INTERVAL '30 days'
             GROUP BY 1
         )
         SELECT
             COALESCE(a.trade_date, i.trade_date) as trade_date,
-            a.trades as athena_trades,
-            a.win_rate as athena_wr,
-            a.pnl as athena_pnl,
+            a.trades as solomon_trades,
+            a.win_rate as solomon_wr,
+            a.pnl as solomon_pnl,
             i.trades as icarus_trades,
             i.win_rate as icarus_wr,
             i.pnl as icarus_pnl
-        FROM athena_daily a
+        FROM solomon_daily a
         FULL OUTER JOIN icarus_daily i ON a.trade_date = i.trade_date
         ORDER BY trade_date DESC
         LIMIT 15
     """)
     rows = cursor.fetchall()
 
-    print(f"  {'Date':<12} {'ATHENA':<25} {'ICARUS':<25}")
+    print(f"  {'Date':<12} {'SOLOMON':<25} {'GIDEON':<25}")
     print(f"  {'':<12} {'Trades WR%   P&L':<25} {'Trades WR%   P&L':<25}")
     print(f"  {'-'*60}")
 
@@ -412,7 +412,7 @@ def analyze_losing_patterns(db):
     conn = db.connect()
     cursor = conn.cursor()
 
-    for bot, table in [("ATHENA", "athena_positions"), ("ICARUS", "icarus_positions")]:
+    for bot, table in [("SOLOMON", "solomon_positions"), ("GIDEON", "gideon_positions")]:
         print(f"\n--- {bot} Losing Trade Patterns ---")
 
         # Check for consecutive losses
@@ -490,8 +490,8 @@ def main():
         sys.exit(1)
 
     # Analyze each bot
-    analyze_bot(db, "ATHENA", "athena_positions")
-    analyze_bot(db, "ICARUS", "icarus_positions")
+    analyze_bot(db, "SOLOMON", "solomon_positions")
+    analyze_bot(db, "GIDEON", "gideon_positions")
 
     # Compare bots
     compare_bots(db)

@@ -14,39 +14,39 @@ import { BOT_BRANDS, BotName } from '@/components/trader'
 
 // Brand color lookup for chart theming
 const getBrandColors = (botFilter?: string) => {
-  if (botFilter === 'ARES') {
+  if (botFilter === 'FORTRESS') {
     return {
-      primary: BOT_BRANDS.ARES.hexPrimary,  // Amber #F59E0B
-      light: BOT_BRANDS.ARES.hexLight,       // Light amber
-      dark: BOT_BRANDS.ARES.hexDark,         // Dark amber
+      primary: BOT_BRANDS.FORTRESS.hexPrimary,  // Amber #F59E0B
+      light: BOT_BRANDS.FORTRESS.hexLight,       // Light amber
+      dark: BOT_BRANDS.FORTRESS.hexDark,         // Dark amber
     }
   }
-  if (botFilter === 'ATHENA') {
+  if (botFilter === 'SOLOMON') {
     return {
-      primary: BOT_BRANDS.ATHENA.hexPrimary, // Cyan #06B6D4
-      light: BOT_BRANDS.ATHENA.hexLight,      // Light cyan
-      dark: BOT_BRANDS.ATHENA.hexDark,        // Dark cyan
+      primary: BOT_BRANDS.SOLOMON.hexPrimary, // Cyan #06B6D4
+      light: BOT_BRANDS.SOLOMON.hexLight,      // Light cyan
+      dark: BOT_BRANDS.SOLOMON.hexDark,        // Dark cyan
     }
   }
-  if (botFilter === 'PEGASUS') {
+  if (botFilter === 'ANCHOR') {
     return {
-      primary: BOT_BRANDS.PEGASUS.hexPrimary, // Blue #3B82F6
-      light: BOT_BRANDS.PEGASUS.hexLight,      // Light blue
-      dark: BOT_BRANDS.PEGASUS.hexDark,        // Dark blue
+      primary: BOT_BRANDS.ANCHOR.hexPrimary, // Blue #3B82F6
+      light: BOT_BRANDS.ANCHOR.hexLight,      // Light blue
+      dark: BOT_BRANDS.ANCHOR.hexDark,        // Dark blue
     }
   }
-  if (botFilter === 'ICARUS') {
+  if (botFilter === 'GIDEON') {
     return {
-      primary: BOT_BRANDS.ICARUS.hexPrimary, // Orange #F97316
-      light: BOT_BRANDS.ICARUS.hexLight,      // Light orange
-      dark: BOT_BRANDS.ICARUS.hexDark,        // Dark orange
+      primary: BOT_BRANDS.GIDEON.hexPrimary, // Orange #F97316
+      light: BOT_BRANDS.GIDEON.hexLight,      // Light orange
+      dark: BOT_BRANDS.GIDEON.hexDark,        // Dark orange
     }
   }
-  if (botFilter === 'TITAN') {
+  if (botFilter === 'SAMSON') {
     return {
-      primary: BOT_BRANDS.TITAN.hexPrimary, // Violet #8B5CF6
-      light: BOT_BRANDS.TITAN.hexLight,      // Light violet
-      dark: BOT_BRANDS.TITAN.hexDark,        // Dark violet
+      primary: BOT_BRANDS.SAMSON.hexPrimary, // Violet #8B5CF6
+      light: BOT_BRANDS.SAMSON.hexLight,      // Light violet
+      dark: BOT_BRANDS.SAMSON.hexDark,        // Dark violet
     }
   }
   if (botFilter === 'AGAPE') {
@@ -132,7 +132,7 @@ interface IntradayEquityData {
 }
 
 interface EquityCurveChartProps {
-  botFilter?: string  // 'ARES', 'ATHENA', or undefined for all
+  botFilter?: string  // 'FORTRESS', 'SOLOMON', or undefined for all
   defaultTimeframe?: 'daily' | 'weekly' | 'monthly'
   defaultDays?: number
   height?: number
@@ -427,7 +427,7 @@ export default function EquityCurveChart({
   const { minEquity, maxEquity, minDrawdown, maxDrawdown } = useMemo(() => {
     const dataToUse = viewMode === 'intraday' ? processedIntradayData : aggregatedData
     // Use bot-appropriate starting capital for empty chart bounds
-    const defaultCapital = (botFilter === 'TITAN' || botFilter === 'PEGASUS') ? 200000 : 100000
+    const defaultCapital = (botFilter === 'SAMSON' || botFilter === 'ANCHOR') ? 200000 : 100000
     if (!dataToUse.length) return { minEquity: 0, maxEquity: defaultCapital, minDrawdown: 0, maxDrawdown: 10 }
 
     const equities = dataToUse.map(p => p.equity)
@@ -497,37 +497,37 @@ export default function EquityCurveChart({
     const brandColors = getBrandColors(botFilter)
     return (
       <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
-        botFilter === 'ARES' ? 'border-amber-700/50' :
-        botFilter === 'ATHENA' ? 'border-cyan-700/50' :
-        botFilter === 'PEGASUS' ? 'border-blue-700/50' :
-        botFilter === 'TITAN' ? 'border-violet-700/50' :
-        botFilter === 'ICARUS' ? 'border-orange-700/50' :
+        botFilter === 'FORTRESS' ? 'border-amber-700/50' :
+        botFilter === 'SOLOMON' ? 'border-cyan-700/50' :
+        botFilter === 'ANCHOR' ? 'border-blue-700/50' :
+        botFilter === 'SAMSON' ? 'border-violet-700/50' :
+        botFilter === 'GIDEON' ? 'border-orange-700/50' :
         'border-gray-800'
       }`}>
         <div className="text-center py-8">
           <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
-            botFilter === 'ARES' ? 'bg-amber-900/30' :
-            botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
-            botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
-            botFilter === 'TITAN' ? 'bg-violet-900/30' :
-            botFilter === 'ICARUS' ? 'bg-orange-900/30' :
+            botFilter === 'FORTRESS' ? 'bg-amber-900/30' :
+            botFilter === 'SOLOMON' ? 'bg-cyan-900/30' :
+            botFilter === 'ANCHOR' ? 'bg-blue-900/30' :
+            botFilter === 'SAMSON' ? 'bg-violet-900/30' :
+            botFilter === 'GIDEON' ? 'bg-orange-900/30' :
             'bg-gray-800/50'
           }`}>
             <TrendingUp className={`w-8 h-8 ${
-              botFilter === 'ARES' ? 'text-amber-400' :
-              botFilter === 'ATHENA' ? 'text-cyan-400' :
-              botFilter === 'PEGASUS' ? 'text-blue-400' :
-              botFilter === 'TITAN' ? 'text-violet-400' :
-              botFilter === 'ICARUS' ? 'text-orange-400' :
+              botFilter === 'FORTRESS' ? 'text-amber-400' :
+              botFilter === 'SOLOMON' ? 'text-cyan-400' :
+              botFilter === 'ANCHOR' ? 'text-blue-400' :
+              botFilter === 'SAMSON' ? 'text-violet-400' :
+              botFilter === 'GIDEON' ? 'text-orange-400' :
               'text-gray-400'
             }`} />
           </div>
           <p className={`font-medium mb-2 ${
-            botFilter === 'ARES' ? 'text-amber-400' :
-            botFilter === 'ATHENA' ? 'text-cyan-400' :
-            botFilter === 'PEGASUS' ? 'text-blue-400' :
-            botFilter === 'TITAN' ? 'text-violet-400' :
-            botFilter === 'ICARUS' ? 'text-orange-400' :
+            botFilter === 'FORTRESS' ? 'text-amber-400' :
+            botFilter === 'SOLOMON' ? 'text-cyan-400' :
+            botFilter === 'ANCHOR' ? 'text-blue-400' :
+            botFilter === 'SAMSON' ? 'text-violet-400' :
+            botFilter === 'GIDEON' ? 'text-orange-400' :
             'text-gray-300'
           }`}>No Equity Data Available</p>
           <p className="text-gray-500 text-sm">
@@ -562,28 +562,28 @@ export default function EquityCurveChart({
   if (shouldShowLoading) {
     return (
       <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
-        botFilter === 'ARES' ? 'border-amber-700/50' :
-        botFilter === 'ATHENA' ? 'border-cyan-700/50' :
-        botFilter === 'PEGASUS' ? 'border-blue-700/50' :
-        botFilter === 'TITAN' ? 'border-violet-700/50' :
-        botFilter === 'ICARUS' ? 'border-orange-700/50' :
+        botFilter === 'FORTRESS' ? 'border-amber-700/50' :
+        botFilter === 'SOLOMON' ? 'border-cyan-700/50' :
+        botFilter === 'ANCHOR' ? 'border-blue-700/50' :
+        botFilter === 'SAMSON' ? 'border-violet-700/50' :
+        botFilter === 'GIDEON' ? 'border-orange-700/50' :
         'border-gray-800'
       }`}>
         <div className="animate-pulse space-y-4">
           <div className={`h-6 rounded w-1/3 ${
-            botFilter === 'ARES' ? 'bg-amber-900/30' :
-            botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
-            botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
-            botFilter === 'TITAN' ? 'bg-violet-900/30' :
-            botFilter === 'ICARUS' ? 'bg-orange-900/30' :
+            botFilter === 'FORTRESS' ? 'bg-amber-900/30' :
+            botFilter === 'SOLOMON' ? 'bg-cyan-900/30' :
+            botFilter === 'ANCHOR' ? 'bg-blue-900/30' :
+            botFilter === 'SAMSON' ? 'bg-violet-900/30' :
+            botFilter === 'GIDEON' ? 'bg-orange-900/30' :
             'bg-gray-800'
           }`} />
           <div className={`h-64 rounded ${
-            botFilter === 'ARES' ? 'bg-amber-900/20' :
-            botFilter === 'ATHENA' ? 'bg-cyan-900/20' :
-            botFilter === 'PEGASUS' ? 'bg-blue-900/20' :
-            botFilter === 'TITAN' ? 'bg-violet-900/20' :
-            botFilter === 'ICARUS' ? 'bg-orange-900/20' :
+            botFilter === 'FORTRESS' ? 'bg-amber-900/20' :
+            botFilter === 'SOLOMON' ? 'bg-cyan-900/20' :
+            botFilter === 'ANCHOR' ? 'bg-blue-900/20' :
+            botFilter === 'SAMSON' ? 'bg-violet-900/20' :
+            botFilter === 'GIDEON' ? 'bg-orange-900/20' :
             'bg-gray-800'
           }`} />
         </div>
@@ -592,8 +592,8 @@ export default function EquityCurveChart({
   }
 
   // Get default starting capital based on bot type
-  // SPX bots (TITAN, PEGASUS) use $200k, SPY bots (ARES, ATHENA, ICARUS) use $100k
-  const defaultStartingCapital = (botFilter === 'TITAN' || botFilter === 'PEGASUS') ? 200000 : 100000
+  // SPX bots (SAMSON, ANCHOR) use $200k, SPY bots (FORTRESS, SOLOMON, GIDEON) use $100k
+  const defaultStartingCapital = (botFilter === 'SAMSON' || botFilter === 'ANCHOR') ? 200000 : 100000
 
   // Get summary based on view mode
   const summary = viewMode === 'intraday' && intradayData
@@ -610,26 +610,26 @@ export default function EquityCurveChart({
 
   return (
     <div className={`bg-[#0a0a0a] border rounded-lg overflow-hidden ${
-      botFilter === 'ARES' ? 'border-amber-700/50' :
-      botFilter === 'ATHENA' ? 'border-cyan-700/50' :
-      botFilter === 'PEGASUS' ? 'border-blue-700/50' :
-      botFilter === 'TITAN' ? 'border-violet-700/50' :
-      botFilter === 'ICARUS' ? 'border-orange-700/50' :
+      botFilter === 'FORTRESS' ? 'border-amber-700/50' :
+      botFilter === 'SOLOMON' ? 'border-cyan-700/50' :
+      botFilter === 'ANCHOR' ? 'border-blue-700/50' :
+      botFilter === 'SAMSON' ? 'border-violet-700/50' :
+      botFilter === 'GIDEON' ? 'border-orange-700/50' :
       'border-gray-800'
     }`}>
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            <TrendingUp className={`w-5 h-5 ${botFilter === 'ARES' ? 'text-amber-400' : botFilter === 'ATHENA' ? 'text-cyan-400' : botFilter === 'PEGASUS' ? 'text-blue-400' : botFilter === 'TITAN' ? 'text-violet-400' : botFilter === 'ICARUS' ? 'text-orange-400' : 'text-green-400'}`} />
+            <TrendingUp className={`w-5 h-5 ${botFilter === 'FORTRESS' ? 'text-amber-400' : botFilter === 'SOLOMON' ? 'text-cyan-400' : botFilter === 'ANCHOR' ? 'text-blue-400' : botFilter === 'SAMSON' ? 'text-violet-400' : botFilter === 'GIDEON' ? 'text-orange-400' : 'text-green-400'}`} />
             <h3 className="font-bold text-white">{title}</h3>
             {botFilter && (
               <span className={`px-2 py-0.5 text-xs rounded ${
-                botFilter === 'ARES' ? 'bg-amber-500/20 text-amber-400' :
-                botFilter === 'ATHENA' ? 'bg-cyan-500/20 text-cyan-400' :
-                botFilter === 'PEGASUS' ? 'bg-blue-500/20 text-blue-400' :
-                botFilter === 'TITAN' ? 'bg-violet-500/20 text-violet-400' :
-                botFilter === 'ICARUS' ? 'bg-orange-500/20 text-orange-400' :
+                botFilter === 'FORTRESS' ? 'bg-amber-500/20 text-amber-400' :
+                botFilter === 'SOLOMON' ? 'bg-cyan-500/20 text-cyan-400' :
+                botFilter === 'ANCHOR' ? 'bg-blue-500/20 text-blue-400' :
+                botFilter === 'SAMSON' ? 'bg-violet-500/20 text-violet-400' :
+                botFilter === 'GIDEON' ? 'bg-orange-500/20 text-orange-400' :
                 'bg-purple-500/20 text-purple-400'
               }`}>
                 {botFilter}
@@ -982,19 +982,19 @@ export default function EquityCurveChart({
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
-                botFilter === 'ARES' ? 'bg-amber-900/30' :
-                botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
-                botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
-                botFilter === 'TITAN' ? 'bg-violet-900/30' :
-                botFilter === 'ICARUS' ? 'bg-orange-900/30' :
+                botFilter === 'FORTRESS' ? 'bg-amber-900/30' :
+                botFilter === 'SOLOMON' ? 'bg-cyan-900/30' :
+                botFilter === 'ANCHOR' ? 'bg-blue-900/30' :
+                botFilter === 'SAMSON' ? 'bg-violet-900/30' :
+                botFilter === 'GIDEON' ? 'bg-orange-900/30' :
                 'bg-gray-800/50'
               }`}>
                 <TrendingUp className={`w-6 h-6 ${
-                  botFilter === 'ARES' ? 'text-amber-400/70' :
-                  botFilter === 'ATHENA' ? 'text-cyan-400/70' :
-                  botFilter === 'PEGASUS' ? 'text-blue-400/70' :
-                  botFilter === 'TITAN' ? 'text-violet-400/70' :
-                  botFilter === 'ICARUS' ? 'text-orange-400/70' :
+                  botFilter === 'FORTRESS' ? 'text-amber-400/70' :
+                  botFilter === 'SOLOMON' ? 'text-cyan-400/70' :
+                  botFilter === 'ANCHOR' ? 'text-blue-400/70' :
+                  botFilter === 'SAMSON' ? 'text-violet-400/70' :
+                  botFilter === 'GIDEON' ? 'text-orange-400/70' :
                   'text-gray-500'
                 }`} />
               </div>

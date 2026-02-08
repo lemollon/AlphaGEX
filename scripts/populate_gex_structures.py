@@ -342,7 +342,7 @@ def calculate_gex_structure(conn, symbol: str, trade_date: str, dte_max: int = 7
         call_oi = int(row[2]) if row[2] else 0
         put_oi = int(row[3]) if row[3] else 0
 
-        # GEX = gamma × OI × 100 × spot²  (using spot² like kronos_gex_calculator)
+        # GEX = gamma × OI × 100 × spot²  (using spot² like chronicles_gex_calculator)
         call_gex = gamma * call_oi * 100 * (spot_open ** 2) if call_oi > 0 else 0
         put_gex = gamma * put_oi * 100 * (spot_open ** 2) if put_oi > 0 else 0
 

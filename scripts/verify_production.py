@@ -128,9 +128,9 @@ class ProductionVerifier:
 
         # 4. Bot Systems
         print("🦾 BOT SYSTEMS")
-        self.check("ARES status", "/api/ares/status")
-        self.check("ATHENA status", "/api/athena/status")
-        self.check("APOLLO status", "/api/apollo/status")
+        self.check("FORTRESS status", "/api/fortress/status")
+        self.check("SOLOMON status", "/api/solomon/status")
+        self.check("DISCERNMENT status", "/api/discernment/status")
         print()
 
         # 5. Core API Routes

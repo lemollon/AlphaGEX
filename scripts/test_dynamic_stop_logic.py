@@ -16,7 +16,7 @@ def calculate_dynamic_stop(base_stop: float, vix: float, atr: float, gamma_regim
     """
     Calculate dynamic stop distance based on market conditions.
     
-    This is the EXACT logic from trading/heracles/signals.py
+    This is the EXACT logic from trading/valor/signals.py
     """
     # 1. VIX Adjustment
     if vix <= 0:

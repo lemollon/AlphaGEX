@@ -2,8 +2,8 @@
 End-to-End Test: V2 Bot Audit Trail Storage
 =============================================
 
-Verifies that ARES V2, ATHENA V2, and PEGASUS V2 properly store
-all Oracle/Kronos audit trail data in the database.
+Verifies that FORTRESS V2, SOLOMON V2, and ANCHOR V2 properly store
+all Prophet/Chronicles audit trail data in the database.
 
 This is critical for live trading - we need FULL visibility into
 why trades were made.
@@ -19,17 +19,17 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 # =============================================================================
-# ARES V2 AUDIT TRAIL TESTS
+# FORTRESS V2 AUDIT TRAIL TESTS
 # =============================================================================
 
 class TestARESV2AuditTrail:
-    """Test ARES V2 Iron Condor stores full Oracle/Kronos context"""
+    """Test FORTRESS V2 Iron Condor stores full Prophet/Chronicles context"""
 
     def test_signal_captures_oracle_context(self):
-        """Verify signal captures all Oracle prediction details"""
-        from trading.ares_v2.models import IronCondorSignal
+        """Verify signal captures all Prophet prediction details"""
+        from trading.fortress_v2.models import IronCondorSignal
 
-        # Create signal with full Oracle context
+        # Create signal with full Prophet context
         signal = IronCondorSignal(
             spot_price=585.50,
             vix=18.5,
@@ -37,7 +37,7 @@ class TestARESV2AuditTrail:
             call_wall=595.0,
             put_wall=575.0,
             gex_regime="POSITIVE_GAMMA",
-            # Kronos context
+            # Chronicles context
             flip_point=582.0,
             net_gex=1500000000,
             # Strike selection
@@ -52,9 +52,9 @@ class TestARESV2AuditTrail:
             total_credit=0.87,
             max_loss=113.0,
             max_profit=87.0,
-            # Oracle context (CRITICAL)
+            # Prophet context (CRITICAL)
             confidence=0.78,
-            reasoning="VIX=18.5, GEX-Protected | Oracle: ENTER (78%) | Win Prob: 72% | Top Factor: vix_level",
+            reasoning="VIX=18.5, GEX-Protected | Prophet: ENTER (78%) | Win Prob: 72% | Top Factor: vix_level",
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
             oracle_top_factors=[
@@ -77,11 +77,11 @@ class TestARESV2AuditTrail:
         assert "vix_level" in signal.reasoning
 
     def test_position_stores_oracle_context(self):
-        """Verify position stores all Oracle context from signal"""
-        from trading.ares_v2.models import IronCondorPosition, PositionStatus
+        """Verify position stores all Prophet context from signal"""
+        from trading.fortress_v2.models import IronCondorPosition, PositionStatus
 
         position = IronCondorPosition(
-            position_id="ARES-20241230-ABC123",
+            position_id="FORTRESS-20241230-ABC123",
             ticker="SPY",
             expiration="2024-12-30",
             put_short_strike=572.0,
@@ -101,14 +101,14 @@ class TestARESV2AuditTrail:
             call_wall=595.0,
             put_wall=575.0,
             gex_regime="POSITIVE_GAMMA",
-            # Kronos context
+            # Chronicles context
             flip_point=582.0,
             net_gex=1500000000,
-            # Oracle context
+            # Prophet context
             oracle_confidence=0.78,
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
-            oracle_reasoning="VIX=18.5, GEX-Protected | Oracle: ENTER (78%)",
+            oracle_reasoning="VIX=18.5, GEX-Protected | Prophet: ENTER (78%)",
             oracle_top_factors='[{"factor": "vix_level", "impact": 0.35}]',
             oracle_use_gex_walls=True,
             status=PositionStatus.OPEN,
@@ -130,11 +130,11 @@ class TestARESV2AuditTrail:
         assert data["oracle_win_probability"] == 0.72
         assert data["oracle_advice"] == "ENTER"
 
-    @patch("trading.ares_v2.db.get_connection")
+    @patch("trading.fortress_v2.db.get_connection")
     def test_db_saves_oracle_context(self, mock_get_conn):
-        """Verify DB layer saves all Oracle/Kronos columns"""
-        from trading.ares_v2.db import ARESDatabase
-        from trading.ares_v2.models import IronCondorPosition, PositionStatus
+        """Verify DB layer saves all Prophet/Chronicles columns"""
+        from trading.fortress_v2.db import FortressDatabase
+        from trading.fortress_v2.models import IronCondorPosition, PositionStatus
 
         # Setup mock
         mock_conn = MagicMock()
@@ -144,7 +144,7 @@ class TestARESV2AuditTrail:
 
         # Create position with full context
         position = IronCondorPosition(
-            position_id="ARES-TEST-001",
+            position_id="FORTRESS-TEST-001",
             ticker="SPY",
             expiration="2024-12-30",
             put_short_strike=572.0,
@@ -161,10 +161,10 @@ class TestARESV2AuditTrail:
             underlying_at_entry=585.50,
             vix_at_entry=18.5,
             expected_move=8.75,
-            # Kronos context
+            # Chronicles context
             flip_point=582.0,
             net_gex=1500000000,
-            # Oracle context
+            # Prophet context
             oracle_confidence=0.78,
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
@@ -176,15 +176,15 @@ class TestARESV2AuditTrail:
         )
 
         # Save position
-        db = ARESDatabase()
+        db = FortressDatabase()
         db.save_position(position)
 
-        # Verify INSERT was called with Oracle columns
+        # Verify INSERT was called with Prophet columns
         insert_call = mock_cursor.execute.call_args_list[-1]
         sql = insert_call[0][0]
         params = insert_call[0][1]
 
-        # Check SQL includes Oracle columns
+        # Check SQL includes Prophet columns
         assert "flip_point" in sql
         assert "net_gex" in sql
         assert "oracle_win_probability" in sql
@@ -192,7 +192,7 @@ class TestARESV2AuditTrail:
         assert "oracle_top_factors" in sql
         assert "oracle_use_gex_walls" in sql
 
-        # Check params include Oracle values
+        # Check params include Prophet values
         assert 582.0 in params  # flip_point
         assert 1500000000 in params  # net_gex
         assert 0.72 in params  # oracle_win_probability
@@ -200,15 +200,15 @@ class TestARESV2AuditTrail:
 
 
 # =============================================================================
-# ATHENA V2 AUDIT TRAIL TESTS
+# SOLOMON V2 AUDIT TRAIL TESTS
 # =============================================================================
 
 class TestATHENAV2AuditTrail:
-    """Test ATHENA V2 Directional Spreads stores full ML/Kronos context"""
+    """Test SOLOMON V2 Directional Spreads stores full ML/Chronicles context"""
 
     def test_signal_captures_ml_context(self):
         """Verify signal captures all ML prediction details"""
-        from trading.athena_v2.models import TradeSignal, SpreadType
+        from trading.solomon_v2.models import TradeSignal, SpreadType
 
         signal = TradeSignal(
             direction="BULLISH",
@@ -227,7 +227,7 @@ class TestATHENAV2AuditTrail:
             rr_ratio=1.35,
             confidence=0.75,
             reasoning="BULLISH near PUT_WALL | ML: 68% win | Top: gex_regime",
-            # Kronos context
+            # Chronicles context
             flip_point=582.0,
             net_gex=1500000000,
             # ML context
@@ -249,10 +249,10 @@ class TestATHENAV2AuditTrail:
 
     def test_position_stores_ml_context(self):
         """Verify position stores all ML context from signal"""
-        from trading.athena_v2.models import SpreadPosition, SpreadType, PositionStatus
+        from trading.solomon_v2.models import SpreadPosition, SpreadType, PositionStatus
 
         position = SpreadPosition(
-            position_id="ATHENA-20241230-DEF456",
+            position_id="SOLOMON-20241230-DEF456",
             spread_type=SpreadType.BULL_CALL,
             ticker="SPY",
             long_strike=583.0,
@@ -267,7 +267,7 @@ class TestATHENAV2AuditTrail:
             put_wall=575.0,
             gex_regime="POSITIVE_GAMMA",
             vix_at_entry=18.5,
-            # Kronos context
+            # Chronicles context
             flip_point=582.0,
             net_gex=1500000000,
             # ML context
@@ -294,11 +294,11 @@ class TestATHENAV2AuditTrail:
         assert position.wall_distance_pct == 1.79
         assert "PUT_WALL" in position.trade_reasoning
 
-    @patch("trading.athena_v2.db.get_connection")
+    @patch("trading.solomon_v2.db.get_connection")
     def test_db_saves_ml_context(self, mock_get_conn):
-        """Verify DB layer saves all ML/Kronos columns"""
-        from trading.athena_v2.db import ATHENADatabase
-        from trading.athena_v2.models import SpreadPosition, SpreadType, PositionStatus
+        """Verify DB layer saves all ML/Chronicles columns"""
+        from trading.solomon_v2.db import SolomonDatabase
+        from trading.solomon_v2.models import SpreadPosition, SpreadType, PositionStatus
 
         # Setup mock
         mock_conn = MagicMock()
@@ -307,7 +307,7 @@ class TestATHENAV2AuditTrail:
         mock_get_conn.return_value = mock_conn
 
         position = SpreadPosition(
-            position_id="ATHENA-TEST-001",
+            position_id="SOLOMON-TEST-001",
             spread_type=SpreadType.BULL_CALL,
             ticker="SPY",
             long_strike=583.0,
@@ -318,7 +318,7 @@ class TestATHENAV2AuditTrail:
             max_profit=1150.0,
             max_loss=850.0,
             underlying_at_entry=585.50,
-            # Kronos context
+            # Chronicles context
             flip_point=582.0,
             net_gex=1500000000,
             # ML context
@@ -332,7 +332,7 @@ class TestATHENAV2AuditTrail:
             open_time=datetime.now(CENTRAL_TZ),
         )
 
-        db = ATHENADatabase()
+        db = SolomonDatabase()
         db.save_position(position)
 
         # Verify INSERT includes ML columns
@@ -351,15 +351,15 @@ class TestATHENAV2AuditTrail:
 
 
 # =============================================================================
-# PEGASUS V2 AUDIT TRAIL TESTS
+# ANCHOR V2 AUDIT TRAIL TESTS
 # =============================================================================
 
-class TestPEGASUSV2AuditTrail:
-    """Test PEGASUS V2 SPX Iron Condor stores full Oracle/Kronos context"""
+class TestANCHORV2AuditTrail:
+    """Test ANCHOR V2 SPX Iron Condor stores full Prophet/Chronicles context"""
 
     def test_signal_captures_oracle_context(self):
-        """Verify signal captures all Oracle prediction details"""
-        from trading.pegasus.models import IronCondorSignal
+        """Verify signal captures all Prophet prediction details"""
+        from trading.anchor.models import IronCondorSignal
 
         signal = IronCondorSignal(
             spot_price=5855.0,
@@ -368,7 +368,7 @@ class TestPEGASUSV2AuditTrail:
             call_wall=5950.0,
             put_wall=5750.0,
             gex_regime="POSITIVE_GAMMA",
-            # Kronos context
+            # Chronicles context
             flip_point=5820.0,
             net_gex=1500000000,
             # Strikes
@@ -385,8 +385,8 @@ class TestPEGASUSV2AuditTrail:
             max_profit=480.0,
             # Signal quality
             confidence=0.78,
-            reasoning="SPX VIX=18.5, EM=$88 | GEX-Protected | Oracle: ENTER (78%)",
-            # Oracle context
+            reasoning="SPX VIX=18.5, EM=$88 | GEX-Protected | Prophet: ENTER (78%)",
+            # Prophet context
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
             oracle_top_factors=[
@@ -407,11 +407,11 @@ class TestPEGASUSV2AuditTrail:
         assert signal.oracle_use_gex_walls is True
 
     def test_position_stores_oracle_context(self):
-        """Verify position stores all Oracle context"""
-        from trading.pegasus.models import IronCondorPosition, PositionStatus
+        """Verify position stores all Prophet context"""
+        from trading.anchor.models import IronCondorPosition, PositionStatus
 
         position = IronCondorPosition(
-            position_id="PEGASUS-20241230-GHI789",
+            position_id="ANCHOR-20241230-GHI789",
             ticker="SPX",
             expiration="2024-12-30",
             put_short_strike=5720.0,
@@ -431,14 +431,14 @@ class TestPEGASUSV2AuditTrail:
             call_wall=5950.0,
             put_wall=5750.0,
             gex_regime="POSITIVE_GAMMA",
-            # Kronos context
+            # Chronicles context
             flip_point=5820.0,
             net_gex=1500000000,
-            # Oracle context
+            # Prophet context
             oracle_confidence=0.78,
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
-            oracle_reasoning="SPX VIX=18.5 | Oracle: ENTER (78%)",
+            oracle_reasoning="SPX VIX=18.5 | Prophet: ENTER (78%)",
             oracle_top_factors='[{"factor": "vix_level", "impact": 0.35}]',
             oracle_use_gex_walls=True,
             status=PositionStatus.OPEN,
@@ -458,11 +458,11 @@ class TestPEGASUSV2AuditTrail:
         assert data["net_gex"] == 1500000000
         assert data["oracle_win_probability"] == 0.72
 
-    @patch("trading.pegasus.db.get_connection")
+    @patch("trading.anchor.db.get_connection")
     def test_db_saves_oracle_context(self, mock_get_conn):
-        """Verify DB layer saves all Oracle/Kronos columns"""
-        from trading.pegasus.db import PEGASUSDatabase
-        from trading.pegasus.models import IronCondorPosition, PositionStatus
+        """Verify DB layer saves all Prophet/Chronicles columns"""
+        from trading.anchor.db import AnchorDatabase
+        from trading.anchor.models import IronCondorPosition, PositionStatus
 
         # Setup mock
         mock_conn = MagicMock()
@@ -471,7 +471,7 @@ class TestPEGASUSV2AuditTrail:
         mock_get_conn.return_value = mock_conn
 
         position = IronCondorPosition(
-            position_id="PEGASUS-TEST-001",
+            position_id="ANCHOR-TEST-001",
             ticker="SPX",
             expiration="2024-12-30",
             put_short_strike=5720.0,
@@ -486,10 +486,10 @@ class TestPEGASUSV2AuditTrail:
             max_loss=1040.0,
             max_profit=960.0,
             underlying_at_entry=5855.0,
-            # Kronos context
+            # Chronicles context
             flip_point=5820.0,
             net_gex=1500000000,
-            # Oracle context
+            # Prophet context
             oracle_confidence=0.78,
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
@@ -500,10 +500,10 @@ class TestPEGASUSV2AuditTrail:
             open_time=datetime.now(CENTRAL_TZ),
         )
 
-        db = PEGASUSDatabase()
+        db = AnchorDatabase()
         db.save_position(position)
 
-        # Verify INSERT includes Oracle columns
+        # Verify INSERT includes Prophet columns
         insert_call = mock_cursor.execute.call_args_list[-1]
         sql = insert_call[0][0]
 
@@ -522,12 +522,12 @@ class TestPEGASUSV2AuditTrail:
 class TestExecutorPassesFullContext:
     """Test that executors pass full context from signal to position"""
 
-    def test_ares_executor_passes_oracle_context(self):
-        """ARES executor should pass all Oracle context to position"""
-        from trading.ares_v2.executor import OrderExecutor
-        from trading.ares_v2.models import ARESConfig, TradingMode, IronCondorSignal
+    def test_fortress_executor_passes_oracle_context(self):
+        """FORTRESS executor should pass all Prophet context to position"""
+        from trading.fortress_v2.executor import OrderExecutor
+        from trading.fortress_v2.models import FortressConfig, TradingMode, IronCondorSignal
 
-        config = ARESConfig(mode=TradingMode.PAPER)
+        config = FortressConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(
@@ -550,7 +550,7 @@ class TestExecutorPassesFullContext:
             max_loss=113.0,
             max_profit=87.0,
             confidence=0.78,
-            reasoning="Test | Oracle: ENTER (78%)",
+            reasoning="Test | Prophet: ENTER (78%)",
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
             oracle_top_factors=[{"factor": "vix_level", "impact": 0.35}],
@@ -561,7 +561,7 @@ class TestExecutorPassesFullContext:
 
         position = executor.execute_iron_condor(signal)
 
-        # Verify position has Oracle context
+        # Verify position has Prophet context
         assert position is not None
         assert position.flip_point == 582.0
         assert position.net_gex == 1500000000
@@ -569,12 +569,12 @@ class TestExecutorPassesFullContext:
         assert position.oracle_advice == "ENTER"
         assert position.oracle_use_gex_walls is True
 
-    def test_athena_executor_passes_ml_context(self):
-        """ATHENA executor should pass all ML context to position"""
-        from trading.athena_v2.executor import OrderExecutor
-        from trading.athena_v2.models import ATHENAConfig, TradingMode, TradeSignal, SpreadType
+    def test_solomon_executor_passes_ml_context(self):
+        """SOLOMON executor should pass all ML context to position"""
+        from trading.solomon_v2.executor import OrderExecutor
+        from trading.solomon_v2.models import SolomonConfig, TradingMode, TradeSignal, SpreadType
 
-        config = ATHENAConfig(mode=TradingMode.PAPER)
+        config = SolomonConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = TradeSignal(
@@ -614,12 +614,12 @@ class TestExecutorPassesFullContext:
         assert position.wall_type == "PUT_WALL"
         assert position.wall_distance_pct == 1.79
 
-    def test_pegasus_executor_passes_oracle_context(self):
-        """PEGASUS executor should pass all Oracle context to position"""
-        from trading.pegasus.executor import OrderExecutor
-        from trading.pegasus.models import PEGASUSConfig, TradingMode, IronCondorSignal
+    def test_anchor_executor_passes_oracle_context(self):
+        """ANCHOR executor should pass all Prophet context to position"""
+        from trading.anchor.executor import OrderExecutor
+        from trading.anchor.models import AnchorConfig, TradingMode, IronCondorSignal
 
-        config = PEGASUSConfig(mode=TradingMode.PAPER)
+        config = AnchorConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(
@@ -642,7 +642,7 @@ class TestExecutorPassesFullContext:
             max_loss=520.0,
             max_profit=480.0,
             confidence=0.78,
-            reasoning="SPX | Oracle: ENTER (78%)",
+            reasoning="SPX | Prophet: ENTER (78%)",
             oracle_win_probability=0.72,
             oracle_advice="ENTER",
             oracle_top_factors=[{"factor": "vix_level", "impact": 0.35}],
@@ -653,7 +653,7 @@ class TestExecutorPassesFullContext:
 
         position = executor.execute_iron_condor(signal)
 
-        # Verify position has Oracle context
+        # Verify position has Prophet context
         assert position is not None
         assert position.flip_point == 5820.0
         assert position.net_gex == 1500000000
@@ -670,11 +670,11 @@ class TestJSONSerialization:
     """Test that top_factors are properly serialized to JSON"""
 
     def test_ares_top_factors_json(self):
-        """ARES should serialize oracle_top_factors to JSON string"""
-        from trading.ares_v2.executor import OrderExecutor
-        from trading.ares_v2.models import ARESConfig, TradingMode, IronCondorSignal
+        """FORTRESS should serialize oracle_top_factors to JSON string"""
+        from trading.fortress_v2.executor import OrderExecutor
+        from trading.fortress_v2.models import FortressConfig, TradingMode, IronCondorSignal
 
-        config = ARESConfig(mode=TradingMode.PAPER)
+        config = FortressConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(
@@ -717,12 +717,12 @@ class TestJSONSerialization:
         assert len(factors) == 2
         assert factors[0]["factor"] == "vix_level"
 
-    def test_pegasus_top_factors_json(self):
-        """PEGASUS should serialize oracle_top_factors to JSON string"""
-        from trading.pegasus.executor import OrderExecutor
-        from trading.pegasus.models import PEGASUSConfig, TradingMode, IronCondorSignal
+    def test_anchor_top_factors_json(self):
+        """ANCHOR should serialize oracle_top_factors to JSON string"""
+        from trading.anchor.executor import OrderExecutor
+        from trading.anchor.models import AnchorConfig, TradingMode, IronCondorSignal
 
-        config = PEGASUSConfig(mode=TradingMode.PAPER)
+        config = AnchorConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(

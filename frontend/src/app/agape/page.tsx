@@ -43,7 +43,7 @@ import {
 } from '@/lib/hooks/useMarketData'
 
 // ==============================================================================
-// EQUITY CURVE TIMEFRAMES (matching HERACLES/ARES pattern)
+// EQUITY CURVE TIMEFRAMES (matching VALOR/FORTRESS pattern)
 // ==============================================================================
 const EQUITY_TIMEFRAMES = [
   { id: 'intraday', label: 'Today', days: 0 },
@@ -54,7 +54,7 @@ const EQUITY_TIMEFRAMES = [
 ]
 
 // ==============================================================================
-// TABS CONFIGURATION (matching ARES/TITAN pattern with icons)
+// TABS CONFIGURATION (matching FORTRESS/SAMSON pattern with icons)
 // ==============================================================================
 const AGAPE_TABS = [
   { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
@@ -78,7 +78,7 @@ export default function AgapePage() {
   // Brand from centralized system
   const brand = BOT_BRANDS.AGAPE
 
-  // Data hooks (matching ARES/TITAN pattern)
+  // Data hooks (matching FORTRESS/SAMSON pattern)
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEStatus()
   const { data: perfData } = useAGAPEPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEPositions()
@@ -113,7 +113,7 @@ export default function AgapePage() {
       <main className={`min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto space-y-6">
 
-          {/* Header - Branded (matches ARES/TITAN pattern) */}
+          {/* Header - Branded (matches FORTRESS/SAMSON pattern) */}
           <BotPageHeader
             botName="AGAPE"
             isActive={status?.status === 'ACTIVE'}
@@ -179,7 +179,7 @@ export default function AgapePage() {
             </div>
           </div>
 
-          {/* Loss Streak Warning Banner (matches HERACLES pattern) */}
+          {/* Loss Streak Warning Banner (matches VALOR pattern) */}
           {status?.aggressive_features?.consecutive_losses > 0 && !status?.aggressive_features?.loss_streak_paused && (
             <div className="bg-orange-900/30 border border-orange-500/50 rounded-lg p-3">
               <div className="flex items-center gap-3">
@@ -249,7 +249,7 @@ export default function AgapePage() {
             />
           </div>
 
-          {/* Tabs - Branded (matching ARES/TITAN icon tab pattern) */}
+          {/* Tabs - Branded (matching FORTRESS/SAMSON icon tab pattern) */}
           <div className="flex gap-2 border-b border-gray-800 pb-2">
             {AGAPE_TABS.map((tab) => (
               <button
@@ -299,7 +299,7 @@ export default function AgapePage() {
 }
 
 // ==============================================================================
-// PORTFOLIO TAB (Primary tab - matches ARES/TITAN pattern)
+// PORTFOLIO TAB (Primary tab - matches FORTRESS/SAMSON pattern)
 // ==============================================================================
 
 function PortfolioTab({
@@ -327,7 +327,7 @@ function PortfolioTab({
 
   return (
     <>
-      {/* Paper Account Summary (matches HERACLES pattern) */}
+      {/* Paper Account Summary (matches VALOR pattern) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
           <div className="text-sm text-gray-400">Starting Capital</div>
@@ -439,7 +439,7 @@ function PortfolioTab({
                     <p className="text-gray-300">{pos.funding_regime_at_entry}</p>
                   </div>
                   <div>
-                    <span className="text-gray-500">Oracle</span>
+                    <span className="text-gray-500">Prophet</span>
                     <p className="text-gray-300">
                       {pos.oracle_advice || 'Advisory'}
                       {pos.oracle_win_probability ? ` (${(pos.oracle_win_probability * 100).toFixed(0)}%)` : ''}
@@ -594,7 +594,7 @@ function OverviewTab({
             <p className="text-white font-mono">{status?.cooldown_minutes || 5} min</p>
           </div>
           <div>
-            <span className="text-gray-500">Oracle</span>
+            <span className="text-gray-500">Prophet</span>
             <p className="text-white font-mono">{status?.require_oracle ? 'Required' : 'Advisory'}</p>
           </div>
           <div>
@@ -809,7 +809,7 @@ function ActivityTab({ data, brand }: { data: any[]; brand: typeof BOT_BRANDS.AG
               <th className="text-left px-4 py-3 text-gray-500 font-medium">ETH</th>
               <th className="text-left px-4 py-3 text-gray-500 font-medium">Funding</th>
               <th className="text-left px-4 py-3 text-gray-500 font-medium">Signal</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Oracle</th>
+              <th className="text-left px-4 py-3 text-gray-500 font-medium">Prophet</th>
               <th className="text-left px-4 py-3 text-gray-500 font-medium">Outcome</th>
             </tr>
           </thead>
@@ -960,7 +960,7 @@ function ConfigTab({ status, mappingData, brand }: { status: any; mappingData: a
             <p className="text-white font-mono">{status?.cooldown_minutes || 5} min</p>
           </div>
           <div>
-            <span className="text-gray-500">Oracle</span>
+            <span className="text-gray-500">Prophet</span>
             <p className="text-white font-mono">{status?.require_oracle ? 'Required' : 'Advisory'}</p>
           </div>
           <div>

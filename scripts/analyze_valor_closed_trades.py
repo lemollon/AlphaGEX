@@ -27,10 +27,10 @@ except ImportError:
 
 
 def analyze_closed_trades():
-    """Pull and analyze all HERACLES closed trades."""
+    """Pull and analyze all VALOR closed trades."""
 
     print("\n" + "="*80)
-    print("VALOR (HERACLES) CLOSED TRADE ANALYSIS")
+    print("VALOR (VALOR) CLOSED TRADE ANALYSIS")
     print("="*80)
 
     try:
@@ -60,7 +60,7 @@ def analyze_closed_trades():
                 win_probability,
                 signal_confidence,
                 trade_reasoning
-            FROM heracles_closed_trades
+            FROM valor_closed_trades
             ORDER BY close_time DESC
             LIMIT 100
         """)
@@ -68,7 +68,7 @@ def analyze_closed_trades():
         trades = c.fetchall()
 
         if not trades:
-            print("\n❌ No closed trades found in heracles_closed_trades table")
+            print("\n❌ No closed trades found in valor_closed_trades table")
             return
 
         print(f"\n📊 Found {len(trades)} closed trades\n")

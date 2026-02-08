@@ -128,20 +128,20 @@ def apply_migration(conn, dry_run=False):
 def verify_indexes(conn):
     """Verify all expected indexes exist."""
     expected_indexes = [
-        # ARES
-        ('idx_ares_positions_status', 'ares_positions'),
-        ('idx_ares_positions_open_time', 'ares_positions'),
-        ('idx_ares_positions_status_open_time', 'ares_positions'),
-        ('idx_ares_positions_expiration', 'ares_positions'),
-        # ATHENA
-        ('idx_athena_positions_status', 'athena_positions'),
-        ('idx_athena_positions_open_time', 'athena_positions'),
-        ('idx_athena_positions_status_open_time', 'athena_positions'),
-        ('idx_athena_positions_expiration', 'athena_positions'),
-        # PEGASUS
-        ('idx_pegasus_positions_status', 'pegasus_positions'),
-        ('idx_pegasus_positions_open_time', 'pegasus_positions'),
-        ('idx_pegasus_positions_status_open_time', 'pegasus_positions'),
+        # FORTRESS
+        ('idx_fortress_positions_status', 'fortress_positions'),
+        ('idx_fortress_positions_open_time', 'fortress_positions'),
+        ('idx_fortress_positions_status_open_time', 'fortress_positions'),
+        ('idx_fortress_positions_expiration', 'fortress_positions'),
+        # SOLOMON
+        ('idx_solomon_positions_status', 'solomon_positions'),
+        ('idx_solomon_positions_open_time', 'solomon_positions'),
+        ('idx_solomon_positions_status_open_time', 'solomon_positions'),
+        ('idx_solomon_positions_expiration', 'solomon_positions'),
+        # ANCHOR
+        ('idx_anchor_positions_status', 'anchor_positions'),
+        ('idx_anchor_positions_open_time', 'anchor_positions'),
+        ('idx_anchor_positions_status_open_time', 'anchor_positions'),
         # GEX_HISTORY
         ('idx_gex_history_symbol_timestamp', 'gex_history'),
         ('idx_gex_history_timestamp', 'gex_history'),

@@ -38,25 +38,25 @@ interface BotStatusResponse {
 // Default starting capitals - used ONLY if API doesn't return starting_capital
 // These should match the config table defaults in the backend
 const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
-  ARES: 100000,
-  ATHENA: 100000,
-  ICARUS: 100000,
-  PEGASUS: 200000,
-  TITAN: 200000,
-  PHOENIX: 100000,
-  ATLAS: 100000,
-  PROMETHEUS: 500000,
-  HERACLES: 100000,
+  FORTRESS: 100000,
+  SOLOMON: 100000,
+  GIDEON: 100000,
+  ANCHOR: 200000,
+  SAMSON: 200000,
+  LAZARUS: 100000,
+  CORNERSTONE: 100000,
+  JUBILEE: 500000,
+  VALOR: 100000,
   AGAPE: 5000,
   AGAPE_SPOT: 8000,
 }
 
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
-  { name: 'ARES', endpoint: '/api/ares/status' },
-  { name: 'ATHENA', endpoint: '/api/athena/status' },
-  { name: 'ICARUS', endpoint: '/api/icarus/status' },
-  { name: 'PEGASUS', endpoint: '/api/pegasus/status' },
-  { name: 'TITAN', endpoint: '/api/titan/status' },
+  { name: 'FORTRESS', endpoint: '/api/fortress/status' },
+  { name: 'SOLOMON', endpoint: '/api/solomon/status' },
+  { name: 'GIDEON', endpoint: '/api/gideon/status' },
+  { name: 'ANCHOR', endpoint: '/api/anchor/status' },
+  { name: 'SAMSON', endpoint: '/api/samson/status' },
 ]
 
 const fetcher = async (url: string): Promise<BotStatusResponse> => {
@@ -71,13 +71,13 @@ const fetcher = async (url: string): Promise<BotStatusResponse> => {
 
 export default function PortfolioSummaryCard() {
   // Fetch status for all bots
-  const { data: aresData, isLoading: aresLoading } = useSWR('/api/ares/status', fetcher, { refreshInterval: 30000 })
-  const { data: athenaData, isLoading: athenaLoading } = useSWR('/api/athena/status', fetcher, { refreshInterval: 30000 })
-  const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/icarus/status', fetcher, { refreshInterval: 30000 })
-  const { data: pegasusData, isLoading: pegasusLoading } = useSWR('/api/pegasus/status', fetcher, { refreshInterval: 30000 })
-  const { data: titanData, isLoading: titanLoading } = useSWR('/api/titan/status', fetcher, { refreshInterval: 30000 })
+  const { data: aresData, isLoading: aresLoading } = useSWR('/api/fortress/status', fetcher, { refreshInterval: 30000 })
+  const { data: solomonData, isLoading: solomonLoading } = useSWR('/api/solomon/status', fetcher, { refreshInterval: 30000 })
+  const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/gideon/status', fetcher, { refreshInterval: 30000 })
+  const { data: anchorData, isLoading: anchorLoading } = useSWR('/api/anchor/status', fetcher, { refreshInterval: 30000 })
+  const { data: titanData, isLoading: titanLoading } = useSWR('/api/samson/status', fetcher, { refreshInterval: 30000 })
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading
 
   // Normalize bot data (handle both nested and flat response structures)
   const normalizeData = (response: BotStatusResponse | undefined): BotStatus => {
@@ -90,11 +90,11 @@ export default function PortfolioSummaryCard() {
   const portfolio = useMemo(() => {
     // Pair each bot's data with its name for proper starting capital lookup
     const botDataList: { name: BotName; data: BotStatus }[] = [
-      { name: 'ARES', data: normalizeData(aresData) },
-      { name: 'ATHENA', data: normalizeData(athenaData) },
-      { name: 'ICARUS', data: normalizeData(icarusData) },
-      { name: 'PEGASUS', data: normalizeData(pegasusData) },
-      { name: 'TITAN', data: normalizeData(titanData) },
+      { name: 'FORTRESS', data: normalizeData(aresData) },
+      { name: 'SOLOMON', data: normalizeData(solomonData) },
+      { name: 'GIDEON', data: normalizeData(icarusData) },
+      { name: 'ANCHOR', data: normalizeData(anchorData) },
+      { name: 'SAMSON', data: normalizeData(titanData) },
     ]
 
     let totalStartingCapital = 0
@@ -160,7 +160,7 @@ export default function PortfolioSummaryCard() {
       winRate,
       activeBots,
     }
-  }, [aresData, athenaData, icarusData, pegasusData, titanData])
+  }, [aresData, solomonData, icarusData, anchorData, titanData])
 
   const formatCurrency = (value: number) => {
     const absValue = Math.abs(value)

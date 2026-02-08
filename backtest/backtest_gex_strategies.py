@@ -576,7 +576,7 @@ class GEXBacktester(BacktestBase):
 
 
 # =============================================================================
-# WALK-FORWARD OPTIMIZER FOR PHOENIX/GEX STRATEGIES
+# WALK-FORWARD OPTIMIZER FOR LAZARUS/GEX STRATEGIES
 # =============================================================================
 
 # Import Walk-Forward Optimizer
@@ -623,7 +623,7 @@ class GEXBacktestResult:
 
 class GEXOptimizer:
     """
-    Parameter optimizer for PHOENIX/GEX strategies with Walk-Forward validation.
+    Parameter optimizer for LAZARUS/GEX strategies with Walk-Forward validation.
 
     This prevents overfitting by:
     1. Grid searching parameters on training data
@@ -658,7 +658,7 @@ class GEXOptimizer:
             Best parameters validated against overfitting
         """
         print("="*70)
-        print("PHOENIX/GEX PARAMETER OPTIMIZATION")
+        print("LAZARUS/GEX PARAMETER OPTIMIZATION")
         print("="*70)
         print(f"Symbol: {self.symbol}")
         print(f"Period: {self.start_date} to {self.end_date}")
@@ -799,7 +799,7 @@ class GEXOptimizer:
 
         print()
         print("="*70)
-        print("WALK-FORWARD VALIDATION (PHOENIX/GEX)")
+        print("WALK-FORWARD VALIDATION (LAZARUS/GEX)")
         print("="*70)
         print("Preventing overfitting by testing on unseen data...")
         print(f"Train window: {train_days} days, Test window: {test_days} days")

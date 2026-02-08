@@ -1,7 +1,7 @@
 """
 Scan Explainer - Claude AI-Powered Decision Explanations
 
-Generates human-readable explanations for every ARES and ATHENA scan decision.
+Generates human-readable explanations for every FORTRESS and SOLOMON scan decision.
 This is the KEY to understanding WHY a bot did or didn't trade.
 
 Every scan gets a detailed explanation including:
@@ -57,8 +57,8 @@ class MarketContext:
 
 @dataclass
 class SignalContext:
-    """Signal information from ML/Oracle"""
-    source: str  # "ML", "Oracle", "GEX", "None"
+    """Signal information from ML/Prophet"""
+    source: str  # "ML", "Prophet", "GEX", "None"
     direction: str  # "BULLISH", "BEARISH", "NEUTRAL", "NONE"
     confidence: Optional[float] = None
     win_probability: Optional[float] = None
@@ -171,7 +171,7 @@ def generate_scan_explanation(context: ScanContext) -> Dict[str, str]:
 def _build_explanation_prompt(context: ScanContext) -> str:
     """Build the prompt for Claude to explain the decision"""
 
-    bot_desc = "ARES (Aggressive Iron Condor - sells 0DTE iron condors once per day)" if context.bot_name == "ARES" else "ATHENA (Directional Spreads - trades up to 5x/day based on GEX signals)"
+    bot_desc = "FORTRESS (Aggressive Iron Condor - sells 0DTE iron condors once per day)" if context.bot_name == "FORTRESS" else "SOLOMON (Directional Spreads - trades up to 5x/day based on GEX signals)"
 
     # Build market context string
     market_str = f"""
@@ -261,7 +261,7 @@ Signal Information:
     if context.error_message:
         error_str = f"\nError: {context.error_message}"
 
-    prompt = f"""You are GEXIS, explaining a trading bot's decision to a human trader who needs to understand exactly what happened and why.
+    prompt = f"""You are COUNSELOR, explaining a trading bot's decision to a human trader who needs to understand exactly what happened and why.
 
 Bot: {bot_desc}
 Scan #{context.scan_number}
@@ -303,15 +303,15 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
     if decision == DecisionType.MARKET_CLOSED:
         return {
             "summary": f"{bot_name} scan skipped - market is closed",
-            "full_explanation": f"The market is currently closed. {bot_name} only trades during market hours (ARES: 8:30 AM - 3:55 PM CT, ATHENA: 8:30 AM - 3:00 PM CT). No trading decisions are made outside these windows.",
-            "what_would_trigger": "Market needs to open. Trading window starts at 8:30 AM CT for both ARES and ATHENA.",
+            "full_explanation": f"The market is currently closed. {bot_name} only trades during market hours (FORTRESS: 8:30 AM - 3:55 PM CT, SOLOMON: 8:30 AM - 3:00 PM CT). No trading decisions are made outside these windows.",
+            "what_would_trigger": "Market needs to open. Trading window starts at 8:30 AM CT for both FORTRESS and SOLOMON.",
             "market_insight": "Pre-market futures and overnight news should be reviewed before trading window opens."
         }
 
     if decision == DecisionType.BEFORE_WINDOW:
         return {
             "summary": f"{bot_name} scan skipped - before trading window",
-            "full_explanation": f"Current time is before {bot_name}'s trading window. Both ARES and ATHENA start at 8:30 AM CT when the market opens. The bot is waiting for the trading window to open.",
+            "full_explanation": f"Current time is before {bot_name}'s trading window. Both FORTRESS and SOLOMON start at 8:30 AM CT when the market opens. The bot is waiting for the trading window to open.",
             "what_would_trigger": f"Wait for trading window to open. {bot_name} will start scanning automatically.",
             "market_insight": "Early session often has higher volatility - first 30 minutes after open tend to set the day's range."
         }
@@ -319,7 +319,7 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
     if decision == DecisionType.AFTER_WINDOW:
         return {
             "summary": f"{bot_name} scan skipped - after trading window",
-            "full_explanation": f"Current time is after {bot_name}'s trading window. ARES ends at 3:55 PM CT, ATHENA ends at 3:00 PM CT. No new trades will be opened today.",
+            "full_explanation": f"Current time is after {bot_name}'s trading window. FORTRESS ends at 3:55 PM CT, SOLOMON ends at 3:00 PM CT. No new trades will be opened today.",
             "what_would_trigger": "N/A - trading window closed for today. Bot will resume tomorrow at market open.",
             "market_insight": "Review today's performance and prepare for tomorrow's session."
         }
@@ -362,8 +362,8 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
                     what_trigger = f"Need better R:R ratio. Current: {failed_check.actual_value}, Required: {failed_check.required_value}."
             elif "confidence" in failed_check.name.lower():
                 what_trigger = f"Signal confidence needs to increase from {failed_check.actual_value} to at least {failed_check.required_value}."
-            elif "oracle" in failed_check.name.lower():
-                what_trigger = f"Oracle needs to change recommendation from {failed_check.actual_value} to TRADE."
+            elif "prophet" in failed_check.name.lower():
+                what_trigger = f"Prophet needs to change recommendation from {failed_check.actual_value} to TRADE."
             else:
                 what_trigger = f"{failed_check.name} needs to change from {failed_check.actual_value} to meet threshold {failed_check.required_value}."
 
@@ -424,7 +424,7 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
 
     if decision == DecisionType.SKIP:
         summary = f"{bot_name} SKIP - already traded today"
-        explanation = f"{bot_name} has already executed its daily trade. ARES trades once per day maximum. The bot will resume scanning tomorrow."
+        explanation = f"{bot_name} has already executed its daily trade. FORTRESS trades once per day maximum. The bot will resume scanning tomorrow."
         return {
             "summary": summary,
             "full_explanation": explanation,
@@ -461,7 +461,7 @@ def explain_ares_decision(
     error_message: Optional[str] = None
 ) -> Dict[str, str]:
     """
-    Convenience function to explain an ARES decision.
+    Convenience function to explain an FORTRESS decision.
 
     Returns:
         {"summary": "...", "full_explanation": "..."}
@@ -486,7 +486,7 @@ def explain_ares_decision(
         dist_put = ((underlying_price - put_wall) / underlying_price) * 100
 
     context = ScanContext(
-        bot_name="ARES",
+        bot_name="FORTRESS",
         scan_number=scan_number,
         decision_type=DecisionType(outcome),
         market=MarketContext(
@@ -516,7 +516,7 @@ def explain_ares_decision(
     return generate_scan_explanation(context)
 
 
-def explain_athena_decision(
+def explain_solomon_decision(
     scan_number: int,
     outcome: str,
     underlying_price: float,
@@ -535,7 +535,7 @@ def explain_athena_decision(
     error_message: Optional[str] = None
 ) -> Dict[str, str]:
     """
-    Convenience function to explain an ATHENA decision.
+    Convenience function to explain an SOLOMON decision.
 
     Returns:
         {"summary": "...", "full_explanation": "..."}
@@ -570,7 +570,7 @@ def explain_athena_decision(
         dist_put = ((underlying_price - put_wall) / underlying_price) * 100
 
     context = ScanContext(
-        bot_name="ATHENA",
+        bot_name="SOLOMON",
         scan_number=scan_number,
         decision_type=DecisionType(outcome),
         market=MarketContext(

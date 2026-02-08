@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test Tastytrade SDK Installation and DXLinkStreamer
-Verifies real-time futures quotes are working for HERACLES
+Verifies real-time futures quotes are working for VALOR
 
 Supports both:
 - OAuth authentication (PREFERRED - works with 2FA)

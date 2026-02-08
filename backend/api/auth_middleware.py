@@ -10,7 +10,7 @@ Provides:
 Usage:
     from backend.api.auth_middleware import require_api_key, require_auth
 
-    @router.post("/api/ares/trade")
+    @router.post("/api/fortress/trade")
     async def execute_trade(request: Request, auth: dict = Depends(require_api_key)):
         ...
 """
@@ -65,8 +65,8 @@ class AuthConfig:
 
     # Paths that require admin-level access
     ADMIN_PATHS = [
-        "/api/ares/force-trade",
-        "/api/athena/force-trade",
+        "/api/fortress/force-trade",
+        "/api/solomon/force-trade",
         "/api/admin/",
         "/api/config/",
     ]

@@ -5,10 +5,10 @@ This module integrates quant enhancements with the existing AlphaGEX system:
 
 1. Walk-Forward Optimizer -> Validates backtest results
 2. Monte Carlo Kelly -> Safer position sizing in position_sizer.py
-3. Oracle Advisor -> Primary decision maker (replaced ML Regime Classifier and Ensemble)
+3. Prophet Advisor -> Primary decision maker (replaced ML Regime Classifier and Ensemble)
 
 Note: ML Regime Classifier and Ensemble Strategy were removed in January 2025.
-Oracle is now the sole decision authority for all trading bots.
+Prophet is now the sole decision authority for all trading bots.
 
 Usage:
     from quant.integration import QuantEnhancedTrader
@@ -29,7 +29,7 @@ from dataclasses import dataclass
 ML_REGIME_AVAILABLE = False
 ENSEMBLE_AVAILABLE = False
 
-# ML Regime Classifier - REMOVED, Oracle handles this now
+# ML Regime Classifier - REMOVED, Prophet handles this now
 try:
     from .ml_regime_classifier import (
         MLRegimeClassifier,
@@ -60,7 +60,7 @@ except ImportError:
     def run_walk_forward_validation(*args, **kwargs):
         return None
 
-# Ensemble Strategy - REMOVED, Oracle is sole authority
+# Ensemble Strategy - REMOVED, Prophet is sole authority
 try:
     from .ensemble_strategy import (
         EnsembleStrategyWeighter,

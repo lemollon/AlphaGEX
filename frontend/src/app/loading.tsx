@@ -1,12 +1,12 @@
 'use client'
 
-import NexusLoadingScreen from '@/components/NexusLoadingScreen'
+import CovenantLoadingScreen from '@/components/CovenantLoadingScreen'
 
 export default function Loading() {
   return (
-    <NexusLoadingScreen
+    <CovenantLoadingScreen
       message="Initializing AlphaGEX"
-      subMessage="Connecting NEXUS neural pathways..."
+      subMessage="Connecting COVENANT neural pathways..."
       showTips={true}
     />
   )

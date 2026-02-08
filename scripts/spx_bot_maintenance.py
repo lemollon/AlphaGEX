@@ -2,7 +2,7 @@
 """
 SPX Bot Maintenance Script
 
-Combined utility for SPX-trading bots (TITAN, PEGASUS):
+Combined utility for SPX-trading bots (SAMSON, ANCHOR):
 1. Verify SPX quotes work with Tradier production API
 2. Clean up test/demo/orphaned positions
 
@@ -274,7 +274,7 @@ def run_cleanup(confirm: bool = False):
     print(f"POSITION CLEANUP {'(PREVIEW)' if not confirm else '(DELETING)'}")
     print("=" * 60)
 
-    for bot in ['pegasus', 'titan']:
+    for bot in ['anchor', 'samson']:
         print(f"\n  {bot.upper()}:")
 
         if not confirm:

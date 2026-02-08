@@ -131,8 +131,8 @@ class TestBotLoggerTable:
         bot_counts = {row[0]: row[1] for row in results}
         print(f"\nBot decision counts: {bot_counts}")
 
-        # List of expected bots (PEGASUS replaces ATLAS in Solomon)
-        expected_bots = ['ARES', 'ATHENA', 'PHOENIX', 'PEGASUS']
+        # List of expected bots (ANCHOR replaces CORNERSTONE in Proverbs)
+        expected_bots = ['FORTRESS', 'SOLOMON', 'LAZARUS', 'ANCHOR']
 
         # Check which bots have logged
         for bot in expected_bots:
@@ -143,37 +143,37 @@ class TestBotLoggerTable:
 
 
 class TestAresLogging:
-    """Tests for ARES (Iron Condor) decision logging."""
+    """Tests for FORTRESS (Iron Condor) decision logging."""
 
-    def test_ares_logs_entry_decisions(self, db_connection):
-        """Verify ARES logs ENTRY decisions."""
+    def test_fortress_logs_entry_decisions(self, db_connection):
+        """Verify FORTRESS logs ENTRY decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'ARES' AND decision_type = 'ENTRY'
+            WHERE bot_name = 'FORTRESS' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
         print(f"\nARES ENTRY decisions: {count}")
         # Just verify the query works - count may be 0 if no trades yet
 
-    def test_ares_logs_skip_decisions(self, db_connection):
-        """Verify ARES logs SKIP decisions."""
+    def test_fortress_logs_skip_decisions(self, db_connection):
+        """Verify FORTRESS logs SKIP decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'ARES' AND decision_type = 'SKIP'
+            WHERE bot_name = 'FORTRESS' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
         print(f"\nARES SKIP decisions: {count}")
 
-    def test_ares_entry_has_required_fields(self, db_connection):
-        """Verify ARES ENTRY decisions have all required fields populated."""
+    def test_fortress_entry_has_required_fields(self, db_connection):
+        """Verify FORTRESS ENTRY decisions have all required fields populated."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT decision_id, symbol, strategy, spot_price, vix,
                    entry_reasoning, passed_all_checks
             FROM bot_decision_logs
-            WHERE bot_name = 'ARES' AND decision_type = 'ENTRY'
+            WHERE bot_name = 'FORTRESS' AND decision_type = 'ENTRY'
             ORDER BY timestamp DESC
             LIMIT 1
         """)
@@ -186,168 +186,168 @@ class TestAresLogging:
             assert strategy is not None, "strategy is NULL"
             print(f"\nARES ENTRY sample: {symbol} {strategy} @ ${spot_price}")
         else:
-            print("\nNo ARES ENTRY decisions to verify")
+            print("\nNo FORTRESS ENTRY decisions to verify")
 
 
 class TestAtlasLogging:
-    """Tests for ATLAS (SPX Wheel) decision logging."""
+    """Tests for CORNERSTONE (SPX Wheel) decision logging."""
 
-    def test_atlas_logs_entry_decisions(self, db_connection):
-        """Verify ATLAS logs ENTRY decisions."""
+    def test_cornerstone_logs_entry_decisions(self, db_connection):
+        """Verify CORNERSTONE logs ENTRY decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'ATLAS' AND decision_type = 'ENTRY'
+            WHERE bot_name = 'CORNERSTONE' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
         print(f"\nATLAS ENTRY decisions: {count}")
 
-    def test_atlas_logs_skip_decisions(self, db_connection):
-        """Verify ATLAS logs SKIP decisions."""
+    def test_cornerstone_logs_skip_decisions(self, db_connection):
+        """Verify CORNERSTONE logs SKIP decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'ATLAS' AND decision_type = 'SKIP'
+            WHERE bot_name = 'CORNERSTONE' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
         print(f"\nATLAS SKIP decisions: {count}")
 
 
 class TestAthenaLogging:
-    """Tests for ATHENA (Directional Spreads) decision logging."""
+    """Tests for SOLOMON (Directional Spreads) decision logging."""
 
-    def test_athena_logs_to_bot_decision_logs(self, db_connection):
+    def test_solomon_logs_to_bot_decision_logs(self, db_connection):
         """
-        CRITICAL: Verify ATHENA logs to bot_decision_logs table.
-        This was a known gap - ATHENA only logged to trading_decisions.
+        CRITICAL: Verify SOLOMON logs to bot_decision_logs table.
+        This was a known gap - SOLOMON only logged to trading_decisions.
         """
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'ATHENA'
+            WHERE bot_name = 'SOLOMON'
         """)
         count = cursor.fetchone()[0]
         print(f"\nATHENA total decisions in bot_decision_logs: {count}")
 
         # This should now pass after the fix
-        # Note: Count may be 0 if ATHENA hasn't traded since the fix
+        # Note: Count may be 0 if SOLOMON hasn't traded since the fix
         if count == 0:
-            print("WARNING: ATHENA has no entries in bot_decision_logs - verify fix was deployed")
+            print("WARNING: SOLOMON has no entries in bot_decision_logs - verify fix was deployed")
 
-    def test_athena_logs_entry_decisions(self, db_connection):
-        """Verify ATHENA logs ENTRY decisions."""
+    def test_solomon_logs_entry_decisions(self, db_connection):
+        """Verify SOLOMON logs ENTRY decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'ATHENA' AND decision_type = 'ENTRY'
+            WHERE bot_name = 'SOLOMON' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
         print(f"\nATHENA ENTRY decisions: {count}")
 
-    def test_athena_logs_skip_decisions(self, db_connection):
-        """Verify ATHENA logs SKIP decisions."""
+    def test_solomon_logs_skip_decisions(self, db_connection):
+        """Verify SOLOMON logs SKIP decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'ATHENA' AND decision_type = 'SKIP'
+            WHERE bot_name = 'SOLOMON' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
         print(f"\nATHENA SKIP decisions: {count}")
 
 
 class TestPhoenixLogging:
-    """Tests for PHOENIX (Autonomous 0DTE) decision logging."""
+    """Tests for LAZARUS (Autonomous 0DTE) decision logging."""
 
-    def test_phoenix_logs_entry_decisions(self, db_connection):
-        """Verify PHOENIX logs ENTRY decisions."""
+    def test_lazarus_logs_entry_decisions(self, db_connection):
+        """Verify LAZARUS logs ENTRY decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'PHOENIX' AND decision_type = 'ENTRY'
+            WHERE bot_name = 'LAZARUS' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
         print(f"\nPHOENIX ENTRY decisions: {count}")
 
-    def test_phoenix_logs_skip_decisions(self, db_connection):
-        """Verify PHOENIX logs SKIP decisions."""
+    def test_lazarus_logs_skip_decisions(self, db_connection):
+        """Verify LAZARUS logs SKIP decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'PHOENIX' AND decision_type = 'SKIP'
+            WHERE bot_name = 'LAZARUS' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
         print(f"\nPHOENIX SKIP decisions: {count}")
 
-    def test_phoenix_logs_exit_decisions(self, db_connection):
-        """Verify PHOENIX logs EXIT decisions."""
+    def test_lazarus_logs_exit_decisions(self, db_connection):
+        """Verify LAZARUS logs EXIT decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'PHOENIX' AND decision_type = 'EXIT'
+            WHERE bot_name = 'LAZARUS' AND decision_type = 'EXIT'
         """)
         count = cursor.fetchone()[0]
         print(f"\nPHOENIX EXIT decisions: {count}")
 
 
-class TestPegasusLogging:
-    """Tests for PEGASUS (SPX Iron Condor) decision logging."""
+class TestAnchorLogging:
+    """Tests for ANCHOR (SPX Iron Condor) decision logging."""
 
-    def test_pegasus_logs_entry_decisions(self, db_connection):
-        """Verify PEGASUS logs ENTRY decisions."""
+    def test_anchor_logs_entry_decisions(self, db_connection):
+        """Verify ANCHOR logs ENTRY decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'PEGASUS' AND decision_type = 'ENTRY'
+            WHERE bot_name = 'ANCHOR' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nPEGASUS ENTRY decisions: {count}")
+        print(f"\nANCHOR ENTRY decisions: {count}")
 
-    def test_pegasus_logs_skip_decisions(self, db_connection):
-        """Verify PEGASUS logs SKIP decisions."""
+    def test_anchor_logs_skip_decisions(self, db_connection):
+        """Verify ANCHOR logs SKIP decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'PEGASUS' AND decision_type = 'SKIP'
+            WHERE bot_name = 'ANCHOR' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nPEGASUS SKIP decisions: {count}")
+        print(f"\nANCHOR SKIP decisions: {count}")
 
-    def test_pegasus_logs_exit_decisions(self, db_connection):
-        """Verify PEGASUS logs EXIT decisions."""
+    def test_anchor_logs_exit_decisions(self, db_connection):
+        """Verify ANCHOR logs EXIT decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM bot_decision_logs
-            WHERE bot_name = 'PEGASUS' AND decision_type = 'EXIT'
+            WHERE bot_name = 'ANCHOR' AND decision_type = 'EXIT'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nPEGASUS EXIT decisions: {count}")
+        print(f"\nANCHOR EXIT decisions: {count}")
 
-    def test_pegasus_has_spx_context(self, db_connection):
-        """Verify PEGASUS decisions have SPX-specific context."""
+    def test_anchor_has_spx_context(self, db_connection):
+        """Verify ANCHOR decisions have SPX-specific context."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT symbol, spot_price, vix, net_gex
             FROM bot_decision_logs
-            WHERE bot_name = 'PEGASUS'
+            WHERE bot_name = 'ANCHOR'
             ORDER BY timestamp DESC
             LIMIT 1
         """)
         result = cursor.fetchone()
         if result:
             symbol, spot_price, vix, net_gex = result
-            print(f"\nPEGASUS sample: {symbol} @ ${spot_price}, VIX={vix}")
-            # PEGASUS should be trading SPX
-            assert symbol == 'SPX' or symbol is None, "PEGASUS should trade SPX"
+            print(f"\nANCHOR sample: {symbol} @ ${spot_price}, VIX={vix}")
+            # ANCHOR should be trading SPX
+            assert symbol == 'SPX' or symbol is None, "ANCHOR should trade SPX"
         else:
-            print("\nNo PEGASUS decisions to verify yet")
+            print("\nNo ANCHOR decisions to verify yet")
 
-    def test_pegasus_oracle_integration(self, db_connection):
-        """Verify PEGASUS has Oracle context in decisions."""
+    def test_anchor_oracle_integration(self, db_connection):
+        """Verify ANCHOR has Prophet context in decisions."""
         cursor = db_connection.cursor()
         cursor.execute("""
             SELECT full_decision
             FROM bot_decision_logs
-            WHERE bot_name = 'PEGASUS' AND full_decision IS NOT NULL
+            WHERE bot_name = 'ANCHOR' AND full_decision IS NOT NULL
             ORDER BY timestamp DESC
             LIMIT 1
         """)
@@ -359,11 +359,11 @@ class TestPegasusLogging:
                 data = json.loads(full_decision)
             else:
                 data = full_decision
-            # Check for Oracle context
-            has_oracle = 'oracle' in str(data).lower()
-            print(f"\nPEGASUS has Oracle context: {has_oracle}")
+            # Check for Prophet context
+            has_oracle = 'prophet' in str(data).lower()
+            print(f"\nANCHOR has Prophet context: {has_oracle}")
         else:
-            print("\nNo PEGASUS decisions with full_decision to check")
+            print("\nNo ANCHOR decisions with full_decision to check")
 
 
 # =============================================================================
@@ -668,7 +668,7 @@ class TestDataConsistency:
         cursor.execute("""
             SELECT bot_name, COUNT(*) as count
             FROM bot_decision_logs
-            WHERE bot_name NOT IN ('ARES', 'ATLAS', 'ATHENA', 'PHOENIX', 'PEGASUS', 'HERMES', 'ORACLE')
+            WHERE bot_name NOT IN ('FORTRESS', 'CORNERSTONE', 'SOLOMON', 'LAZARUS', 'ANCHOR', 'SHEPHERD', 'PROPHET')
             GROUP BY bot_name
         """)
         results = cursor.fetchall()
@@ -746,19 +746,19 @@ class TestDualLogging:
     """Verify bots log to both tables correctly."""
 
     def test_ares_dual_logging(self, db_connection):
-        """Verify ARES logs to both tables."""
+        """Verify FORTRESS logs to both tables."""
         cursor = db_connection.cursor()
 
         # Check bot_decision_logs
         cursor.execute("""
-            SELECT COUNT(*) FROM bot_decision_logs WHERE bot_name = 'ARES'
+            SELECT COUNT(*) FROM bot_decision_logs WHERE bot_name = 'FORTRESS'
         """)
         bot_count = cursor.fetchone()[0]
 
         # Check trading_decisions
         cursor.execute("""
             SELECT COUNT(*) FROM trading_decisions
-            WHERE full_decision::text LIKE '%ARES%'
+            WHERE full_decision::text LIKE '%FORTRESS%'
         """)
         trading_count = cursor.fetchone()[0]
 
@@ -766,23 +766,23 @@ class TestDualLogging:
         print(f"  bot_decision_logs: {bot_count}")
         print(f"  trading_decisions: {trading_count}")
 
-    def test_athena_dual_logging(self, db_connection):
+    def test_solomon_dual_logging(self, db_connection):
         """
-        CRITICAL: Verify ATHENA now logs to BOTH tables.
-        This was fixed - ATHENA previously only logged to trading_decisions.
+        CRITICAL: Verify SOLOMON now logs to BOTH tables.
+        This was fixed - SOLOMON previously only logged to trading_decisions.
         """
         cursor = db_connection.cursor()
 
         # Check bot_decision_logs
         cursor.execute("""
-            SELECT COUNT(*) FROM bot_decision_logs WHERE bot_name = 'ATHENA'
+            SELECT COUNT(*) FROM bot_decision_logs WHERE bot_name = 'SOLOMON'
         """)
         bot_count = cursor.fetchone()[0]
 
         # Check trading_decisions
         cursor.execute("""
             SELECT COUNT(*) FROM trading_decisions
-            WHERE full_decision::text LIKE '%ATHENA%'
+            WHERE full_decision::text LIKE '%SOLOMON%'
         """)
         trading_count = cursor.fetchone()[0]
 
@@ -790,29 +790,29 @@ class TestDualLogging:
         print(f"  bot_decision_logs: {bot_count}")
         print(f"  trading_decisions: {trading_count}")
 
-        # Note: bot_count may be 0 if ATHENA hasn't traded since fix
+        # Note: bot_count may be 0 if SOLOMON hasn't traded since fix
         if trading_count > 0 and bot_count == 0:
-            print("  WARNING: ATHENA logs to trading_decisions but not bot_decision_logs")
+            print("  WARNING: SOLOMON logs to trading_decisions but not bot_decision_logs")
             print("  This suggests the dual logging fix hasn't been deployed or triggered yet")
 
-    def test_pegasus_dual_logging(self, db_connection):
-        """Verify PEGASUS logs to BOTH tables."""
+    def test_anchor_dual_logging(self, db_connection):
+        """Verify ANCHOR logs to BOTH tables."""
         cursor = db_connection.cursor()
 
         # Check bot_decision_logs
         cursor.execute("""
-            SELECT COUNT(*) FROM bot_decision_logs WHERE bot_name = 'PEGASUS'
+            SELECT COUNT(*) FROM bot_decision_logs WHERE bot_name = 'ANCHOR'
         """)
         bot_count = cursor.fetchone()[0]
 
         # Check trading_decisions
         cursor.execute("""
             SELECT COUNT(*) FROM trading_decisions
-            WHERE full_decision::text LIKE '%PEGASUS%'
+            WHERE full_decision::text LIKE '%ANCHOR%'
         """)
         trading_count = cursor.fetchone()[0]
 
-        print(f"\nPEGASUS dual logging:")
+        print(f"\nANCHOR dual logging:")
         print(f"  bot_decision_logs: {bot_count}")
         print(f"  trading_decisions: {trading_count}")
 

@@ -194,25 +194,25 @@ def _parse_claude_json_response(response_text: Optional[str]) -> Optional[Dict[s
 
 
 # Valid bot names
-VALID_BOTS = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+VALID_BOTS = ['fortress', 'solomon', 'samson', 'anchor', 'gideon']
 
 # Bot position table mapping
 BOT_POSITION_TABLES = {
-    'ares': 'ares_positions',
-    'athena': 'athena_positions',
-    'titan': 'titan_positions',
-    'pegasus': 'pegasus_positions',
-    'icarus': 'icarus_positions',
+    'fortress': 'fortress_positions',
+    'solomon': 'solomon_positions',
+    'samson': 'samson_positions',
+    'anchor': 'anchor_positions',
+    'gideon': 'gideon_positions',
 }
 
 # Bot scan activity source
 # Some bots use unified scan_activity, others have their own tables
 BOT_SCAN_SOURCES = {
-    'ares': 'scan_activity',
-    'athena': 'scan_activity',
-    'titan': 'scan_activity',
-    'pegasus': 'scan_activity',
-    'icarus': 'scan_activity',
+    'fortress': 'scan_activity',
+    'solomon': 'scan_activity',
+    'samson': 'scan_activity',
+    'anchor': 'scan_activity',
+    'gideon': 'scan_activity',
 }
 
 # Cache for column existence checks (avoids repeated information_schema queries)
@@ -600,7 +600,7 @@ Call Wall: {call_wall}
 Put Wall: {put_wall}
 Flip Point: {flip_point}
 GEX Regime: {gex_regime}
-Oracle Reasoning: {oracle_reasoning}
+Prophet Reasoning: {oracle_reasoning}
 
 ## INTRADAY PRICE DATA (selected candles)
 {tick_summary}

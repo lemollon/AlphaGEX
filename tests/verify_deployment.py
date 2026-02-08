@@ -46,13 +46,13 @@ def check_frontend(frontend_url: str):
     pages = [
         "/",
         "/dashboard",
-        "/heracles",
-        "/prometheus-box",
-        "/ares",
-        "/athena",
-        "/titan",
-        "/pegasus",
-        "/icarus",
+        "/valor",
+        "/jubilee",
+        "/fortress",
+        "/solomon",
+        "/samson",
+        "/anchor",
+        "/gideon",
     ]
 
     for page in pages:
@@ -101,13 +101,13 @@ def check_bot_status(backend_url: str):
     print("\n=== BOT STATUS ===")
 
     bots = [
-        ("heracles", "/api/heracles/status"),
-        ("prometheus", "/api/prometheus-box/status"),
-        ("ares", "/api/ares/status"),
-        ("athena", "/api/athena/status"),
-        ("titan", "/api/titan/status"),
-        ("pegasus", "/api/pegasus/status"),
-        ("icarus", "/api/icarus/status"),
+        ("valor", "/api/valor/status"),
+        ("jubilee", "/api/jubilee/status"),
+        ("fortress", "/api/fortress/status"),
+        ("solomon", "/api/solomon/status"),
+        ("samson", "/api/samson/status"),
+        ("anchor", "/api/anchor/status"),
+        ("gideon", "/api/gideon/status"),
     ]
 
     for bot_name, endpoint in bots:
@@ -141,7 +141,7 @@ def check_cors(frontend_url: str, backend_url: str):
     }
 
     try:
-        resp = requests.options(f"{backend_url}/api/heracles/status", headers=headers, timeout=30)
+        resp = requests.options(f"{backend_url}/api/valor/status", headers=headers, timeout=30)
 
         # Check for CORS headers
         cors_origin = resp.headers.get("Access-Control-Allow-Origin", "")
@@ -163,9 +163,9 @@ def check_data_freshness(backend_url: str):
     """Check that data is fresh (bots are running)."""
     print("\n=== DATA FRESHNESS ===")
 
-    # Check HERACLES scan activity
+    # Check VALOR scan activity
     try:
-        resp = requests.get(f"{backend_url}/api/heracles/scan-activity?limit=1", timeout=30)
+        resp = requests.get(f"{backend_url}/api/valor/scan-activity?limit=1", timeout=30)
         if resp.status_code == 200:
             data = resp.json()
             scans = data.get("scans", [])
@@ -175,19 +175,19 @@ def check_data_freshness(backend_url: str):
                     scan_time = datetime.fromisoformat(last_scan.replace("Z", "+00:00"))
                     age_minutes = (datetime.now(scan_time.tzinfo) - scan_time).total_seconds() / 60
                     is_fresh = age_minutes < 30
-                    log_result("HERACLES last scan < 30 min ago", is_fresh, warning=not is_fresh,
+                    log_result("VALOR last scan < 30 min ago", is_fresh, warning=not is_fresh,
                               message=f"Last scan: {int(age_minutes)} min ago")
                 except:
-                    log_result("HERACLES scan timestamp parsing", False, warning=True,
+                    log_result("VALOR scan timestamp parsing", False, warning=True,
                               message="Could not parse timestamp")
             else:
-                log_result("HERACLES has scan data", False, warning=True,
+                log_result("VALOR has scan data", False, warning=True,
                           message="No scans found")
         else:
-            log_result("HERACLES scan activity endpoint", False, message=f"HTTP {resp.status_code}")
+            log_result("VALOR scan activity endpoint", False, message=f"HTTP {resp.status_code}")
 
     except requests.exceptions.RequestException as e:
-        log_result("HERACLES scan activity check", False, message=str(e))
+        log_result("VALOR scan activity check", False, message=str(e))
 
 
 def check_ml_status(backend_url: str):
@@ -195,9 +195,9 @@ def check_ml_status(backend_url: str):
     print("\n=== ML MODEL STATUS ===")
 
     ml_endpoints = [
-        ("/api/heracles/ml/status", "HERACLES ML"),
-        ("/api/ml/sage/status", "SAGE ML"),
-        ("/api/ml/gex-models/status", "ORION GEX ML"),
+        ("/api/valor/ml/status", "VALOR ML"),
+        ("/api/ml/wisdom/status", "WISDOM ML"),
+        ("/api/ml/gex-models/status", "STARS GEX ML"),
     ]
 
     for endpoint, name in ml_endpoints:

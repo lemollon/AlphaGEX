@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-COMPREHENSIVE PROFITABILITY ANALYSIS: ATHENA, ICARUS, TITAN
+COMPREHENSIVE PROFITABILITY ANALYSIS: SOLOMON, GIDEON, SAMSON
 ============================================================
 Analyzes why these bots have not been profitable by examining:
 1. Trade win/loss distribution
@@ -25,8 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 BOT_CONFIGS = {
-    'athena': {
-        'table': 'athena_positions',
+    'solomon': {
+        'table': 'solomon_positions',
         'type': 'directional',
         'underlying': 'SPY',
         'pnl_formula': 'debit',  # (close_price - entry_debit) * contracts * 100
@@ -37,8 +37,8 @@ BOT_CONFIGS = {
             'underlying_at_entry': 'underlying_at_entry',
         }
     },
-    'icarus': {
-        'table': 'icarus_positions',
+    'gideon': {
+        'table': 'gideon_positions',
         'type': 'directional',
         'underlying': 'SPY',
         'pnl_formula': 'debit',
@@ -49,8 +49,8 @@ BOT_CONFIGS = {
             'underlying_at_entry': 'underlying_at_entry',
         }
     },
-    'titan': {
-        'table': 'titan_positions',
+    'samson': {
+        'table': 'samson_positions',
         'type': 'iron_condor',
         'underlying': 'SPX',
         'pnl_formula': 'credit',  # (total_credit - close_price) * contracts * 100
@@ -490,9 +490,9 @@ def analyze_bot(conn, bot_name, config):
     else:
         print("  No losing trades found")
 
-    # 9. Oracle Confidence vs Outcome
+    # 9. Prophet Confidence vs Outcome
     print("\n" + "-" * 60)
-    print("8. ORACLE CONFIDENCE VS OUTCOME")
+    print("8. PROPHET CONFIDENCE VS OUTCOME")
     print("-" * 60)
 
     cursor.execute(f"""
@@ -534,7 +534,7 @@ def analyze_bot(conn, bot_name, config):
             wr = (wins / count * 100) if count > 0 else 0
             print(f"  {bucket:<20} {count:>6} {wins:>6} {losses:>6} {wr:>6.1f}% ${float(total_pnl):>10,.2f} ${float(avg_pnl):>8,.2f}")
     else:
-        print("  No oracle confidence data available")
+        print("  No prophet confidence data available")
 
     # 10. Recent Trend (Last 20 trades)
     print("\n" + "-" * 60)
@@ -577,13 +577,13 @@ def analyze_bot(conn, bot_name, config):
     else:
         print("  No recent closed trades")
 
-    # 11. Oracle Win Probability Correlation
+    # 11. Prophet Win Probability Correlation
     print("\n" + "-" * 60)
-    print("10. ORACLE WIN PROBABILITY VS ACTUAL OUTCOME")
+    print("10. PROPHET WIN PROBABILITY VS ACTUAL OUTCOME")
     print("-" * 60)
 
     try:
-        # Correlate Oracle win probability predictions with actual outcomes
+        # Correlate Prophet win probability predictions with actual outcomes
         cursor.execute(f"""
             SELECT
                 CASE
@@ -627,7 +627,7 @@ def analyze_bot(conn, bot_name, config):
                 calibration = "✅" if abs(actual_wr - avg_wp_pct) < 10 else "⚠️"
                 print(f"  {bucket:<18} {count:>6} {wins:>6} {losses:>6} {actual_wr:>8.1f}% {avg_wp_pct:>8.1f}% ${float(avg_pnl):>8,.2f} {calibration}")
         else:
-            print("  No Oracle win probability data available")
+            print("  No Prophet win probability data available")
     except Exception as e:
         print(f"  Error: {e}")
 
@@ -698,21 +698,21 @@ def analyze_backtest_drift(conn, bot_name):
 
     # Apache backtest benchmarks (from the profitable backtest)
     APACHE_BENCHMARKS = {
-        'athena': {
+        'solomon': {
             'win_rate': 0.58,  # 58% win rate
             'avg_win_pct': 45.0,  # 45% of max profit
             'avg_loss_pct': 35.0,  # 35% of max loss
             'expectancy': 12.0,  # 12% expected return per trade
             'trades_per_week': 8,  # ~8 trades per week
         },
-        'icarus': {
+        'gideon': {
             'win_rate': 0.52,  # 52% win rate (aggressive)
             'avg_win_pct': 40.0,
             'avg_loss_pct': 45.0,
             'expectancy': 5.0,  # Lower expectancy due to aggression
             'trades_per_week': 15,
         },
-        'titan': {
+        'samson': {
             'win_rate': 0.72,  # 72% win rate for IC
             'avg_win_pct': 30.0,  # Take profit at 30%
             'avg_loss_pct': 100.0,  # Full loss when breached
@@ -952,7 +952,7 @@ def generate_recommendations(all_results):
 
 def main():
     print("=" * 80)
-    print("ATHENA, ICARUS, TITAN PROFITABILITY ANALYSIS")
+    print("SOLOMON, GIDEON, SAMSON PROFITABILITY ANALYSIS")
     print(f"Generated: {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S CT')}")
     print("=" * 80)
 
@@ -960,7 +960,7 @@ def main():
 
     all_results = {}
 
-    for bot_name in ['athena', 'icarus', 'titan']:
+    for bot_name in ['solomon', 'gideon', 'samson']:
         config = BOT_CONFIGS[bot_name]
         results = analyze_bot(conn, bot_name, config)
         all_results[bot_name] = results

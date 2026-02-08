@@ -1,5 +1,5 @@
 """
-Price Trend Tracker - Real-time trend analysis for Oracle NEUTRAL regime
+Price Trend Tracker - Real-time trend analysis for Prophet NEUTRAL regime
 ==========================================================================
 
 Tracks price history across 5-minute scans to determine:
@@ -103,11 +103,11 @@ class WallPositionAnalysis:
 @dataclass
 class StrategySuitability:
     """Strategy suitability scores based on market conditions"""
-    # Iron Condor suitability (ARES, PEGASUS)
+    # Iron Condor suitability (FORTRESS, ANCHOR)
     ic_suitability: float  # 0-1
     ic_reasoning: List[str] = field(default_factory=list)
 
-    # Directional spread suitability (ATHENA, ICARUS)
+    # Directional spread suitability (SOLOMON, GIDEON)
     bullish_suitability: float = 0.0  # 0-1
     bearish_suitability: float = 0.0  # 0-1
     directional_reasoning: List[str] = field(default_factory=list)
@@ -630,7 +630,7 @@ class PriceTrendTracker:
         # STEP 1: WALL PROXIMITY TAKES PRIORITY when near a wall
         # This is the key fix - when price is within wall_filter_pct of a wall,
         # the wall determines direction (expect bounce/rejection), not the trend.
-        # This matches how Oracle handles POSITIVE GEX regime.
+        # This matches how Prophet handles POSITIVE GEX regime.
         # =====================================================================
         if wall_position.dist_to_put_wall_pct <= wall_filter_pct:
             # Near put wall = expect bounce UP = BULLISH

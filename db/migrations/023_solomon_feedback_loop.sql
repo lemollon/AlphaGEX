@@ -1,58 +1,58 @@
 -- Migration 023: Solomon Feedback Loop Enhancements
 -- Adds prediction linking, strategy tracking, and direction accuracy
--- Supports the complete feedback loop: Oracle -> Bots -> Solomon -> Oracle
+-- Supports the complete feedback loop: Prophet -> Bots -> Solomon -> Prophet
 
 -- ============================================================================
--- 1. ORACLE PREDICTIONS - Add strategy recommendation and position linking
+-- 1. PROPHET PREDICTIONS - Add strategy recommendation and position linking
 -- ============================================================================
 
 -- Add strategy recommendation column (IRON_CONDOR or DIRECTIONAL)
-ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS strategy_recommendation VARCHAR(20);
+ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS strategy_recommendation VARCHAR(20);
 
 -- Add position_id for 1:1 prediction-to-position linking (Option C)
-ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS position_id VARCHAR(100);
+ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS position_id VARCHAR(100);
 
 -- Add direction tracking for directional strategies
-ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS direction_predicted VARCHAR(10);  -- BULLISH/BEARISH
-ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS direction_correct BOOLEAN;
+ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS direction_predicted VARCHAR(10);  -- BULLISH/BEARISH
+ALTER TABLE prophet_predictions ADD COLUMN IF NOT EXISTS direction_correct BOOLEAN;
 
 -- Drop old unique constraint and create new one with position_id
 -- Note: This allows multiple predictions per bot per day (one per position)
-DROP INDEX IF EXISTS oracle_predictions_trade_date_bot_name_key;
-CREATE UNIQUE INDEX IF NOT EXISTS oracle_predictions_position_unique
-    ON oracle_predictions(trade_date, bot_name, position_id)
+DROP INDEX IF EXISTS prophet_predictions_trade_date_bot_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS prophet_predictions_position_unique
+    ON prophet_predictions(trade_date, bot_name, position_id)
     WHERE position_id IS NOT NULL;
 
 -- Index for strategy analysis
-CREATE INDEX IF NOT EXISTS idx_oracle_predictions_strategy ON oracle_predictions(strategy_recommendation);
-CREATE INDEX IF NOT EXISTS idx_oracle_predictions_position ON oracle_predictions(position_id);
-CREATE INDEX IF NOT EXISTS idx_oracle_predictions_direction ON oracle_predictions(direction_predicted);
+CREATE INDEX IF NOT EXISTS idx_prophet_predictions_strategy ON prophet_predictions(strategy_recommendation);
+CREATE INDEX IF NOT EXISTS idx_prophet_predictions_position ON prophet_predictions(position_id);
+CREATE INDEX IF NOT EXISTS idx_prophet_predictions_direction ON prophet_predictions(direction_predicted);
 
 -- ============================================================================
 -- 2. BOT POSITION TABLES - Add oracle_prediction_id column
 -- ============================================================================
 
--- ARES positions
-ALTER TABLE ares_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-CREATE INDEX IF NOT EXISTS idx_ares_positions_oracle_pred ON ares_positions(oracle_prediction_id);
+-- FORTRESS positions
+ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_oracle_pred ON fortress_positions(oracle_prediction_id);
 
--- ATHENA positions
-ALTER TABLE athena_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-ALTER TABLE athena_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
-CREATE INDEX IF NOT EXISTS idx_athena_positions_oracle_pred ON athena_positions(oracle_prediction_id);
+-- SOLOMON positions
+ALTER TABLE solomon_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+ALTER TABLE solomon_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
+CREATE INDEX IF NOT EXISTS idx_solomon_positions_oracle_pred ON solomon_positions(oracle_prediction_id);
 
 -- TITAN positions
 ALTER TABLE titan_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_titan_positions_oracle_pred ON titan_positions(oracle_prediction_id);
 
--- PEGASUS positions
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_oracle_pred ON pegasus_positions(oracle_prediction_id);
+-- ANCHOR positions
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_oracle_pred ON anchor_positions(oracle_prediction_id);
 
--- ICARUS positions
-ALTER TABLE icarus_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-ALTER TABLE icarus_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
-CREATE INDEX IF NOT EXISTS idx_icarus_positions_oracle_pred ON icarus_positions(oracle_prediction_id);
+-- GIDEON positions
+ALTER TABLE gideon_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+ALTER TABLE gideon_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
+CREATE INDEX IF NOT EXISTS idx_gideon_positions_oracle_pred ON gideon_positions(oracle_prediction_id);
 
 -- ============================================================================
 -- 3. SOLOMON PERFORMANCE - Add strategy-level tracking
@@ -68,7 +68,7 @@ ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ 
 -- Add strategy and outcome tracking to solomon_performance
 ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(20);  -- IRON_CONDOR/DIRECTIONAL
 ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS oracle_advice VARCHAR(20);   -- TRADE_FULL/REDUCED/SKIP
-ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS oracle_strategy_recommendation VARCHAR(20);
+ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS prophet_strategy_recommendation VARCHAR(20);
 ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
 
 -- Add outcome details
@@ -111,13 +111,13 @@ CREATE TABLE IF NOT EXISTS solomon_strategy_analysis (
     total_pnl DECIMAL(12,2),
     avg_pnl DECIMAL(10,2),
 
-    -- Oracle accuracy for this strategy
-    oracle_recommended_count INTEGER DEFAULT 0,  -- Times Oracle said use this strategy
-    oracle_correct_count INTEGER DEFAULT 0,      -- Times Oracle was right
-    oracle_accuracy DECIMAL(5,4),
+    -- Prophet accuracy for this strategy
+    oracle_recommended_count INTEGER DEFAULT 0,  -- Times Prophet said use this strategy
+    oracle_correct_count INTEGER DEFAULT 0,      -- Times Prophet was right
+    prophet_accuracy DECIMAL(5,4),
 
     -- By bot breakdown (JSONB for flexibility)
-    bot_breakdown JSONB,  -- {"ARES": {"trades": 5, "wins": 4}, "PEGASUS": {...}}
+    bot_breakdown JSONB,  -- {"FORTRESS": {"trades": 5, "wins": 4}, "ANCHOR": {...}}
 
     -- Market conditions summary
     avg_vix DECIMAL(5,2),
@@ -167,19 +167,19 @@ CREATE TABLE IF NOT EXISTS solomon_bot_configs (
 -- Insert default configurations for the 5 bots
 INSERT INTO solomon_bot_configs (bot_name, strategy_type, primary_success_metric, target_value, risk_tolerance, track_metrics, optimizable_params)
 VALUES
-    ('ARES', 'IRON_CONDOR', 'win_rate', 0.70, 'NORMAL',
+    ('FORTRESS', 'IRON_CONDOR', 'win_rate', 0.70, 'NORMAL',
      '["win_rate", "put_breach_rate", "call_breach_rate", "max_profit_rate"]',
      '["sd_multiplier", "spread_width", "profit_target_pct"]'),
-    ('PEGASUS', 'IRON_CONDOR', 'win_rate', 0.70, 'CONSERVATIVE',
+    ('ANCHOR', 'IRON_CONDOR', 'win_rate', 0.70, 'CONSERVATIVE',
      '["win_rate", "put_breach_rate", "call_breach_rate", "max_profit_rate"]',
      '["sd_multiplier", "spread_width", "profit_target_pct"]'),
     ('TITAN', 'IRON_CONDOR', 'win_rate', 0.60, 'AGGRESSIVE',
      '["win_rate", "put_breach_rate", "call_breach_rate", "max_profit_rate", "trade_frequency"]',
      '["sd_multiplier", "spread_width", "profit_target_pct", "min_win_probability"]'),
-    ('ATHENA', 'DIRECTIONAL', 'direction_accuracy', 0.55, 'CONSERVATIVE',
+    ('SOLOMON', 'DIRECTIONAL', 'direction_accuracy', 0.55, 'CONSERVATIVE',
      '["direction_accuracy", "avg_rr_achieved", "wall_proximity_at_entry"]',
      '["wall_filter_pct", "profit_target_pct", "stop_loss_pct", "min_rr_ratio"]'),
-    ('ICARUS', 'DIRECTIONAL', 'direction_accuracy', 0.50, 'AGGRESSIVE',
+    ('GIDEON', 'DIRECTIONAL', 'direction_accuracy', 0.50, 'AGGRESSIVE',
      '["direction_accuracy", "avg_rr_achieved", "trade_frequency"]',
      '["wall_filter_pct", "profit_target_pct", "stop_loss_pct", "min_win_probability"]')
 ON CONFLICT (bot_name) DO UPDATE SET
@@ -192,14 +192,14 @@ ON CONFLICT (bot_name) DO UPDATE SET
     updated_at = NOW();
 
 -- ============================================================================
--- 6. ORACLE STRATEGY ACCURACY TABLE (New)
+-- 6. PROPHET STRATEGY ACCURACY TABLE (New)
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS oracle_strategy_accuracy (
+CREATE TABLE IF NOT EXISTS prophet_strategy_accuracy (
     id SERIAL PRIMARY KEY,
     analysis_date DATE NOT NULL,
 
-    -- What Oracle recommended
+    -- What Prophet recommended
     strategy_recommended VARCHAR(20) NOT NULL,  -- IRON_CONDOR, DIRECTIONAL, SKIP
 
     -- Market conditions when recommended
@@ -218,8 +218,8 @@ CREATE TABLE IF NOT EXISTS oracle_strategy_accuracy (
     UNIQUE(analysis_date, strategy_recommended, vix_regime, gex_regime)
 );
 
-CREATE INDEX IF NOT EXISTS idx_oracle_strategy_acc_date ON oracle_strategy_accuracy(analysis_date);
-CREATE INDEX IF NOT EXISTS idx_oracle_strategy_acc_rec ON oracle_strategy_accuracy(strategy_recommended);
+CREATE INDEX IF NOT EXISTS idx_prophet_strategy_acc_date ON prophet_strategy_accuracy(analysis_date);
+CREATE INDEX IF NOT EXISTS idx_prophet_strategy_acc_rec ON prophet_strategy_accuracy(strategy_recommended);
 
 -- ============================================================================
 -- 7. SOLOMON A/B TESTS TABLE (New)

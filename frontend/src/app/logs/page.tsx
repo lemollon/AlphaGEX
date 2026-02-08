@@ -61,7 +61,7 @@ interface AutonomousLog {
   reasoning_summary: string
 }
 
-type LogCategory = 'trading' | 'ml' | 'oracle' | 'autonomous' | 'psychology' | 'wheel' | 'gex' | 'all'
+type LogCategory = 'trading' | 'ml' | 'prophet' | 'autonomous' | 'psychology' | 'wheel' | 'gex' | 'all'
 
 export default function LogsPage() {
   // SWR hooks for data fetching with caching
@@ -88,8 +88,8 @@ export default function LogsPage() {
 
   const categories = [
     { id: 'trading', name: 'Trading Decisions', icon: FileText, color: 'bg-blue-500', tables: ['trading_decisions'] },
-    { id: 'ml', name: 'ML/AI Logs', icon: Brain, color: 'bg-purple-500', tables: ['ml_decision_logs', 'ml_predictions', 'ares_ml_outcomes', 'spx_wheel_ml_outcomes'] },
-    { id: 'oracle', name: 'Oracle Predictions', icon: Eye, color: 'bg-green-500', tables: ['oracle_predictions'] },
+    { id: 'ml', name: 'ML/AI Logs', icon: Brain, color: 'bg-purple-500', tables: ['ml_decision_logs', 'ml_predictions', 'fortress_ml_outcomes', 'spx_wheel_ml_outcomes'] },
+    { id: 'prophet', name: 'Prophet Predictions', icon: Eye, color: 'bg-green-500', tables: ['prophet_predictions'] },
     { id: 'autonomous', name: 'Autonomous Trader', icon: Bot, color: 'bg-orange-500', tables: ['autonomous_trader_logs', 'autonomous_trade_log'] },
     { id: 'psychology', name: 'Psychology Analysis', icon: Activity, color: 'bg-pink-500', tables: ['psychology_analysis', 'pattern_learning'] },
     { id: 'wheel', name: 'Wheel Activity', icon: TrendingUp, color: 'bg-cyan-500', tables: ['wheel_activity_log'] },
@@ -99,11 +99,11 @@ export default function LogsPage() {
 
   const bots = [
     { id: 'all', name: 'All Bots', color: 'bg-gray-600' },
-    { id: 'PHOENIX', name: 'PHOENIX', color: 'bg-orange-500' },
-    { id: 'ATLAS', name: 'ATLAS', color: 'bg-blue-500' },
-    { id: 'ARES', name: 'ARES', color: 'bg-red-500' },
-    { id: 'HERMES', name: 'HERMES', color: 'bg-purple-500' },
-    { id: 'ORACLE', name: 'ORACLE', color: 'bg-green-500' },
+    { id: 'LAZARUS', name: 'LAZARUS', color: 'bg-orange-500' },
+    { id: 'CORNERSTONE', name: 'CORNERSTONE', color: 'bg-blue-500' },
+    { id: 'FORTRESS', name: 'FORTRESS', color: 'bg-red-500' },
+    { id: 'SHEPHERD', name: 'SHEPHERD', color: 'bg-purple-500' },
+    { id: 'PROPHET', name: 'PROPHET', color: 'bg-green-500' },
   ]
 
   // Refresh function
@@ -116,7 +116,7 @@ export default function LogsPage() {
 
   // Loading states for specific tabs
   const loadingLogs = (activeCategory === 'ml' && mlLoading) ||
-                     (activeCategory === 'oracle' && oracleLoading) ||
+                     (activeCategory === 'prophet' && oracleLoading) ||
                      (activeCategory === 'autonomous' && autonomousLoading)
 
   const getTableCount = (tableNames: string[]) => {
@@ -163,7 +163,7 @@ export default function LogsPage() {
         data = response.data?.data?.decisions || []
       } else if (activeCategory === 'ml') {
         data = mlLogs
-      } else if (activeCategory === 'oracle') {
+      } else if (activeCategory === 'prophet') {
         data = oraclePredictions
       } else if (activeCategory === 'autonomous') {
         data = autonomousLogs
@@ -405,26 +405,26 @@ export default function LogsPage() {
             </div>
           )}
 
-          {/* Oracle Predictions View */}
-          {activeCategory === 'oracle' && (
+          {/* Prophet Predictions View */}
+          {activeCategory === 'prophet' && (
             <div className="bg-gray-800 rounded-lg border border-gray-700">
               <div className="p-4 border-b border-gray-700 flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                   <Eye className="w-5 h-5 text-green-500" />
-                  Oracle ML Predictions
+                  Prophet ML Predictions
                 </h3>
                 <span className="text-gray-400 text-sm">{oraclePredictions.length} predictions</span>
               </div>
               {loadingLogs ? (
                 <div className="p-8 text-center text-gray-400">
                   <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
-                  Loading Oracle predictions...
+                  Loading Prophet predictions...
                 </div>
               ) : oraclePredictions.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
                   <Eye className="w-12 h-12 mx-auto mb-3 text-gray-600" />
-                  <p>No Oracle predictions yet</p>
-                  <p className="text-sm mt-1">Run Oracle analysis to generate predictions</p>
+                  <p>No Prophet predictions yet</p>
+                  <p className="text-sm mt-1">Run Prophet analysis to generate predictions</p>
                 </div>
               ) : (
                 <div className="divide-y divide-gray-700 max-h-96 overflow-y-auto">
@@ -609,7 +609,7 @@ export default function LogsPage() {
                 <p className="text-gray-500">Model predictions, scores, training</p>
               </div>
               <div>
-                <p className="text-green-400 font-medium">Oracle Predictions</p>
+                <p className="text-green-400 font-medium">Prophet Predictions</p>
                 <p className="text-gray-500">AI advisory with win probabilities</p>
               </div>
               <div>

@@ -1,6 +1,6 @@
 """
 Tastytrade API Routes
-Connection testing and future HERACLES bot integration
+Connection testing and future VALOR bot integration
 """
 
 import os

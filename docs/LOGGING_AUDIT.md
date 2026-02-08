@@ -8,12 +8,12 @@ Generated: 2025-12-12
 
 | # | Table | Writers | Purpose |
 |---|-------|---------|---------|
-| 1 | `trading_decisions` | `trading/decision_logger.py` | Main bot decisions (PHOENIX, ATLAS, ARES, HERMES, ORACLE) |
+| 1 | `trading_decisions` | `trading/decision_logger.py` | Main bot decisions (PHOENIX, ATLAS, ARES, HERMES, PROPHET) |
 | 2 | `autonomous_trader_logs` | `db/autonomous_database_logger.py` | Detailed scan cycle logs with market context, psychology |
 | 3 | `autonomous_trade_log` | `core/autonomous_paper_trader.py` | Simple trade action log (date, time, action, details) |
 | 4 | `autonomous_trade_activity` | `trading/mixins/performance_tracker.py` | Trade activity with symbol, pnl_impact |
 | 5 | `ml_decision_logs` | `backend/api/routes/ml_routes.py` | ML decision logging |
-| 6 | `oracle_predictions` | `quant/oracle_advisor.py` | Oracle predictions with confidence |
+| 6 | `prophet_predictions` | `quant/prophet_advisor.py` | Prophet predictions with confidence |
 | 7 | `ares_ml_outcomes` | `quant/ares_ml_advisor.py` | ARES ML model outcomes |
 | 8 | `spx_wheel_ml_outcomes` | `trading/spx_wheel_ml.py` | SPX wheel ML outcomes |
 | 9 | `psychology_analysis` | `data/automated_data_collector.py` | Psychology trap analysis |

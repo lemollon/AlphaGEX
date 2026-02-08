@@ -6,8 +6,8 @@ import Navigation from '../../components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '../../lib/api'
 
-// GEXIS Configuration
-const GEXIS_NAME = 'GEXIS'
+// COUNSELOR Configuration
+const GEXIS_NAME = 'COUNSELOR'
 const GEXIS_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
 const USER_NAME = 'Optionist Prime'
 
@@ -16,7 +16,7 @@ function getCentralTime(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
 }
 
-// Get time-based greeting for GEXIS (Central Time)
+// Get time-based greeting for COUNSELOR (Central Time)
 function getTimeGreeting(): string {
   const hour = getCentralTime().getHours()
   if (hour >= 5 && hour < 12) return 'Good morning'
@@ -24,7 +24,7 @@ function getTimeGreeting(): string {
   return 'Good evening'
 }
 
-// Get GEXIS welcome message - JARVIS-style sophisticated greeting
+// Get COUNSELOR welcome message - JARVIS-style sophisticated greeting
 function getGexisWelcomeMessage(): string {
   const greeting = getTimeGreeting()
   const ct = getCentralTime()
@@ -46,7 +46,7 @@ function getGexisWelcomeMessage(): string {
     marketContext = `Post-market analysis mode. Processing today's data.`
   }
 
-  return `${greeting}, ${USER_NAME}. GEXIS online.
+  return `${greeting}, ${USER_NAME}. COUNSELOR online.
 
 **━━━ COMMAND CENTER ACTIVE ━━━**
 ◉ Neural Core: Operational
@@ -144,7 +144,7 @@ export default function AICopilot() {
     } catch (error: any) {
       console.error('Error getting AI response:', error)
 
-      // Show GEXIS-style error with retry option
+      // Show COUNSELOR-style error with retry option
       const errorType = error?.type || 'unknown'
       const errorMessage = error?.message || 'Unknown error occurred'
 

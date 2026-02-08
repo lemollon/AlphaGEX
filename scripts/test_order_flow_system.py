@@ -6,7 +6,7 @@ Order Flow System End-to-End Test Script
 Tests the complete order flow pressure system per CLAUDE.md standards:
 1. Database schema exists
 2. Tradier data fetcher has bid_size/ask_size fields
-3. ARGUS engine calculates pressure correctly
+3. WATCHTOWER engine calculates pressure correctly
 4. API endpoint returns order_flow data
 5. Database persistence works
 
@@ -128,12 +128,12 @@ def test_tradier_data_fetcher():
         print_result("Tradier data fetcher test", False, str(e))
         return False
 
-def test_argus_engine():
-    """Test 3: Verify ARGUS engine has order flow methods"""
-    print_header("TEST 3: ARGUS Engine")
+def test_watchtower_engine():
+    """Test 3: Verify WATCHTOWER engine has order flow methods"""
+    print_header("TEST 3: WATCHTOWER Engine")
 
     try:
-        from core.argus_engine import ArgusEngine, StrikeData
+        from core.watchtower_engine import WatchtowerEngine, StrikeData
         from dataclasses import fields
 
         # Check StrikeData has bid/ask fields
@@ -144,7 +144,7 @@ def test_argus_engine():
             print_result(f"StrikeData.{field}", field in field_names)
 
         # Check engine has the methods
-        engine = ArgusEngine()
+        engine = WatchtowerEngine()
         has_pressure_method = hasattr(engine, 'calculate_bid_ask_pressure')
         has_volume_method = hasattr(engine, 'calculate_net_gex_volume')
 
@@ -216,7 +216,7 @@ def test_argus_engine():
         return has_pressure_method and has_volume_method
 
     except Exception as e:
-        print_result("ARGUS engine test", False, str(e))
+        print_result("WATCHTOWER engine test", False, str(e))
         import traceback
         traceback.print_exc()
         return False
@@ -230,8 +230,8 @@ def test_api_endpoint():
 
         # Try local first, then production
         urls = [
-            "http://localhost:8000/api/argus/gamma?symbol=SPY",
-            "https://alphagex-api.onrender.com/api/argus/gamma?symbol=SPY"
+            "http://localhost:8000/api/watchtower/gamma?symbol=SPY",
+            "https://alphagex-api.onrender.com/api/watchtower/gamma?symbol=SPY"
         ]
 
         response = None
@@ -354,17 +354,17 @@ def test_database_persistence():
         print_result("Database persistence test", False, str(e))
         return False
 
-def test_argus_routes_integration():
-    """Test 6: Verify ARGUS routes have persistence wired up"""
+def test_watchtower_routes_integration():
+    """Test 6: Verify WATCHTOWER routes have persistence wired up"""
     print_header("TEST 6: Route Integration")
 
     try:
         import ast
 
-        # Read the argus_routes.py file
+        # Read the watchtower_routes.py file
         routes_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'backend', 'api', 'routes', 'argus_routes.py'
+            'backend', 'api', 'routes', 'watchtower_routes.py'
         )
 
         with open(routes_path, 'r') as f:
@@ -421,7 +421,7 @@ def test_standards_compliance():
     try:
         routes_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'backend', 'api', 'routes', 'argus_routes.py'
+            'backend', 'api', 'routes', 'watchtower_routes.py'
         )
         with open(routes_path, 'r') as f:
             content = f.read()
@@ -435,7 +435,7 @@ def test_standards_compliance():
     try:
         routes_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'backend', 'api', 'routes', 'argus_routes.py'
+            'backend', 'api', 'routes', 'watchtower_routes.py'
         )
         with open(routes_path, 'r') as f:
             content = f.read()
@@ -449,7 +449,7 @@ def test_standards_compliance():
     try:
         frontend_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'frontend', 'src', 'app', 'argus', 'page.tsx'
+            'frontend', 'src', 'app', 'watchtower', 'page.tsx'
         )
         with open(frontend_path, 'r') as f:
             content = f.read()
@@ -467,7 +467,7 @@ def test_standards_compliance():
     try:
         routes_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'backend', 'api', 'routes', 'argus_routes.py'
+            'backend', 'api', 'routes', 'watchtower_routes.py'
         )
         with open(routes_path, 'r') as f:
             content = f.read()
@@ -502,8 +502,8 @@ def main():
     # Run all tests
     results.append(("Database Schema", test_database_schema()))
     results.append(("Tradier Data Fetcher", test_tradier_data_fetcher()))
-    results.append(("ARGUS Engine", test_argus_engine()))
-    results.append(("Route Integration", test_argus_routes_integration()))
+    results.append(("WATCHTOWER Engine", test_watchtower_engine()))
+    results.append(("Route Integration", test_watchtower_routes_integration()))
     results.append(("API Endpoint", test_api_endpoint()))
     results.append(("Database Persistence", test_database_persistence()))
     results.append(("STANDARDS.md Compliance", test_standards_compliance()))

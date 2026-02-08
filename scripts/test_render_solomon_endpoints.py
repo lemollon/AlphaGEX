@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Render Integration Test Script for Solomon Feedback Loop (Migration 023)
+Render Integration Test Script for Proverbs Feedback Loop (Migration 023)
 
-This script tests the Solomon API endpoints on the deployed Render service.
+This script tests the Proverbs API endpoints on the deployed Render service.
 Run this after deploying to verify the feedback loop is working end-to-end.
 
 Usage:
     # Test production
-    python scripts/test_render_solomon_endpoints.py
+    python scripts/test_render_proverbs_endpoints.py
 
     # Test with custom URL
-    python scripts/test_render_solomon_endpoints.py --url https://your-api.onrender.com
+    python scripts/test_render_proverbs_endpoints.py --url https://your-api.onrender.com
 
     # Verbose output
-    python scripts/test_render_solomon_endpoints.py -v
+    python scripts/test_render_proverbs_endpoints.py -v
 
 Requirements:
     pip install requests
@@ -135,14 +135,14 @@ def test_endpoint(
     return False, "All retry attempts failed", None
 
 
-def run_solomon_tests(base_url: str, verbose: bool = False) -> Tuple[int, int]:
+def run_proverbs_tests(base_url: str, verbose: bool = False) -> Tuple[int, int]:
     """
-    Run all Solomon endpoint tests.
+    Run all Proverbs endpoint tests.
 
     Returns:
         Tuple of (passed_count, total_count)
     """
-    print(f"\n{Colors.BOLD}=== Solomon Feedback Loop Integration Tests ==={Colors.END}")
+    print(f"\n{Colors.BOLD}=== Proverbs Feedback Loop Integration Tests ==={Colors.END}")
     print(f"Target: {base_url}\n")
 
     tests = [
@@ -154,57 +154,57 @@ def run_solomon_tests(base_url: str, verbose: bool = False) -> Tuple[int, int]:
             "expected_fields": ["status"],
         },
 
-        # Solomon Dashboard
+        # Proverbs Dashboard
         {
-            "name": "Solomon Dashboard",
-            "endpoint": "/api/solomon/dashboard",
+            "name": "Proverbs Dashboard",
+            "endpoint": "/api/proverbs/dashboard",
             "method": "GET",
         },
 
         # Migration 023: Strategy Analysis
         {
             "name": "Strategy Analysis (Migration 023)",
-            "endpoint": "/api/solomon/strategy-analysis",
+            "endpoint": "/api/proverbs/strategy-analysis",
             "method": "GET",
             "expected_fields": ["success"],
         },
         {
             "name": "Strategy Analysis with Days Param",
-            "endpoint": "/api/solomon/strategy-analysis",
+            "endpoint": "/api/proverbs/strategy-analysis",
             "method": "GET",
             "params": {"days": 7},
         },
 
-        # Migration 023: Oracle Accuracy
+        # Migration 023: Prophet Accuracy
         {
-            "name": "Oracle Accuracy (Migration 023)",
-            "endpoint": "/api/solomon/oracle-accuracy",
+            "name": "Prophet Accuracy (Migration 023)",
+            "endpoint": "/api/proverbs/prophet-accuracy",
             "method": "GET",
             "expected_fields": ["success"],
         },
         {
-            "name": "Oracle Accuracy with Days Param",
-            "endpoint": "/api/solomon/oracle-accuracy",
+            "name": "Prophet Accuracy with Days Param",
+            "endpoint": "/api/proverbs/prophet-accuracy",
             "method": "GET",
             "params": {"days": 14},
         },
 
         # Enhanced Endpoints
         {
-            "name": "Solomon Enhanced Digest",
-            "endpoint": "/api/solomon/enhanced/digest",
+            "name": "Proverbs Enhanced Digest",
+            "endpoint": "/api/proverbs/enhanced/digest",
             "method": "GET",
         },
         {
-            "name": "Solomon Enhanced Correlations",
-            "endpoint": "/api/solomon/enhanced/correlations",
+            "name": "Proverbs Enhanced Correlations",
+            "endpoint": "/api/proverbs/enhanced/correlations",
             "method": "GET",
         },
 
         # Validation Status
         {
-            "name": "Solomon Validation Status",
-            "endpoint": "/api/solomon/validation/status",
+            "name": "Proverbs Validation Status",
+            "endpoint": "/api/proverbs/validation/status",
             "method": "GET",
         },
     ]
@@ -246,7 +246,7 @@ def run_bot_integration_tests(base_url: str, verbose: bool = False) -> Tuple[int
     """
     print(f"\n{Colors.BOLD}=== Bot Integration Tests ==={Colors.END}\n")
 
-    bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+    bots = ['fortress', 'solomon', 'samson', 'anchor', 'gideon']
     passed = 0
     total = len(bots)
 
@@ -260,7 +260,7 @@ def run_bot_integration_tests(base_url: str, verbose: bool = False) -> Tuple[int
             # Check if bot has oracle_prediction tracking enabled
             if data and isinstance(data, dict):
                 # Look for signs of feedback loop integration
-                has_integration = any(k in str(data).lower() for k in ['oracle', 'prediction', 'feedback'])
+                has_integration = any(k in str(data).lower() for k in ['prophet', 'prediction', 'feedback'])
                 if has_integration:
                     print_status("PASS", f"{bot.upper()}: Status OK with feedback loop indicators")
                 else:
@@ -277,7 +277,7 @@ def run_bot_integration_tests(base_url: str, verbose: bool = False) -> Tuple[int
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test Solomon feedback loop endpoints on Render deployment"
+        description="Test Proverbs feedback loop endpoints on Render deployment"
     )
     parser.add_argument(
         "--url",
@@ -295,9 +295,9 @@ def main():
         help="Only run bot integration tests"
     )
     parser.add_argument(
-        "--solomon-only",
+        "--proverbs-only",
         action="store_true",
-        help="Only run Solomon endpoint tests"
+        help="Only run Proverbs endpoint tests"
     )
 
     args = parser.parse_args()
@@ -306,11 +306,11 @@ def main():
     total_tests = 0
 
     if not args.bots_only:
-        passed, total = run_solomon_tests(args.url, args.verbose)
+        passed, total = run_proverbs_tests(args.url, args.verbose)
         total_passed += passed
         total_tests += total
 
-    if not args.solomon_only:
+    if not args.proverbs_only:
         passed, total = run_bot_integration_tests(args.url, args.verbose)
         total_passed += passed
         total_tests += total

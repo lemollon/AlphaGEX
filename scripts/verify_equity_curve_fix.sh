@@ -35,11 +35,11 @@ conn = get_connection()
 cursor = conn.cursor()
 
 bots = [
-    ("ARES", "ares_positions"),
-    ("TITAN", "titan_positions"),
-    ("PEGASUS", "pegasus_positions"),
-    ("ATHENA", "athena_positions"),
-    ("ICARUS", "icarus_positions"),
+    ("FORTRESS", "fortress_positions"),
+    ("SAMSON", "samson_positions"),
+    ("ANCHOR", "anchor_positions"),
+    ("SOLOMON", "solomon_positions"),
+    ("GIDEON", "gideon_positions"),
 ]
 
 GREEN = '\033[0;32m'

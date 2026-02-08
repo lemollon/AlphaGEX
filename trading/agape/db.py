@@ -1,7 +1,7 @@
 """
 AGAPE Database Layer - PostgreSQL persistence for the ETH bot.
 
-Mirrors ARES V2 db.py pattern: config loading, position management,
+Mirrors FORTRESS V2 db.py pattern: config loading, position management,
 logging, and scan activity tracking.
 """
 
@@ -211,7 +211,7 @@ class AgapeDatabase:
     def load_config(self) -> Optional[Dict[str, str]]:
         """Load bot config from autonomous_config table.
 
-        Uses ICARUS-style key/value schema with 'agape_' prefix:
+        Uses GIDEON-style key/value schema with 'agape_' prefix:
           key='agape_starting_capital', value='5000.0'
         """
         conn = self._get_conn()

@@ -83,11 +83,11 @@ def _calculate_portfolio_unrealized_pnl(cursor) -> dict:
 
     # Bot configurations: (table, symbol, credit_field)
     bot_configs = [
-        ('ares_positions', 'ARES', 'SPY', 'total_credit'),
-        ('athena_positions', 'ATHENA', 'SPY', 'entry_price'),
-        ('icarus_positions', 'ICARUS', 'SPY', 'entry_price'),
-        ('titan_positions', 'TITAN', 'SPX', 'total_credit'),
-        ('pegasus_positions', 'PEGASUS', 'SPX', 'total_credit'),
+        ('fortress_positions', 'FORTRESS', 'SPY', 'total_credit'),
+        ('solomon_positions', 'SOLOMON', 'SPY', 'entry_price'),
+        ('gideon_positions', 'GIDEON', 'SPY', 'entry_price'),
+        ('samson_positions', 'SAMSON', 'SPX', 'total_credit'),
+        ('anchor_positions', 'ANCHOR', 'SPX', 'total_credit'),
     ]
 
     has_mtm = False
@@ -111,7 +111,7 @@ def _calculate_portfolio_unrealized_pnl(cursor) -> dict:
                 (pos_id, credit, contracts, spread_width,
                  put_short, put_long, call_short, call_long, expiration) = pos
 
-                # Skip non-IC positions (ATHENA/ICARUS directional)
+                # Skip non-IC positions (SOLOMON/GIDEON directional)
                 if not all([put_short, put_long, call_short, call_long]):
                     continue
 
@@ -1960,7 +1960,7 @@ async def get_decision_logs(
     Get decision logs for all bots or a specific bot.
 
     Args:
-        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, PROPHET)
         start_date: Filter from date (YYYY-MM-DD)
         end_date: Filter to date (YYYY-MM-DD)
         decision_type: Filter by type (ENTRY_SIGNAL, STAY_FLAT, etc.)
@@ -2045,7 +2045,7 @@ async def get_decision_summary(bot: str = None, days: int = 7):
     Get summary statistics for bot decisions.
 
     Args:
-        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, PROPHET)
         days: Number of days to look back (default 7)
 
     Returns:
@@ -2076,7 +2076,7 @@ async def get_recent_decision_logs(bot: str = None, limit: int = 20):
     Get recent decisions for dashboard display.
 
     Args:
-        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, PROPHET)
         limit: Number of recent decisions (default 20)
 
     Returns simplified decision records for quick viewing.
@@ -2106,17 +2106,17 @@ async def get_all_bots_status():
     Get status of all trading bots.
 
     Returns status for all 10 bots:
-    - LIVE: ARES, ATHENA, PEGASUS
-    - PAPER: TITAN, ICARUS, PROMETHEUS
-    - LEGACY/MANUAL: PHOENIX, ATLAS, HERMES, ORACLE
+    - LIVE: FORTRESS, SOLOMON, ANCHOR
+    - PAPER: SAMSON, GIDEON, JUBILEE
+    - LEGACY/MANUAL: LAZARUS, CORNERSTONE, SHEPHERD, PROPHET
     """
     try:
         from trading.decision_logger import get_bot_decision_summary
 
         bots = {
             # === LIVE TRADING BOTS ===
-            "ARES": {
-                "name": "ARES",
+            "FORTRESS": {
+                "name": "FORTRESS",
                 "description": "Aggressive Iron Condor (SPY 0DTE)",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2124,10 +2124,10 @@ async def get_all_bots_status():
                 "schedule": "8:30 AM - 3:30 PM CT, every 5 min",
                 "strategy": "0DTE Iron Condor at 1 SD",
                 "symbol": "SPY",
-                "data_sources": ["VIX", "Oracle", "GEX Regime"]
+                "data_sources": ["VIX", "Prophet", "GEX Regime"]
             },
-            "ATHENA": {
-                "name": "ATHENA",
+            "SOLOMON": {
+                "name": "SOLOMON",
                 "description": "Directional Spreads (Bull/Bear)",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2135,10 +2135,10 @@ async def get_all_bots_status():
                 "schedule": "8:35 AM - 2:30 PM CT, every 5 min",
                 "strategy": "GEX-based directional spreads",
                 "symbol": "SPY",
-                "data_sources": ["GEX Walls", "Oracle", "VIX"]
+                "data_sources": ["GEX Walls", "Prophet", "VIX"]
             },
-            "PEGASUS": {
-                "name": "PEGASUS",
+            "ANCHOR": {
+                "name": "ANCHOR",
                 "description": "SPX Weekly Iron Condor",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2146,12 +2146,12 @@ async def get_all_bots_status():
                 "schedule": "Every 5 min during market hours",
                 "strategy": "SPX Iron Condor, conservative strikes",
                 "symbol": "SPX",
-                "data_sources": ["VIX", "Oracle", "Expected Move"]
+                "data_sources": ["VIX", "Prophet", "Expected Move"]
             },
 
             # === PAPER TRADING BOTS ===
-            "TITAN": {
-                "name": "TITAN",
+            "SAMSON": {
+                "name": "SAMSON",
                 "description": "Aggressive SPX Iron Condor",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2159,10 +2159,10 @@ async def get_all_bots_status():
                 "schedule": "Multiple trades daily, 30-min cooldown",
                 "strategy": "Aggressive SPX IC, 15% risk/trade",
                 "symbol": "SPX",
-                "data_sources": ["VIX", "Oracle", "GEX"]
+                "data_sources": ["VIX", "Prophet", "GEX"]
             },
-            "ICARUS": {
-                "name": "ICARUS",
+            "GIDEON": {
+                "name": "GIDEON",
                 "description": "Aggressive Directional Spreads",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2170,10 +2170,10 @@ async def get_all_bots_status():
                 "schedule": "Every 5 min during market hours",
                 "strategy": "Aggressive directional, relaxed GEX filters",
                 "symbol": "SPY",
-                "data_sources": ["GEX", "Oracle", "VIX"]
+                "data_sources": ["GEX", "Prophet", "VIX"]
             },
-            "PROMETHEUS": {
-                "name": "PROMETHEUS",
+            "JUBILEE": {
+                "name": "JUBILEE",
                 "description": "Box Spread Synthetic Borrowing + IC Trading",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2181,12 +2181,12 @@ async def get_all_bots_status():
                 "schedule": "Box: Daily 9:30 AM CT | IC: Every 10 min",
                 "strategy": "Borrow via box spreads, trade ICs with borrowed capital",
                 "symbol": "SPX",
-                "data_sources": ["Fed Funds Rate", "Oracle (PEGASUS rules)", "Tradier Production"]
+                "data_sources": ["Fed Funds Rate", "Prophet (ANCHOR rules)", "Tradier Production"]
             },
 
             # === LEGACY / PARTIAL IMPLEMENTATION ===
-            "PHOENIX": {
-                "name": "PHOENIX",
+            "LAZARUS": {
+                "name": "LAZARUS",
                 "description": "0DTE Options (Partial Implementation)",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2196,8 +2196,8 @@ async def get_all_bots_status():
                 "symbol": "SPY/SPX",
                 "data_sources": ["GEX", "Psychology Rules"]
             },
-            "ATLAS": {
-                "name": "ATLAS",
+            "CORNERSTONE": {
+                "name": "CORNERSTONE",
                 "description": "SPX Wheel (Partial Implementation)",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2207,8 +2207,8 @@ async def get_all_bots_status():
                 "symbol": "SPX",
                 "data_sources": ["VIX", "Delta Targeting"]
             },
-            "HERMES": {
-                "name": "HERMES",
+            "SHEPHERD": {
+                "name": "SHEPHERD",
                 "description": "Manual Wheel Manager",
                 "type": "manual",
                 "mode": "N/A",
@@ -2218,8 +2218,8 @@ async def get_all_bots_status():
                 "symbol": "Various",
                 "data_sources": []
             },
-            "ORACLE": {
-                "name": "ORACLE",
+            "PROPHET": {
+                "name": "PROPHET",
                 "description": "ML Advisory System",
                 "type": "advisory",
                 "mode": "N/A",
@@ -2227,7 +2227,7 @@ async def get_all_bots_status():
                 "schedule": "On-demand",
                 "strategy": "ML-based trade recommendations for all bots",
                 "symbol": "N/A",
-                "data_sources": ["SAGE ML", "VIX", "GEX", "Historical outcomes"]
+                "data_sources": ["WISDOM ML", "VIX", "GEX", "Historical outcomes"]
             }
         }
 
@@ -2273,20 +2273,20 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
     Recapitalize a bot with fresh capital while preserving all historical data.
 
     Use this instead of reset when a bot blows an account - keeps all trade
-    history for Solomon learning while allowing the bot to continue trading.
+    history for Proverbs learning while allowing the bot to continue trading.
 
     Args:
-        bot: Bot name (ARES, ATHENA, TITAN, PEGASUS, ICARUS)
+        bot: Bot name (FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON)
         capital: New starting capital amount
         note: Optional note explaining the recapitalization
 
     Preserves:
         - All closed trades (for win/loss pattern analysis)
         - All equity snapshots (for drawdown analysis)
-        - All decision logs (for Solomon learning)
+        - All decision logs (for Proverbs learning)
         - All scan activity (for signal analysis)
     """
-    valid_bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']
+    valid_bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON']
     bot_upper = bot.upper()
 
     if bot_upper not in valid_bots:
@@ -2352,7 +2352,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
             "previous_capital": previous_capital,
             "new_capital": capital,
             "note": note,
-            "message": f"{bot_upper} recapitalized to ${capital:,.2f}. All historical data preserved for Solomon learning.",
+            "message": f"{bot_upper} recapitalized to ${capital:,.2f}. All historical data preserved for Proverbs learning.",
             "data_preserved": [
                 f"{bot_lower}_positions (closed trades)",
                 f"{bot_lower}_equity_snapshots (drawdown history)",
@@ -2374,7 +2374,7 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
     Reset bot data to start fresh with proper tracking.
 
     Args:
-        bot: Bot name to reset (PHOENIX, ATLAS) or None for all
+        bot: Bot name to reset (LAZARUS, CORNERSTONE) or None for all
         confirm: Must be True to actually delete data
 
     DANGEROUS: This deletes all historical trade data for the bot(s).
@@ -2409,7 +2409,7 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
         try:
             if bot:
                 c.execute("DELETE FROM autonomous_open_positions WHERE symbol LIKE %s",
-                         ('%SPY%' if bot == 'PHOENIX' else '%SPX%',))
+                         ('%SPY%' if bot == 'LAZARUS' else '%SPX%',))
             else:
                 c.execute("DELETE FROM autonomous_open_positions")
             deleted_counts["open_positions"] = c.rowcount
@@ -2420,7 +2420,7 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
         try:
             if bot:
                 c.execute("DELETE FROM autonomous_closed_trades WHERE symbol LIKE %s",
-                         ('%SPY%' if bot == 'PHOENIX' else '%SPX%',))
+                         ('%SPY%' if bot == 'LAZARUS' else '%SPX%',))
             else:
                 c.execute("DELETE FROM autonomous_closed_trades")
             deleted_counts["closed_trades"] = c.rowcount
@@ -2468,64 +2468,64 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
 
 
 # =============================================================================
-# ARES (Aggressive Iron Condor) Routes
+# FORTRESS (Aggressive Iron Condor) Routes
 # =============================================================================
 
-# Try to import ARES V2 trader
+# Try to import FORTRESS V2 trader
 try:
-    from trading.ares_v2 import ARESTrader, ARESConfig, TradingMode as ARESTradingMode
+    from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode as ARESTradingMode
     ARES_AVAILABLE = True
 except ImportError as e:
     ARES_AVAILABLE = False
-    ARESConfig = None
-    logger.warning(f"ARES trader not available: {e}")
+    FortressConfig = None
+    logger.warning(f"FORTRESS trader not available: {e}")
 
-# Initialize ARES trader instance (lazy initialization)
-_ares_trader = None
+# Initialize FORTRESS trader instance (lazy initialization)
+_fortress_trader = None
 
-def get_ares_trader():
-    """Get or create ARES trader instance"""
-    global _ares_trader
-    if _ares_trader is None and ARES_AVAILABLE:
-        # Use default ARESConfig which is LIVE mode (sandbox=True in executor)
-        config = ARESConfig()
-        _ares_trader = ARESTrader(config=config)
-    return _ares_trader
+def get_fortress_trader():
+    """Get or create FORTRESS trader instance"""
+    global _fortress_trader
+    if _fortress_trader is None and ARES_AVAILABLE:
+        # Use default FortressConfig which is LIVE mode (sandbox=True in executor)
+        config = FortressConfig()
+        _fortress_trader = FortressTrader(config=config)
+    return _fortress_trader
 
 
-@router.get("/bots/ares/status")
-async def get_ares_status():
+@router.get("/bots/fortress/status")
+async def get_fortress_status():
     """
-    Get ARES bot status.
+    Get FORTRESS bot status.
 
     Returns current status, configuration, and performance metrics.
     """
     if not ARES_AVAILABLE:
         return {
             "success": False,
-            "error": "ARES trader not available",
+            "error": "FORTRESS trader not available",
             "mode": "unavailable"
         }
 
     try:
-        ares = get_ares_trader()
-        if ares:
-            status = ares.get_status()
+        fortress = get_fortress_trader()
+        if fortress:
+            status = fortress.get_status()
             return status
         else:
             return {
                 "success": False,
-                "error": "Could not initialize ARES trader"
+                "error": "Could not initialize FORTRESS trader"
             }
     except Exception as e:
-        logger.error(f"Error getting ARES status: {e}")
+        logger.error(f"Error getting FORTRESS status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/bots/ares/run")
+@router.post("/bots/fortress/run")
 async def run_ares_cycle():
     """
-    Run ARES daily trading cycle.
+    Run FORTRESS daily trading cycle.
 
     This will:
     1. Check if within trading window
@@ -2538,24 +2538,24 @@ async def run_ares_cycle():
     if not ARES_AVAILABLE:
         raise HTTPException(
             status_code=503,
-            detail="ARES trader not available"
+            detail="FORTRESS trader not available"
         )
 
     try:
-        ares = get_ares_trader()
-        if not ares:
+        fortress = get_fortress_trader()
+        if not fortress:
             raise HTTPException(
                 status_code=503,
-                detail="Could not initialize ARES trader"
+                detail="Could not initialize FORTRESS trader"
             )
 
-        result = ares.run_daily_cycle()
+        result = fortress.run_daily_cycle()
         return {
             "success": True,
             "data": result
         }
     except Exception as e:
-        logger.error(f"Error running ARES cycle: {e}")
+        logger.error(f"Error running FORTRESS cycle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2711,7 +2711,7 @@ async def debug_no_trades():
 
         # 4. Open Positions
         open_positions = {}
-        for table, bot in [('ares_positions', 'ARES'), ('athena_positions', 'ATHENA')]:
+        for table, bot in [('fortress_positions', 'FORTRESS'), ('solomon_positions', 'SOLOMON')]:
             try:
                 cursor.execute(f'''
                     SELECT position_id, status, open_time, underlying_at_entry
@@ -2936,11 +2936,11 @@ async def get_sync_status():
         }
 
         bot_tables = [
-            ('ares', 'ares_positions'),
-            ('athena', 'athena_positions'),
-            ('titan', 'titan_positions'),
-            ('pegasus', 'pegasus_positions'),
-            ('icarus', 'icarus_positions')
+            ('fortress', 'fortress_positions'),
+            ('solomon', 'solomon_positions'),
+            ('samson', 'samson_positions'),
+            ('anchor', 'anchor_positions'),
+            ('gideon', 'gideon_positions')
         ]
 
         today = datetime.now().date()

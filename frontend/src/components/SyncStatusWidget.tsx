@@ -173,7 +173,7 @@ export default function SyncStatusWidget() {
             <div className="mb-4 space-y-2">
               <div className="text-xs text-text-muted font-medium">Bot Issues:</div>
               <div className="grid grid-cols-5 gap-1">
-                {['ares', 'athena', 'titan', 'pegasus', 'icarus'].map(bot => {
+                {['fortress', 'solomon', 'samson', 'anchor', 'gideon'].map(bot => {
                   const stale = status?.stale_positions?.[bot] || 0
                   const pnl = status?.missing_pnl?.[bot] || 0
                   const botIssues = stale + pnl

@@ -39,7 +39,7 @@ python scripts/tests/test_database.py
 - Database connection
 - Schema tables existence
 - PYTHIA (probability) schema
-- ORACLE schema
+- PROPHET schema
 - Wheel Strategy schema
 - Data integrity checks
 
@@ -54,7 +54,7 @@ python scripts/tests/test_api_endpoints.py
 - Health check endpoints
 - Market data (GEX, VIX, Psychology)
 - PYTHIA (Probability) endpoints
-- ORACLE AI endpoints
+- PROPHET AI endpoints
 - PROMETHEUS (ML) endpoints
 - Wheel Strategy endpoints
 - Trader endpoints
@@ -71,7 +71,7 @@ python scripts/tests/test_integration.py
 ```
 
 **Flows tested:**
-- ORACLE prediction flow
+- PROPHET prediction flow
 - PYTHIA calibration flow
 - PROMETHEUS ML flow
 - Wheel cycle management
@@ -89,9 +89,9 @@ python scripts/tests/test_claude_integration.py
 
 **Tests included:**
 - API key configuration
-- ORACLE Claude status
+- PROPHET Claude status
 - GEXIS commands
-- ORACLE analysis with Claude explanation
+- PROPHET analysis with Claude explanation
 - GEXIS contextual analysis
 
 ## Environment Variables

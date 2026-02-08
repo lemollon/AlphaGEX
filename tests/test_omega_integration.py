@@ -6,10 +6,10 @@ These tests verify that all components of the unified trading system
 work together correctly:
 
 1. OMEGA Orchestrator (central hub)
-2. Solomon Integration (safety layer)
+2. Proverbs Integration (safety layer)
 3. Ensemble Weighting (market context)
 4. ML Advisor (primary decision)
-5. Oracle Adaptation (bot-specific)
+5. Prophet Adaptation (bot-specific)
 6. Gap Implementations (1, 2, 5, 6, 9, 10)
 
 Author: AlphaGEX Quant Team
@@ -162,13 +162,13 @@ class TestGap1AutoRetrainMonitor:
 
         monitor = AutoRetrainMonitor()
         monitor.record_prediction(
-            bot_name="ARES",
+            bot_name="FORTRESS",
             predicted_win_prob=0.72,
             model_version="1.0.0"
         )
 
         assert len(monitor.recent_predictions) == 1
-        assert monitor.recent_predictions[0]['bot_name'] == "ARES"
+        assert monitor.recent_predictions[0]['bot_name'] == "FORTRESS"
         assert monitor.recent_predictions[0]['predicted_win_prob'] == 0.72
 
     def test_retrain_monitor_insufficient_data(self):
@@ -179,7 +179,7 @@ class TestGap1AutoRetrainMonitor:
 
         # Record only 5 outcomes (below threshold)
         for i in range(5):
-            result = monitor.record_outcome("ARES", was_win=True, pnl=50)
+            result = monitor.record_outcome("FORTRESS", was_win=True, pnl=50)
 
         assert result['retrain_needed'] is False
         assert result['metrics'].get('status') == 'insufficient_data'
@@ -192,11 +192,11 @@ class TestGap1AutoRetrainMonitor:
 
         # Record enough outcomes first
         for i in range(25):
-            monitor.record_outcome("ARES", was_win=True, pnl=50)
+            monitor.record_outcome("FORTRESS", was_win=True, pnl=50)
 
         # Now record consecutive losses
         for i in range(6):  # More than threshold
-            result = monitor.record_outcome("ARES", was_win=False, pnl=-100)
+            result = monitor.record_outcome("FORTRESS", was_win=False, pnl=-100)
 
         assert result['retrain_needed'] is True
         assert 'Consecutive losses' in result['reason']
@@ -284,11 +284,11 @@ class TestGap9CorrelationEnforcer:
 
         enforcer = CrossBotCorrelationEnforcer()
 
-        enforcer.register_position("ARES", "BULLISH", 10.0, "SPY")
+        enforcer.register_position("FORTRESS", "BULLISH", 10.0, "SPY")
 
-        assert "ARES" in enforcer.active_positions
-        assert enforcer.active_positions["ARES"]['direction'] == "BULLISH"
-        assert enforcer.active_positions["ARES"]['exposure_pct'] == 10.0
+        assert "FORTRESS" in enforcer.active_positions
+        assert enforcer.active_positions["FORTRESS"]['direction'] == "BULLISH"
+        assert enforcer.active_positions["FORTRESS"]['exposure_pct'] == 10.0
 
     def test_correlation_enforcer_limit_check(self):
         """Test correlation limit enforcement"""
@@ -296,14 +296,14 @@ class TestGap9CorrelationEnforcer:
 
         enforcer = CrossBotCorrelationEnforcer()
 
-        # Register ARES with 15% exposure
-        enforcer.register_position("ARES", "BULLISH", 15.0)
+        # Register FORTRESS with 15% exposure
+        enforcer.register_position("FORTRESS", "BULLISH", 15.0)
 
-        # Register ATHENA with 15% exposure
-        enforcer.register_position("ATHENA", "BULLISH", 15.0)
+        # Register SOLOMON with 15% exposure
+        enforcer.register_position("SOLOMON", "BULLISH", 15.0)
 
-        # Now check if PHOENIX can add 10% (total would be 40% > 30% limit)
-        result = enforcer.check_new_position("PHOENIX", "BULLISH", 10.0)
+        # Now check if LAZARUS can add 10% (total would be 40% > 30% limit)
+        result = enforcer.check_new_position("LAZARUS", "BULLISH", 10.0)
 
         # Should be blocked or reduced
         assert result['total_correlated_exposure'] == 40.0
@@ -361,26 +361,26 @@ class TestGap10EquityCompoundScaler:
 
 
 # =============================================================================
-# ORACLE OMEGA MODE TESTS
+# PROPHET OMEGA MODE TESTS
 # =============================================================================
 
 class TestOracleOmegaMode:
-    """Tests for Oracle OMEGA mode (trust ML Advisor)"""
+    """Tests for Prophet OMEGA mode (trust ML Advisor)"""
 
     def test_oracle_omega_mode_initialization(self):
-        """Test Oracle can be initialized in OMEGA mode"""
-        from quant.oracle_advisor import OracleAdvisor
+        """Test Prophet can be initialized in OMEGA mode"""
+        from quant.prophet_advisor import ProphetAdvisor
 
-        oracle = OracleAdvisor(enable_claude=False, omega_mode=True)
+        prophet = ProphetAdvisor(enable_claude=False, omega_mode=True)
 
-        assert oracle.omega_mode is True
+        assert prophet.omega_mode is True
 
     def test_oracle_omega_mode_disables_vix_skip(self):
         """Test that OMEGA mode disables VIX skip rules"""
         # This test verifies the code path, not the full prediction
-        from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+        from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
 
-        oracle = OracleAdvisor(enable_claude=False, omega_mode=True)
+        prophet = ProphetAdvisor(enable_claude=False, omega_mode=True)
 
         # Create high VIX context that would normally trigger skip
         context = MarketContext(
@@ -392,7 +392,7 @@ class TestOracleOmegaMode:
 
         # In OMEGA mode, VIX skip rules should be bypassed
         # The test verifies the mode is set correctly
-        assert oracle.omega_mode is True
+        assert prophet.omega_mode is True
 
 
 # =============================================================================
@@ -413,11 +413,11 @@ class TestOmegaMixin:
 
         class TestBot(OmegaIntegrationMixin):
             def __init__(self):
-                self.bot_name = "ARES"
+                self.bot_name = "FORTRESS"
                 self.capital = 100000
 
         bot = TestBot()
-        assert bot.bot_name == "ARES"
+        assert bot.bot_name == "FORTRESS"
         assert bot.capital == 100000
 
     def test_mixin_omega_can_trade(self):
@@ -426,7 +426,7 @@ class TestOmegaMixin:
 
         class TestBot(OmegaIntegrationMixin):
             def __init__(self):
-                self.bot_name = "ARES"
+                self.bot_name = "FORTRESS"
                 self.capital = 100000
 
         bot = TestBot()
@@ -450,15 +450,15 @@ class TestIntegrationFlow:
         omega = OmegaOrchestrator(capital=100000)
 
         decision = omega.get_trading_decision(
-            bot_name="ARES",
+            bot_name="FORTRESS",
             gex_data=mock_gex_data,
             features=mock_features,
             current_regime="POSITIVE"
         )
 
         assert decision is not None
-        assert decision.bot_name == "ARES"
-        assert decision.solomon_verdict is not None
+        assert decision.bot_name == "FORTRESS"
+        assert decision.proverbs_verdict is not None
         assert decision.ensemble_context is not None
         assert decision.ml_decision is not None
         assert decision.oracle_adaptation is not None
@@ -472,7 +472,7 @@ class TestIntegrationFlow:
 
         # First get a decision
         decision = omega.get_trading_decision(
-            bot_name="ARES",
+            bot_name="FORTRESS",
             gex_data=mock_gex_data,
             features=mock_features,
             current_regime="POSITIVE"
@@ -480,7 +480,7 @@ class TestIntegrationFlow:
 
         # Then record outcome
         result = omega.record_trade_outcome(
-            bot_name="ARES",
+            bot_name="FORTRESS",
             was_win=True,
             pnl=150.0
         )
@@ -497,7 +497,7 @@ class TestIntegrationFlow:
         omega = OmegaOrchestrator(capital=100000)
 
         decision = omega.get_trading_decision(
-            bot_name="ARES",
+            bot_name="FORTRESS",
             gex_data=mock_gex_data,
             features=mock_features,
             current_regime="POSITIVE"

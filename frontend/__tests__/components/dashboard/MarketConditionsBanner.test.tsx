@@ -1,7 +1,7 @@
 /**
  * MarketConditionsBanner Component Tests
  *
- * Tests for the market conditions banner displaying VIX, GEX, and Oracle status.
+ * Tests for the market conditions banner displaying VIX, GEX, and Prophet status.
  */
 
 import React from 'react'
@@ -53,7 +53,7 @@ const mockVIXExtreme = {
   data: { vix_spot: 40.0 }
 }
 
-// Mock Oracle data
+// Mock Prophet data
 const mockOracleData = {
   success: true,
   status: 'healthy',
@@ -75,7 +75,7 @@ describe('MarketConditionsBanner Component', () => {
     )
   }
 
-  const setupMockFetch = (gex = mockGEXData, vix = mockVIXNormal, oracle = mockOracleData) => {
+  const setupMockFetch = (gex = mockGEXData, vix = mockVIXNormal, prophet = mockOracleData) => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/gex/')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(gex) })
@@ -83,8 +83,8 @@ describe('MarketConditionsBanner Component', () => {
       if (url.includes('/api/vix/')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(vix) })
       }
-      if (url.includes('/api/oracle/')) {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve(oracle) })
+      if (url.includes('/api/prophet/')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(prophet) })
       }
       return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
     })
@@ -196,15 +196,15 @@ describe('MarketConditionsBanner Component', () => {
     })
   })
 
-  describe('Oracle Recommendation Display', () => {
-    it('displays Oracle Says label', async () => {
+  describe('Prophet Recommendation Display', () => {
+    it('displays Prophet Says label', async () => {
       setupMockFetch()
 
       const MarketConditionsBanner = require('../../../src/components/dashboard/MarketConditionsBanner').default
       renderWithSWR(<MarketConditionsBanner />)
 
       await waitFor(() => {
-        expect(screen.getByText('Oracle Says')).toBeInTheDocument()
+        expect(screen.getByText('Prophet Says')).toBeInTheDocument()
       })
     })
 

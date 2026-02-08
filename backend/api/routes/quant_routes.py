@@ -725,7 +725,7 @@ async def get_pending_outcomes(limit: int = Query(50, le=200)):
 
 class BotPredictionRequest(BaseModel):
     """Request to log a prediction used by a bot"""
-    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, etc)")
+    bot_name: str = Field(..., description="Bot name (FORTRESS, SOLOMON, etc)")
     prediction_type: str = Field(..., description="Model type")
     predicted_value: str = Field(..., description="Prediction value")
     confidence: float = Field(..., description="Confidence level")

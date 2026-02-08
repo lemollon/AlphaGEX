@@ -35,19 +35,19 @@ So I did what any engineer with too much free time would do: I built a system.
 
 🔴 **ARES** — 0DTE Iron Condors with GEX-protected strikes (not your grandma's standard deviation)
 
-⚡ **ATHENA** — Directional spreads that ride GEX flip gravity to magnets
+⚡ **SOLOMON** — Directional spreads that ride GEX flip gravity to magnets
 
 🔥 **PHOENIX** — 0DTE directional plays for trending regimes
 
 🗺️ **ATLAS** — SPX Wheel strategy with ML-optimized entry timing
 
-🦄 **PEGASUS** — Weekly SPX Iron Condors for lower-volatility environments
+🦄 **ANCHOR** — Weekly SPX Iron Condors for lower-volatility environments
 
 ---
 
-## The Secret Sauce: The Oracle + Claude AI
+## The Secret Sauce: The Prophet + Claude AI
 
-At the heart of AlphaGEX is **The Oracle** — an ensemble of 5 specialized ML models:
+At the heart of AlphaGEX is **The Prophet** — an ensemble of 5 specialized ML models:
 
 1. **Direction Probability Model** — UP/DOWN/FLAT predictions
 2. **Flip Gravity Model** — Probability price gravitates to GEX flip point
@@ -108,7 +108,7 @@ One API key. Full autonomy.
 
 ## The Daily Ritual
 
-Every morning, I check **The Daily Mana** — the Oracle's overnight analysis:
+Every morning, I check **The Daily Mana** — the Prophet's overnight analysis:
 
 - Market regime classification (VIX + GEX state)
 - Bot recommendations for the day
@@ -196,7 +196,7 @@ Follow along. The alpha testing has begun.
 
 After years of trading, I built what I wished existed:
 
-• 5 autonomous bots (ARES, ATHENA, PHOENIX, ATLAS, PEGASUS)
+• 5 autonomous bots (ARES, SOLOMON, PHOENIX, ATLAS, ANCHOR)
 • GEX (Gamma Exposure) analysis — trade WITH market makers
 • ML ensemble + Claude AI validation on every trade
 • Self-learning feedback loop with human approval gates
@@ -225,10 +225,10 @@ Years of blown accounts led to this.
 AlphaGEX: 5 AI trading bots that use GEX (Gamma Exposure) to trade WITH market makers instead of against them.
 
 🔴 ARES — Iron Condors
-⚡ ATHENA — Directional Spreads
+⚡ SOLOMON — Directional Spreads
 🔥 PHOENIX — 0DTE Plays
 🗺️ ATLAS — SPX Wheel
-🦄 PEGASUS — Weekly IC
+🦄 ANCHOR — Weekly IC
 
 Powered by:
 • Claude AI (validates every trade)

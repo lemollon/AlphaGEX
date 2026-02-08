@@ -457,13 +457,13 @@ def calculate_term_structure(vix_spot: float) -> Dict[str, Any]:
 def fetch_vix_from_tradier() -> Optional[Dict[str, Any]]:
     """Fetch VIX from Tradier API with retry.
 
-    NOTE: Uses explicit credentials from APIConfig like ARES does.
+    NOTE: Uses explicit credentials from APIConfig like FORTRESS does.
     $VIX.X quotes work in both sandbox and production modes.
     """
     def _fetch():
         from data.tradier_data_fetcher import TradierDataFetcher
         from unified_config import APIConfig
-        # Use explicit credentials like ARES does
+        # Use explicit credentials like FORTRESS does
         api_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
         account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
         if not api_key or not account_id:

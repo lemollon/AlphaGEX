@@ -26,7 +26,7 @@ const mockPositionsWithTodayActivity = {
   success: true,
   data: [
     {
-      position_id: 'ARES-TODAY-001',
+      position_id: 'FORTRESS-TODAY-001',
       spread_type: 'IRON_CONDOR',
       ticker: 'SPY',
       contracts: 1,
@@ -38,7 +38,7 @@ const mockPositionsWithTodayActivity = {
       close_reason: 'PROFIT_TARGET',
     },
     {
-      position_id: 'ARES-TODAY-002',
+      position_id: 'FORTRESS-TODAY-002',
       spread_type: 'IRON_CONDOR',
       ticker: 'SPY',
       contracts: 1,
@@ -53,7 +53,7 @@ const mockPositionsNoTodayActivity = {
   success: true,
   data: [
     {
-      position_id: 'ARES-OLD-001',
+      position_id: 'FORTRESS-OLD-001',
       spread_type: 'IRON_CONDOR',
       ticker: 'SPY',
       status: 'closed',

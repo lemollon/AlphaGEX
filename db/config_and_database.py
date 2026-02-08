@@ -484,9 +484,9 @@ def init_database():
         )
     ''')
 
-    # ARES Iron Condor Positions
+    # FORTRESS Iron Condor Positions
     c.execute('''
-        CREATE TABLE IF NOT EXISTS ares_positions (
+        CREATE TABLE IF NOT EXISTS fortress_positions (
             id SERIAL PRIMARY KEY,
             position_id TEXT UNIQUE NOT NULL,
             open_date TEXT NOT NULL,
@@ -532,9 +532,9 @@ def init_database():
         )
     ''')
 
-    # ARES Daily Performance Tracking
+    # FORTRESS Daily Performance Tracking
     c.execute('''
-        CREATE TABLE IF NOT EXISTS ares_daily_performance (
+        CREATE TABLE IF NOT EXISTS fortress_daily_performance (
             id SERIAL PRIMARY KEY,
             date TEXT UNIQUE NOT NULL,
             starting_capital REAL NOT NULL,
@@ -2034,12 +2034,12 @@ def init_database():
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_action ON autonomous_trade_log(action)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_log_position_id ON autonomous_trade_log(position_id)")
 
-    # ARES positions indexes
-    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_status ON ares_positions(status)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_open_date ON ares_positions(open_date)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_expiration ON ares_positions(expiration)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_positions_mode ON ares_positions(mode)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_ares_daily_performance_date ON ares_daily_performance(date)")
+    # FORTRESS positions indexes
+    safe_index("CREATE INDEX IF NOT EXISTS idx_fortress_positions_status ON fortress_positions(status)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_fortress_positions_open_date ON fortress_positions(open_date)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_fortress_positions_expiration ON fortress_positions(expiration)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_fortress_positions_mode ON fortress_positions(mode)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_fortress_daily_performance_date ON fortress_daily_performance(date)")
 
     # ===== NEW TABLE INDEXES =====
 
@@ -2307,7 +2307,7 @@ def init_database():
 
             -- IDENTIFICATION
             decision_id TEXT UNIQUE NOT NULL,
-            bot_name TEXT NOT NULL,  -- PHOENIX, ATLAS, ARES, HERMES, ORACLE
+            bot_name TEXT NOT NULL,  -- LAZARUS, CORNERSTONE, FORTRESS, SHEPHERD, PROPHET
             session_id TEXT,
             scan_cycle INTEGER,
             decision_sequence INTEGER,
@@ -3125,11 +3125,11 @@ def init_database():
     ''')
 
     # =========================================================================
-    # APOLLO ML SCANNER TABLES
+    # DISCERNMENT ML SCANNER TABLES
     # =========================================================================
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_scans (
+        CREATE TABLE IF NOT EXISTS discernment_scans (
             id SERIAL PRIMARY KEY,
             scan_id VARCHAR(50) UNIQUE NOT NULL,
             timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -3142,7 +3142,7 @@ def init_database():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_predictions (
+        CREATE TABLE IF NOT EXISTS discernment_predictions (
             id SERIAL PRIMARY KEY,
             prediction_id VARCHAR(50) UNIQUE NOT NULL,
             scan_id VARCHAR(50),
@@ -3163,7 +3163,7 @@ def init_database():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_outcomes (
+        CREATE TABLE IF NOT EXISTS discernment_outcomes (
             id SERIAL PRIMARY KEY,
             outcome_id VARCHAR(50) UNIQUE NOT NULL,
             prediction_id VARCHAR(50),
@@ -3183,7 +3183,7 @@ def init_database():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS apollo_model_performance (
+        CREATE TABLE IF NOT EXISTS discernment_model_performance (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             model_version VARCHAR(20),
@@ -3243,10 +3243,10 @@ def init_database():
     safe_index("CREATE INDEX IF NOT EXISTS idx_vol_surface_symbol_time ON volatility_surface_snapshots(symbol, snapshot_time)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_vol_surface_skew_regime ON volatility_surface_snapshots(skew_regime)")
 
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_scans_timestamp ON apollo_scans(timestamp)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_symbol ON apollo_predictions(symbol)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_scan ON apollo_predictions(scan_id)")
-    safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_outcomes_symbol ON apollo_outcomes(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_scans_timestamp ON discernment_scans(timestamp)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_predictions_symbol ON discernment_predictions(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_predictions_scan ON discernment_predictions(scan_id)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_discernment_outcomes_symbol ON discernment_outcomes(symbol)")
 
     # ----- Indexes for consolidated tables -----
     safe_index("CREATE INDEX IF NOT EXISTS idx_gamma_history_symbol_date ON gamma_history(symbol, date)")
@@ -3457,10 +3457,10 @@ def init_bot_tables():
     c = conn.cursor()
 
     # ===========================================================================
-    # ARES - SPY Iron Condor (0DTE)
+    # FORTRESS - SPY Iron Condor (0DTE)
     # ===========================================================================
     c.execute('''
-        CREATE TABLE IF NOT EXISTS ares_positions (
+        CREATE TABLE IF NOT EXISTS fortress_positions (
             id SERIAL PRIMARY KEY,
             position_id VARCHAR(50) UNIQUE NOT NULL,
             ticker VARCHAR(10) NOT NULL,
@@ -3507,7 +3507,7 @@ def init_bot_tables():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS ares_equity_snapshots (
+        CREATE TABLE IF NOT EXISTS fortress_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             balance DECIMAL(12, 2) NOT NULL,
@@ -3520,10 +3520,10 @@ def init_bot_tables():
     ''')
 
     # ===========================================================================
-    # ATHENA - SPY Directional Spreads
+    # SOLOMON - SPY Directional Spreads
     # ===========================================================================
     c.execute('''
-        CREATE TABLE IF NOT EXISTS athena_positions (
+        CREATE TABLE IF NOT EXISTS solomon_positions (
             id SERIAL PRIMARY KEY,
             position_id VARCHAR(50) UNIQUE NOT NULL,
             spread_type VARCHAR(30) NOT NULL,
@@ -3568,7 +3568,7 @@ def init_bot_tables():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS athena_equity_snapshots (
+        CREATE TABLE IF NOT EXISTS solomon_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             balance DECIMAL(12, 2) NOT NULL,
@@ -3581,10 +3581,10 @@ def init_bot_tables():
     ''')
 
     # ===========================================================================
-    # TITAN - SPX Aggressive Iron Condor
+    # SAMSON - SPX Aggressive Iron Condor
     # ===========================================================================
     c.execute('''
-        CREATE TABLE IF NOT EXISTS titan_positions (
+        CREATE TABLE IF NOT EXISTS samson_positions (
             id SERIAL PRIMARY KEY,
             position_id VARCHAR(50) UNIQUE NOT NULL,
             ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
@@ -3629,7 +3629,7 @@ def init_bot_tables():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS titan_equity_snapshots (
+        CREATE TABLE IF NOT EXISTS samson_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             balance DECIMAL(12, 2) NOT NULL,
@@ -3642,10 +3642,10 @@ def init_bot_tables():
     ''')
 
     # ===========================================================================
-    # PEGASUS - SPX Weekly Iron Condor
+    # ANCHOR - SPX Weekly Iron Condor
     # ===========================================================================
     c.execute('''
-        CREATE TABLE IF NOT EXISTS pegasus_positions (
+        CREATE TABLE IF NOT EXISTS anchor_positions (
             id SERIAL PRIMARY KEY,
             position_id VARCHAR(50) UNIQUE NOT NULL,
             ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
@@ -3690,7 +3690,7 @@ def init_bot_tables():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS pegasus_equity_snapshots (
+        CREATE TABLE IF NOT EXISTS anchor_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             balance DECIMAL(12, 2) NOT NULL,
@@ -3703,10 +3703,10 @@ def init_bot_tables():
     ''')
 
     # ===========================================================================
-    # ICARUS - SPY Aggressive Directional Spreads
+    # GIDEON - SPY Aggressive Directional Spreads
     # ===========================================================================
     c.execute('''
-        CREATE TABLE IF NOT EXISTS icarus_positions (
+        CREATE TABLE IF NOT EXISTS gideon_positions (
             id SERIAL PRIMARY KEY,
             position_id VARCHAR(50) UNIQUE NOT NULL,
             spread_type VARCHAR(30) NOT NULL,
@@ -3751,7 +3751,7 @@ def init_bot_tables():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS icarus_equity_snapshots (
+        CREATE TABLE IF NOT EXISTS gideon_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             balance DECIMAL(12, 2) NOT NULL,
@@ -3765,7 +3765,7 @@ def init_bot_tables():
 
     conn.commit()
     conn.close()
-    print("✅ Bot tables initialized (ARES, ATHENA, TITAN, PEGASUS, ICARUS)")
+    print("✅ Bot tables initialized (FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON)")
 
 
 def _get_table_columns(cursor, table_name):

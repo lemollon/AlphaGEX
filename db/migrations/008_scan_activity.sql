@@ -1,5 +1,5 @@
 -- Scan Activity Table Migration
--- Logs EVERY scan from ARES and ATHENA with full context
+-- Logs EVERY scan from FORTRESS and SOLOMON with full context
 -- This provides complete visibility into bot behavior
 -- Run: psql $DATABASE_URL -f db/migrations/008_scan_activity.sql
 
@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS scan_activity (
     id SERIAL PRIMARY KEY,
 
     -- Identification
-    bot_name VARCHAR(50) NOT NULL,  -- ARES, ATHENA
+    bot_name VARCHAR(50) NOT NULL,  -- FORTRESS, SOLOMON
     scan_id VARCHAR(100) NOT NULL UNIQUE,  -- Unique scan identifier
     scan_number INTEGER NOT NULL,  -- Scan number for the day
 
@@ -45,12 +45,12 @@ CREATE TABLE IF NOT EXISTS scan_activity (
     distance_to_put_wall_pct DECIMAL(10, 4),
 
     -- Signal Data
-    signal_source VARCHAR(50),  -- ML, Oracle, GEX, None
+    signal_source VARCHAR(50),  -- ML, Prophet, GEX, None
     signal_direction VARCHAR(20),  -- BULLISH, BEARISH, NEUTRAL, NONE
     signal_confidence DECIMAL(5, 4),  -- 0-1
     signal_win_probability DECIMAL(5, 4),  -- 0-1
 
-    -- Oracle Advice (if consulted)
+    -- Prophet Advice (if consulted)
     oracle_advice VARCHAR(50),  -- TRADE, SKIP_TODAY, REDUCE_SIZE, etc.
     oracle_reasoning TEXT,
 

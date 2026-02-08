@@ -158,7 +158,7 @@ function deriveSkipReason(outcome: string, checks?: ScanCheck[]): string {
     if (checkLower.includes('vix') && checkLower.includes('low')) return 'VIX_TOO_LOW'
     if (checkLower.includes('max') && checkLower.includes('trade')) return 'MAX_TRADES_REACHED'
     if (checkLower.includes('confidence')) return 'LOW_CONFIDENCE'
-    if (checkLower.includes('oracle')) return 'ORACLE_SAYS_NO'
+    if (checkLower.includes('prophet')) return 'ORACLE_SAYS_NO'
     if (checkLower.includes('market') && checkLower.includes('hour')) return 'BEFORE_WINDOW'
     if (checkLower.includes('conflict')) return 'CONFLICTING_SIGNALS'
   }
@@ -184,13 +184,13 @@ function deriveSkipExplanation(outcome: string, reason: string, checks?: ScanChe
     case 'MAX_TRADES_REACHED':
       return 'Maximum daily trade limit has been reached. No more trades will be opened today to manage risk.'
     case 'NO_SIGNAL':
-      return 'No clear directional signal from ML or Oracle. The market conditions are ambiguous.'
+      return 'No clear directional signal from ML or Prophet. The market conditions are ambiguous.'
     case 'LOW_CONFIDENCE':
       return `Signal confidence is below the required threshold. ${failedCheck?.value ? `Current: ${typeof failedCheck.value === 'object' ? JSON.stringify(failedCheck.value) : failedCheck.value}` : ''}`
     case 'ORACLE_SAYS_NO':
-      return 'The Oracle advisor recommends skipping this opportunity due to unfavorable conditions.'
+      return 'The Prophet advisor recommends skipping this opportunity due to unfavorable conditions.'
     case 'CONFLICTING_SIGNALS':
-      return 'ML and Oracle signals are conflicting. Neither signal is strong enough to override the other.'
+      return 'ML and Prophet signals are conflicting. Neither signal is strong enough to override the other.'
     case 'RISK_CHECK_FAILED':
       return `One or more risk checks failed. ${failedCheck ? `${failedCheck.check}: ${typeof failedCheck.value === 'object' ? JSON.stringify(failedCheck.value) : (failedCheck.value || 'failed')}` : ''}`
     case 'ERROR':
@@ -350,7 +350,7 @@ interface ScanResult {
   // Override tracking
   override_occurred?: boolean
   override_details?: {
-    winner: 'ML' | 'Oracle' | string
+    winner: 'ML' | 'Prophet' | string
     overridden_signal: string
     override_reason: string
   }
@@ -380,7 +380,7 @@ interface ScanResult {
 }
 
 interface LastScanSummaryProps {
-  botName: 'ARES' | 'ATHENA' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'ANCHOR'
   lastScan: ScanResult | null
   isLoading: boolean
   nextScanIn?: number // seconds
@@ -501,7 +501,7 @@ export default function LastScanSummary({
             />
           )}
 
-          {/* ML vs Oracle Signals - THE KEY INSIGHT */}
+          {/* ML vs Prophet Signals - THE KEY INSIGHT */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* ML Signal */}
             <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
@@ -536,11 +536,11 @@ export default function LastScanSummary({
               )}
             </div>
 
-            {/* Oracle Signal */}
+            {/* Prophet Signal */}
             <div className="bg-black/30 rounded-lg p-3 border border-gray-700">
               <div className="flex items-center gap-2 mb-2">
                 <Zap className="w-4 h-4 text-purple-400" />
-                <span className="text-purple-400 text-sm font-bold">ORACLE SIGNAL</span>
+                <span className="text-purple-400 text-sm font-bold">PROPHET SIGNAL</span>
               </div>
               {lastScan.oracle_signal ? (
                 <div className="space-y-1">
@@ -557,7 +557,7 @@ export default function LastScanSummary({
                   </div>
                 </div>
               ) : (
-                <span className="text-gray-500 text-sm">No Oracle advice</span>
+                <span className="text-gray-500 text-sm">No Prophet advice</span>
               )}
             </div>
           </div>

@@ -164,7 +164,7 @@ const CALCULATIONS: Calculation[] = [
     name: 'Distance to Flip %',
     formula: '(spot - flip_point) / spot × 100',
     purpose: 'Measure how far price is from the gamma flip point',
-    file: 'quant/kronos_gex_calculator.py',
+    file: 'quant/chronicles_gex_calculator.py',
     line: 78,
     category: 'GEX',
     subcategory: 'Distance Metrics',
@@ -186,7 +186,7 @@ const CALCULATIONS: Calculation[] = [
     name: 'GEX Normalized',
     formula: 'gex_normalized = net_gex / spot²',
     purpose: 'Scale-independent GEX for comparison across different stock prices',
-    file: 'quant/kronos_gex_calculator.py',
+    file: 'quant/chronicles_gex_calculator.py',
     line: 92,
     category: 'GEX',
     subcategory: 'Normalized Metrics',
@@ -1055,17 +1055,17 @@ def expected_move(price, iv, dte):
     tags: ['iron-condor', 'credit', 'premium', 'structure']
   },
 
-  // ==================== ARES BOT ====================
+  // ==================== FORTRESS BOT ====================
   {
     id: 40,
-    name: 'ARES Expected Move',
+    name: 'FORTRESS Expected Move',
     formula: 'Based on VIX level: VIX<15: 0.7%, 15-20: 0.9%, 20-30: 1.2%, >30: 1.5%',
-    purpose: 'Strike distance for ARES IC',
+    purpose: 'Strike distance for FORTRESS IC',
     file: 'trading/ares_iron_condor.py',
     line: 156,
-    category: 'ARES',
+    category: 'FORTRESS',
     subcategory: 'Strike Selection',
-    description: 'ARES uses VIX-adjusted expected moves for strike selection. Higher VIX means wider strikes to account for increased volatility. These percentages determine short strike distance.',
+    description: 'FORTRESS uses VIX-adjusted expected moves for strike selection. Higher VIX means wider strikes to account for increased volatility. These percentages determine short strike distance.',
     codeSnippet: `def ares_expected_move_pct(vix):
     """Get expected move % based on VIX level"""
     if vix < 15:
@@ -1078,28 +1078,28 @@ def expected_move(price, iv, dte):
         return 0.015  # 1.5%
 
 def ares_strike_distance(spot, vix):
-    """Calculate strike distance for ARES"""
+    """Calculate strike distance for FORTRESS"""
     em_pct = ares_expected_move_pct(vix)
     return spot * em_pct`,
     example: {
       inputs: 'SPY=$450, VIX=22',
       output: 'EM = 1.2%, Strike distance = $5.40'
     },
-    related: ['1 SD Strike', 'ARES Expected Move', 'VIX Regime'],
-    tags: ['ares', 'strike', 'vix-adjusted', 'iron-condor']
+    related: ['1 SD Strike', 'FORTRESS Expected Move', 'VIX Regime'],
+    tags: ['fortress', 'strike', 'vix-adjusted', 'iron-condor']
   },
 
-  // ==================== ATHENA BOT ====================
+  // ==================== SOLOMON BOT ====================
   {
     id: 41,
     name: 'Wall Filter',
     formula: '|distance_to_wall_pct| <= 1%',
-    purpose: 'ATHENA entry filter - trade only near GEX walls',
-    file: 'trading/athena_directional_spreads.py',
+    purpose: 'SOLOMON entry filter - trade only near GEX walls',
+    file: 'trading/solomon_directional_spreads.py',
     line: 89,
-    category: 'ATHENA',
+    category: 'SOLOMON',
     subcategory: 'Entry Filters',
-    description: 'ATHENA only enters directional trades when price is within 1% of a relevant GEX wall. This increases probability of the wall acting as support/resistance.',
+    description: 'SOLOMON only enters directional trades when price is within 1% of a relevant GEX wall. This increases probability of the wall acting as support/resistance.',
     codeSnippet: `def wall_filter_passed(spot, call_wall, put_wall, max_distance_pct=1.0):
     """Check if price is near a GEX wall"""
     distance_to_call = abs(call_wall - spot) / spot * 100
@@ -1118,19 +1118,19 @@ def ares_strike_distance(spot, vix):
       output: 'call distance=0.89%, put distance=1.11% → Near call wall ✓'
     },
     related: ['Call Wall', 'Put Wall', 'R:R Ratio Filter'],
-    tags: ['athena', 'filter', 'wall', 'entry']
+    tags: ['solomon', 'filter', 'wall', 'entry']
   },
   {
     id: 42,
     name: 'Scale-Out Strategy',
     formula: '50% profit → exit 30%; 75% profit → exit 30%; trail remainder',
-    purpose: 'ATHENA profit-taking and trailing',
-    file: 'trading/athena_directional_spreads.py',
+    purpose: 'SOLOMON profit-taking and trailing',
+    file: 'trading/solomon_directional_spreads.py',
     line: 234,
-    category: 'ATHENA',
+    category: 'SOLOMON',
     subcategory: 'Exit Management',
-    description: 'ATHENA uses scaled exits: take partial profits at 50% and 75% of max profit, then trail the remaining 40% of position to capture extended moves.',
-    codeSnippet: `class ATHENAExitManager:
+    description: 'SOLOMON uses scaled exits: take partial profits at 50% and 75% of max profit, then trail the remaining 40% of position to capture extended moves.',
+    codeSnippet: `class SOLOMONExitManager:
     def __init__(self, max_profit, contracts):
         self.max_profit = max_profit
         self.initial_contracts = contracts
@@ -1161,20 +1161,20 @@ def ares_strike_distance(spot, vix):
       output: 'Exit 3 contracts at 50%, 3 at 75%, trail remaining 4'
     },
     related: ['Trailing Stop', 'Profit Threshold', 'R:R Ratio Filter'],
-    tags: ['athena', 'scale-out', 'profit-taking', 'exit']
+    tags: ['solomon', 'scale-out', 'profit-taking', 'exit']
   },
 
-  // ==================== ARGUS 0DTE ====================
+  // ==================== WATCHTOWER 0DTE ====================
   {
     id: 43,
     name: 'ROC 1-Min (Gamma)',
     formula: 'roc_1m = (gamma_now - gamma_1min_ago) / |gamma_1min_ago| × 100',
     purpose: 'Short-term gamma momentum',
-    file: 'core/argus_engine.py',
+    file: 'core/watchtower_engine.py',
     line: 178,
-    category: 'ARGUS',
+    category: 'WATCHTOWER',
     subcategory: 'Gamma Momentum',
-    description: 'ARGUS tracks 1-minute rate of change in gamma to detect rapid shifts in market maker positioning. Spikes > 15% indicate significant hedging activity.',
+    description: 'WATCHTOWER tracks 1-minute rate of change in gamma to detect rapid shifts in market maker positioning. Spikes > 15% indicate significant hedging activity.',
     codeSnippet: `def gamma_roc_1min(current_gamma, gamma_1min_ago):
     """Calculate 1-minute gamma rate of change"""
     if gamma_1min_ago == 0:
@@ -1185,18 +1185,18 @@ def ares_strike_distance(spot, vix):
       output: 'ROC = (1.8-1.5)/1.5 × 100 = +20% (gamma spike)'
     },
     related: ['ROC 5-Min', 'Danger Zone Detection', 'Gamma Flip Detection'],
-    tags: ['argus', 'roc', 'gamma', 'momentum', '0dte']
+    tags: ['watchtower', 'roc', 'gamma', 'momentum', '0dte']
   },
   {
     id: 44,
     name: 'Danger Zone Detection',
     formula: 'SPIKE: >15% 1min ROC; BUILDING: >25% 5min ROC; COLLAPSING: <-25% 5min ROC',
     purpose: 'Identify dangerous gamma conditions',
-    file: 'core/argus_engine.py',
+    file: 'core/watchtower_engine.py',
     line: 256,
-    category: 'ARGUS',
+    category: 'WATCHTOWER',
     subcategory: 'Risk Detection',
-    description: 'ARGUS danger zone detection identifies extreme gamma conditions that could lead to explosive moves. SPIKE means sudden hedging activity, BUILDING/COLLAPSING mean sustained pressure.',
+    description: 'WATCHTOWER danger zone detection identifies extreme gamma conditions that could lead to explosive moves. SPIKE means sudden hedging activity, BUILDING/COLLAPSING mean sustained pressure.',
     codeSnippet: `def detect_danger_zone(roc_1min, roc_5min):
     """Detect dangerous gamma conditions"""
     danger_zones = []
@@ -1227,7 +1227,7 @@ def ares_strike_distance(spot, vix):
       output: 'Danger: SPIKE (18% 1min) + BUILDING (32% 5min)'
     },
     related: ['ROC 1-Min', 'ROC 5-Min', 'Gamma Flip Detection'],
-    tags: ['argus', 'danger', 'risk', 'alert', '0dte']
+    tags: ['watchtower', 'danger', 'risk', 'alert', '0dte']
   },
 
   // ==================== VALIDATION ====================
@@ -1258,17 +1258,17 @@ def ares_strike_distance(spot, vix):
     tags: ['brier', 'calibration', 'probability', 'validation']
   },
 
-  // ==================== SOLOMON - Feedback Loop Intelligence ====================
+  // ==================== PROVERBS - Feedback Loop Intelligence ====================
   {
     id: 46,
     name: 'Proposal Validation Score',
     formula: 'score = (improvement_pct >= 5) && (trades >= 20) && (days >= 7)',
     purpose: 'Determines if a bot configuration change has proven improvement before applying',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 156,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Validation',
-    description: 'Solomon\'s core validation logic ensures configuration changes only apply when improvement is PROVEN. Requires minimum 7 days, 20 trades, and 5% improvement over baseline to pass validation.',
+    description: 'Proverbs\'s core validation logic ensures configuration changes only apply when improvement is PROVEN. Requires minimum 7 days, 20 trades, and 5% improvement over baseline to pass validation.',
     codeSnippet: `def evaluate_validation(self, validation_id: str) -> Dict[str, Any]:
     """Evaluate if validation period proves improvement"""
     v = self.validations[validation_id]
@@ -1291,16 +1291,16 @@ def ares_strike_distance(spot, vix):
       output: 'improvement=9.1%, can_apply=True (all criteria met)'
     },
     related: ['A/B Test Framework', 'Rollback Trigger', 'Confidence Interval'],
-    tags: ['solomon', 'validation', 'improvement', 'proven']
+    tags: ['proverbs', 'validation', 'improvement', 'proven']
   },
   {
     id: 47,
     name: 'Win Rate Improvement %',
     formula: 'improvement = (proposed_win_rate - current_win_rate) / current_win_rate × 100',
     purpose: 'Measures percentage improvement in win rate between control and variant',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 178,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Metrics',
     description: 'Calculates the relative improvement in win rate between the current configuration (control) and the proposed configuration (variant). Used to determine if a change should be applied.',
     codeSnippet: `def calculate_improvement(current_win_rate: float, proposed_win_rate: float) -> float:
@@ -1313,16 +1313,16 @@ def ares_strike_distance(spot, vix):
       output: 'improvement = (58-52)/52 × 100 = 11.5%'
     },
     related: ['Proposal Validation Score', 'PnL Improvement'],
-    tags: ['solomon', 'win-rate', 'improvement', 'comparison']
+    tags: ['proverbs', 'win-rate', 'improvement', 'comparison']
   },
   {
     id: 48,
     name: 'Proposal Confidence Score',
     formula: 'confidence = min(1.0, trades/50) × min(1.0, days/14) × consistency_factor',
     purpose: 'Quantifies confidence in a proposal based on sample size and consistency',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 205,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Validation',
     description: 'Calculates confidence in a proposed change based on number of trades, days elapsed, and consistency of results. Higher confidence means more reliable validation.',
     codeSnippet: `def calculate_confidence(trades: int, days: int, std_dev: float) -> float:
@@ -1336,16 +1336,16 @@ def ares_strike_distance(spot, vix):
       output: 'confidence = 0.6 × 0.71 × 0.87 = 0.37'
     },
     related: ['Proposal Validation Score', 'A/B Test Framework'],
-    tags: ['solomon', 'confidence', 'sample-size', 'consistency']
+    tags: ['proverbs', 'confidence', 'sample-size', 'consistency']
   },
   {
     id: 49,
     name: 'Rollback Trigger Score',
     formula: 'trigger = (win_rate < baseline × 0.9) || (max_drawdown > threshold) || (consecutive_losses > 5)',
     purpose: 'Determines if a configuration should be rolled back due to poor performance',
-    file: 'quant/solomon_enhancements.py',
+    file: 'quant/proverbs_enhancements.py',
     line: 245,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Safety',
     description: 'Safety mechanism that triggers automatic rollback when a configuration underperforms. Monitors win rate degradation, drawdown limits, and consecutive losses.',
     codeSnippet: `def check_rollback_trigger(metrics: Dict, baseline: Dict) -> bool:
@@ -1365,16 +1365,16 @@ def ares_strike_distance(spot, vix):
       output: 'trigger=True (both win rate drop and consecutive losses exceeded)'
     },
     related: ['Version Control', 'Emergency Killswitch'],
-    tags: ['solomon', 'rollback', 'safety', 'trigger']
+    tags: ['proverbs', 'rollback', 'safety', 'trigger']
   },
   {
     id: 50,
     name: 'Version Diff Score',
     formula: 'diff_score = Σ|new_param - old_param| / |old_param| for each parameter',
     purpose: 'Quantifies magnitude of configuration changes between versions',
-    file: 'quant/solomon_feedback_loop.py',
+    file: 'quant/proverbs_feedback_loop.py',
     line: 312,
-    category: 'Solomon',
+    category: 'Proverbs',
     subcategory: 'Versioning',
     description: 'Calculates the total magnitude of changes between configuration versions. Higher scores indicate more significant changes that may require more careful validation.',
     codeSnippet: `def calculate_diff_score(old_config: Dict, new_config: Dict) -> float:
@@ -1392,7 +1392,7 @@ def ares_strike_distance(spot, vix):
       output: 'diff = |0.35-0.30|/0.30 + |55-50|/50 = 0.167 + 0.10 = 0.267'
     },
     related: ['Version History', 'Proposal Validation'],
-    tags: ['solomon', 'version', 'diff', 'magnitude']
+    tags: ['proverbs', 'version', 'diff', 'magnitude']
   },
 
   // Add more calculations here following the same pattern...
@@ -1404,7 +1404,7 @@ def ares_strike_distance(spot, vix):
 
 // Add remaining GEX calculations
 for (let i = 46; i <= 268; i++) {
-  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'ARES', 'ATHENA', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation', 'Solomon']
+  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'FORTRESS', 'SOLOMON', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'WATCHTOWER', 'Validation', 'Proverbs']
   const subcategories: { [key: string]: string[] } = {
     'GEX': ['Core Gamma', 'Distance Metrics', 'Normalized Metrics', 'Wall Analysis', 'Ratios', 'Changes'],
     'Greeks': ['Black-Scholes', 'First-Order Greeks', 'Second-Order Greeks', 'Volatility'],
@@ -1417,15 +1417,15 @@ for (let i = 46; i <= 268; i++) {
     'Risk': ['Risk-Adjusted Returns', 'Drawdown', 'Profitability'],
     'Volatility': ['IV Metrics', 'Term Structure', 'Surface'],
     'Backtest': ['Options Math', 'Options Structures', 'Signals'],
-    'ARES': ['Strike Selection', 'Position Sizing', 'Exit Rules'],
-    'ATHENA': ['Entry Filters', 'Exit Management', 'Signals'],
+    'FORTRESS': ['Strike Selection', 'Position Sizing', 'Exit Rules'],
+    'SOLOMON': ['Entry Filters', 'Exit Management', 'Signals'],
     'Gamma Exp': ['DTE Buckets', 'Decay', 'Concentration'],
     'ML': ['Predictions', 'Preprocessing', 'Features'],
     'Wheel': ['Premium', 'Assignment', 'Rolling'],
     'Ensemble': ['Weighting', 'Signals', 'Performance'],
-    'ARGUS': ['Gamma Momentum', 'Risk Detection', 'Real-time'],
+    'WATCHTOWER': ['Gamma Momentum', 'Risk Detection', 'Real-time'],
     'Validation': ['Probability Calibration', 'Regression', 'Classification'],
-    'Solomon': ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop']
+    'Proverbs': ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop']
   }
 
   // This would be populated with real data in production
@@ -1445,15 +1445,15 @@ const CATEGORIES = [
   { name: 'Risk', icon: Shield, color: 'text-emerald-400', bgColor: 'bg-emerald-500/20', subcategories: ['Risk-Adjusted Returns', 'Drawdown', 'Profitability'] },
   { name: 'Volatility', icon: Zap, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['IV Metrics', 'Term Structure', 'Surface'] },
   { name: 'Backtest', icon: Clock, color: 'text-indigo-400', bgColor: 'bg-indigo-500/20', subcategories: ['Options Math', 'Options Structures', 'Signals'] },
-  { name: 'ARES', icon: Crosshair, color: 'text-rose-400', bgColor: 'bg-rose-500/20', subcategories: ['Strike Selection', 'Position Sizing', 'Exit Rules'] },
-  { name: 'ATHENA', icon: GitBranch, color: 'text-violet-400', bgColor: 'bg-violet-500/20', subcategories: ['Entry Filters', 'Exit Management', 'Signals'] },
+  { name: 'FORTRESS', icon: Crosshair, color: 'text-rose-400', bgColor: 'bg-rose-500/20', subcategories: ['Strike Selection', 'Position Sizing', 'Exit Rules'] },
+  { name: 'SOLOMON', icon: GitBranch, color: 'text-violet-400', bgColor: 'bg-violet-500/20', subcategories: ['Entry Filters', 'Exit Management', 'Signals'] },
   { name: 'Gamma Exp', icon: Clock, color: 'text-fuchsia-400', bgColor: 'bg-fuchsia-500/20', subcategories: ['DTE Buckets', 'Decay', 'Concentration'] },
   { name: 'ML', icon: Brain, color: 'text-sky-400', bgColor: 'bg-sky-500/20', subcategories: ['Predictions', 'Preprocessing', 'Features'] },
   { name: 'Wheel', icon: ArrowUpDown, color: 'text-lime-400', bgColor: 'bg-lime-500/20', subcategories: ['Premium', 'Assignment', 'Rolling'] },
   { name: 'Ensemble', icon: Layers, color: 'text-teal-400', bgColor: 'bg-teal-500/20', subcategories: ['Weighting', 'Signals', 'Performance'] },
-  { name: 'ARGUS', icon: Eye, color: 'text-orange-400', bgColor: 'bg-orange-500/20', subcategories: ['Gamma Momentum', 'Risk Detection', 'Real-time'] },
+  { name: 'WATCHTOWER', icon: Eye, color: 'text-orange-400', bgColor: 'bg-orange-500/20', subcategories: ['Gamma Momentum', 'Risk Detection', 'Real-time'] },
   { name: 'Validation', icon: Check, color: 'text-green-400', bgColor: 'bg-green-500/20', subcategories: ['Probability Calibration', 'Regression', 'Classification'] },
-  { name: 'Solomon', icon: BookOpen, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop'] },
+  { name: 'Proverbs', icon: BookOpen, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop'] },
 ]
 
 // ============================================================================

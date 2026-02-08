@@ -36,11 +36,11 @@ if args.live:
 
     endpoints = [
         ("/health", "GET", "Health check"),
-        ("/api/ai/gexis/health", "GET", "GEXIS health"),
-        ("/api/ai/gexis/capabilities", "GET", "GEXIS capabilities"),
-        ("/api/ai/gexis/learning-memory/stats", "GET", "Learning Memory stats"),
-        ("/api/ares/status", "GET", "ARES status"),
-        ("/api/athena/status", "GET", "ATHENA status"),
+        ("/api/ai/counselor/health", "GET", "COUNSELOR health"),
+        ("/api/ai/counselor/capabilities", "GET", "COUNSELOR capabilities"),
+        ("/api/ai/counselor/learning-memory/stats", "GET", "Learning Memory stats"),
+        ("/api/fortress/status", "GET", "FORTRESS status"),
+        ("/api/solomon/status", "GET", "SOLOMON status"),
     ]
 
     print(f"\nTesting: {base_url}")
@@ -86,12 +86,12 @@ else:
 
         # Check for new endpoints
         new_endpoints = [
-            "/gexis/learning-memory/stats",
-            "/gexis/extended-thinking",
-            "/gexis/analyze-strike",
-            "/gexis/evaluate-trade",
-            "/gexis/capabilities",
-            "/gexis/health",
+            "/counselor/learning-memory/stats",
+            "/counselor/extended-thinking",
+            "/counselor/analyze-strike",
+            "/counselor/evaluate-trade",
+            "/counselor/capabilities",
+            "/counselor/health",
         ]
 
         for ep in new_endpoints:
@@ -106,12 +106,12 @@ else:
         fail(f"AI routes error: {e}")
         errors.append("ai_routes")
 
-    # Test ARES routes
-    print("\n-- ARES Routes --")
+    # Test FORTRESS routes
+    print("\n-- FORTRESS Routes --")
     try:
-        from backend.api.routes.ares_routes import router as ares_router
+        from backend.api.routes.fortress_routes import router as ares_router
         routes = [r.path for r in ares_router.routes]
-        ok(f"ARES router loaded: {len(routes)} routes")
+        ok(f"FORTRESS router loaded: {len(routes)} routes")
 
         # Check Tradier endpoint exists
         if any("tradier" in r for r in routes):
@@ -120,18 +120,18 @@ else:
             warn("  No Tradier endpoint found")
 
     except Exception as e:
-        fail(f"ARES routes error: {e}")
-        errors.append("ares_routes")
+        fail(f"FORTRESS routes error: {e}")
+        errors.append("fortress_routes")
 
-    # Test ATHENA routes
-    print("\n-- ATHENA Routes --")
+    # Test SOLOMON routes
+    print("\n-- SOLOMON Routes --")
     try:
-        from backend.api.routes.athena_routes import router as athena_router
-        routes = [r.path for r in athena_router.routes]
-        ok(f"ATHENA router loaded: {len(routes)} routes")
+        from backend.api.routes.solomon_routes import router as solomon_router
+        routes = [r.path for r in solomon_router.routes]
+        ok(f"SOLOMON router loaded: {len(routes)} routes")
     except Exception as e:
-        fail(f"ATHENA routes error: {e}")
-        errors.append("athena_routes")
+        fail(f"SOLOMON routes error: {e}")
+        errors.append("solomon_routes")
 
     # Test main app loads
     print("\n-- Main App --")

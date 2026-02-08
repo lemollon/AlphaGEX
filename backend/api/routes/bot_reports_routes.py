@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/trader", tags=["Bot Reports"])
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
-VALID_BOTS = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+VALID_BOTS = ['fortress', 'solomon', 'samson', 'anchor', 'gideon']
 
 # Import report generator
 try:
@@ -83,7 +83,7 @@ async def get_today_report_summary(bot: str):
     Use this for dashboard widgets that don't need full trade details.
 
     Args:
-        bot: Bot name (ares, athena, titan, pegasus, icarus)
+        bot: Bot name (fortress, solomon, samson, anchor, gideon)
 
     Returns:
         Lightweight report summary (no trade details or JSONB data)
@@ -124,7 +124,7 @@ async def get_today_report(
     Returns cached report if available.
 
     Args:
-        bot: Bot name (ares, athena, titan, pegasus, icarus)
+        bot: Bot name (fortress, solomon, samson, anchor, gideon)
         force_regenerate: Force regenerate report
 
     Returns:

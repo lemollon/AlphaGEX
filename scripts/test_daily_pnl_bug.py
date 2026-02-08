@@ -91,11 +91,11 @@ def main():
         return 1
 
     bots = [
-        ("ARES", "ares_positions"),
-        ("TITAN", "titan_positions"),
-        ("PEGASUS", "pegasus_positions"),
-        ("ATHENA", "athena_positions"),
-        ("ICARUS", "icarus_positions"),
+        ("FORTRESS", "fortress_positions"),
+        ("SAMSON", "samson_positions"),
+        ("ANCHOR", "anchor_positions"),
+        ("SOLOMON", "solomon_positions"),
+        ("GIDEON", "gideon_positions"),
     ]
 
     results = []
@@ -121,12 +121,12 @@ def main():
 
     print(f"\n{BLUE}Files with the fix:{RESET}")
     print("  - backend/services/bot_metrics_service.py (unified endpoint)")
-    print("  - backend/api/routes/events_routes.py (combined/Oracle page)")
-    print("  - backend/api/routes/ares_routes.py")
-    print("  - backend/api/routes/titan_routes.py")
-    print("  - backend/api/routes/pegasus_routes.py")
-    print("  - backend/api/routes/athena_routes.py")
-    print("  - backend/api/routes/icarus_routes.py")
+    print("  - backend/api/routes/events_routes.py (combined/Prophet page)")
+    print("  - backend/api/routes/fortress_routes.py")
+    print("  - backend/api/routes/samson_routes.py")
+    print("  - backend/api/routes/anchor_routes.py")
+    print("  - backend/api/routes/solomon_routes.py")
+    print("  - backend/api/routes/gideon_routes.py")
 
     return 0
 

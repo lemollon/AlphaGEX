@@ -3,7 +3,7 @@
 # Run with: bash scripts/render_test_actionable_trade.sh
 
 echo "=============================================="
-echo "  ARGUS ACTIONABLE TRADE - RENDER SHELL TEST"
+echo "  WATCHTOWER ACTIONABLE TRADE - RENDER SHELL TEST"
 echo "=============================================="
 echo ""
 
@@ -54,7 +54,7 @@ echo "TEST 3: Trade Action Endpoint"
 echo "-------------------------------------------"
 # Use internal API URL for Render
 API_URL="${API_BASE_URL:-http://localhost:8000}"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/api/argus/trade-action?symbol=SPY&account_size=50000&risk_per_trade_pct=1" 2>/dev/null)
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/api/watchtower/trade-action?symbol=SPY&account_size=50000&risk_per_trade_pct=1" 2>/dev/null)
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | head -n -1)
 
@@ -137,7 +137,7 @@ fi
 echo ""
 echo "TEST 4: Signals Recent Endpoint"
 echo "-------------------------------------------"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/api/argus/signals/recent?symbol=SPY&limit=5" 2>/dev/null)
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/api/watchtower/signals/recent?symbol=SPY&limit=5" 2>/dev/null)
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | head -n -1)
 
@@ -165,7 +165,7 @@ fi
 echo ""
 echo "TEST 5: Signals Performance Endpoint"
 echo "-------------------------------------------"
-RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/api/argus/signals/performance?symbol=SPY&days=30" 2>/dev/null)
+RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/api/watchtower/signals/performance?symbol=SPY&days=30" 2>/dev/null)
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | head -n -1)
 
@@ -223,7 +223,7 @@ TEST_SIGNAL='{"action":"TEST_IRON_CONDOR","direction":"NEUTRAL","confidence":75,
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
     -H "Content-Type: application/json" \
     -d "$TEST_SIGNAL" \
-    "${API_URL}/api/argus/signals/log?symbol=SPY" 2>/dev/null)
+    "${API_URL}/api/watchtower/signals/log?symbol=SPY" 2>/dev/null)
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | head -n -1)
 
@@ -250,7 +250,7 @@ echo ""
 echo "TEST 7: Update Outcomes (POST)"
 echo "-------------------------------------------"
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-    "${API_URL}/api/argus/signals/update-outcomes?symbol=SPY" 2>/dev/null)
+    "${API_URL}/api/watchtower/signals/update-outcomes?symbol=SPY" 2>/dev/null)
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 BODY=$(echo "$RESPONSE" | head -n -1)
 

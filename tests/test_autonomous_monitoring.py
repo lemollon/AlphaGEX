@@ -54,7 +54,7 @@ class TestBotHealthCheck:
                 if hasattr(monitor, 'check_health'):
                     with patch.object(monitor, 'check_health') as mock_health:
                         mock_health.return_value = {'status': 'healthy', 'uptime': 3600}
-                        result = monitor.check_health('ARES')
+                        result = monitor.check_health('FORTRESS')
                         assert 'status' in result
         except ImportError:
             pytest.skip("Autonomous monitoring not available")
@@ -89,7 +89,7 @@ class TestBotPerformanceMonitoring:
                 if hasattr(monitor, 'get_performance'):
                     with patch.object(monitor, 'get_performance') as mock_perf:
                         mock_perf.return_value = {'pnl': 500, 'trades': 10}
-                        result = monitor.get_performance('ARES')
+                        result = monitor.get_performance('FORTRESS')
                         assert 'pnl' in result or 'trades' in result
         except ImportError:
             pytest.skip("Autonomous monitoring not available")

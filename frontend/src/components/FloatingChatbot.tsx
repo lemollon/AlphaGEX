@@ -12,7 +12,7 @@ interface Message {
   timestamp: Date
   imageUrl?: string // Base64 image data URL
   type?: 'normal' | 'command' | 'briefing' | 'alert' // Message type for styling
-  toolsUsed?: Array<{ tool: string; input: any }> // Tools used by GEXIS
+  toolsUsed?: Array<{ tool: string; input: any }> // Tools used by COUNSELOR
   pendingConfirmation?: { // For bot control confirmations
     action: string
     bot: string
@@ -20,8 +20,8 @@ interface Message {
   }
 }
 
-// GEXIS Configuration
-const GEXIS_NAME = 'GEXIS'
+// COUNSELOR Configuration
+const GEXIS_NAME = 'COUNSELOR'
 const GEXIS_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
 const USER_NAME = 'Optionist Prime'
 
@@ -90,7 +90,7 @@ function getCentralTime(): Date {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
 }
 
-// Get time-based greeting for GEXIS (Central Time)
+// Get time-based greeting for COUNSELOR (Central Time)
 function getTimeGreeting(): string {
   const hour = getCentralTime().getHours()
   if (hour >= 5 && hour < 12) return 'Good morning'
@@ -98,7 +98,7 @@ function getTimeGreeting(): string {
   return 'Good evening'
 }
 
-// Get GEXIS welcome message - JARVIS-style sophisticated greeting
+// Get COUNSELOR welcome message - JARVIS-style sophisticated greeting
 function getGexisWelcomeMessage(): string {
   const greeting = getTimeGreeting()
   const ct = getCentralTime()
@@ -122,7 +122,7 @@ function getGexisWelcomeMessage(): string {
     marketContext = `After-hours session. Preparing tomorrow's intelligence.`
   }
 
-  return `${greeting}, ${USER_NAME}. GEXIS online.
+  return `${greeting}, ${USER_NAME}. COUNSELOR online.
 
 **━━━ SYSTEM STATUS ━━━**
 ◉ Neural Core: Active
@@ -138,7 +138,7 @@ I have full situational awareness of your AlphaGEX ecosystem—real-time gamma e
 *"Shall I run a market scan, or do you have a specific objective today, Prime?"*`
 }
 
-// Get GEXIS chat cleared message - JARVIS-style
+// Get COUNSELOR chat cleared message - JARVIS-style
 function getGexisClearMessage(): string {
   return `Memory banks cleared, ${USER_NAME}.
 
@@ -254,7 +254,7 @@ export default function FloatingChatbot() {
         }))
         setMessages(messagesWithDates)
       } else {
-        // Add GEXIS welcome message if no history
+        // Add COUNSELOR welcome message if no history
         setMessages([{
           id: '1',
           role: 'assistant',
@@ -617,7 +617,7 @@ export default function FloatingChatbot() {
       let pendingConf = null
 
       try {
-        const response = await fetch(`${API_URL}/api/ai/gexis/agentic-chat/stream`, {
+        const response = await fetch(`${API_URL}/api/ai/counselor/agentic-chat/stream`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -711,7 +711,7 @@ export default function FloatingChatbot() {
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `gexis-conversation-${sessionId}.md`
+        a.download = `counselor-conversation-${sessionId}.md`
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
@@ -754,7 +754,7 @@ export default function FloatingChatbot() {
           background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%)',
           boxShadow: '0 0 30px rgba(99, 102, 241, 0.5), 0 0 60px rgba(139, 92, 246, 0.3)'
         }}
-        title="Open GEXIS"
+        title="Open COUNSELOR"
       >
         {/* Animated background rings */}
         <div className="absolute inset-0 rounded-full animate-ping opacity-20" style={{ background: 'linear-gradient(135deg, #6366f1, #06b6d4)' }} />
@@ -1007,7 +1007,7 @@ export default function FloatingChatbot() {
                         <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                         <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                       </div>
-                      <span className="text-sm text-text-muted">GEXIS is thinking...</span>
+                      <span className="text-sm text-text-muted">COUNSELOR is thinking...</span>
                     </>
                   )}
                 </div>
@@ -1117,7 +1117,7 @@ export default function FloatingChatbot() {
                 handleSend()
               }
             }}
-            placeholder={`Ask GEXIS or type / for commands...`}
+            placeholder={`Ask COUNSELOR or type / for commands...`}
             className="flex-1 bg-background-card border border-border rounded-xl px-4 py-2.5 text-sm text-text-primary placeholder-text-muted resize-none min-h-[44px] max-h-[120px] focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50"
             disabled={loading}
             rows={1}

@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-COMPLETE SOLOMON VERIFICATION TEST SUITE
+COMPLETE PROVERBS VERIFICATION TEST SUITE
 
-Run in Render shell: python scripts/test_solomon_complete.py
+Run in Render shell: python scripts/test_proverbs_complete.py
 
 Tests:
 1. Database tables exist and are writable
 2. A/B test persistence (create, record, evaluate, persist)
 3. Proposal validation trade recording
 4. Version tracking on proposal apply
-5. Oracle returns Solomon info in reasoning
-6. Oracle scores are NOT modified by Solomon
+5. Prophet returns Proverbs info in reasoning
+6. Prophet scores are NOT modified by Proverbs
 7. All API endpoints return real data
 8. Frontend API client coverage
 """
@@ -38,28 +38,28 @@ def fail(msg): print(f"   {RED}❌ {msg}{RESET}")
 def warn(msg): print(f"   {YELLOW}⚠️  {msg}{RESET}")
 def info(msg): print(f"   {BLUE}ℹ️  {msg}{RESET}")
 
-class SolomonTestSuite:
+class ProverbsTestSuite:
     def __init__(self):
         self.results: List[Tuple[str, bool, str]] = []
         self.db_available = False
-        self.solomon = None
+        self.proverbs = None
         self.enhanced = None
 
     def run_all(self):
         print()
         print(f"{BOLD}{'='*70}{RESET}")
-        print(f"{BOLD}COMPLETE SOLOMON VERIFICATION TEST SUITE{RESET}")
+        print(f"{BOLD}COMPLETE PROVERBS VERIFICATION TEST SUITE{RESET}")
         print(f"{BOLD}{'='*70}{RESET}")
         print()
 
         # Run all tests
         self.test_1_database_connection()
-        self.test_2_solomon_initialization()
+        self.test_2_proverbs_initialization()
         self.test_3_table_existence()
         self.test_4_ab_test_persistence()
         self.test_5_audit_logging()
         self.test_6_version_tracking()
-        self.test_7_oracle_solomon_info()
+        self.test_7_oracle_proverbs_info()
         self.test_8_oracle_no_interference()
         self.test_9_api_endpoints()
         self.test_10_realtime_status()
@@ -99,23 +99,23 @@ class SolomonTestSuite:
             fail(f"Database error: {e}")
             self.record("Database Connection", False, str(e))
 
-    def test_2_solomon_initialization(self):
-        print(f"\n{BOLD}TEST 2: SOLOMON INITIALIZATION{RESET}")
+    def test_2_proverbs_initialization(self):
+        print(f"\n{BOLD}TEST 2: PROVERBS INITIALIZATION{RESET}")
         try:
-            from quant.solomon_feedback_loop import get_solomon
+            from quant.proverbs_feedback_loop import get_proverbs
 
-            self.solomon = get_solomon()
-            ok(f"Solomon initialized: {self.solomon.session_id}")
-            self.record("Solomon Initialization", True, self.solomon.session_id)
+            self.proverbs = get_proverbs()
+            ok(f"Proverbs initialized: {self.proverbs.session_id}")
+            self.record("Proverbs Initialization", True, self.proverbs.session_id)
 
             # Also initialize enhanced
-            from quant.solomon_enhancements import get_solomon_enhanced
-            self.enhanced = get_solomon_enhanced()
-            ok("Solomon Enhanced initialized")
+            from quant.proverbs_enhancements import get_proverbs_enhanced
+            self.enhanced = get_proverbs_enhanced()
+            ok("Proverbs Enhanced initialized")
 
         except Exception as e:
-            fail(f"Solomon initialization failed: {e}")
-            self.record("Solomon Initialization", False, str(e))
+            fail(f"Proverbs initialization failed: {e}")
+            self.record("Proverbs Initialization", False, str(e))
 
     def test_3_table_existence(self):
         print(f"\n{BOLD}TEST 3: TABLE EXISTENCE{RESET}")
@@ -126,15 +126,15 @@ class SolomonTestSuite:
             return
 
         required_tables = [
-            'solomon_audit_log',
-            'solomon_proposals',
-            'solomon_versions',
-            'solomon_performance',
-            'solomon_rollbacks',
-            'solomon_health',
-            'solomon_kill_switch',
-            'solomon_validations',
-            'solomon_ab_tests',
+            'proverbs_audit_log',
+            'proverbs_proposals',
+            'proverbs_versions',
+            'proverbs_performance',
+            'proverbs_rollbacks',
+            'proverbs_health',
+            'proverbs_kill_switch',
+            'proverbs_validations',
+            'proverbs_ab_tests',
         ]
 
         try:
@@ -171,7 +171,7 @@ class SolomonTestSuite:
         print(f"\n{BOLD}TEST 4: A/B TEST PERSISTENCE{RESET}")
 
         if not self.enhanced:
-            warn("Skipping - Solomon Enhanced not initialized")
+            warn("Skipping - Proverbs Enhanced not initialized")
             self.record("A/B Test Persistence", False, "Enhanced not available")
             return
 
@@ -199,7 +199,7 @@ class SolomonTestSuite:
             cursor.execute("""
                 SELECT test_id, bot_name, control_trades, variant_trades,
                        control_pnl, variant_pnl, status
-                FROM solomon_ab_tests WHERE test_id = %s
+                FROM proverbs_ab_tests WHERE test_id = %s
             """, (test_id,))
             row = cursor.fetchone()
             conn.close()
@@ -240,17 +240,17 @@ class SolomonTestSuite:
     def test_5_audit_logging(self):
         print(f"\n{BOLD}TEST 5: AUDIT LOGGING{RESET}")
 
-        if not self.solomon:
-            warn("Skipping - Solomon not initialized")
-            self.record("Audit Logging", False, "Solomon not available")
+        if not self.proverbs:
+            warn("Skipping - Proverbs not initialized")
+            self.record("Audit Logging", False, "Proverbs not available")
             return
 
         try:
-            from quant.solomon_feedback_loop import ActionType
+            from quant.proverbs_feedback_loop import ActionType
 
             test_desc = f"Verification test at {datetime.now().isoformat()}"
 
-            self.solomon.log_action(
+            self.proverbs.log_action(
                 bot_name="TEST_BOT",
                 action_type=ActionType.HEALTH_CHECK,
                 description=test_desc,
@@ -264,7 +264,7 @@ class SolomonTestSuite:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT id, bot_name, action_type, action_description
-                FROM solomon_audit_log
+                FROM proverbs_audit_log
                 WHERE action_description = %s
                 ORDER BY timestamp DESC LIMIT 1
             """, (test_desc,))
@@ -285,15 +285,15 @@ class SolomonTestSuite:
     def test_6_version_tracking(self):
         print(f"\n{BOLD}TEST 6: VERSION TRACKING{RESET}")
 
-        if not self.solomon:
-            warn("Skipping - Solomon not initialized")
-            self.record("Version Tracking", False, "Solomon not available")
+        if not self.proverbs:
+            warn("Skipping - Proverbs not initialized")
+            self.record("Version Tracking", False, "Proverbs not available")
             return
 
         try:
-            from quant.solomon_feedback_loop import VersionType
+            from quant.proverbs_feedback_loop import VersionType
 
-            version_id = self.solomon.save_version(
+            version_id = self.proverbs.save_version(
                 bot_name="TEST_BOT",
                 version_type=VersionType.PARAMETERS,
                 artifact_name="test_params",
@@ -311,7 +311,7 @@ class SolomonTestSuite:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT version_id, bot_name, version_type, artifact_name
-                    FROM solomon_versions WHERE version_id = %s
+                    FROM proverbs_versions WHERE version_id = %s
                 """, (version_id,))
                 row = cursor.fetchone()
                 conn.close()
@@ -330,13 +330,13 @@ class SolomonTestSuite:
             fail(f"Version tracking failed: {e}")
             self.record("Version Tracking", False, str(e))
 
-    def test_7_oracle_solomon_info(self):
-        print(f"\n{BOLD}TEST 7: ORACLE RETURNS SOLOMON INFO{RESET}")
+    def test_7_oracle_proverbs_info(self):
+        print(f"\n{BOLD}TEST 7: PROPHET RETURNS PROVERBS INFO{RESET}")
 
         try:
-            from quant.oracle_advisor import get_oracle, MarketContext, GEXRegime
+            from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
 
-            oracle = get_oracle()
+            prophet = get_oracle()
 
             context = MarketContext(
                 spot_price=590.0,
@@ -349,41 +349,41 @@ class SolomonTestSuite:
                 day_of_week=1  # Tuesday
             )
 
-            rec = oracle.get_strategy_recommendation(context)
+            rec = prophet.get_strategy_recommendation(context)
 
             ok(f"Strategy: {rec.recommended_strategy.value}")
             ok(f"IC Score: {rec.ic_suitability:.2f}")
             ok(f"DIR Score: {rec.dir_suitability:.2f}")
 
-            # Check if reasoning contains Solomon info
+            # Check if reasoning contains Proverbs info
             reasoning = rec.reasoning
             info(f"Reasoning length: {len(reasoning)} chars")
 
             # Split and display
             parts = reasoning.split(' | ')
-            solomon_parts = [p for p in parts if 'SOLOMON' in p.upper()]
+            proverbs_parts = [p for p in parts if 'PROVERBS' in p.upper()]
 
-            if solomon_parts:
-                ok(f"Solomon info found in reasoning: {len(solomon_parts)} part(s)")
-                for p in solomon_parts:
+            if proverbs_parts:
+                ok(f"Proverbs info found in reasoning: {len(proverbs_parts)} part(s)")
+                for p in proverbs_parts:
                     info(f"  → {p}")
-                self.record("Oracle Solomon Info", True, f"{len(solomon_parts)} parts")
+                self.record("Prophet Proverbs Info", True, f"{len(proverbs_parts)} parts")
             else:
-                warn("No SOLOMON INFO in reasoning (may be OK if no historical data)")
-                info("This is expected if Solomon has no historical trade data yet")
-                self.record("Oracle Solomon Info", True, "No data yet (expected)")
+                warn("No PROVERBS INFO in reasoning (may be OK if no historical data)")
+                info("This is expected if Proverbs has no historical trade data yet")
+                self.record("Prophet Proverbs Info", True, "No data yet (expected)")
 
         except Exception as e:
-            fail(f"Oracle test failed: {e}")
-            self.record("Oracle Solomon Info", False, str(e))
+            fail(f"Prophet test failed: {e}")
+            self.record("Prophet Proverbs Info", False, str(e))
 
     def test_8_oracle_no_interference(self):
-        print(f"\n{BOLD}TEST 8: ORACLE SCORES NOT MODIFIED BY SOLOMON{RESET}")
+        print(f"\n{BOLD}TEST 8: PROPHET SCORES NOT MODIFIED BY PROVERBS{RESET}")
 
         try:
-            from quant.oracle_advisor import get_oracle, MarketContext, GEXRegime
+            from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
 
-            oracle = get_oracle()
+            prophet = get_oracle()
 
             # Same context for both calls
             context = MarketContext(
@@ -398,8 +398,8 @@ class SolomonTestSuite:
             )
 
             # Call twice
-            rec1 = oracle.get_strategy_recommendation(context)
-            rec2 = oracle.get_strategy_recommendation(context)
+            rec1 = prophet.get_strategy_recommendation(context)
+            rec2 = prophet.get_strategy_recommendation(context)
 
             # Compare scores
             ic_match = rec1.ic_suitability == rec2.ic_suitability
@@ -430,15 +430,15 @@ class SolomonTestSuite:
             all_match = ic_match and dir_match and size_match and strategy_match
 
             if all_match:
-                ok("CONFIRMED: Solomon does NOT affect Oracle scores (deterministic)")
-                self.record("Oracle No Interference", True)
+                ok("CONFIRMED: Proverbs does NOT affect Prophet scores (deterministic)")
+                self.record("Prophet No Interference", True)
             else:
-                fail("Oracle scores are NOT deterministic!")
-                self.record("Oracle No Interference", False, "Scores differ")
+                fail("Prophet scores are NOT deterministic!")
+                self.record("Prophet No Interference", False, "Scores differ")
 
         except Exception as e:
-            fail(f"Oracle interference test failed: {e}")
-            self.record("Oracle No Interference", False, str(e))
+            fail(f"Prophet interference test failed: {e}")
+            self.record("Prophet No Interference", False, str(e))
 
     def test_9_api_endpoints(self):
         print(f"\n{BOLD}TEST 9: API ENDPOINTS{RESET}")
@@ -448,16 +448,16 @@ class SolomonTestSuite:
             base_url = "http://localhost:8000"
 
             endpoints = [
-                ("/api/solomon/health", "GET"),
-                ("/api/solomon/dashboard", "GET"),
-                ("/api/solomon/realtime-status?days=7", "GET"),
-                ("/api/solomon/enhanced/digest", "GET"),
-                ("/api/solomon/enhanced/correlations", "GET"),
-                ("/api/solomon/strategy-analysis?days=30", "GET"),
-                ("/api/solomon/oracle-accuracy?days=30", "GET"),
-                ("/api/solomon/enhanced/ab-test", "GET"),
-                ("/api/solomon/validation/status", "GET"),
-                ("/api/oracle/strategy-recommendation", "GET"),
+                ("/api/proverbs/health", "GET"),
+                ("/api/proverbs/dashboard", "GET"),
+                ("/api/proverbs/realtime-status?days=7", "GET"),
+                ("/api/proverbs/enhanced/digest", "GET"),
+                ("/api/proverbs/enhanced/correlations", "GET"),
+                ("/api/proverbs/strategy-analysis?days=30", "GET"),
+                ("/api/proverbs/prophet-accuracy?days=30", "GET"),
+                ("/api/proverbs/enhanced/ab-test", "GET"),
+                ("/api/proverbs/validation/status", "GET"),
+                ("/api/prophet/strategy-recommendation", "GET"),
             ]
 
             passed = 0
@@ -475,7 +475,7 @@ class SolomonTestSuite:
                         passed += 1
                     elif resp.status_code == 503:
                         warn(f"{endpoint}: 503 (service unavailable)")
-                        passed += 1  # Expected if Solomon not loaded
+                        passed += 1  # Expected if Proverbs not loaded
                     else:
                         fail(f"{endpoint}: {resp.status_code}")
                         failed += 1
@@ -510,12 +510,12 @@ class SolomonTestSuite:
 
             # Check each bot's position table
             bots = [
-                ('ARES', 'ares_positions'),
-                ('ATHENA', 'athena_positions'),
-                ('TITAN', 'titan_positions'),
-                ('PEGASUS', 'pegasus_positions'),
-                ('ICARUS', 'icarus_positions'),
-                ('PROMETHEUS', 'prometheus_ic_positions'),
+                ('FORTRESS', 'fortress_positions'),
+                ('SOLOMON', 'solomon_positions'),
+                ('SAMSON', 'samson_positions'),
+                ('ANCHOR', 'anchor_positions'),
+                ('GIDEON', 'gideon_positions'),
+                ('JUBILEE', 'jubilee_ic_positions'),
             ]
 
             found_data = False
@@ -568,7 +568,7 @@ class SolomonTestSuite:
 
         if failed == 0:
             print(f"{GREEN}{BOLD}{'='*70}{RESET}")
-            print(f"{GREEN}{BOLD}✅ ALL TESTS PASSED - SOLOMON IS PRODUCTION READY{RESET}")
+            print(f"{GREEN}{BOLD}✅ ALL TESTS PASSED - PROVERBS IS PRODUCTION READY{RESET}")
             print(f"{GREEN}{BOLD}{'='*70}{RESET}")
         else:
             print(f"{RED}{BOLD}{'='*70}{RESET}")
@@ -579,5 +579,5 @@ class SolomonTestSuite:
 
 
 if __name__ == "__main__":
-    suite = SolomonTestSuite()
+    suite = ProverbsTestSuite()
     suite.run_all()

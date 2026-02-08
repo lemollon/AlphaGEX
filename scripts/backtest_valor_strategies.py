@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VALOR (HERACLES) Strategy Backtester
+VALOR (VALOR) Strategy Backtester
 =====================================
 Backtests different strategies against historical trades to find improvements.
 
@@ -64,7 +64,7 @@ CONFIG = {
 # ============================================================================
 
 print("=" * 70)
-print("VALOR (HERACLES) STRATEGY BACKTESTER")
+print("VALOR (VALOR) STRATEGY BACKTESTER")
 print("=" * 70)
 print("\nAll simulations use ONLY real historical trade data.")
 
@@ -87,7 +87,7 @@ trades = db.fetchall("""
         initial_stop,
         ml_approved,
         ml_confidence
-    FROM heracles_closed_trades
+    FROM valor_closed_trades
     ORDER BY open_time ASC
 """)
 

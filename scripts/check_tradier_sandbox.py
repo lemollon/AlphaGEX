@@ -4,7 +4,7 @@ Check Tradier Sandbox Status
 =============================
 
 Shows current positions, orders, and balance in Tradier sandbox.
-This is what ARES trades actually look like on the broker side.
+This is what FORTRESS trades actually look like on the broker side.
 
 Run: python scripts/check_tradier_sandbox.py
 """
@@ -55,7 +55,7 @@ def main():
                 print()
                 print("  ⚠️  ISSUE: Option Buying Power is $0!")
                 print("  ────────────────────────────────────────")
-                print("  This prevents ARES from placing trades.")
+                print("  This prevents FORTRESS from placing trades.")
                 print()
                 print("  HOW TO FIX:")
                 print("  1. Go to https://dash.tradier.com/")
@@ -149,7 +149,7 @@ def main():
    - Orders: Dashboard > Orders
    - History: Dashboard > History
 
-ARES trades will appear here as Iron Condor multileg orders.
+FORTRESS trades will appear here as Iron Condor multileg orders.
 Each trade shows:
   - 4 legs (long put, short put, short call, long call)
   - Net credit received

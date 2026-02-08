@@ -369,12 +369,12 @@ async def get_partial_close_positions():
 
         positions = []
 
-        # Check ARES positions
+        # Check FORTRESS positions
         try:
             c.execute("""
-                SELECT position_id, ticker, expiration, 'ARES' as bot_name,
+                SELECT position_id, ticker, expiration, 'FORTRESS' as bot_name,
                        close_reason, close_time, realized_pnl
-                FROM ares_positions
+                FROM fortress_positions
                 WHERE status = 'partial_close'
                 ORDER BY COALESCE(close_time, open_time) DESC
             """)
@@ -391,12 +391,12 @@ async def get_partial_close_positions():
         except Exception:
             pass  # Table might not exist yet
 
-        # Check ATHENA positions
+        # Check SOLOMON positions
         try:
             c.execute("""
-                SELECT position_id, ticker, expiration, 'ATHENA' as bot_name,
+                SELECT position_id, ticker, expiration, 'SOLOMON' as bot_name,
                        close_reason, close_time, realized_pnl
-                FROM athena_positions
+                FROM solomon_positions
                 WHERE status = 'partial_close'
                 ORDER BY COALESCE(close_time, open_time) DESC
             """)
@@ -413,12 +413,12 @@ async def get_partial_close_positions():
         except Exception:
             pass
 
-        # Check PEGASUS positions
+        # Check ANCHOR positions
         try:
             c.execute("""
-                SELECT position_id, ticker, expiration, 'PEGASUS' as bot_name,
+                SELECT position_id, ticker, expiration, 'ANCHOR' as bot_name,
                        close_reason, close_time, realized_pnl
-                FROM pegasus_positions
+                FROM anchor_positions
                 WHERE status = 'partial_close'
                 ORDER BY COALESCE(close_time, open_time) DESC
             """)
@@ -441,9 +441,9 @@ async def get_partial_close_positions():
             "data": positions,
             "count": len(positions),
             "by_bot": {
-                "ARES": len([p for p in positions if p['bot_name'] == 'ARES']),
-                "ATHENA": len([p for p in positions if p['bot_name'] == 'ATHENA']),
-                "PEGASUS": len([p for p in positions if p['bot_name'] == 'PEGASUS'])
+                "FORTRESS": len([p for p in positions if p['bot_name'] == 'FORTRESS']),
+                "SOLOMON": len([p for p in positions if p['bot_name'] == 'SOLOMON']),
+                "ANCHOR": len([p for p in positions if p['bot_name'] == 'ANCHOR'])
             }
         }
 

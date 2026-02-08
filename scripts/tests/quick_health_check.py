@@ -59,7 +59,7 @@ def check_tables():
     essential_tables = [
         'gex_snapshots',
         'decision_logs',
-        'oracle_predictions',
+        'prophet_predictions',
         'probability_weights',
         'wheel_cycles'
     ]

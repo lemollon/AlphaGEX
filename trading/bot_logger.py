@@ -14,7 +14,7 @@ Usage:
     from trading.bot_logger import log_bot_decision, BotDecision, ExecutionTimeline
 
     decision = BotDecision(
-        bot_name="ARES",
+        bot_name="FORTRESS",
         decision_type="ENTRY",
         action="SELL",
         symbol="SPY",
@@ -40,16 +40,16 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 class BotName(Enum):
     """Bot identifiers"""
-    PHOENIX = "PHOENIX"
-    ATLAS = "ATLAS"
-    ARES = "ARES"
-    HERMES = "HERMES"
-    ORACLE = "ORACLE"
-    ATHENA = "ATHENA"    # Directional Spreads (Bull Call / Bear Call)
-    ICARUS = "ICARUS"    # Aggressive Directional Spreads (relaxed GEX filters)
-    PEGASUS = "PEGASUS"  # SPX Iron Condor ($10 spreads, weekly)
-    TITAN = "TITAN"      # Aggressive SPX Iron Condor ($12 spreads)
-    PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
+    LAZARUS = "LAZARUS"
+    CORNERSTONE = "CORNERSTONE"
+    FORTRESS = "FORTRESS"
+    SHEPHERD = "SHEPHERD"
+    PROPHET = "PROPHET"
+    SOLOMON = "SOLOMON"    # Directional Spreads (Bull Call / Bear Call)
+    GIDEON = "GIDEON"    # Aggressive Directional Spreads (relaxed GEX filters)
+    ANCHOR = "ANCHOR"  # SPX Iron Condor ($10 spreads, weekly)
+    SAMSON = "SAMSON"      # Aggressive SPX Iron Condor ($12 spreads)
+    JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
 
 
 class DecisionType(Enum):
@@ -188,7 +188,7 @@ class BotDecision:
     This is the main data structure that captures everything about a decision.
     """
     # IDENTIFICATION
-    bot_name: str  # PHOENIX, ATLAS, ARES, HERMES, ORACLE
+    bot_name: str  # LAZARUS, CORNERSTONE, FORTRESS, SHEPHERD, PROPHET
     decision_type: str  # ENTRY, EXIT, SKIP, ADJUSTMENT
     action: str  # BUY, SELL, HOLD
     symbol: str = "SPY"
@@ -196,12 +196,12 @@ class BotDecision:
 
     # SIGNAL SOURCE & OVERRIDE TRACKING
     # Captures where the signal came from and if any override happened
-    # Examples: "ML", "Oracle", "Oracle (override ML)", "ML+Oracle", "Manual"
+    # Examples: "ML", "Prophet", "Prophet (override ML)", "ML+Prophet", "Manual"
     signal_source: str = ""
     # If True, trade was made despite one signal saying SKIP
     override_occurred: bool = False
     # Detailed override info: {"overridden_signal": "ML", "overridden_advice": "STAY_OUT",
-    #                         "override_reason": "Oracle high confidence", "override_confidence": 0.85}
+    #                         "override_reason": "Prophet high confidence", "override_confidence": 0.85}
     override_details: Dict[str, Any] = field(default_factory=dict)
 
     # TRADE DETAILS
@@ -338,7 +338,7 @@ class SessionTracker:
     Track scan_cycle and decision_sequence within a trading session.
 
     Usage:
-        tracker = get_session_tracker("ARES")
+        tracker = get_session_tracker("FORTRESS")
         tracker.new_cycle()  # Start a new scan cycle (scan_cycle += 1)
         scan = tracker.current_cycle
         seq = tracker.next_decision()  # Get next decision_sequence
@@ -874,50 +874,50 @@ def get_session_decisions(session_id: str) -> List[Dict]:
 
 # Convenience functions for each bot
 def get_ares_logger():
-    """Get a pre-configured logger for ARES"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ARES" else None
+    """Get a pre-configured logger for FORTRESS"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "FORTRESS" else None
 
 
 def get_atlas_logger():
-    """Get a pre-configured logger for ATLAS"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ATLAS" else None
+    """Get a pre-configured logger for CORNERSTONE"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "CORNERSTONE" else None
 
 
 def get_phoenix_logger():
-    """Get a pre-configured logger for PHOENIX"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "PHOENIX" else None
+    """Get a pre-configured logger for LAZARUS"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "LAZARUS" else None
 
 
 def get_hermes_logger():
-    """Get a pre-configured logger for HERMES"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "HERMES" else None
+    """Get a pre-configured logger for SHEPHERD"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "SHEPHERD" else None
 
 
 def get_oracle_logger():
-    """Get a pre-configured logger for ORACLE"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ORACLE" else None
+    """Get a pre-configured logger for PROPHET"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "PROPHET" else None
 
 
-def get_athena_logger():
-    """Get a pre-configured logger for ATHENA"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ATHENA" else None
+def get_solomon_logger():
+    """Get a pre-configured logger for SOLOMON"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "SOLOMON" else None
 
 
-def get_pegasus_logger():
-    """Get a pre-configured logger for PEGASUS"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "PEGASUS" else None
+def get_anchor_logger():
+    """Get a pre-configured logger for ANCHOR"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ANCHOR" else None
 
 
 def get_icarus_logger():
-    """Get a pre-configured logger for ICARUS"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ICARUS" else None
+    """Get a pre-configured logger for GIDEON"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "GIDEON" else None
 
 
 def get_titan_logger():
-    """Get a pre-configured logger for TITAN"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "TITAN" else None
+    """Get a pre-configured logger for SAMSON"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "SAMSON" else None
 
 
 def get_prometheus_logger():
-    """Get a pre-configured logger for PROMETHEUS"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "PROMETHEUS" else None
+    """Get a pre-configured logger for JUBILEE"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "JUBILEE" else None

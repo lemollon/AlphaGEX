@@ -23,7 +23,7 @@ interface ScanActivity {
   signal_win_probability?: number
   oracle_advice?: string
   oracle_reasoning?: string
-  // Full Oracle context
+  // Full Prophet context
   oracle_win_probability?: number
   oracle_confidence?: number
   oracle_top_factors?: Array<{
@@ -241,7 +241,7 @@ interface ScanActivity {
   kelly_prob_ruin?: number
   kelly_recommendation?: string
 
-  // === NEW: ARGUS Pattern Analysis ===
+  // === NEW: WATCHTOWER Pattern Analysis ===
   argus_pattern_match?: string
   argus_similarity_score?: number
   argus_historical_outcome?: string
@@ -326,7 +326,7 @@ function deriveSkipReason(outcome: string, checks?: Array<{ check_name: string; 
     if (checkLower.includes('vix') && (checkLower.includes('low') || checkLower.includes('min'))) return 'VIX_TOO_LOW'
     if (checkLower.includes('max') && checkLower.includes('trade')) return 'MAX_TRADES_REACHED'
     if (checkLower.includes('confidence')) return 'LOW_CONFIDENCE'
-    if (checkLower.includes('oracle')) return 'ORACLE_SAYS_NO'
+    if (checkLower.includes('prophet')) return 'ORACLE_SAYS_NO'
     if (checkLower.includes('market') && checkLower.includes('hour')) return 'BEFORE_WINDOW'
     if (checkLower.includes('conflict')) return 'CONFLICTING_SIGNALS'
   }
@@ -345,7 +345,7 @@ function getSkipReasonDisplay(reason: string): { icon: string; label: string; co
     case 'NO_SIGNAL': return { icon: '📡', label: 'No Signal', color: 'text-yellow-400' }
     case 'LOW_CONFIDENCE': return { icon: '🎯', label: 'Low Confidence', color: 'text-yellow-400' }
     case 'RISK_CHECK_FAILED': return { icon: '⚠️', label: 'Risk Check Failed', color: 'text-orange-400' }
-    case 'ORACLE_SAYS_NO': return { icon: '🔮', label: 'Oracle Said No', color: 'text-purple-400' }
+    case 'ORACLE_SAYS_NO': return { icon: '🔮', label: 'Prophet Said No', color: 'text-purple-400' }
     case 'CONFLICTING_SIGNALS': return { icon: '⚔️', label: 'Conflicting Signals', color: 'text-amber-400' }
     case 'ERROR': return { icon: '❌', label: 'Error', color: 'text-red-400' }
     default: return { icon: '❓', label: reason.replace(/_/g, ' '), color: 'text-gray-400' }
@@ -423,7 +423,7 @@ function getMLConsensusDisplay(scan: ScanActivity): { label: string; color: stri
   // Otherwise compute from available signals
   const signals: Array<{ name: string; signal: string; confidence: number }> = []
 
-  if (scan.oracle_advice) signals.push({ name: 'Oracle', signal: scan.oracle_advice, confidence: scan.oracle_confidence || 0 })
+  if (scan.oracle_advice) signals.push({ name: 'Prophet', signal: scan.oracle_advice, confidence: scan.oracle_confidence || 0 })
   if (scan.quant_ml_advice) signals.push({ name: 'QuantML', signal: scan.quant_ml_advice, confidence: scan.quant_ml_confidence || 0 })
   if (scan.regime_predicted_action) signals.push({ name: 'Regime', signal: scan.regime_predicted_action, confidence: scan.regime_confidence || 0 })
   if (scan.gex_ml_direction) signals.push({ name: 'GEX ML', signal: scan.gex_ml_direction, confidence: (scan.gex_ml_confidence || 0) * 100 })
@@ -591,7 +591,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                       scan.oracle_advice === 'TRADE' ? 'bg-green-500/20 text-green-400' :
                       scan.oracle_advice === 'SKIP' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'
                     }`}>
-                      Oracle: {scan.oracle_advice} {scan.oracle_win_probability ? `(${(scan.oracle_win_probability * 100).toFixed(0)}%)` : ''}
+                      Prophet: {scan.oracle_advice} {scan.oracle_win_probability ? `(${(scan.oracle_win_probability * 100).toFixed(0)}%)` : ''}
                     </span>
                   )}
                   {scan.quant_ml_advice && (
@@ -927,15 +927,15 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                 <span>Win Prob: {(scan.signal_win_probability * 100).toFixed(0)}%</span>
               )}
               {scan.oracle_advice && (
-                <span>Oracle: {scan.oracle_advice}</span>
+                <span>Prophet: {scan.oracle_advice}</span>
               )}
             </div>
 
-            {/* Oracle Analysis Section - Full visibility into Oracle decision */}
+            {/* Prophet Analysis Section - Full visibility into Prophet decision */}
             {(scan.oracle_win_probability !== undefined || scan.oracle_top_factors) && (
               <details className="mt-2">
                 <summary className="text-xs text-purple-400 cursor-pointer hover:text-purple-300 flex items-center gap-1">
-                  🔮 Oracle Analysis
+                  🔮 Prophet Analysis
                   {scan.oracle_win_probability !== undefined && (
                     <span className={`ml-1 px-1.5 py-0.5 rounded ${
                       scan.oracle_win_probability >= (scan.min_win_probability_threshold || 0.55)
@@ -975,10 +975,10 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                     </div>
                   )}
 
-                  {/* Oracle Confidence */}
+                  {/* Prophet Confidence */}
                   {scan.oracle_confidence !== undefined && (
                     <div className="flex items-center justify-between">
-                      <span className="text-gray-400">Oracle Confidence:</span>
+                      <span className="text-gray-400">Prophet Confidence:</span>
                       <span className={`font-medium ${
                         scan.oracle_confidence >= 0.7 ? 'text-green-400' :
                         scan.oracle_confidence >= 0.5 ? 'text-yellow-400' : 'text-red-400'
@@ -1026,7 +1026,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                     </div>
                   )}
 
-                  {/* Oracle Reasoning */}
+                  {/* Prophet Reasoning */}
                   {scan.oracle_reasoning && (
                     <div className="mt-1 pt-1 border-t border-purple-500/20">
                       <span className="text-gray-400">Reasoning: </span>
@@ -1373,12 +1373,12 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               </details>
             )}
 
-            {/* === NEW: ARGUS Pattern Analysis Section === */}
+            {/* === NEW: WATCHTOWER Pattern Analysis Section === */}
             {(scan.argus_pattern_match || scan.argus_roc_signal || scan.argus_similarity_score !== undefined) && (
               <details className="mt-2">
                 <summary className="text-xs text-cyan-400 cursor-pointer hover:text-cyan-300 flex items-center gap-1">
                   <Activity className="w-3 h-3" />
-                  ARGUS Pattern Analysis
+                  WATCHTOWER Pattern Analysis
                   {scan.argus_roc_signal && (
                     <span className={`ml-1 px-1.5 py-0.5 rounded ${
                       scan.argus_roc_signal.includes('BUY') ? 'bg-green-500/20 text-green-400' :
@@ -2329,9 +2329,9 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               'Dist to Put Wall %', 'Dist to Call Wall %', 'R:R',
               // Signal
               'Signal Source', 'Signal Direction', 'Signal Confidence', 'Signal Win Prob',
-              // Oracle
-              'Oracle Advice', 'Oracle Win Prob', 'Oracle Confidence', 'Min Threshold',
-              'Oracle Probabilities', 'Oracle Suggested Strikes', 'Oracle Reasoning', 'Top Factors',
+              // Prophet
+              'Prophet Advice', 'Prophet Win Prob', 'Prophet Confidence', 'Min Threshold',
+              'Prophet Probabilities', 'Prophet Suggested Strikes', 'Prophet Reasoning', 'Top Factors',
               // Psychology
               'Psychology Pattern', 'Liberation Setup', 'False Floor', 'Forward Magnets',
               // Execution
@@ -2375,7 +2375,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               s.signal_direction || '',
               s.signal_confidence ? (s.signal_confidence * 100).toFixed(1) + '%' : '',
               s.signal_win_probability ? (s.signal_win_probability * 100).toFixed(1) + '%' : '',
-              // Oracle
+              // Prophet
               s.oracle_advice || '',
               s.oracle_win_probability ? (s.oracle_win_probability * 100).toFixed(1) + '%' : '',
               s.oracle_confidence ? (s.oracle_confidence * 100).toFixed(0) + '%' : '',

@@ -85,8 +85,8 @@ def test_schema_tables():
         'wheel_legs',
 
         # AI/ML tables
-        'oracle_predictions',
-        'oracle_training_outcomes',
+        'prophet_predictions',
+        'prophet_training_outcomes',
         'probability_predictions',
         'probability_outcomes',
         'probability_weights',
@@ -179,18 +179,18 @@ def test_probability_system_schema():
 
 
 def test_oracle_schema():
-    """Test ORACLE prediction schema"""
-    print_header("ORACLE SCHEMA TEST")
+    """Test PROPHET prediction schema"""
+    print_header("PROPHET SCHEMA TEST")
 
     try:
         from database_adapter import get_connection
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check oracle_predictions columns
+        # Check prophet_predictions columns
         cursor.execute("""
             SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'oracle_predictions'
+            WHERE table_name = 'prophet_predictions'
         """)
         pred_cols = [row[0] for row in cursor.fetchall()]
 
@@ -199,28 +199,28 @@ def test_oracle_schema():
 
         for col in required_cols:
             exists = col in pred_cols
-            print_result(f"oracle_predictions.{col}", exists)
+            print_result(f"prophet_predictions.{col}", exists)
 
-        # Check oracle_training_outcomes
+        # Check prophet_training_outcomes
         cursor.execute("""
             SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'oracle_training_outcomes'
+            WHERE table_name = 'prophet_training_outcomes'
         """)
         outcome_cols = [row[0] for row in cursor.fetchall()]
 
-        print_result("oracle_training_outcomes table", len(outcome_cols) > 0,
+        print_result("prophet_training_outcomes table", len(outcome_cols) > 0,
                     f"{len(outcome_cols)} columns")
 
         # Check prediction count
-        cursor.execute("SELECT COUNT(*) FROM oracle_predictions")
+        cursor.execute("SELECT COUNT(*) FROM prophet_predictions")
         pred_count = cursor.fetchone()[0]
-        print_result("Oracle predictions stored", True, f"{pred_count} predictions")
+        print_result("Prophet predictions stored", True, f"{pred_count} predictions")
 
         conn.close()
         return True
 
     except Exception as e:
-        print_result("ORACLE schema check", False, str(e))
+        print_result("PROPHET schema check", False, str(e))
         return False
 
 
@@ -330,7 +330,7 @@ def main():
         "connection": test_database_connection(),
         "schema": test_schema_tables(),
         "pythia": test_probability_system_schema(),
-        "oracle": test_oracle_schema(),
+        "prophet": test_oracle_schema(),
         "wheel": test_wheel_schema(),
         "integrity": test_data_integrity(),
     }

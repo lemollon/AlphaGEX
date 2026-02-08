@@ -12,7 +12,7 @@ ALTER TABLE ml_predictions ADD COLUMN IF NOT EXISTS outcome_notes TEXT;
 ALTER TABLE ml_predictions ADD COLUMN IF NOT EXISTS outcome_recorded_at TIMESTAMPTZ;
 
 -- Add bot integration columns
-ALTER TABLE ml_predictions ADD COLUMN IF NOT EXISTS used_by_bot VARCHAR(20);  -- ARES, ATHENA, ICARUS, TITAN, PEGASUS
+ALTER TABLE ml_predictions ADD COLUMN IF NOT EXISTS used_by_bot VARCHAR(20);  -- FORTRESS, SOLOMON, GIDEON, TITAN, ANCHOR
 ALTER TABLE ml_predictions ADD COLUMN IF NOT EXISTS trade_id VARCHAR(100);     -- Link to actual trade
 ALTER TABLE ml_predictions ADD COLUMN IF NOT EXISTS session_id VARCHAR(50);    -- Trading session
 

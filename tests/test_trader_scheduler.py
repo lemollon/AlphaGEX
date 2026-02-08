@@ -4,7 +4,7 @@ Comprehensive Tests for Trader Scheduler
 Tests the autonomous trading scheduler including:
 - Scheduler initialization
 - Market hours detection
-- Bot scheduling logic (PHOENIX, ATLAS, ARES, ATHENA)
+- Bot scheduling logic (LAZARUS, CORNERSTONE, FORTRESS, SOLOMON)
 - State persistence and recovery
 - Heartbeat logging
 
@@ -31,9 +31,9 @@ class TestCapitalAllocation:
         from scheduler.trader_scheduler import CAPITAL_ALLOCATION
 
         total = (
-            CAPITAL_ALLOCATION['PHOENIX'] +
-            CAPITAL_ALLOCATION['ATLAS'] +
-            CAPITAL_ALLOCATION['ARES'] +
+            CAPITAL_ALLOCATION['LAZARUS'] +
+            CAPITAL_ALLOCATION['CORNERSTONE'] +
+            CAPITAL_ALLOCATION['FORTRESS'] +
             CAPITAL_ALLOCATION['RESERVE']
         )
 
@@ -46,12 +46,12 @@ class TestCapitalAllocation:
 
         total = CAPITAL_ALLOCATION['TOTAL']
 
-        # PHOENIX should be 30%
-        assert CAPITAL_ALLOCATION['PHOENIX'] == 300_000
-        # ATLAS should be 40%
-        assert CAPITAL_ALLOCATION['ATLAS'] == 400_000
-        # ARES should be 20%
-        assert CAPITAL_ALLOCATION['ARES'] == 200_000
+        # LAZARUS should be 30%
+        assert CAPITAL_ALLOCATION['LAZARUS'] == 300_000
+        # CORNERSTONE should be 40%
+        assert CAPITAL_ALLOCATION['CORNERSTONE'] == 400_000
+        # FORTRESS should be 20%
+        assert CAPITAL_ALLOCATION['FORTRESS'] == 200_000
         # RESERVE should be 10%
         assert CAPITAL_ALLOCATION['RESERVE'] == 100_000
 
@@ -62,7 +62,7 @@ class TestSchedulerInitialization:
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', False)
     @patch('scheduler.trader_scheduler.ARES_AVAILABLE', False)
-    @patch('scheduler.trader_scheduler.ATHENA_AVAILABLE', False)
+    @patch('scheduler.trader_scheduler.SOLOMON_AVAILABLE', False)
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
@@ -225,14 +225,14 @@ class TestStatePersistence:
 
 
 class TestPhoenixScheduling:
-    """Tests for PHOENIX (0DTE) bot scheduling"""
+    """Tests for LAZARUS (0DTE) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
     def test_phoenix_trade_logic_market_open(self, mock_conn, mock_api, mock_trader):
-        """Test PHOENIX trading logic during market hours"""
+        """Test LAZARUS trading logic during market hours"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
@@ -260,7 +260,7 @@ class TestPhoenixScheduling:
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
     def test_phoenix_trade_logic_market_closed(self, mock_conn, mock_api, mock_trader):
-        """Test PHOENIX trading logic when market closed"""
+        """Test LAZARUS trading logic when market closed"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
@@ -279,7 +279,7 @@ class TestPhoenixScheduling:
 
 
 class TestAtlasScheduling:
-    """Tests for ATLAS (SPX Wheel) bot scheduling"""
+    """Tests for CORNERSTONE (SPX Wheel) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', True)
@@ -288,7 +288,7 @@ class TestAtlasScheduling:
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
     def test_atlas_initialization(self, mock_conn, mock_api, mock_trader, mock_wheel):
-        """Test ATLAS trader initialization"""
+        """Test CORNERSTONE trader initialization"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
@@ -298,18 +298,18 @@ class TestAtlasScheduling:
         from scheduler.trader_scheduler import AutonomousTraderScheduler
         scheduler = AutonomousTraderScheduler()
 
-        assert scheduler.atlas_trader is not None
+        assert scheduler.cornerstone_trader is not None
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.SOLOMON_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.get_solomon')
+    @patch('scheduler.trader_scheduler.PROVERBS_AVAILABLE', True)
+    @patch('scheduler.trader_scheduler.get_proverbs')
     @patch('scheduler.trader_scheduler.SPXWheelTrader')
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_atlas_respects_kill_switch(self, mock_conn, mock_api, mock_trader, mock_wheel, mock_solomon):
-        """Test ATLAS respects Solomon kill switch"""
+    def test_atlas_respects_kill_switch(self, mock_conn, mock_api, mock_trader, mock_wheel, mock_proverbs):
+        """Test CORNERSTONE respects Proverbs kill switch"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
@@ -318,9 +318,9 @@ class TestAtlasScheduling:
         mock_atlas = MagicMock()
         mock_wheel.return_value = mock_atlas
 
-        mock_solomon_instance = MagicMock()
-        mock_solomon_instance.is_bot_killed.return_value = True  # Kill switch active
-        mock_solomon.return_value = mock_solomon_instance
+        mock_proverbs_instance = MagicMock()
+        mock_proverbs_instance.is_bot_killed.return_value = True  # Kill switch active
+        mock_proverbs.return_value = mock_proverbs_instance
 
         from scheduler.trader_scheduler import AutonomousTraderScheduler
         scheduler = AutonomousTraderScheduler()
@@ -334,16 +334,16 @@ class TestAtlasScheduling:
 
 
 class TestAresScheduling:
-    """Tests for ARES (Iron Condor) bot scheduling"""
+    """Tests for FORTRESS (Iron Condor) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.ARES_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.ARESTrader')
+    @patch('scheduler.trader_scheduler.FortressTrader')
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
     def test_ares_initialization(self, mock_conn, mock_api, mock_trader, mock_ares):
-        """Test ARES trader initialization"""
+        """Test FORTRESS trader initialization"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
@@ -353,30 +353,30 @@ class TestAresScheduling:
         from scheduler.trader_scheduler import AutonomousTraderScheduler
         scheduler = AutonomousTraderScheduler()
 
-        assert scheduler.ares_trader is not None
+        assert scheduler.fortress_trader is not None
 
 
 class TestAthenaScheduling:
-    """Tests for ATHENA (Directional Spreads) bot scheduling"""
+    """Tests for SOLOMON (Directional Spreads) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.ATHENA_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.ATHENATrader')
+    @patch('scheduler.trader_scheduler.SOLOMON_AVAILABLE', True)
+    @patch('scheduler.trader_scheduler.SolomonTrader')
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_athena_initialization(self, mock_conn, mock_api, mock_trader, mock_athena):
-        """Test ATHENA trader initialization"""
+    def test_solomon_initialization(self, mock_conn, mock_api, mock_trader, mock_solomon):
+        """Test SOLOMON trader initialization"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
         mock_trader.return_value = MagicMock()
-        mock_athena.return_value = MagicMock()
+        mock_solomon.return_value = MagicMock()
 
         from scheduler.trader_scheduler import AutonomousTraderScheduler
         scheduler = AutonomousTraderScheduler()
 
-        assert scheduler.athena_trader is not None
+        assert scheduler.solomon_trader is not None
 
 
 class TestHeartbeatLogging:
@@ -397,7 +397,7 @@ class TestHeartbeatLogging:
         scheduler = AutonomousTraderScheduler()
 
         if hasattr(scheduler, '_save_heartbeat'):
-            scheduler._save_heartbeat('PHOENIX', 'SCAN_COMPLETE', {'test': True})
+            scheduler._save_heartbeat('LAZARUS', 'SCAN_COMPLETE', {'test': True})
             # Should not raise
 
 

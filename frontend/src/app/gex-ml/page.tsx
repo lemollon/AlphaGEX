@@ -1,10 +1,10 @@
 'use client'
 
 /**
- * ORION - GEX Probability Models Dashboard
+ * STARS - GEX Probability Models Dashboard
  *
- * Named after the mighty hunter constellation, ORION provides the ML-powered
- * probability predictions that guide ARGUS (0DTE) and HYPERION (Weekly) gamma
+ * Named after the mighty hunter constellation, STARS provides the ML-powered
+ * probability predictions that guide WATCHTOWER (0DTE) and GLORY (Weekly) gamma
  * visualizations.
  *
  * Features:
@@ -65,8 +65,8 @@ interface ModelStatus {
     pin_zone: boolean
   }
   usage: {
-    argus: string
-    hyperion: string
+    watchtower: string
+    glory: string
   }
 }
 
@@ -298,10 +298,10 @@ export default function GexMLPage() {
             <div>
               <h1 className="text-3xl font-bold text-text-primary mb-2 flex items-center gap-3">
                 <Brain className="w-8 h-8 text-info" />
-                ORION
+                STARS
               </h1>
               <p className="text-text-secondary">
-                GEX Probability Models - ML-Powered Gamma Intelligence for ARGUS & HYPERION
+                GEX Probability Models - ML-Powered Gamma Intelligence for WATCHTOWER & GLORY
               </p>
               {modelStatus?.model_info?.version && (
                 <p className="text-sm text-info mt-1 flex items-center gap-2">
@@ -342,10 +342,10 @@ export default function GexMLPage() {
               <div>
                 <h2 className="text-xl font-semibold text-text-primary">
                   {modelStatus?.is_trained && !modelStatus?.needs_retraining
-                    ? 'ORION is Active & Providing ML Predictions'
+                    ? 'STARS is Active & Providing ML Predictions'
                     : modelStatus?.is_trained
-                      ? 'ORION is Active (Retraining Recommended)'
-                      : 'ORION Needs Training'}
+                      ? 'STARS is Active (Retraining Recommended)'
+                      : 'STARS Needs Training'}
                 </h2>
                 <p className="text-text-secondary mt-1">
                   {modelStatus?.is_trained
@@ -463,14 +463,14 @@ export default function GexMLPage() {
                       Integration with Gamma Visualizers
                     </h3>
                     <p className="text-text-secondary text-sm mb-4">
-                      ORION's ML predictions enhance ARGUS and HYPERION gamma visualizations with probability-weighted analysis.
+                      STARS's ML predictions enhance WATCHTOWER and GLORY gamma visualizations with probability-weighted analysis.
                     </p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="bg-background-hover rounded-lg p-4 border border-gray-700/50">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-text-primary font-medium flex items-center gap-2">
                             <Eye className="w-4 h-4 text-info" />
-                            ARGUS (0DTE Gamma)
+                            WATCHTOWER (0DTE Gamma)
                           </span>
                           {modelStatus?.is_trained ? (
                             <CheckCircle className="w-4 h-4 text-success" />
@@ -479,7 +479,7 @@ export default function GexMLPage() {
                           )}
                         </div>
                         <p className="text-xs text-text-muted">
-                          {modelStatus?.usage?.argus || '60% ML + 40% distance-weighted'}
+                          {modelStatus?.usage?.watchtower || '60% ML + 40% distance-weighted'}
                         </p>
                         <p className="text-xs text-info mt-1">
                           {modelStatus?.is_trained ? 'ML predictions active' : 'Using distance-only fallback'}
@@ -489,7 +489,7 @@ export default function GexMLPage() {
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-text-primary font-medium flex items-center gap-2">
                             <Sparkles className="w-4 h-4 text-primary" />
-                            HYPERION (Weekly Gamma)
+                            GLORY (Weekly Gamma)
                           </span>
                           {modelStatus?.is_trained ? (
                             <CheckCircle className="w-4 h-4 text-success" />
@@ -498,7 +498,7 @@ export default function GexMLPage() {
                           )}
                         </div>
                         <p className="text-xs text-text-muted">
-                          {modelStatus?.usage?.hyperion || '60% ML + 40% distance-weighted'}
+                          {modelStatus?.usage?.glory || '60% ML + 40% distance-weighted'}
                         </p>
                         <p className="text-xs text-primary mt-1">
                           {modelStatus?.is_trained ? 'ML predictions active' : 'Using distance-only fallback'}
@@ -537,20 +537,20 @@ export default function GexMLPage() {
                     </div>
                   </div>
 
-                  {/* What ORION Can/Cannot Do */}
+                  {/* What STARS Can/Cannot Do */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-background-card rounded-lg p-6 border border-success/30">
                       <h3 className="text-lg font-semibold text-success mb-4 flex items-center gap-2">
                         <CheckCircle className="w-5 h-5" />
-                        What ORION CAN Do
+                        What STARS CAN Do
                       </h3>
                       <ul className="space-y-2">
                         {[
                           'Predict directional bias from gamma structure patterns',
                           'Estimate probability of price moving to flip point',
-                          'Calculate strike-level pin probabilities for ARGUS',
+                          'Calculate strike-level pin probabilities for WATCHTOWER',
                           'Estimate expected volatility from GEX regime',
-                          'Enhance ARGUS/HYPERION with ML-weighted probabilities'
+                          'Enhance WATCHTOWER/GLORY with ML-weighted probabilities'
                         ].map((item, i) => (
                           <li key={i} className="flex items-start gap-2 text-text-secondary">
                             <ChevronRight className="w-4 h-4 text-success mt-1 flex-shrink-0" />
@@ -562,7 +562,7 @@ export default function GexMLPage() {
                     <div className="bg-background-card rounded-lg p-6 border border-danger/30">
                       <h3 className="text-lg font-semibold text-danger mb-4 flex items-center gap-2">
                         <XCircle className="w-5 h-5" />
-                        What ORION CANNOT Do
+                        What STARS CANNOT Do
                       </h3>
                       <ul className="space-y-2">
                         {[
@@ -585,7 +585,7 @@ export default function GexMLPage() {
                   <div className="bg-background-card rounded-lg p-6 border border-gray-700/50">
                     <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
                       <BookOpen className="w-5 h-5 text-info" />
-                      How ORION Calculates Probabilities
+                      How STARS Calculates Probabilities
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="bg-background-hover rounded-lg p-4">
@@ -635,12 +635,12 @@ export default function GexMLPage() {
                         {training ? (
                           <>
                             <RefreshCw className="w-6 h-6 animate-spin" />
-                            Training ORION...
+                            Training STARS...
                           </>
                         ) : (
                           <>
                             <Brain className="w-6 h-6" />
-                            Train ORION Models
+                            Train STARS Models
                           </>
                         )}
                       </button>
@@ -656,10 +656,10 @@ export default function GexMLPage() {
                   <div className="bg-background-card rounded-lg p-6 border border-gray-700/50">
                     <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-info" />
-                      Get ORION Prediction
+                      Get STARS Prediction
                     </h3>
                     <p className="text-text-secondary text-sm mb-4">
-                      Enter gamma structure data to get ORION's ML prediction for market direction and pin probabilities.
+                      Enter gamma structure data to get STARS's ML prediction for market direction and pin probabilities.
                     </p>
 
                     <form onSubmit={handlePredict} className="space-y-4">
@@ -814,17 +814,17 @@ export default function GexMLPage() {
                       <div className="mt-4 p-4 bg-warning/10 border border-warning/30 rounded-lg flex items-center gap-3">
                         <AlertTriangle className="w-5 h-5 text-warning" />
                         <p className="text-warning">
-                          ORION models are not trained yet. Train the models first to get predictions.
+                          STARS models are not trained yet. Train the models first to get predictions.
                         </p>
                       </div>
                     )}
                   </div>
 
-                  {/* How ORION Makes Predictions */}
+                  {/* How STARS Makes Predictions */}
                   <div className="bg-background-card rounded-lg p-6 border border-gray-700/50">
                     <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
                       <BookOpen className="w-5 h-5 text-info" />
-                      Understanding ORION Predictions
+                      Understanding STARS Predictions
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
@@ -928,7 +928,7 @@ export default function GexMLPage() {
                         {training ? (
                           <>
                             <RefreshCw className="w-6 h-6 animate-spin" />
-                            Training ORION...
+                            Training STARS...
                           </>
                         ) : (
                           <>

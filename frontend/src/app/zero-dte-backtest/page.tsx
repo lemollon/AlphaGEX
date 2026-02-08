@@ -186,8 +186,8 @@ export default function ZeroDTEBacktestPage() {
   // Comparison state
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([])
 
-  // Oracle AI state
-  const [oracleStatus, setOracleStatus] = useState<any>(null)
+  // Prophet AI state
+  const [oracleStatus, setProphetStatus] = useState<any>(null)
   const [oracleLogs, setOracleLogs] = useState<any[]>([])
   const [showOracleLogs, setShowOracleLogs] = useState(false)
 
@@ -220,25 +220,25 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
-  // Load Oracle status
-  const loadOracleStatus = async () => {
+  // Load Prophet status
+  const loadProphetStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/zero-dte/oracle/status`)
+      const response = await fetch(`${API_URL}/api/zero-dte/prophet/status`)
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
-          setOracleStatus(data.oracle)
+          setProphetStatus(data.prophet)
         }
       }
     } catch (err) {
-      console.error('Failed to load Oracle status:', err)
+      console.error('Failed to load Prophet status:', err)
     }
   }
 
-  // Load Oracle logs
+  // Load Prophet logs
   const loadOracleLogs = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/zero-dte/oracle/logs?limit=20`)
+      const response = await fetch(`${API_URL}/api/zero-dte/prophet/logs?limit=20`)
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
@@ -246,7 +246,7 @@ export default function ZeroDTEBacktestPage() {
         }
       }
     } catch (err) {
-      console.error('Failed to load Oracle logs:', err)
+      console.error('Failed to load Prophet logs:', err)
     }
   }
 
@@ -268,7 +268,7 @@ export default function ZeroDTEBacktestPage() {
           if (data.tiers) setTiers(data.tiers)
           if (data.presets) setPresets(data.presets)
           if (data.saved_strategies) setSavedStrategies(data.saved_strategies)
-          if (data.oracle) setOracleStatus(data.oracle)
+          if (data.prophet) setProphetStatus(data.prophet)
           // Load full results separately (init only returns summary)
           loadResults()
           return
@@ -283,7 +283,7 @@ export default function ZeroDTEBacktestPage() {
       loadResults()
       loadPresets()
       loadSavedStrategies()
-      loadOracleStatus()
+      loadProphetStatus()
     } catch (err) {
       console.error('Init failed, using fallback:', err)
       checkBackendHealth()
@@ -293,7 +293,7 @@ export default function ZeroDTEBacktestPage() {
       loadResults()
       loadPresets()
       loadSavedStrategies()
-      loadOracleStatus()
+      loadProphetStatus()
     }
   }
 
@@ -302,7 +302,7 @@ export default function ZeroDTEBacktestPage() {
     loadKronosInit()
   }, [])
 
-  // Auto-refresh Oracle logs when panel is open
+  // Auto-refresh Prophet logs when panel is open
   useEffect(() => {
     if (showOracleLogs) {
       loadOracleLogs()
@@ -452,11 +452,11 @@ export default function ZeroDTEBacktestPage() {
     function tryWebSocket() {
       try {
         const wsUrl = API_URL.replace('http://', 'ws://').replace('https://', 'wss://')
-        websocket = new WebSocket(`${wsUrl}/ws/kronos/job/${currentJobId}`)
+        websocket = new WebSocket(`${wsUrl}/ws/chronicles/job/${currentJobId}`)
 
         websocket.onopen = () => {
           connectionMethod = 'websocket'
-          console.log('KRONOS: Connected via WebSocket')
+          console.log('CHRONICLES: Connected via WebSocket')
         }
 
         websocket.onmessage = (event) => {
@@ -498,7 +498,7 @@ export default function ZeroDTEBacktestPage() {
 
         eventSource.onopen = () => {
           connectionMethod = 'sse'
-          console.log('KRONOS: Connected via SSE')
+          console.log('CHRONICLES: Connected via SSE')
         }
 
         eventSource.onmessage = (event) => {
@@ -526,7 +526,7 @@ export default function ZeroDTEBacktestPage() {
     function startFallbackPolling() {
       if (fallbackInterval) return
       connectionMethod = 'polling'
-      console.log('KRONOS: Using polling fallback')
+      console.log('CHRONICLES: Using polling fallback')
 
       fallbackInterval = setInterval(async () => {
         try {
@@ -890,7 +890,7 @@ export default function ZeroDTEBacktestPage() {
             <div>
               <h1 className="text-3xl font-bold flex items-center gap-3">
                 <Clock className="w-8 h-8 text-blue-400" />
-                KRONOS - 0DTE Iron Condor Backtest
+                CHRONICLES - 0DTE Iron Condor Backtest
               </h1>
               <p className="text-gray-400 mt-1">
                 God of Time Decay - Hybrid scaling strategy with automatic tier transitions
@@ -912,7 +912,7 @@ export default function ZeroDTEBacktestPage() {
                  backendStatus === 'error' ? 'Backend Offline' :
                  'Checking...'}
               </div>
-              {/* Oracle AI Status Indicator */}
+              {/* Prophet AI Status Indicator */}
               {oracleStatus && (
                 <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs ${
                   oracleStatus.claude_available ? 'bg-purple-900/50 text-purple-400' : 'bg-gray-800 text-gray-400'
@@ -928,7 +928,7 @@ export default function ZeroDTEBacktestPage() {
                 className="flex items-center gap-2 px-4 py-2 bg-purple-900/30 hover:bg-purple-900/50 rounded-lg text-sm text-purple-300"
               >
                 <Activity className="w-4 h-4" />
-                Oracle Logs
+                Prophet Logs
                 {showOracleLogs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
               <button
@@ -942,13 +942,13 @@ export default function ZeroDTEBacktestPage() {
             </div>
           </div>
 
-          {/* Oracle Live Logs Panel */}
+          {/* Prophet Live Logs Panel */}
           {showOracleLogs && (
             <div className="bg-purple-900/20 border border-purple-800 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-purple-300 flex items-center gap-2">
                   <Activity className="w-4 h-4" />
-                  Oracle AI Live Logs
+                  Prophet AI Live Logs
                 </h3>
                 <div className="flex items-center gap-2">
                   {oracleStatus && (
@@ -967,7 +967,7 @@ export default function ZeroDTEBacktestPage() {
               <div className="bg-black/30 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs">
                 {oracleLogs.length === 0 ? (
                   <div className="text-gray-500 text-center py-4">
-                    No Oracle logs yet. Run a backtest or make a prediction to see Claude AI activity.
+                    No Prophet logs yet. Run a backtest or make a prediction to see Claude AI activity.
                   </div>
                 ) : (
                   oracleLogs.slice().reverse().map((log, idx) => (

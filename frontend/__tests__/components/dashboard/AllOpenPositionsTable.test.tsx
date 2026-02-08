@@ -18,7 +18,7 @@ const mockAresPositions = {
   success: true,
   data: [
     {
-      position_id: 'ARES-001',
+      position_id: 'FORTRESS-001',
       spread_type: 'IRON_CONDOR',
       ticker: 'SPY',
       short_call_strike: 590,
@@ -39,7 +39,7 @@ const mockTitanPositions = {
   data: {
     open_positions: [
       {
-        position_id: 'TITAN-001',
+        position_id: 'SAMSON-001',
         spread_type: 'IRON_CONDOR',
         ticker: 'SPX',
         short_call_strike: 5900,

@@ -1,941 +1,381 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState } from 'react'
 import {
-  Brain, Activity, AlertTriangle, CheckCircle, XCircle,
-  Clock, RefreshCw, ChevronDown, ChevronUp, ChevronRight,
-  RotateCcw, Play, Pause, FileText, TrendingDown,
-  History, Target, Lock, Unlock,
-  BarChart2, Calendar, Sun, Moon, GitBranch, Layers,
-  Timer, Repeat, CircleCheck
+  Target, TrendingUp, TrendingDown, Activity, DollarSign,
+  BarChart3, ChevronDown, ChevronUp, Server, Clock, Zap,
+  Shield, Crosshair, Settings, Wallet, History, LayoutDashboard, Download, FileText
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
+import ScanActivityFeed from '@/components/ScanActivityFeed'
+import { useToast } from '@/components/ui/Toast'
 import { apiClient } from '@/lib/api'
+import { RotateCcw, AlertTriangle } from 'lucide-react'
+import {
+  useATHENAStatus,
+  useATHENAPositions,
+  useATHENAPerformance,
+  useSolomonConfig,
+  useATHENALivePnL,
+  useScanActivityAthena,
+  useUnifiedBotSummary,
+} from '@/lib/hooks/useMarketData'
+import {
+  BotPageHeader,
+  BotCard,
+  EmptyState,
+  LoadingState,
+  StatCard,
+  BOT_BRANDS,
+  BotStatusBanner,
+  UnrealizedPnLCard,
+  HedgeSignalCard,
+  CapitalConfigPanel,
+} from '@/components/trader'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import DriftStatusCard from '@/components/DriftStatusCard'
+import BotReportPage from '@/components/trader/BotReportPage'
 
-// ==================== SPARKLINE COMPONENT ====================
+// ==============================================================================
+// INTERFACES
+// ==============================================================================
 
-const Sparkline = ({ data, color = '#8b5cf6', width = 100, height = 30 }: {
-  data: number[]
-  color?: string
-  width?: number
-  height?: number
-}) => {
-  if (!data || data.length === 0) {
-    return <div className="text-gray-600 text-xs">No data</div>
-  }
-
-  const min = Math.min(...data)
-  const max = Math.max(...data)
-  const range = max - min || 1
-
-  const points = data.map((value, index) => {
-    const x = (index / (data.length - 1)) * width
-    const y = height - ((value - min) / range) * height
-    return `${x},${y}`
-  }).join(' ')
-
-  const lastValue = data[data.length - 1]
-  const firstValue = data[0]
-  const trend = lastValue >= firstValue ? 'up' : 'down'
-  const trendColor = trend === 'up' ? '#22c55e' : '#ef4444'
-
-  return (
-    <svg width={width} height={height} className="overflow-visible">
-      <polyline
-        points={points}
-        fill="none"
-        stroke={trendColor}
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle
-        cx={(data.length - 1) / (data.length - 1) * width}
-        cy={height - ((lastValue - min) / range) * height}
-        r="3"
-        fill={trendColor}
-      />
-    </svg>
-  )
-}
-
-// ==================== AUTOMATED SCHEDULE INDICATOR ====================
-
-const AutomatedScheduleIndicator = ({ lastRun, nextRun }: { lastRun: string | null, nextRun?: string }) => {
-  const [timeUntilRun, setTimeUntilRun] = useState<string>('')
-  const [progress, setProgress] = useState<number>(0)
-
-  useEffect(() => {
-    const calculateNextRun = () => {
-      // Solomon runs at 4:00 PM CT (16:00) every weekday
-      const now = new Date()
-      const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
-      const ctHour = ct.getHours()
-      const ctMinutes = ct.getMinutes()
-      const ctDay = ct.getDay() // 0 = Sunday, 6 = Saturday
-
-      // Find next 4 PM CT on a weekday
-      let nextRunDate = new Date(ct)
-      nextRunDate.setHours(16, 0, 0, 0)
-
-      // If it's past 4 PM or weekend, find next weekday
-      if (ctHour >= 16 || ctDay === 0 || ctDay === 6) {
-        nextRunDate.setDate(nextRunDate.getDate() + 1)
-        // Skip to Monday if needed
-        while (nextRunDate.getDay() === 0 || nextRunDate.getDay() === 6) {
-          nextRunDate.setDate(nextRunDate.getDate() + 1)
-        }
-      }
-
-      const diff = nextRunDate.getTime() - ct.getTime()
-      const hours = Math.floor(diff / (1000 * 60 * 60))
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
-
-      if (hours > 24) {
-        const days = Math.floor(hours / 24)
-        setTimeUntilRun(`${days}d ${hours % 24}h`)
-      } else if (hours > 0) {
-        setTimeUntilRun(`${hours}h ${minutes}m`)
-      } else {
-        setTimeUntilRun(`${minutes}m`)
-      }
-
-      // Calculate progress (24 hour cycle)
-      const totalMinutesInDay = 24 * 60
-      const minutesSinceLastRun = (24 * 60) - (hours * 60 + minutes)
-      setProgress(Math.min(100, (minutesSinceLastRun / totalMinutesInDay) * 100))
-    }
-
-    calculateNextRun()
-    const interval = setInterval(calculateNextRun, 60000) // Update every minute
-    return () => clearInterval(interval)
-  }, [])
-
-  const lastRunDate = lastRun ? new Date(lastRun) : null
-  const wasSuccessful = lastRunDate !== null // Assume success if we have a date
-
-  return (
-    <div className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
-              <Repeat className="w-5 h-5 text-purple-400" />
-            </div>
-            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
-              <CircleCheck className="w-3 h-3 text-white" />
-            </div>
-          </div>
-          <div>
-            <div className="text-sm font-bold text-white">Autonomous Mode</div>
-            <div className="text-xs text-gray-400">Runs daily at 4:00 PM CT</div>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-xs text-gray-500">Next Run</div>
-          <div className="text-lg font-bold text-purple-400 flex items-center gap-1">
-            <Timer className="w-4 h-4" />
-            {timeUntilRun}
-          </div>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div className="mb-3">
-        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-          <span>Cycle Progress</span>
-          <span>{progress.toFixed(0)}%</span>
-        </div>
-        <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full transition-all duration-1000 relative"
-            style={{ width: `${progress}%` }}
-          >
-            <div className="absolute inset-0 bg-white/20 animate-pulse" />
-          </div>
-        </div>
-      </div>
-
-      {/* Last Run Info */}
-      <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-2">
-          {wasSuccessful ? (
-            <CheckCircle className="w-4 h-4 text-green-400" />
-          ) : (
-            <Clock className="w-4 h-4 text-gray-400" />
-          )}
-          <span className="text-gray-400">
-            Last run: {lastRunDate ? lastRunDate.toLocaleString() : 'Awaiting first run'}
-          </span>
-        </div>
-        {wasSuccessful && (
-          <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">
-            Completed
-          </span>
-        )}
-      </div>
-
-      {/* Auto-Apply Indicator */}
-      <div className="mt-3 pt-3 border-t border-gray-700/50">
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-          <span>
-            Proven improvements auto-applied • No manual intervention required
-          </span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ==================== P&L INDICATOR ====================
-
-const RealTimePnL = ({ value, previousValue }: { value: number, previousValue?: number }) => {
-  const isPositive = value >= 0
-  const change = previousValue !== undefined ? value - previousValue : 0
-  const showChange = previousValue !== undefined && change !== 0
-
-  return (
-    <div className="flex items-center gap-2">
-      <span className={`text-2xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-        ${Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-      </span>
-      {showChange && (
-        <span className={`text-xs px-1.5 py-0.5 rounded ${change >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-          {change >= 0 ? '+' : ''}{change.toFixed(2)}
-        </span>
-      )}
-    </div>
-  )
-}
-
-// ==================== INTERFACES ====================
-
-interface BotStatus {
-  name: string
-  is_killed: boolean
-  performance: {
-    total_trades: number
-    wins: number
-    losses: number
-    win_rate: number
-    total_pnl: number
-  }
-  performance_history?: number[] // For sparkline
-  active_version: {
-    version_id: string
-    version_number: string
-    created_at: string
-    approved_by: string
-  } | null
-  versions_count: number
-  last_action: {
-    timestamp: string
-    action_type: string
-    action_description: string
-  } | null
-}
-
-interface Proposal {
-  proposal_id: string
-  created_at: string
-  expires_at: string
-  proposal_type: string
-  bot_name: string
-  title: string
-  description: string
-  current_value: Record<string, unknown>
-  proposed_value: Record<string, unknown>
-  change_summary: string
-  reason: string
-  supporting_metrics: Record<string, unknown>
-  expected_improvement: Record<string, unknown>
-  risk_level: string
-  risk_factors: string[]
-  rollback_plan: string
+interface Heartbeat {
+  last_scan: string | null
+  last_scan_iso: string | null
   status: string
-  reviewed_by: string | null
-  reviewed_at: string | null
-  review_notes: string | null
+  scan_count_today: number
+  details: Record<string, any>
 }
 
-interface AuditEntry {
-  id: number
-  timestamp: string
-  bot_name: string
-  actor: string
-  session_id: string
-  action_type: string
-  action_description: string
-  before_state: Record<string, unknown>
-  after_state: Record<string, unknown>
-  reason: string
-  justification: Record<string, unknown>
-  version_from: string
-  version_to: string
-  proposal_id: string | null
-  success: boolean
-  error_message: string
-}
-
-interface Version {
-  version_id: string
-  version_number: string
-  created_at: string
-  version_type: string
-  artifact_name: string
+interface SOLOMONStatus {
+  mode: string
+  ticker: string
+  capital: number
+  starting_capital?: number
+  current_equity?: number
+  unrealized_pnl?: number | null
+  total_pnl: number
+  trade_count: number
+  win_rate: number
+  open_positions: number
+  closed_positions: number
+  traded_today: boolean
+  daily_trades: number
+  daily_pnl: number
+  in_trading_window: boolean
+  current_time: string
   is_active: boolean
-  approved_by: string | null
-  performance_metrics: Record<string, unknown>
-}
-
-interface DashboardData {
-  timestamp: string
-  session_id: string
-  bots: Record<string, BotStatus>
-  pending_proposals: Proposal[]
-  recent_actions: AuditEntry[]
-  kill_switch_status: Record<string, unknown>
-  health: {
-    database: boolean
-    oracle: boolean
-    last_feedback_run: string | null
-    pending_proposals_count: number
-    degradation_alerts: number
+  scan_interval_minutes?: number
+  heartbeat?: Heartbeat
+  oracle_available?: boolean
+  gex_ml_available?: boolean
+  config?: {
+    risk_per_trade: number
+    spread_width: number
+    ticker: string
+    max_daily_trades: number
   }
 }
 
-// ==================== COMPONENTS ====================
-
-const StatusBadge = ({ status, size = 'md' }: { status: string, size?: 'sm' | 'md' | 'lg' }) => {
-  const colors: Record<string, string> = {
-    'PENDING': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
-    'APPROVED': 'bg-green-500/20 text-green-400 border-green-500/50',
-    'REJECTED': 'bg-red-500/20 text-red-400 border-red-500/50',
-    'EXPIRED': 'bg-gray-500/20 text-gray-400 border-gray-500/50',
-    'APPLIED': 'bg-blue-500/20 text-blue-400 border-blue-500/50',
-    'LOW': 'bg-green-500/20 text-green-400 border-green-500/50',
-    'MEDIUM': 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
-    'HIGH': 'bg-red-500/20 text-red-400 border-red-500/50',
-  }
-
-  const sizeClasses = {
-    sm: 'px-1.5 py-0.5 text-xs',
-    md: 'px-2 py-1 text-xs',
-    lg: 'px-3 py-1.5 text-sm'
-  }
-
-  return (
-    <span className={`${colors[status] || 'bg-gray-500/20 text-gray-400'} ${sizeClasses[size]} rounded border font-medium`}>
-      {status}
-    </span>
-  )
+interface SpreadPosition {
+  position_id: string
+  ticker: string
+  spread_type: string
+  long_strike: number
+  short_strike: number
+  expiration: string
+  is_0dte: boolean
+  entry_price: number
+  contracts: number
+  max_profit: number
+  max_loss: number
+  spot_at_entry: number
+  vix_at_entry?: number
+  gex_regime: string
+  // Prophet audit trail
+  oracle_confidence: number
+  oracle_win_probability?: number
+  oracle_advice?: string
+  oracle_reasoning?: string
+  oracle_top_factors?: string
+  // GEX context
+  flip_point?: number
+  net_gex?: number
+  put_wall?: number
+  call_wall?: number
+  status: string
+  exit_price?: number
+  exit_reason?: string
+  realized_pnl?: number
+  created_at: string
+  exit_time?: string
 }
 
-const BotCard = ({
-  bot,
-  onKill,
-  onResume,
-  onViewVersions,
-  sparklineData
-}: {
-  bot: BotStatus
-  onKill: (name: string) => void
-  onResume: (name: string) => void
-  onViewVersions: (name: string) => void
-  sparklineData?: number[]
-}) => {
-  const [showDetails, setShowDetails] = useState(false)
-
-  const winRate = bot.performance?.win_rate || 0
-  const totalPnl = bot.performance?.total_pnl || 0
-  const wins = bot.performance?.wins || 0
-  const losses = bot.performance?.losses || 0
-
-  // Generate mock sparkline if none provided
-  const chartData = sparklineData || Array.from({ length: 10 }, () => Math.random() * 100)
-
-  // Calculate streak
-  const streak = wins > losses ? `${wins - losses}W` : losses > wins ? `${losses - wins}L` : 'EVEN'
-  const streakColor = wins > losses ? 'text-green-400' : losses > wins ? 'text-red-400' : 'text-gray-400'
-
-  return (
-    <div className={`bg-gray-800 rounded-lg border ${bot.is_killed ? 'border-red-500/50' : 'border-gray-700'} p-4`}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${bot.is_killed ? 'bg-red-500' : 'bg-green-500'} animate-pulse`} />
-          <h3 className="text-lg font-bold text-white">{bot.name}</h3>
-          {bot.is_killed && (
-            <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded border border-red-500/50">
-              KILLED
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {bot.is_killed ? (
-            <button
-              onClick={() => onResume(bot.name)}
-              className="p-1.5 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 transition-colors"
-              title="Resume Bot"
-            >
-              <Unlock className="w-4 h-4" />
-            </button>
-          ) : (
-            <button
-              onClick={() => onKill(bot.name)}
-              className="p-1.5 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
-              title="Kill Bot"
-            >
-              <Lock className="w-4 h-4" />
-            </button>
-          )}
-          <button
-            onClick={() => onViewVersions(bot.name)}
-            className="p-1.5 bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
-            title="View Versions"
-          >
-            <History className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowDetails(!showDetails)}
-            className="p-1.5 bg-gray-700 text-gray-400 rounded hover:bg-gray-600 transition-colors"
-          >
-            {showDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
-
-      {/* P&L with Sparkline */}
-      <div className="flex items-center justify-between mb-3 bg-gray-900/50 rounded-lg p-3">
-        <div>
-          <div className="text-xs text-gray-500 mb-1">Total P&L</div>
-          <RealTimePnL value={totalPnl} />
-        </div>
-        <div className="flex flex-col items-end">
-          <Sparkline data={chartData} width={80} height={24} />
-          <div className={`text-xs mt-1 ${streakColor}`}>{streak}</div>
-        </div>
-      </div>
-
-      {/* Performance Summary */}
-      <div className="grid grid-cols-3 gap-2 mb-3">
-        <div className="bg-gray-900/50 rounded p-2 text-center">
-          <div className="text-xs text-gray-500">Win Rate</div>
-          <div className={`text-lg font-bold ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-            {winRate.toFixed(1)}%
-          </div>
-        </div>
-        <div className="bg-gray-900/50 rounded p-2 text-center">
-          <div className="text-xs text-gray-500">Wins</div>
-          <div className="text-lg font-bold text-green-400">{wins}</div>
-        </div>
-        <div className="bg-gray-900/50 rounded p-2 text-center">
-          <div className="text-xs text-gray-500">Losses</div>
-          <div className="text-lg font-bold text-red-400">{losses}</div>
-        </div>
-      </div>
-
-      {/* Active Version */}
-      {bot.active_version && (
-        <div className="text-xs text-gray-400 flex items-center justify-between px-1">
-          <span>
-            <GitBranch className="w-3 h-3 inline mr-1" />
-            v{bot.active_version.version_number}
-          </span>
-          <span className="text-gray-600">{bot.versions_count} versions</span>
-        </div>
-      )}
-
-      {/* Expanded Details */}
-      {showDetails && (
-        <div className="mt-3 pt-3 border-t border-gray-700 space-y-2">
-          {bot.last_action && (
-            <div className="text-xs">
-              <div className="text-gray-500 mb-1">Last Action</div>
-              <div className="bg-gray-900/50 rounded p-2">
-                <div className="text-gray-300">{bot.last_action.action_description}</div>
-                <div className="text-gray-500 mt-1">
-                  {new Date(bot.last_action.timestamp).toLocaleString()}
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-gray-900/50 rounded p-2">
-              <div className="text-gray-500">Trades Today</div>
-              <div className="text-white font-bold">{bot.performance?.total_trades || 0}</div>
-            </div>
-            <div className="bg-gray-900/50 rounded p-2">
-              <div className="text-gray-500">Profit Factor</div>
-              <div className="text-purple-400 font-bold">
-                {wins && losses ? (wins / losses).toFixed(2) : '-'}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
+// Helper to parse Prophet top factors
+function parseOracleTopFactors(factorsJson: string | undefined): Array<{factor: string, impact: number}> {
+  if (!factorsJson) return []
+  try {
+    const parsed = JSON.parse(factorsJson)
+    if (Array.isArray(parsed)) return parsed
+    return []
+  } catch {
+    return []
+  }
 }
 
-// ==================== VALIDATION STATUS COMPONENT ====================
+// ==============================================================================
+// TABS
+// ==============================================================================
 
-interface ValidationStatus {
-  can_apply: boolean
-  improvement_proven: boolean
-  validation_method?: string
-  improvement_metrics?: {
-    current_win_rate?: number
-    proposed_win_rate?: number
-    win_rate_change?: number
-    current_pnl?: number
-    proposed_pnl?: number
-    pnl_change?: number
-    validation_days?: number
-    current_trades?: number
-    proposed_trades?: number
-  }
-  rejection_reasons?: string[]
-  message?: string
+const SOLOMON_TABS = [
+  { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet },
+  { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
+  { id: 'activity' as const, label: 'Activity', icon: Activity },
+  { id: 'history' as const, label: 'History', icon: History },
+  { id: 'reports' as const, label: 'Reports', icon: FileText },
+  { id: 'config' as const, label: 'Config', icon: Settings },
+]
+type SolomonTabId = typeof SOLOMON_TABS[number]['id']
+
+// ==============================================================================
+// HELPERS
+// ==============================================================================
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value)
 }
 
-interface ProposalReasoning {
-  problem_statement?: string
-  hypothesis?: string
-  supporting_evidence?: Array<{ description?: string; type?: string; data?: unknown }>
-  expected_improvement?: Record<string, number>
-  confidence_level?: number
-  success_criteria?: Record<string, number>
-  rollback_trigger?: Record<string, number>
+function exportTradesToCSV(positions: SpreadPosition[], filename: string) {
+  const headers = ['Position ID', 'Ticker', 'Type', 'Long Strike', 'Short Strike', 'Entry', 'Exit', 'P&L', 'Exit Reason', 'Exit Time']
+  const rows = positions.map(p => [
+    p.position_id,
+    p.ticker,
+    p.spread_type,
+    p.long_strike,
+    p.short_strike,
+    p.entry_price,
+    p.exit_price || '',
+    p.realized_pnl || '',
+    p.exit_reason || '',
+    p.exit_time || ''
+  ])
+  const csv = [headers, ...rows].map(row => row.join(',')).join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
 }
 
-const ValidationStatusBadge = ({ status }: { status: ValidationStatus | null }) => {
-  if (!status) {
-    return (
-      <span className="px-2 py-1 bg-gray-500/20 text-gray-400 border border-gray-500/50 rounded text-xs font-medium">
-        No Validation
-      </span>
-    )
-  }
+// ==============================================================================
+// POSITION CARD
+// ==============================================================================
 
-  if (status.can_apply && status.improvement_proven) {
-    return (
-      <span className="px-2 py-1 bg-green-500/20 text-green-400 border border-green-500/50 rounded text-xs font-medium flex items-center gap-1">
-        <CheckCircle className="w-3 h-3" />
-        IMPROVEMENT PROVEN
-      </span>
-    )
-  }
-
-  return (
-    <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 rounded text-xs font-medium flex items-center gap-1">
-      <Clock className="w-3 h-3" />
-      VALIDATING...
-    </span>
-  )
-}
-
-const ProposalCard = ({
-  proposal,
-  onApprove,
-  onReject
-}: {
-  proposal: Proposal
-  onApprove: (id: string, notes: string) => void
-  onReject: (id: string, notes: string) => void
-}) => {
-  const [showDetails, setShowDetails] = useState(false)
-  const [showWhy, setShowWhy] = useState(false)
-  const [notes, setNotes] = useState('')
-  const [processing, setProcessing] = useState(false)
-  const [validationStatus, setValidationStatus] = useState<ValidationStatus | null>(null)
-  const [reasoning, setReasoning] = useState<ProposalReasoning | null>(null)
-  const [loadingValidation, setLoadingValidation] = useState(false)
-
-  // Fetch validation status and reasoning on mount
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoadingValidation(true)
-      try {
-        // Fetch validation status using apiClient
-        const validationRes = await apiClient.getSolomonValidationCanApply(proposal.proposal_id)
-        if (validationRes.data) {
-          setValidationStatus(validationRes.data)
-        }
-
-        // Fetch detailed reasoning using apiClient
-        const reasoningRes = await apiClient.getSolomonProposalReasoning(proposal.proposal_id)
-        if (reasoningRes.data?.reasoning) {
-          setReasoning(reasoningRes.data.reasoning)
-        }
-      } catch (error) {
-        console.log('Validation data not available yet:', error)
-      }
-      setLoadingValidation(false)
-    }
-
-    fetchData()
-  }, [proposal.proposal_id])
-
-  const handleApprove = async () => {
-    // Check if improvement is proven before approving
-    if (validationStatus && !validationStatus.can_apply) {
-      alert('Cannot approve: Improvement has not been proven yet. Validation must complete successfully before applying changes.')
-      return
-    }
-
-    setProcessing(true)
-    await onApprove(proposal.proposal_id, notes)
-    setProcessing(false)
-  }
-
-  const handleReject = async () => {
-    setProcessing(true)
-    await onReject(proposal.proposal_id, notes)
-    setProcessing(false)
-  }
-
-  const expiresAt = new Date(proposal.expires_at)
-  const now = new Date()
-  const hoursLeft = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60)))
-
-  // Extract WHY information
-  const supportingMetrics = proposal.supporting_metrics as { evidence?: unknown[], expected_improvement?: Record<string, unknown> } | null
-  const expectedImprovement = proposal.expected_improvement || supportingMetrics?.expected_improvement || {}
-
-  return (
-    <div className="bg-gray-800 rounded-lg border border-yellow-500/30 p-4">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-bold text-yellow-400">{proposal.bot_name}</span>
-            <StatusBadge status={proposal.risk_level} size="sm" />
-            {loadingValidation ? (
-              <span className="text-xs text-gray-500">Loading...</span>
-            ) : (
-              <ValidationStatusBadge status={validationStatus} />
-            )}
-          </div>
-          <h4 className="text-white font-medium">{proposal.title}</h4>
-        </div>
-        <div className="text-right text-xs">
-          <div className="text-gray-500">Expires in</div>
-          <div className={`font-bold ${hoursLeft < 12 ? 'text-red-400' : 'text-yellow-400'}`}>
-            {hoursLeft}h
-          </div>
-        </div>
-      </div>
-
-      {/* Validation Progress (if validating) */}
-      {validationStatus && !validationStatus.can_apply && validationStatus.improvement_metrics && (
-        <div className="bg-purple-500/10 border border-purple-500/30 rounded p-3 mb-3">
-          <div className="text-xs text-purple-400 font-medium mb-2 flex items-center gap-1">
-            <Activity className="w-3 h-3" />
-            Validation Progress
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-xs">
-            <div>
-              <div className="text-gray-500">Days</div>
-              <div className="text-white font-bold">{validationStatus.improvement_metrics.validation_days || 0} / 7</div>
-            </div>
-            <div>
-              <div className="text-gray-500">Control Trades</div>
-              <div className="text-white font-bold">{validationStatus.improvement_metrics.current_trades || 0} / 20</div>
-            </div>
-            <div>
-              <div className="text-gray-500">Variant Trades</div>
-              <div className="text-white font-bold">{validationStatus.improvement_metrics.proposed_trades || 0} / 20</div>
-            </div>
-          </div>
-          {validationStatus.rejection_reasons && validationStatus.rejection_reasons.length > 0 && (
-            <div className="mt-2 text-xs text-yellow-400">
-              {validationStatus.rejection_reasons[0]}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* WHY Section - Always visible */}
-      <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3 mb-3">
-        <button
-          onClick={() => setShowWhy(!showWhy)}
-          className="w-full flex items-center justify-between text-blue-400 text-xs font-medium"
-        >
-          <span className="flex items-center gap-1">
-            <Target className="w-3 h-3" />
-            WHY THIS CHANGE? (Click to {showWhy ? 'collapse' : 'expand'})
-          </span>
-          {showWhy ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        </button>
-
-        {showWhy && (
-          <div className="mt-3 space-y-3 text-xs">
-            {reasoning?.problem_statement && (
-              <div>
-                <div className="text-gray-500 mb-1">Problem Statement</div>
-                <div className="text-gray-300">{reasoning.problem_statement}</div>
-              </div>
-            )}
-
-            {reasoning?.hypothesis && (
-              <div>
-                <div className="text-gray-500 mb-1">Hypothesis</div>
-                <div className="text-gray-300">{reasoning.hypothesis}</div>
-              </div>
-            )}
-
-            {(!reasoning?.hypothesis) && proposal.reason && (
-              <div>
-                <div className="text-gray-500 mb-1">Reason</div>
-                <div className="text-gray-300">{proposal.reason}</div>
-              </div>
-            )}
-
-            {Object.keys(expectedImprovement).length > 0 && (
-              <div>
-                <div className="text-gray-500 mb-1">Expected Improvement</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {Object.entries(expectedImprovement).map(([key, value]) => (
-                    <div key={key} className="bg-green-500/10 rounded p-1.5">
-                      <div className="text-gray-500 capitalize">{key.replace(/_/g, ' ')}</div>
-                      <div className="text-green-400 font-bold">
-                        {typeof value === 'number' ? `+${value}%` : String(value)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {reasoning?.supporting_evidence && reasoning.supporting_evidence.length > 0 && (
-              <div>
-                <div className="text-gray-500 mb-1">Supporting Evidence</div>
-                <ul className="list-disc list-inside text-gray-300">
-                  {reasoning.supporting_evidence.map((evidence, i) => (
-                    <li key={i}>
-                      {evidence.description || JSON.stringify(evidence)}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {reasoning?.confidence_level && (
-              <div>
-                <div className="text-gray-500 mb-1">Confidence Level</div>
-                <div className="w-full bg-gray-700 rounded h-2">
-                  <div
-                    className="bg-blue-500 rounded h-2"
-                    style={{ width: `${reasoning.confidence_level * 100}%` }}
-                  />
-                </div>
-                <div className="text-gray-400 mt-1">
-                  {(reasoning.confidence_level * 100).toFixed(0)}% confident
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {!showWhy && (
-          <div className="mt-2 text-xs text-gray-400 line-clamp-2">
-            {reasoning?.problem_statement || proposal.reason}
-          </div>
-        )}
-      </div>
-
-      {/* Change Summary */}
-      <div className="bg-gray-900/50 rounded p-2 mb-3 text-xs">
-        <div className="text-gray-500 mb-1">Change Summary</div>
-        <div className="text-gray-300 font-mono">{proposal.change_summary}</div>
-      </div>
-
-      {/* Show More Details Toggle */}
-      <button
-        onClick={() => setShowDetails(!showDetails)}
-        className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mb-3"
-      >
-        {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        {showDetails ? 'Hide Technical Details' : 'Show Technical Details'}
-      </button>
-
-      {showDetails && (
-        <div className="space-y-3 mb-3">
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-gray-900/50 rounded p-2">
-              <div className="text-gray-500 mb-1">Current Value</div>
-              <pre className="text-gray-300 overflow-auto max-h-24">
-                {JSON.stringify(proposal.current_value, null, 2)}
-              </pre>
-            </div>
-            <div className="bg-gray-900/50 rounded p-2">
-              <div className="text-gray-500 mb-1">Proposed Value</div>
-              <pre className="text-green-400 overflow-auto max-h-24">
-                {JSON.stringify(proposal.proposed_value, null, 2)}
-              </pre>
-            </div>
-          </div>
-
-          {proposal.risk_factors.length > 0 && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded p-2">
-              <div className="text-xs text-red-400 font-medium mb-1">Risk Factors</div>
-              <ul className="text-xs text-gray-300 list-disc list-inside">
-                {proposal.risk_factors.map((factor, i) => (
-                  <li key={i}>{factor}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {proposal.rollback_plan && (
-            <div className="bg-blue-500/10 border border-blue-500/30 rounded p-2">
-              <div className="text-xs text-blue-400 font-medium mb-1">Rollback Plan</div>
-              <div className="text-xs text-gray-300">{proposal.rollback_plan}</div>
-            </div>
-          )}
-
-          {reasoning?.success_criteria && (
-            <div className="bg-green-500/10 border border-green-500/30 rounded p-2">
-              <div className="text-xs text-green-400 font-medium mb-1">Success Criteria</div>
-              <pre className="text-xs text-gray-300">
-                {JSON.stringify(reasoning.success_criteria, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {reasoning?.rollback_trigger && (
-            <div className="bg-orange-500/10 border border-orange-500/30 rounded p-2">
-              <div className="text-xs text-orange-400 font-medium mb-1">Rollback Triggers</div>
-              <pre className="text-xs text-gray-300">
-                {JSON.stringify(reasoning.rollback_trigger, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Approval Section */}
-      <div className="space-y-2">
-        <input
-          type="text"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Review notes (optional)..."
-          className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-        />
-
-        {/* Warning if validation not complete */}
-        {validationStatus && !validationStatus.can_apply && (
-          <div className="text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/30 rounded p-2 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4" />
-            <span>Improvement not proven yet. Wait for validation to complete before approving.</span>
-          </div>
-        )}
-
-        <div className="flex gap-2">
-          <button
-            onClick={handleApprove}
-            disabled={processing || Boolean(validationStatus && !validationStatus.can_apply)}
-            className="flex-1 bg-green-500/20 text-green-400 border border-green-500/50 rounded py-2 text-sm font-medium hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            <CheckCircle className="w-4 h-4" />
-            {validationStatus && validationStatus.can_apply ? 'Apply (Validated)' : 'Approve'}
-          </button>
-          <button
-            onClick={handleReject}
-            disabled={processing}
-            className="flex-1 bg-red-500/20 text-red-400 border border-red-500/50 rounded py-2 text-sm font-medium hover:bg-red-500/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            <XCircle className="w-4 h-4" />
-            Reject
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-const AuditLogEntry = ({ entry }: { entry: AuditEntry }) => {
+function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: boolean }) {
   const [expanded, setExpanded] = useState(false)
-
-  const getActionIcon = (type: string) => {
-    if (type.includes('RETRAIN') || type.includes('MODEL')) return <Brain className="w-4 h-4" />
-    if (type.includes('ROLLBACK')) return <RotateCcw className="w-4 h-4" />
-    if (type.includes('PROPOSAL')) return <FileText className="w-4 h-4" />
-    if (type.includes('KILL')) return <AlertTriangle className="w-4 h-4" />
-    if (type.includes('DEGRADATION')) return <TrendingDown className="w-4 h-4" />
-    return <Activity className="w-4 h-4" />
-  }
-
-  const getActionColor = (type: string) => {
-    if (type.includes('APPROVED') || type.includes('SUCCESS')) return 'text-green-400'
-    if (type.includes('REJECTED') || type.includes('KILL') || type.includes('DEGRADATION')) return 'text-red-400'
-    if (type.includes('PROPOSAL_CREATED') || type.includes('PENDING')) return 'text-yellow-400'
-    return 'text-blue-400'
-  }
+  const isBullish = position.spread_type?.includes('BULL')
+  const pnl = isOpen ? 0 : (position.realized_pnl || 0)
+  const pnlColor = pnl >= 0 ? 'text-green-400' : 'text-red-400'
+  const topFactors = parseOracleTopFactors(position.oracle_top_factors)
 
   return (
-    <div className="bg-gray-800/50 rounded p-3 border border-gray-700/50">
-      <div className="flex items-start justify-between">
-        <div className="flex items-start gap-3">
-          <div className={`mt-0.5 ${getActionColor(entry.action_type)}`}>
-            {getActionIcon(entry.action_type)}
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-white">{entry.bot_name}</span>
-              <span className={`text-xs ${getActionColor(entry.action_type)}`}>
-                {entry.action_type.replace(/_/g, ' ')}
+    <div className={`bg-gray-800/50 rounded-lg border ${isOpen ? 'border-cyan-500/30' : 'border-gray-700'} overflow-hidden`}>
+      <div
+        className="p-4 cursor-pointer hover:bg-gray-700/30 transition-colors"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className={`w-2 h-2 rounded-full ${isOpen ? 'bg-cyan-400 animate-pulse' : 'bg-gray-500'}`} />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-white font-bold">{position.ticker}</span>
+                <span className={`text-xs px-2 py-0.5 rounded ${isBullish ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                  {isBullish ? 'BULL CALL' : 'BEAR PUT'}
+                </span>
+              </div>
+              <span className="text-gray-400 text-sm">
+                {position.long_strike}/{position.short_strike} • Exp: {position.expiration}
               </span>
-              {!entry.success && (
-                <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-xs rounded">FAILED</span>
-              )}
             </div>
-            <div className="text-sm text-gray-400 mt-0.5">{entry.action_description}</div>
-            <div className="text-xs text-gray-500 mt-1 flex items-center gap-2">
-              <Clock className="w-3 h-3" />
-              {new Date(entry.timestamp).toLocaleString()}
-              <span className="text-gray-600">|</span>
-              <span>by {entry.actor}</span>
-            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            {!isOpen && (
+              <span className={`font-bold ${pnlColor}`}>
+                {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)}
+              </span>
+            )}
+            {isOpen && (
+              <span className="text-cyan-400 text-sm">
+                {position.contracts} contract{position.contracts !== 1 ? 's' : ''}
+              </span>
+            )}
+            {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
           </div>
         </div>
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="text-gray-500 hover:text-gray-300"
-        >
-          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-        </button>
       </div>
 
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-gray-700 space-y-2 text-xs">
-          {entry.reason && (
-            <div>
-              <span className="text-gray-500">Reason: </span>
-              <span className="text-gray-300">{entry.reason}</span>
+        <div className="border-t border-gray-700 p-4 space-y-4">
+          {/* Prophet Decision - WHY this trade */}
+          <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="w-4 h-4 text-purple-400" />
+              <span className="text-purple-400 font-medium text-sm">Prophet Decision</span>
             </div>
-          )}
-          {entry.version_from && entry.version_to && (
-            <div>
-              <span className="text-gray-500">Version: </span>
-              <span className="text-gray-400">{entry.version_from}</span>
-              <span className="text-gray-600"> → </span>
-              <span className="text-green-400">{entry.version_to}</span>
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div>
+                <span className="text-gray-500 block">Confidence</span>
+                <span className={`font-bold ${(position.oracle_confidence || 0) >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                  {position.oracle_confidence?.toFixed(0) || 0}%
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Win Probability</span>
+                <span className={`font-bold ${(position.oracle_win_probability || 0) >= 0.50 ? 'text-green-400' : 'text-red-400'}`}>
+                  {((position.oracle_win_probability || 0) * 100).toFixed(0)}%
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Advice</span>
+                <span className={`font-bold ${position.oracle_advice === 'ENTER' ? 'text-green-400' : 'text-yellow-400'}`}>
+                  {position.oracle_advice || 'N/A'}
+                </span>
+              </div>
             </div>
-          )}
-          {Object.keys(entry.justification || {}).length > 0 && (
-            <div className="bg-gray-900/50 rounded p-2">
-              <div className="text-gray-500 mb-1">Justification</div>
-              <pre className="text-gray-300 overflow-auto max-h-32">
-                {JSON.stringify(entry.justification, null, 2)}
-              </pre>
+            {position.oracle_reasoning && (
+              <div className="mt-3 pt-3 border-t border-purple-500/20">
+                <span className="text-gray-500 text-xs">Reasoning:</span>
+                <p className="text-gray-300 text-sm mt-1">{position.oracle_reasoning}</p>
+              </div>
+            )}
+            {topFactors.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-purple-500/20">
+                <span className="text-gray-500 text-xs">Top Factors:</span>
+                <div className="mt-1 space-y-1">
+                  {topFactors.slice(0, 3).map((f, i) => (
+                    <div key={i} className="flex justify-between text-xs">
+                      <span className="text-gray-400">{f.factor}</span>
+                      <span className="text-purple-300">{f.impact.toFixed(3)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* GEX Context - Market conditions */}
+          <div className="bg-gray-800/50 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Shield className="w-4 h-4 text-red-400" />
+              <span className="text-gray-400 font-medium text-sm">Market Context at Entry</span>
             </div>
-          )}
-          {entry.error_message && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded p-2 text-red-400">
-              Error: {entry.error_message}
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div>
+                <span className="text-gray-500 block">GEX Regime</span>
+                <span className={`font-bold ${
+                  position.gex_regime === 'POSITIVE' ? 'text-green-400' :
+                  position.gex_regime === 'NEGATIVE' ? 'text-red-400' : 'text-yellow-400'
+                }`}>
+                  {position.gex_regime || 'NEUTRAL'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Flip Point</span>
+                <span className="text-white font-bold">${position.flip_point?.toFixed(0) || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Net GEX</span>
+                <span className={`font-bold ${(position.net_gex || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {position.net_gex ? ((position.net_gex) / 1e9).toFixed(2) + 'B' : 'N/A'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Put Wall</span>
+                <span className="text-orange-400 font-bold">${position.put_wall?.toFixed(0) || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Call Wall</span>
+                <span className="text-cyan-400 font-bold">${position.call_wall?.toFixed(0) || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">VIX</span>
+                <span className={`font-bold ${(position.vix_at_entry || 0) > 22 ? 'text-red-400' : 'text-green-400'}`}>
+                  {position.vix_at_entry?.toFixed(1) || 'N/A'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Position Details */}
+          <div className="bg-gray-800/50 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Target className="w-4 h-4 text-cyan-400" />
+              <span className="text-gray-400 font-medium text-sm">Position Details</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div>
+                <span className="text-gray-500 block">Entry Price</span>
+                <span className="text-white font-bold">${position.entry_price?.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Max Profit</span>
+                <span className="text-green-400 font-bold">${position.max_profit?.toFixed(0)}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Max Loss</span>
+                <span className="text-red-400 font-bold">${position.max_loss?.toFixed(0)}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Spot at Entry</span>
+                <span className="text-white font-bold">${position.spot_at_entry?.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Contracts</span>
+                <span className="text-white font-bold">{position.contracts}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">0DTE</span>
+                <span className="text-white font-bold">{position.is_0dte ? 'Yes' : 'No'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Close Details */}
+          {!isOpen && position.exit_reason && (
+            <div className="bg-gray-800/50 rounded-lg p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <History className="w-4 h-4 text-gray-400" />
+                <span className="text-gray-400 font-medium text-sm">Close Details</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-gray-500 block">Exit Reason</span>
+                  <span className="text-white">{position.exit_reason}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 block">Exit Time</span>
+                  <span className="text-white">{position.exit_time || 'N/A'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 block">Exit Price</span>
+                  <span className="text-white">${position.exit_price?.toFixed(2) || 'N/A'}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500 block">P&L</span>
+                  <span className={`font-bold ${pnlColor}`}>
+                    {pnl >= 0 ? '+' : ''}{formatCurrency(pnl)}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -944,944 +384,405 @@ const AuditLogEntry = ({ entry }: { entry: AuditEntry }) => {
   )
 }
 
-const VersionModal = ({
-  botName,
-  versions,
-  onClose,
-  onRollback,
-  onActivate
-}: {
-  botName: string
-  versions: Version[]
-  onClose: () => void
-  onRollback: (versionId: string, reason: string) => void
-  onActivate: (versionId: string) => void
-}) => {
-  const [rollbackReason, setRollbackReason] = useState('')
-  const [selectedVersion, setSelectedVersion] = useState<string | null>(null)
-
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-lg border border-gray-700 max-w-2xl w-full max-h-[80vh] overflow-hidden">
-        <div className="p-4 border-b border-gray-700 flex items-center justify-between">
-          <h3 className="text-lg font-bold text-white">{botName} Version History</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white">
-            <XCircle className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-4 overflow-y-auto max-h-96 space-y-2">
-          {versions.map((version) => (
-            <div
-              key={version.version_id}
-              className={`bg-gray-900/50 rounded p-3 border ${
-                version.is_active ? 'border-green-500/50' : 'border-gray-700'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg font-bold text-white">{version.version_number}</span>
-                  {version.is_active && (
-                    <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded border border-green-500/50">
-                      ACTIVE
-                    </span>
-                  )}
-                </div>
-                {!version.is_active && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setSelectedVersion(version.version_id)}
-                      className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded hover:bg-yellow-500/30"
-                    >
-                      Rollback
-                    </button>
-                    <button
-                      onClick={() => onActivate(version.version_id)}
-                      className="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded hover:bg-blue-500/30"
-                    >
-                      Activate
-                    </button>
-                  </div>
-                )}
-              </div>
-              <div className="text-xs text-gray-400 space-y-1">
-                <div>Created: {new Date(version.created_at).toLocaleString()}</div>
-                <div>Type: {version.version_type} / {version.artifact_name}</div>
-                {version.approved_by && <div>Approved by: {version.approved_by}</div>}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {selectedVersion && (
-          <div className="p-4 border-t border-gray-700 bg-gray-900/50">
-            <div className="text-sm text-yellow-400 mb-2">Rollback to selected version</div>
-            <input
-              type="text"
-              value={rollbackReason}
-              onChange={(e) => setRollbackReason(e.target.value)}
-              placeholder="Reason for rollback..."
-              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 mb-2"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  if (rollbackReason) {
-                    onRollback(selectedVersion, rollbackReason)
-                    setSelectedVersion(null)
-                    setRollbackReason('')
-                  }
-                }}
-                disabled={!rollbackReason}
-                className="flex-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 rounded py-2 text-sm font-medium hover:bg-yellow-500/30 disabled:opacity-50"
-              >
-                Confirm Rollback
-              </button>
-              <button
-                onClick={() => {
-                  setSelectedVersion(null)
-                  setRollbackReason('')
-                }}
-                className="px-4 bg-gray-700 text-gray-300 rounded py-2 text-sm font-medium hover:bg-gray-600"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// ==================== MAIN PAGE ====================
+// ==============================================================================
+// MAIN PAGE COMPONENT
+// ==============================================================================
 
 export default function SolomonPage() {
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
-  const [autoRefresh, setAutoRefresh] = useState(true)
+  const sidebarPadding = useSidebarPadding()
+  const [activeTab, setActiveTab] = useState<SolomonTabId>('portfolio')
+  const { addToast } = useToast()
 
-  // Modal states
-  const [versionModalBot, setVersionModalBot] = useState<string | null>(null)
-  const [versions, setVersions] = useState<Version[]>([])
+  // Data hooks
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useATHENAStatus()
+  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useATHENAPositions()
+  const { data: performanceData } = useATHENAPerformance(30)
+  const { data: configData } = useSolomonConfig()
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useATHENALivePnL()
+  const { data: scanData, isLoading: scansLoading } = useScanActivityAthena(50)
 
-  // Tab states
-  const [activeTab, setActiveTab] = useState<'overview' | 'proposals' | 'audit' | 'versions' | 'analytics'>('overview')
+  // UNIFIED METRICS: Single source of truth for all stats
+  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('SOLOMON')
+  const unifiedMetrics = unifiedData?.data
 
-  // Analytics data
-  const [analyticsBot, setAnalyticsBot] = useState<string>('ARES')
-  const [dailyDigest, setDailyDigest] = useState<any>(null)
-  const [correlations, setCorrelations] = useState<any>(null)
-  const [timeAnalysis, setTimeAnalysis] = useState<any>(null)
-  // Migration 023: Strategy Analysis data
-  const [strategyAnalysis, setStrategyAnalysis] = useState<any>(null)
-  const [oracleAccuracy, setOracleAccuracy] = useState<any>(null)
+  // Extract data
+  const status: SOLOMONStatus | null = statusData?.data || statusData || null
+  const allPositions: SpreadPosition[] = positionsData?.data || positionsData || []
+  const scans = scanData?.data?.scans || scanData?.scans || []
+  const config = configData?.data || configData || status?.config || null
+  const performance = performanceData?.data || performanceData || null
 
-  const fetchAnalytics = useCallback(async (bot: string) => {
-    try {
-      const [digestRes, corrRes, timeRes, strategyRes, oracleRes] = await Promise.all([
-        apiClient.getSolomonEnhancedDigest(),
-        apiClient.getSolomonEnhancedCorrelations(),
-        apiClient.getSolomonEnhancedTimeAnalysis(bot),
-        // Migration 023: Fetch strategy analysis
-        apiClient.getSolomonStrategyAnalysis(),
-        apiClient.getSolomonOracleAccuracy()
-      ])
-      setDailyDigest(digestRes.data)
-      setCorrelations(corrRes.data)
-      setTimeAnalysis(timeRes.data)
-      setStrategyAnalysis(strategyRes.data)
-      setOracleAccuracy(oracleRes.data)
-    } catch (err) {
-      console.error('Failed to fetch analytics:', err)
-    }
-  }, [])
+  // Separate open and closed positions
+  const openPositions = allPositions.filter(p => p.status === 'open')
+  const closedPositions = allPositions.filter(p => p.status === 'closed' || p.status === 'expired')
 
-  const fetchDashboard = useCallback(async () => {
-    try {
-      const response = await apiClient.getSolomonDashboard()
-      setDashboard(response.data)
-      setLastRefresh(new Date())
-      setError(null)
-    } catch (err) {
-      console.error('Failed to fetch dashboard:', err)
-      setError('Failed to load Solomon dashboard')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  // UNIFIED: Use server-calculated stats (never calculate in frontend)
+  // Priority: unified metrics → status fallback → frontend calculation as last resort
+  const totalPnL = unifiedMetrics?.total_realized_pnl ?? closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
+  const winRate = unifiedMetrics?.win_rate ?? (closedPositions.length > 0
+    ? (closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length) * 100
+    : 0)  // Already 0-100 percentage from server
+  const tradeCount = unifiedMetrics?.total_trades ?? closedPositions.length
+  const currentEquity = unifiedMetrics?.current_equity ?? (status?.current_equity || status?.capital || 100000)
+  const capitalSource = unifiedMetrics?.capital_source ?? 'default'
+  // Check if unrealized P&L is available (live pricing from worker)
+  const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
 
-  useEffect(() => {
-    fetchDashboard()
-  }, [fetchDashboard])
+  // Brand info
+  const brand = BOT_BRANDS.SOLOMON
 
-  useEffect(() => {
-    if (!autoRefresh) return
+  const handleRefresh = async () => {
+    await Promise.all([refreshStatus(), refreshUnified()])
+    addToast({ type: 'success', title: 'Refreshed', message: 'SOLOMON data refreshed' })
+  }
 
-    const interval = setInterval(fetchDashboard, 30000) // Refresh every 30s
-    return () => clearInterval(interval)
-  }, [autoRefresh, fetchDashboard])
-
-  const handleKillBot = async (botName: string) => {
-    const reason = prompt(`Why are you killing ${botName}?`)
-    if (!reason) return
-
-    try {
-      await apiClient.activateSolomonKillswitch(botName, {
-        reason,
-        user: 'Dashboard User'
-      })
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to kill bot:', err)
-      alert('Failed to activate kill switch')
+  const handleReset = async () => {
+    const response = await apiClient.resetATHENAData(true)
+    if (response.data?.success) {
+      addToast({ type: 'success', title: 'Reset Complete', message: 'SOLOMON data has been reset successfully' })
+      refreshStatus()
+    } else {
+      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset SOLOMON data' })
+      throw new Error(response.data?.message || 'Failed to reset')
     }
   }
 
-  const handleResumeBot = async (botName: string) => {
-    try {
-      await apiClient.deactivateSolomonKillswitch(botName, {
-        user: 'Dashboard User'
-      })
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to resume bot:', err)
-      alert('Failed to deactivate kill switch')
-    }
-  }
-
-  const handleViewVersions = async (botName: string) => {
-    try {
-      const response = await apiClient.getSolomonVersions(botName)
-      setVersions(response.data.versions || [])
-      setVersionModalBot(botName)
-    } catch (err) {
-      console.error('Failed to fetch versions:', err)
-      alert('Failed to load version history')
-    }
-  }
-
-  const handleApproveProposal = async (proposalId: string, notes: string) => {
-    try {
-      await apiClient.approveSolomonProposal(proposalId, {
-        reviewer: 'Dashboard User',
-        notes
-      })
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to approve proposal:', err)
-      alert('Failed to approve proposal')
-    }
-  }
-
-  const handleRejectProposal = async (proposalId: string, notes: string) => {
-    if (!notes) {
-      alert('Please provide a reason for rejection')
-      return
-    }
-    try {
-      await apiClient.rejectSolomonProposal(proposalId, {
-        reviewer: 'Dashboard User',
-        notes
-      })
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to reject proposal:', err)
-      alert('Failed to reject proposal')
-    }
-  }
-
-  const handleRollback = async (versionId: string, reason: string) => {
-    if (!versionModalBot) return
-    try {
-      await apiClient.rollbackSolomonBot(versionModalBot, {
-        to_version_id: versionId,
-        reason,
-        user: 'Dashboard User'
-      })
-      setVersionModalBot(null)
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to rollback:', err)
-      alert('Failed to rollback')
-    }
-  }
-
-  const handleActivateVersion = async (versionId: string) => {
-    try {
-      await apiClient.activateSolomonVersion(versionId, 'Dashboard User')
-      handleViewVersions(versionModalBot!)
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to activate version:', err)
-      alert('Failed to activate version')
-    }
-  }
-
-  if (loading) {
+  if (statusLoading) {
     return (
-      <div className="min-h-screen bg-gray-900">
+      <>
         <Navigation />
-        <main className="max-w-7xl mx-auto px-4 py-8 pt-24">
-          <div className="flex items-center justify-center h-64">
-            <RefreshCw className="w-8 h-8 text-purple-400 animate-spin" />
-          </div>
-        </main>
-      </div>
+        <div className="flex items-center justify-center h-screen">
+          <LoadingState message="Loading SOLOMON..." />
+        </div>
+      </>
     )
   }
-
-  if (error || !dashboard) {
-    return (
-      <div className="min-h-screen bg-gray-900">
-        <Navigation />
-        <main className="max-w-7xl mx-auto px-4 py-8 pt-24">
-          <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-6 text-center">
-            <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-            <h2 className="text-xl font-bold text-red-400 mb-2">Solomon Unavailable</h2>
-            <p className="text-gray-400">{error || 'Could not load dashboard data'}</p>
-            <button
-              onClick={fetchDashboard}
-              className="mt-4 px-4 py-2 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30"
-            >
-              Retry
-            </button>
-          </div>
-        </main>
-      </div>
-    )
-  }
-
-  const bots = Object.values(dashboard.bots || {})
-  const pendingProposals = dashboard.pending_proposals || []
-  const recentActions = dashboard.recent_actions || []
 
   return (
-    <div className="min-h-screen bg-gray-900">
+    <>
       <Navigation />
+      <main className={`min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-7xl mx-auto space-y-6">
 
-      <main className="max-w-7xl mx-auto px-4 py-8 pt-24">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <div className="p-3 bg-purple-500/20 rounded-lg">
-              <Brain className="w-8 h-8 text-purple-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white">SOLOMON</h1>
-              <p className="text-gray-400 italic">"Iron sharpens iron, and one man sharpens another."</p>
-              <p className="text-gray-500 text-xs">Proverbs 27:17 — Feedback Loop Intelligence System</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`p-2 rounded-lg transition-colors ${
-                autoRefresh
-                  ? 'bg-green-500/20 text-green-400'
-                  : 'bg-gray-700 text-gray-400'
-              }`}
-              title={autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
-            >
-              {autoRefresh ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-            </button>
-            <button
-              onClick={fetchDashboard}
-              className="p-2 bg-gray-700 text-gray-400 rounded-lg hover:bg-gray-600 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+          {/* Header - Branded */}
+          <BotPageHeader
+            botName="SOLOMON"
+            isActive={status?.is_active || false}
+            lastHeartbeat={status?.heartbeat?.last_scan_iso || undefined}
+            onRefresh={handleRefresh}
+            isRefreshing={statusLoading}
+            scanIntervalMinutes={status?.scan_interval_minutes || 5}
+          />
 
-        {/* Automated Schedule Indicator */}
-        <div className="mb-6">
-          <AutomatedScheduleIndicator lastRun={dashboard.health.last_feedback_run} />
-        </div>
-
-        {/* Health Banner */}
-        <div className="bg-gray-800 rounded-lg border border-gray-700 p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${dashboard.health.database ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="text-sm text-gray-400">Database</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${dashboard.health.oracle ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="text-sm text-gray-400">Oracle</span>
-              </div>
-              {pendingProposals.length > 0 && (
-                <div className="flex items-center gap-2 px-3 py-1 bg-yellow-500/20 rounded-lg">
-                  <AlertTriangle className="w-4 h-4 text-yellow-400" />
-                  <span className="text-sm text-yellow-400">{pendingProposals.length} pending proposals</span>
+          {/* Capital Source Warning - Shows when using default capital */}
+          {capitalSource === 'default' && (
+            <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-yellow-400 font-semibold">Using Default Capital</h3>
+                  <p className="text-gray-300 text-sm mt-1">
+                    SOLOMON is using the default starting capital ($100,000). For accurate P&L and return calculations,
+                    configure your actual starting capital via the API.
+                  </p>
+                  <p className="text-gray-500 text-xs mt-2">
+                    POST /api/metrics/SOLOMON/capital with your actual starting capital
+                  </p>
                 </div>
-              )}
-              {dashboard.health.degradation_alerts > 0 && (
-                <div className="flex items-center gap-2 px-3 py-1 bg-red-500/20 rounded-lg">
-                  <TrendingDown className="w-4 h-4 text-red-400" />
-                  <span className="text-sm text-red-400">{dashboard.health.degradation_alerts} degradation alerts</span>
+              </div>
+            </div>
+          )}
+
+          {/* SOLOMON vs GIDEON Comparison Banner */}
+          <div className="bg-cyan-900/20 border border-cyan-500/30 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <Shield className="w-5 h-5 text-cyan-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-cyan-400 font-semibold">SOLOMON vs GIDEON: Conservative Parameters</h3>
+                <p className="text-gray-400 text-sm mt-1">SOLOMON uses more conservative settings for steady, consistent returns.</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                  <div>
+                    <span className="text-gray-500">Risk/Trade:</span>
+                    <span className="text-cyan-400 ml-2">2%</span>
+                    <span className="text-gray-600 ml-1">(vs 3%)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Spread Width:</span>
+                    <span className="text-cyan-400 ml-2">$2</span>
+                    <span className="text-gray-600 ml-1">(vs $3)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Min Win Prob:</span>
+                    <span className="text-cyan-400 ml-2">50%</span>
+                    <span className="text-gray-600 ml-1">(vs 48%)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Wall Filter:</span>
+                    <span className="text-cyan-400 ml-2">1.0%</span>
+                    <span className="text-gray-600 ml-1">(vs 2.0%)</span>
+                  </div>
                 </div>
-              )}
-            </div>
-            <div className="text-xs text-gray-500">
-              Last refresh: {lastRefresh?.toLocaleTimeString()}
-            </div>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 mb-6 bg-gray-800 rounded-lg p-1 w-fit">
-          {(['overview', 'proposals', 'audit', 'versions', 'analytics'] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => {
-                setActiveTab(tab)
-                if (tab === 'analytics') {
-                  fetchAnalytics(analyticsBot)
-                }
-              }}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
-                activeTab === tab
-                  ? 'bg-purple-500/20 text-purple-400'
-                  : 'text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              {tab === 'analytics' && <BarChart2 className="w-4 h-4" />}
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              {tab === 'proposals' && pendingProposals.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full">
-                  {pendingProposals.length}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab Content */}
-        {activeTab === 'overview' && (
-          <div className="space-y-6">
-            {/* Bot Cards */}
-            <div>
-              <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                <Target className="w-5 h-5 text-purple-400" />
-                Bot Status
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {bots.map((bot) => (
-                  <BotCard
-                    key={bot.name}
-                    bot={bot}
-                    onKill={handleKillBot}
-                    onResume={handleResumeBot}
-                    onViewVersions={handleViewVersions}
-                    sparklineData={bot.performance_history}
-                  />
-                ))}
               </div>
             </div>
-
-            {/* Pending Proposals Preview */}
-            {pendingProposals.length > 0 && (
-              <div>
-                <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-yellow-400" />
-                  Pending Approvals
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {pendingProposals.slice(0, 2).map((proposal) => (
-                    <ProposalCard
-                      key={proposal.proposal_id}
-                      proposal={proposal}
-                      onApprove={handleApproveProposal}
-                      onReject={handleRejectProposal}
-                    />
-                  ))}
-                </div>
-                {pendingProposals.length > 2 && (
-                  <button
-                    onClick={() => setActiveTab('proposals')}
-                    className="mt-3 text-sm text-purple-400 hover:text-purple-300"
-                  >
-                    View all {pendingProposals.length} proposals →
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Recent Actions Preview */}
-            <div>
-              <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                <Activity className="w-5 h-5 text-blue-400" />
-                Recent Actions
-              </h2>
-              <div className="space-y-2">
-                {recentActions.slice(0, 5).map((entry) => (
-                  <AuditLogEntry key={entry.id} entry={entry} />
-                ))}
-              </div>
-              {recentActions.length > 5 && (
-                <button
-                  onClick={() => setActiveTab('audit')}
-                  className="mt-3 text-sm text-purple-400 hover:text-purple-300"
-                >
-                  View full audit log →
-                </button>
-              )}
-            </div>
           </div>
-        )}
 
-        {activeTab === 'proposals' && (
-          <div>
-            <h2 className="text-lg font-bold text-white mb-4">All Pending Proposals</h2>
-            {pendingProposals.length === 0 ? (
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-                <CheckCircle className="w-12 h-12 text-green-400 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-white mb-2">All Clear!</h3>
-                <p className="text-gray-400">No pending proposals at this time.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {pendingProposals.map((proposal) => (
-                  <ProposalCard
-                    key={proposal.proposal_id}
-                    proposal={proposal}
-                    onApprove={handleApproveProposal}
-                    onReject={handleRejectProposal}
-                  />
-                ))}
-              </div>
-            )}
+          {/* Quick Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <StatCard
+              label={hasLivePricing ? "Current Equity" : "Realized Equity"}
+              value={formatCurrency(currentEquity)}
+              icon={<DollarSign className="h-4 w-4" />}
+              color="blue"
+            />
+            <StatCard
+              label="Realized P&L"
+              value={`${totalPnL >= 0 ? '+' : ''}${formatCurrency(totalPnL)}`}
+              icon={<TrendingUp className="h-4 w-4" />}
+              color={totalPnL >= 0 ? 'green' : 'red'}
+            />
+            <StatCard
+              label="Win Rate"
+              value={`${winRate.toFixed(1)}%`}
+              icon={<Target className="h-4 w-4" />}
+              color={winRate >= 60 ? 'green' : winRate >= 50 ? 'yellow' : 'red'}
+            />
+            <StatCard
+              label="Trades"
+              value={tradeCount.toString()}
+              icon={<Activity className="h-4 w-4" />}
+              color="blue"
+            />
+            <StatCard
+              label="Open Positions"
+              value={openPositions.length.toString()}
+              icon={<Crosshair className="h-4 w-4" />}
+              color="blue"
+            />
           </div>
-        )}
 
-        {activeTab === 'audit' && (
-          <div>
-            <h2 className="text-lg font-bold text-white mb-4">Audit Log</h2>
-            <div className="space-y-2">
-              {recentActions.map((entry) => (
-                <AuditLogEntry key={entry.id} entry={entry} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'versions' && (
-          <div>
-            <h2 className="text-lg font-bold text-white mb-4">Version Management</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {bots.map((bot) => (
-                <div
-                  key={bot.name}
-                  className="bg-gray-800 rounded-lg border border-gray-700 p-4 cursor-pointer hover:border-purple-500/50 transition-colors"
-                  onClick={() => handleViewVersions(bot.name)}
-                >
-                  <h3 className="text-lg font-bold text-white mb-2">{bot.name}</h3>
-                  {bot.active_version ? (
-                    <>
-                      <div className="text-2xl font-bold text-purple-400 mb-2">
-                        v{bot.active_version.version_number}
-                      </div>
-                      <div className="text-xs text-gray-400">
-                        {bot.versions_count} total versions
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-gray-500">No versions</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'analytics' && (
-          <div className="space-y-6">
-            {/* Bot Selector */}
-            <div className="flex items-center gap-4">
-              <h2 className="text-lg font-bold text-white">Analytics</h2>
-              <select
-                value={analyticsBot}
-                onChange={(e) => {
-                  setAnalyticsBot(e.target.value)
-                  fetchAnalytics(e.target.value)
-                }}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm"
+          {/* Tabs - Branded */}
+          <div className="flex gap-2 border-b border-gray-800 pb-2">
+            {SOLOMON_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  activeTab === tab.id
+                    ? `${brand.lightBg} ${brand.primaryText} border ${brand.primaryBorder}`
+                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                }`}
               >
-                <option value="ARES">ARES</option>
-                <option value="ATHENA">ATHENA</option>
-                <option value="TITAN">TITAN</option>
-                <option value="PEGASUS">PEGASUS</option>
-                <option value="ICARUS">ICARUS</option>
-                <option value="PROMETHEUS">PROMETHEUS</option>
-              </select>
-            </div>
+                <tab.icon className="w-4 h-4" />
+                <span className="text-sm font-medium">{tab.label}</span>
+              </button>
+            ))}
+          </div>
 
-            {/* Daily Digest Summary */}
-            {dailyDigest && (
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-purple-400" />
-                  Daily Digest - {dailyDigest.date || 'Today'}
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-xs text-gray-500">Total P&L</div>
-                    <div className={`text-xl font-bold ${(dailyDigest.summary?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      ${(dailyDigest.summary?.total_pnl || 0).toLocaleString()}
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-xs text-gray-500">Total Trades</div>
-                    <div className="text-xl font-bold text-white">{dailyDigest.summary?.total_trades || 0}</div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-xs text-gray-500">Win Rate</div>
-                    <div className={`text-xl font-bold ${(dailyDigest.summary?.win_rate || 0) >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                      {(dailyDigest.summary?.win_rate || 0).toFixed(1)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-xs text-gray-500">Total Wins</div>
-                    <div className="text-xl font-bold text-green-400">{dailyDigest.summary?.total_wins || 0}</div>
-                  </div>
-                </div>
+          {/* Tab Content */}
+          <div className="space-y-6">
+            {/* Portfolio Tab */}
+            {activeTab === 'portfolio' && (
+              <>
+                {/* Bot Status Banner */}
+                <BotStatusBanner
+                  botName="SOLOMON"
+                  isActive={status?.is_active || false}
+                  lastScan={status?.heartbeat?.last_scan_iso}
+                  scanInterval={status?.scan_interval_minutes || 5}
+                  openPositions={openPositions.length}
+                  todayPnl={status?.daily_pnl || 0}
+                  todayTrades={status?.daily_trades || 0}
+                />
 
-                {/* Per-Bot Breakdown */}
-                {dailyDigest.bots && (
-                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {Object.entries(dailyDigest.bots).map(([botName, stats]: [string, any]) => (
-                      <div key={botName} className="bg-gray-900/30 rounded p-2 text-xs">
-                        <div className="font-bold text-white mb-1">{botName}</div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Trades:</span>
-                          <span className="text-white">{stats.trades}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">P&L:</span>
-                          <span className={stats.pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            ${stats.pnl?.toFixed(2) || '0.00'}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+                {/* Live Unrealized P&L Card */}
+                <UnrealizedPnLCard
+                  botName="SOLOMON"
+                  data={livePnLData?.data || livePnLData}
+                  isLoading={livePnLLoading}
+                  isValidating={livePnLValidating}
+                />
 
-            {/* Migration 023: Strategy Analysis - IC vs Directional */}
-            {strategyAnalysis && strategyAnalysis.status === 'analyzed' && (
-              <div className="bg-gray-800 rounded-lg border border-purple-500/30 p-4">
-                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
-                  <Target className="w-5 h-5 text-purple-400" />
-                  Strategy Analysis (IC vs Directional) - Last 30 Days
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  {/* Iron Condor Performance */}
-                  <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center">
-                        <Layers className="w-4 h-4 text-blue-400" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-bold text-blue-400">Iron Condor</div>
-                        <div className="text-xs text-gray-500">ARES, TITAN, PEGASUS</div>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="bg-gray-900/50 rounded p-2 text-center">
-                        <div className="text-xs text-gray-500">Trades</div>
-                        <div className="text-lg font-bold text-white">{strategyAnalysis.iron_condor?.trades || 0}</div>
-                      </div>
-                      <div className="bg-gray-900/50 rounded p-2 text-center">
-                        <div className="text-xs text-gray-500">Win Rate</div>
-                        <div className={`text-lg font-bold ${(strategyAnalysis.iron_condor?.win_rate || 0) >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                          {(strategyAnalysis.iron_condor?.win_rate || 0).toFixed(1)}%
-                        </div>
-                      </div>
-                      <div className="bg-gray-900/50 rounded p-2 text-center">
-                        <div className="text-xs text-gray-500">P&L</div>
-                        <div className={`text-lg font-bold ${(strategyAnalysis.iron_condor?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          ${(strategyAnalysis.iron_condor?.total_pnl || 0).toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-2 text-xs text-gray-500">
-                      Avg P&L: ${(strategyAnalysis.iron_condor?.avg_pnl || 0).toFixed(2)}
-                    </div>
-                  </div>
+                {/* VIX Hedge Signal */}
+                <HedgeSignalCard />
 
-                  {/* Directional Performance */}
-                  <div className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-4">
-                    <div className="flex items-center gap-2 mb-3">
-                      <div className="w-8 h-8 rounded-full bg-orange-500/20 flex items-center justify-center">
-                        <TrendingDown className="w-4 h-4 text-orange-400" style={{ transform: 'rotate(-45deg)' }} />
-                      </div>
-                      <div>
-                        <div className="text-sm font-bold text-orange-400">Directional</div>
-                        <div className="text-xs text-gray-500">ATHENA, ICARUS</div>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="bg-gray-900/50 rounded p-2 text-center">
-                        <div className="text-xs text-gray-500">Trades</div>
-                        <div className="text-lg font-bold text-white">{strategyAnalysis.directional?.trades || 0}</div>
-                      </div>
-                      <div className="bg-gray-900/50 rounded p-2 text-center">
-                        <div className="text-xs text-gray-500">Win Rate</div>
-                        <div className={`text-lg font-bold ${(strategyAnalysis.directional?.win_rate || 0) >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                          {(strategyAnalysis.directional?.win_rate || 0).toFixed(1)}%
-                        </div>
-                      </div>
-                      <div className="bg-gray-900/50 rounded p-2 text-center">
-                        <div className="text-xs text-gray-500">P&L</div>
-                        <div className={`text-lg font-bold ${(strategyAnalysis.directional?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          ${(strategyAnalysis.directional?.total_pnl || 0).toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-2 text-xs text-gray-500">
-                      Avg P&L: ${(strategyAnalysis.directional?.avg_pnl || 0).toFixed(2)}
-                    </div>
-                  </div>
-                </div>
+                {/* Performance Drift - Backtest vs Live */}
+                <DriftStatusCard botName="SOLOMON" />
 
-                {/* Strategy Recommendation */}
-                {strategyAnalysis.recommendation && (
-                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
-                    <div className="text-sm font-medium text-purple-400 flex items-center gap-2">
-                      <Brain className="w-4 h-4" />
-                      Strategy Recommendation
-                    </div>
-                    <div className="text-xs text-gray-300 mt-1">{strategyAnalysis.recommendation}</div>
-                  </div>
-                )}
-              </div>
-            )}
+                {/* Equity Curve */}
+                <EquityCurveChart
+                  title="SOLOMON Equity Curve"
+                  botFilter="SOLOMON"
+                  showIntradayOption={true}
+                />
 
-            {/* Migration 023: Oracle Accuracy */}
-            {oracleAccuracy && oracleAccuracy.status === 'analyzed' && (
-              <div className="bg-gray-800 rounded-lg border border-green-500/30 p-4">
-                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
-                  <CheckCircle className="w-5 h-5 text-green-400" />
-                  Oracle Advice Accuracy - Last 30 Days
-                </h3>
-
-                {/* Summary */}
-                {oracleAccuracy.summary && (
-                  <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mb-4">
-                    <div className="text-sm text-green-400">{oracleAccuracy.summary}</div>
-                  </div>
-                )}
-
-                {/* Accuracy by Advice Type */}
-                {oracleAccuracy.by_advice && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                    {Object.entries(oracleAccuracy.by_advice).map(([advice, data]: [string, any]) => (
-                      <div key={advice} className="bg-gray-900/50 rounded-lg p-3">
-                        <div className="text-xs text-gray-500 mb-1">{advice.replace(/_/g, ' ')}</div>
-                        <div className="flex items-baseline gap-2">
-                          <span className={`text-xl font-bold ${data.accuracy >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                            {data.accuracy?.toFixed(1) || 0}%
-                          </span>
-                          <span className="text-xs text-gray-500">({data.count || 0} trades)</span>
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          Avg P&L: ${data.avg_pnl?.toFixed(2) || 0}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Accuracy by Strategy */}
-                {oracleAccuracy.by_strategy && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {Object.entries(oracleAccuracy.by_strategy).map(([strategy, data]: [string, any]) => (
-                      <div key={strategy} className={`rounded-lg p-3 ${
-                        strategy === 'IRON_CONDOR' ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-orange-500/10 border border-orange-500/30'
-                      }`}>
-                        <div className={`text-xs font-medium mb-1 ${
-                          strategy === 'IRON_CONDOR' ? 'text-blue-400' : 'text-orange-400'
-                        }`}>
-                          {strategy.replace(/_/g, ' ')}
-                        </div>
-                        <div className="flex items-baseline gap-2">
-                          <span className={`text-lg font-bold ${data.accuracy >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                            {data.accuracy?.toFixed(1) || 0}%
-                          </span>
-                          <span className="text-xs text-gray-500">accuracy ({data.count || 0} trades)</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Cross-Bot Correlations */}
-            {correlations && correlations.correlations && (
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
-                  <Layers className="w-5 h-5 text-blue-400" />
-                  Cross-Bot Correlations
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {correlations.correlations.map((corr: any, idx: number) => (
-                    <div key={idx} className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium text-white">{corr.bot_a} ↔ {corr.bot_b}</span>
-                      </div>
-                      <div className={`text-2xl font-bold ${
-                        Math.abs(corr.correlation) > 0.7 ? 'text-red-400' :
-                        Math.abs(corr.correlation) > 0.4 ? 'text-yellow-400' : 'text-green-400'
-                      }`}>
-                        {(corr.correlation * 100).toFixed(0)}%
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {corr.sample_size} samples
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {correlations.analysis && (
-                  <div className="mt-4 bg-gray-900/30 rounded p-3">
-                    <div className="text-xs text-gray-400">
-                      <span className="text-purple-400 font-medium">Diversification Score:</span>{' '}
-                      {((correlations.analysis.diversification_score || 0) * 100).toFixed(0)}%
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {correlations.analysis.recommendation}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Time of Day Analysis */}
-            {timeAnalysis && timeAnalysis.hourly_performance && (
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-yellow-400" />
-                  Time of Day Performance - {analyticsBot}
-                </h3>
-                <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
-                  {timeAnalysis.hourly_performance.map((hour: any) => (
-                    <div
-                      key={hour.hour}
-                      className={`rounded-lg p-2 text-center ${
-                        hour.best_performance ? 'bg-green-500/20 border border-green-500/50' :
-                        hour.worst_performance ? 'bg-red-500/20 border border-red-500/50' :
-                        'bg-gray-900/50'
-                      }`}
-                    >
-                      <div className="text-xs text-gray-500 flex items-center justify-center gap-1">
-                        {hour.hour < 12 ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
-                        {hour.hour}:00
-                      </div>
-                      <div className={`text-sm font-bold ${hour.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        ${hour.avg_pnl?.toFixed(0) || 0}
-                      </div>
-                      <div className="text-xs text-gray-500">{hour.trades_count} trades</div>
-                      {hour.best_performance && <div className="text-xs text-green-400 mt-1">BEST</div>}
-                      {hour.worst_performance && <div className="text-xs text-red-400 mt-1">WORST</div>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Quick Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                  <Repeat className="w-4 h-4 text-purple-400" />
-                  Automation Status
-                </h4>
-                <div className="space-y-2">
-                  <div className="px-3 py-2 bg-green-500/10 border border-green-500/30 rounded text-sm">
-                    <div className="flex items-center gap-2 text-green-400">
-                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                      <span className="font-medium">Autonomous Mode Active</span>
-                    </div>
-                    <div className="text-xs text-gray-400 mt-1">
-                      Solomon runs daily at 4:00 PM CT and auto-applies proven improvements
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => apiClient.getSolomonWeekendPrecheck().then(r => alert(JSON.stringify(r.data, null, 2)))}
-                    className="w-full text-left px-3 py-2 bg-gray-900/50 rounded text-sm text-gray-300 hover:bg-gray-700 transition-colors"
-                  >
-                    Weekend Pre-Check Analysis
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-red-400" />
-                  Risk Alerts
-                </h4>
-                <div className="space-y-2">
-                  {dashboard?.health.degradation_alerts > 0 ? (
-                    <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded text-sm text-red-400">
-                      {dashboard.health.degradation_alerts} degradation alerts in last 24h
-                    </div>
+                {/* Open Positions */}
+                <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
+                  {openPositions.length === 0 ? (
+                    <EmptyState title="No open positions" description="Positions will appear here when trades are opened" icon={<Crosshair className="h-8 w-8" />} />
                   ) : (
-                    <div className="px-3 py-2 bg-green-500/10 border border-green-500/30 rounded text-sm text-green-400">
-                      No risk alerts - all systems normal
+                    <div className="space-y-4">
+                      {openPositions.map((position) => (
+                        <PositionCard key={position.position_id} position={position} isOpen={true} />
+                      ))}
                     </div>
                   )}
-                </div>
-              </div>
+                </BotCard>
+              </>
+            )}
 
-              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
-                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                  <Activity className="w-4 h-4 text-blue-400" />
-                  System Status
-                </h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Database</span>
-                    <span className={dashboard?.health.database ? 'text-green-400' : 'text-red-400'}>
-                      {dashboard?.health.database ? 'Connected' : 'Disconnected'}
+            {/* Overview Tab */}
+            {activeTab === 'overview' && (
+              <BotCard title="Bot Status" icon={<Server className="h-5 w-5" />}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Mode</span>
+                    <span className="text-xl font-bold text-white">{status?.mode?.toUpperCase() || 'PAPER'}</span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Ticker</span>
+                    <span className="text-xl font-bold text-cyan-400">{config?.ticker || 'SPY'}</span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Trading Window</span>
+                    <span className={`text-xl font-bold ${status?.in_trading_window ? 'text-green-400' : 'text-gray-400'}`}>
+                      {status?.in_trading_window ? 'ACTIVE' : 'CLOSED'}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Oracle</span>
-                    <span className={dashboard?.health.oracle ? 'text-green-400' : 'text-red-400'}>
-                      {dashboard?.health.oracle ? 'Active' : 'Inactive'}
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Last Scan</span>
+                    <span className="text-lg font-bold text-white">
+                      {status?.heartbeat?.last_scan || 'Never'}
                     </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Last Feedback Run</span>
-                    <span className="text-gray-400 text-xs">
-                      {dashboard?.health.last_feedback_run ?
-                        new Date(dashboard.health.last_feedback_run).toLocaleString() :
-                        'Never'}
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Current Time</span>
+                    <span className="text-lg font-bold text-white">
+                      {status?.current_time || 'Unknown'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Scans Today</span>
+                    <span className="text-xl font-bold text-white">
+                      {status?.heartbeat?.scan_count_today || 0}
+                    </span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Traded Today</span>
+                    <span className={`text-xl font-bold ${status?.traded_today || (status?.daily_trades || 0) > 0 ? 'text-green-400' : 'text-gray-400'}`}>
+                      {status?.traded_today || (status?.daily_trades || 0) > 0 ? 'YES' : 'NO'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Prophet</span>
+                    <span className={`text-xl font-bold ${status?.oracle_available ? 'text-green-400' : 'text-gray-400'}`}>
+                      {status?.oracle_available ? 'ONLINE' : 'OFFLINE'}
                     </span>
                   </div>
                 </div>
-              </div>
-            </div>
+              </BotCard>
+            )}
+
+            {/* Activity Tab */}
+            {activeTab === 'activity' && (
+              <BotCard title="Scan Activity" icon={<Activity className="h-5 w-5" />}>
+                <ScanActivityFeed
+                  scans={scans}
+                  botName="SOLOMON"
+                  isLoading={scansLoading}
+                />
+              </BotCard>
+            )}
+
+            {/* History Tab */}
+            {activeTab === 'history' && (
+              <BotCard title="Closed Positions" icon={<History className="h-5 w-5" />}>
+                {closedPositions.length > 0 && (
+                  <div className="flex justify-end mb-4">
+                    <button
+                      onClick={() => {
+                        const today = new Date().toISOString().split('T')[0]
+                        exportTradesToCSV(closedPositions, `solomon-trades-${today}.csv`)
+                        addToast({ type: 'success', title: 'Export Complete', message: `Exported ${closedPositions.length} trades to CSV` })
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 border border-cyan-500/30 rounded-lg transition-colors"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span className="text-sm">Export CSV</span>
+                    </button>
+                  </div>
+                )}
+                {closedPositions.length === 0 ? (
+                  <EmptyState title="No closed positions yet" description="Closed trades will appear here" icon={<History className="h-8 w-8" />} />
+                ) : (
+                  <div className="space-y-4">
+                    {closedPositions.map((position) => (
+                      <PositionCard key={position.position_id} position={position} isOpen={false} />
+                    ))}
+                  </div>
+                )}
+              </BotCard>
+            )}
+
+            {/* Reports Tab */}
+            {activeTab === 'reports' && (
+              <BotReportPage
+                botName="SOLOMON"
+                botDisplayName="SOLOMON"
+                brandColor="cyan"
+                backLink="/solomon"
+              />
+            )}
+
+            {/* Config Tab */}
+            {activeTab === 'config' && (
+              <>
+              <BotCard title="Configuration" icon={<Settings className="h-5 w-5" />}>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Spread Width</span>
+                    <span className="text-xl font-bold text-white">${config?.spread_width || 2}</span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Risk Per Trade</span>
+                    <span className="text-xl font-bold text-white">{config?.risk_per_trade || 2}%</span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Max Daily Trades</span>
+                    <span className="text-xl font-bold text-white">{config?.max_daily_trades || 5}</span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Ticker</span>
+                    <span className="text-xl font-bold text-cyan-400">{config?.ticker || 'SPY'}</span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">Prophet</span>
+                    <span className={`text-xl font-bold ${status?.oracle_available ? 'text-green-400' : 'text-gray-400'}`}>
+                      {status?.oracle_available ? 'ENABLED' : 'DISABLED'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4">
+                    <span className="text-gray-500 text-sm block">GEX ML</span>
+                    <span className={`text-xl font-bold ${status?.gex_ml_available ? 'text-green-400' : 'text-gray-400'}`}>
+                      {status?.gex_ml_available ? 'ENABLED' : 'DISABLED'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-4 col-span-2">
+                    <span className="text-gray-500 text-sm block">Trading Window</span>
+                    <span className="text-xl font-bold text-white">08:35 - 14:30 CT</span>
+                  </div>
+                </div>
+              </BotCard>
+
+              {/* Capital Configuration */}
+              <CapitalConfigPanel
+                botName="SOLOMON"
+                brandColor="cyan"
+              />
+              </>
+            )}
           </div>
-        )}
+        </div>
       </main>
-
-      {/* Version Modal */}
-      {versionModalBot && (
-        <VersionModal
-          botName={versionModalBot}
-          versions={versions}
-          onClose={() => setVersionModalBot(null)}
-          onRollback={handleRollback}
-          onActivate={handleActivateVersion}
-        />
-      )}
-    </div>
+    </>
   )
 }

@@ -1,7 +1,7 @@
 """
 Position-Level Stop Loss Management
 
-Provides per-position stop loss tracking and monitoring for ARES and ATHENA.
+Provides per-position stop loss tracking and monitoring for FORTRESS and SOLOMON.
 
 Features:
 - Configurable stop loss percentages per position
@@ -87,7 +87,7 @@ class PositionStopLossManager:
     """
     Manages stop losses for multiple positions.
 
-    Designed to work with both ARES (Iron Condors) and ATHENA (Directional Spreads).
+    Designed to work with both FORTRESS (Iron Condors) and SOLOMON (Directional Spreads).
     """
 
     def __init__(self, default_config: Optional[StopLossConfig] = None):
@@ -297,7 +297,7 @@ class PositionStopLossManager:
 
 
 # ============================================================================
-# Factory Functions for ARES and ATHENA
+# Factory Functions for FORTRESS and SOLOMON
 # ============================================================================
 
 def create_iron_condor_stop_config(

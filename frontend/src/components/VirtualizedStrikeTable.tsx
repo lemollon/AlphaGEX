@@ -3,7 +3,7 @@
 /**
  * Shared Strike Table Component
  *
- * Used by both ARGUS (0DTE) and HYPERION (Weekly) for efficient rendering
+ * Used by both WATCHTOWER (0DTE) and GLORY (Weekly) for efficient rendering
  * of strike lists. Uses memoization and CSS containment for performance.
  */
 
@@ -51,7 +51,7 @@ export interface StrikeTableProps {
   onSelectStrike: (strike: StrikeData) => void
   lastUpdated?: Date | null
 
-  // Optional extended columns (for ARGUS)
+  // Optional extended columns (for WATCHTOWER)
   showProbabilityColumn?: boolean
   showTrendColumn?: boolean
   strikeTrends?: Record<string, StrikeTrend>

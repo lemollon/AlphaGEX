@@ -41,11 +41,11 @@ def log_result(test_name: str, passed: bool, message: str = "", expected: str = 
 
 
 def run_position_sizing_tests():
-    """Test HERACLES position sizing calculations."""
+    """Test VALOR position sizing calculations."""
     print("\n=== POSITION SIZING TESTS ===")
 
     try:
-        from trading.heracles.signals import calculate_position_size
+        from trading.valor.signals import calculate_position_size
 
         # Test 1: Standard position sizing
         # $100K capital, 2% risk, 2.5pt stop = $125 max loss per contract
@@ -83,7 +83,7 @@ def run_profit_target_tests():
     """Test profit target trigger logic."""
     print("\n=== PROFIT TARGET TESTS ===")
 
-    # HERACLES uses 6-point profit target by default
+    # VALOR uses 6-point profit target by default
     profit_target_points = 6.0
 
     def check_profit_target(entry_price: float, current_price: float, direction: str) -> bool:
@@ -118,7 +118,7 @@ def run_stop_loss_tests():
     """Test stop loss trigger logic."""
     print("\n=== STOP LOSS TESTS ===")
 
-    # HERACLES default stop is 2.5 points
+    # VALOR default stop is 2.5 points
     stop_loss_points = 2.5
 
     def check_stop_loss(entry_price: float, current_price: float, direction: str) -> bool:

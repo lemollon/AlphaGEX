@@ -3,7 +3,7 @@ Setup Unified Gamma History Table
 =================================
 
 Creates a unified gamma history table that can be used by both
-ARGUS (0DTE) and HYPERION (Weekly) for ROC calculations.
+WATCHTOWER (0DTE) and GLORY (Weekly) for ROC calculations.
 
 This replaces the separate hyperion_gamma_history table with a
 unified structure that supports both systems.
@@ -37,7 +37,7 @@ def create_unified_gamma_history_table():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS unified_gamma_history (
                 id SERIAL PRIMARY KEY,
-                system VARCHAR(10) NOT NULL,  -- 'ARGUS' or 'HYPERION'
+                system VARCHAR(10) NOT NULL,  -- 'WATCHTOWER' or 'GLORY'
                 symbol VARCHAR(10) NOT NULL,
                 expiration_date DATE,
                 strike DECIMAL(10, 2) NOT NULL,
@@ -93,7 +93,7 @@ def create_unified_gamma_history_table():
 
 
 def create_alerts_table():
-    """Create alerts table for both ARGUS and HYPERION"""
+    """Create alerts table for both WATCHTOWER and GLORY"""
     conn = get_connection()
     if not conn:
         logger.error("Could not connect to database")
@@ -105,7 +105,7 @@ def create_alerts_table():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS gamma_alerts (
                 id SERIAL PRIMARY KEY,
-                system VARCHAR(10) NOT NULL,  -- 'ARGUS' or 'HYPERION'
+                system VARCHAR(10) NOT NULL,  -- 'WATCHTOWER' or 'GLORY'
                 symbol VARCHAR(10) NOT NULL,
                 alert_type VARCHAR(50) NOT NULL,
                 strike DECIMAL(10, 2),
@@ -161,7 +161,7 @@ def create_patterns_table():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS gamma_patterns (
                 id SERIAL PRIMARY KEY,
-                system VARCHAR(10) NOT NULL,  -- 'ARGUS' or 'HYPERION'
+                system VARCHAR(10) NOT NULL,  -- 'WATCHTOWER' or 'GLORY'
                 symbol VARCHAR(10) NOT NULL,
                 pattern_date DATE NOT NULL,
                 spot_price DECIMAL(10, 2),
@@ -218,7 +218,7 @@ def create_danger_zone_logs_table():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS gamma_danger_zones (
                 id SERIAL PRIMARY KEY,
-                system VARCHAR(10) NOT NULL,  -- 'ARGUS' or 'HYPERION'
+                system VARCHAR(10) NOT NULL,  -- 'WATCHTOWER' or 'GLORY'
                 symbol VARCHAR(10) NOT NULL,
                 strike DECIMAL(10, 2) NOT NULL,
                 danger_type VARCHAR(20) NOT NULL,
@@ -305,7 +305,7 @@ def create_strike_trends_table():
         return False
 
 
-def migrate_hyperion_history():
+def migrate_glory_history():
     """Migrate existing hyperion_gamma_history to unified table"""
     conn = get_connection()
     if not conn:
@@ -330,7 +330,7 @@ def migrate_hyperion_history():
                 INSERT INTO unified_gamma_history
                     (system, symbol, strike, net_gamma, recorded_at, created_at)
                 SELECT
-                    'HYPERION',
+                    'GLORY',
                     symbol,
                     strike,
                     gamma_value,
@@ -351,7 +351,7 @@ def migrate_hyperion_history():
         return True
 
     except Exception as e:
-        logger.error(f"Error migrating hyperion history: {e}")
+        logger.error(f"Error migrating glory history: {e}")
         conn.rollback()
         cursor.close()
         conn.close()
@@ -386,8 +386,8 @@ def main():
     if not create_strike_trends_table():
         success = False
 
-    print("\n6. Migrating existing Hyperion history...")
-    if not migrate_hyperion_history():
+    print("\n6. Migrating existing Glory history...")
+    if not migrate_glory_history():
         success = False
 
     print("\n" + "=" * 60)

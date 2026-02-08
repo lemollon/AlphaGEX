@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Render Shell Script: VALOR (HERACLES) Update Validation Tests
+Render Shell Script: VALOR (VALOR) Update Validation Tests
 ==============================================================
 
 Validates all VALOR updates including:
@@ -41,7 +41,7 @@ def test_ml_approval_workflow():
     print_header("TEST 1: ML APPROVAL WORKFLOW")
 
     try:
-        from trading.heracles.signals import (
+        from trading.valor.signals import (
             is_ml_approved, approve_ml_model, revoke_ml_approval,
             _get_config_value, _set_config_value
         )
@@ -85,7 +85,7 @@ def test_ab_test_workflow():
     print_header("TEST 2: A/B TEST FOR DYNAMIC STOPS")
 
     try:
-        from trading.heracles.signals import (
+        from trading.valor.signals import (
             is_ab_test_enabled, enable_ab_test, disable_ab_test, get_ab_assignment
         )
 
@@ -130,9 +130,9 @@ def test_ab_test_database():
     print_header("TEST 3: A/B TEST DATABASE")
 
     try:
-        from trading.heracles.db import HERACLESDatabase
+        from trading.valor.db import ValorDatabase
 
-        db = HERACLESDatabase()
+        db = ValorDatabase()
         results = db.get_ab_test_results()
 
         print(f"\n  A/B Test Results from Database:")
@@ -168,10 +168,10 @@ def test_dynamic_stop_calculation():
     print_header("TEST 4: DYNAMIC STOP CALCULATION")
 
     try:
-        from trading.heracles.signals import HERACLESSignalGenerator
-        from trading.heracles.models import HERACLESConfig, BayesianWinTracker, GammaRegime
+        from trading.valor.signals import HERACLESSignalGenerator
+        from trading.valor.models import ValorConfig, BayesianWinTracker, GammaRegime
 
-        config = HERACLESConfig()
+        config = ValorConfig()
         tracker = BayesianWinTracker()
         generator = HERACLESSignalGenerator(config, tracker)
 
@@ -219,10 +219,10 @@ def test_bidirectional_momentum():
     print_header("TEST 5: BIDIRECTIONAL MOMENTUM (WALL BOUNCE)")
 
     try:
-        from trading.heracles.signals import HERACLESSignalGenerator
-        from trading.heracles.models import HERACLESConfig, BayesianWinTracker, GammaRegime, SignalSource
+        from trading.valor.signals import HERACLESSignalGenerator
+        from trading.valor.models import ValorConfig, BayesianWinTracker, GammaRegime, SignalSource
 
-        config = HERACLESConfig()
+        config = ValorConfig()
         tracker = BayesianWinTracker()
         generator = HERACLESSignalGenerator(config, tracker)
 
@@ -304,7 +304,7 @@ def test_signal_stop_tracking():
     print_header("TEST 6: SIGNAL STOP TRACKING FIELDS")
 
     try:
-        from trading.heracles.models import FuturesSignal, TradeDirection, GammaRegime, SignalSource
+        from trading.valor.models import FuturesSignal, TradeDirection, GammaRegime, SignalSource
 
         # Create a test signal
         signal = FuturesSignal(
@@ -345,7 +345,7 @@ def test_position_stop_tracking():
     print_header("TEST 7: POSITION STOP TRACKING FIELDS")
 
     try:
-        from trading.heracles.models import FuturesPosition, TradeDirection, GammaRegime, SignalSource
+        from trading.valor.models import FuturesPosition, TradeDirection, GammaRegime, SignalSource
 
         # Create a test position
         position = FuturesPosition(
@@ -384,7 +384,7 @@ def test_ml_model_status():
     print_header("TEST 8: ML MODEL STATUS")
 
     try:
-        from trading.heracles.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_heracles_ml_advisor
 
         advisor = get_heracles_ml_advisor()
 
@@ -421,30 +421,30 @@ def test_database_columns():
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check heracles_closed_trades columns
+        # Check valor_closed_trades columns
         cursor.execute("""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_name = 'heracles_closed_trades'
+            WHERE table_name = 'valor_closed_trades'
             AND column_name IN ('stop_type', 'stop_points_used')
         """)
         closed_cols = [row[0] for row in cursor.fetchall()]
 
-        # Check heracles_positions columns
+        # Check valor_positions columns
         cursor.execute("""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_name = 'heracles_positions'
+            WHERE table_name = 'valor_positions'
             AND column_name IN ('stop_type', 'stop_points_used')
         """)
         position_cols = [row[0] for row in cursor.fetchall()]
 
         conn.close()
 
-        print_result("heracles_closed_trades.stop_type", 'stop_type' in closed_cols)
-        print_result("heracles_closed_trades.stop_points_used", 'stop_points_used' in closed_cols)
-        print_result("heracles_positions.stop_type", 'stop_type' in position_cols)
-        print_result("heracles_positions.stop_points_used", 'stop_points_used' in position_cols)
+        print_result("valor_closed_trades.stop_type", 'stop_type' in closed_cols)
+        print_result("valor_closed_trades.stop_points_used", 'stop_points_used' in closed_cols)
+        print_result("valor_positions.stop_type", 'stop_type' in position_cols)
+        print_result("valor_positions.stop_points_used", 'stop_points_used' in position_cols)
 
         all_present = (len(closed_cols) == 2 and len(position_cols) == 2)
 
@@ -463,7 +463,7 @@ def test_database_columns():
 def run_all_tests():
     """Run all validation tests"""
     print("\n" + "=" * 70)
-    print("  VALOR (HERACLES) UPDATE VALIDATION SUITE")
+    print("  VALOR (VALOR) UPDATE VALIDATION SUITE")
     print(f"  Run Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S CT')}")
     print("=" * 70)
 

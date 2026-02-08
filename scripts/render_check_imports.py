@@ -35,11 +35,11 @@ for mod in ["fastapi", "uvicorn", "psycopg2", "pydantic"]:
 # AI modules
 print("\n-- AI Modules --")
 ai_modules = [
-    "ai.gexis_personality",
-    "ai.gexis_tools",
-    "ai.gexis_extended_thinking",
-    "ai.gexis_learning_memory",
-    "ai.gexis_knowledge",
+    "ai.counselor_personality",
+    "ai.counselor_tools",
+    "ai.counselor_extended_thinking",
+    "ai.counselor_learning_memory",
+    "ai.counselor_knowledge",
 ]
 for mod in ai_modules:
     try:
@@ -53,8 +53,8 @@ for mod in ai_modules:
 print("\n-- Backend Routes --")
 routes = [
     "backend.api.routes.ai_routes",
-    "backend.api.routes.ares_routes",
-    "backend.api.routes.athena_routes",
+    "backend.api.routes.fortress_routes",
+    "backend.api.routes.solomon_routes",
     "backend.api.routes.gex_routes",
     "backend.api.routes.trader_routes",
 ]
@@ -69,8 +69,8 @@ for mod in routes:
 # Trading bots
 print("\n-- Trading Bots --")
 bots = [
-    "trading.ares_v2.trader",
-    "trading.athena_v2.trader",
+    "trading.fortress_v2.trader",
+    "trading.solomon_v2.trader",
 ]
 for mod in bots:
     try:
@@ -82,7 +82,7 @@ for mod in bots:
 # Quant modules
 print("\n-- Quant Modules --")
 quant = [
-    "quant.oracle_advisor",
+    "quant.prophet_advisor",
 ]
 for mod in quant:
     try:

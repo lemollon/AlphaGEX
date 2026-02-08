@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, Clock, ChevronRight, Timer } f
 import { LivePosition } from './LivePortfolio'
 
 interface OpenPositionsLiveProps {
-  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botName: 'SOLOMON' | 'FORTRESS' | 'ANCHOR'
   positions: LivePosition[]
   underlyingPrice?: number
   isLoading?: boolean
@@ -97,8 +97,8 @@ function getBreakevenInfo(position: LivePosition, currentPrice?: number): { dist
   return { distance, distancePct, isGoodSide }
 }
 
-// Athena Spread Position Card
-function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: LivePosition; underlyingPrice?: number; onClick?: () => void }) {
+// Solomon Spread Position Card
+function SolomonPositionCard({ position, underlyingPrice, onClick }: { position: LivePosition; underlyingPrice?: number; onClick?: () => void }) {
   const isPositive = position.unrealized_pnl >= 0
   const spreadType = position.spread_type?.includes('BULL') ? 'Bull Call Spread' : 'Bear Call Spread'
   const isBullish = position.spread_type?.includes('BULL')
@@ -164,7 +164,7 @@ function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: 
           )}
           {position.oracle_confidence && (
             <span className="px-2 py-1 bg-purple-900/30 text-purple-400 text-xs rounded">
-              Oracle: {(position.oracle_confidence * 100).toFixed(0)}%
+              Prophet: {(position.oracle_confidence * 100).toFixed(0)}%
             </span>
           )}
         </div>
@@ -228,7 +228,7 @@ function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: 
   )
 }
 
-// ARES Iron Condor Position Card
+// FORTRESS Iron Condor Position Card
 function AresPositionCard({ position, underlyingPrice, onClick }: { position: LivePosition; underlyingPrice?: number; onClick?: () => void }) {
   const isPositive = position.unrealized_pnl >= 0
   const isAtRisk = position.risk_status === 'AT_RISK'
@@ -403,15 +403,15 @@ export default function OpenPositionsLive({ botName, positions, underlyingPrice,
 
       <div className="space-y-3">
         {positions.map((position) => (
-          botName === 'ATHENA' ? (
-            <AthenaPositionCard
+          botName === 'SOLOMON' ? (
+            <SolomonPositionCard
               key={position.position_id}
               position={position}
               underlyingPrice={underlyingPrice}
               onClick={() => onPositionClick?.(position)}
             />
           ) : (
-            // ARES and PEGASUS both trade Iron Condors
+            // FORTRESS and ANCHOR both trade Iron Condors
             <AresPositionCard
               key={position.position_id}
               position={position}

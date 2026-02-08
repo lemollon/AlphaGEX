@@ -79,105 +79,105 @@ def run_endpoint_existence_tests(base_url: str):
         ("/api/system-health", "GET", 200),
     ]
 
-    # HERACLES endpoints (MES Futures)
+    # VALOR endpoints (MES Futures)
     heracles_endpoints = [
-        ("/api/heracles/status", "GET", 200),
-        ("/api/heracles/positions", "GET", 200),
-        ("/api/heracles/closed-trades", "GET", 200),
-        ("/api/heracles/paper-equity-curve", "GET", 200),
-        ("/api/heracles/equity-curve/intraday", "GET", 200),
-        ("/api/heracles/scan-activity", "GET", 200),
-        ("/api/heracles/ml-training-data", "GET", 200),
-        ("/api/heracles/ml/status", "GET", 200),
-        ("/api/heracles/ml/feature-importance", "GET", 200),
-        ("/api/heracles/ml/approval-status", "GET", 200),
-        ("/api/heracles/ab-test/status", "GET", 200),
-        ("/api/heracles/ab-test/results", "GET", 200),
-        ("/api/heracles/diagnostics", "GET", 200),
-        ("/api/heracles/config", "GET", 200),
-        ("/api/heracles/win-tracker", "GET", 200),
+        ("/api/valor/status", "GET", 200),
+        ("/api/valor/positions", "GET", 200),
+        ("/api/valor/closed-trades", "GET", 200),
+        ("/api/valor/paper-equity-curve", "GET", 200),
+        ("/api/valor/equity-curve/intraday", "GET", 200),
+        ("/api/valor/scan-activity", "GET", 200),
+        ("/api/valor/ml-training-data", "GET", 200),
+        ("/api/valor/ml/status", "GET", 200),
+        ("/api/valor/ml/feature-importance", "GET", 200),
+        ("/api/valor/ml/approval-status", "GET", 200),
+        ("/api/valor/ab-test/status", "GET", 200),
+        ("/api/valor/ab-test/results", "GET", 200),
+        ("/api/valor/diagnostics", "GET", 200),
+        ("/api/valor/config", "GET", 200),
+        ("/api/valor/win-tracker", "GET", 200),
     ]
 
-    # PROMETHEUS endpoints (Box Spread + IC)
+    # JUBILEE endpoints (Box Spread + IC)
     prometheus_endpoints = [
-        ("/api/prometheus-box/status", "GET", 200),
-        ("/api/prometheus-box/positions", "GET", 200),
-        ("/api/prometheus-box/equity-curve", "GET", 200),
-        ("/api/prometheus-box/equity-curve/intraday", "GET", 200),
-        ("/api/prometheus-box/analytics/rates", "GET", 200),
-        ("/api/prometheus-box/analytics/capital-flow", "GET", 200),
-        ("/api/prometheus-box/ic/status", "GET", 200),
-        ("/api/prometheus-box/ic/positions", "GET", 200),
-        ("/api/prometheus-box/ic/equity-curve", "GET", 200),
-        ("/api/prometheus-box/ic/equity-curve/intraday", "GET", 200),
-        ("/api/prometheus-box/ic/performance", "GET", 200),
-        ("/api/prometheus-box/combined/performance", "GET", 200),
-        ("/api/prometheus-box/reconciliation", "GET", 200),
+        ("/api/jubilee/status", "GET", 200),
+        ("/api/jubilee/positions", "GET", 200),
+        ("/api/jubilee/equity-curve", "GET", 200),
+        ("/api/jubilee/equity-curve/intraday", "GET", 200),
+        ("/api/jubilee/analytics/rates", "GET", 200),
+        ("/api/jubilee/analytics/capital-flow", "GET", 200),
+        ("/api/jubilee/ic/status", "GET", 200),
+        ("/api/jubilee/ic/positions", "GET", 200),
+        ("/api/jubilee/ic/equity-curve", "GET", 200),
+        ("/api/jubilee/ic/equity-curve/intraday", "GET", 200),
+        ("/api/jubilee/ic/performance", "GET", 200),
+        ("/api/jubilee/combined/performance", "GET", 200),
+        ("/api/jubilee/reconciliation", "GET", 200),
     ]
 
-    # ARES endpoints (SPY Iron Condor)
+    # FORTRESS endpoints (SPY Iron Condor)
     ares_endpoints = [
-        ("/api/ares/status", "GET", 200),
-        ("/api/ares/positions", "GET", 200),
-        ("/api/ares/performance", "GET", 200),
-        ("/api/ares/equity-curve", "GET", 200),
-        ("/api/ares/equity-curve/intraday", "GET", 200),
-        ("/api/ares/config", "GET", 200),
+        ("/api/fortress/status", "GET", 200),
+        ("/api/fortress/positions", "GET", 200),
+        ("/api/fortress/performance", "GET", 200),
+        ("/api/fortress/equity-curve", "GET", 200),
+        ("/api/fortress/equity-curve/intraday", "GET", 200),
+        ("/api/fortress/config", "GET", 200),
     ]
 
-    # TITAN endpoints (SPX Aggressive IC)
+    # SAMSON endpoints (SPX Aggressive IC)
     titan_endpoints = [
-        ("/api/titan/status", "GET", 200),
-        ("/api/titan/positions", "GET", 200),
-        ("/api/titan/equity-curve", "GET", 200),
-        ("/api/titan/equity-curve/intraday", "GET", 200),
+        ("/api/samson/status", "GET", 200),
+        ("/api/samson/positions", "GET", 200),
+        ("/api/samson/equity-curve", "GET", 200),
+        ("/api/samson/equity-curve/intraday", "GET", 200),
     ]
 
-    # PEGASUS endpoints (SPX Weekly IC)
-    pegasus_endpoints = [
-        ("/api/pegasus/status", "GET", 200),
-        ("/api/pegasus/positions", "GET", 200),
-        ("/api/pegasus/equity-curve", "GET", 200),
-        ("/api/pegasus/equity-curve/intraday", "GET", 200),
+    # ANCHOR endpoints (SPX Weekly IC)
+    anchor_endpoints = [
+        ("/api/anchor/status", "GET", 200),
+        ("/api/anchor/positions", "GET", 200),
+        ("/api/anchor/equity-curve", "GET", 200),
+        ("/api/anchor/equity-curve/intraday", "GET", 200),
     ]
 
-    # ATHENA endpoints (Directional Spreads)
-    athena_endpoints = [
-        ("/api/athena/status", "GET", 200),
-        ("/api/athena/positions", "GET", 200),
-        ("/api/athena/equity-curve", "GET", 200),
-        ("/api/athena/equity-curve/intraday", "GET", 200),
+    # SOLOMON endpoints (Directional Spreads)
+    solomon_endpoints = [
+        ("/api/solomon/status", "GET", 200),
+        ("/api/solomon/positions", "GET", 200),
+        ("/api/solomon/equity-curve", "GET", 200),
+        ("/api/solomon/equity-curve/intraday", "GET", 200),
     ]
 
-    # ICARUS endpoints (Aggressive Directional)
+    # GIDEON endpoints (Aggressive Directional)
     icarus_endpoints = [
-        ("/api/icarus/status", "GET", 200),
-        ("/api/icarus/positions", "GET", 200),
-        ("/api/icarus/equity-curve", "GET", 200),
-        ("/api/icarus/equity-curve/intraday", "GET", 200),
+        ("/api/gideon/status", "GET", 200),
+        ("/api/gideon/positions", "GET", 200),
+        ("/api/gideon/equity-curve", "GET", 200),
+        ("/api/gideon/equity-curve/intraday", "GET", 200),
     ]
 
-    # Oracle & ML endpoints
+    # Prophet & ML endpoints
     oracle_endpoints = [
-        ("/api/zero-dte/oracle/status", "GET", 200),
-        ("/api/ml/sage/status", "GET", 200),
+        ("/api/zero-dte/prophet/status", "GET", 200),
+        ("/api/ml/wisdom/status", "GET", 200),
         ("/api/ml/gex-models/status", "GET", 200),
     ]
 
     # Unified metrics endpoints
     metrics_endpoints = [
-        ("/api/metrics/ARES/summary", "GET", 200),
-        ("/api/metrics/ATHENA/summary", "GET", 200),
-        ("/api/metrics/TITAN/summary", "GET", 200),
-        ("/api/metrics/PEGASUS/summary", "GET", 200),
-        ("/api/metrics/ICARUS/summary", "GET", 200),
-        ("/api/metrics/HERACLES/summary", "GET", 200),
+        ("/api/metrics/FORTRESS/summary", "GET", 200),
+        ("/api/metrics/SOLOMON/summary", "GET", 200),
+        ("/api/metrics/SAMSON/summary", "GET", 200),
+        ("/api/metrics/ANCHOR/summary", "GET", 200),
+        ("/api/metrics/GIDEON/summary", "GET", 200),
+        ("/api/metrics/VALOR/summary", "GET", 200),
     ]
 
     all_endpoints = (
         core_endpoints + heracles_endpoints + prometheus_endpoints +
-        ares_endpoints + titan_endpoints + pegasus_endpoints +
-        athena_endpoints + icarus_endpoints + oracle_endpoints + metrics_endpoints
+        ares_endpoints + titan_endpoints + anchor_endpoints +
+        solomon_endpoints + icarus_endpoints + oracle_endpoints + metrics_endpoints
     )
 
     for endpoint, method, expected_status in all_endpoints:
@@ -196,25 +196,25 @@ def run_response_shape_tests(base_url: str):
 
     # Define expected response fields for key endpoints
     shape_tests = [
-        # HERACLES
-        ("/api/heracles/status", ["status", "mode", "positions"]),
-        ("/api/heracles/diagnostics", ["bot_name", "execution", "database", "market_data", "gex_data"]),
-        ("/api/heracles/ml/status", ["model_trained"]),
-        ("/api/heracles/ml/approval-status", ["ml_approved", "probability_source"]),
-        ("/api/heracles/ab-test/status", ["ab_test_enabled"]),
+        # VALOR
+        ("/api/valor/status", ["status", "mode", "positions"]),
+        ("/api/valor/diagnostics", ["bot_name", "execution", "database", "market_data", "gex_data"]),
+        ("/api/valor/ml/status", ["model_trained"]),
+        ("/api/valor/ml/approval-status", ["ml_approved", "probability_source"]),
+        ("/api/valor/ab-test/status", ["ab_test_enabled"]),
 
-        # PROMETHEUS
-        ("/api/prometheus-box/status", ["status"]),
-        ("/api/prometheus-box/combined/performance", ["available"]),
+        # JUBILEE
+        ("/api/jubilee/status", ["status"]),
+        ("/api/jubilee/combined/performance", ["available"]),
 
-        # ARES
-        ("/api/ares/status", ["status"]),
+        # FORTRESS
+        ("/api/fortress/status", ["status"]),
 
-        # Oracle
-        ("/api/zero-dte/oracle/status", ["status"]),
+        # Prophet
+        ("/api/zero-dte/prophet/status", ["status"]),
 
         # Metrics (unified)
-        ("/api/metrics/HERACLES/summary", ["bot_name"]),
+        ("/api/metrics/VALOR/summary", ["bot_name"]),
     ]
 
     for endpoint, required_fields in shape_tests:
@@ -231,7 +231,7 @@ def run_error_handling_tests(base_url: str):
     print("\n=== ERROR HANDLING TESTS ===")
 
     # Test 404 for non-existent endpoints
-    passed, resp = test_endpoint_exists(base_url, "/api/heracles/nonexistent", "GET", 404)
+    passed, resp = test_endpoint_exists(base_url, "/api/valor/nonexistent", "GET", 404)
     if passed or (hasattr(resp, 'status_code') and resp.status_code in [404, 422]):
         log_result("404 for nonexistent endpoint", True)
     else:
@@ -249,7 +249,7 @@ def run_cross_bot_consistency_tests(base_url: str):
     """Test that all bots have consistent endpoint patterns."""
     print("\n=== CROSS-BOT CONSISTENCY TESTS ===")
 
-    bots = ["ares", "athena", "titan", "pegasus", "icarus"]
+    bots = ["fortress", "solomon", "samson", "anchor", "gideon"]
 
     # All bots should have /status
     for bot in bots:
@@ -271,7 +271,7 @@ def run_data_integrity_tests(base_url: str):
     print("\n=== DATA INTEGRITY TESTS ===")
 
     # Test equity curve returns array structure
-    for endpoint in ["/api/heracles/paper-equity-curve", "/api/ares/equity-curve"]:
+    for endpoint in ["/api/valor/paper-equity-curve", "/api/fortress/equity-curve"]:
         passed, resp = test_endpoint_exists(base_url, endpoint)
         if passed:
             try:
@@ -283,15 +283,15 @@ def run_data_integrity_tests(base_url: str):
         else:
             log_result(f"{endpoint} returns equity_curve data", False, "Not reachable")
 
-    # Test HERACLES scan activity has outcome field for ML training
-    passed, resp = test_endpoint_exists(base_url, "/api/heracles/scan-activity")
+    # Test VALOR scan activity has outcome field for ML training
+    passed, resp = test_endpoint_exists(base_url, "/api/valor/scan-activity")
     if passed:
         try:
             data = resp.json()
             has_scans = "scans" in data
-            log_result("HERACLES scan-activity returns scans array", has_scans)
+            log_result("VALOR scan-activity returns scans array", has_scans)
         except:
-            log_result("HERACLES scan-activity returns scans array", False, "Invalid JSON")
+            log_result("VALOR scan-activity returns scans array", False, "Invalid JSON")
 
 def print_summary():
     """Print test summary."""

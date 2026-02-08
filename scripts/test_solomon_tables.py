@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Solomon Tables Verification Script
+Proverbs Tables Verification Script
 
 Run this in Render shell to verify:
-1. All Solomon tables exist
+1. All Proverbs tables exist
 2. Data can be written to tables
 3. Data can be read from tables
 4. A/B test persistence works
 5. Validation trade recording works
 
 Usage:
-    python scripts/test_solomon_tables.py
+    python scripts/test_proverbs_tables.py
 """
 
 import os
@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def main():
     print("=" * 70)
-    print("SOLOMON TABLES VERIFICATION TEST")
+    print("PROVERBS TABLES VERIFICATION TEST")
     print("=" * 70)
     print()
 
@@ -44,31 +44,31 @@ def main():
         print(f"   ❌ Database error: {e}")
         return False
 
-    # Step 2: Initialize Solomon (which creates tables)
+    # Step 2: Initialize Proverbs (which creates tables)
     print()
-    print("2. INITIALIZING SOLOMON (creates tables)...")
+    print("2. INITIALIZING PROVERBS (creates tables)...")
     try:
-        from quant.solomon_feedback_loop import get_solomon
-        solomon = get_solomon()
-        print(f"   ✅ Solomon initialized: {solomon.session_id}")
+        from quant.proverbs_feedback_loop import get_proverbs
+        proverbs = get_proverbs()
+        print(f"   ✅ Proverbs initialized: {proverbs.session_id}")
     except Exception as e:
-        print(f"   ❌ Failed to initialize Solomon: {e}")
+        print(f"   ❌ Failed to initialize Proverbs: {e}")
         return False
 
     # Step 3: Verify all tables exist
     print()
-    print("3. VERIFYING SOLOMON TABLES EXIST...")
+    print("3. VERIFYING PROVERBS TABLES EXIST...")
 
     required_tables = [
-        'solomon_audit_log',
-        'solomon_proposals',
-        'solomon_versions',
-        'solomon_performance',
-        'solomon_rollbacks',
-        'solomon_health',
-        'solomon_kill_switch',
-        'solomon_validations',
-        'solomon_ab_tests',  # NEW - A/B test persistence
+        'proverbs_audit_log',
+        'proverbs_proposals',
+        'proverbs_versions',
+        'proverbs_performance',
+        'proverbs_rollbacks',
+        'proverbs_health',
+        'proverbs_kill_switch',
+        'proverbs_validations',
+        'proverbs_ab_tests',  # NEW - A/B test persistence
     ]
 
     conn = get_connection()
@@ -98,7 +98,7 @@ def main():
         print()
         print("   ⚠️  Some tables are missing. Attempting to create them...")
         # Re-run schema creation
-        solomon._ensure_schema()
+        proverbs._ensure_schema()
         print("   Schema recreation attempted. Please re-run this test.")
         return False
 
@@ -106,8 +106,8 @@ def main():
     print()
     print("4. TESTING A/B TEST PERSISTENCE...")
     try:
-        from quant.solomon_enhancements import get_solomon_enhanced
-        enhanced = get_solomon_enhanced()
+        from quant.proverbs_enhancements import get_proverbs_enhanced
+        enhanced = get_proverbs_enhanced()
 
         # Create a test A/B test
         test_id = enhanced.ab_testing.create_test(
@@ -126,7 +126,7 @@ def main():
         # Verify it's in database
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM solomon_ab_tests WHERE test_id = %s", (test_id,))
+        cursor.execute("SELECT * FROM proverbs_ab_tests WHERE test_id = %s", (test_id,))
         row = cursor.fetchone()
         conn.close()
 
@@ -169,9 +169,9 @@ def main():
     print()
     print("6. TESTING AUDIT LOGGING...")
     try:
-        from quant.solomon_feedback_loop import ActionType
+        from quant.proverbs_feedback_loop import ActionType
 
-        solomon.log_action(
+        proverbs.log_action(
             bot_name="TEST_BOT",
             action_type=ActionType.HEALTH_CHECK,
             description="Table verification test",
@@ -183,7 +183,7 @@ def main():
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT * FROM solomon_audit_log
+            SELECT * FROM proverbs_audit_log
             WHERE action_description = 'Table verification test'
             ORDER BY timestamp DESC LIMIT 1
         """)
@@ -204,9 +204,9 @@ def main():
     print()
     print("7. TESTING VERSION TRACKING...")
     try:
-        from quant.solomon_feedback_loop import VersionType
+        from quant.proverbs_feedback_loop import VersionType
 
-        version_id = solomon.save_version(
+        version_id = proverbs.save_version(
             bot_name="TEST_BOT",
             version_type=VersionType.PARAMETERS,
             artifact_name="test_parameters",
@@ -221,7 +221,7 @@ def main():
             # Verify it's in database
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM solomon_versions WHERE version_id = %s", (version_id,))
+            cursor.execute("SELECT * FROM proverbs_versions WHERE version_id = %s", (version_id,))
             row = cursor.fetchone()
             conn.close()
 
@@ -258,10 +258,10 @@ def main():
 
     print()
     print("=" * 70)
-    print("✅ ALL SOLOMON TABLE TESTS PASSED")
+    print("✅ ALL PROVERBS TABLE TESTS PASSED")
     print("=" * 70)
     print()
-    print("Solomon is production-ready:")
+    print("Proverbs is production-ready:")
     print("  • All 9 required tables exist")
     print("  • A/B test persistence works")
     print("  • Audit logging works")

@@ -3,7 +3,7 @@
 Claude AI Integration Test
 Run in Render shell: python scripts/tests/test_claude_integration.py
 
-Tests Claude API connectivity and GEXIS/ORACLE AI features.
+Tests Claude API connectivity and COUNSELOR/PROPHET AI features.
 """
 
 import os
@@ -112,38 +112,38 @@ def test_api_key_configured():
 
 
 def test_oracle_claude_status():
-    """Test ORACLE's Claude integration"""
-    print_header("ORACLE CLAUDE STATUS")
+    """Test PROPHET's Claude integration"""
+    print_header("PROPHET CLAUDE STATUS")
 
-    resp = api_request('/api/zero-dte/oracle/status')
+    resp = api_request('/api/zero-dte/prophet/status')
 
     if not resp['success']:
-        print_result("Oracle status endpoint", False, resp.get('error', 'Unknown error'))
+        print_result("Prophet status endpoint", False, resp.get('error', 'Unknown error'))
         return False
 
-    oracle = resp['data'].get('oracle', {})
+    prophet = resp['data'].get('prophet', {})
 
     # Check Claude availability
-    claude_available = oracle.get('claude_available', False)
+    claude_available = prophet.get('claude_available', False)
     print_result("Claude available", claude_available)
 
     # Check Claude model
-    claude_model = oracle.get('claude_model', 'Not configured')
+    claude_model = prophet.get('claude_model', 'Not configured')
     print_result("Claude model", bool(claude_model), claude_model)
 
     # Check model trained status
-    model_trained = oracle.get('model_trained', False)
+    model_trained = prophet.get('model_trained', False)
     print_result("ML model trained", model_trained)
 
     return claude_available
 
 
 def test_gexis_command():
-    """Test GEXIS chatbot command endpoint"""
-    print_header("GEXIS COMMAND TEST")
+    """Test COUNSELOR chatbot command endpoint"""
+    print_header("COUNSELOR COMMAND TEST")
 
     # Test /status command
-    resp = api_request('/api/ai/gexis/command', method='POST', data={"command": "/status"})
+    resp = api_request('/api/ai/counselor/command', method='POST', data={"command": "/status"})
 
     if resp['success']:
         print_result("/status command", True, f"Response in {resp.get('elapsed_ms', 0):.0f}ms")
@@ -154,7 +154,7 @@ def test_gexis_command():
         print_result("/status command", False, resp.get('error', ''))
 
     # Test /briefing command
-    resp = api_request('/api/ai/gexis/command', method='POST', data={"command": "/briefing"})
+    resp = api_request('/api/ai/counselor/command', method='POST', data={"command": "/briefing"})
 
     if resp['success']:
         print_result("/briefing command", True, f"Response in {resp.get('elapsed_ms', 0):.0f}ms")
@@ -166,8 +166,8 @@ def test_gexis_command():
 
 
 def test_oracle_analysis():
-    """Test ORACLE prediction analysis with Claude"""
-    print_header("ORACLE ANALYSIS TEST")
+    """Test PROPHET prediction analysis with Claude"""
+    print_header("PROPHET ANALYSIS TEST")
 
     # Create test prediction request
     test_data = {
@@ -184,16 +184,16 @@ def test_oracle_analysis():
     print("  Sending test prediction request...")
     print(f"  Parameters: spot={test_data['spot_price']}, vix={test_data['vix']}, gex={test_data['gex_regime']}")
 
-    resp = api_request('/api/zero-dte/oracle/analyze', method='POST', data=test_data, timeout=120)
+    resp = api_request('/api/zero-dte/prophet/analyze', method='POST', data=test_data, timeout=120)
 
     if not resp['success']:
-        print_result("Oracle analysis", False, resp.get('error', 'Unknown error'))
+        print_result("Prophet analysis", False, resp.get('error', 'Unknown error'))
         return False
 
     data = resp['data']
 
     if not data.get('success'):
-        print_result("Oracle analysis", False, data.get('error', 'Analysis failed'))
+        print_result("Prophet analysis", False, data.get('error', 'Analysis failed'))
         return False
 
     # Check prediction result
@@ -224,8 +224,8 @@ def test_oracle_analysis():
 
 
 def test_gexis_analyze_with_context():
-    """Test GEXIS analysis with conversation context"""
-    print_header("GEXIS CONTEXTUAL ANALYSIS TEST")
+    """Test COUNSELOR analysis with conversation context"""
+    print_header("COUNSELOR CONTEXTUAL ANALYSIS TEST")
 
     test_data = {
         "query": "What's the current market sentiment based on GEX levels?",
@@ -236,16 +236,16 @@ def test_gexis_analyze_with_context():
 
     print(f"  Query: {test_data['query']}")
 
-    resp = api_request('/api/ai/gexis/analyze-with-context', method='POST', data=test_data, timeout=120)
+    resp = api_request('/api/ai/counselor/analyze-with-context', method='POST', data=test_data, timeout=120)
 
     if not resp['success']:
-        print_result("GEXIS analysis", False, resp.get('error', 'Unknown error'))
+        print_result("COUNSELOR analysis", False, resp.get('error', 'Unknown error'))
         return False
 
     data = resp['data']
 
     if not data.get('success'):
-        print_result("GEXIS analysis", False, data.get('error', 'Analysis failed'))
+        print_result("COUNSELOR analysis", False, data.get('error', 'Analysis failed'))
         return False
 
     analysis = data.get('data', {}).get('analysis', '')
@@ -264,10 +264,10 @@ def test_gexis_analyze_with_context():
 
 
 def test_alerts_endpoint():
-    """Test GEXIS alerts endpoint"""
-    print_header("GEXIS ALERTS TEST")
+    """Test COUNSELOR alerts endpoint"""
+    print_header("COUNSELOR ALERTS TEST")
 
-    resp = api_request('/api/ai/gexis/alerts')
+    resp = api_request('/api/ai/counselor/alerts')
 
     if resp['success']:
         count = resp['data'].get('count', 0)
@@ -290,8 +290,8 @@ def main():
 
     results = {
         "api_key": test_api_key_configured(),
-        "oracle_status": test_oracle_claude_status(),
-        "gexis_commands": test_gexis_command(),
+        "prophet_status": test_oracle_claude_status(),
+        "counselor_commands": test_gexis_command(),
         "alerts": test_alerts_endpoint(),
     }
 

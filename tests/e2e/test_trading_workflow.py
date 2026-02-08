@@ -100,60 +100,60 @@ class TestFullTradingWorkflow:
 
 
 class TestAresWorkflow:
-    """End-to-end tests for ARES Iron Condor workflow"""
+    """End-to-end tests for FORTRESS Iron Condor workflow"""
 
     @patch('trading.ares_iron_condor.get_connection')
     @patch('trading.ares_iron_condor.get_data_provider')
     def test_ares_scan_to_trade_workflow(self, mock_provider, mock_conn):
-        """Test ARES scanning and trade execution workflow"""
+        """Test FORTRESS scanning and trade execution workflow"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_cursor.fetchall.return_value = []
         mock_conn.return_value.cursor.return_value = mock_cursor
 
         try:
-            from trading.ares_iron_condor import ARESTrader, TradingMode
+            from trading.ares_iron_condor import FortressTrader, TradingMode
 
-            # Step 1: Initialize ARES in paper mode
-            ares = ARESTrader(mode=TradingMode.PAPER, initial_capital=200000)
+            # Step 1: Initialize FORTRESS in paper mode
+            fortress = FortressTrader(mode=TradingMode.PAPER, initial_capital=200000)
 
             # Step 2: Verify initialization
-            assert ares.initial_capital == 200000
+            assert fortress.initial_capital == 200000
 
         except ImportError:
-            pytest.skip("ARES not available")
+            pytest.skip("FORTRESS not available")
 
 
 class TestAthenaWorkflow:
-    """End-to-end tests for ATHENA directional spreads workflow"""
+    """End-to-end tests for SOLOMON directional spreads workflow"""
 
-    @patch('trading.athena_directional_spreads.get_connection')
-    def test_athena_signal_workflow(self, mock_conn):
-        """Test ATHENA signal generation workflow"""
+    @patch('trading.solomon_directional_spreads.get_connection')
+    def test_solomon_signal_workflow(self, mock_conn):
+        """Test SOLOMON signal generation workflow"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_cursor.fetchall.return_value = []
         mock_conn.return_value.cursor.return_value = mock_cursor
 
         try:
-            from trading.athena_directional_spreads import ATHENATrader
+            from trading.solomon_directional_spreads import SolomonTrader
 
-            # Step 1: Initialize ATHENA
-            athena = ATHENATrader(initial_capital=100000)
+            # Step 1: Initialize SOLOMON
+            solomon = SolomonTrader(initial_capital=100000)
 
             # Step 2: Verify initialization
-            assert athena is not None
+            assert solomon is not None
 
         except ImportError:
-            pytest.skip("ATHENA not available")
+            pytest.skip("SOLOMON not available")
 
 
 class TestAtlasWorkflow:
-    """End-to-end tests for ATLAS wheel strategy workflow"""
+    """End-to-end tests for CORNERSTONE wheel strategy workflow"""
 
     @patch('trading.spx_wheel_system.get_connection')
-    def test_atlas_wheel_cycle_workflow(self, mock_conn):
-        """Test ATLAS wheel strategy cycle"""
+    def test_cornerstone_wheel_cycle_workflow(self, mock_conn):
+        """Test CORNERSTONE wheel strategy cycle"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_cursor.fetchall.return_value = []
@@ -162,14 +162,14 @@ class TestAtlasWorkflow:
         try:
             from trading.spx_wheel_system import SPXWheelTrader, TradingMode
 
-            # Step 1: Initialize ATLAS
-            atlas = SPXWheelTrader(mode=TradingMode.PAPER, initial_capital=400000)
+            # Step 1: Initialize CORNERSTONE
+            cornerstone = SPXWheelTrader(mode=TradingMode.PAPER, initial_capital=400000)
 
             # Step 2: Verify initialization
-            assert atlas.initial_capital == 400000
+            assert cornerstone.initial_capital == 400000
 
         except ImportError:
-            pytest.skip("ATLAS not available")
+            pytest.skip("CORNERSTONE not available")
 
 
 class TestSchedulerWorkflow:
@@ -250,26 +250,26 @@ class TestGEXCalculationWorkflow:
 
 
 class TestOracleWorkflow:
-    """End-to-end tests for Oracle AI advisor workflow"""
+    """End-to-end tests for Prophet AI advisor workflow"""
 
-    @patch('quant.oracle_advisor.get_connection')
+    @patch('quant.prophet_advisor.get_connection')
     def test_oracle_prediction_workflow(self, mock_conn):
-        """Test Oracle prediction workflow"""
+        """Test Prophet prediction workflow"""
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = []
         mock_conn.return_value.cursor.return_value = mock_cursor
 
         try:
-            from quant.oracle_advisor import OracleAdvisor
+            from quant.prophet_advisor import ProphetAdvisor
 
-            # Step 1: Initialize Oracle
-            oracle = OracleAdvisor()
+            # Step 1: Initialize Prophet
+            prophet = ProphetAdvisor()
 
             # Step 2: Verify it's ready
-            assert oracle is not None
+            assert prophet is not None
 
         except ImportError:
-            pytest.skip("Oracle not available")
+            pytest.skip("Prophet not available")
 
 
 class TestPositionManagementWorkflow:

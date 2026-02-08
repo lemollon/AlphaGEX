@@ -2,7 +2,7 @@
 Comprehensive Tests for AI Routes
 
 Tests the AI API endpoints including:
-- GEXIS chat endpoints
+- COUNSELOR chat endpoints
 - AI analysis endpoints
 - Intelligence module endpoints
 
@@ -32,26 +32,26 @@ def test_client():
 
 
 class TestGEXISChatEndpoints:
-    """Tests for GEXIS chat endpoints"""
+    """Tests for COUNSELOR chat endpoints"""
 
     def test_gexis_chat_endpoint_exists(self, test_client):
-        """Test GEXIS chat endpoint exists"""
+        """Test COUNSELOR chat endpoint exists"""
         if test_client is None:
             pytest.skip("Test client not available")
 
         response = test_client.post(
-            "/api/gexis/chat",
-            json={"message": "Hello GEXIS"}
+            "/api/counselor/chat",
+            json={"message": "Hello COUNSELOR"}
         )
         # Should return response (may be 500 if no API key)
         assert response.status_code in [200, 400, 401, 500]
 
     def test_gexis_greeting_endpoint(self, test_client):
-        """Test GEXIS greeting endpoint"""
+        """Test COUNSELOR greeting endpoint"""
         if test_client is None:
             pytest.skip("Test client not available")
 
-        response = test_client.get("/api/gexis/greeting")
+        response = test_client.get("/api/counselor/greeting")
         assert response.status_code in [200, 404, 500]
 
 
@@ -103,17 +103,17 @@ class TestMockedAIRoutes:
 
     @patch('backend.api.routes.ai_routes.get_gexis_response')
     def test_gexis_returns_response(self, mock_gexis, test_client):
-        """Test GEXIS returns valid response"""
+        """Test COUNSELOR returns valid response"""
         if test_client is None:
             pytest.skip("Test client not available")
 
         mock_gexis.return_value = {
-            "response": "Hello, Optionist Prime. GEXIS at your service.",
+            "response": "Hello, Optionist Prime. COUNSELOR at your service.",
             "status": "success"
         }
 
         response = test_client.post(
-            "/api/gexis/chat",
+            "/api/counselor/chat",
             json={"message": "Hello"}
         )
 
@@ -131,7 +131,7 @@ class TestChatRequestValidation:
             pytest.skip("Test client not available")
 
         response = test_client.post(
-            "/api/gexis/chat",
+            "/api/counselor/chat",
             json={"message": ""}
         )
         # Should reject empty message
@@ -143,7 +143,7 @@ class TestChatRequestValidation:
             pytest.skip("Test client not available")
 
         response = test_client.post(
-            "/api/gexis/chat",
+            "/api/counselor/chat",
             json={}
         )
         # Should reject missing field
@@ -183,7 +183,7 @@ class TestErrorHandling:
             pytest.skip("Test client not available")
 
         response = test_client.post(
-            "/api/gexis/chat",
+            "/api/counselor/chat",
             data="not valid json",
             headers={"Content-Type": "application/json"}
         )
@@ -194,12 +194,12 @@ class TestResponseFormats:
     """Tests for response format consistency"""
 
     def test_gexis_response_format(self, test_client):
-        """Test GEXIS response has expected format"""
+        """Test COUNSELOR response has expected format"""
         if test_client is None:
             pytest.skip("Test client not available")
 
         response = test_client.post(
-            "/api/gexis/chat",
+            "/api/counselor/chat",
             json={"message": "What is my status?"}
         )
 
@@ -219,7 +219,7 @@ class TestRateLimiting:
         # Send multiple rapid requests
         responses = []
         for _ in range(5):
-            response = test_client.get("/api/gexis/greeting")
+            response = test_client.get("/api/counselor/greeting")
             responses.append(response.status_code)
 
         # All should be handled (not crash)

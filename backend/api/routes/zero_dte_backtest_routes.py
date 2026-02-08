@@ -103,13 +103,13 @@ _jobs: Dict[str, Dict] = {}
 
 
 # ============================================================================
-# Health Check Endpoint - Use this to debug KRONOS issues
+# Health Check Endpoint - Use this to debug CHRONICLES issues
 # ============================================================================
 
 @router.get("/health")
 async def health_check():
     """
-    Health check endpoint for KRONOS debugging.
+    Health check endpoint for CHRONICLES debugging.
 
     Returns detailed status about:
     - Backend connectivity
@@ -141,7 +141,7 @@ async def health_check():
         health["status"] = "degraded"
         health["error"] = (
             "Neither ORAT_DATABASE_URL nor DATABASE_URL is set. "
-            "KRONOS requires PostgreSQL with ORAT options data. "
+            "CHRONICLES requires PostgreSQL with ORAT options data. "
             "Set ORAT_DATABASE_URL to point to your backtester database."
         )
         return health
@@ -209,7 +209,7 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
     """Run the hybrid fixed backtest in background"""
     try:
         print(f"\n{'='*60}", flush=True)
-        print(f"🚀 KRONOS BACKTEST STARTING - Job: {job_id}", flush=True)
+        print(f"🚀 CHRONICLES BACKTEST STARTING - Job: {job_id}", flush=True)
         print(f"   Ticker: {config.ticker}", flush=True)
         print(f"   Date Range: {config.start_date} to {config.end_date}", flush=True)
         print(f"   Initial Capital: ${config.initial_capital:,.0f}", flush=True)
@@ -225,7 +225,7 @@ def run_hybrid_fixed_backtest(config: ZeroDTEBacktestConfig, job_id: str):
         if not orat_db:
             error_msg = (
                 "Neither ORAT_DATABASE_URL nor DATABASE_URL is set. "
-                "KRONOS backtester requires a PostgreSQL connection to access ORAT options data. "
+                "CHRONICLES backtester requires a PostgreSQL connection to access ORAT options data. "
                 "Set ORAT_DATABASE_URL to point to your backtester database with ORAT options data."
             )
             logger.error(error_msg)
@@ -480,7 +480,7 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         strategy_display_name = _format_strategy_name(config.strategy_type)
 
         # Debug logging
-        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, strategy={strategy_display_name}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
+        print(f"📝 CHRONICLES: Saving backtest - job_id={job_id}, strategy={strategy_display_name}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
 
         cursor.execute("""
             INSERT INTO zero_dte_backtest_results (
@@ -668,16 +668,16 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
 
             conn.commit()
             logger.info(f"✅ Saved {trades_saved}/{len(all_trades)} individual trades for job {job_id}")
-            print(f"✅ KRONOS: Saved {trades_saved} trades to database (for ML training)", flush=True)
+            print(f"✅ CHRONICLES: Saved {trades_saved} trades to database (for ML training)", flush=True)
 
         conn.close()
-        print(f"✅ KRONOS: Saved backtest results to database (job_id: {job_id})", flush=True)
+        print(f"✅ CHRONICLES: Saved backtest results to database (job_id: {job_id})", flush=True)
 
     except Exception as e:
         import traceback
         error_detail = traceback.format_exc()
         logger.error(f"❌ Failed to save backtest results: {e}\n{error_detail}")
-        print(f"❌ KRONOS: Failed to save results to database: {e}", flush=True)
+        print(f"❌ CHRONICLES: Failed to save results to database: {e}", flush=True)
         print(f"   Error details: {error_detail}", flush=True)
 
 
@@ -782,7 +782,7 @@ async def get_backtest_trades(backtest_id: str):
     """
     Get individual trades from a saved backtest for ML training.
 
-    Returns all trades with their features and outcomes for ARES ML advisor training.
+    Returns all trades with their features and outcomes for FORTRESS ML advisor training.
     """
     try:
         conn = get_connection()
@@ -834,7 +834,7 @@ async def get_all_trades_for_ml(limit: int = 10000):
     """
     Get all backtest trades for ML model training.
 
-    Returns trades from all backtests with features suitable for ARES ML advisor.
+    Returns trades from all backtests with features suitable for FORTRESS ML advisor.
     This endpoint is used by the ML training pipeline.
     """
     try:
@@ -2210,11 +2210,11 @@ async def delete_saved_strategy(strategy_id: str):
 
 
 # ============================================================================
-# ORACLE CLAUDE AI ENDPOINTS
+# PROPHET CLAUDE AI ENDPOINTS
 # ============================================================================
 
 class OracleAnalysisRequest(BaseModel):
-    """Request model for Oracle Claude analysis"""
+    """Request model for Prophet Claude analysis"""
     spot_price: float = Field(default=5000.0, description="Current spot price")
     vix: float = Field(default=20.0, description="Current VIX")
     gex_regime: str = Field(default="NEUTRAL", description="GEX regime: POSITIVE, NEGATIVE, NEUTRAL")
@@ -2222,12 +2222,12 @@ class OracleAnalysisRequest(BaseModel):
     gex_call_wall: float = Field(default=0.0, description="GEX call wall strike")
     gex_put_wall: float = Field(default=0.0, description="GEX put wall strike")
     day_of_week: int = Field(default=2, description="Day of week (0=Mon, 4=Fri)")
-    bot_name: str = Field(default="ARES", description="Bot name: ARES, ATLAS, PHOENIX")
+    bot_name: str = Field(default="FORTRESS", description="Bot name: FORTRESS, CORNERSTONE, LAZARUS")
 
 
 class OracleExplainRequest(BaseModel):
-    """Request model for explaining Oracle prediction"""
-    prediction: Dict[str, Any] = Field(..., description="Oracle prediction to explain")
+    """Request model for explaining Prophet prediction"""
+    prediction: Dict[str, Any] = Field(..., description="Prophet prediction to explain")
     context: Dict[str, Any] = Field(..., description="Market context used")
 
 
@@ -2276,34 +2276,34 @@ def _get_all_heartbeats() -> dict:
         return {}
 
 
-@router.get("/oracle/status")
-async def get_oracle_status():
+@router.get("/prophet/status")
+async def get_prophet_status():
     """
-    Get Oracle system status including Claude AI availability and bot heartbeats.
+    Get Prophet system status including Claude AI availability and bot heartbeats.
 
     Returns information about:
     - ML model status (trained/untrained)
     - Claude AI status (enabled/disabled)
     - Model version
-    - All bot heartbeats (ARES, ATHENA, etc.)
+    - All bot heartbeats (FORTRESS, SOLOMON, etc.)
     """
     try:
-        from quant.oracle_advisor import get_oracle
+        from quant.prophet_advisor import get_oracle
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
         # Get heartbeats for all bots
         heartbeats = _get_all_heartbeats()
 
         return {
             "success": True,
-            "oracle": {
-                "model_trained": oracle.is_trained,
-                "model_version": oracle.model_version,
-                "claude_available": oracle.claude_available,
-                "claude_model": oracle.claude.CLAUDE_MODEL if oracle.claude else None,
-                "high_confidence_threshold": oracle.high_confidence_threshold,
-                "low_confidence_threshold": oracle.low_confidence_threshold,
+            "prophet": {
+                "model_trained": prophet.is_trained,
+                "model_version": prophet.model_version,
+                "claude_available": prophet.claude_available,
+                "claude_model": prophet.claude.CLAUDE_MODEL if prophet.claude else None,
+                "high_confidence_threshold": prophet.high_confidence_threshold,
+                "low_confidence_threshold": prophet.low_confidence_threshold,
             },
             "bot_heartbeats": heartbeats
         }
@@ -2311,11 +2311,11 @@ async def get_oracle_status():
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}",
+            "error": f"Prophet module not available: {e}",
             "bot_heartbeats": _get_all_heartbeats()
         }
     except Exception as e:
-        logger.error(f"Failed to get Oracle status: {e}")
+        logger.error(f"Failed to get Prophet status: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -2323,25 +2323,25 @@ async def get_oracle_status():
         }
 
 
-@router.post("/oracle/analyze")
+@router.post("/prophet/analyze")
 async def oracle_analyze(request: OracleAnalysisRequest):
     """
-    Get Oracle advice with Claude AI validation.
+    Get Prophet advice with Claude AI validation.
 
     This endpoint:
     1. Creates market context from request
-    2. Gets ML-based prediction from Oracle
+    2. Gets ML-based prediction from Prophet
     3. Validates with Claude AI (if available)
     4. Returns combined analysis
 
     Use this for live trading decisions.
     """
     try:
-        from quant.oracle_advisor import (
+        from quant.prophet_advisor import (
             get_oracle, MarketContext, GEXRegime, BotName
         )
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
         # Parse GEX regime
         gex_regime = GEXRegime[request.gex_regime.upper()]
@@ -2364,23 +2364,23 @@ async def oracle_analyze(request: OracleAnalysisRequest):
         )
 
         # Get advice based on bot type
-        if bot_name == BotName.ARES:
-            prediction = oracle.get_ares_advice(
+        if bot_name == BotName.FORTRESS:
+            prediction = prophet.get_ares_advice(
                 context,
                 use_gex_walls=(request.gex_call_wall > 0 and request.gex_put_wall > 0),
                 use_claude_validation=True
             )
-        elif bot_name == BotName.ATLAS:
-            prediction = oracle.get_atlas_advice(context)
-        elif bot_name == BotName.PHOENIX:
-            prediction = oracle.get_phoenix_advice(context)
+        elif bot_name == BotName.CORNERSTONE:
+            prediction = prophet.get_atlas_advice(context)
+        elif bot_name == BotName.LAZARUS:
+            prediction = prophet.get_phoenix_advice(context)
         else:
-            prediction = oracle.get_ares_advice(context)
+            prediction = prophet.get_ares_advice(context)
 
         # Get Claude explanation if available
         explanation = None
-        if oracle.claude_available:
-            explanation = oracle.explain_prediction(prediction, context)
+        if prophet.claude_available:
+            explanation = prophet.explain_prediction(prediction, context)
 
         return {
             "success": True,
@@ -2399,7 +2399,7 @@ async def oracle_analyze(request: OracleAnalysisRequest):
                 "top_factors": prediction.top_factors
             },
             "claude_explanation": explanation,
-            "claude_available": oracle.claude_available,
+            "claude_available": prophet.claude_available,
             "context": {
                 "spot_price": context.spot_price,
                 "vix": context.vix,
@@ -2411,10 +2411,10 @@ async def oracle_analyze(request: OracleAnalysisRequest):
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}"
+            "error": f"Prophet module not available: {e}"
         }
     except Exception as e:
-        logger.error(f"Oracle analysis failed: {e}")
+        logger.error(f"Prophet analysis failed: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -2423,23 +2423,23 @@ async def oracle_analyze(request: OracleAnalysisRequest):
         }
 
 
-@router.post("/oracle/explain")
+@router.post("/prophet/explain")
 async def oracle_explain(request: OracleExplainRequest):
     """
-    Get Claude AI explanation of an Oracle prediction.
+    Get Claude AI explanation of an Prophet prediction.
 
     Takes a prediction object and market context, returns
     a natural language explanation suitable for traders.
     """
     try:
-        from quant.oracle_advisor import (
+        from quant.prophet_advisor import (
             get_oracle, MarketContext, GEXRegime, BotName,
             TradingAdvice, OraclePrediction
         )
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
-        if not oracle.claude_available:
+        if not prophet.claude_available:
             return {
                 "success": False,
                 "error": "Claude AI not available. Set ANTHROPIC_API_KEY environment variable."
@@ -2448,7 +2448,7 @@ async def oracle_explain(request: OracleExplainRequest):
         # Reconstruct prediction object
         pred_data = request.prediction
         prediction = OraclePrediction(
-            bot_name=BotName[pred_data.get('bot_name', 'ARES')],
+            bot_name=BotName[pred_data.get('bot_name', 'FORTRESS')],
             advice=TradingAdvice[pred_data.get('advice', 'TRADE_FULL')],
             win_probability=pred_data.get('win_probability', 0.68),
             confidence=pred_data.get('confidence', 70),
@@ -2474,7 +2474,7 @@ async def oracle_explain(request: OracleExplainRequest):
             gex_between_walls=ctx_data.get('gex_between_walls', True)
         )
 
-        explanation = oracle.explain_prediction(prediction, context)
+        explanation = prophet.explain_prediction(prediction, context)
 
         return {
             "success": True,
@@ -2482,23 +2482,23 @@ async def oracle_explain(request: OracleExplainRequest):
         }
 
     except Exception as e:
-        logger.error(f"Oracle explain failed: {e}")
+        logger.error(f"Prophet explain failed: {e}")
         return {
             "success": False,
             "error": str(e)
         }
 
 
-@router.get("/oracle/logs")
-async def get_oracle_logs(limit: int = 50):
+@router.get("/prophet/logs")
+async def get_prophet_logs(limit: int = 50):
     """
-    Get Oracle live logs for frontend transparency.
+    Get Prophet live logs for frontend transparency.
 
     Returns recent Claude AI interactions, validations, and analyses.
-    Use this for real-time monitoring of Oracle's reasoning.
+    Use this for real-time monitoring of Prophet's reasoning.
     """
     try:
-        from quant.oracle_advisor import oracle_live_log
+        from quant.prophet_advisor import oracle_live_log
 
         logs = oracle_live_log.get_logs(limit=limit)
 
@@ -2511,11 +2511,11 @@ async def get_oracle_logs(limit: int = 50):
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}",
+            "error": f"Prophet module not available: {e}",
             "logs": []
         }
     except Exception as e:
-        logger.error(f"Failed to get Oracle logs: {e}")
+        logger.error(f"Failed to get Prophet logs: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -2523,11 +2523,11 @@ async def get_oracle_logs(limit: int = 50):
         }
 
 
-@router.delete("/oracle/logs")
-async def clear_oracle_logs():
-    """Clear Oracle live logs"""
+@router.delete("/prophet/logs")
+async def clear_prophet_logs():
+    """Clear Prophet live logs"""
     try:
-        from quant.oracle_advisor import oracle_live_log
+        from quant.prophet_advisor import oracle_live_log
 
         oracle_live_log.clear()
 
@@ -2537,20 +2537,20 @@ async def clear_oracle_logs():
         return {"success": False, "error": str(e)}
 
 
-@router.get("/oracle/data-flows")
-async def get_oracle_data_flows(limit: int = 50, bot_name: str = None):
+@router.get("/prophet/data-flows")
+async def get_prophet_data_flows(limit: int = 50, bot_name: str = None):
     """
-    Get detailed Oracle data flow records for FULL TRANSPARENCY.
+    Get detailed Prophet data flow records for FULL TRANSPARENCY.
 
-    Returns complete data at each stage of the Oracle pipeline:
-    - INPUT: Market context data fed into Oracle
+    Returns complete data at each stage of the Prophet pipeline:
+    - INPUT: Market context data fed into Prophet
     - ML_OUTPUT: ML model predictions and features
     - DECISION: Final advice with all reasoning
 
-    This gives you complete visibility into what data Oracle is processing.
+    This gives you complete visibility into what data Prophet is processing.
     """
     try:
-        from quant.oracle_advisor import oracle_live_log
+        from quant.prophet_advisor import oracle_live_log
 
         flows = oracle_live_log.get_data_flows(limit=limit, bot_name=bot_name)
 
@@ -2563,11 +2563,11 @@ async def get_oracle_data_flows(limit: int = 50, bot_name: str = None):
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}",
+            "error": f"Prophet module not available: {e}",
             "data_flows": []
         }
     except Exception as e:
-        logger.error(f"Failed to get Oracle data flows: {e}")
+        logger.error(f"Failed to get Prophet data flows: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -2575,7 +2575,7 @@ async def get_oracle_data_flows(limit: int = 50, bot_name: str = None):
         }
 
 
-@router.get("/oracle/claude-exchanges")
+@router.get("/prophet/claude-exchanges")
 async def get_oracle_claude_exchanges(limit: int = 20, bot_name: str = None):
     """
     Get COMPLETE Claude AI exchanges with FULL TRANSPARENCY.
@@ -2596,7 +2596,7 @@ async def get_oracle_claude_exchanges(limit: int = 20, bot_name: str = None):
     - response_time_ms: Response latency
     """
     try:
-        from quant.oracle_advisor import oracle_live_log
+        from quant.prophet_advisor import oracle_live_log
 
         exchanges = oracle_live_log.get_claude_exchanges(limit=limit, bot_name=bot_name)
 
@@ -2609,7 +2609,7 @@ async def get_oracle_claude_exchanges(limit: int = 20, bot_name: str = None):
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}",
+            "error": f"Prophet module not available: {e}",
             "claude_exchanges": []
         }
     except Exception as e:
@@ -2621,10 +2621,10 @@ async def get_oracle_claude_exchanges(limit: int = 20, bot_name: str = None):
         }
 
 
-@router.get("/oracle/full-transparency")
+@router.get("/prophet/full-transparency")
 async def get_oracle_full_transparency(bot_name: str = None):
     """
-    Get COMPLETE Oracle transparency data in one call.
+    Get COMPLETE Prophet transparency data in one call.
 
     Returns everything:
     - Recent logs (500 max)
@@ -2632,10 +2632,10 @@ async def get_oracle_full_transparency(bot_name: str = None):
     - Complete Claude AI exchanges with full prompt/response
     - Latest data flow for each bot
 
-    Use this endpoint for the Oracle transparency dashboard.
+    Use this endpoint for the Prophet transparency dashboard.
     """
     try:
-        from quant.oracle_advisor import oracle_live_log
+        from quant.prophet_advisor import oracle_live_log
 
         # Get all transparency data
         logs = oracle_live_log.get_logs(limit=100)
@@ -2644,7 +2644,7 @@ async def get_oracle_full_transparency(bot_name: str = None):
 
         # Get latest flow per bot
         latest_by_bot = {}
-        for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
+        for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'LAZARUS']:
             latest = oracle_live_log.get_latest_flow_for_bot(bot)
             if latest:
                 latest_by_bot[bot] = latest
@@ -2665,14 +2665,14 @@ async def get_oracle_full_transparency(bot_name: str = None):
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}",
+            "error": f"Prophet module not available: {e}",
             "logs": [],
             "data_flows": [],
             "claude_exchanges": [],
             "latest_by_bot": {}
         }
     except Exception as e:
-        logger.error(f"Failed to get Oracle transparency data: {e}")
+        logger.error(f"Failed to get Prophet transparency data: {e}")
         return {
             "success": False,
             "error": str(e),
@@ -2683,7 +2683,7 @@ async def get_oracle_full_transparency(bot_name: str = None):
         }
 
 
-@router.post("/oracle/analyze-patterns")
+@router.post("/prophet/analyze-patterns")
 async def oracle_analyze_patterns(job_id: Optional[str] = None):
     """
     Use Claude AI to analyze patterns in backtest results.
@@ -2694,11 +2694,11 @@ async def oracle_analyze_patterns(job_id: Optional[str] = None):
     Returns identified patterns, loss conditions, and recommendations.
     """
     try:
-        from quant.oracle_advisor import get_oracle
+        from quant.prophet_advisor import get_oracle
 
-        oracle = get_oracle()
+        prophet = get_oracle()
 
-        if not oracle.claude_available:
+        if not prophet.claude_available:
             return {
                 "success": False,
                 "error": "Claude AI not available. Set ANTHROPIC_API_KEY environment variable."
@@ -2712,7 +2712,7 @@ async def oracle_analyze_patterns(job_id: Optional[str] = None):
                 backtest_results = job['result']
 
         # Run pattern analysis
-        analysis = oracle.analyze_patterns(backtest_results)
+        analysis = prophet.analyze_patterns(backtest_results)
 
         return {
             "success": analysis.get('success', False),
@@ -2732,10 +2732,10 @@ async def oracle_analyze_patterns(job_id: Optional[str] = None):
         }
 
 
-@router.get("/oracle/training-status")
-async def get_oracle_training_status():
+@router.get("/prophet/training-status")
+async def get_prophet_training_status():
     """
-    Get comprehensive Oracle training status.
+    Get comprehensive Prophet training status.
 
     Returns information about:
     - Model training status and version
@@ -2744,7 +2744,7 @@ async def get_oracle_training_status():
     - Whether retraining is needed
     """
     try:
-        from quant.oracle_advisor import get_training_status
+        from quant.prophet_advisor import get_training_status
 
         status = get_training_status()
 
@@ -2756,7 +2756,7 @@ async def get_oracle_training_status():
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}"
+            "error": f"Prophet module not available: {e}"
         }
     except Exception as e:
         logger.error(f"Failed to get training status: {e}")
@@ -2766,10 +2766,10 @@ async def get_oracle_training_status():
         }
 
 
-@router.post("/oracle/trigger-training")
-async def trigger_oracle_training(force: bool = False):
+@router.post("/prophet/trigger-training")
+async def trigger_prophet_training(force: bool = False):
     """
-    Manually trigger Oracle model training.
+    Manually trigger Prophet model training.
 
     Args:
         force: If True, train even if threshold not met
@@ -2778,7 +2778,7 @@ async def trigger_oracle_training(force: bool = False):
         Training result with metrics
     """
     try:
-        from quant.oracle_advisor import auto_train
+        from quant.prophet_advisor import auto_train
 
         result = auto_train(force=force)
 
@@ -2790,7 +2790,7 @@ async def trigger_oracle_training(force: bool = False):
     except ImportError as e:
         return {
             "success": False,
-            "error": f"Oracle module not available: {e}"
+            "error": f"Prophet module not available: {e}"
         }
     except Exception as e:
         logger.error(f"Failed to trigger training: {e}")
@@ -2802,20 +2802,20 @@ async def trigger_oracle_training(force: bool = False):
         }
 
 
-@router.get("/oracle/predictions")
-async def get_oracle_predictions_full(
+@router.get("/prophet/predictions")
+async def get_prophet_predictions_full(
     days: int = 30,
     limit: int = 100,
     bot_name: Optional[str] = None,
     include_claude: bool = True
 ):
     """
-    Get full Oracle predictions with Claude analysis data.
+    Get full Prophet predictions with Claude analysis data.
 
     Args:
         days: Number of days to look back (default: 30)
         limit: Maximum number of predictions (default: 100)
-        bot_name: Filter by bot (ARES, ATLAS, PHOENIX, ATHENA)
+        bot_name: Filter by bot (FORTRESS, CORNERSTONE, LAZARUS, SOLOMON)
         include_claude: Include Claude analysis data (default: True)
 
     Returns comprehensive prediction data including:
@@ -2844,7 +2844,7 @@ async def get_oracle_predictions_full(
                 ic_suitability, bullish_suitability, bearish_suitability,
                 recommended_strategy, trend_direction, trend_strength,
                 position_in_range_pct, is_contained, wall_filter_passed
-            FROM oracle_predictions
+            FROM prophet_predictions
             WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
         """
         params = [days]
@@ -2911,16 +2911,16 @@ async def get_oracle_predictions_full(
         }
 
 
-@router.get("/oracle/bot-interactions")
+@router.get("/prophet/bot-interactions")
 async def get_oracle_bot_interactions(
     days: int = 7,
     limit: int = 200,
     bot_name: Optional[str] = None
 ):
     """
-    Get all bot interactions with Oracle.
+    Get all bot interactions with Prophet.
 
-    Shows every time a bot (ARES, ATLAS, PHOENIX, ATHENA) consulted Oracle
+    Shows every time a bot (FORTRESS, CORNERSTONE, LAZARUS, SOLOMON) consulted Prophet
     with full context and reasoning.
 
     Args:
@@ -2932,7 +2932,7 @@ async def get_oracle_bot_interactions(
         conn = get_connection()
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
-        # Get from both oracle_predictions and bot_decision_logs
+        # Get from both prophet_predictions and bot_decision_logs
         query = """
             SELECT
                 'prediction' as source,
@@ -2976,7 +2976,7 @@ async def get_oracle_bot_interactions(
                 op.position_in_range_pct,
                 op.is_contained,
                 op.wall_filter_passed
-            FROM oracle_predictions op
+            FROM prophet_predictions op
             WHERE op.trade_date >= CURRENT_DATE - INTERVAL '%s days'
         """
         params = [days]
@@ -2991,7 +2991,7 @@ async def get_oracle_bot_interactions(
         cursor.execute(query, params)
         interactions = [dict(row) for row in cursor.fetchall()]
 
-        # Also get from bot_decision_logs for ORACLE entries
+        # Also get from bot_decision_logs for PROPHET entries
         try:
             cursor.execute("""
                 SELECT
@@ -3008,7 +3008,7 @@ async def get_oracle_bot_interactions(
                     passed_all_checks,
                     blocked_reason
                 FROM bot_decision_logs
-                WHERE bot_name = 'ORACLE'
+                WHERE bot_name = 'PROPHET'
                 AND timestamp >= NOW() - INTERVAL '%s days'
                 ORDER BY timestamp DESC
                 LIMIT %s
@@ -3020,7 +3020,7 @@ async def get_oracle_bot_interactions(
 
         conn.close()
 
-        # Parse JSON fields (same as /oracle/predictions endpoint)
+        # Parse JSON fields (same as /prophet/predictions endpoint)
         for interaction in interactions:
             # Parse top_factors - ensure it's always a dict or None
             top_factors = interaction.get('top_factors')
@@ -3069,10 +3069,10 @@ async def get_oracle_bot_interactions(
         }
 
 
-@router.get("/oracle/performance")
-async def get_oracle_performance(days: int = 90):
+@router.get("/prophet/performance")
+async def get_prophet_performance(days: int = 90):
     """
-    Get Oracle prediction performance metrics.
+    Get Prophet prediction performance metrics.
 
     Returns:
     - Accuracy by bot
@@ -3094,7 +3094,7 @@ async def get_oracle_performance(days: int = 90):
                 actual_outcome,
                 actual_pnl,
                 trade_date
-            FROM oracle_predictions
+            FROM prophet_predictions
             WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
             AND actual_outcome IS NOT NULL
             ORDER BY trade_date
@@ -3160,7 +3160,7 @@ async def get_oracle_performance(days: int = 90):
         }
 
     except Exception as e:
-        logger.error(f"Failed to get Oracle performance: {e}")
+        logger.error(f"Failed to get Prophet performance: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -3344,7 +3344,7 @@ async def get_kronos_init():
     - tiers
     - presets
     - saved_strategies
-    - oracle_status
+    - prophet_status
     - health
     - results (recent)
 
@@ -3468,19 +3468,19 @@ async def get_kronos_init():
             logger.debug(f"No results table: {e}")
         init_data["recent_results"] = recent_results
 
-        # Oracle status
-        oracle_status = {"claude_available": False, "model_version": "v3.0"}
+        # Prophet status
+        prophet_status = {"claude_available": False, "model_version": "v3.0"}
         try:
-            from ai.oracle_advisor import OracleAdvisor
-            advisor = OracleAdvisor()
-            oracle_status = {
+            from ai.prophet_advisor import ProphetAdvisor
+            advisor = ProphetAdvisor()
+            prophet_status = {
                 "claude_available": advisor.client is not None,
                 "claude_model": advisor.model if advisor.client else None,
                 "model_version": "v3.0"
             }
         except Exception as e:
-            logger.debug(f"Oracle not available: {e}")
-        init_data["oracle"] = oracle_status
+            logger.debug(f"Prophet not available: {e}")
+        init_data["prophet"] = prophet_status
 
         # Active jobs
         active_jobs = [
@@ -3605,8 +3605,8 @@ async def natural_language_backtest(
         parsing_method = "claude"
 
         try:
-            from ai.oracle_advisor import OracleAdvisor
-            advisor = OracleAdvisor()
+            from ai.prophet_advisor import ProphetAdvisor
+            advisor = ProphetAdvisor()
 
             if advisor.client:
                 # Use Claude to parse natural language

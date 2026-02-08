@@ -3,7 +3,7 @@ OMEGA Integration Mixin for Trading Bots
 =========================================
 
 This mixin provides OMEGA Orchestrator integration for all trading bots.
-It replaces direct calls to Oracle, ML Advisor, and CircuitBreaker with
+It replaces direct calls to Prophet, ML Advisor, and CircuitBreaker with
 the unified OMEGA decision flow.
 
 USAGE:
@@ -27,7 +27,7 @@ USAGE:
 MIGRATION FROM OLD SYSTEM:
     OLD:
         if self.circuit_breaker.can_trade():
-            advice = oracle.get_ares_advice(context)
+            advice = prophet.get_ares_advice(context)
             if advice.advice != TradingAdvice.SKIP_TODAY:
                 self.execute_trade(advice)
 
@@ -61,12 +61,12 @@ class OmegaIntegrationMixin:
     Mixin that provides OMEGA Orchestrator integration for trading bots.
 
     Attributes expected on the class:
-        - bot_name: str (e.g., 'ARES', 'ATHENA')
+        - bot_name: str (e.g., 'FORTRESS', 'SOLOMON')
         - capital: float (current capital)
 
     This mixin replaces:
-        - CircuitBreaker checks (now handled by Solomon layer in OMEGA)
-        - Direct Oracle calls (now routed through OMEGA's layered decision)
+        - CircuitBreaker checks (now handled by Proverbs layer in OMEGA)
+        - Direct Prophet calls (now routed through OMEGA's layered decision)
         - ML Advisor calls (now the PRIMARY decision in OMEGA)
     """
 
@@ -100,7 +100,7 @@ class OmegaIntegrationMixin:
         This is the main entry point for all trading decisions.
         It replaces direct calls to:
             - circuit_breaker.can_trade()
-            - oracle.get_ares_advice()
+            - prophet.get_ares_advice()
             - ml_advisor.predict()
 
         Args:
@@ -145,7 +145,7 @@ class OmegaIntegrationMixin:
         Record trade outcome to OMEGA for feedback loops.
 
         This updates:
-            - Solomon (consecutive loss tracking)
+            - Proverbs (consecutive loss tracking)
             - Auto-retrain monitor (Gap 1)
             - Thompson allocator (Gap 2)
             - Equity scaler (Gap 10)
@@ -175,7 +175,7 @@ class OmegaIntegrationMixin:
 
     def omega_can_trade(self) -> bool:
         """
-        Check if trading is allowed via OMEGA (Solomon layer).
+        Check if trading is allowed via OMEGA (Proverbs layer).
 
         This replaces: circuit_breaker.can_trade()
 
@@ -190,11 +190,11 @@ class OmegaIntegrationMixin:
         bot_name = getattr(self, 'bot_name', 'UNKNOWN')
 
         try:
-            # Get Solomon verdict directly
-            verdict = omega._check_solomon(bot_name)
+            # Get Proverbs verdict directly
+            verdict = omega._check_proverbs(bot_name)
             return verdict.can_trade
         except Exception as e:
-            logger.error(f"OMEGA Solomon check failed for {bot_name}: {e}")
+            logger.error(f"OMEGA Proverbs check failed for {bot_name}: {e}")
             return True  # Default to allow on error
 
     def omega_get_capital_allocation(self) -> float:
@@ -367,13 +367,13 @@ class OmegaIntegrationMixin:
         **kwargs
     ) -> Optional[Any]:
         """
-        Helper to migrate from direct Oracle calls to OMEGA.
+        Helper to migrate from direct Prophet calls to OMEGA.
 
         Converts MarketContext to OMEGA format and returns decision.
         """
         import warnings
         warnings.warn(
-            "Direct Oracle calls are deprecated. Use omega_get_trading_decision() instead.",
+            "Direct Prophet calls are deprecated. Use omega_get_trading_decision() instead.",
             DeprecationWarning,
             stacklevel=2
         )
@@ -418,14 +418,14 @@ def create_omega_enabled_bot(base_class, bot_name: str, capital: float = 100000)
 
     Args:
         base_class: The original bot class
-        bot_name: Name of the bot (ARES, ATHENA, etc.)
+        bot_name: Name of the bot (FORTRESS, SOLOMON, etc.)
         capital: Initial capital
 
     Returns:
         New class with OMEGA integration
 
     Example:
-        OmegaAres = create_omega_enabled_bot(AresTrader, 'ARES', 100000)
+        OmegaAres = create_omega_enabled_bot(FortressTrader, 'FORTRESS', 100000)
         bot = OmegaAres()
         decision = bot.omega_get_trading_decision(gex_data, features)
     """
@@ -449,7 +449,7 @@ if __name__ == "__main__":
     # Example of how a bot would use this mixin
     class ExampleBot(OmegaIntegrationMixin):
         def __init__(self):
-            self.bot_name = "ARES"
+            self.bot_name = "FORTRESS"
             self.capital = 100000
 
         def run_trading_cycle(self):

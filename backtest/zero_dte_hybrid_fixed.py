@@ -46,7 +46,7 @@ except ImportError:
 
 # GEX Calculator integration for GEX-Protected strategies
 try:
-    from quant.kronos_gex_calculator import KronosGEXCalculator, GEXData
+    from quant.chronicles_gex_calculator import KronosGEXCalculator, GEXData
     GEX_AVAILABLE = True
 except ImportError:
     GEX_AVAILABLE = False

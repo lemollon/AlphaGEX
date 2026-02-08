@@ -47,7 +47,7 @@ async def optimize_strategy(strategy_name: str):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail="Strategy optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="Strategy optimizer has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except Exception as e:
         logger.error(f" Error in strategy optimizer: {str(e)}")
@@ -87,7 +87,7 @@ async def optimize_all_strategies():
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail="Strategy optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="Strategy optimizer has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except Exception as e:
         logger.error(f" Error in strategy optimizer: {str(e)}")
@@ -127,7 +127,7 @@ async def get_trade_recommendation(request: dict):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail="Strategy optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+            detail="Strategy optimizer has been removed. Use COUNSELOR AI assistant (/api/ai/counselor) for trade analysis."
         )
     except Exception as e:
         logger.error(f" Error getting trade recommendation: {str(e)}")

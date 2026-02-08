@@ -7,7 +7,7 @@ This script analyzes BEAR_PUT trades in detail to understand:
 2. Price movement direction after entry
 3. Flip point relationship
 4. Timing patterns
-5. Oracle confidence correlation
+5. Prophet confidence correlation
 
 Run in Render shell by copying sections.
 """
@@ -40,7 +40,7 @@ cur.execute("""
         ROUND(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END)::numeric, 2) as avg_win,
         ROUND(AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END)::numeric, 2) as avg_loss
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY bot_name
@@ -67,7 +67,7 @@ cur.execute("""
         oracle_advice,
         notes
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl > 0
     ORDER BY realized_pnl DESC
@@ -77,7 +77,7 @@ print("  Top 20 BEAR_PUT Winners:")
 for row in cur.fetchall():
     dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][int(row[2])]
     conf = row[7] if row[7] else 'N/A'
-    print(f"    {row[0]} {row[1]} {dow} {int(row[3])}:00 | P&L: ${row[6]:.0f} | Oracle: {conf}")
+    print(f"    {row[0]} {row[1]} {dow} {int(row[3])}:00 | P&L: ${row[6]:.0f} | Prophet: {conf}")
 
 conn.close()
 print("\\nPart 1 complete.")
@@ -111,7 +111,7 @@ cur.execute("""
         ROUND(100.0 * SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) as win_pct,
         ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY EXTRACT(DOW FROM entry_time),
@@ -139,7 +139,7 @@ cur.execute("""
         ROUND(100.0 * SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) / COUNT(*), 1) as win_pct,
         ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY EXTRACT(HOUR FROM entry_time)
@@ -176,7 +176,7 @@ cur.execute("""
         entry_price,
         exit_price
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     AND notes IS NOT NULL
@@ -237,7 +237,7 @@ print("\\nPart 3 complete.")
 '''
 
 # =============================================================================
-# PART 4: BEAR_PUT ORACLE CONFIDENCE ANALYSIS
+# PART 4: BEAR_PUT PROPHET CONFIDENCE ANALYSIS
 # =============================================================================
 PART_4 = '''
 import psycopg2
@@ -246,7 +246,7 @@ import os
 conn = psycopg2.connect(os.environ['DATABASE_URL'])
 cur = conn.cursor()
 
-print("\\n6. BEAR_PUT BY ORACLE CONFIDENCE BUCKET")
+print("\\n6. BEAR_PUT BY PROPHET CONFIDENCE BUCKET")
 print("-" * 50)
 print("  (Note: values over 100 are likely stored as 6500 instead of 0.65)")
 
@@ -266,7 +266,7 @@ cur.execute("""
         ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl,
         ROUND(AVG(oracle_confidence)::numeric, 1) as avg_conf
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY CASE
@@ -282,7 +282,7 @@ cur.execute("""
 for row in cur.fetchall():
     print(f"  {row[0]}: {row[1]} trades, {row[2]} wins ({row[3]}% WR), P&L: ${row[4]}")
 
-print("\\n7. BEAR_PUT BY ORACLE ADVICE TYPE")
+print("\\n7. BEAR_PUT BY PROPHET ADVICE TYPE")
 print("-" * 50)
 cur.execute("""
     SELECT
@@ -292,7 +292,7 @@ cur.execute("""
         ROUND(100.0 * SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) as win_pct,
         ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY oracle_advice
@@ -333,7 +333,7 @@ cur.execute("""
         ROUND(AVG(realized_pnl)::numeric, 2) as avg_pnl,
         ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     AND entry_price > 0
@@ -366,7 +366,7 @@ cur.execute("""
         ROUND(MIN(EXTRACT(EPOCH FROM (exit_time - entry_time))/60)::numeric, 1) as min_minutes,
         ROUND(MAX(EXTRACT(EPOCH FROM (exit_time - entry_time))/60)::numeric, 1) as max_minutes
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     AND exit_time IS NOT NULL
@@ -406,7 +406,7 @@ cur.execute("""
         ROUND(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END)::numeric, 2) as avg_win,
         ROUND(AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END)::numeric, 2) as avg_loss
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type IN ('BEAR_PUT_SPREAD', 'BULL_CALL_SPREAD')
     AND realized_pnl IS NOT NULL
     GROUP BY strategy_type
@@ -430,7 +430,7 @@ cur.execute("""
             SUM(realized_pnl) as daily_pnl,
             COUNT(*) as trades
         FROM unified_trades
-        WHERE bot_name IN ('ATHENA', 'ICARUS')
+        WHERE bot_name IN ('SOLOMON', 'GIDEON')
         AND strategy_type IN ('BEAR_PUT_SPREAD', 'BULL_CALL_SPREAD')
         AND realized_pnl IS NOT NULL
         GROUP BY entry_time::date, strategy_type
@@ -484,7 +484,7 @@ print(f"  VIX columns in unified_trades: {[c[0] for c in vix_cols]}")
 cur.execute("""
     SELECT notes
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND notes LIKE '%VIX%' OR notes LIKE '%vix%'
     LIMIT 5
 """)
@@ -506,7 +506,7 @@ cur.execute("""
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COUNT(*) as trades
         FROM unified_trades
-        WHERE bot_name IN ('ATHENA', 'ICARUS')
+        WHERE bot_name IN ('SOLOMON', 'GIDEON')
         AND strategy_type = 'BEAR_PUT_SPREAD'
         AND realized_pnl IS NOT NULL
         GROUP BY entry_time::date, strategy_type
@@ -571,7 +571,7 @@ cur.execute("""
         SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
         ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY CASE
@@ -595,7 +595,7 @@ cur.execute("""
         realized_pnl,
         notes
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl < 0
     ORDER BY entry_time DESC
@@ -628,7 +628,7 @@ print("-" * 50)
 cur.execute("""
     SELECT column_name
     FROM information_schema.columns
-    WHERE table_name IN ('athena_scan_activity', 'icarus_scan_activity')
+    WHERE table_name IN ('solomon_scan_activity', 'gideon_scan_activity')
     LIMIT 20
 """)
 cols = [c[0] for c in cur.fetchall()]
@@ -637,17 +637,17 @@ print(f"  Scan activity columns: {cols[:15]}...")
 # Look at scan activity around BEAR_PUT trades
 cur.execute("""
     SELECT
-        'ATHENA' as bot,
+        'SOLOMON' as bot,
         COUNT(*) as scans,
         COUNT(DISTINCT scan_time::date) as days
-    FROM athena_scan_activity
+    FROM solomon_scan_activity
     WHERE direction_bias = 'BEARISH'
     UNION ALL
     SELECT
-        'ICARUS' as bot,
+        'GIDEON' as bot,
         COUNT(*) as scans,
         COUNT(DISTINCT scan_time::date) as days
-    FROM icarus_scan_activity
+    FROM gideon_scan_activity
     WHERE direction_bias = 'BEARISH'
 """)
 for row in cur.fetchall():
@@ -659,7 +659,7 @@ cur.execute("""
     SELECT
         bot_name,
         CASE
-            WHEN oracle_confidence IS NULL THEN 'No Oracle'
+            WHEN oracle_confidence IS NULL THEN 'No Prophet'
             WHEN oracle_confidence > 100 THEN 'Bug (>100)'
             WHEN oracle_confidence >= 80 THEN 'Strong (80+)'
             WHEN oracle_confidence >= 65 THEN 'Medium (65-80)'
@@ -669,11 +669,11 @@ cur.execute("""
         SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
         ROUND(SUM(realized_pnl)::numeric, 2) as total_pnl
     FROM unified_trades
-    WHERE bot_name IN ('ATHENA', 'ICARUS')
+    WHERE bot_name IN ('SOLOMON', 'GIDEON')
     AND strategy_type = 'BEAR_PUT_SPREAD'
     AND realized_pnl IS NOT NULL
     GROUP BY bot_name, CASE
-            WHEN oracle_confidence IS NULL THEN 'No Oracle'
+            WHEN oracle_confidence IS NULL THEN 'No Prophet'
             WHEN oracle_confidence > 100 THEN 'Bug (>100)'
             WHEN oracle_confidence >= 80 THEN 'Strong (80+)'
             WHEN oracle_confidence >= 65 THEN 'Medium (65-80)'
@@ -722,11 +722,11 @@ cur.execute("""
         ROUND(SUM(t.realized_pnl)::numeric, 2) as total_pnl
     FROM (
         SELECT bot_name, scan_time, flip_distance
-        FROM athena_scan_activity
+        FROM solomon_scan_activity
         WHERE flip_distance IS NOT NULL
         UNION ALL
         SELECT bot_name, scan_time, flip_distance
-        FROM icarus_scan_activity
+        FROM gideon_scan_activity
         WHERE flip_distance IS NOT NULL
     ) a
     JOIN unified_trades t ON a.bot_name = t.bot_name
@@ -760,7 +760,7 @@ else:
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             ROUND(AVG(realized_pnl)::numeric, 2) as avg_pnl
         FROM unified_trades
-        WHERE bot_name IN ('ATHENA', 'ICARUS')
+        WHERE bot_name IN ('SOLOMON', 'GIDEON')
         AND notes LIKE '%flip%'
         AND realized_pnl IS NOT NULL
         GROUP BY bot_name
@@ -784,7 +784,7 @@ if __name__ == '__main__':
     print("  PART 1: Overview and Success Patterns")
     print("  PART 2: Timing Analysis (Day/Hour)")
     print("  PART 3: Flip Point Position Analysis")
-    print("  PART 4: Oracle Confidence Analysis")
+    print("  PART 4: Prophet Confidence Analysis")
     print("  PART 5: Price Movement & Time to Exit")
     print("  PART 6: BEAR_PUT vs BULL_CALL Comparison")
     print("  PART 7: Market Condition Analysis")

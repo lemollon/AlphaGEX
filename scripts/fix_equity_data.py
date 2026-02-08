@@ -49,9 +49,9 @@ def fix_all_data():
 
     capitals = {
         'ares_starting_capital': '100000',
-        'athena_starting_capital': '100000',
+        'solomon_starting_capital': '100000',
         'titan_starting_capital': '200000',
-        'pegasus_starting_capital': '200000',
+        'anchor_starting_capital': '200000',
         'icarus_starting_capital': '100000',
     }
 
@@ -74,7 +74,7 @@ def fix_all_data():
     print("FIX 2: POPULATE MISSING close_time FOR CLOSED POSITIONS")
     print("=" * 80)
 
-    tables = ['ares_positions', 'athena_positions', 'titan_positions', 'pegasus_positions', 'icarus_positions']
+    tables = ['fortress_positions', 'solomon_positions', 'samson_positions', 'anchor_positions', 'gideon_positions']
 
     for table in tables:
         try:
@@ -142,7 +142,7 @@ def fix_all_data():
     print("=" * 80)
 
     # Iron Condor bots: P&L = (credit_received - close_price) * contracts * 100
-    ic_bots = ['ares_positions', 'titan_positions', 'pegasus_positions']
+    ic_bots = ['fortress_positions', 'samson_positions', 'anchor_positions']
 
     for table in ic_bots:
         try:
@@ -186,7 +186,7 @@ def fix_all_data():
             print(f"  ❌ {table}: Failed - {e}")
 
     # Directional spread bots: P&L = (close_price - entry_debit) * contracts * 100
-    spread_bots = ['athena_positions', 'icarus_positions']
+    spread_bots = ['solomon_positions', 'gideon_positions']
 
     for table in spread_bots:
         try:
@@ -236,11 +236,11 @@ def fix_all_data():
     print("=" * 80)
 
     snapshot_tables = [
-        'ares_equity_snapshots',
-        'athena_equity_snapshots',
-        'titan_equity_snapshots',
-        'pegasus_equity_snapshots',
-        'icarus_equity_snapshots'
+        'fortress_equity_snapshots',
+        'solomon_equity_snapshots',
+        'samson_equity_snapshots',
+        'anchor_equity_snapshots',
+        'gideon_equity_snapshots'
     ]
 
     for table in snapshot_tables:

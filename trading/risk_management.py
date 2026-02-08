@@ -585,14 +585,14 @@ def run_daily_risk_checks():
     else:
         print("   ⚠️ Broker margin unavailable - using estimates")
 
-    # 4. Solomon risk status (replaced deprecated circuit_breaker)
-    print("\n4. Solomon Risk Status...")
+    # 4. Proverbs risk status (replaced deprecated circuit_breaker)
+    print("\n4. Proverbs Risk Status...")
     try:
-        from quant.solomon_enhancements import get_solomon_enhanced
-        solomon = get_solomon_enhanced()
-        can_trade = solomon.solomon.can_trade("ARES")
-        daily_loss = solomon.daily_loss_monitor.get_daily_loss("ARES")
-        results['solomon'] = {
+        from quant.proverbs_enhancements import get_proverbs_enhanced
+        proverbs = get_proverbs_enhanced()
+        can_trade = proverbs.proverbs.can_trade("FORTRESS")
+        daily_loss = proverbs.daily_loss_monitor.get_daily_loss("FORTRESS")
+        results['proverbs'] = {
             'can_trade': can_trade,
             'daily_loss': daily_loss,
             'state': 'ACTIVE' if can_trade else 'BLOCKED'
@@ -600,11 +600,11 @@ def run_daily_risk_checks():
         print(f"   State: {'ACTIVE' if can_trade else 'BLOCKED'}")
         print(f"   Daily Loss: ${daily_loss:,.2f}")
         results['checks'].append({
-            'name': 'solomon_risk',
+            'name': 'proverbs_risk',
             'passed': can_trade
         })
     except Exception as e:
-        print(f"   ⚠️ Solomon risk check failed: {e}")
+        print(f"   ⚠️ Proverbs risk check failed: {e}")
 
     print("\n" + "=" * 70)
     passed = sum(1 for c in results['checks'] if c.get('passed'))

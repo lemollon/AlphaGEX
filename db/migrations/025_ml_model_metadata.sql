@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS ml_model_metadata (
     id SERIAL PRIMARY KEY,
 
     -- Model identification
-    model_name VARCHAR(50) NOT NULL,          -- SAGE, ORACLE, GEX_PROBABILITY, GEX_DIRECTIONAL
+    model_name VARCHAR(50) NOT NULL,          -- WISDOM, PROPHET, GEX_PROBABILITY, GEX_DIRECTIONAL
     model_version VARCHAR(50),                -- e.g., 'v1.0.0', '2026-01-26'
 
     -- Training info
@@ -60,15 +60,15 @@ CREATE INDEX IF NOT EXISTS idx_ml_model_metadata_trained
 -- These will be updated when models are first trained
 INSERT INTO ml_model_metadata (model_name, model_version, trained_at, is_active, notes)
 VALUES
-    ('SAGE', 'not_trained', NOW() - INTERVAL '1 year', TRUE, 'Placeholder - will be updated on first training'),
-    ('ORACLE', 'not_trained', NOW() - INTERVAL '1 year', TRUE, 'Placeholder - will be updated on first training'),
+    ('WISDOM', 'not_trained', NOW() - INTERVAL '1 year', TRUE, 'Placeholder - will be updated on first training'),
+    ('PROPHET', 'not_trained', NOW() - INTERVAL '1 year', TRUE, 'Placeholder - will be updated on first training'),
     ('GEX_PROBABILITY', 'not_trained', NOW() - INTERVAL '1 year', TRUE, 'Placeholder - will be updated on first training'),
     ('GEX_DIRECTIONAL', 'not_trained', NOW() - INTERVAL '1 year', TRUE, 'Placeholder - will be updated on first training')
 ON CONFLICT DO NOTHING;
 
 -- Documentation
-COMMENT ON TABLE ml_model_metadata IS 'Metadata for currently deployed ML models (SAGE, Oracle, GEX models)';
-COMMENT ON COLUMN ml_model_metadata.model_name IS 'Model identifier: SAGE, ORACLE, GEX_PROBABILITY, GEX_DIRECTIONAL';
+COMMENT ON TABLE ml_model_metadata IS 'Metadata for currently deployed ML models (WISDOM, Prophet, GEX models)';
+COMMENT ON COLUMN ml_model_metadata.model_name IS 'Model identifier: WISDOM, PROPHET, GEX_PROBABILITY, GEX_DIRECTIONAL';
 COMMENT ON COLUMN ml_model_metadata.is_active IS 'TRUE if this is the currently deployed version of the model';
 COMMENT ON COLUMN ml_model_metadata.feature_importance IS 'JSON object mapping feature names to importance scores';
 

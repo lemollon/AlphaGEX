@@ -3,7 +3,7 @@
 Iron Condor Strike Validation Tests
 ====================================
 
-Executable test script to verify ARES and TITAN strike validation fixes.
+Executable test script to verify FORTRESS and SAMSON strike validation fixes.
 
 Run on Render server:
     python tests/test_ic_strike_validation.py
@@ -11,7 +11,7 @@ Run on Render server:
 This tests that:
 1. Tight GEX walls are REJECTED (< minimum SD)
 2. Wide GEX walls are ACCEPTED (>= minimum SD)
-3. Oracle strikes are validated with same rules
+3. Prophet strikes are validated with same rules
 4. SD fallback produces correct strikes
 
 Exit code: 0 = all pass, 1 = failures
@@ -48,23 +48,23 @@ def test(name: str, condition: bool, details: str = ""):
 
 
 def test_ares_strike_validation():
-    """Test ARES strike validation logic"""
+    """Test FORTRESS strike validation logic"""
     print("\n" + "="*60)
-    print("ARES STRIKE VALIDATION TESTS")
+    print("FORTRESS STRIKE VALIDATION TESTS")
     print("="*60 + "\n")
 
     try:
-        from trading.ares_v2.models import ARESConfig
-        from trading.ares_v2.signals import SignalGenerator
+        from trading.fortress_v2.models import FortressConfig
+        from trading.fortress_v2.signals import SignalGenerator
     except ImportError as e:
-        test("Import ARES modules", False, f"Import failed: {e}")
+        test("Import FORTRESS modules", False, f"Import failed: {e}")
         return
 
-    test("Import ARES modules", True)
+    test("Import FORTRESS modules", True)
 
     # Create signal generator with mocked components
-    config = ARESConfig()
-    config.sd_multiplier = 1.2  # ARES uses 1.2 SD
+    config = FortressConfig()
+    config.sd_multiplier = 1.2  # FORTRESS uses 1.2 SD
     config.spread_width = 2.0
 
     # We'll test the strike calculation logic directly
@@ -97,7 +97,7 @@ def test_ares_strike_validation():
     tight_should_reject = tight_put_wall > min_put_short or tight_call_wall < min_call_short
 
     test(
-        "ARES rejects tight GEX walls (0.5 SD)",
+        "FORTRESS rejects tight GEX walls (0.5 SD)",
         tight_should_reject,
         f"Put wall {tight_put_sd:.2f} SD, Call wall {tight_call_sd:.2f} SD should be < 1.2 SD"
     )
@@ -112,7 +112,7 @@ def test_ares_strike_validation():
     wide_should_accept = wide_put_wall <= min_put_short and wide_call_wall >= min_call_short
 
     test(
-        "ARES accepts wide GEX walls (1.4 SD)",
+        "FORTRESS accepts wide GEX walls (1.4 SD)",
         wide_should_accept,
         f"Put wall {wide_put_sd:.2f} SD, Call wall {wide_call_sd:.2f} SD should be >= 1.2 SD"
     )
@@ -125,7 +125,7 @@ def test_ares_strike_validation():
     sd_call_actual = (sd_call - spot) / expected_move
 
     test(
-        "ARES SD fallback >= 1.2 SD",
+        "FORTRESS SD fallback >= 1.2 SD",
         sd_put_actual >= 1.2 and sd_call_actual >= 1.2,
         f"Got Put {sd_put_actual:.2f} SD, Call {sd_call_actual:.2f} SD"
     )
@@ -147,27 +147,27 @@ def test_ares_strike_validation():
     low_should_reject = low_vix_put_wall > low_min_put or low_vix_call_wall < low_min_call
 
     test(
-        "ARES rejects tight walls at low VIX (0.66 SD)",
+        "FORTRESS rejects tight walls at low VIX (0.66 SD)",
         low_should_reject,
         f"At VIX {low_vix}, walls at {low_put_sd:.2f}/{low_call_sd:.2f} SD should be rejected"
     )
 
 
 def test_titan_strike_validation():
-    """Test TITAN strike validation logic"""
+    """Test SAMSON strike validation logic"""
     print("\n" + "="*60)
-    print("TITAN STRIKE VALIDATION TESTS")
+    print("SAMSON STRIKE VALIDATION TESTS")
     print("="*60 + "\n")
 
     try:
-        from trading.titan.models import TITANConfig
+        from trading.samson.models import SamsonConfig
     except ImportError as e:
-        test("Import TITAN modules", False, f"Import failed: {e}")
+        test("Import SAMSON modules", False, f"Import failed: {e}")
         return
 
-    test("Import TITAN modules", True)
+    test("Import SAMSON modules", True)
 
-    # TITAN uses 0.8 SD (more aggressive)
+    # SAMSON uses 0.8 SD (more aggressive)
     min_sd = 0.8
 
     # Test parameters (SPX)
@@ -185,17 +185,17 @@ def test_titan_strike_validation():
     min_put_short = spot - (min_sd * expected_move)
     min_call_short = spot + (min_sd * expected_move)
 
-    # Test Case 1: Very tight GEX walls (0.3 SD) - TITAN should REJECT
-    # Previously TITAN had NO validation!
+    # Test Case 1: Very tight GEX walls (0.3 SD) - SAMSON should REJECT
+    # Previously SAMSON had NO validation!
     very_tight_put = spot - (0.3 * expected_move)  # Only 0.3 SD
     very_tight_call = spot + (0.3 * expected_move)
 
     very_tight_should_reject = very_tight_put > min_put_short or very_tight_call < min_call_short
 
     test(
-        "TITAN rejects very tight GEX walls (0.3 SD)",
+        "SAMSON rejects very tight GEX walls (0.3 SD)",
         very_tight_should_reject,
-        f"Even aggressive TITAN should reject 0.3 SD walls"
+        f"Even aggressive SAMSON should reject 0.3 SD walls"
     )
 
     # Test Case 2: Moderately tight (0.7 SD) - still below 0.8, should reject
@@ -205,9 +205,9 @@ def test_titan_strike_validation():
     mod_should_reject = mod_tight_put > min_put_short or mod_tight_call < min_call_short
 
     test(
-        "TITAN rejects 0.7 SD walls (below 0.8 minimum)",
+        "SAMSON rejects 0.7 SD walls (below 0.8 minimum)",
         mod_should_reject,
-        f"0.7 SD < 0.8 SD minimum for TITAN"
+        f"0.7 SD < 0.8 SD minimum for SAMSON"
     )
 
     # Test Case 3: Acceptable walls at 0.9 SD
@@ -217,7 +217,7 @@ def test_titan_strike_validation():
     ok_should_accept = ok_put <= min_put_short and ok_call >= min_call_short
 
     test(
-        "TITAN accepts 0.9 SD walls (above 0.8 minimum)",
+        "SAMSON accepts 0.9 SD walls (above 0.8 minimum)",
         ok_should_accept,
         f"0.9 SD >= 0.8 SD minimum"
     )
@@ -231,27 +231,27 @@ def test_titan_strike_validation():
 
     # Allow for rounding tolerance
     test(
-        "TITAN SD fallback ~0.8 SD (with rounding)",
+        "SAMSON SD fallback ~0.8 SD (with rounding)",
         sd_put_actual >= 0.7 and sd_call_actual >= 0.7,  # Allow rounding
         f"Got Put {sd_put_actual:.2f} SD, Call {sd_call_actual:.2f} SD"
     )
 
 
-def test_pegasus_comparison():
-    """Verify PEGASUS still uses 1.0 SD minimum"""
+def test_anchor_comparison():
+    """Verify ANCHOR still uses 1.0 SD minimum"""
     print("\n" + "="*60)
-    print("PEGASUS COMPARISON TESTS")
+    print("ANCHOR COMPARISON TESTS")
     print("="*60 + "\n")
 
     try:
-        from trading.pegasus.models import PEGASUSConfig
+        from trading.anchor.models import AnchorConfig
     except ImportError as e:
-        test("Import PEGASUS modules", False, f"Import failed: {e}")
+        test("Import ANCHOR modules", False, f"Import failed: {e}")
         return
 
-    test("Import PEGASUS modules", True)
+    test("Import ANCHOR modules", True)
 
-    # PEGASUS should use 1.0 SD minimum
+    # ANCHOR should use 1.0 SD minimum
     spot = 6000.0
     expected_move = 60.0  # Simplified
 
@@ -265,9 +265,9 @@ def test_pegasus_comparison():
     should_reject = tight_put > min_put or tight_call < min_call
 
     test(
-        "PEGASUS rejects 0.9 SD walls (below 1.0 minimum)",
+        "ANCHOR rejects 0.9 SD walls (below 1.0 minimum)",
         should_reject,
-        "PEGASUS enforces 1.0 SD minimum"
+        "ANCHOR enforces 1.0 SD minimum"
     )
 
 
@@ -288,25 +288,25 @@ def test_database_queries():
     try:
         c = conn.cursor()
 
-        # Test ares_positions table exists
-        c.execute("SELECT COUNT(*) FROM ares_positions")
+        # Test fortress_positions table exists
+        c.execute("SELECT COUNT(*) FROM fortress_positions")
         ares_count = c.fetchone()[0]
-        test("ares_positions table accessible", True, f"Found {ares_count} records")
+        test("fortress_positions table accessible", True, f"Found {ares_count} records")
 
-        # Test pegasus_positions table exists
-        c.execute("SELECT COUNT(*) FROM pegasus_positions")
-        pegasus_count = c.fetchone()[0]
-        test("pegasus_positions table accessible", True, f"Found {pegasus_count} records")
+        # Test anchor_positions table exists
+        c.execute("SELECT COUNT(*) FROM anchor_positions")
+        anchor_count = c.fetchone()[0]
+        test("anchor_positions table accessible", True, f"Found {anchor_count} records")
 
         # Test required columns exist
         c.execute("""
             SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'ares_positions'
+            WHERE table_name = 'fortress_positions'
             AND column_name IN ('underlying_at_entry', 'expected_move', 'put_short_strike', 'call_short_strike')
         """)
         cols = [r[0] for r in c.fetchall()]
         test(
-            "ARES has required strike columns",
+            "FORTRESS has required strike columns",
             len(cols) >= 4,
             f"Found columns: {cols}"
         )
@@ -325,7 +325,7 @@ def main():
     # Run test suites
     test_ares_strike_validation()
     test_titan_strike_validation()
-    test_pegasus_comparison()
+    test_anchor_comparison()
     test_database_queries()
 
     # Summary

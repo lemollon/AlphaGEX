@@ -3,7 +3,7 @@
 Pin Risk Analysis CLI Script
 
 Analyzes options data for any symbol to determine pinning risk.
-Uses the same PinRiskAnalyzer engine integrated into Apollo.
+Uses the same PinRiskAnalyzer engine integrated into Discernment.
 
 Usage:
     python scripts/analyze_nvda_pin_risk.py NVDA

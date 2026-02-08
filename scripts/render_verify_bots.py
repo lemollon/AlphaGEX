@@ -6,9 +6,9 @@ Run in Render shell:
     python scripts/render_verify_bots.py
 
 This verifies:
-1. ARES status endpoint returns correct fields
-2. ATHENA status endpoint returns correct fields
-3. PEGASUS status endpoint returns correct fields
+1. FORTRESS status endpoint returns correct fields
+2. SOLOMON status endpoint returns correct fields
+3. ANCHOR status endpoint returns correct fields
 4. Tradier connections work for each bot
 5. Trading window calculations are correct
 """
@@ -32,14 +32,14 @@ print("=" * 60)
 errors = []
 
 # ============================================================
-# ARES STATUS
+# FORTRESS STATUS
 # ============================================================
-print("\n-- ARES Status --")
+print("\n-- FORTRESS Status --")
 try:
-    from backend.api.routes.ares_routes import get_ares_status
+    from backend.api.routes.fortress_routes import get_fortress_status
     import asyncio
 
-    result = asyncio.get_event_loop().run_until_complete(get_ares_status())
+    result = asyncio.get_event_loop().run_until_complete(get_fortress_status())
 
     if result.get('success'):
         data = result.get('data', {})
@@ -54,7 +54,7 @@ try:
         missing = [f for f in required_fields if f not in data]
         if missing:
             fail(f"Missing fields: {missing}")
-            errors.append("ARES missing fields")
+            errors.append("FORTRESS missing fields")
         else:
             ok("All required fields present")
 
@@ -76,21 +76,21 @@ try:
         info(f"Capital: ${capital:,.2f}")
 
     else:
-        fail(f"ARES status failed: {result}")
-        errors.append("ARES status failed")
+        fail(f"FORTRESS status failed: {result}")
+        errors.append("FORTRESS status failed")
 
 except Exception as e:
-    fail(f"ARES error: {e}")
-    errors.append(f"ARES: {e}")
+    fail(f"FORTRESS error: {e}")
+    errors.append(f"FORTRESS: {e}")
 
 # ============================================================
-# ATHENA STATUS
+# SOLOMON STATUS
 # ============================================================
-print("\n-- ATHENA Status --")
+print("\n-- SOLOMON Status --")
 try:
-    from backend.api.routes.athena_routes import get_athena_status
+    from backend.api.routes.solomon_routes import get_solomon_status
 
-    result = asyncio.get_event_loop().run_until_complete(get_athena_status())
+    result = asyncio.get_event_loop().run_until_complete(get_solomon_status())
 
     if result.get('success'):
         data = result.get('data', {})
@@ -105,7 +105,7 @@ try:
         missing = [f for f in required_fields if f not in data]
         if missing:
             fail(f"Missing fields: {missing}")
-            errors.append("ATHENA missing fields")
+            errors.append("SOLOMON missing fields")
         else:
             ok("All required fields present")
 
@@ -123,21 +123,21 @@ try:
         info(f"Capital: ${capital:,.2f}")
 
     else:
-        fail(f"ATHENA status failed: {result}")
-        errors.append("ATHENA status failed")
+        fail(f"SOLOMON status failed: {result}")
+        errors.append("SOLOMON status failed")
 
 except Exception as e:
-    fail(f"ATHENA error: {e}")
-    errors.append(f"ATHENA: {e}")
+    fail(f"SOLOMON error: {e}")
+    errors.append(f"SOLOMON: {e}")
 
 # ============================================================
-# PEGASUS STATUS
+# ANCHOR STATUS
 # ============================================================
-print("\n-- PEGASUS Status --")
+print("\n-- ANCHOR Status --")
 try:
-    from backend.api.routes.pegasus_routes import get_pegasus_status
+    from backend.api.routes.anchor_routes import get_anchor_status
 
-    result = asyncio.get_event_loop().run_until_complete(get_pegasus_status())
+    result = asyncio.get_event_loop().run_until_complete(get_anchor_status())
 
     if result.get('success'):
         data = result.get('data', {})
@@ -152,7 +152,7 @@ try:
         missing = [f for f in required_fields if f not in data]
         if missing:
             fail(f"Missing fields: {missing}")
-            errors.append("PEGASUS missing fields")
+            errors.append("ANCHOR missing fields")
         else:
             ok("All required fields present")
 
@@ -170,26 +170,26 @@ try:
         info(f"Capital: ${capital:,.2f}")
 
         if capital_source == 'paper' and capital >= 200000:
-            ok("PEGASUS paper trading with $200k")
+            ok("ANCHOR paper trading with $200k")
         else:
-            warn(f"PEGASUS capital: {capital_source} ${capital:,.2f}")
+            warn(f"ANCHOR capital: {capital_source} ${capital:,.2f}")
 
     else:
-        fail(f"PEGASUS status failed: {result}")
-        errors.append("PEGASUS status failed")
+        fail(f"ANCHOR status failed: {result}")
+        errors.append("ANCHOR status failed")
 
 except Exception as e:
-    fail(f"PEGASUS error: {e}")
-    errors.append(f"PEGASUS: {e}")
+    fail(f"ANCHOR error: {e}")
+    errors.append(f"ANCHOR: {e}")
 
 # ============================================================
-# ATHENA CONFIG
+# SOLOMON CONFIG
 # ============================================================
-print("\n-- ATHENA Config --")
+print("\n-- SOLOMON Config --")
 try:
-    from backend.api.routes.athena_routes import get_athena_config
+    from backend.api.routes.solomon_routes import get_solomon_config
 
-    result = asyncio.get_event_loop().run_until_complete(get_athena_config())
+    result = asyncio.get_event_loop().run_until_complete(get_solomon_config())
 
     if result.get('success'):
         data = result.get('data', {})
@@ -204,12 +204,12 @@ try:
                 val = data[key].get('value', 'N/A') if isinstance(data[key], dict) else data[key]
                 info(f"  {key}: {val}")
     else:
-        fail(f"ATHENA config failed: {result}")
-        errors.append("ATHENA config failed")
+        fail(f"SOLOMON config failed: {result}")
+        errors.append("SOLOMON config failed")
 
 except Exception as e:
-    fail(f"ATHENA config error: {e}")
-    errors.append(f"ATHENA config: {e}")
+    fail(f"SOLOMON config error: {e}")
+    errors.append(f"SOLOMON config: {e}")
 
 # ============================================================
 # TRADIER CREDENTIALS CHECK
@@ -238,9 +238,9 @@ try:
 
     # Expected usage
     print("\n  Expected Tradier Usage:")
-    print("    ARES:    Sandbox (SPY)")
-    print("    ATHENA:  Sandbox (SPY)")
-    print("    PEGASUS: Production (SPX)")
+    print("    FORTRESS:    Sandbox (SPY)")
+    print("    SOLOMON:  Sandbox (SPY)")
+    print("    ANCHOR: Production (SPX)")
 
 except Exception as e:
     fail(f"Credentials check error: {e}")

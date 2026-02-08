@@ -43,18 +43,18 @@ ML_MODELS = {
         'min_records': 100,
         'data_tables': ['gex_structure_daily'],
         'priority': 'HIGH',
-        'used_by': ['ATHENA', 'Apache Strategy'],
+        'used_by': ['SOLOMON', 'Apache Strategy'],
     },
-    'oracle': {
-        'name': 'Oracle Advisor',
+    'prophet': {
+        'name': 'Prophet Advisor',
         'description': 'Trade/skip decision with win probability',
-        'train_script': 'scripts/train_oracle_model.py',
+        'train_script': 'scripts/train_prophet_model.py',
         'model_path': None,  # Stored in database
         'db_model_table': 'oracle_trained_models',
         'min_records': 50,
-        'data_tables': ['oracle_training_outcomes', 'backtest_results', 'autonomous_closed_trades'],
+        'data_tables': ['prophet_training_outcomes', 'backtest_results', 'autonomous_closed_trades'],
         'priority': 'HIGH',
-        'used_by': ['ARES', 'ATHENA', 'PHOENIX'],
+        'used_by': ['FORTRESS', 'SOLOMON', 'LAZARUS'],
     },
     'gex_directional': {
         'name': 'GEX Directional ML',
@@ -67,14 +67,14 @@ ML_MODELS = {
         'used_by': ['Backtests', 'Directional Signals'],
     },
     'ares_ml': {
-        'name': 'ARES ML Advisor',
+        'name': 'FORTRESS ML Advisor',
         'description': 'Iron Condor optimization from backtest patterns',
         'train_script': 'scripts/train_ares_ml.py',
         'model_path': 'quant/.models/ares_advisor_model.pkl',
         'min_records': 50,
         'data_tables': ['backtest_results', 'backtest_trades'],
         'priority': 'MEDIUM',
-        'used_by': ['ARES Iron Condor'],
+        'used_by': ['FORTRESS Iron Condor'],
     },
 }
 
@@ -275,7 +275,7 @@ def check_all_models() -> Dict:
                     model_result['fix'] = 'GEX snapshots available - need populate script for structure'
                 else:
                     model_result['fix'] = 'Need historical options data (ORAT) or more GEX snapshots'
-            elif model_id == 'oracle':
+            elif model_id == 'prophet':
                 model_result['fix'] = 'Run backtests or accumulate live trading outcomes'
 
         results['models'][model_id] = model_result
