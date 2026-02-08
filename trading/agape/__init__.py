@@ -17,7 +17,7 @@ GEX → Crypto Signal Mapping:
     Price Magnets    → Liquidation clusters
     Directional Bias → Long/Short ratio
 
-Architecture mirrors ARES V2:
+Architecture mirrors FORTRESS V2:
     models.py   → Config, Position, Signal dataclasses
     db.py       → PostgreSQL persistence layer
     signals.py  → Signal generation with Oracle integration

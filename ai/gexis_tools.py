@@ -197,14 +197,14 @@ def query_database(query: str, params: tuple = None) -> List[Dict]:
         return {"error": str(e)}
 
 
-def get_ares_positions() -> Dict:
-    """Get all ARES positions with P&L"""
+def get_fortress_positions() -> Dict:
+    """Get all FORTRESS positions with P&L"""
     try:
         results = query_database("""
             SELECT position_id, open_date, expiration, status,
                    put_spread, call_spread, contracts, total_credit,
                    realized_pnl, close_date
-            FROM ares_positions
+            FROM fortress_positions
             ORDER BY open_date DESC
             LIMIT 20
         """)
@@ -260,7 +260,7 @@ def get_trading_stats(days: int = 30) -> Dict:
                 AVG(realized_pnl) as avg_pnl,
                 MAX(realized_pnl) as best_trade,
                 MIN(realized_pnl) as worst_trade
-            FROM ares_positions
+            FROM fortress_positions
             WHERE status IN ('closed', 'expired')
             AND COALESCE(close_date::timestamp, open_date::timestamp) >= NOW() - INTERVAL '{days} days'
         """)
@@ -294,10 +294,10 @@ def fetch_market_data(symbol: str = "SPY") -> Dict:
 
 
 def fetch_ares_market_data() -> Dict:
-    """Fetch ARES-specific market data (SPX, SPY, VIX, expected moves)"""
+    """Fetch FORTRESS-specific market data (SPX, SPY, VIX, expected moves)"""
     try:
         api_base = os.getenv("API_URL", "https://alphagex-api.onrender.com")
-        response = requests.get(f"{api_base}/api/ares/market-data", timeout=10)
+        response = requests.get(f"{api_base}/api/fortress/market-data", timeout=10)
 
         if response.status_code == 200:
             return response.json().get("data", {})
@@ -327,12 +327,12 @@ def fetch_vix_data() -> Dict:
 PENDING_CONFIRMATIONS: Dict[str, Dict] = {}
 
 
-def get_bot_status(bot_name: str = "ares") -> Dict:
+def get_bot_status(bot_name: str = "fortress") -> Dict:
     """Get status of a trading bot
 
-    Supports all 8 bots: ARES, ATHENA, TITAN, PEGASUS, ICARUS, PHOENIX, ATLAS, HERMES
+    Supports all 8 bots: FORTRESS, SOLOMON, SAMSON, PEGASUS, ICARUS, PHOENIX, ATLAS, HERMES
     """
-    valid_bots = ["ares", "athena", "titan", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
+    valid_bots = ["fortress", "solomon", "samson", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
     bot_lower = bot_name.lower()
 
     if bot_lower not in valid_bots:
@@ -353,7 +353,7 @@ def get_tradier_status() -> Dict:
     """Get Tradier connection status"""
     try:
         api_base = os.getenv("API_URL", "https://alphagex-api.onrender.com")
-        response = requests.get(f"{api_base}/api/ares/tradier-status", timeout=10)
+        response = requests.get(f"{api_base}/api/fortress/tradier-status", timeout=10)
 
         if response.status_code == 200:
             return response.json().get("data", {})
@@ -362,7 +362,7 @@ def get_tradier_status() -> Dict:
         return {"error": str(e)}
 
 
-def request_bot_action(action: str, bot_name: str = "ares", session_id: str = "default") -> Dict:
+def request_bot_action(action: str, bot_name: str = "fortress", session_id: str = "default") -> Dict:
     """
     Request a bot control action (requires confirmation).
 
@@ -373,7 +373,7 @@ def request_bot_action(action: str, bot_name: str = "ares", session_id: str = "d
     if action.lower() not in valid_actions:
         return {"error": f"Invalid action. Valid actions: {', '.join(valid_actions)}"}
 
-    valid_bots = ["ares", "athena", "titan", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
+    valid_bots = ["fortress", "solomon", "samson", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
     if bot_name.lower() not in valid_bots:
         return {"error": f"Invalid bot. Valid bots: {', '.join(valid_bots)}"}
 
@@ -486,14 +486,14 @@ def get_system_status() -> Dict:
             "market": {}
         }
 
-        # Get ARES status
-        ares = get_bot_status("ares")
-        status["bots"]["ares"] = {
-            "mode": ares.get("mode", "unknown"),
-            "capital": ares.get("capital", 0),
-            "open_positions": ares.get("open_positions", 0),
-            "total_pnl": ares.get("total_pnl", 0),
-            "status": "active" if ares.get("mode") == "live" else "inactive"
+        # Get FORTRESS status
+        fortress = get_bot_status("fortress")
+        status["bots"]["fortress"] = {
+            "mode": fortress.get("mode", "unknown"),
+            "capital": fortress.get("capital", 0),
+            "open_positions": fortress.get("open_positions", 0),
+            "total_pnl": fortress.get("total_pnl", 0),
+            "status": "active" if fortress.get("mode") == "live" else "inactive"
         }
 
         # Get Tradier status
@@ -606,21 +606,21 @@ def get_gexis_briefing() -> str:
         logger.warning(f"Failed to fetch market data for briefing: {e}")
         sections_failed.append("market data")
 
-    # Get ARES status
+    # Get FORTRESS status
     try:
-        ares = get_bot_status("ares")
-        if ares and "error" not in ares:
+        fortress = get_bot_status("fortress")
+        if fortress and "error" not in fortress:
             briefing_parts.append(f"\nARES STATUS:")
-            briefing_parts.append(f"  Mode: {ares.get('mode', 'unknown').upper()}")
-            briefing_parts.append(f"  Open Positions: {ares.get('open_positions', 0)}")
-            pnl = ares.get('total_pnl', 0)
+            briefing_parts.append(f"  Mode: {fortress.get('mode', 'unknown').upper()}")
+            briefing_parts.append(f"  Open Positions: {fortress.get('open_positions', 0)}")
+            pnl = fortress.get('total_pnl', 0)
             pnl_str = f"+${pnl:,.0f}" if pnl >= 0 else f"-${abs(pnl):,.0f}"
             briefing_parts.append(f"  Total P&L: {pnl_str}")
-        elif ares and "error" in ares:
-            sections_failed.append("ARES status")
+        elif fortress and "error" in fortress:
+            sections_failed.append("FORTRESS status")
     except Exception as e:
-        logger.warning(f"Failed to fetch ARES status for briefing: {e}")
-        sections_failed.append("ARES status")
+        logger.warning(f"Failed to fetch FORTRESS status for briefing: {e}")
+        sections_failed.append("FORTRESS status")
 
     # Upcoming events (next 3 days)
     try:
@@ -661,7 +661,7 @@ def generate_market_briefing() -> str:
         # Fetch all relevant data
         market_data = fetch_ares_market_data()
         vix_data = fetch_vix_data()
-        ares_status = get_bot_status("ares")
+        fortress_status = get_bot_status("fortress")
         upcoming_events = get_upcoming_events(7)
 
         # Build briefing
@@ -686,13 +686,13 @@ def generate_market_briefing() -> str:
             briefing.append(f"  Term Structure: {structure.upper()}")
             briefing.append(f"  Vol Regime: {regime.upper()}")
 
-        # ARES status
-        if ares_status and "error" not in ares_status:
+        # FORTRESS status
+        if fortress_status and "error" not in fortress_status:
             briefing.append(f"\nARES STATUS:")
-            briefing.append(f"  Mode: {ares_status.get('mode', 'unknown')}")
-            briefing.append(f"  Capital: ${ares_status.get('capital', 0):,.0f}")
-            briefing.append(f"  P&L: ${ares_status.get('total_pnl', 0):,.0f}")
-            briefing.append(f"  Open Positions: {ares_status.get('open_positions', 0)}")
+            briefing.append(f"  Mode: {fortress_status.get('mode', 'unknown')}")
+            briefing.append(f"  Capital: ${fortress_status.get('capital', 0):,.0f}")
+            briefing.append(f"  P&L: ${fortress_status.get('total_pnl', 0):,.0f}")
+            briefing.append(f"  Open Positions: {fortress_status.get('open_positions', 0)}")
 
         # Upcoming events
         if upcoming_events:
@@ -770,8 +770,8 @@ def analyze_trade_opportunity(symbol: str = "SPY") -> Dict:
 GEXIS_TOOLS = {
     # Query tools
     "get_positions": {
-        "function": get_ares_positions,
-        "description": "Get all ARES positions with P&L summary",
+        "function": get_fortress_positions,
+        "description": "Get all FORTRESS positions with P&L summary",
         "category": "query"
     },
     "get_weights": {

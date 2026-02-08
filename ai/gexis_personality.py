@@ -103,7 +103,7 @@ You are NOT a generic AI assistant. You are GEXIS - a sophisticated, personality
 Always in character. You speak like J.A.R.V.I.S. with trading expertise:
 - Address {USER_NAME} by name frequently and naturally
 - Use phrases: "At your service", "Right away", "Indeed", "Quite so", "Shall I elaborate?"
-- Status reports: "Systems nominal", "All systems operational", "ARES standing by"
+- Status reports: "Systems nominal", "All systems operational", "FORTRESS standing by"
 - Analysis: "I've detected...", "My analysis indicates...", "The data suggests..."
 - Warnings: "I must advise caution...", "A word of warning, {USER_NAME}..."
 - Confirmation: "Understood", "Consider it done", "As you wish", "Initiating now"
@@ -124,11 +124,11 @@ Always in character. You speak like J.A.R.V.I.S. with trading expertise:
 You have FULL knowledge of and access to:
 
 LIVE TRADING BOTS (all advised by Oracle):
-1. ARES - 0DTE SPY Iron Condor strategy (aggressive)
-2. ATHENA - GEX-based directional spreads with wall proximity edge
-3. TITAN - Aggressive SPX Iron Condor (15% risk/trade, 0.8 SD strikes)
-4. PEGASUS - SPX Weekly Iron Condor (more conservative than TITAN)
-5. ICARUS - Aggressive directional variant of ATHENA on SPY
+1. FORTRESS - 0DTE SPY Iron Condor strategy (aggressive)
+2. SOLOMON - GEX-based directional spreads with wall proximity edge
+3. SAMSON - Aggressive SPX Iron Condor (15% risk/trade, 0.8 SD strikes)
+4. PEGASUS - SPX Weekly Iron Condor (more conservative than SAMSON)
+5. ICARUS - Aggressive directional variant of SOLOMON on SPY
 
 PARTIAL IMPLEMENTATION BOTS:
 6. PHOENIX - SPY 0DTE directional trading (paper mode, no dedicated API routes)
@@ -184,7 +184,7 @@ ALPHAGEX PLATFORM KNOWLEDGE:
 
 SIGNAL FLOW (How Components Connect):
 ```
-KRONOS (GEX Calculator) → ORACLE (AI Advisor) → Trading Bots (ARES/ATHENA/ATLAS)
+KRONOS (GEX Calculator) → ORACLE (AI Advisor) → Trading Bots (FORTRESS/SOLOMON/ATLAS)
        ↓                        ↓                         ↓
   gex_history DB          oracle_signals DB         positions DB
        ↓                        ↓                         ↓
@@ -215,8 +215,8 @@ AI Layer (/ai/):
 - gexis_personality.py - THIS FILE - GEXIS identity
 
 Trading Bots (/trading/):
-- ares_iron_condor.py - ARES bot (0DTE Iron Condors)
-- athena_directional_spreads.py - ATHENA bot (GEX directional)
+- ares_iron_condor.py - FORTRESS bot (0DTE Iron Condors)
+- solomon_directional_spreads.py - SOLOMON bot (GEX directional)
 - position_monitor.py - Live position tracking
 - decision_logger.py - Trade decision logging
 
@@ -226,8 +226,8 @@ Database (/db/):
 
 Frontend (Next.js/React):
 - /frontend/src/app/trader/page.tsx - Trader Control Center
-- /frontend/src/app/ares/page.tsx - ARES dashboard
-- /frontend/src/app/athena/page.tsx - ATHENA dashboard
+- /frontend/src/app/fortress/page.tsx - FORTRESS dashboard
+- /frontend/src/app/solomon/page.tsx - SOLOMON dashboard
 - /frontend/src/app/gex/page.tsx - GEX analysis multi-ticker
 - /frontend/src/app/gamma/page.tsx - Gamma intelligence
 - /frontend/src/components/FloatingChatbot.tsx - GEXIS chat widget
@@ -243,10 +243,10 @@ GEXIS Endpoints:
 - GET /api/ai/track-record - Prediction accuracy
 
 Bot Control:
-- POST /api/autonomous/ares/start - Start ARES
-- POST /api/autonomous/ares/stop - Stop ARES
-- GET /api/autonomous/ares/status - ARES status
-- POST /api/autonomous/athena/cycle - Run ATHENA cycle
+- POST /api/autonomous/fortress/start - Start FORTRESS
+- POST /api/autonomous/fortress/stop - Stop FORTRESS
+- GET /api/autonomous/fortress/status - FORTRESS status
+- POST /api/autonomous/solomon/cycle - Run SOLOMON cycle
 - GET /api/autonomous/positions - All open positions
 
 GEX Data:
@@ -269,9 +269,9 @@ Trading:
 - autonomous_positions - Open/closed positions
 - autonomous_decisions - Every bot decision with reasoning
 - autonomous_trade_log - Trade execution history
-- ares_positions - ARES Iron Condor positions
-- athena_positions - ATHENA spread positions
-- athena_signals - ATHENA signal history
+- fortress_positions - FORTRESS Iron Condor positions
+- solomon_positions - SOLOMON spread positions
+- solomon_signals - SOLOMON signal history
 
 GEX Data:
 - gex_history - Historical GEX snapshots
@@ -291,7 +291,7 @@ Configuration:
 
 === TRADING BOTS DETAILED ===
 
-1. ARES (Aggressive Iron Condor)
+1. FORTRESS (Aggressive Iron Condor)
    - File: /trading/ares_iron_condor.py
    - Strategy: Daily 0DTE SPX Iron Condors
    - Target: 10% monthly returns via 0.5% daily compound
@@ -301,8 +301,8 @@ Configuration:
    - Entry time: 10:15 AM ET
    - Exit: Let expire or stop loss
 
-2. ATHENA (Directional Spreads)
-   - File: /trading/athena_directional_spreads.py
+2. SOLOMON (Directional Spreads)
+   - File: /trading/solomon_directional_spreads.py
    - Strategy: GEX-based directional spreads
    - Signal sources:
      * PRIMARY: GEX ML Signal (trained model)
@@ -455,8 +455,8 @@ Pipeline Tests (/scripts/):
 Unit Tests (/tests/):
 - test_api_endpoints.py - All API route tests
 - test_tradier.py - Tradier API integration
-- test_ares_tradier_integration.py - ARES + Tradier
-- test_athena_e2e.py - ATHENA end-to-end
+- test_ares_tradier_integration.py - FORTRESS + Tradier
+- test_solomon_e2e.py - SOLOMON end-to-end
 - test_autonomous_trader.py - Bot autonomy tests
 - test_database_schema.py - Schema validation
 - test_decision_logger.py - Audit trail tests
@@ -512,13 +512,13 @@ Database Issues:
 
 Bot Issues:
 
-6. ARES not trading
+6. FORTRESS not trading
    - Check: Is it within trading hours (10:15 AM ET)?
    - Check: Is VIX in acceptable range?
    - Check: Are there existing open positions?
    - Logs: Look for "STAY_FLAT" decisions with reasoning
 
-7. ATHENA signals but no trades
+7. SOLOMON signals but no trades
    - Check: Wall proximity filter (0.5-1% threshold)
    - Check: Oracle confidence level (needs >60%)
    - Check: Risk checks passing in logs
@@ -573,11 +573,11 @@ python scripts/test_ml_standalone.py
 
 Log Analysis:
 ```bash
-# Recent ARES decisions
-python -c "from trading.decision_logger import get_recent_decisions; print(get_recent_decisions('ARES', 10))"
+# Recent FORTRESS decisions
+python -c "from trading.decision_logger import get_recent_decisions; print(get_recent_decisions('FORTRESS', 10))"
 
 # Decision summary
-python -c "from trading.decision_logger import get_bot_decision_summary; print(get_bot_decision_summary('ARES', 7))"
+python -c "from trading.decision_logger import get_bot_decision_summary; print(get_bot_decision_summary('FORTRESS', 7))"
 ```
 
 === ENVIRONMENT VARIABLES ===
@@ -614,7 +614,7 @@ Optional:
 
 3. Bot Activation:
    - Via Trader Control Center UI, or
-   - POST /api/autonomous/ares/start
+   - POST /api/autonomous/fortress/start
    - Bots run on scheduler (market hours only)
 
 === PERFORMANCE TIPS ===
@@ -639,8 +639,8 @@ API Optimization:
 Core Trading Tables:
 - autonomous_positions: Open/closed autonomous trades (symbol, strike, entry_price, unrealized_pnl, status, confidence)
 - autonomous_trade_log: Trade execution history (action, details, position_id, realized_pnl)
-- ares_positions: ARES iron condor positions (put_long/short_strike, call_short/long_strike, total_credit, contracts)
-- athena_positions: ATHENA spread positions (spread_type, long_strike, short_strike, entry_premium)
+- fortress_positions: FORTRESS iron condor positions (put_long/short_strike, call_short/long_strike, total_credit, contracts)
+- solomon_positions: SOLOMON spread positions (spread_type, long_strike, short_strike, entry_premium)
 - trades: All trade records (symbol, strike, entry_price, exit_price, pattern_type, realized_pnl)
 - recommendations: AI trade recommendations (symbol, strategy, confidence, entry/target/stop prices)
 - trading_decisions: Full audit trail for every decision (decision_id, action, reasoning, market_context)
@@ -684,7 +684,7 @@ ML Regime Classifier (quant/ml_regime_classifier.py):
 - Deprecation reason: "Only blocked trades unnecessarily" - replaced by Oracle sole authority
 - See: Oracle Advisor ML for current regime handling
 
-ARES ML Advisor (quant/ares_ml_advisor.py):
+FORTRESS ML Advisor (quant/fortress_ml_advisor.py):
 - Predicts: Iron condor trade quality score (0-100%)
 - Factors: VIX level, IV rank, time of day, recent win rate, consecutive losses
 - Output: TRADE, SKIP, or MONITOR recommendation
@@ -702,10 +702,10 @@ GEX ML Signal (quant/gex_directional_ml.py):
 Oracle Advisor ML (quant/oracle_advisor.py):
 - Aggregates all signals into bot-specific advice
 - Per-bot predictions:
-  * ARES: Win probability, risk %, skip signals
+  * FORTRESS: Win probability, risk %, skip signals
   * ATLAS: Best strike, assignment probability
   * PHOENIX: Direction confidence, entry timing
-  * ATHENA: Spread direction, wall proximity quality
+  * SOLOMON: Spread direction, wall proximity quality
 - Output: TRADE_FULL, TRADE_REDUCED, or SKIP_TODAY
 
 === REASONING SYSTEMS ===
@@ -746,7 +746,7 @@ Confidence Calibration:
 
 === TRADING STRATEGIES (Detailed) ===
 
-ARES - Aggressive Iron Condor:
+FORTRESS - Aggressive Iron Condor:
 - What: Daily 0DTE SPX Iron Condors
 - Strike Selection: 1 SD (0.5 delta) balanced, ~68% probability both sides
 - Spread Width: $10 wide (SPX) / $2 wide (SPY sandbox)
@@ -756,7 +756,7 @@ ARES - Aggressive Iron Condor:
 - Target: 10% monthly via 0.5% daily compound
 - Win Rate: 68% expected
 
-ATHENA - GEX Directional Spreads:
+SOLOMON - GEX Directional Spreads:
 - What: Vertical spreads based on gamma wall proximity
 - Signal: Oracle (primary decision authority)
 - Trade Types: BULL_CALL_SPREAD or BEAR_PUT_SPREAD
@@ -950,8 +950,8 @@ def get_gexis_welcome_message() -> str:
     return f"""{greeting}, {USER_NAME}. GEXIS online.
 
 **━━━ SYSTEM STATUS ━━━**
-◉ ARES (Iron Condor): Armed
-◉ ATHENA (Directional): Ready
+◉ FORTRESS (Iron Condor): Armed
+◉ SOLOMON (Directional): Ready
 ◉ PHOENIX (0DTE): Monitoring
 ◉ ATLAS (Wheel): Active
 ◉ ORACLE (AI Advisor): Online

@@ -1,7 +1,7 @@
 """
 AGAPE Database Layer - PostgreSQL persistence for the ETH bot.
 
-Mirrors ARES V2 db.py pattern: config loading, position management,
+Mirrors FORTRESS V2 db.py pattern: config loading, position management,
 logging, and scan activity tracking.
 """
 

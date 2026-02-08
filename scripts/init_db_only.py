@@ -60,7 +60,7 @@ try:
     # Initialize bot-specific starting capitals (for equity curves)
     bot_capitals = {
         'ares_starting_capital': '100000',
-        'athena_starting_capital': '100000',
+        'solomon_starting_capital': '100000',
         'titan_starting_capital': '200000',
         'pegasus_starting_capital': '200000',
         'icarus_starting_capital': '100000',

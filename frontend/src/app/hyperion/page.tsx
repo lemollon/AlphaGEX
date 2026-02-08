@@ -2,7 +2,7 @@
 
 /**
  * HYPERION (Weekly Gamma) - Weekly Options Gamma Visualization (Enhanced)
- * Named after the Titan of Watchfulness - watching longer-term gamma setups
+ * Named after the Samson of Watchfulness - watching longer-term gamma setups
  *
  * HYPERION focuses on weekly options for stocks/ETFs that don't have 0DTE,
  * providing gamma visualization for weekly expirations.

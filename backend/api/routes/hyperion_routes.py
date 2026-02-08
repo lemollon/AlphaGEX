@@ -5,7 +5,7 @@ HYPERION (Weekly Gamma) API Routes - Enhanced Version
 API endpoints for weekly options gamma visualization.
 HYPERION focuses on stocks/ETFs with weekly options (not 0DTE).
 
-Named after the Titan of Watchfulness - watching longer-term gamma setups.
+Named after the Samson of Watchfulness - watching longer-term gamma setups.
 
 Enhanced Features (matching ARGUS):
 - ML probability calculation
@@ -501,7 +501,7 @@ def get_tradier():
     """
     Get Tradier data fetcher instance.
 
-    Uses same pattern as ARES/ARGUS: explicitly gets credentials from APIConfig
+    Uses same pattern as FORTRESS/ARGUS: explicitly gets credentials from APIConfig
     and tries sandbox mode first (for market data), then production.
     """
     global _hyperion_tradier_instance

@@ -1,9 +1,9 @@
 """
 PROMETHEUS - Box Spread Synthetic Borrowing Bot
 
-Named after the Titan who brought fire (resources) to mankind.
+Named after the Samson who brought fire (resources) to mankind.
 PROMETHEUS provides synthetic capital through box spreads to fuel
-Iron Condor volume strategies across ARES, TITAN, and PEGASUS.
+Iron Condor volume strategies across FORTRESS, SAMSON, and PEGASUS.
 
 Key Features:
 - Synthetic borrowing via box spreads at near risk-free rates

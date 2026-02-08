@@ -23,8 +23,8 @@ const TRADING_TIPS = [
   "GEX flips signal dealer gamma crossing zero - watch for explosive moves",
   "Negative GEX means dealers chase price - expect higher volatility",
   "Call walls act as resistance, put walls as support",
-  "ARES hunts Iron Condor opportunities when volatility spikes",
-  "ATHENA captures directional momentum with GEX-aligned spreads",
+  "FORTRESS hunts Iron Condor opportunities when volatility spikes",
+  "SOLOMON captures directional momentum with GEX-aligned spreads",
   "PEGASUS trades weekly SPX Iron Condors with $10 spread protection",
   "PHOENIX targets 0DTE gamma scalps during high-activity periods",
   "ATLAS wheels premium through systematic SPX strategies",
@@ -38,8 +38,8 @@ export default function NexusPage() {
   const [botStatus, setBotStatus] = useState<BotStatus>({
     gex: 'active',
     oracle: 'active',
-    ares: 'idle',
-    athena: 'idle',
+    fortress: 'idle',
+    solomon: 'idle',
     pegasus: 'idle',
     phoenix: 'idle',
     atlas: 'idle',
@@ -56,7 +56,7 @@ export default function NexusPage() {
   useEffect(() => {
     const fetchBotStatus = async () => {
       try {
-        const [aresRes, athenaRes, pegasusRes] = await Promise.all([
+        const [aresRes, solomonRes, pegasusRes] = await Promise.all([
           apiClient.getARESStatus().catch(() => null),
           apiClient.getATHENAStatus().catch(() => null),
           apiClient.getPEGASUSStatus().catch(() => null),
@@ -64,10 +64,10 @@ export default function NexusPage() {
 
         setBotStatus(prev => ({
           ...prev,
-          ares: aresRes?.data?.status === 'running' ? 'trading' :
+          fortress: aresRes?.data?.status === 'running' ? 'trading' :
                 aresRes?.data?.enabled ? 'active' : 'idle',
-          athena: athenaRes?.data?.status === 'running' ? 'trading' :
-                  athenaRes?.data?.enabled ? 'active' : 'idle',
+          solomon: solomonRes?.data?.status === 'running' ? 'trading' :
+                  solomonRes?.data?.enabled ? 'active' : 'idle',
           pegasus: pegasusRes?.data?.status === 'running' ? 'trading' :
                    pegasusRes?.data?.enabled ? 'active' : 'idle',
         }))
@@ -130,8 +130,8 @@ export default function NexusPage() {
     const routes: Record<string, string> = {
       'gex-core': '/',
       'oracle': '/oracle',
-      'ares': '/ares',
-      'athena': '/athena',
+      'fortress': '/fortress',
+      'solomon': '/solomon',
       'pegasus': '/pegasus',
       'phoenix': '/trader',
       'atlas': '/spx-wheel',

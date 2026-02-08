@@ -35,10 +35,10 @@ conn = get_connection()
 cursor = conn.cursor()
 
 bots = [
-    ("ARES", "ares_positions"),
-    ("TITAN", "titan_positions"),
+    ("FORTRESS", "fortress_positions"),
+    ("SAMSON", "samson_positions"),
     ("PEGASUS", "pegasus_positions"),
-    ("ATHENA", "athena_positions"),
+    ("SOLOMON", "solomon_positions"),
     ("ICARUS", "icarus_positions"),
 ]
 

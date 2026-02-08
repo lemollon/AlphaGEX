@@ -504,7 +504,7 @@ class TestStrategyPerformanceCommand:
         perf = get_strategy_performance(days=30)
 
         # Should have data for trading bots
-        assert 'ARES' in perf or 'ATHENA' in perf or 'ATLAS' in perf
+        assert 'FORTRESS' in perf or 'SOLOMON' in perf or 'ATLAS' in perf
 
         # Each bot should have standard metrics
         for bot, stats in perf.items():

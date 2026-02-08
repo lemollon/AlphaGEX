@@ -83,10 +83,10 @@ def _calculate_portfolio_unrealized_pnl(cursor) -> dict:
 
     # Bot configurations: (table, symbol, credit_field)
     bot_configs = [
-        ('ares_positions', 'ARES', 'SPY', 'total_credit'),
-        ('athena_positions', 'ATHENA', 'SPY', 'entry_price'),
+        ('fortress_positions', 'FORTRESS', 'SPY', 'total_credit'),
+        ('solomon_positions', 'SOLOMON', 'SPY', 'entry_price'),
         ('icarus_positions', 'ICARUS', 'SPY', 'entry_price'),
-        ('titan_positions', 'TITAN', 'SPX', 'total_credit'),
+        ('samson_positions', 'SAMSON', 'SPX', 'total_credit'),
         ('pegasus_positions', 'PEGASUS', 'SPX', 'total_credit'),
     ]
 
@@ -111,7 +111,7 @@ def _calculate_portfolio_unrealized_pnl(cursor) -> dict:
                 (pos_id, credit, contracts, spread_width,
                  put_short, put_long, call_short, call_long, expiration) = pos
 
-                # Skip non-IC positions (ATHENA/ICARUS directional)
+                # Skip non-IC positions (SOLOMON/ICARUS directional)
                 if not all([put_short, put_long, call_short, call_long]):
                     continue
 
@@ -2106,8 +2106,8 @@ async def get_all_bots_status():
     Get status of all trading bots.
 
     Returns status for all 10 bots:
-    - LIVE: ARES, ATHENA, PEGASUS
-    - PAPER: TITAN, ICARUS, PROMETHEUS
+    - LIVE: FORTRESS, SOLOMON, PEGASUS
+    - PAPER: SAMSON, ICARUS, PROMETHEUS
     - LEGACY/MANUAL: PHOENIX, ATLAS, HERMES, ORACLE
     """
     try:
@@ -2115,8 +2115,8 @@ async def get_all_bots_status():
 
         bots = {
             # === LIVE TRADING BOTS ===
-            "ARES": {
-                "name": "ARES",
+            "FORTRESS": {
+                "name": "FORTRESS",
                 "description": "Aggressive Iron Condor (SPY 0DTE)",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2126,8 +2126,8 @@ async def get_all_bots_status():
                 "symbol": "SPY",
                 "data_sources": ["VIX", "Oracle", "GEX Regime"]
             },
-            "ATHENA": {
-                "name": "ATHENA",
+            "SOLOMON": {
+                "name": "SOLOMON",
                 "description": "Directional Spreads (Bull/Bear)",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2150,8 +2150,8 @@ async def get_all_bots_status():
             },
 
             # === PAPER TRADING BOTS ===
-            "TITAN": {
-                "name": "TITAN",
+            "SAMSON": {
+                "name": "SAMSON",
                 "description": "Aggressive SPX Iron Condor",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2276,7 +2276,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
     history for Proverbs learning while allowing the bot to continue trading.
 
     Args:
-        bot: Bot name (ARES, ATHENA, TITAN, PEGASUS, ICARUS)
+        bot: Bot name (FORTRESS, SOLOMON, SAMSON, PEGASUS, ICARUS)
         capital: New starting capital amount
         note: Optional note explaining the recapitalization
 
@@ -2286,7 +2286,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
         - All decision logs (for Proverbs learning)
         - All scan activity (for signal analysis)
     """
-    valid_bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']
+    valid_bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS']
     bot_upper = bot.upper()
 
     if bot_upper not in valid_bots:
@@ -2468,64 +2468,64 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
 
 
 # =============================================================================
-# ARES (Aggressive Iron Condor) Routes
+# FORTRESS (Aggressive Iron Condor) Routes
 # =============================================================================
 
-# Try to import ARES V2 trader
+# Try to import FORTRESS V2 trader
 try:
-    from trading.ares_v2 import ARESTrader, ARESConfig, TradingMode as ARESTradingMode
+    from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode as ARESTradingMode
     ARES_AVAILABLE = True
 except ImportError as e:
     ARES_AVAILABLE = False
-    ARESConfig = None
-    logger.warning(f"ARES trader not available: {e}")
+    FortressConfig = None
+    logger.warning(f"FORTRESS trader not available: {e}")
 
-# Initialize ARES trader instance (lazy initialization)
-_ares_trader = None
+# Initialize FORTRESS trader instance (lazy initialization)
+_fortress_trader = None
 
-def get_ares_trader():
-    """Get or create ARES trader instance"""
-    global _ares_trader
-    if _ares_trader is None and ARES_AVAILABLE:
-        # Use default ARESConfig which is LIVE mode (sandbox=True in executor)
-        config = ARESConfig()
-        _ares_trader = ARESTrader(config=config)
-    return _ares_trader
+def get_fortress_trader():
+    """Get or create FORTRESS trader instance"""
+    global _fortress_trader
+    if _fortress_trader is None and ARES_AVAILABLE:
+        # Use default FortressConfig which is LIVE mode (sandbox=True in executor)
+        config = FortressConfig()
+        _fortress_trader = FortressTrader(config=config)
+    return _fortress_trader
 
 
-@router.get("/bots/ares/status")
-async def get_ares_status():
+@router.get("/bots/fortress/status")
+async def get_fortress_status():
     """
-    Get ARES bot status.
+    Get FORTRESS bot status.
 
     Returns current status, configuration, and performance metrics.
     """
     if not ARES_AVAILABLE:
         return {
             "success": False,
-            "error": "ARES trader not available",
+            "error": "FORTRESS trader not available",
             "mode": "unavailable"
         }
 
     try:
-        ares = get_ares_trader()
-        if ares:
-            status = ares.get_status()
+        fortress = get_fortress_trader()
+        if fortress:
+            status = fortress.get_status()
             return status
         else:
             return {
                 "success": False,
-                "error": "Could not initialize ARES trader"
+                "error": "Could not initialize FORTRESS trader"
             }
     except Exception as e:
-        logger.error(f"Error getting ARES status: {e}")
+        logger.error(f"Error getting FORTRESS status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/bots/ares/run")
+@router.post("/bots/fortress/run")
 async def run_ares_cycle():
     """
-    Run ARES daily trading cycle.
+    Run FORTRESS daily trading cycle.
 
     This will:
     1. Check if within trading window
@@ -2538,24 +2538,24 @@ async def run_ares_cycle():
     if not ARES_AVAILABLE:
         raise HTTPException(
             status_code=503,
-            detail="ARES trader not available"
+            detail="FORTRESS trader not available"
         )
 
     try:
-        ares = get_ares_trader()
-        if not ares:
+        fortress = get_fortress_trader()
+        if not fortress:
             raise HTTPException(
                 status_code=503,
-                detail="Could not initialize ARES trader"
+                detail="Could not initialize FORTRESS trader"
             )
 
-        result = ares.run_daily_cycle()
+        result = fortress.run_daily_cycle()
         return {
             "success": True,
             "data": result
         }
     except Exception as e:
-        logger.error(f"Error running ARES cycle: {e}")
+        logger.error(f"Error running FORTRESS cycle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2711,7 +2711,7 @@ async def debug_no_trades():
 
         # 4. Open Positions
         open_positions = {}
-        for table, bot in [('ares_positions', 'ARES'), ('athena_positions', 'ATHENA')]:
+        for table, bot in [('fortress_positions', 'FORTRESS'), ('solomon_positions', 'SOLOMON')]:
             try:
                 cursor.execute(f'''
                     SELECT position_id, status, open_time, underlying_at_entry
@@ -2936,9 +2936,9 @@ async def get_sync_status():
         }
 
         bot_tables = [
-            ('ares', 'ares_positions'),
-            ('athena', 'athena_positions'),
-            ('titan', 'titan_positions'),
+            ('fortress', 'fortress_positions'),
+            ('solomon', 'solomon_positions'),
+            ('samson', 'samson_positions'),
             ('pegasus', 'pegasus_positions'),
             ('icarus', 'icarus_positions')
         ]

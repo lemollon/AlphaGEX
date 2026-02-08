@@ -54,7 +54,7 @@ echo "CORE ENDPOINTS"
 echo "--------------"
 test_endpoint "GET" "/api/proverbs/health" "200"
 test_endpoint "GET" "/api/proverbs/dashboard" "200"
-test_endpoint "GET" "/api/proverbs/dashboard/bot/ARES" "200"
+test_endpoint "GET" "/api/proverbs/dashboard/bot/FORTRESS" "200"
 
 # =====================================================
 # AUDIT ENDPOINTS
@@ -63,7 +63,7 @@ echo ""
 echo "AUDIT ENDPOINTS"
 echo "---------------"
 test_endpoint "GET" "/api/proverbs/audit" "200"
-test_endpoint "GET" "/api/proverbs/audit?bot_name=ARES&limit=10" "200"
+test_endpoint "GET" "/api/proverbs/audit?bot_name=FORTRESS&limit=10" "200"
 test_endpoint "GET" "/api/proverbs/audit/action-types" "200"
 
 # =====================================================
@@ -81,7 +81,7 @@ test_endpoint "GET" "/api/proverbs/proposals/pending" "200"
 echo ""
 echo "VERSION ENDPOINTS"
 echo "-----------------"
-test_endpoint "GET" "/api/proverbs/versions/ARES" "200"
+test_endpoint "GET" "/api/proverbs/versions/FORTRESS" "200"
 test_endpoint "GET" "/api/proverbs/rollbacks" "200"
 
 # =====================================================
@@ -106,7 +106,7 @@ test_endpoint "GET" "/api/proverbs/feedback-loop/status" "200"
 echo ""
 echo "PERFORMANCE ENDPOINTS"
 echo "---------------------"
-test_endpoint "GET" "/api/proverbs/performance/ARES" "200"
+test_endpoint "GET" "/api/proverbs/performance/FORTRESS" "200"
 test_endpoint "GET" "/api/proverbs/realtime-status?days=7" "200"
 
 # =====================================================
@@ -124,13 +124,13 @@ test_endpoint "GET" "/api/proverbs/oracle-accuracy?days=30" "200"
 echo ""
 echo "ENHANCED ANALYTICS ENDPOINTS"
 echo "----------------------------"
-test_endpoint "GET" "/api/proverbs/enhanced/analysis/ARES?days=30" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/analysis/FORTRESS?days=30" "200"
 test_endpoint "GET" "/api/proverbs/enhanced/correlations" "200"
-test_endpoint "GET" "/api/proverbs/enhanced/time-analysis/ARES" "200"
-test_endpoint "GET" "/api/proverbs/enhanced/regime/ARES?days=30" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/time-analysis/FORTRESS" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/regime/FORTRESS?days=30" "200"
 test_endpoint "GET" "/api/proverbs/enhanced/digest" "200"
 test_endpoint "GET" "/api/proverbs/enhanced/weekend-precheck" "200"
-test_endpoint "GET" "/api/proverbs/enhanced/rollback-status/ARES" "200"
+test_endpoint "GET" "/api/proverbs/enhanced/rollback-status/FORTRESS" "200"
 
 # =====================================================
 # A/B TESTING ENDPOINTS

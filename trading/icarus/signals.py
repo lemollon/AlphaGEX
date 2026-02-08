@@ -4,7 +4,7 @@ ICARUS - Signal Generation
 
 Clean signal generation using GEX data, Oracle, and ML models.
 
-ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA):
+ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs SOLOMON):
 - 2% wall filter (vs 1%) - more room to trade
 - 48% min win probability (vs 55%) - lower threshold
 - VIX range 12-30 (vs 15-25) - wider volatility range
@@ -95,7 +95,7 @@ class SignalGenerator:
     """
     Generates trading signals from GEX data and ML models.
 
-    ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA):
+    ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs SOLOMON):
     - 2% wall_filter_pct (vs 1%) - more room to trade
     - 48% min_win_probability (vs 55%) - lower threshold
     - 1.2 min_rr_ratio (vs 1.5) - accept slightly lower R:R
@@ -410,8 +410,8 @@ class SignalGenerator:
                 win_rate_30d=gex_data.get('win_rate_30d', 0.68),
             )
 
-            # Call ATHENA-specific advice method (ICARUS uses same model)
-            prediction = self.oracle.get_athena_advice(
+            # Call SOLOMON-specific advice method (ICARUS uses same model)
+            prediction = self.oracle.get_solomon_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=True,  # Enable Claude for transparency logging
@@ -508,7 +508,7 @@ class SignalGenerator:
         """
         Check if price is near a GEX wall for entry.
 
-        ICARUS uses 2% wall filter (vs ATHENA's 1%) - more aggressive but still filtered.
+        ICARUS uses 2% wall filter (vs SOLOMON's 1%) - more aggressive but still filtered.
 
         Returns: (is_valid, direction, reason)
         """
@@ -523,7 +523,7 @@ class SignalGenerator:
         dist_to_put_wall_pct = abs((spot - put_wall) / spot) * 100
         dist_to_call_wall_pct = abs((call_wall - spot) / spot) * 100
 
-        # ICARUS uses 2% threshold (vs ATHENA's 1%) - more aggressive but still filtered
+        # ICARUS uses 2% threshold (vs SOLOMON's 1%) - more aggressive but still filtered
         threshold = self.config.wall_filter_pct
 
         # Check which wall is within threshold
@@ -556,7 +556,7 @@ class SignalGenerator:
         """
         Calculate optimal spread strikes.
 
-        ICARUS uses $3 spread width (vs ATHENA's $2).
+        ICARUS uses $3 spread width (vs SOLOMON's $2).
 
         Returns: (long_strike, short_strike)
         """
@@ -879,7 +879,7 @@ class SignalGenerator:
             spread_type, long_strike, short_strike, spot_price, vix
         )
 
-        # Step 8: Calculate risk/reward (1.2 min for ICARUS vs ATHENA's 1.5)
+        # Step 8: Calculate risk/reward (1.2 min for ICARUS vs SOLOMON's 1.5)
         rr_ratio = max_profit / max_loss if max_loss > 0 else 0
 
         # R:R ratio check - warning only (no blocking)

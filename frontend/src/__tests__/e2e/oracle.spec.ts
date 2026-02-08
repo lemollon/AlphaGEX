@@ -60,8 +60,8 @@ test.describe('Oracle Knowledge Base - Page Load', () => {
     await expect(page.locator('text=Bot Heartbeats')).toBeVisible({ timeout: 10000 })
 
     // Check for bot names
-    await expect(page.locator('text=ARES')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('text=ATHENA')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=FORTRESS')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=SOLOMON')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=ATLAS')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=PHOENIX')).toBeVisible({ timeout: 5000 })
   })
@@ -149,7 +149,7 @@ test.describe('Oracle Knowledge Base - Bot Interactions Tab', () => {
     await expect(botSelect).toBeVisible({ timeout: 10000 })
 
     // Change selection
-    await botSelect.selectOption('ARES')
+    await botSelect.selectOption('FORTRESS')
     await page.waitForTimeout(1000)
 
     // Should trigger refresh
@@ -664,11 +664,11 @@ test.describe('Oracle Knowledge Base - Interactive Features', () => {
 
     // Select a specific bot
     const botSelect = page.locator('select').first()
-    await botSelect.selectOption('ARES')
+    await botSelect.selectOption('FORTRESS')
     await page.waitForTimeout(2000)
 
     // Either shows filtered data or empty state
-    const hasAresData = await page.locator('text=ARES').count() > 1
+    const hasAresData = await page.locator('text=FORTRESS').count() > 1
     const hasEmptyMessage = await page.locator('text=No bot interactions found').isVisible()
 
     expect(hasAresData || hasEmptyMessage).toBe(true)

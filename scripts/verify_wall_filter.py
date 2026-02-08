@@ -32,11 +32,11 @@ print("\n[1] MODEL DEFAULTS (in code)")
 print("-" * 70)
 
 try:
-    from trading.athena_v2.models import ATHENAConfig
-    athena_default = ATHENAConfig()
-    print(f"  ATHENA default wall_filter_pct: {athena_default.wall_filter_pct}%")
+    from trading.solomon_v2.models import SolomonConfig
+    solomon_default = SolomonConfig()
+    print(f"  SOLOMON default wall_filter_pct: {solomon_default.wall_filter_pct}%")
 except Exception as e:
-    print(f"  ATHENA: Error loading - {e}")
+    print(f"  SOLOMON: Error loading - {e}")
 
 try:
     from trading.icarus.models import ICARUSConfig
@@ -57,17 +57,17 @@ try:
     with db_connection() as conn:
         c = conn.cursor()
 
-        # ATHENA config
+        # SOLOMON config
         c.execute("""
             SELECT config_key, config_value
             FROM autonomous_config
-            WHERE bot_name = 'ATHENA' AND config_key = 'wall_filter_pct'
+            WHERE bot_name = 'SOLOMON' AND config_key = 'wall_filter_pct'
         """)
         result = c.fetchone()
         if result:
-            print(f"  ATHENA database wall_filter_pct: {result[1]}%")
+            print(f"  SOLOMON database wall_filter_pct: {result[1]}%")
         else:
-            print(f"  ATHENA database wall_filter_pct: NOT SET (will use default {athena_default.wall_filter_pct}%)")
+            print(f"  SOLOMON database wall_filter_pct: NOT SET (will use default {solomon_default.wall_filter_pct}%)")
 
         # ICARUS config
         c.execute("""
@@ -96,10 +96,10 @@ try:
     import inspect
 
     # Get the default from the function signature
-    sig = inspect.signature(OracleAdvisor.get_athena_advice)
+    sig = inspect.signature(OracleAdvisor.get_solomon_advice)
     for param_name, param in sig.parameters.items():
         if param_name == 'wall_filter_pct':
-            print(f"  Oracle get_athena_advice default: {param.default}%")
+            print(f"  Oracle get_solomon_advice default: {param.default}%")
             break
 except Exception as e:
     print(f"  Oracle error: {e}")

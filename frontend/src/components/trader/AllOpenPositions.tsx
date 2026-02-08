@@ -32,7 +32,7 @@ interface EnhancedPosition extends LivePosition {
 }
 
 interface AllOpenPositionsProps {
-  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botName: 'SOLOMON' | 'FORTRESS' | 'PEGASUS'
   positions: LivePosition[]
   underlyingPrice?: number
   isLoading?: boolean
@@ -565,8 +565,8 @@ function EntryContext({
   )
 }
 
-// Single Position Card - ATHENA style (spreads)
-function AthenaPositionCard({
+// Single Position Card - SOLOMON style (spreads)
+function SolomonPositionCard({
   position,
   underlyingPrice,
   onClick,
@@ -585,7 +585,7 @@ function AthenaPositionCard({
   const { age, timestamp } = getPositionAge(position.entry_time || position.created_at)
   const expInfo = getExpirationInfo(position.expiration)
 
-  // Calculate probability for ATHENA spreads (simplified - debit spreads)
+  // Calculate probability for SOLOMON spreads (simplified - debit spreads)
   const price = underlyingPrice || position.current_underlying || 0
   const shortStrike = position.short_strike || 0
   const longStrike = position.long_strike || 0
@@ -783,7 +783,7 @@ function AthenaPositionCard({
   )
 }
 
-// Single Position Card - ARES style (iron condors)
+// Single Position Card - FORTRESS style (iron condors)
 function AresPositionCard({
   position,
   underlyingPrice,
@@ -1071,8 +1071,8 @@ export default function AllOpenPositions({
       {hasPositions ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {positions.map((position) =>
-            botName === 'ATHENA' ? (
-              <AthenaPositionCard
+            botName === 'SOLOMON' ? (
+              <SolomonPositionCard
                 key={position.position_id}
                 position={position as EnhancedPosition}
                 underlyingPrice={underlyingPrice}

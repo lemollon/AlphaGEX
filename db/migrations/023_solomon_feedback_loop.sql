@@ -32,14 +32,14 @@ CREATE INDEX IF NOT EXISTS idx_oracle_predictions_direction ON oracle_prediction
 -- 2. BOT POSITION TABLES - Add oracle_prediction_id column
 -- ============================================================================
 
--- ARES positions
-ALTER TABLE ares_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-CREATE INDEX IF NOT EXISTS idx_ares_positions_oracle_pred ON ares_positions(oracle_prediction_id);
+-- FORTRESS positions
+ALTER TABLE fortress_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_oracle_pred ON fortress_positions(oracle_prediction_id);
 
--- ATHENA positions
-ALTER TABLE athena_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-ALTER TABLE athena_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
-CREATE INDEX IF NOT EXISTS idx_athena_positions_oracle_pred ON athena_positions(oracle_prediction_id);
+-- SOLOMON positions
+ALTER TABLE solomon_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+ALTER TABLE solomon_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
+CREATE INDEX IF NOT EXISTS idx_solomon_positions_oracle_pred ON solomon_positions(oracle_prediction_id);
 
 -- TITAN positions
 ALTER TABLE titan_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS solomon_strategy_analysis (
     oracle_accuracy DECIMAL(5,4),
 
     -- By bot breakdown (JSONB for flexibility)
-    bot_breakdown JSONB,  -- {"ARES": {"trades": 5, "wins": 4}, "PEGASUS": {...}}
+    bot_breakdown JSONB,  -- {"FORTRESS": {"trades": 5, "wins": 4}, "PEGASUS": {...}}
 
     -- Market conditions summary
     avg_vix DECIMAL(5,2),
@@ -167,7 +167,7 @@ CREATE TABLE IF NOT EXISTS solomon_bot_configs (
 -- Insert default configurations for the 5 bots
 INSERT INTO solomon_bot_configs (bot_name, strategy_type, primary_success_metric, target_value, risk_tolerance, track_metrics, optimizable_params)
 VALUES
-    ('ARES', 'IRON_CONDOR', 'win_rate', 0.70, 'NORMAL',
+    ('FORTRESS', 'IRON_CONDOR', 'win_rate', 0.70, 'NORMAL',
      '["win_rate", "put_breach_rate", "call_breach_rate", "max_profit_rate"]',
      '["sd_multiplier", "spread_width", "profit_target_pct"]'),
     ('PEGASUS', 'IRON_CONDOR', 'win_rate', 0.70, 'CONSERVATIVE',
@@ -176,7 +176,7 @@ VALUES
     ('TITAN', 'IRON_CONDOR', 'win_rate', 0.60, 'AGGRESSIVE',
      '["win_rate", "put_breach_rate", "call_breach_rate", "max_profit_rate", "trade_frequency"]',
      '["sd_multiplier", "spread_width", "profit_target_pct", "min_win_probability"]'),
-    ('ATHENA', 'DIRECTIONAL', 'direction_accuracy', 0.55, 'CONSERVATIVE',
+    ('SOLOMON', 'DIRECTIONAL', 'direction_accuracy', 0.55, 'CONSERVATIVE',
      '["direction_accuracy", "avg_rr_achieved", "wall_proximity_at_entry"]',
      '["wall_filter_pct", "profit_target_pct", "stop_loss_pct", "min_rr_ratio"]'),
     ('ICARUS', 'DIRECTIONAL', 'direction_accuracy', 0.50, 'AGGRESSIVE',

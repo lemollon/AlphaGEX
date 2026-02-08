@@ -71,17 +71,17 @@ def check_model_has_field(bot_name: str, model_path: str, class_name: str, field
     except Exception as e:
         test_fail(f"{bot_name} {class_name}", str(e))
 
-# ARES
-check_model_has_field("ARES", "trading/ares_v2/models.py", "IronCondorSignal", "oracle_confidence")
-check_model_has_field("ARES", "trading/ares_v2/models.py", "IronCondorPosition", "oracle_confidence")
+# FORTRESS
+check_model_has_field("FORTRESS", "trading/fortress_v2/models.py", "IronCondorSignal", "oracle_confidence")
+check_model_has_field("FORTRESS", "trading/fortress_v2/models.py", "IronCondorPosition", "oracle_confidence")
 
-# ATHENA
-check_model_has_field("ATHENA", "trading/athena_v2/models.py", "TradeSignal", "oracle_confidence")
-check_model_has_field("ATHENA", "trading/athena_v2/models.py", "SpreadPosition", "oracle_confidence")
+# SOLOMON
+check_model_has_field("SOLOMON", "trading/solomon_v2/models.py", "TradeSignal", "oracle_confidence")
+check_model_has_field("SOLOMON", "trading/solomon_v2/models.py", "SpreadPosition", "oracle_confidence")
 
-# TITAN
-check_model_has_field("TITAN", "trading/titan/models.py", "IronCondorSignal", "oracle_confidence")
-check_model_has_field("TITAN", "trading/titan/models.py", "IronCondorPosition", "oracle_confidence")
+# SAMSON
+check_model_has_field("SAMSON", "trading/samson/models.py", "IronCondorSignal", "oracle_confidence")
+check_model_has_field("SAMSON", "trading/samson/models.py", "IronCondorPosition", "oracle_confidence")
 
 # PEGASUS
 check_model_has_field("PEGASUS", "trading/pegasus/models.py", "IronCondorSignal", "oracle_confidence")
@@ -119,9 +119,9 @@ def check_signal_accepts_oracle_confidence(bot_name: str, signals_path: str):
     except Exception as e:
         test_fail(f"{bot_name} signals.py", str(e))
 
-check_signal_accepts_oracle_confidence("ARES", "trading/ares_v2/signals.py")
-check_signal_accepts_oracle_confidence("ATHENA", "trading/athena_v2/signals.py")
-check_signal_accepts_oracle_confidence("TITAN", "trading/titan/signals.py")
+check_signal_accepts_oracle_confidence("FORTRESS", "trading/fortress_v2/signals.py")
+check_signal_accepts_oracle_confidence("SOLOMON", "trading/solomon_v2/signals.py")
+check_signal_accepts_oracle_confidence("SAMSON", "trading/samson/signals.py")
 check_signal_accepts_oracle_confidence("PEGASUS", "trading/pegasus/signals.py")
 check_signal_accepts_oracle_confidence("ICARUS", "trading/icarus/signals.py")
 
@@ -159,9 +159,9 @@ def check_position_to_dict_has_oracle(bot_name: str, model_path: str):
     except Exception as e:
         test_fail(f"{bot_name} model", str(e))
 
-check_position_to_dict_has_oracle("ARES", "trading/ares_v2/models.py")
-check_position_to_dict_has_oracle("ATHENA", "trading/athena_v2/models.py")
-check_position_to_dict_has_oracle("TITAN", "trading/titan/models.py")
+check_position_to_dict_has_oracle("FORTRESS", "trading/fortress_v2/models.py")
+check_position_to_dict_has_oracle("SOLOMON", "trading/solomon_v2/models.py")
+check_position_to_dict_has_oracle("SAMSON", "trading/samson/models.py")
 check_position_to_dict_has_oracle("PEGASUS", "trading/pegasus/models.py")
 check_position_to_dict_has_oracle("ICARUS", "trading/icarus/models.py")
 
@@ -199,9 +199,9 @@ def check_executor_uses_oracle_confidence(bot_name: str, executor_path: str):
     except Exception as e:
         test_fail(f"{bot_name} executor", str(e))
 
-check_executor_uses_oracle_confidence("ARES", "trading/ares_v2/executor.py")
-check_executor_uses_oracle_confidence("ATHENA", "trading/athena_v2/executor.py")
-check_executor_uses_oracle_confidence("TITAN", "trading/titan/executor.py")
+check_executor_uses_oracle_confidence("FORTRESS", "trading/fortress_v2/executor.py")
+check_executor_uses_oracle_confidence("SOLOMON", "trading/solomon_v2/executor.py")
+check_executor_uses_oracle_confidence("SAMSON", "trading/samson/executor.py")
 check_executor_uses_oracle_confidence("PEGASUS", "trading/pegasus/executor.py")
 check_executor_uses_oracle_confidence("ICARUS", "trading/icarus/executor.py")
 
@@ -231,9 +231,9 @@ def check_signals_passes_oracle_confidence(bot_name: str, signals_path: str):
     except Exception as e:
         test_fail(f"{bot_name} signals", str(e))
 
-check_signals_passes_oracle_confidence("ARES", "trading/ares_v2/signals.py")
-check_signals_passes_oracle_confidence("ATHENA", "trading/athena_v2/signals.py")
-check_signals_passes_oracle_confidence("TITAN", "trading/titan/signals.py")
+check_signals_passes_oracle_confidence("FORTRESS", "trading/fortress_v2/signals.py")
+check_signals_passes_oracle_confidence("SOLOMON", "trading/solomon_v2/signals.py")
+check_signals_passes_oracle_confidence("SAMSON", "trading/samson/signals.py")
 check_signals_passes_oracle_confidence("PEGASUS", "trading/pegasus/signals.py")
 check_signals_passes_oracle_confidence("ICARUS", "trading/icarus/signals.py")
 
@@ -267,9 +267,9 @@ def check_db_has_oracle_columns(bot_name: str, db_path: str):
     except Exception as e:
         test_fail(f"{bot_name} db.py", str(e))
 
-check_db_has_oracle_columns("ARES", "trading/ares_v2/db.py")
-check_db_has_oracle_columns("ATHENA", "trading/athena_v2/db.py")
-check_db_has_oracle_columns("TITAN", "trading/titan/db.py")
+check_db_has_oracle_columns("FORTRESS", "trading/fortress_v2/db.py")
+check_db_has_oracle_columns("SOLOMON", "trading/solomon_v2/db.py")
+check_db_has_oracle_columns("SAMSON", "trading/samson/db.py")
 check_db_has_oracle_columns("PEGASUS", "trading/pegasus/db.py")
 check_db_has_oracle_columns("ICARUS", "trading/icarus/db.py")
 

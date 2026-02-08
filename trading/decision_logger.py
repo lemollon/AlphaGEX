@@ -45,11 +45,11 @@ class BotName(Enum):
     ATLAS = "ATLAS"      # SPXWheelTrader - SPX Cash-Secured Put Wheel
     HERMES = "HERMES"    # WheelStrategyManager - Manual Wheel via UI
     ORACLE = "ORACLE"    # MultiStrategyOptimizer - Advisory/Recommendations
-    ARES = "ARES"        # ARESTrader - Aggressive Iron Condor (10% monthly target)
-    ATHENA = "ATHENA"    # ATHENATrader - Directional Spreads (Bull/Bear Call Spreads)
+    FORTRESS = "FORTRESS"        # FortressTrader - Aggressive Iron Condor (10% monthly target)
+    SOLOMON = "SOLOMON"    # SolomonTrader - Directional Spreads (Bull/Bear Call Spreads)
     PEGASUS = "PEGASUS"  # PEGASUSTrader - SPX Iron Condor ($10 spreads, weekly)
     ICARUS = "ICARUS"    # ICARUSTrader - Aggressive Directional Spreads
-    TITAN = "TITAN"      # TITANTrader - Aggressive SPX Iron Condor ($12 spreads)
+    SAMSON = "SAMSON"      # SamsonTrader - Aggressive SPX Iron Condor ($12 spreads)
     PROMETHEUS = "PROMETHEUS"  # PrometheusTrader - Box Spread Synthetic Borrowing + IC Trading
 
 
@@ -189,7 +189,7 @@ class MarketContext:
 @dataclass
 class MLPredictions:
     """
-    ML model predictions for ATHENA (GEX ML signal).
+    ML model predictions for SOLOMON (GEX ML signal).
     Captures all outputs from the ML models for full audit trail.
     """
     # Primary prediction
@@ -305,7 +305,7 @@ class TradeDecision:
     # Oracle AI advice (from OracleAdvisor)
     oracle_advice: Optional[Dict] = None  # Full oracle prediction with win_prob, confidence, factors
 
-    # ML Predictions (for ATHENA - GEX ML signal)
+    # ML Predictions (for SOLOMON - GEX ML signal)
     ml_predictions: Optional[MLPredictions] = None
 
     # Structured risk checks (list of individual check results)
@@ -847,7 +847,7 @@ def export_decisions_json(
                 record['what'] = full_dec.get('what', '')
                 record['why'] = full_dec.get('why', '')
                 record['how'] = full_dec.get('how', '')
-                record['bot_name'] = full_dec.get('bot_name', 'ARES')
+                record['bot_name'] = full_dec.get('bot_name', 'FORTRESS')
 
                 # Trade legs with complete data (strikes, prices, Greeks)
                 record['legs'] = full_dec.get('legs', [])
@@ -981,7 +981,7 @@ def export_decisions_json(
                 record['passed_risk_checks'] = full_dec.get('passed_risk_checks', True)
 
                 # =========================================================
-                # ML PREDICTIONS - For ATHENA (GEX ML signal)
+                # ML PREDICTIONS - For SOLOMON (GEX ML signal)
                 # =========================================================
                 ml_preds = full_dec.get('ml_predictions', {})
                 if ml_preds and isinstance(ml_preds, dict):
@@ -1308,17 +1308,17 @@ def get_oracle_logger() -> DecisionLogger:
 
 
 def get_ares_logger() -> DecisionLogger:
-    """Get logger for ARES (Aggressive Iron Condor)"""
-    if 'ARES' not in _bot_loggers:
-        _bot_loggers['ARES'] = DecisionLogger()
-    return _bot_loggers['ARES']
+    """Get logger for FORTRESS (Aggressive Iron Condor)"""
+    if 'FORTRESS' not in _bot_loggers:
+        _bot_loggers['FORTRESS'] = DecisionLogger()
+    return _bot_loggers['FORTRESS']
 
 
-def get_athena_logger() -> DecisionLogger:
-    """Get logger for ATHENA (Directional Spreads)"""
-    if 'ATHENA' not in _bot_loggers:
-        _bot_loggers['ATHENA'] = DecisionLogger()
-    return _bot_loggers['ATHENA']
+def get_solomon_logger() -> DecisionLogger:
+    """Get logger for SOLOMON (Directional Spreads)"""
+    if 'SOLOMON' not in _bot_loggers:
+        _bot_loggers['SOLOMON'] = DecisionLogger()
+    return _bot_loggers['SOLOMON']
 
 
 def get_pegasus_logger() -> DecisionLogger:
@@ -1336,10 +1336,10 @@ def get_icarus_logger() -> DecisionLogger:
 
 
 def get_titan_logger() -> DecisionLogger:
-    """Get logger for TITAN (Aggressive SPX Iron Condor)"""
-    if 'TITAN' not in _bot_loggers:
-        _bot_loggers['TITAN'] = DecisionLogger()
-    return _bot_loggers['TITAN']
+    """Get logger for SAMSON (Aggressive SPX Iron Condor)"""
+    if 'SAMSON' not in _bot_loggers:
+        _bot_loggers['SAMSON'] = DecisionLogger()
+    return _bot_loggers['SAMSON']
 
 
 def get_prometheus_logger() -> DecisionLogger:

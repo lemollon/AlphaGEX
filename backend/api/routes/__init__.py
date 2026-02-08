@@ -27,8 +27,8 @@ from . import wheel_routes
 from . import export_routes
 from . import ml_routes
 from . import spx_backtest_routes
-from . import ares_routes
-from . import athena_routes
+from . import fortress_routes
+from . import solomon_routes
 from . import pegasus_routes
 from . import daily_manna_routes
 from . import bot_reports_routes
@@ -60,8 +60,8 @@ __all__ = [
     'export_routes',
     'ml_routes',
     'spx_backtest_routes',
-    'ares_routes',
-    'athena_routes',
+    'fortress_routes',
+    'solomon_routes',
     'pegasus_routes',
     'daily_manna_routes',
     'bot_reports_routes',

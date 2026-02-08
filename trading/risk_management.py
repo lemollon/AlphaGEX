@@ -590,8 +590,8 @@ def run_daily_risk_checks():
     try:
         from quant.proverbs_enhancements import get_proverbs_enhanced
         proverbs = get_proverbs_enhanced()
-        can_trade = proverbs.proverbs.can_trade("ARES")
-        daily_loss = proverbs.daily_loss_monitor.get_daily_loss("ARES")
+        can_trade = proverbs.proverbs.can_trade("FORTRESS")
+        daily_loss = proverbs.daily_loss_monitor.get_daily_loss("FORTRESS")
         results['proverbs'] = {
             'can_trade': can_trade,
             'daily_loss': daily_loss,

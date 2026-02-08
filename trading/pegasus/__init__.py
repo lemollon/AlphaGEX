@@ -10,7 +10,7 @@ Usage:
     trader = PEGASUSTrader()
     result = trader.run_cycle()
 
-Key differences from ARES (SPY):
+Key differences from FORTRESS (SPY):
 - Ticker: SPX
 - Spread width: $10 (vs $2)
 - Strike increments: $5 (vs $1)

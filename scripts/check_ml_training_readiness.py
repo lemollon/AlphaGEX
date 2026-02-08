@@ -43,7 +43,7 @@ ML_MODELS = {
         'min_records': 100,
         'data_tables': ['gex_structure_daily'],
         'priority': 'HIGH',
-        'used_by': ['ATHENA', 'Apache Strategy'],
+        'used_by': ['SOLOMON', 'Apache Strategy'],
     },
     'oracle': {
         'name': 'Oracle Advisor',
@@ -54,7 +54,7 @@ ML_MODELS = {
         'min_records': 50,
         'data_tables': ['oracle_training_outcomes', 'backtest_results', 'autonomous_closed_trades'],
         'priority': 'HIGH',
-        'used_by': ['ARES', 'ATHENA', 'PHOENIX'],
+        'used_by': ['FORTRESS', 'SOLOMON', 'PHOENIX'],
     },
     'gex_directional': {
         'name': 'GEX Directional ML',
@@ -67,14 +67,14 @@ ML_MODELS = {
         'used_by': ['Backtests', 'Directional Signals'],
     },
     'ares_ml': {
-        'name': 'ARES ML Advisor',
+        'name': 'FORTRESS ML Advisor',
         'description': 'Iron Condor optimization from backtest patterns',
         'train_script': 'scripts/train_ares_ml.py',
         'model_path': 'quant/.models/ares_advisor_model.pkl',
         'min_records': 50,
         'data_tables': ['backtest_results', 'backtest_trades'],
         'priority': 'MEDIUM',
-        'used_by': ['ARES Iron Condor'],
+        'used_by': ['FORTRESS Iron Condor'],
     },
 }
 

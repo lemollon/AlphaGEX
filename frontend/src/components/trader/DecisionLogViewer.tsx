@@ -76,7 +76,7 @@ interface BotStatus {
 }
 
 interface DecisionLogViewerProps {
-  defaultBot?: string  // Lock to specific bot (e.g., 'ARES')
+  defaultBot?: string  // Lock to specific bot (e.g., 'FORTRESS')
   hideFilter?: boolean // Hide the bot filter dropdown
 }
 
@@ -154,7 +154,7 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
       'ATLAS': 'text-blue-400',
       'HERMES': 'text-purple-400',
       'ORACLE': 'text-green-400',
-      'ARES': 'text-red-400'
+      'FORTRESS': 'text-red-400'
     }
     return colors[botName] || 'text-gray-400'
   }
@@ -186,8 +186,8 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
               <option value="all">All Bots</option>
               <option value="PHOENIX">PHOENIX (0DTE)</option>
               <option value="ATLAS">ATLAS (Wheel)</option>
-              <option value="ARES">ARES (SPY IC)</option>
-              <option value="ATHENA">ATHENA (Spreads)</option>
+              <option value="FORTRESS">FORTRESS (SPY IC)</option>
+              <option value="SOLOMON">SOLOMON (Spreads)</option>
               <option value="PEGASUS">PEGASUS (SPX IC)</option>
               <option value="HERMES">HERMES (Manual)</option>
               <option value="ORACLE">ORACLE (Advisory)</option>

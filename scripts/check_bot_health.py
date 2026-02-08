@@ -178,19 +178,19 @@ def check_open_positions():
         conn = get_connection()
         c = conn.cursor()
 
-        # Check ARES positions
+        # Check FORTRESS positions
         try:
-            c.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
-            ares_open = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM fortress_positions WHERE status = 'open'")
+            fortress_open = c.fetchone()[0]
         except:
-            ares_open = "N/A"
+            fortress_open = "N/A"
 
-        # Check ATHENA positions
+        # Check SOLOMON positions
         try:
-            c.execute("SELECT COUNT(*) FROM athena_positions WHERE status = 'open'")
-            athena_open = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM solomon_positions WHERE status = 'open'")
+            solomon_open = c.fetchone()[0]
         except:
-            athena_open = "N/A"
+            solomon_open = "N/A"
 
         # Check ICARUS positions
         try:
@@ -206,20 +206,20 @@ def check_open_positions():
         except:
             pegasus_open = "N/A"
 
-        # Check TITAN positions
+        # Check SAMSON positions
         try:
-            c.execute("SELECT COUNT(*) FROM titan_positions WHERE status = 'open'")
+            c.execute("SELECT COUNT(*) FROM samson_positions WHERE status = 'open'")
             titan_open = c.fetchone()[0]
         except:
             titan_open = "N/A"
 
         print(f"\n{'Bot':<12} {'Open Positions':<15}")
         print("-" * 30)
-        print(f"{'ARES':<12} {ares_open}")
-        print(f"{'ATHENA':<12} {athena_open}")
+        print(f"{'FORTRESS':<12} {fortress_open}")
+        print(f"{'SOLOMON':<12} {solomon_open}")
         print(f"{'ICARUS':<12} {icarus_open}")
         print(f"{'PEGASUS':<12} {pegasus_open}")
-        print(f"{'TITAN':<12} {titan_open}")
+        print(f"{'SAMSON':<12} {titan_open}")
 
         conn.close()
 
@@ -238,11 +238,11 @@ def check_trading_window():
     # Define trading windows (market closes at 3:00 PM CT)
     # Entry windows end 15 min before market close
     windows = {
-        'ARES': ('08:30', '14:45'),
-        'ATHENA': ('08:35', '14:30'),
+        'FORTRESS': ('08:30', '14:45'),
+        'SOLOMON': ('08:35', '14:30'),
         'ICARUS': ('08:35', '14:30'),
         'PEGASUS': ('08:30', '14:45'),
-        'TITAN': ('08:30', '14:45'),
+        'SAMSON': ('08:30', '14:45'),
         'ATLAS': ('09:05', '09:10'),  # Daily run
         'ARGUS': ('08:30', '14:45'),
     }

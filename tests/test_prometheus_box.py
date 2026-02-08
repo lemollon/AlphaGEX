@@ -588,7 +588,7 @@ class TestCapitalDeployment:
 
         assert data['deployment_id'] == "DEP-001"
         assert 'allocations' in data
-        assert data['allocations']['ares']['amount'] == 35000.0
+        assert data['allocations']['fortress']['amount'] == 35000.0
 
 
 class TestBorrowingCostAnalysis:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ARES Intraday Snapshot Diagnostic Script
+FORTRESS Intraday Snapshot Diagnostic Script
 Run this in Render shell to diagnose why intraday equity chart isn't working.
 
 Usage:
@@ -19,7 +19,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 def run_diagnostics():
     print("=" * 70)
-    print("ARES INTRADAY SNAPSHOT DIAGNOSTICS")
+    print("FORTRESS INTRADAY SNAPSHOT DIAGNOSTICS")
     print("=" * 70)
 
     now = datetime.now(CENTRAL_TZ)
@@ -52,31 +52,31 @@ def run_diagnostics():
         print(f"\n❌ Database connection FAILED: {e}")
         return
 
-    # ========== ARES EQUITY SNAPSHOTS TABLE ==========
+    # ========== FORTRESS EQUITY SNAPSHOTS TABLE ==========
     print("\n" + "=" * 70)
-    print("ARES EQUITY SNAPSHOTS TABLE")
+    print("FORTRESS EQUITY SNAPSHOTS TABLE")
     print("=" * 70)
 
     cursor.execute("""
         SELECT EXISTS (
             SELECT FROM information_schema.tables
-            WHERE table_name = 'ares_equity_snapshots'
+            WHERE table_name = 'fortress_equity_snapshots'
         )
     """)
     table_exists = cursor.fetchone()[0]
 
     if not table_exists:
-        print("\n❌ ares_equity_snapshots table does NOT EXIST")
+        print("\n❌ fortress_equity_snapshots table does NOT EXIST")
         print("   This is the root cause - no table means no snapshots!")
         print("   The scheduler creates this table when it first runs during market hours.")
     else:
-        print("\n✅ ares_equity_snapshots table exists")
+        print("\n✅ fortress_equity_snapshots table exists")
 
         # Get columns
         cursor.execute("""
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_name = 'ares_equity_snapshots'
+            WHERE table_name = 'fortress_equity_snapshots'
             ORDER BY ordinal_position
         """)
         columns = cursor.fetchall()
@@ -94,12 +94,12 @@ def run_diagnostics():
             print(f"\n   ✅ All required columns present")
 
         # Count snapshots
-        cursor.execute("SELECT COUNT(*) FROM ares_equity_snapshots")
+        cursor.execute("SELECT COUNT(*) FROM fortress_equity_snapshots")
         total = cursor.fetchone()[0]
         print(f"\n   Total snapshots: {total}")
 
         cursor.execute("""
-            SELECT COUNT(*) FROM ares_equity_snapshots
+            SELECT COUNT(*) FROM fortress_equity_snapshots
             WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_count = cursor.fetchone()[0]
@@ -111,7 +111,7 @@ def run_diagnostics():
         # Get latest snapshot
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
-            FROM ares_equity_snapshots
+            FROM fortress_equity_snapshots
             ORDER BY timestamp DESC
             LIMIT 1
         """)
@@ -138,74 +138,74 @@ def run_diagnostics():
         else:
             print("\n   ❌ No snapshots ever saved!")
 
-    # ========== ARES POSITIONS TABLE ==========
+    # ========== FORTRESS POSITIONS TABLE ==========
     print("\n" + "=" * 70)
-    print("ARES POSITIONS TABLE")
+    print("FORTRESS POSITIONS TABLE")
     print("=" * 70)
 
     cursor.execute("""
         SELECT EXISTS (
             SELECT FROM information_schema.tables
-            WHERE table_name = 'ares_positions'
+            WHERE table_name = 'fortress_positions'
         )
     """)
     pos_exists = cursor.fetchone()[0]
 
     if not pos_exists:
-        print("\n❌ ares_positions table does NOT EXIST")
+        print("\n❌ fortress_positions table does NOT EXIST")
     else:
-        print("\n✅ ares_positions table exists")
+        print("\n✅ fortress_positions table exists")
 
-        cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
+        cursor.execute("SELECT COUNT(*) FROM fortress_positions WHERE status = 'open'")
         open_count = cursor.fetchone()[0]
         print(f"   Open positions: {open_count}")
 
-        cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired')")
+        cursor.execute("SELECT COUNT(*) FROM fortress_positions WHERE status IN ('closed', 'expired')")
         closed_count = cursor.fetchone()[0]
         print(f"   Closed positions: {closed_count}")
 
-        cursor.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM ares_positions WHERE status IN ('closed', 'expired')")
+        cursor.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM fortress_positions WHERE status IN ('closed', 'expired')")
         total_pnl = cursor.fetchone()[0]
         print(f"   Total realized P&L: ${float(total_pnl):,.2f}")
 
-    # ========== TITAN COMPARISON ==========
+    # ========== SAMSON COMPARISON ==========
     print("\n" + "=" * 70)
-    print("TITAN COMPARISON (for reference)")
+    print("SAMSON COMPARISON (for reference)")
     print("=" * 70)
 
     cursor.execute("""
         SELECT EXISTS (
             SELECT FROM information_schema.tables
-            WHERE table_name = 'titan_equity_snapshots'
+            WHERE table_name = 'samson_equity_snapshots'
         )
     """)
     titan_exists = cursor.fetchone()[0]
 
     if titan_exists:
-        cursor.execute("SELECT COUNT(*) FROM titan_equity_snapshots")
+        cursor.execute("SELECT COUNT(*) FROM samson_equity_snapshots")
         titan_total = cursor.fetchone()[0]
 
         cursor.execute("""
-            SELECT COUNT(*) FROM titan_equity_snapshots
+            SELECT COUNT(*) FROM samson_equity_snapshots
             WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         titan_today = cursor.fetchone()[0]
 
-        cursor.execute("SELECT MAX(timestamp) FROM titan_equity_snapshots")
+        cursor.execute("SELECT MAX(timestamp) FROM samson_equity_snapshots")
         titan_last = cursor.fetchone()[0]
 
-        print(f"\n   TITAN total snapshots: {titan_total}")
-        print(f"   TITAN today's snapshots: {titan_today}")
-        print(f"   TITAN last snapshot: {titan_last}")
+        print(f"\n   SAMSON total snapshots: {titan_total}")
+        print(f"   SAMSON today's snapshots: {titan_today}")
+        print(f"   SAMSON last snapshot: {titan_last}")
 
         if titan_today > 0 and today_count == 0:
-            print("\n   ⚠️  TITAN has snapshots today but ARES doesn't!")
-            print("      This suggests ARES-specific issue in scheduler")
+            print("\n   ⚠️  SAMSON has snapshots today but FORTRESS doesn't!")
+            print("      This suggests FORTRESS-specific issue in scheduler")
         elif titan_today == 0 and today_count == 0:
-            print("\n   ℹ️  Neither TITAN nor ARES have snapshots today")
+            print("\n   ℹ️  Neither SAMSON nor FORTRESS have snapshots today")
             print("      Scheduler may not be running or market is closed")
     else:
-        print("\n   titan_equity_snapshots table doesn't exist")
+        print("\n   samson_equity_snapshots table doesn't exist")
 
     # ========== CONFIG CHECK ==========
     print("\n" + "=" * 70)
@@ -230,7 +230,7 @@ def run_diagnostics():
 
     issues = []
     if not table_exists:
-        issues.append("ares_equity_snapshots table doesn't exist")
+        issues.append("fortress_equity_snapshots table doesn't exist")
     elif today_count == 0:
         issues.append("No snapshots saved today")
 

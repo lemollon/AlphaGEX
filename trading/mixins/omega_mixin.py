@@ -61,7 +61,7 @@ class OmegaIntegrationMixin:
     Mixin that provides OMEGA Orchestrator integration for trading bots.
 
     Attributes expected on the class:
-        - bot_name: str (e.g., 'ARES', 'ATHENA')
+        - bot_name: str (e.g., 'FORTRESS', 'SOLOMON')
         - capital: float (current capital)
 
     This mixin replaces:
@@ -418,14 +418,14 @@ def create_omega_enabled_bot(base_class, bot_name: str, capital: float = 100000)
 
     Args:
         base_class: The original bot class
-        bot_name: Name of the bot (ARES, ATHENA, etc.)
+        bot_name: Name of the bot (FORTRESS, SOLOMON, etc.)
         capital: Initial capital
 
     Returns:
         New class with OMEGA integration
 
     Example:
-        OmegaAres = create_omega_enabled_bot(AresTrader, 'ARES', 100000)
+        OmegaAres = create_omega_enabled_bot(FortressTrader, 'FORTRESS', 100000)
         bot = OmegaAres()
         decision = bot.omega_get_trading_decision(gex_data, features)
     """
@@ -449,7 +449,7 @@ if __name__ == "__main__":
     # Example of how a bot would use this mixin
     class ExampleBot(OmegaIntegrationMixin):
         def __init__(self):
-            self.bot_name = "ARES"
+            self.bot_name = "FORTRESS"
             self.capital = 100000
 
         def run_trading_cycle(self):

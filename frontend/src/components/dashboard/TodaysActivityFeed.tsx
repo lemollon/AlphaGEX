@@ -33,11 +33,11 @@ interface PositionsResponse {
 }
 
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
-  { name: 'ARES', endpoint: '/api/ares/positions' },
-  { name: 'ATHENA', endpoint: '/api/athena/positions' },
+  { name: 'FORTRESS', endpoint: '/api/fortress/positions' },
+  { name: 'SOLOMON', endpoint: '/api/solomon/positions' },
   { name: 'ICARUS', endpoint: '/api/icarus/positions' },
   { name: 'PEGASUS', endpoint: '/api/pegasus/positions' },
-  { name: 'TITAN', endpoint: '/api/titan/positions' },
+  { name: 'SAMSON', endpoint: '/api/samson/positions' },
 ]
 
 const fetcher = async (url: string): Promise<PositionsResponse> => {
@@ -52,13 +52,13 @@ const fetcher = async (url: string): Promise<PositionsResponse> => {
 
 export default function TodaysActivityFeed() {
   // Fetch positions for all bots
-  const { data: aresData, isLoading: aresLoading } = useSWR('/api/ares/positions', fetcher, { refreshInterval: 30000 })
-  const { data: athenaData, isLoading: athenaLoading } = useSWR('/api/athena/positions', fetcher, { refreshInterval: 30000 })
+  const { data: aresData, isLoading: aresLoading } = useSWR('/api/fortress/positions', fetcher, { refreshInterval: 30000 })
+  const { data: solomonData, isLoading: solomonLoading } = useSWR('/api/solomon/positions', fetcher, { refreshInterval: 30000 })
   const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/icarus/positions', fetcher, { refreshInterval: 30000 })
   const { data: pegasusData, isLoading: pegasusLoading } = useSWR('/api/pegasus/positions', fetcher, { refreshInterval: 30000 })
-  const { data: titanData, isLoading: titanLoading } = useSWR('/api/titan/positions', fetcher, { refreshInterval: 30000 })
+  const { data: titanData, isLoading: titanLoading } = useSWR('/api/samson/positions', fetcher, { refreshInterval: 30000 })
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || pegasusLoading || titanLoading
 
   // Get today's date in Central Time
   const getTodayString = () => {
@@ -148,18 +148,18 @@ export default function TodaysActivityFeed() {
   // Combine and sort all trades
   const todaysTrades = useMemo(() => {
     const allTrades = [
-      ...extractTrades(aresData, 'ARES'),
-      ...extractTrades(athenaData, 'ATHENA'),
+      ...extractTrades(aresData, 'FORTRESS'),
+      ...extractTrades(solomonData, 'SOLOMON'),
       ...extractTrades(icarusData, 'ICARUS'),
       ...extractTrades(pegasusData, 'PEGASUS'),
-      ...extractTrades(titanData, 'TITAN'),
+      ...extractTrades(titanData, 'SAMSON'),
     ]
 
     // Sort by timestamp descending (most recent first)
     return allTrades.sort((a, b) => {
       return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     })
-  }, [aresData, athenaData, icarusData, pegasusData, titanData])
+  }, [aresData, solomonData, icarusData, pegasusData, titanData])
 
   const formatTime = (timestamp: string) => {
     return new Date(timestamp).toLocaleTimeString('en-US', {

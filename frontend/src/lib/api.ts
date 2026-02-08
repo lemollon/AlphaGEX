@@ -335,41 +335,41 @@ export const apiClient = {
   resetBotData: (params?: { bot?: string, confirm?: boolean }) =>
     api.post('/api/trader/bots/reset', null, { params }),
 
-  // ARES - Aggressive Iron Condor Bot
-  getARESStatus: () => api.get('/api/trader/bots/ares/status'),
-  runARESCycle: () => api.post('/api/trader/bots/ares/run'),
+  // FORTRESS - Aggressive Iron Condor Bot
+  getARESStatus: () => api.get('/api/trader/bots/fortress/status'),
+  runARESCycle: () => api.post('/api/trader/bots/fortress/run'),
 
-  // ARES Page API endpoints
-  getARESPageStatus: () => api.get('/api/ares/status'),
-  getARESPerformance: () => api.get('/api/ares/performance'),
-  getARESEquityCurve: (days: number = 30) => api.get('/api/ares/equity-curve', { params: { days } }),
-  getARESIntradayEquity: (date?: string) => api.get('/api/ares/equity-curve/intraday', { params: date ? { date } : {} }),
-  getARESLiveEquity: () => api.get('/api/ares/equity-curve/live'),
-  getARESPositions: () => api.get('/api/ares/positions'),
-  getARESMarketData: () => api.get('/api/ares/market-data'),
-  getARESTradierStatus: () => api.get('/api/ares/tradier-status'),
-  getARESDecisions: (limit: number = 50) => api.get('/api/ares/decisions', { params: { limit } }),
-  getARESLogs: (level?: string, limit: number = 100) => api.get('/api/ares/logs', { params: { level, limit } }),
-  getARESConfig: () => api.get('/api/ares/config'),
-  resetARESData: (confirm: boolean = false) => api.post('/api/ares/reset', null, { params: { confirm } }),
+  // FORTRESS Page API endpoints
+  getARESPageStatus: () => api.get('/api/fortress/status'),
+  getARESPerformance: () => api.get('/api/fortress/performance'),
+  getARESEquityCurve: (days: number = 30) => api.get('/api/fortress/equity-curve', { params: { days } }),
+  getARESIntradayEquity: (date?: string) => api.get('/api/fortress/equity-curve/intraday', { params: date ? { date } : {} }),
+  getARESLiveEquity: () => api.get('/api/fortress/equity-curve/live'),
+  getARESPositions: () => api.get('/api/fortress/positions'),
+  getARESMarketData: () => api.get('/api/fortress/market-data'),
+  getARESTradierStatus: () => api.get('/api/fortress/tradier-status'),
+  getARESDecisions: (limit: number = 50) => api.get('/api/fortress/decisions', { params: { limit } }),
+  getARESLogs: (level?: string, limit: number = 100) => api.get('/api/fortress/logs', { params: { level, limit } }),
+  getFortressConfig: () => api.get('/api/fortress/config'),
+  resetARESData: (confirm: boolean = false) => api.post('/api/fortress/reset', null, { params: { confirm } }),
 
-  // ATHENA - Directional Spread Bot
-  getATHENAStatus: () => api.get('/api/athena/status'),
-  getATHENAPositions: (status?: string) => api.get('/api/athena/positions', { params: status ? { status_filter: status } : {} }),
-  getATHENASignals: (limit: number = 50) => api.get('/api/athena/signals', { params: { limit } }),
-  getATHENALogs: (level?: string, limit: number = 100) => api.get('/api/athena/logs', { params: { level, limit } }),
-  getATHENAPerformance: (days: number = 30) => api.get('/api/athena/performance', { params: { days } }),
-  getATHENAEquityCurve: (days: number = 30) => api.get('/api/athena/equity-curve', { params: { days } }),
-  getATHENAIntradayEquity: (date?: string) => api.get('/api/athena/equity-curve/intraday', { params: date ? { date } : {} }),
-  getATHENAConfig: () => api.get('/api/athena/config'),
-  updateATHENAConfig: (name: string, value: string) => api.post(`/api/athena/config/${name}`, null, { params: { value } }),
-  runATHENACycle: () => api.post('/api/athena/run'),
-  getATHENAOracleAdvice: () => api.get('/api/athena/oracle-advice'),
-  getATHENAMLSignal: () => api.get('/api/athena/ml-signal'),
-  getATHENALivePnL: () => api.get('/api/athena/live-pnl'),
-  processATHENAExpired: () => api.post('/api/athena/process-expired'),
-  skipATHENAToday: () => api.post('/api/athena/skip-today'),
-  resetATHENAData: (confirm: boolean = false) => api.post('/api/athena/reset', null, { params: { confirm } }),
+  // SOLOMON - Directional Spread Bot
+  getATHENAStatus: () => api.get('/api/solomon/status'),
+  getATHENAPositions: (status?: string) => api.get('/api/solomon/positions', { params: status ? { status_filter: status } : {} }),
+  getSolomonSignals: (limit: number = 50) => api.get('/api/solomon/signals', { params: { limit } }),
+  getATHENALogs: (level?: string, limit: number = 100) => api.get('/api/solomon/logs', { params: { level, limit } }),
+  getATHENAPerformance: (days: number = 30) => api.get('/api/solomon/performance', { params: { days } }),
+  getATHENAEquityCurve: (days: number = 30) => api.get('/api/solomon/equity-curve', { params: { days } }),
+  getATHENAIntradayEquity: (date?: string) => api.get('/api/solomon/equity-curve/intraday', { params: date ? { date } : {} }),
+  getSolomonConfig: () => api.get('/api/solomon/config'),
+  updateSolomonConfig: (name: string, value: string) => api.post(`/api/solomon/config/${name}`, null, { params: { value } }),
+  runATHENACycle: () => api.post('/api/solomon/run'),
+  getATHENAOracleAdvice: () => api.get('/api/solomon/oracle-advice'),
+  getATHENAMLSignal: () => api.get('/api/solomon/ml-signal'),
+  getATHENALivePnL: () => api.get('/api/solomon/live-pnl'),
+  processATHENAExpired: () => api.post('/api/solomon/process-expired'),
+  skipATHENAToday: () => api.post('/api/solomon/skip-today'),
+  resetATHENAData: (confirm: boolean = false) => api.post('/api/solomon/reset', null, { params: { confirm } }),
 
   // ICARUS - Aggressive Directional Spread Bot
   getICARUSStatus: () => api.get('/api/icarus/status'),
@@ -402,31 +402,31 @@ export const apiClient = {
   skipPEGASUSToday: () => api.post('/api/pegasus/skip-today'),
   resetPEGASUSData: (confirm: boolean = false) => api.post('/api/pegasus/reset', null, { params: { confirm } }),
 
-  // TITAN - Aggressive SPX Iron Condor Bot (Daily Trading)
-  getTITANStatus: () => api.get('/api/titan/status'),
-  getTITANPositions: (status?: string) => api.get('/api/titan/positions', { params: status ? { status_filter: status } : {} }),
-  getTITANLogs: (level?: string, limit: number = 100) => api.get('/api/titan/logs', { params: { level, limit } }),
-  getTITANPerformance: (days: number = 30) => api.get('/api/titan/performance', { params: { days } }),
-  getTITANEquityCurve: (days: number = 30) => api.get('/api/titan/equity-curve', { params: { days } }),
-  getTITANIntradayEquity: (date?: string) => api.get('/api/titan/equity-curve/intraday', { params: date ? { date } : {} }),
-  getTITANConfig: () => api.get('/api/titan/config'),
-  updateTITANConfig: (name: string, value: string) => api.post(`/api/titan/config/${name}`, null, { params: { value } }),
-  runTITANCycle: () => api.post('/api/titan/run'),
-  getTITANLivePnL: () => api.get('/api/titan/live-pnl'),
-  processTITANExpired: () => api.post('/api/titan/process-expired'),
-  skipTITANToday: () => api.post('/api/titan/skip-today'),
-  resetTITANData: (confirm: boolean = false) => api.post('/api/titan/reset', null, { params: { confirm } }),
+  // SAMSON - Aggressive SPX Iron Condor Bot (Daily Trading)
+  getTITANStatus: () => api.get('/api/samson/status'),
+  getTITANPositions: (status?: string) => api.get('/api/samson/positions', { params: status ? { status_filter: status } : {} }),
+  getTITANLogs: (level?: string, limit: number = 100) => api.get('/api/samson/logs', { params: { level, limit } }),
+  getTITANPerformance: (days: number = 30) => api.get('/api/samson/performance', { params: { days } }),
+  getTITANEquityCurve: (days: number = 30) => api.get('/api/samson/equity-curve', { params: { days } }),
+  getTITANIntradayEquity: (date?: string) => api.get('/api/samson/equity-curve/intraday', { params: date ? { date } : {} }),
+  getSamsonConfig: () => api.get('/api/samson/config'),
+  updateSamsonConfig: (name: string, value: string) => api.post(`/api/samson/config/${name}`, null, { params: { value } }),
+  runTITANCycle: () => api.post('/api/samson/run'),
+  getTITANLivePnL: () => api.get('/api/samson/live-pnl'),
+  processTITANExpired: () => api.post('/api/samson/process-expired'),
+  skipTITANToday: () => api.post('/api/samson/skip-today'),
+  resetTITANData: (confirm: boolean = false) => api.post('/api/samson/reset', null, { params: { confirm } }),
 
-  // ARES - Live P&L
-  getARESLivePnL: () => api.get('/api/ares/live-pnl'),
-  processARESExpired: () => api.post('/api/ares/process-expired'),
-  skipARESToday: () => api.post('/api/ares/skip-today'),
-  updateARESConfig: (config: { risk_per_trade_pct?: number; sd_multiplier?: number }) =>
-    api.post('/api/ares/config', config),
+  // FORTRESS - Live P&L
+  getARESLivePnL: () => api.get('/api/fortress/live-pnl'),
+  processARESExpired: () => api.post('/api/fortress/process-expired'),
+  skipARESToday: () => api.post('/api/fortress/skip-today'),
+  updateFortressConfig: (config: { risk_per_trade_pct?: number; sd_multiplier?: number }) =>
+    api.post('/api/fortress/config', config),
 
-  // ARES Strategy Presets
-  getARESStrategyPresets: () => api.get('/api/ares/strategy/presets'),
-  setARESStrategyPreset: (preset: string) => api.post('/api/ares/strategy/preset', { preset }),
+  // FORTRESS Strategy Presets
+  getARESStrategyPresets: () => api.get('/api/fortress/strategy/presets'),
+  setARESStrategyPreset: (preset: string) => api.post('/api/fortress/strategy/preset', { preset }),
 
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {

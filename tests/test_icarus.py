@@ -4,7 +4,7 @@ ICARUS Bot Comprehensive Test Suite
 
 Tests for the ICARUS aggressive directional spreads trading bot.
 
-ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA):
+ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs SOLOMON):
 - 2% wall filter (vs 1%) - more room to trade
 - 48% min win probability (vs 55%) - lower threshold
 - 3% risk per trade (vs 2%) - larger positions
@@ -86,23 +86,23 @@ class TestICARUSConfig:
             config = ICARUSConfig()
 
             # ICARUS aggressive Apache GEX backtest defaults
-            assert config.wall_filter_pct == 2.0, "Wall filter should be 2% (vs ATHENA's 1%)"
-            assert config.min_win_probability == 0.48, "Min win prob should be 48% (vs ATHENA's 55%)"
-            assert config.min_confidence == 0.48, "Min confidence should be 48% (vs ATHENA's 55%)"
-            assert config.min_rr_ratio == 1.2, "Min R:R ratio should be 1.2 (vs ATHENA's 1.5)"
-            assert config.risk_per_trade_pct == 3.0, "Risk per trade should be 3% (vs ATHENA's 2%)"
-            assert config.spread_width == 3, "Spread width should be $3 (vs ATHENA's $2)"
-            assert config.max_daily_trades == 8, "Max daily trades should be 8 (vs ATHENA's 5)"
-            assert config.max_open_positions == 4, "Max open positions should be 4 (vs ATHENA's 3)"
+            assert config.wall_filter_pct == 2.0, "Wall filter should be 2% (vs SOLOMON's 1%)"
+            assert config.min_win_probability == 0.48, "Min win prob should be 48% (vs SOLOMON's 55%)"
+            assert config.min_confidence == 0.48, "Min confidence should be 48% (vs SOLOMON's 55%)"
+            assert config.min_rr_ratio == 1.2, "Min R:R ratio should be 1.2 (vs SOLOMON's 1.5)"
+            assert config.risk_per_trade_pct == 3.0, "Risk per trade should be 3% (vs SOLOMON's 2%)"
+            assert config.spread_width == 3, "Spread width should be $3 (vs SOLOMON's $2)"
+            assert config.max_daily_trades == 8, "Max daily trades should be 8 (vs SOLOMON's 5)"
+            assert config.max_open_positions == 4, "Max open positions should be 4 (vs SOLOMON's 3)"
             # VIX filter
-            assert config.min_vix == 12.0, "Min VIX should be 12 (vs ATHENA's 15)"
-            assert config.max_vix == 30.0, "Max VIX should be 30 (vs ATHENA's 25)"
+            assert config.min_vix == 12.0, "Min VIX should be 12 (vs SOLOMON's 15)"
+            assert config.max_vix == 30.0, "Max VIX should be 30 (vs SOLOMON's 25)"
             # GEX ratio asymmetry
-            assert config.min_gex_ratio_bearish == 1.3, "Min GEX ratio bearish should be 1.3 (vs ATHENA's 1.5)"
-            assert config.max_gex_ratio_bullish == 0.77, "Max GEX ratio bullish should be 0.77 (vs ATHENA's 0.67)"
+            assert config.min_gex_ratio_bearish == 1.3, "Min GEX ratio bearish should be 1.3 (vs SOLOMON's 1.5)"
+            assert config.max_gex_ratio_bullish == 0.77, "Max GEX ratio bullish should be 0.77 (vs SOLOMON's 0.67)"
             # Exit thresholds
-            assert config.profit_target_pct == 40.0, "Profit target should be 40% (vs ATHENA's 50%)"
-            assert config.stop_loss_pct == 60.0, "Stop loss should be 60% (vs ATHENA's 50%)"
+            assert config.profit_target_pct == 40.0, "Profit target should be 40% (vs SOLOMON's 50%)"
+            assert config.stop_loss_pct == 60.0, "Stop loss should be 60% (vs SOLOMON's 50%)"
 
     def test_config_validation_valid(self, mock_db_connection):
         """Test valid config passes validation"""

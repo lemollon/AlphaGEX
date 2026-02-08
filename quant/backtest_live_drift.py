@@ -95,7 +95,7 @@ class BacktestLiveDriftDetector:
 
     Usage:
         detector = BacktestLiveDriftDetector()
-        report = detector.analyze_bot("ARES")
+        report = detector.analyze_bot("FORTRESS")
 
         if report.overall_severity == DriftSeverity.CRITICAL:
             # Take action - reduce position size, pause bot, etc.
@@ -146,22 +146,22 @@ class BacktestLiveDriftDetector:
     def _get_positions_table(self, bot_name: str) -> str:
         """Get the correct positions table name for each bot."""
         tables = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
             'ICARUS': 'icarus_positions',
             'PEGASUS': 'pegasus_positions',
-            'TITAN': 'titan_positions'
+            'SAMSON': 'samson_positions'
         }
-        return tables.get(bot_name.upper(), 'ares_positions')
+        return tables.get(bot_name.upper(), 'fortress_positions')
 
     def _get_backtest_patterns(self, bot_name: str) -> list:
         """Get backtest pattern names that match each bot type."""
         patterns = {
-            'ARES': ['ARES', 'IRON_CONDOR', 'SPY_IC', 'IC_'],
-            'ATHENA': ['ATHENA', 'DIRECTIONAL', 'SPREAD', 'GEX_'],
+            'FORTRESS': ['FORTRESS', 'IRON_CONDOR', 'SPY_IC', 'IC_'],
+            'SOLOMON': ['SOLOMON', 'DIRECTIONAL', 'SPREAD', 'GEX_'],
             'ICARUS': ['ICARUS', 'AGGRESSIVE', 'DIRECTIONAL'],
             'PEGASUS': ['PEGASUS', 'SPX_IC', 'SPX_IRON', 'CONDOR'],
-            'TITAN': ['TITAN', 'AGGRESSIVE_IC', 'SPX_AGGRESSIVE']
+            'SAMSON': ['SAMSON', 'AGGRESSIVE_IC', 'SPX_AGGRESSIVE']
         }
         return patterns.get(bot_name.upper(), [bot_name])
 
@@ -332,7 +332,7 @@ class BacktestLiveDriftDetector:
         Analyze a bot's live performance vs backtest expectations.
 
         Args:
-            bot_name: Name of the bot (ARES, ATHENA, etc.)
+            bot_name: Name of the bot (FORTRESS, SOLOMON, etc.)
             lookback_days: How many days of live data to analyze
 
         Returns:
@@ -517,7 +517,7 @@ class BacktestLiveDriftDetector:
         Returns:
             Dict mapping bot name to drift report
         """
-        bots = ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN']
+        bots = ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON']
         reports = {}
 
         for bot in bots:

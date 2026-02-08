@@ -43,7 +43,7 @@ import {
 } from '@/lib/hooks/useMarketData'
 
 // ==============================================================================
-// EQUITY CURVE TIMEFRAMES (matching HERACLES/ARES pattern)
+// EQUITY CURVE TIMEFRAMES (matching HERACLES/FORTRESS pattern)
 // ==============================================================================
 const EQUITY_TIMEFRAMES = [
   { id: 'intraday', label: 'Today', days: 0 },
@@ -54,7 +54,7 @@ const EQUITY_TIMEFRAMES = [
 ]
 
 // ==============================================================================
-// TABS CONFIGURATION (matching ARES/TITAN pattern with icons)
+// TABS CONFIGURATION (matching FORTRESS/SAMSON pattern with icons)
 // ==============================================================================
 const AGAPE_TABS = [
   { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
@@ -78,7 +78,7 @@ export default function AgapePage() {
   // Brand from centralized system
   const brand = BOT_BRANDS.AGAPE
 
-  // Data hooks (matching ARES/TITAN pattern)
+  // Data hooks (matching FORTRESS/SAMSON pattern)
   const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAGAPEStatus()
   const { data: perfData } = useAGAPEPerformance()
   const { data: positionsData, isLoading: posLoading } = useAGAPEPositions()
@@ -113,7 +113,7 @@ export default function AgapePage() {
       <main className={`min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto space-y-6">
 
-          {/* Header - Branded (matches ARES/TITAN pattern) */}
+          {/* Header - Branded (matches FORTRESS/SAMSON pattern) */}
           <BotPageHeader
             botName="AGAPE"
             isActive={status?.status === 'ACTIVE'}
@@ -230,7 +230,7 @@ export default function AgapePage() {
             />
           </div>
 
-          {/* Tabs - Branded (matching ARES/TITAN icon tab pattern) */}
+          {/* Tabs - Branded (matching FORTRESS/SAMSON icon tab pattern) */}
           <div className="flex gap-2 border-b border-gray-800 pb-2">
             {AGAPE_TABS.map((tab) => (
               <button
@@ -280,7 +280,7 @@ export default function AgapePage() {
 }
 
 // ==============================================================================
-// PORTFOLIO TAB (Primary tab - matches ARES/TITAN pattern)
+// PORTFOLIO TAB (Primary tab - matches FORTRESS/SAMSON pattern)
 // ==============================================================================
 
 function PortfolioTab({

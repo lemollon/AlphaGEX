@@ -2,7 +2,7 @@
 End-to-End Test: V2 Bot Audit Trail Storage
 =============================================
 
-Verifies that ARES V2, ATHENA V2, and PEGASUS V2 properly store
+Verifies that FORTRESS V2, SOLOMON V2, and PEGASUS V2 properly store
 all Oracle/Kronos audit trail data in the database.
 
 This is critical for live trading - we need FULL visibility into
@@ -19,15 +19,15 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 # =============================================================================
-# ARES V2 AUDIT TRAIL TESTS
+# FORTRESS V2 AUDIT TRAIL TESTS
 # =============================================================================
 
 class TestARESV2AuditTrail:
-    """Test ARES V2 Iron Condor stores full Oracle/Kronos context"""
+    """Test FORTRESS V2 Iron Condor stores full Oracle/Kronos context"""
 
     def test_signal_captures_oracle_context(self):
         """Verify signal captures all Oracle prediction details"""
-        from trading.ares_v2.models import IronCondorSignal
+        from trading.fortress_v2.models import IronCondorSignal
 
         # Create signal with full Oracle context
         signal = IronCondorSignal(
@@ -78,10 +78,10 @@ class TestARESV2AuditTrail:
 
     def test_position_stores_oracle_context(self):
         """Verify position stores all Oracle context from signal"""
-        from trading.ares_v2.models import IronCondorPosition, PositionStatus
+        from trading.fortress_v2.models import IronCondorPosition, PositionStatus
 
         position = IronCondorPosition(
-            position_id="ARES-20241230-ABC123",
+            position_id="FORTRESS-20241230-ABC123",
             ticker="SPY",
             expiration="2024-12-30",
             put_short_strike=572.0,
@@ -130,11 +130,11 @@ class TestARESV2AuditTrail:
         assert data["oracle_win_probability"] == 0.72
         assert data["oracle_advice"] == "ENTER"
 
-    @patch("trading.ares_v2.db.get_connection")
+    @patch("trading.fortress_v2.db.get_connection")
     def test_db_saves_oracle_context(self, mock_get_conn):
         """Verify DB layer saves all Oracle/Kronos columns"""
-        from trading.ares_v2.db import ARESDatabase
-        from trading.ares_v2.models import IronCondorPosition, PositionStatus
+        from trading.fortress_v2.db import FortressDatabase
+        from trading.fortress_v2.models import IronCondorPosition, PositionStatus
 
         # Setup mock
         mock_conn = MagicMock()
@@ -144,7 +144,7 @@ class TestARESV2AuditTrail:
 
         # Create position with full context
         position = IronCondorPosition(
-            position_id="ARES-TEST-001",
+            position_id="FORTRESS-TEST-001",
             ticker="SPY",
             expiration="2024-12-30",
             put_short_strike=572.0,
@@ -176,7 +176,7 @@ class TestARESV2AuditTrail:
         )
 
         # Save position
-        db = ARESDatabase()
+        db = FortressDatabase()
         db.save_position(position)
 
         # Verify INSERT was called with Oracle columns
@@ -200,15 +200,15 @@ class TestARESV2AuditTrail:
 
 
 # =============================================================================
-# ATHENA V2 AUDIT TRAIL TESTS
+# SOLOMON V2 AUDIT TRAIL TESTS
 # =============================================================================
 
 class TestATHENAV2AuditTrail:
-    """Test ATHENA V2 Directional Spreads stores full ML/Kronos context"""
+    """Test SOLOMON V2 Directional Spreads stores full ML/Kronos context"""
 
     def test_signal_captures_ml_context(self):
         """Verify signal captures all ML prediction details"""
-        from trading.athena_v2.models import TradeSignal, SpreadType
+        from trading.solomon_v2.models import TradeSignal, SpreadType
 
         signal = TradeSignal(
             direction="BULLISH",
@@ -249,10 +249,10 @@ class TestATHENAV2AuditTrail:
 
     def test_position_stores_ml_context(self):
         """Verify position stores all ML context from signal"""
-        from trading.athena_v2.models import SpreadPosition, SpreadType, PositionStatus
+        from trading.solomon_v2.models import SpreadPosition, SpreadType, PositionStatus
 
         position = SpreadPosition(
-            position_id="ATHENA-20241230-DEF456",
+            position_id="SOLOMON-20241230-DEF456",
             spread_type=SpreadType.BULL_CALL,
             ticker="SPY",
             long_strike=583.0,
@@ -294,11 +294,11 @@ class TestATHENAV2AuditTrail:
         assert position.wall_distance_pct == 1.79
         assert "PUT_WALL" in position.trade_reasoning
 
-    @patch("trading.athena_v2.db.get_connection")
+    @patch("trading.solomon_v2.db.get_connection")
     def test_db_saves_ml_context(self, mock_get_conn):
         """Verify DB layer saves all ML/Kronos columns"""
-        from trading.athena_v2.db import ATHENADatabase
-        from trading.athena_v2.models import SpreadPosition, SpreadType, PositionStatus
+        from trading.solomon_v2.db import SolomonDatabase
+        from trading.solomon_v2.models import SpreadPosition, SpreadType, PositionStatus
 
         # Setup mock
         mock_conn = MagicMock()
@@ -307,7 +307,7 @@ class TestATHENAV2AuditTrail:
         mock_get_conn.return_value = mock_conn
 
         position = SpreadPosition(
-            position_id="ATHENA-TEST-001",
+            position_id="SOLOMON-TEST-001",
             spread_type=SpreadType.BULL_CALL,
             ticker="SPY",
             long_strike=583.0,
@@ -332,7 +332,7 @@ class TestATHENAV2AuditTrail:
             open_time=datetime.now(CENTRAL_TZ),
         )
 
-        db = ATHENADatabase()
+        db = SolomonDatabase()
         db.save_position(position)
 
         # Verify INSERT includes ML columns
@@ -522,12 +522,12 @@ class TestPEGASUSV2AuditTrail:
 class TestExecutorPassesFullContext:
     """Test that executors pass full context from signal to position"""
 
-    def test_ares_executor_passes_oracle_context(self):
-        """ARES executor should pass all Oracle context to position"""
-        from trading.ares_v2.executor import OrderExecutor
-        from trading.ares_v2.models import ARESConfig, TradingMode, IronCondorSignal
+    def test_fortress_executor_passes_oracle_context(self):
+        """FORTRESS executor should pass all Oracle context to position"""
+        from trading.fortress_v2.executor import OrderExecutor
+        from trading.fortress_v2.models import FortressConfig, TradingMode, IronCondorSignal
 
-        config = ARESConfig(mode=TradingMode.PAPER)
+        config = FortressConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(
@@ -569,12 +569,12 @@ class TestExecutorPassesFullContext:
         assert position.oracle_advice == "ENTER"
         assert position.oracle_use_gex_walls is True
 
-    def test_athena_executor_passes_ml_context(self):
-        """ATHENA executor should pass all ML context to position"""
-        from trading.athena_v2.executor import OrderExecutor
-        from trading.athena_v2.models import ATHENAConfig, TradingMode, TradeSignal, SpreadType
+    def test_solomon_executor_passes_ml_context(self):
+        """SOLOMON executor should pass all ML context to position"""
+        from trading.solomon_v2.executor import OrderExecutor
+        from trading.solomon_v2.models import SolomonConfig, TradingMode, TradeSignal, SpreadType
 
-        config = ATHENAConfig(mode=TradingMode.PAPER)
+        config = SolomonConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = TradeSignal(
@@ -670,11 +670,11 @@ class TestJSONSerialization:
     """Test that top_factors are properly serialized to JSON"""
 
     def test_ares_top_factors_json(self):
-        """ARES should serialize oracle_top_factors to JSON string"""
-        from trading.ares_v2.executor import OrderExecutor
-        from trading.ares_v2.models import ARESConfig, TradingMode, IronCondorSignal
+        """FORTRESS should serialize oracle_top_factors to JSON string"""
+        from trading.fortress_v2.executor import OrderExecutor
+        from trading.fortress_v2.models import FortressConfig, TradingMode, IronCondorSignal
 
-        config = ARESConfig(mode=TradingMode.PAPER)
+        config = FortressConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(

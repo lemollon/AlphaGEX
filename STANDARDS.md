@@ -651,7 +651,7 @@ mutate(); // Trigger refetch
 
 ## Bot-Specific Requirements
 
-### When Modifying ANY Bot (ARES, TITAN, PEGASUS, ATHENA, ICARUS)
+### When Modifying ANY Bot (ARES, TITAN, PEGASUS, SOLOMON, ICARUS)
 
 **Each bot MUST have these working:**
 

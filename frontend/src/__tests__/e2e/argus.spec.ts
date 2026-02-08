@@ -161,8 +161,8 @@ test.describe('ARGUS - 0DTE Gamma Live', () => {
     await expect(page.locator('text=BOT STATUS')).toBeVisible({ timeout: 10000 })
 
     // Check for bot names
-    await expect(page.locator('text=ARES')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('text=ATHENA')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=FORTRESS')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=SOLOMON')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=PHOENIX')).toBeVisible({ timeout: 5000 })
   })
 

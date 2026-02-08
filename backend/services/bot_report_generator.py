@@ -194,13 +194,13 @@ def _parse_claude_json_response(response_text: Optional[str]) -> Optional[Dict[s
 
 
 # Valid bot names
-VALID_BOTS = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+VALID_BOTS = ['fortress', 'solomon', 'samson', 'pegasus', 'icarus']
 
 # Bot position table mapping
 BOT_POSITION_TABLES = {
-    'ares': 'ares_positions',
-    'athena': 'athena_positions',
-    'titan': 'titan_positions',
+    'fortress': 'fortress_positions',
+    'solomon': 'solomon_positions',
+    'samson': 'samson_positions',
     'pegasus': 'pegasus_positions',
     'icarus': 'icarus_positions',
 }
@@ -208,9 +208,9 @@ BOT_POSITION_TABLES = {
 # Bot scan activity source
 # Some bots use unified scan_activity, others have their own tables
 BOT_SCAN_SOURCES = {
-    'ares': 'scan_activity',
-    'athena': 'scan_activity',
-    'titan': 'scan_activity',
+    'fortress': 'scan_activity',
+    'solomon': 'scan_activity',
+    'samson': 'scan_activity',
     'pegasus': 'scan_activity',
     'icarus': 'scan_activity',
 }

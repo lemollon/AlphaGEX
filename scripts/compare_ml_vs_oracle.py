@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compare ARES ML Advisor vs Oracle Advisor Performance
+Compare FORTRESS ML Advisor vs Oracle Advisor Performance
 ======================================================
 
 This script runs backtests and compares decision quality between:
@@ -199,7 +199,7 @@ def simulate_oracle_decisions(trades: List[Dict], oracle) -> Dict[str, Any]:
 
             # Get Oracle prediction
             prediction = oracle.get_prediction(
-                bot_name=BotName.ARES,
+                bot_name=BotName.FORTRESS,
                 vix=vix,
                 spot_price=spot_price,
                 expected_move=expected_move,
@@ -258,7 +258,7 @@ def simulate_oracle_decisions(trades: List[Dict], oracle) -> Dict[str, Any]:
 
 def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[str, Any]:
     """
-    Simulate backtest with ML + Oracle working TOGETHER (how ARES actually operates).
+    Simulate backtest with ML + Oracle working TOGETHER (how FORTRESS actually operates).
 
     Decision flow:
     1. VIX-based pre-filter (skip extreme conditions)
@@ -356,7 +356,7 @@ def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[
                         )
 
                     oracle_pred = oracle.get_prediction(
-                        bot_name=BotName.ARES,
+                        bot_name=BotName.FORTRESS,
                         vix=vix,
                         spot_price=spot_price,
                         expected_move=expected_move,
@@ -533,7 +533,7 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
     # Initialize ML Advisor
     ml_advisor = None
     try:
-        from quant.ares_ml_advisor import get_advisor, train_from_backtest
+        from quant.fortress_ml_advisor import get_advisor, train_from_backtest
 
         # Train ML model on baseline results
         print("  Training ML Advisor on baseline data...")
@@ -576,10 +576,10 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
         oracle_results = simulate_oracle_decisions(all_trades, oracle)
         print(f"    Allowed: {oracle_results['allowed_trades']} | Skipped: {oracle_results['skipped_trades']}")
 
-    # Combined ML + Oracle (how ARES actually operates)
+    # Combined ML + Oracle (how FORTRESS actually operates)
     combined_results = None
     if ml_advisor or oracle:
-        print("  Simulating COMBINED ML + Oracle decisions (ARES mode)...")
+        print("  Simulating COMBINED ML + Oracle decisions (FORTRESS mode)...")
         combined_results = simulate_combined_decisions(all_trades, ml_advisor, oracle)
         print(f"    Full trades: {combined_results.get('full_trades', 0)} | Reduced: {combined_results.get('reduced_trades', 0)} | Skipped: {combined_results['skipped_trades']}")
 
@@ -779,7 +779,7 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
         skip_rate = combined_results['skipped_trades'] / len(all_trades) * 100
         reduced_rate = combined_results.get('reduced_trades', 0) / len(all_trades) * 100
 
-        print(f"\n  COMBINED (ARES Mode) Analysis:")
+        print(f"\n  COMBINED (FORTRESS Mode) Analysis:")
         print(f"    - Skips {skip_rate:.1f}% of trades")
         print(f"    - Uses reduced position on {reduced_rate:.1f}% of trades")
         print(f"    - Avoided {combined_results['skipped_would_be_losses']} losing trades")
@@ -793,7 +793,7 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
         # Final recommendation
         print(f"\n  RECOMMENDATION:")
         if combined_score >= max(ml_score, oracle_score):
-            print(f"    USE COMBINED MODE (current ARES setup) - best overall performance")
+            print(f"    USE COMBINED MODE (current FORTRESS setup) - best overall performance")
         elif ml_score > oracle_score:
             print(f"    Consider ML-only mode - better pattern recognition")
         elif oracle_score > ml_score:

@@ -26,7 +26,7 @@ import {
 import { useUnifiedBotSummary, useUnifiedBotCapital } from '@/lib/hooks/useMarketData'
 
 interface CapitalConfigPanelProps {
-  botName: 'ARES' | 'ATHENA' | 'ICARUS' | 'TITAN' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'ICARUS' | 'SAMSON' | 'PEGASUS'
   brandColor?: string  // e.g., 'amber', 'cyan', 'orange', 'violet', 'blue'
 }
 
@@ -39,10 +39,10 @@ const BRAND_COLORS: Record<string, { bg: string; border: string; text: string; h
 }
 
 const BOT_BRAND_COLORS: Record<string, string> = {
-  ARES: 'amber',
-  ATHENA: 'cyan',
+  FORTRESS: 'amber',
+  SOLOMON: 'cyan',
   ICARUS: 'orange',
-  TITAN: 'violet',
+  SAMSON: 'violet',
   PEGASUS: 'blue',
 }
 

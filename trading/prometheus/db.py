@@ -228,13 +228,13 @@ class PrometheusDatabase:
 
                     total_capital_available DECIMAL(15, 2),
 
-                    -- ARES allocation
+                    -- FORTRESS allocation
                     ares_allocation DECIMAL(15, 2),
                     ares_allocation_pct DECIMAL(6, 2),
                     ares_allocation_reasoning TEXT,
                     ares_returns_to_date DECIMAL(15, 2) DEFAULT 0,
 
-                    -- TITAN allocation
+                    -- SAMSON allocation
                     titan_allocation DECIMAL(15, 2),
                     titan_allocation_pct DECIMAL(6, 2),
                     titan_allocation_reasoning TEXT,

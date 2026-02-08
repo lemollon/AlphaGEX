@@ -625,12 +625,12 @@ export default function PegasusPage() {
             </div>
           )}
 
-          {/* PEGASUS vs TITAN Comparison Banner */}
+          {/* PEGASUS vs SAMSON Comparison Banner */}
           <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
             <div className="flex items-start gap-3">
               <Shield className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
-                <h3 className="text-blue-400 font-semibold">PEGASUS vs TITAN: Conservative Parameters</h3>
+                <h3 className="text-blue-400 font-semibold">PEGASUS vs SAMSON: Conservative Parameters</h3>
                 <p className="text-gray-400 text-sm mt-1">PEGASUS uses standard SPX Iron Condor settings for consistent, steady returns.</p>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
                   <div>

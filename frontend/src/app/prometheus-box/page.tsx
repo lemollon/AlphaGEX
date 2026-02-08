@@ -148,8 +148,8 @@ export default function PrometheusBoxDashboard() {
   const { data: dailyPnl } = useSWR('/api/prometheus-box/daily-pnl?days=14', fetcher, { refreshInterval: 60000 })
 
   // IC Bot positions for capital deployment tracking (legacy - to be removed)
-  const { data: aresPositions } = useSWR('/api/ares/positions', fetcher, { refreshInterval: 30000 })
-  const { data: titanPositions } = useSWR('/api/titan/positions', fetcher, { refreshInterval: 30000 })
+  const { data: aresPositions } = useSWR('/api/fortress/positions', fetcher, { refreshInterval: 30000 })
+  const { data: titanPositions } = useSWR('/api/samson/positions', fetcher, { refreshInterval: 30000 })
   const { data: pegasusPositions } = useSWR('/api/pegasus/positions', fetcher, { refreshInterval: 30000 })
 
   const isLoading = !status

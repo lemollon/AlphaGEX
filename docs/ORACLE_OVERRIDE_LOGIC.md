@@ -2,7 +2,7 @@
 
 ## Overview
 
-Oracle is the central AI advisory system that aggregates multiple signals (GEX, ML predictions, VIX regime, market conditions) and provides curated recommendations to each trading bot (ARES, ATHENA, ATLAS). The override logic allows the system to adjust or completely override ML model predictions based on additional market context.
+Oracle is the central AI advisory system that aggregates multiple signals (GEX, ML predictions, VIX regime, market conditions) and provides curated recommendations to each trading bot (ARES, SOLOMON, ATLAS). The override logic allows the system to adjust or completely override ML model predictions based on additional market context.
 
 ## Architecture Flow
 
@@ -24,7 +24,7 @@ Oracle is the central AI advisory system that aggregates multiple signals (GEX, 
                      │                        │                        │
                      ▼                        ▼                        ▼
                 ┌─────────┐              ┌─────────┐              ┌─────────┐
-                │  ARES   │              │  ATLAS  │              │ ATHENA  │
+                │  ARES   │              │  ATLAS  │              │ SOLOMON  │
                 │   IC    │              │  Wheel  │              │ Spreads │
                 └─────────┘              └─────────┘              └─────────┘
 ```
@@ -68,7 +68,7 @@ Oracle provides a recommended position size based on win probability using a mod
 **Bot Implementation:**
 
 - **ARES**: Uses `suggested_risk_pct` directly for Iron Condor sizing
-- **ATHENA**: Uses `suggested_risk_pct * 0.5` (halved for directional risk)
+- **SOLOMON**: Uses `suggested_risk_pct * 0.5` (halved for directional risk)
 - **ATLAS**: Uses `suggested_risk_pct` for cash-secured put sizing
 
 ### 3. SD Multiplier Override (`suggested_sd_multiplier`)
@@ -125,7 +125,7 @@ class OraclePrediction:
    - win_prob < 55%: STAY_OUT
 ```
 
-### ATHENA (Directional Spreads) Override Flow
+### SOLOMON (Directional Spreads) Override Flow
 
 ```
 1. Get GEX data from Kronos

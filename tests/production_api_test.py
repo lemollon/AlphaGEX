@@ -115,22 +115,22 @@ def run_endpoint_existence_tests(base_url: str):
         ("/api/prometheus-box/reconciliation", "GET", 200),
     ]
 
-    # ARES endpoints (SPY Iron Condor)
+    # FORTRESS endpoints (SPY Iron Condor)
     ares_endpoints = [
-        ("/api/ares/status", "GET", 200),
-        ("/api/ares/positions", "GET", 200),
-        ("/api/ares/performance", "GET", 200),
-        ("/api/ares/equity-curve", "GET", 200),
-        ("/api/ares/equity-curve/intraday", "GET", 200),
-        ("/api/ares/config", "GET", 200),
+        ("/api/fortress/status", "GET", 200),
+        ("/api/fortress/positions", "GET", 200),
+        ("/api/fortress/performance", "GET", 200),
+        ("/api/fortress/equity-curve", "GET", 200),
+        ("/api/fortress/equity-curve/intraday", "GET", 200),
+        ("/api/fortress/config", "GET", 200),
     ]
 
-    # TITAN endpoints (SPX Aggressive IC)
+    # SAMSON endpoints (SPX Aggressive IC)
     titan_endpoints = [
-        ("/api/titan/status", "GET", 200),
-        ("/api/titan/positions", "GET", 200),
-        ("/api/titan/equity-curve", "GET", 200),
-        ("/api/titan/equity-curve/intraday", "GET", 200),
+        ("/api/samson/status", "GET", 200),
+        ("/api/samson/positions", "GET", 200),
+        ("/api/samson/equity-curve", "GET", 200),
+        ("/api/samson/equity-curve/intraday", "GET", 200),
     ]
 
     # PEGASUS endpoints (SPX Weekly IC)
@@ -141,12 +141,12 @@ def run_endpoint_existence_tests(base_url: str):
         ("/api/pegasus/equity-curve/intraday", "GET", 200),
     ]
 
-    # ATHENA endpoints (Directional Spreads)
-    athena_endpoints = [
-        ("/api/athena/status", "GET", 200),
-        ("/api/athena/positions", "GET", 200),
-        ("/api/athena/equity-curve", "GET", 200),
-        ("/api/athena/equity-curve/intraday", "GET", 200),
+    # SOLOMON endpoints (Directional Spreads)
+    solomon_endpoints = [
+        ("/api/solomon/status", "GET", 200),
+        ("/api/solomon/positions", "GET", 200),
+        ("/api/solomon/equity-curve", "GET", 200),
+        ("/api/solomon/equity-curve/intraday", "GET", 200),
     ]
 
     # ICARUS endpoints (Aggressive Directional)
@@ -166,9 +166,9 @@ def run_endpoint_existence_tests(base_url: str):
 
     # Unified metrics endpoints
     metrics_endpoints = [
-        ("/api/metrics/ARES/summary", "GET", 200),
-        ("/api/metrics/ATHENA/summary", "GET", 200),
-        ("/api/metrics/TITAN/summary", "GET", 200),
+        ("/api/metrics/FORTRESS/summary", "GET", 200),
+        ("/api/metrics/SOLOMON/summary", "GET", 200),
+        ("/api/metrics/SAMSON/summary", "GET", 200),
         ("/api/metrics/PEGASUS/summary", "GET", 200),
         ("/api/metrics/ICARUS/summary", "GET", 200),
         ("/api/metrics/HERACLES/summary", "GET", 200),
@@ -177,7 +177,7 @@ def run_endpoint_existence_tests(base_url: str):
     all_endpoints = (
         core_endpoints + heracles_endpoints + prometheus_endpoints +
         ares_endpoints + titan_endpoints + pegasus_endpoints +
-        athena_endpoints + icarus_endpoints + oracle_endpoints + metrics_endpoints
+        solomon_endpoints + icarus_endpoints + oracle_endpoints + metrics_endpoints
     )
 
     for endpoint, method, expected_status in all_endpoints:
@@ -207,8 +207,8 @@ def run_response_shape_tests(base_url: str):
         ("/api/prometheus-box/status", ["status"]),
         ("/api/prometheus-box/combined/performance", ["available"]),
 
-        # ARES
-        ("/api/ares/status", ["status"]),
+        # FORTRESS
+        ("/api/fortress/status", ["status"]),
 
         # Oracle
         ("/api/zero-dte/oracle/status", ["status"]),
@@ -249,7 +249,7 @@ def run_cross_bot_consistency_tests(base_url: str):
     """Test that all bots have consistent endpoint patterns."""
     print("\n=== CROSS-BOT CONSISTENCY TESTS ===")
 
-    bots = ["ares", "athena", "titan", "pegasus", "icarus"]
+    bots = ["fortress", "solomon", "samson", "pegasus", "icarus"]
 
     # All bots should have /status
     for bot in bots:
@@ -271,7 +271,7 @@ def run_data_integrity_tests(base_url: str):
     print("\n=== DATA INTEGRITY TESTS ===")
 
     # Test equity curve returns array structure
-    for endpoint in ["/api/heracles/paper-equity-curve", "/api/ares/equity-curve"]:
+    for endpoint in ["/api/heracles/paper-equity-curve", "/api/fortress/equity-curve"]:
         passed, resp = test_endpoint_exists(base_url, endpoint)
         if passed:
             try:

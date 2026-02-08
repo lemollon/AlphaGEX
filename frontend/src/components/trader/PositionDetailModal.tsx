@@ -89,7 +89,7 @@ interface PositionDetailModalProps {
     exit_reason?: string
   }
   underlyingPrice?: number
-  botType?: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botType?: 'SOLOMON' | 'FORTRESS' | 'PEGASUS'
 }
 
 export default function PositionDetailModal({
@@ -97,13 +97,13 @@ export default function PositionDetailModal({
   onClose,
   position,
   underlyingPrice,
-  botType = 'ATHENA'
+  botType = 'SOLOMON'
 }: PositionDetailModalProps) {
   if (!position) return null
 
   const isOpen_ = position.status === 'open'
   const isBullish = position.spread_type?.includes('BULL')
-  const isIronCondor = position.spread_type?.includes('IRON_CONDOR') || botType === 'ARES'
+  const isIronCondor = position.spread_type?.includes('IRON_CONDOR') || botType === 'FORTRESS'
   const ticker = position.ticker || (isIronCondor ? 'SPX' : 'SPY')
 
   // Calculate position age

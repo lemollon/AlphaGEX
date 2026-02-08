@@ -331,7 +331,7 @@ async def get_equity_curve_intraday(date: Optional[str] = None):
     """Get today's intraday equity curve matching standard bot format.
 
     Returns data_points[], snapshots_count, current_equity, day_pnl,
-    starting_equity, high_of_day, low_of_day - same format as ARES/TITAN.
+    starting_equity, high_of_day, low_of_day - same format as FORTRESS/SAMSON.
     """
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime('%Y-%m-%d')
@@ -783,7 +783,7 @@ async def get_gex_mapping():
             "title": "AGAPE: GEX → Crypto Signal Mapping",
             "description": (
                 "AGAPE uses crypto market microstructure signals as equivalents "
-                "to the GEX-based analysis used by equity bots (ARES, ARGUS, etc.)"
+                "to the GEX-based analysis used by equity bots (FORTRESS, ARGUS, etc.)"
             ),
             "mappings": [
                 {

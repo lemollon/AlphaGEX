@@ -83,20 +83,20 @@ else
     fail "POST /api/ai/analyze with /calendar - Response: $RESP"
 fi
 
-# Test 6: Bot Control /start ares (should require confirmation)
+# Test 6: Bot Control /start fortress (should require confirmation)
 echo ""
-echo "Test 6: Bot Control /start ares"
+echo "Test 6: Bot Control /start fortress"
 RESP=$(curl -s -X POST "$API_BASE/api/ai/analyze" \
     -H "Content-Type: application/json" \
-    -d '{"query": "/start ares"}' 2>/dev/null)
+    -d '{"query": "/start fortress"}' 2>/dev/null)
 if echo "$RESP" | grep -q '"success":true'; then
     if echo "$RESP" | grep -q 'confirm\|Confirm'; then
-        pass "POST /api/ai/analyze with /start ares - Asks for confirmation"
+        pass "POST /api/ai/analyze with /start fortress - Asks for confirmation"
     else
-        fail "POST /api/ai/analyze with /start ares - No confirmation prompt"
+        fail "POST /api/ai/analyze with /start fortress - No confirmation prompt"
     fi
 else
-    fail "POST /api/ai/analyze with /start ares - Response: $RESP"
+    fail "POST /api/ai/analyze with /start fortress - Response: $RESP"
 fi
 
 # Test 7: Natural Language Query

@@ -427,13 +427,13 @@ class CapitalDeployment:
             'source_box_position_id': self.source_box_position_id,
             'total_capital_available': self.total_capital_available,
             'allocations': {
-                'ares': {
+                'fortress': {
                     'amount': self.ares_allocation,
                     'pct': self.ares_allocation_pct,
                     'reasoning': self.ares_allocation_reasoning,
                     'returns': self.ares_returns_to_date,
                 },
-                'titan': {
+                'samson': {
                     'amount': self.titan_allocation,
                     'pct': self.titan_allocation_pct,
                     'reasoning': self.titan_allocation_reasoning,
@@ -731,7 +731,7 @@ class DailyBriefing:
 # PROMETHEUS IC TRADING MODELS
 # ==============================================================================
 # These models support PROMETHEUS's own Iron Condor trading using borrowed capital.
-# Instead of deploying to ARES/TITAN/PEGASUS, PROMETHEUS trades its own ICs.
+# Instead of deploying to FORTRESS/SAMSON/PEGASUS, PROMETHEUS trades its own ICs.
 # ==============================================================================
 
 

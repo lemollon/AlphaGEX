@@ -127,7 +127,7 @@ describe('MultiBotEquityCurve Component', () => {
   })
 
   describe('Bot Toggle Pills', () => {
-    it('renders ARES toggle pill', async () => {
+    it('renders FORTRESS toggle pill', async () => {
       setupMockFetch()
 
       const MultiBotEquityCurve = require('../../../src/components/charts/MultiBotEquityCurve').default
@@ -135,20 +135,20 @@ describe('MultiBotEquityCurve Component', () => {
 
       await waitFor(() => {
         // Bot names appear in both toggle pills and stats grid
-        const aresElements = screen.getAllByText('ARES')
+        const aresElements = screen.getAllByText('FORTRESS')
         expect(aresElements.length).toBeGreaterThan(0)
       })
     })
 
-    it('renders ATHENA toggle pill', async () => {
+    it('renders SOLOMON toggle pill', async () => {
       setupMockFetch()
 
       const MultiBotEquityCurve = require('../../../src/components/charts/MultiBotEquityCurve').default
       renderWithSWR(<MultiBotEquityCurve />)
 
       await waitFor(() => {
-        const athenaElements = screen.getAllByText('ATHENA')
-        expect(athenaElements.length).toBeGreaterThan(0)
+        const solomonElements = screen.getAllByText('SOLOMON')
+        expect(solomonElements.length).toBeGreaterThan(0)
       })
     })
 
@@ -176,14 +176,14 @@ describe('MultiBotEquityCurve Component', () => {
       })
     })
 
-    it('renders TITAN toggle pill', async () => {
+    it('renders SAMSON toggle pill', async () => {
       setupMockFetch()
 
       const MultiBotEquityCurve = require('../../../src/components/charts/MultiBotEquityCurve').default
       renderWithSWR(<MultiBotEquityCurve />)
 
       await waitFor(() => {
-        const titanElements = screen.getAllByText('TITAN')
+        const titanElements = screen.getAllByText('SAMSON')
         expect(titanElements.length).toBeGreaterThan(0)
       })
     })
@@ -195,8 +195,8 @@ describe('MultiBotEquityCurve Component', () => {
       renderWithSWR(<MultiBotEquityCurve />)
 
       await waitFor(() => {
-        // Get all ARES elements and find the one that's a button child
-        const aresElements = screen.getAllByText('ARES')
+        // Get all FORTRESS elements and find the one that's a button child
+        const aresElements = screen.getAllByText('FORTRESS')
         const aresButton = aresElements[0].closest('button')
         expect(aresButton).toBeInTheDocument()
         if (aresButton) {
@@ -274,7 +274,7 @@ describe('MultiBotEquityCurve Component', () => {
 
       await waitFor(() => {
         // Should have 5 stat cards for 5 bots
-        const aresCards = screen.getAllByText('ARES')
+        const aresCards = screen.getAllByText('FORTRESS')
         expect(aresCards.length).toBeGreaterThanOrEqual(1)
       })
     })
@@ -371,7 +371,7 @@ describe('MultiBotEquityCurve Component', () => {
     it('handles partial data', async () => {
       // Some bots succeed, some fail
       mockFetch.mockImplementation((url: string) => {
-        if (url.includes('ares')) {
+        if (url.includes('fortress')) {
           return Promise.resolve({ ok: true, json: () => Promise.resolve(mockAresEquityCurve) })
         }
         return Promise.reject(new Error('Failed'))

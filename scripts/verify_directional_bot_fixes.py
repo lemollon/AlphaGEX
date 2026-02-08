@@ -3,7 +3,7 @@
 Verify Directional Bot Fixes - Render Shell Test Script
 ========================================================
 
-Run this in Render shell to verify all ICARUS/ATHENA fixes are working.
+Run this in Render shell to verify all ICARUS/SOLOMON fixes are working.
 
 Usage:
     python scripts/verify_directional_bot_fixes.py
@@ -62,7 +62,7 @@ def test_oracle_confidence_scale():
             win_rate_30d=0.55,
         )
 
-        prediction = oracle.get_athena_advice(
+        prediction = oracle.get_solomon_advice(
             context=context,
             use_gex_walls=True,
             wall_filter_pct=6.0,
@@ -206,7 +206,7 @@ def test_flip_distance_filter():
         import inspect
         from quant.oracle_advisor import OracleAdvisor
 
-        source = inspect.getsource(OracleAdvisor.get_athena_advice)
+        source = inspect.getsource(OracleAdvisor.get_solomon_advice)
 
         checks = [
             ('flip_distance_pct', 'Flip distance calculation'),
@@ -247,7 +247,7 @@ def test_friday_filter():
         import inspect
         from quant.oracle_advisor import OracleAdvisor
 
-        source = inspect.getsource(OracleAdvisor.get_athena_advice)
+        source = inspect.getsource(OracleAdvisor.get_solomon_advice)
 
         checks = [
             ('is_friday', 'Friday detection'),

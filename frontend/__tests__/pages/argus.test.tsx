@@ -355,7 +355,7 @@ const createValidDangerZoneLogs = () => ([
 
 const createValidBotPositions = () => ([
   {
-    bot: 'ARES',
+    bot: 'FORTRESS',
     strategy: 'Iron Condor',
     status: 'open',
     strikes: '580/590',

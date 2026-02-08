@@ -1071,11 +1071,11 @@ async def score_trade_and_log(
 
 
 # ============================================================================
-# SAGE (ARES ML ADVISOR) ENDPOINTS - Trading Bot ML Intelligence
+# SAGE (FORTRESS ML ADVISOR) ENDPOINTS - Trading Bot ML Intelligence
 # ============================================================================
 
 class SagePredictRequest(BaseModel):
-    """Request for SAGE (ARES ML Advisor) prediction"""
+    """Request for SAGE (FORTRESS ML Advisor) prediction"""
     vix: float
     day_of_week: int = None  # 0-6, defaults to today
     price: float = None  # SPY price
@@ -1093,13 +1093,13 @@ class SagePredictRequest(BaseModel):
 @router.get("/sage/status")
 async def get_sage_status():
     """
-    Get SAGE (ARES ML Advisor) status - the PRIMARY ML system for trading bots.
+    Get SAGE (FORTRESS ML Advisor) status - the PRIMARY ML system for trading bots.
 
     SAGE provides ML-driven predictions for Iron Condor and directional strategies.
-    Used by ARES, ATHENA, ICARUS, PEGASUS, and TITAN bots.
+    Used by FORTRESS, SOLOMON, ICARUS, PEGASUS, and SAMSON bots.
     """
     try:
-        from quant.ares_ml_advisor import get_advisor, AresMLAdvisor
+        from quant.fortress_ml_advisor import get_advisor, FortressMLAdvisor
 
         advisor = get_advisor()
 
@@ -1138,7 +1138,7 @@ async def get_sage_status():
             from database_adapter import get_connection
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM ares_ml_outcomes WHERE actual_outcome IS NOT NULL")
+            cursor.execute("SELECT COUNT(*) FROM fortress_ml_outcomes WHERE actual_outcome IS NOT NULL")
             training_data_count = cursor.fetchone()[0]
             conn.close()
         except:
@@ -1180,7 +1180,7 @@ async def get_sage_status():
             "ml_library_available": False,
             "model_trained": False,
             "error": f"SAGE module not available: {str(e)}",
-            "honest_assessment": "SAGE (ARES ML Advisor) module not available. Using fallback rules."
+            "honest_assessment": "SAGE (FORTRESS ML Advisor) module not available. Using fallback rules."
         }
     except Exception as e:
         logger.error(f"SAGE status error: {e}")
@@ -1207,12 +1207,12 @@ def _get_sage_assessment(model_trained: bool, data_count: int) -> str:
 @router.post("/sage/predict")
 async def sage_predict(request: SagePredictRequest):
     """
-    Get SAGE (ARES ML Advisor) prediction for current market conditions.
+    Get SAGE (FORTRESS ML Advisor) prediction for current market conditions.
 
     Returns win probability, trading advice, and suggested position sizing.
     """
     try:
-        from quant.ares_ml_advisor import get_advisor
+        from quant.fortress_ml_advisor import get_advisor
         from datetime import datetime
 
         advisor = get_advisor()
@@ -1292,7 +1292,7 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
         dict with success, training_method, samples_used, accuracy
     """
     try:
-        from quant.ares_ml_advisor import get_advisor
+        from quant.fortress_ml_advisor import get_advisor
 
         advisor = get_advisor()
 
@@ -1355,14 +1355,14 @@ def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) ->
 @router.post("/sage/train")
 async def train_sage(min_samples: int = 30, use_kronos: bool = True):
     """
-    Train SAGE (ARES ML Advisor) model.
+    Train SAGE (FORTRESS ML Advisor) model.
 
     Can train from:
     1. KRONOS backtest results (default)
     2. Live trade outcomes
     """
     try:
-        from quant.ares_ml_advisor import get_advisor
+        from quant.fortress_ml_advisor import get_advisor
 
         advisor = get_advisor()
 
@@ -1443,7 +1443,7 @@ async def get_sage_feature_importance():
     Get SAGE feature importance - which factors drive predictions.
     """
     try:
-        from quant.ares_ml_advisor import get_advisor
+        from quant.fortress_ml_advisor import get_advisor
 
         advisor = get_advisor()
 
@@ -1526,11 +1526,11 @@ async def get_bot_ml_status():
     """
     try:
         bots = [
-            {"name": "ARES", "min_win_prob": 50, "description": "SPY Iron Condor"},
-            {"name": "ATHENA", "min_win_prob": 48, "description": "Directional Spreads"},
+            {"name": "FORTRESS", "min_win_prob": 50, "description": "SPY Iron Condor"},
+            {"name": "SOLOMON", "min_win_prob": 48, "description": "Directional Spreads"},
             {"name": "ICARUS", "min_win_prob": 40, "description": "Aggressive Directional"},
             {"name": "PEGASUS", "min_win_prob": 50, "description": "SPX Iron Condor"},
-            {"name": "TITAN", "min_win_prob": 40, "description": "Aggressive SPX IC"}
+            {"name": "SAMSON", "min_win_prob": 40, "description": "Aggressive SPX IC"}
         ]
 
         bot_statuses = []
@@ -1573,7 +1573,7 @@ async def get_bot_ml_status():
             "success": True,
             "data": {
                 "bots": bot_statuses,
-                "primary_source": "SAGE (ARES ML Advisor)",
+                "primary_source": "SAGE (FORTRESS ML Advisor)",
                 "backup_source": "Oracle (when ML unavailable)"
             }
         }

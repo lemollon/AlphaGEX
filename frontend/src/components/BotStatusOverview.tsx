@@ -156,7 +156,7 @@ export default function BotStatusOverview() {
 
   // Live trading bots
   const { data: aresStatus, isLoading: aresLoading, mutate: refreshAres } = useARESStatus()
-  const { data: athenaStatus, isLoading: athenaLoading, mutate: refreshAthena } = useATHENAStatus()
+  const { data: solomonStatus, isLoading: solomonLoading, mutate: refreshAthena } = useATHENAStatus()
   const { data: pegasusStatus, isLoading: pegasusLoading, mutate: refreshPegasus } = usePEGASUSStatus()
 
   // Paper trading bots
@@ -165,7 +165,7 @@ export default function BotStatusOverview() {
   const { data: prometheusStatus, isLoading: prometheusLoading, mutate: refreshPrometheus } = usePROMETHEUSStatus()
 
   const { data: aresLivePnL } = useARESLivePnL()
-  const { data: athenaLivePnL } = useATHENALivePnL()
+  const { data: solomonLivePnL } = useATHENALivePnL()
   const { data: pegasusLivePnL } = usePEGASUSLivePnL()
   const { data: icarusLivePnL } = useICARUSLivePnL()
   const { data: titanLivePnL } = useTITANLivePnL()
@@ -184,21 +184,21 @@ export default function BotStatusOverview() {
   // PERFORMANCE FIX: useMemo for calculated P&L values (was recalculating every render)
   const { totalTodayPnL, totalUnrealizedPnL, paperTodayPnL } = useMemo(() => ({
     totalTodayPnL: (aresLivePnL?.data?.today_pnl || 0) +
-                   (athenaLivePnL?.data?.today_pnl || 0) +
+                   (solomonLivePnL?.data?.today_pnl || 0) +
                    (pegasusLivePnL?.data?.today_pnl || 0),
     totalUnrealizedPnL: (aresLivePnL?.data?.total_unrealized_pnl || 0) +
-                        (athenaLivePnL?.data?.total_unrealized_pnl || 0) +
+                        (solomonLivePnL?.data?.total_unrealized_pnl || 0) +
                         (pegasusLivePnL?.data?.total_unrealized_pnl || 0),
     paperTodayPnL: (icarusLivePnL?.data?.today_pnl || 0) +
                    (titanLivePnL?.data?.today_pnl || 0) +
                    (prometheusLivePnL?.net_profit || 0)
-  }), [aresLivePnL, athenaLivePnL, pegasusLivePnL, icarusLivePnL, titanLivePnL, prometheusLivePnL])
+  }), [aresLivePnL, solomonLivePnL, pegasusLivePnL, icarusLivePnL, titanLivePnL, prometheusLivePnL])
 
   // PERFORMANCE FIX: useMemo for active bot counts (was filtering on every render)
   const { activeLiveBots, activePaperBots, totalActiveBots } = useMemo(() => {
     const live = [
       aresStatus?.data?.is_active || aresStatus?.data?.bot_status === 'ACTIVE',
-      athenaStatus?.data?.is_active || athenaStatus?.data?.bot_status === 'ACTIVE',
+      solomonStatus?.data?.is_active || solomonStatus?.data?.bot_status === 'ACTIVE',
       pegasusStatus?.data?.is_active || pegasusStatus?.data?.status === 'active'
     ].filter(Boolean).length
 
@@ -209,7 +209,7 @@ export default function BotStatusOverview() {
     ].filter(Boolean).length
 
     return { activeLiveBots: live, activePaperBots: paper, totalActiveBots: live + paper }
-  }, [aresStatus, athenaStatus, pegasusStatus, icarusStatus, titanStatus, prometheusStatus])
+  }, [aresStatus, solomonStatus, pegasusStatus, icarusStatus, titanStatus, prometheusStatus])
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">
@@ -280,22 +280,22 @@ export default function BotStatusOverview() {
             <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Live Trading</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <BotStatusCard
-                name="ARES"
+                name="FORTRESS"
                 icon={<Sword className="w-5 h-5 text-blue-500" />}
-                href="/ares"
+                href="/fortress"
                 status={aresStatus?.data}
                 livePnL={aresLivePnL?.data}
                 color="blue"
                 isLoading={aresLoading}
               />
               <BotStatusCard
-                name="ATHENA"
+                name="SOLOMON"
                 icon={<Target className="w-5 h-5 text-purple-500" />}
-                href="/athena"
-                status={athenaStatus?.data}
-                livePnL={athenaLivePnL?.data}
+                href="/solomon"
+                status={solomonStatus?.data}
+                livePnL={solomonLivePnL?.data}
                 color="purple"
-                isLoading={athenaLoading}
+                isLoading={solomonLoading}
               />
               <BotStatusCard
                 name="PEGASUS"
@@ -323,9 +323,9 @@ export default function BotStatusOverview() {
                 isLoading={icarusLoading}
               />
               <BotStatusCard
-                name="TITAN"
+                name="SAMSON"
                 icon={<Rocket className="w-5 h-5 text-rose-500" />}
-                href="/titan"
+                href="/samson"
                 status={titanStatus?.data}
                 livePnL={titanLivePnL?.data}
                 color="rose"

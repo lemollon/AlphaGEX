@@ -90,8 +90,8 @@ def test_knowledge_base():
             results["failed"] += 1
 
         # Test TRADING_STRATEGIES
-        if TRADING_STRATEGIES and "ARES" in TRADING_STRATEGIES:
-            log_pass("TRADING_STRATEGIES loaded (contains ARES)")
+        if TRADING_STRATEGIES and "FORTRESS" in TRADING_STRATEGIES:
+            log_pass("TRADING_STRATEGIES loaded (contains FORTRESS)")
             results["passed"] += 1
         else:
             log_fail("TRADING_STRATEGIES missing or incomplete")
@@ -200,7 +200,7 @@ def test_agentic_tools():
 
         # Test request_bot_action
         try:
-            result = request_bot_action("start", "ares", "test_session")
+            result = request_bot_action("start", "fortress", "test_session")
             if result.get("requires_confirmation"):
                 log_pass("request_bot_action() returns confirmation request")
                 results["passed"] += 1
@@ -417,8 +417,8 @@ def test_slash_commands():
             ("/briefing", "briefing", None),
             ("/gex SPY", "gex", "SPY"),
             ("/gex", "gex", None),
-            ("/start ares", "start_bot", "ares"),
-            ("/stop athena", "stop_bot", "athena"),
+            ("/start fortress", "start_bot", "fortress"),
+            ("/stop solomon", "stop_bot", "solomon"),
             ("/confirm", "confirm", None),
             ("/cancel", "cancel", None),
             ("/positions", "positions", None),
@@ -474,7 +474,7 @@ def test_slash_commands():
         # Test non-command queries
         non_commands = [
             "What's the GEX?",
-            "Tell me about ARES",
+            "Tell me about FORTRESS",
             "hello",
             "How is SPY doing?",
         ]
@@ -515,7 +515,7 @@ def test_bot_control_flow():
 
         # Test 1: Request action
         session_id = "test_session_123"
-        result = request_bot_action("start", "ares", session_id)
+        result = request_bot_action("start", "fortress", session_id)
 
         if result.get("requires_confirmation"):
             log_pass("request_bot_action returns requires_confirmation=True")
@@ -531,7 +531,7 @@ def test_bot_control_flow():
             log_fail(f"request_bot_action action mismatch: {result.get('action')}")
             results["failed"] += 1
 
-        if result.get("bot") == "ares":
+        if result.get("bot") == "fortress":
             log_pass("request_bot_action returns correct bot")
             results["passed"] += 1
         else:
@@ -556,7 +556,7 @@ def test_bot_control_flow():
             results["failed"] += 1
 
         # Test 4: Invalid action
-        result = request_bot_action("invalid_action", "ares", "test3")
+        result = request_bot_action("invalid_action", "fortress", "test3")
         if result.get("error"):
             log_pass("Invalid action returns error")
             results["passed"] += 1

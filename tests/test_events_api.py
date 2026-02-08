@@ -16,9 +16,9 @@ class TestEventDetection:
         # Mock trade data structure matching what the detector expects
         mock_trades = [
             # (exit_date, exit_time, realized_pnl, strategy, symbol, entry_vix, exit_vix, gex_regime)
-            ('2024-01-01', '10:00:00', 100.0, 'ARES', 'SPY', 15.0, 14.5, 'positive'),
-            ('2024-01-02', '10:00:00', 150.0, 'ARES', 'SPY', 15.0, 14.5, 'positive'),
-            ('2024-01-03', '10:00:00', 200.0, 'ARES', 'SPY', 15.0, 14.5, 'positive'),
+            ('2024-01-01', '10:00:00', 100.0, 'FORTRESS', 'SPY', 15.0, 14.5, 'positive'),
+            ('2024-01-02', '10:00:00', 150.0, 'FORTRESS', 'SPY', 15.0, 14.5, 'positive'),
+            ('2024-01-03', '10:00:00', 200.0, 'FORTRESS', 'SPY', 15.0, 14.5, 'positive'),
         ]
 
         # Verify trade data structure
@@ -27,7 +27,7 @@ class TestEventDetection:
             assert len(trade) == 8  # 8 fields per trade
             exit_date, exit_time, pnl, strategy, symbol, entry_vix, exit_vix, gex_regime = trade
             assert pnl > 0  # All winning trades
-            assert strategy == 'ARES'
+            assert strategy == 'FORTRESS'
 
     def test_event_types_complete(self):
         """Verify all event types are defined"""
@@ -60,7 +60,7 @@ class TestEventPersistence:
             'title': 'New Equity High',
             'description': 'Cumulative P&L reached $1,000',
             'value': 1000.0,
-            'bot': 'ARES'
+            'bot': 'FORTRESS'
         }
 
         required_fields = ['date', 'type', 'severity', 'title']
@@ -70,8 +70,8 @@ class TestEventPersistence:
     def test_deduplication_key_fields(self):
         """Test that deduplication uses correct key fields"""
         # Dedup key: (event_date, event_type, bot_name, value)
-        event1 = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'ARES', 'value': 1000}
-        event2 = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'ARES', 'value': 1000}
+        event1 = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'FORTRESS', 'value': 1000}
+        event2 = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'FORTRESS', 'value': 1000}
 
         # Same key = should be deduplicated
         key1 = (event1['date'], event1['type'], event1.get('bot', ''), str(event1.get('value', '')))
@@ -80,11 +80,11 @@ class TestEventPersistence:
 
     def test_different_bots_not_deduplicated(self):
         """Test that same event from different bots is not deduplicated"""
-        event_ares = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'ARES', 'value': 1000}
-        event_athena = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'ATHENA', 'value': 1000}
+        event_ares = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'FORTRESS', 'value': 1000}
+        event_solomon = {'date': '2024-01-01', 'type': 'new_high', 'bot': 'SOLOMON', 'value': 1000}
 
         key1 = (event_ares['date'], event_ares['type'], event_ares.get('bot', ''))
-        key2 = (event_athena['date'], event_athena['type'], event_athena.get('bot', ''))
+        key2 = (event_solomon['date'], event_solomon['type'], event_solomon.get('bot', ''))
         assert key1 != key2
 
 
@@ -235,7 +235,7 @@ class TestAPIEndpoints:
         """Test /api/events/ accepts correct parameters"""
         valid_params = {
             'days': 90,
-            'bot': 'ARES',
+            'bot': 'FORTRESS',
             'event_type': 'new_high'
         }
 
@@ -248,7 +248,7 @@ class TestAPIEndpoints:
         """Test /api/events/equity-curve accepts correct parameters"""
         valid_params = {
             'days': 90,
-            'bot': 'ATHENA',
+            'bot': 'SOLOMON',
             'timeframe': 'daily',
             'auto_sync': True
         }

@@ -7,7 +7,7 @@ Run in Render shell:
     python scripts/render_run_migrations.py --apply  # Actually run migrations
 
 This runs:
-- Migration 013: ARES extended columns + fresh start
+- Migration 013: FORTRESS extended columns + fresh start
 - Migration 014: All bots fresh start
 """
 
@@ -38,7 +38,7 @@ if not args.apply:
 
 # Migrations to run
 migrations = [
-    ("013_ares_extended_columns.sql", "ARES extended columns + fresh start"),
+    ("013_ares_extended_columns.sql", "FORTRESS extended columns + fresh start"),
     ("014_all_bots_fresh_start.sql", "All bots fresh start reset"),
 ]
 
@@ -105,21 +105,21 @@ for filename, description in migrations:
 # Verify fresh start
 print("\n-- Verifying Fresh Start --")
 try:
-    cursor.execute("SELECT COUNT(*) FROM ares_positions")
+    cursor.execute("SELECT COUNT(*) FROM fortress_positions")
     ares_count = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM athena_positions")
-    athena_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM solomon_positions")
+    solomon_count = cursor.fetchone()[0]
 
     if ares_count == 0:
-        ok(f"ARES: 0 positions (fresh start)")
+        ok(f"FORTRESS: 0 positions (fresh start)")
     else:
-        warn(f"ARES: {ares_count} positions remain")
+        warn(f"FORTRESS: {ares_count} positions remain")
 
-    if athena_count == 0:
-        ok(f"ATHENA: 0 positions (fresh start)")
+    if solomon_count == 0:
+        ok(f"SOLOMON: 0 positions (fresh start)")
     else:
-        warn(f"ATHENA: {athena_count} positions remain")
+        warn(f"SOLOMON: {solomon_count} positions remain")
 
 except Exception as e:
     warn(f"Verification query failed: {e}")

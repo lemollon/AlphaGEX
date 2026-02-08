@@ -27,11 +27,11 @@ const fetcher = async (url: string) => {
 
 // Map system IDs to their API endpoint prefixes
 const SYSTEM_API_MAP: Record<string, string> = {
-  ares: '/api/ares',
-  athena: '/api/athena',
+  fortress: '/api/fortress',
+  solomon: '/api/solomon',
   icarus: '/api/icarus',
   pegasus: '/api/pegasus',
-  titan: '/api/titan',
+  samson: '/api/samson',
   sage: '/api/sage',
   quant: '/api/quant',
   oracle: '/api/oracle',
@@ -41,14 +41,14 @@ const SYSTEM_API_MAP: Record<string, string> = {
 
 // Map planet names to their associated bot/metric type
 const PLANET_BOT_MAP: Record<string, string> = {
-  // ARES planets
-  'condor': 'ares',
-  'shield': 'ares',
-  'strategy': 'ares',
-  // ATHENA planets
-  'spread': 'athena',
-  'direction': 'athena',
-  'momentum': 'athena',
+  // FORTRESS planets
+  'condor': 'fortress',
+  'shield': 'fortress',
+  'strategy': 'fortress',
+  // SOLOMON planets
+  'spread': 'solomon',
+  'direction': 'solomon',
+  'momentum': 'solomon',
   // ORACLE planets
   'prediction': 'oracle',
   'probability': 'oracle',
@@ -68,7 +68,7 @@ const SYSTEM_ROUTES: Record<string, string> = {
   manna: '/daily-manna',
   icarus: '/icarus',
   pegasus: '/pegasus',
-  titan: '/titan',
+  samson: '/samson',
   sage: '/sage',
   quant: '/quant',
   oracle: '/oracle',
@@ -78,8 +78,8 @@ const SYSTEM_ROUTES: Record<string, string> = {
   kronos: '/zero-dte-backtest',
   proverbs: '/proverbs',
   hyperion: '/hyperion',
-  ares: '/ares',
-  athena: '/athena',
+  fortress: '/fortress',
+  solomon: '/solomon',
   phoenix: '/trader',
   atlas: '/spx-wheel',
   gexcore: '/gex',
@@ -115,14 +115,14 @@ function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
     revalidateOnFocus: false,
   })
 
-  // Fetch ARES status
-  const { data: aresData } = useSWR('/api/ares/status', fetcher, {
+  // Fetch FORTRESS status
+  const { data: aresData } = useSWR('/api/fortress/status', fetcher, {
     refreshInterval: 30000,
     revalidateOnFocus: false,
   })
 
-  // Fetch ATHENA status
-  const { data: athenaData } = useSWR('/api/athena/status', fetcher, {
+  // Fetch SOLOMON status
+  const { data: solomonData } = useSWR('/api/solomon/status', fetcher, {
     refreshInterval: 30000,
     revalidateOnFocus: false,
   })
@@ -154,11 +154,11 @@ function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
       }
     }
 
-    // ARES system - Iron Condor bot
+    // FORTRESS system - Iron Condor bot
     if (aresData) {
       const perf = extractPerf(aresData)
-      data['ares'] = {
-        // Map to ORACLE system planets (where ARES performance is shown)
+      data['fortress'] = {
+        // Map to ORACLE system planets (where FORTRESS performance is shown)
         'prediction': {
           pnl: perf.total_pnl,
           pnlPercent: perf.return_pct,
@@ -170,10 +170,10 @@ function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
       }
     }
 
-    // ATHENA system - Directional Spreads bot
-    if (athenaData) {
-      const perf = extractPerf(athenaData)
-      data['athena'] = {
+    // SOLOMON system - Directional Spreads bot
+    if (solomonData) {
+      const perf = extractPerf(solomonData)
+      data['solomon'] = {
         'direction': {
           pnl: perf.total_pnl,
           pnlPercent: perf.return_pct,
@@ -259,9 +259,9 @@ function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
     }
 
     return data
-  }, [traderPerf, aresData, athenaData, botsStatus])
+  }, [traderPerf, aresData, solomonData, botsStatus])
 
-  const isLoading = !traderPerf && !aresData && !athenaData && !botsStatus
+  const isLoading = !traderPerf && !aresData && !solomonData && !botsStatus
 
   return { liveData, isLoading }
 }
@@ -302,8 +302,8 @@ class Canvas3DErrorBoundary extends Component<{ children: ReactNode, fallback: R
 // =============================================================================
 
 export interface BotStatus {
-  ares?: 'active' | 'idle' | 'trading' | 'error'
-  athena?: 'active' | 'idle' | 'trading' | 'error'
+  fortress?: 'active' | 'idle' | 'trading' | 'error'
+  solomon?: 'active' | 'idle' | 'trading' | 'error'
   pegasus?: 'active' | 'idle' | 'trading' | 'error'
   phoenix?: 'active' | 'idle' | 'trading' | 'error'
   atlas?: 'active' | 'idle' | 'trading' | 'error'
@@ -327,7 +327,7 @@ export type SystemCategory = 'center' | 'inner' | 'outer'
 // Get system category based on position
 function getSystemCategory(systemId: string): SystemCategory {
   if (systemId === 'manna') return 'center'
-  const innerRing = ['icarus', 'pegasus', 'titan', 'sage', 'quant']
+  const innerRing = ['icarus', 'pegasus', 'samson', 'sage', 'quant']
   if (innerRing.includes(systemId)) return 'inner'
   return 'outer'
 }
@@ -445,8 +445,8 @@ const STATUS_COLORS = {
 
 const BOT_NODES = [
   { id: 'oracle', name: 'ORACLE', angle: 0 },
-  { id: 'ares', name: 'ARES', angle: Math.PI / 3 },           // 60°
-  { id: 'athena', name: 'ATHENA', angle: Math.PI * 2 / 3 },   // 120°
+  { id: 'fortress', name: 'FORTRESS', angle: Math.PI / 3 },           // 60°
+  { id: 'solomon', name: 'SOLOMON', angle: Math.PI * 2 / 3 },   // 120°
   { id: 'pegasus', name: 'PEGASUS', angle: Math.PI },          // 180°
   { id: 'atlas', name: 'ATLAS', angle: Math.PI * 4 / 3 },     // 240°
   { id: 'phoenix', name: 'PHOENIX', angle: Math.PI * 5 / 3 }, // 300°
@@ -2284,7 +2284,7 @@ const STOCK_TICKERS = [
 // =============================================================================
 // SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
 // MANNA is the CENTER OF THE UNIVERSE - all systems orbit around it
-// Inner Ring: 5 Bot Systems (ICARUS, PEGASUS, TITAN, SAGE, QUANT) - radius ~45
+// Inner Ring: 5 Bot Systems (ICARUS, PEGASUS, SAMSON, SAGE, QUANT) - radius ~45
 // Outer Ring: 7 Original Systems - radius ~80
 // =============================================================================
 
@@ -2342,10 +2342,10 @@ const SOLAR_SYSTEMS = [
     ]
   },
   {
-    id: 'titan',
-    name: 'TITAN',
+    id: 'samson',
+    name: 'SAMSON',
     subtitle: 'Primordial Force',
-    route: '/titan',
+    route: '/samson',
     position: [26, -36, -60] as [number, number, number],  // Lower right - 4 o'clock
     sunColor: '#7c3aed',  // Deep purple - ancient cosmic power
     glowColor: '#a78bfa',
@@ -2483,7 +2483,7 @@ const SOLAR_SYSTEMS = [
   {
     id: 'hyperion',
     name: 'HYPERION',
-    subtitle: 'Mathematical Titan',
+    subtitle: 'Mathematical Samson',
     route: '/probability',
     position: [-70, 40, -55] as [number, number, number],  // Upper left - 10:30
     sunColor: '#6366f1',
@@ -5929,7 +5929,7 @@ function ApolloEffects({ color, sunColor, paused }: { color: string, sunColor: s
   )
 }
 
-// HYPERION - Mathematical Titan with Fibonacci spirals, fractals, and equations
+// HYPERION - Mathematical Samson with Fibonacci spirals, fractals, and equations
 function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
   const spiralRef = useRef<THREE.Group>(null)

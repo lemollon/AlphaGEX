@@ -80,7 +80,7 @@ const fetchers = {
     return response.data
   },
 
-  // ARES Bot
+  // FORTRESS Bot
   aresStatus: async () => {
     const response = await apiClient.getARESPageStatus()
     return response.data
@@ -103,7 +103,7 @@ const fetchers = {
   },
   aresEquityCurve: async (days: number) => {
     try {
-      const response = await api.get(`/api/ares/equity-curve?days=${days}`)
+      const response = await api.get(`/api/fortress/equity-curve?days=${days}`)
       return response.data
     } catch {
       return { success: false, data: { equity_curve: [] } }
@@ -112,7 +112,7 @@ const fetchers = {
   aresIntradayEquity: async (date?: string) => {
     try {
       const params = date ? `?date=${date}` : ''
-      const response = await api.get(`/api/ares/equity-curve/intraday${params}`)
+      const response = await api.get(`/api/fortress/equity-curve/intraday${params}`)
       return response.data
     } catch {
       return { success: false, data: { intraday_curve: [] } }
@@ -120,7 +120,7 @@ const fetchers = {
   },
   aresTradierStatus: async () => {
     try {
-      const response = await api.get('/api/ares/tradier-status')
+      const response = await api.get('/api/fortress/tradier-status')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -128,7 +128,7 @@ const fetchers = {
   },
   aresConfig: async () => {
     try {
-      const response = await api.get('/api/ares/config')
+      const response = await api.get('/api/fortress/config')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -143,89 +143,89 @@ const fetchers = {
     }
   },
 
-  // ATHENA Bot
-  athenaStatus: async () => {
+  // SOLOMON Bot
+  solomonStatus: async () => {
     const response = await apiClient.getATHENAStatus()
     return response.data
   },
-  athenaPositions: async () => {
+  solomonPositions: async () => {
     const response = await apiClient.getATHENAPositions()
     return response.data
   },
-  athenaSignals: async (limit: number) => {
-    const response = await apiClient.getATHENASignals(limit)
+  solomonSignals: async (limit: number) => {
+    const response = await apiClient.getSolomonSignals(limit)
     return response.data
   },
-  athenaPerformance: async (days: number) => {
+  solomonPerformance: async (days: number) => {
     const response = await apiClient.getATHENAPerformance(days)
     return response.data
   },
-  athenaOracleAdvice: async () => {
+  solomonOracleAdvice: async () => {
     try {
-      const response = await api.get('/api/athena/oracle-advice')
+      const response = await api.get('/api/solomon/oracle-advice')
       return response.data
     } catch {
       return { success: false, data: null }
     }
   },
-  athenaMLSignal: async () => {
+  solomonMLSignal: async () => {
     try {
-      const response = await api.get('/api/athena/ml-signal')
+      const response = await api.get('/api/solomon/ml-signal')
       return response.data
     } catch {
       return { success: false, data: null }
     }
   },
-  athenaDecisions: async (limit?: number) => {
+  solomonDecisions: async (limit?: number) => {
     try {
       const params = new URLSearchParams()
       params.append('limit', String(limit || 100))
-      const response = await api.get(`/api/athena/decisions?${params}`)
+      const response = await api.get(`/api/solomon/decisions?${params}`)
       return response.data
     } catch (error) {
-      console.error('Error fetching ATHENA decisions:', error)
+      console.error('Error fetching SOLOMON decisions:', error)
       return { success: false, data: [], count: 0 }
     }
   },
-  athenaLogs: async (level?: string, limit?: number) => {
+  solomonLogs: async (level?: string, limit?: number) => {
     try {
       const params = new URLSearchParams()
       if (level) params.append('level', level)
       params.append('limit', String(limit || 50))
-      const response = await api.get(`/api/athena/logs?${params}`)
+      const response = await api.get(`/api/solomon/logs?${params}`)
       return response.data
     } catch {
       return { success: false, data: [] }
     }
   },
-  athenaLivePnL: async () => {
+  solomonLivePnL: async () => {
     try {
-      const response = await api.get('/api/athena/live-pnl')
+      const response = await api.get('/api/solomon/live-pnl')
       return response.data
     } catch {
       return { success: false, data: null }
     }
   },
-  athenaConfig: async () => {
+  solomonConfig: async () => {
     try {
-      const response = await api.get('/api/athena/config')
+      const response = await api.get('/api/solomon/config')
       return response.data
     } catch {
       return { success: false, data: null }
     }
   },
-  athenaEquityCurve: async (days: number = 30) => {
+  solomonEquityCurve: async (days: number = 30) => {
     try {
-      const response = await api.get(`/api/athena/equity-curve?days=${days}`)
+      const response = await api.get(`/api/solomon/equity-curve?days=${days}`)
       return response.data
     } catch {
       return { success: false, data: { equity_curve: [] } }
     }
   },
-  athenaIntradayEquity: async (date?: string) => {
+  solomonIntradayEquity: async (date?: string) => {
     try {
       const params = date ? `?date=${date}` : ''
-      const response = await api.get(`/api/athena/equity-curve/intraday${params}`)
+      const response = await api.get(`/api/solomon/equity-curve/intraday${params}`)
       return response.data
     } catch {
       return { success: false, data: { intraday_curve: [] } }
@@ -333,7 +333,7 @@ const fetchers = {
 
   aresLivePnL: async () => {
     try {
-      const response = await api.get('/api/ares/live-pnl')
+      const response = await api.get('/api/fortress/live-pnl')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -341,7 +341,7 @@ const fetchers = {
   },
   aresLogs: async (level?: string, limit: number = 100) => {
     try {
-      const response = await api.get('/api/ares/logs', { params: { level, limit } })
+      const response = await api.get('/api/fortress/logs', { params: { level, limit } })
       return response.data
     } catch {
       return { success: false, data: [] }
@@ -354,7 +354,7 @@ const fetchers = {
       const params = new URLSearchParams()
       params.append('limit', String(limit || 50))
       if (date) params.append('date', date)
-      const response = await api.get(`/api/scans/activity/ARES?${params}`)
+      const response = await api.get(`/api/scans/activity/FORTRESS?${params}`)
       return response.data
     } catch {
       return { success: false, data: { scans: [] } }
@@ -365,7 +365,7 @@ const fetchers = {
       const params = new URLSearchParams()
       params.append('limit', String(limit || 50))
       if (date) params.append('date', date)
-      const response = await api.get(`/api/scans/activity/ATHENA?${params}`)
+      const response = await api.get(`/api/scans/activity/SOLOMON?${params}`)
       return response.data
     } catch {
       return { success: false, data: { scans: [] } }
@@ -682,10 +682,10 @@ const fetchers = {
     }
   },
 
-  // TITAN Aggressive SPX Iron Condor Bot (Daily Trading)
+  // SAMSON Aggressive SPX Iron Condor Bot (Daily Trading)
   titanStatus: async () => {
     try {
-      const response = await api.get('/api/titan/status')
+      const response = await api.get('/api/samson/status')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -693,7 +693,7 @@ const fetchers = {
   },
   titanPositions: async () => {
     try {
-      const response = await api.get('/api/titan/positions')
+      const response = await api.get('/api/samson/positions')
       return response.data
     } catch {
       return { success: false, data: { open_positions: [], closed_positions: [] } }
@@ -701,7 +701,7 @@ const fetchers = {
   },
   titanEquityCurve: async (days: number = 30) => {
     try {
-      const response = await api.get(`/api/titan/equity-curve?days=${days}`)
+      const response = await api.get(`/api/samson/equity-curve?days=${days}`)
       return response.data
     } catch {
       return { success: false, data: { equity_curve: [] } }
@@ -710,7 +710,7 @@ const fetchers = {
   titanIntradayEquity: async (date?: string) => {
     try {
       const params = date ? `?date=${date}` : ''
-      const response = await api.get(`/api/titan/equity-curve/intraday${params}`)
+      const response = await api.get(`/api/samson/equity-curve/intraday${params}`)
       return response.data
     } catch {
       return { success: false, data: { intraday_curve: [] } }
@@ -718,7 +718,7 @@ const fetchers = {
   },
   titanConfig: async () => {
     try {
-      const response = await api.get('/api/titan/config')
+      const response = await api.get('/api/samson/config')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -726,7 +726,7 @@ const fetchers = {
   },
   titanLivePnL: async () => {
     try {
-      const response = await api.get('/api/titan/live-pnl')
+      const response = await api.get('/api/samson/live-pnl')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -737,7 +737,7 @@ const fetchers = {
       const params = new URLSearchParams()
       params.append('limit', String(limit || 50))
       if (date) params.append('date', date)
-      const response = await api.get(`/api/scans/activity/TITAN?${params}`)
+      const response = await api.get(`/api/scans/activity/SAMSON?${params}`)
       return response.data
     } catch {
       return { success: false, data: { scans: [] } }
@@ -1102,11 +1102,11 @@ export function useFalseFloors(options?: SWRConfiguration) {
 }
 
 // =============================================================================
-// ARES BOT HOOKS
+// FORTRESS BOT HOOKS
 // =============================================================================
 
 export function useARESStatus(options?: SWRConfiguration) {
-  return useSWR('ares-status', fetchers.aresStatus, {
+  return useSWR('fortress-status', fetchers.aresStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1114,7 +1114,7 @@ export function useARESStatus(options?: SWRConfiguration) {
 }
 
 export function useARESPerformance(options?: SWRConfiguration) {
-  return useSWR('ares-performance', fetchers.aresPerformance, {
+  return useSWR('fortress-performance', fetchers.aresPerformance, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1122,7 +1122,7 @@ export function useARESPerformance(options?: SWRConfiguration) {
 }
 
 export function useARESPositions(options?: SWRConfiguration) {
-  return useSWR('ares-positions', fetchers.aresPositions, {
+  return useSWR('fortress-positions', fetchers.aresPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1130,7 +1130,7 @@ export function useARESPositions(options?: SWRConfiguration) {
 }
 
 export function useARESMarketData(options?: SWRConfiguration) {
-  return useSWR('ares-market-data', fetchers.aresMarketData, {
+  return useSWR('fortress-market-data', fetchers.aresMarketData, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1139,7 +1139,7 @@ export function useARESMarketData(options?: SWRConfiguration) {
 
 export function useARESDecisions(limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
-    `ares-decisions-${limit}`,
+    `fortress-decisions-${limit}`,
     () => fetchers.aresDecisions(limit),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
@@ -1147,7 +1147,7 @@ export function useARESDecisions(limit: number = 50, options?: SWRConfiguration)
 
 export function useARESEquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `ares-equity-curve-${days}`,
+    `fortress-equity-curve-${days}`,
     () => fetchers.aresEquityCurve(days),
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
   )
@@ -1155,22 +1155,22 @@ export function useARESEquityCurve(days: number = 30, options?: SWRConfiguration
 
 export function useARESIntradayEquity(date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `ares-intraday-equity-${date || 'today'}`,
+    `fortress-intraday-equity-${date || 'today'}`,
     () => fetchers.aresIntradayEquity(date),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
 export function useARESTradierStatus(options?: SWRConfiguration) {
-  return useSWR('ares-tradier-status', fetchers.aresTradierStatus, {
+  return useSWR('fortress-tradier-status', fetchers.aresTradierStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function useARESConfig(options?: SWRConfiguration) {
-  return useSWR('ares-config', fetchers.aresConfig, {
+export function useFortressConfig(options?: SWRConfiguration) {
+  return useSWR('fortress-config', fetchers.aresConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,
@@ -1178,7 +1178,7 @@ export function useARESConfig(options?: SWRConfiguration) {
 }
 
 export function useARESStrategyPresets(options?: SWRConfiguration) {
-  return useSWR('ares-strategy-presets', fetchers.aresStrategyPresets, {
+  return useSWR('fortress-strategy-presets', fetchers.aresStrategyPresets, {
     ...swrConfig,
     refreshInterval: 60 * 1000, // Refresh every minute
     ...options,
@@ -1186,11 +1186,11 @@ export function useARESStrategyPresets(options?: SWRConfiguration) {
 }
 
 // =============================================================================
-// ATHENA BOT HOOKS
+// SOLOMON BOT HOOKS
 // =============================================================================
 
 export function useATHENAStatus(options?: SWRConfiguration) {
-  return useSWR('athena-status', fetchers.athenaStatus, {
+  return useSWR('solomon-status', fetchers.solomonStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1198,31 +1198,31 @@ export function useATHENAStatus(options?: SWRConfiguration) {
 }
 
 export function useATHENAPositions(options?: SWRConfiguration) {
-  return useSWR('athena-positions', fetchers.athenaPositions, {
+  return useSWR('solomon-positions', fetchers.solomonPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function useATHENASignals(limit: number = 50, options?: SWRConfiguration) {
+export function useSolomonSignals(limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
-    `athena-signals-${limit}`,
-    () => fetchers.athenaSignals(limit),
+    `solomon-signals-${limit}`,
+    () => fetchers.solomonSignals(limit),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
 export function useATHENAPerformance(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `athena-performance-${days}`,
-    () => fetchers.athenaPerformance(days),
+    `solomon-performance-${days}`,
+    () => fetchers.solomonPerformance(days),
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
   )
 }
 
 export function useATHENAOracleAdvice(options?: SWRConfiguration) {
-  return useSWR('athena-oracle-advice', fetchers.athenaOracleAdvice, {
+  return useSWR('solomon-oracle-advice', fetchers.solomonOracleAdvice, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1230,7 +1230,7 @@ export function useATHENAOracleAdvice(options?: SWRConfiguration) {
 }
 
 export function useATHENAMLSignal(options?: SWRConfiguration) {
-  return useSWR('athena-ml-signal', fetchers.athenaMLSignal, {
+  return useSWR('solomon-ml-signal', fetchers.solomonMLSignal, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1239,30 +1239,30 @@ export function useATHENAMLSignal(options?: SWRConfiguration) {
 
 export function useATHENALogs(level?: string, limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
-    `athena-logs-${level || 'all'}-${limit}`,
-    () => fetchers.athenaLogs(level, limit),
+    `solomon-logs-${level || 'all'}-${limit}`,
+    () => fetchers.solomonLogs(level, limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
 export function useATHENADecisions(limit: number = 100, options?: SWRConfiguration) {
   return useSWR(
-    `athena-decisions-${limit}`,
-    () => fetchers.athenaDecisions(limit),
+    `solomon-decisions-${limit}`,
+    () => fetchers.solomonDecisions(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
 export function useATHENALivePnL(options?: SWRConfiguration) {
   return useSWR(
-    'athena-live-pnl',
-    fetchers.athenaLivePnL,
+    'solomon-live-pnl',
+    fetchers.solomonLivePnL,
     { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
   )
 }
 
-export function useATHENAConfig(options?: SWRConfiguration) {
-  return useSWR('athena-config', fetchers.athenaConfig, {
+export function useSolomonConfig(options?: SWRConfiguration) {
+  return useSWR('solomon-config', fetchers.solomonConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,  // 5 minute refresh for config
     ...options,
@@ -1271,23 +1271,23 @@ export function useATHENAConfig(options?: SWRConfiguration) {
 
 export function useATHENAEquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `athena-equity-curve-${days}`,
-    () => fetchers.athenaEquityCurve(days),
+    `solomon-equity-curve-${days}`,
+    () => fetchers.solomonEquityCurve(days),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
 export function useATHENAIntradayEquity(date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `athena-intraday-equity-${date || 'today'}`,
-    () => fetchers.athenaIntradayEquity(date),
+    `solomon-intraday-equity-${date || 'today'}`,
+    () => fetchers.solomonIntradayEquity(date),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
 export function useARESLivePnL(options?: SWRConfiguration) {
   return useSWR(
-    'ares-live-pnl',
+    'fortress-live-pnl',
     fetchers.aresLivePnL,
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }  // 30 second refresh to match other bots
   )
@@ -1295,7 +1295,7 @@ export function useARESLivePnL(options?: SWRConfiguration) {
 
 export function useARESLogs(level?: string, limit: number = 100, options?: SWRConfiguration) {
   return useSWR(
-    `ares-logs-${level || 'all'}-${limit}`,
+    `fortress-logs-${level || 'all'}-${limit}`,
     () => fetchers.aresLogs(level, limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -1399,7 +1399,7 @@ export function useICARUSScanActivity(limit: number = 50, date?: string, options
 
 export function useScanActivityAres(limit: number = 50, date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `scan-activity-ares-${limit}-${date || 'all'}`,
+    `scan-activity-fortress-${limit}-${date || 'all'}`,
     () => fetchers.scanActivityAres(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -1407,7 +1407,7 @@ export function useScanActivityAres(limit: number = 50, date?: string, options?:
 
 export function useScanActivityAthena(limit: number = 50, date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `scan-activity-athena-${limit}-${date || 'all'}`,
+    `scan-activity-solomon-${limit}-${date || 'all'}`,
     () => fetchers.scanActivityAthena(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -1482,11 +1482,11 @@ export function useScanActivityPegasus(limit: number = 50, date?: string, option
 }
 
 // =============================================================================
-// TITAN AGGRESSIVE SPX IRON CONDOR HOOKS (Daily Trading)
+// SAMSON AGGRESSIVE SPX IRON CONDOR HOOKS (Daily Trading)
 // =============================================================================
 
 export function useTITANStatus(options?: SWRConfiguration) {
-  return useSWR('titan-status', fetchers.titanStatus, {
+  return useSWR('samson-status', fetchers.titanStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1494,7 +1494,7 @@ export function useTITANStatus(options?: SWRConfiguration) {
 }
 
 export function useTITANPositions(options?: SWRConfiguration) {
-  return useSWR('titan-positions', fetchers.titanPositions, {
+  return useSWR('samson-positions', fetchers.titanPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1503,7 +1503,7 @@ export function useTITANPositions(options?: SWRConfiguration) {
 
 export function useTITANEquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `titan-equity-curve-${days}`,
+    `samson-equity-curve-${days}`,
     () => fetchers.titanEquityCurve(days),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
@@ -1511,14 +1511,14 @@ export function useTITANEquityCurve(days: number = 30, options?: SWRConfiguratio
 
 export function useTITANIntradayEquity(date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `titan-intraday-equity-${date || 'today'}`,
+    `samson-intraday-equity-${date || 'today'}`,
     () => fetchers.titanIntradayEquity(date),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
-export function useTITANConfig(options?: SWRConfiguration) {
-  return useSWR('titan-config', fetchers.titanConfig, {
+export function useSamsonConfig(options?: SWRConfiguration) {
+  return useSWR('samson-config', fetchers.titanConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,
@@ -1526,7 +1526,7 @@ export function useTITANConfig(options?: SWRConfiguration) {
 }
 
 export function useTITANLivePnL(options?: SWRConfiguration) {
-  return useSWR('titan-live-pnl', fetchers.titanLivePnL, {
+  return useSWR('samson-live-pnl', fetchers.titanLivePnL, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1535,7 +1535,7 @@ export function useTITANLivePnL(options?: SWRConfiguration) {
 
 export function useScanActivityTitan(limit: number = 50, date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `scan-activity-titan-${limit}-${date || 'all'}`,
+    `scan-activity-samson-${limit}-${date || 'all'}`,
     () => fetchers.scanActivityTitan(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -2454,8 +2454,8 @@ export const prefetchMarketData = {
   gammaIntelligence: (symbol: string = 'SPY') =>
     preload(`gamma-intelligence-${symbol}`, () => fetchers.gammaIntelligence(symbol)),
   vix: () => preload('vix-current', fetchers.vixCurrent),
-  aresStatus: () => preload('ares-status', fetchers.aresStatus),
-  athenaStatus: () => preload('athena-status', fetchers.athenaStatus),
+  aresStatus: () => preload('fortress-status', fetchers.aresStatus),
+  solomonStatus: () => preload('solomon-status', fetchers.solomonStatus),
   traderStatus: () => preload('trader-status', fetchers.traderStatus),
   dailyManna: () => preload('daily-manna', () => fetchers.dailyManna()),
   dailyMannaWidget: () => preload('daily-manna-widget', fetchers.dailyMannaWidget),
@@ -2474,7 +2474,7 @@ export const prefetchMarketData = {
 
     // Bot statuses
     prefetchMarketData.aresStatus()
-    prefetchMarketData.athenaStatus()
+    prefetchMarketData.solomonStatus()
     prefetchMarketData.traderStatus()
   },
 }

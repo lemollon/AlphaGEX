@@ -34,10 +34,10 @@ except ImportError:
 
 # Symbol mapping for each bot
 BOT_SYMBOLS = {
-    'ares': 'SPY',      # ARES trades SPY
-    'athena': 'SPY',    # ATHENA trades SPY
+    'fortress': 'SPY',      # FORTRESS trades SPY
+    'solomon': 'SPY',    # SOLOMON trades SPY
     'icarus': 'SPY',    # ICARUS trades SPY
-    'titan': '^SPX',    # TITAN trades SPX (use ^GSPC as backup)
+    'samson': '^SPX',    # SAMSON trades SPX (use ^GSPC as backup)
     'pegasus': '^SPX',  # PEGASUS trades SPX
 }
 
@@ -253,7 +253,7 @@ def fetch_ticks_for_trades(
 
     Args:
         trades: List of trade dicts
-        bot_name: Bot name to determine symbol (ares, titan, etc.)
+        bot_name: Bot name to determine symbol (fortress, samson, etc.)
 
     Returns:
         Dict mapping position_id to list of candles

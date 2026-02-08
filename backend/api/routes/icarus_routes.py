@@ -3,9 +3,9 @@ ICARUS Aggressive Directional Spread Bot API Routes
 =====================================================
 
 API endpoints for the ICARUS aggressive directional spread trading bot.
-ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA conservative):
+ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs SOLOMON conservative):
 
-Key differences from ATHENA:
+Key differences from SOLOMON:
 - 2% wall filter (vs 1%) - more room to trade
 - 48% min win probability (vs 55%) - lower threshold
 - 3% risk per trade (vs 2%) - larger positions
@@ -430,7 +430,7 @@ async def get_icarus_status():
     now = datetime.now(CENTRAL_TZ)
     current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
 
-    # ICARUS trading window: 8:35 AM - 2:30 PM CT (same as ATHENA)
+    # ICARUS trading window: 8:35 AM - 2:30 PM CT (same as SOLOMON)
     entry_start = "08:35"
     entry_end = "14:30"
 
@@ -723,7 +723,7 @@ async def get_icarus_positions(
             realized_pnl = float(row[21]) if row[21] else 0
             return_pct = round((realized_pnl / max_profit_val) * 100, 1) if max_profit_val and realized_pnl else 0
 
-            # Calculate is_0dte (same as ATHENA)
+            # Calculate is_0dte (same as SOLOMON)
             expiration = str(row[5]) if row[5] else None
             is_0dte = False
             if expiration:
@@ -745,12 +745,12 @@ async def get_icarus_positions(
                 "spread_width": spread_width,
                 "expiration": expiration,
                 "is_0dte": is_0dte,
-                "entry_price": entry_debit,  # Match ATHENA's field name
+                "entry_price": entry_debit,  # Match SOLOMON's field name
                 "entry_debit": entry_debit,  # Keep for backward compat
                 "contracts": row[7],
                 "max_profit": max_profit_val,
                 "max_loss": float(row[9]) if row[9] else 0,
-                "spot_at_entry": float(row[10]) if row[10] else 0,  # Match ATHENA's field name
+                "spot_at_entry": float(row[10]) if row[10] else 0,  # Match SOLOMON's field name
                 "underlying_at_entry": float(row[10]) if row[10] else 0,  # Keep for backward compat
                 "call_wall": float(row[11]) if row[11] else 0,
                 "put_wall": float(row[12]) if row[12] else 0,
@@ -760,15 +760,15 @@ async def get_icarus_positions(
                 "ml_direction": row[16],
                 "ml_confidence": float(row[17]) if row[17] else 0,
                 "status": row[18],
-                "exit_price": float(row[19]) if row[19] else 0,  # Match ATHENA's field name
+                "exit_price": float(row[19]) if row[19] else 0,  # Match SOLOMON's field name
                 "close_price": float(row[19]) if row[19] else 0,  # Keep for backward compat
-                "exit_reason": row[20],  # Match ATHENA's field name
+                "exit_reason": row[20],  # Match SOLOMON's field name
                 "close_reason": row[20],  # Keep for backward compat
                 "realized_pnl": realized_pnl,
                 "return_pct": return_pct,
-                "created_at": row[22].isoformat() if row[22] else None,  # Match ATHENA's field name
+                "created_at": row[22].isoformat() if row[22] else None,  # Match SOLOMON's field name
                 "open_time": row[22].isoformat() if row[22] else None,  # Keep for backward compat
-                "exit_time": row[23].isoformat() if row[23] else None,  # Match ATHENA's field name
+                "exit_time": row[23].isoformat() if row[23] else None,  # Match SOLOMON's field name
                 "close_time": row[23].isoformat() if row[23] else None,  # Keep for backward compat
                 "wall_type": row[24],
                 "wall_distance_pct": float(row[25]) if row[25] else 0,
@@ -986,21 +986,21 @@ async def get_icarus_config():
     """Get ICARUS configuration settings (Apache GEX backtest aggressive parameters)."""
     # ICARUS aggressive Apache GEX backtest configuration
     default_config = {
-        "risk_per_trade": {"value": "3.0", "description": "Risk per trade (3% vs ATHENA's 2%)"},
-        "spread_width": {"value": "3", "description": "Width of spread in strikes ($3 vs ATHENA's $2)"},
-        "max_daily_trades": {"value": "8", "description": "Maximum trades per day (8 vs ATHENA's 5)"},
-        "max_open_positions": {"value": "4", "description": "Maximum concurrent positions (4 vs ATHENA's 3)"},
+        "risk_per_trade": {"value": "3.0", "description": "Risk per trade (3% vs SOLOMON's 2%)"},
+        "spread_width": {"value": "3", "description": "Width of spread in strikes ($3 vs SOLOMON's $2)"},
+        "max_daily_trades": {"value": "8", "description": "Maximum trades per day (8 vs SOLOMON's 5)"},
+        "max_open_positions": {"value": "4", "description": "Maximum concurrent positions (4 vs SOLOMON's 3)"},
         "ticker": {"value": "SPY", "description": "Trading ticker symbol"},
-        "wall_filter_pct": {"value": "2.0", "description": "GEX wall filter (2% vs ATHENA's 1%)"},
-        "min_win_probability": {"value": "0.48", "description": "Minimum win probability (48% vs ATHENA's 55%)"},
-        "min_confidence": {"value": "0.48", "description": "Minimum signal confidence (48% vs ATHENA's 55%)"},
-        "min_rr_ratio": {"value": "1.2", "description": "Minimum risk:reward ratio (1.2 vs ATHENA's 1.5)"},
-        "min_vix": {"value": "12.0", "description": "Minimum VIX (12 vs ATHENA's 15)"},
-        "max_vix": {"value": "30.0", "description": "Maximum VIX (30 vs ATHENA's 25)"},
-        "min_gex_ratio_bearish": {"value": "1.3", "description": "GEX ratio for bearish signal (1.3 vs ATHENA's 1.5)"},
-        "max_gex_ratio_bullish": {"value": "0.77", "description": "GEX ratio for bullish signal (0.77 vs ATHENA's 0.67)"},
-        "stop_loss_pct": {"value": "60", "description": "Stop loss percentage (60% vs ATHENA's 50%)"},
-        "profit_target_pct": {"value": "40", "description": "Take profit percentage (40% vs ATHENA's 50%)"},
+        "wall_filter_pct": {"value": "2.0", "description": "GEX wall filter (2% vs SOLOMON's 1%)"},
+        "min_win_probability": {"value": "0.48", "description": "Minimum win probability (48% vs SOLOMON's 55%)"},
+        "min_confidence": {"value": "0.48", "description": "Minimum signal confidence (48% vs SOLOMON's 55%)"},
+        "min_rr_ratio": {"value": "1.2", "description": "Minimum risk:reward ratio (1.2 vs SOLOMON's 1.5)"},
+        "min_vix": {"value": "12.0", "description": "Minimum VIX (12 vs SOLOMON's 15)"},
+        "max_vix": {"value": "30.0", "description": "Maximum VIX (30 vs SOLOMON's 25)"},
+        "min_gex_ratio_bearish": {"value": "1.3", "description": "GEX ratio for bearish signal (1.3 vs SOLOMON's 1.5)"},
+        "max_gex_ratio_bullish": {"value": "0.77", "description": "GEX ratio for bullish signal (0.77 vs SOLOMON's 0.67)"},
+        "stop_loss_pct": {"value": "60", "description": "Stop loss percentage (60% vs SOLOMON's 50%)"},
+        "profit_target_pct": {"value": "40", "description": "Take profit percentage (40% vs SOLOMON's 50%)"},
         "entry_start_time": {"value": "08:35", "description": "Trading window start time CT"},
         "entry_end_time": {"value": "14:30", "description": "Trading window end time CT"},
     }

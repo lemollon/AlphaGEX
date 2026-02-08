@@ -23,15 +23,15 @@ import { useScanActivityAres, useScanActivityAthena, useScanActivityPegasus, use
 // PERFORMANCE FIX: Move helper functions outside component (no re-creation per render)
 const getBotIcon = (botName: string) => {
   switch (botName?.toUpperCase()) {
-    case 'ARES':
+    case 'FORTRESS':
       return <Sword className="w-4 h-4 text-blue-500" />
-    case 'ATHENA':
+    case 'SOLOMON':
       return <Target className="w-4 h-4 text-purple-500" />
     case 'PEGASUS':
       return <Shield className="w-4 h-4 text-amber-500" />
     case 'ICARUS':
       return <Flame className="w-4 h-4 text-cyan-500" />
-    case 'TITAN':
+    case 'SAMSON':
       return <Rocket className="w-4 h-4 text-rose-500" />
     default:
       return <Activity className="w-4 h-4 text-text-muted" />
@@ -91,14 +91,14 @@ export default function DashboardScanFeed() {
 
   // Live bots
   const { data: aresScans, isLoading: aresLoading, mutate: refreshAres } = useScanActivityAres(10)
-  const { data: athenaScans, isLoading: athenaLoading, mutate: refreshAthena } = useScanActivityAthena(10)
+  const { data: solomonScans, isLoading: solomonLoading, mutate: refreshAthena } = useScanActivityAthena(10)
   const { data: pegasusScans, isLoading: pegasusLoading, mutate: refreshPegasus } = useScanActivityPegasus(10)
 
   // Paper bots
   const { data: icarusScans, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSScanActivity(10)
   const { data: titanScans, isLoading: titanLoading, mutate: refreshTitan } = useScanActivityTitan(10)
 
-  const isLoading = aresLoading || athenaLoading || pegasusLoading || icarusLoading || titanLoading
+  const isLoading = aresLoading || solomonLoading || pegasusLoading || icarusLoading || titanLoading
 
   // PERFORMANCE FIX: useCallback for refreshAll to prevent child re-renders
   const refreshAll = useCallback(() => {
@@ -112,13 +112,13 @@ export default function DashboardScanFeed() {
   // PERFORMANCE FIX: useMemo for allScans array (was creating new arrays every render)
   const allScans = useMemo(() => {
     return [
-      ...(aresScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ARES' })),
-      ...(athenaScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ATHENA' })),
+      ...(aresScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'FORTRESS' })),
+      ...(solomonScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'SOLOMON' })),
       ...(pegasusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'PEGASUS' })),
       ...(icarusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ICARUS' })),
-      ...(titanScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'TITAN' }))
+      ...(titanScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'SAMSON' }))
     ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 10)
-  }, [aresScans, athenaScans, pegasusScans, icarusScans, titanScans])
+  }, [aresScans, solomonScans, pegasusScans, icarusScans, titanScans])
 
   // PERFORMANCE FIX: useMemo for stats (single pass instead of 3 filter operations)
   const { tradesCount, skipsCount, errorsCount } = useMemo(() => {

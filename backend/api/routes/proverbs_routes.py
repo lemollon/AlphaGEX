@@ -73,7 +73,7 @@ class ResumeRequest(BaseModel):
 
 class ProposalCreateRequest(BaseModel):
     """Request to create a new proposal"""
-    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, PEGASUS, PHOENIX)")
+    bot_name: str = Field(..., description="Bot name (FORTRESS, SOLOMON, PEGASUS, PHOENIX)")
     proposal_type: str = Field(..., description="Type of proposal (MODEL_UPDATE, PARAMETER_CHANGE, etc.)")
     title: str = Field(..., description="Short title for the proposal")
     description: str = Field(..., description="Detailed description")
@@ -160,7 +160,7 @@ async def get_bot_dashboard(bot_name: str):
         raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     bot_name = bot_name.upper()
-    if bot_name not in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
+    if bot_name not in ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON', 'PHOENIX']:
         raise HTTPException(status_code=400, detail=f"Invalid bot name: {bot_name}")
 
     try:
@@ -596,7 +596,7 @@ async def get_kill_switch_status():
         status = proverbs.get_kill_switch_status()
 
         # Add bots not yet in the table
-        for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
+        for bot in ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON', 'PHOENIX']:
             if bot not in status:
                 status[bot] = {
                     'bot_name': bot,
@@ -859,7 +859,7 @@ async def get_realtime_status(
     Get real-time Proverbs monitoring status with actual trade data.
 
     This endpoint provides visibility into what Proverbs is actively monitoring,
-    derived directly from each bot's positions table (ares_positions, titan_positions, etc.)
+    derived directly from each bot's positions table (fortress_positions, samson_positions, etc.)
     rather than summary tables.
 
     Returns per-bot:
@@ -876,9 +876,9 @@ async def get_realtime_status(
 
         # Bot tables mapping - query actual position tables
         BOT_TABLES = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
-            'TITAN': 'titan_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
             'PEGASUS': 'pegasus_positions',
             'ICARUS': 'icarus_positions',
             'PROMETHEUS': 'prometheus_ic_positions',
@@ -892,7 +892,7 @@ async def get_realtime_status(
         for bot_name, table_name in BOT_TABLES.items():
             try:
                 # Get recent trade performance for this bot
-                # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
                 cursor.execute(f"""
                     SELECT
                         COUNT(*) as total_trades,
@@ -910,7 +910,7 @@ async def get_realtime_status(
                     bot_rows.append((bot_name, row[0], row[1], row[2], row[3], row[4], row[5]))
 
                 # Get today's performance for this bot
-                # Cast to timestamptz to handle ARES TEXT columns
+                # Cast to timestamptz to handle FORTRESS TEXT columns
                 cursor.execute(f"""
                     SELECT
                         COUNT(*) as today_trades,
@@ -924,7 +924,7 @@ async def get_realtime_status(
                     today_by_bot[bot_name] = {'trades': today_row[0], 'pnl': float(today_row[1] or 0)}
 
                 # Get last 10 trades for streak calculation
-                # Cast to timestamptz to handle ARES TEXT columns
+                # Cast to timestamptz to handle FORTRESS TEXT columns
                 cursor.execute(f"""
                     SELECT realized_pnl
                     FROM {table_name}
@@ -965,8 +965,8 @@ async def get_realtime_status(
 
         # Build bot status
         bots = {}
-        ic_bots = ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
-        dir_bots = ['ATHENA', 'ICARUS']
+        ic_bots = ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
+        dir_bots = ['SOLOMON', 'ICARUS']
 
         for row in bot_rows:
             bot_name, total_trades, wins, losses, total_pnl, avg_pnl, last_trade = row
@@ -1033,8 +1033,8 @@ async def get_strategy_analysis(
     Directional strategy performance across all bots.
 
     Returns:
-    - Iron Condor metrics (ARES, TITAN, PEGASUS)
-    - Directional metrics (ATHENA, ICARUS)
+    - Iron Condor metrics (FORTRESS, SAMSON, PEGASUS)
+    - Directional metrics (SOLOMON, ICARUS)
     - Win rate comparison
     - Average P&L comparison
     - Strategy recommendation
@@ -1532,7 +1532,7 @@ class ValidatedProposalRequest(BaseModel):
     This is the recommended way to create proposals as it enforces
     the "proven improvement required" policy.
     """
-    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, PEGASUS, PHOENIX)")
+    bot_name: str = Field(..., description="Bot name (FORTRESS, SOLOMON, PEGASUS, PHOENIX)")
     title: str = Field(..., description="Short title for the proposal")
 
     # DETAILED REASONING (WHY)

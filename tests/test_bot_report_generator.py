@@ -48,7 +48,7 @@ class TestDatabaseTableCreation:
 
     def test_valid_bots_list(self):
         """Verify VALID_BOTS contains expected bots."""
-        expected_bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+        expected_bots = ['fortress', 'solomon', 'samson', 'pegasus', 'icarus']
         assert VALID_BOTS == expected_bots, f"VALID_BOTS mismatch: {VALID_BOTS}"
 
     @patch('backend.services.bot_report_generator.get_connection')
@@ -514,7 +514,7 @@ class TestFetchFunctions:
         mock_db_conn.return_value.__enter__ = Mock(return_value=mock_conn)
         mock_db_conn.return_value.__exit__ = Mock(return_value=False)
 
-        trades = fetch_closed_trades_for_date('ares', date(2025, 1, 15))
+        trades = fetch_closed_trades_for_date('fortress', date(2025, 1, 15))
 
         assert len(trades) == 1
         assert isinstance(trades[0]['pnl'], float)
@@ -526,7 +526,7 @@ class TestFetchFunctions:
         """Test graceful handling when DB is unavailable."""
         from backend.services.bot_report_generator import fetch_closed_trades_for_date
 
-        trades = fetch_closed_trades_for_date('ares', date(2025, 1, 15))
+        trades = fetch_closed_trades_for_date('fortress', date(2025, 1, 15))
         assert trades == []
 
     def test_fetch_closed_trades_rejects_invalid_bot(self):

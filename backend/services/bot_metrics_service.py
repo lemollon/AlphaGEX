@@ -38,10 +38,10 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 class BotName(Enum):
     """Supported trading bots"""
-    ARES = "ARES"
-    ATHENA = "ATHENA"
+    FORTRESS = "FORTRESS"
+    SOLOMON = "SOLOMON"
     ICARUS = "ICARUS"
-    TITAN = "TITAN"
+    SAMSON = "SAMSON"
     PEGASUS = "PEGASUS"
     HERACLES = "HERACLES"
     AGAPE = "AGAPE"
@@ -157,10 +157,10 @@ class BotMetricsService:
 
     # Default capital per bot (only used if database and Tradier unavailable)
     DEFAULT_CAPITAL = {
-        BotName.ARES: 100000,
-        BotName.ATHENA: 100000,
+        BotName.FORTRESS: 100000,
+        BotName.SOLOMON: 100000,
         BotName.ICARUS: 100000,
-        BotName.TITAN: 200000,
+        BotName.SAMSON: 200000,
         BotName.PEGASUS: 200000,
         BotName.HERACLES: 100000,  # MES Futures paper trading
         BotName.AGAPE: 5000,       # ETH Micro Futures paper trading
@@ -168,24 +168,24 @@ class BotMetricsService:
 
     # Database table mappings
     BOT_TABLES = {
-        BotName.ARES: {
-            'positions': 'ares_positions',
-            'snapshots': 'ares_equity_snapshots',
+        BotName.FORTRESS: {
+            'positions': 'fortress_positions',
+            'snapshots': 'fortress_equity_snapshots',
             'config_key': 'ares_starting_capital',
         },
-        BotName.ATHENA: {
-            'positions': 'athena_positions',
-            'snapshots': 'athena_equity_snapshots',
-            'config_key': 'athena_starting_capital',
+        BotName.SOLOMON: {
+            'positions': 'solomon_positions',
+            'snapshots': 'solomon_equity_snapshots',
+            'config_key': 'solomon_starting_capital',
         },
         BotName.ICARUS: {
             'positions': 'icarus_positions',
             'snapshots': 'icarus_equity_snapshots',
             'config_key': 'icarus_starting_capital',
         },
-        BotName.TITAN: {
-            'positions': 'titan_positions',
-            'snapshots': 'titan_equity_snapshots',
+        BotName.SAMSON: {
+            'positions': 'samson_positions',
+            'snapshots': 'samson_equity_snapshots',
             'config_key': 'titan_starting_capital',
         },
         BotName.PEGASUS: {
@@ -313,7 +313,7 @@ class BotMetricsService:
         # 2. Check Tradier connection (for status info only, NOT for starting capital)
         # CRITICAL: Do NOT use Tradier balance as starting_capital!
         # Tradier balance = starting_capital + all P&L, using it would cause double-counting
-        tradier_data = self._get_tradier_balance(sandbox=(bot in [BotName.ARES]))
+        tradier_data = self._get_tradier_balance(sandbox=(bot in [BotName.FORTRESS]))
         if tradier_data and tradier_data.get('connected'):
             tradier_connected = True
             tradier_balance = tradier_data.get('total_equity', 0)
@@ -495,9 +495,9 @@ class BotMetricsService:
                 # The positions table unrealized_pnl column is never updated with live values
                 if open_count > 0 and MTM_AVAILABLE:
                     try:
-                        # Iron Condor bots: ARES, TITAN, PEGASUS
-                        if bot in [BotName.ARES, BotName.TITAN, BotName.PEGASUS]:
-                            underlying = 'SPY' if bot == BotName.ARES else 'SPX'
+                        # Iron Condor bots: FORTRESS, SAMSON, PEGASUS
+                        if bot in [BotName.FORTRESS, BotName.SAMSON, BotName.PEGASUS]:
+                            underlying = 'SPY' if bot == BotName.FORTRESS else 'SPX'
                             cursor.execute(f"""
                                 SELECT position_id, total_credit, contracts, spread_width,
                                        put_short_strike, put_long_strike, call_short_strike, call_long_strike,
@@ -529,8 +529,8 @@ class BotMetricsService:
                                 except Exception as pos_err:
                                     logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
 
-                        # Directional spread bots: ATHENA, ICARUS
-                        elif bot in [BotName.ATHENA, BotName.ICARUS]:
+                        # Directional spread bots: SOLOMON, ICARUS
+                        elif bot in [BotName.SOLOMON, BotName.ICARUS]:
                             cursor.execute(f"""
                                 SELECT position_id, spread_type, entry_debit, contracts,
                                        long_strike, short_strike, expiration
@@ -731,9 +731,9 @@ class BotMetricsService:
                 # Calculate unrealized P&L using MTM for open positions
                 if open_count > 0 and MTM_AVAILABLE:
                     try:
-                        # Iron Condor bots: ARES, TITAN, PEGASUS
-                        if bot in [BotName.ARES, BotName.TITAN, BotName.PEGASUS]:
-                            underlying = 'SPY' if bot == BotName.ARES else 'SPX'
+                        # Iron Condor bots: FORTRESS, SAMSON, PEGASUS
+                        if bot in [BotName.FORTRESS, BotName.SAMSON, BotName.PEGASUS]:
+                            underlying = 'SPY' if bot == BotName.FORTRESS else 'SPX'
                             cursor.execute(f"""
                                 SELECT position_id, total_credit, contracts, spread_width,
                                        put_short_strike, put_long_strike, call_short_strike, call_long_strike,
@@ -765,8 +765,8 @@ class BotMetricsService:
                                 except Exception as pos_err:
                                     logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
 
-                        # Directional spread bots: ATHENA, ICARUS
-                        elif bot in [BotName.ATHENA, BotName.ICARUS]:
+                        # Directional spread bots: SOLOMON, ICARUS
+                        elif bot in [BotName.SOLOMON, BotName.ICARUS]:
                             cursor.execute(f"""
                                 SELECT position_id, spread_type, entry_debit, contracts,
                                        long_strike, short_strike, expiration

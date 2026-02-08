@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS oracle_predictions (
 
     -- Prediction context
     trade_date DATE NOT NULL,
-    bot_name VARCHAR(20) NOT NULL,  -- ARES, ATLAS, PHOENIX
+    bot_name VARCHAR(20) NOT NULL,  -- FORTRESS, ATLAS, PHOENIX
     prediction_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
     -- Prediction details
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS oracle_predictions (
     suggested_risk_pct FLOAT,
     suggested_sd_multiplier FLOAT,
 
-    -- GEX-specific (for ARES)
+    -- GEX-specific (for FORTRESS)
     use_gex_walls BOOLEAN DEFAULT FALSE,
     suggested_put_strike FLOAT,
     suggested_call_strike FLOAT,

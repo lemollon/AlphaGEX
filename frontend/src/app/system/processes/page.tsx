@@ -107,8 +107,8 @@ const ALL_PROCESSES = [
   { id: 'exit-conditions', title: 'Exit Condition Checker', category: 'decisions', keywords: ['exit', 'profit', 'stop'], type: 'decision' as NodeType },
   { id: 'vix-gate', title: 'VIX Gating Logic', category: 'decisions', keywords: ['vix', 'volatility'], type: 'risk' as NodeType },
   { id: 'trade-entry', title: 'Trade Entry Pipeline', category: 'execution', keywords: ['trade', 'entry', 'execute'], type: 'output' as NodeType },
-  { id: 'ares', title: 'ARES Bot', category: 'bots', keywords: ['ares', 'iron condor', '0dte'], type: 'bot' as NodeType },
-  { id: 'athena', title: 'ATHENA Bot', category: 'bots', keywords: ['athena', 'directional'], type: 'bot' as NodeType },
+  { id: 'fortress', title: 'FORTRESS Bot', category: 'bots', keywords: ['fortress', 'iron condor', '0dte'], type: 'bot' as NodeType },
+  { id: 'solomon', title: 'SOLOMON Bot', category: 'bots', keywords: ['solomon', 'directional'], type: 'bot' as NodeType },
   { id: 'apollo', title: 'APOLLO Bot', category: 'bots', keywords: ['apollo', 'scanner'], type: 'bot' as NodeType },
   { id: 'argus', title: 'ARGUS Bot', category: 'bots', keywords: ['argus', 'gamma'], type: 'bot' as NodeType },
   { id: 'oracle', title: 'ORACLE Bot', category: 'bots', keywords: ['oracle', 'ml'], type: 'bot' as NodeType },
@@ -1210,8 +1210,8 @@ export default function SystemProcessesPage() {
 
   // Bot data
   const bots = useMemo(() => [
-    { name: 'ARES', icon: '⚔️', description: '0DTE Iron Condor', status: botStatuses['ares']?.status || 'stopped', pnl: botStatuses['ares']?.pnlToday || 0 },
-    { name: 'ATHENA', icon: '🦉', description: 'Directional Spreads', status: botStatuses['athena']?.status || 'stopped', pnl: botStatuses['athena']?.pnlToday || 0 },
+    { name: 'FORTRESS', icon: '⚔️', description: '0DTE Iron Condor', status: botStatuses['fortress']?.status || 'stopped', pnl: botStatuses['fortress']?.pnlToday || 0 },
+    { name: 'SOLOMON', icon: '🦉', description: 'Directional Spreads', status: botStatuses['solomon']?.status || 'stopped', pnl: botStatuses['solomon']?.pnlToday || 0 },
     { name: 'APOLLO', icon: '☀️', description: 'AI Scanner', status: botStatuses['apollo']?.status || 'stopped', pnl: 0 },
     { name: 'ARGUS', icon: '👁️', description: 'Gamma Monitor', status: botStatuses['argus']?.status || 'stopped', pnl: 0 },
     { name: 'ORACLE', icon: '🔮', description: 'ML Predictions', status: botStatuses['oracle']?.status || 'stopped', pnl: 0 },

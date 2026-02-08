@@ -47,7 +47,7 @@ class TestLogsEndpoints:
         """Test get logs for specific bot"""
         if test_client is None:
             pytest.skip("Test client not available")
-        response = test_client.get("/api/logs/bot/ARES")
+        response = test_client.get("/api/logs/bot/FORTRESS")
         assert response.status_code in [200, 404, 500]
 
     def test_get_trade_logs(self, test_client):

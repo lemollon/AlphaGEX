@@ -65,7 +65,7 @@ class PrometheusTrader:
     2. WEEKLY: Analyze rates, generate new signals if favorable
     3. ON-DEMAND: Execute signals, close positions
 
-    Unlike ARES/TITAN which trade every 5 minutes, PROMETHEUS
+    Unlike FORTRESS/SAMSON which trade every 5 minutes, PROMETHEUS
     focuses on strategic capital deployment over weeks/months.
 
     The trader coordinates:
@@ -121,8 +121,8 @@ class PrometheusTrader:
 
                     # Fetch IC bot returns (would integrate with actual bots)
                     ic_returns = self._fetch_ic_returns(position)
-                    position.returns_from_ares = ic_returns.get('ares', 0)
-                    position.returns_from_titan = ic_returns.get('titan', 0)
+                    position.returns_from_ares = ic_returns.get('fortress', 0)
+                    position.returns_from_titan = ic_returns.get('samson', 0)
                     position.returns_from_pegasus = ic_returns.get('pegasus', 0)
                     position.total_ic_returns = sum(ic_returns.values())
                     position.net_profit = position.total_ic_returns - position.cost_accrued_to_date
@@ -459,12 +459,12 @@ class PrometheusTrader:
         return {
             'total_cash_generated': sum(p.total_credit_received for p in positions),
             'deployment_summary': {
-                'ares': {
+                'fortress': {
                     'deployed': ares_total,
                     'returns': ares_returns,
                     'roi': ares_returns / ares_total * 100 if ares_total > 0 else 0,
                 },
-                'titan': {
+                'samson': {
                     'deployed': titan_total,
                     'returns': titan_returns,
                     'roi': titan_returns / titan_total * 100 if titan_total > 0 else 0,
@@ -508,7 +508,7 @@ This is mathematically identical to taking out a loan!
 
 PROMETHEUS uses box spreads to:
 1. Generate cash at low interest rates (often below margin rates)
-2. Deploy that cash to IC bots (ARES, TITAN, PEGASUS)
+2. Deploy that cash to IC bots (FORTRESS, SAMSON, PEGASUS)
 3. Earn premium from Iron Condors
 4. Profit = IC Returns - Box Spread Cost
 
@@ -712,10 +712,10 @@ For box spreads to be profitable:
         Fetch REAL returns from IC bots for the deployed capital.
 
         LEGACY NOTE: This method is for the OLD capital deployment model where
-        PROMETHEUS deployed borrowed capital to ARES/TITAN/PEGASUS.
+        PROMETHEUS deployed borrowed capital to FORTRESS/SAMSON/PEGASUS.
         The new standalone model uses PrometheusICTrader instead.
 
-        Queries ARES, TITAN, and PEGASUS closed_trades tables to get
+        Queries FORTRESS, SAMSON, and PEGASUS closed_trades tables to get
         actual realized P&L since this PROMETHEUS position was opened.
 
         Returns are proportionally attributed based on each bot's share
@@ -725,8 +725,8 @@ For box spreads to be profitable:
         if their config tables don't have starting_capital set.
         """
         returns = {
-            'ares': 0.0,
-            'titan': 0.0,
+            'fortress': 0.0,
+            'samson': 0.0,
             'pegasus': 0.0,
         }
 
@@ -741,21 +741,21 @@ For box spreads to be profitable:
             # Get the start date for this position
             start_date = position.open_time.strftime('%Y-%m-%d')
 
-            # Query ARES returns
+            # Query FORTRESS returns
             if position.cash_deployed_to_ares > 0:
                 try:
                     cur.execute("""
                         SELECT COALESCE(SUM(realized_pnl), 0)
-                        FROM ares_positions
+                        FROM fortress_positions
                         WHERE status IN ('closed', 'expired')
                         AND close_time >= %s::timestamp
                     """, (start_date,))
                     result = cur.fetchone()
-                    total_ares_pnl = float(result[0]) if result and result[0] else 0.0
+                    total_fortress_pnl = float(result[0]) if result and result[0] else 0.0
 
-                    # Get ARES total capital to calculate attribution
+                    # Get FORTRESS total capital to calculate attribution
                     cur.execute("""
-                        SELECT value FROM ares_config WHERE key = 'starting_capital'
+                        SELECT value FROM fortress_config WHERE key = 'starting_capital'
                     """)
                     ares_cap_result = cur.fetchone()
                     ares_capital = float(ares_cap_result[0]) if ares_cap_result else 100000.0
@@ -763,18 +763,18 @@ For box spreads to be profitable:
                     # Attribute returns proportionally
                     if ares_capital > 0:
                         attribution_pct = position.cash_deployed_to_ares / ares_capital
-                        returns['ares'] = total_ares_pnl * min(attribution_pct, 1.0)
+                        returns['fortress'] = total_fortress_pnl * min(attribution_pct, 1.0)
 
-                    logger.debug(f"ARES returns: ${returns['ares']:.2f} (total: ${total_ares_pnl:.2f}, attribution: {attribution_pct*100:.1f}%)")
+                    logger.debug(f"FORTRESS returns: ${returns['fortress']:.2f} (total: ${total_fortress_pnl:.2f}, attribution: {attribution_pct*100:.1f}%)")
                 except Exception as e:
-                    logger.warning(f"Failed to fetch ARES returns: {e}")
+                    logger.warning(f"Failed to fetch FORTRESS returns: {e}")
 
-            # Query TITAN returns
+            # Query SAMSON returns
             if position.cash_deployed_to_titan > 0:
                 try:
                     cur.execute("""
                         SELECT COALESCE(SUM(realized_pnl), 0)
-                        FROM titan_positions
+                        FROM samson_positions
                         WHERE status IN ('closed', 'expired')
                         AND close_time >= %s::timestamp
                     """, (start_date,))
@@ -782,18 +782,18 @@ For box spreads to be profitable:
                     total_titan_pnl = float(result[0]) if result and result[0] else 0.0
 
                     cur.execute("""
-                        SELECT value FROM titan_config WHERE key = 'starting_capital'
+                        SELECT value FROM samson_config WHERE key = 'starting_capital'
                     """)
                     titan_cap_result = cur.fetchone()
                     titan_capital = float(titan_cap_result[0]) if titan_cap_result else 100000.0
 
                     if titan_capital > 0:
                         attribution_pct = position.cash_deployed_to_titan / titan_capital
-                        returns['titan'] = total_titan_pnl * min(attribution_pct, 1.0)
+                        returns['samson'] = total_titan_pnl * min(attribution_pct, 1.0)
 
-                    logger.debug(f"TITAN returns: ${returns['titan']:.2f}")
+                    logger.debug(f"SAMSON returns: ${returns['samson']:.2f}")
                 except Exception as e:
-                    logger.warning(f"Failed to fetch TITAN returns: {e}")
+                    logger.warning(f"Failed to fetch SAMSON returns: {e}")
 
             # Query PEGASUS returns
             if position.cash_deployed_to_pegasus > 0:
@@ -825,7 +825,7 @@ For box spreads to be profitable:
             conn.close()
 
             logger.info(f"IC returns for position {position.position_id}: "
-                       f"ARES=${returns['ares']:.2f}, TITAN=${returns['titan']:.2f}, PEGASUS=${returns['pegasus']:.2f}")
+                       f"FORTRESS=${returns['fortress']:.2f}, SAMSON=${returns['samson']:.2f}, PEGASUS=${returns['pegasus']:.2f}")
 
         except Exception as e:
             logger.error(f"Failed to fetch IC returns: {e}")
@@ -852,8 +852,8 @@ For box spreads to be profitable:
         daily_rate = monthly_return_rate / 30
 
         return {
-            'ares': position.cash_deployed_to_ares * daily_rate * days_held,
-            'titan': position.cash_deployed_to_titan * daily_rate * days_held,
+            'fortress': position.cash_deployed_to_ares * daily_rate * days_held,
+            'samson': position.cash_deployed_to_titan * daily_rate * days_held,
             'pegasus': position.cash_deployed_to_pegasus * daily_rate * days_held,
         }
 
@@ -901,7 +901,7 @@ class PrometheusICTrader:
     - Generate new signals when capital is available
     - Execute approved signals
 
-    Key Differences from Other IC Bots (TITAN, PEGASUS):
+    Key Differences from Other IC Bots (SAMSON, PEGASUS):
     - Uses borrowed capital from box spreads
     - All returns are tracked against specific box positions
     - Conservative sizing to protect borrowed capital

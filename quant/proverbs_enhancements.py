@@ -587,9 +587,9 @@ class TimeOfDayAnalyzer:
 
         # Map bot names to their actual position tables
         BOT_TABLES = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
-            'TITAN': 'titan_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
             'PEGASUS': 'pegasus_positions',
             'ICARUS': 'icarus_positions',
             'PROMETHEUS': 'prometheus_ic_positions',
@@ -604,7 +604,7 @@ class TimeOfDayAnalyzer:
             cursor = conn.cursor()
 
             # Get trades with hour info - using bot-specific positions table
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
                     EXTRACT(HOUR FROM close_time::timestamptz AT TIME ZONE 'America/Chicago') as hour,
@@ -683,9 +683,9 @@ class CrossBotAnalyzer:
 
         # Map bot names to their actual position tables
         BOT_TABLES = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
-            'TITAN': 'titan_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
             'PEGASUS': 'pegasus_positions',
             'ICARUS': 'icarus_positions',
             'PROMETHEUS': 'prometheus_ic_positions',
@@ -701,7 +701,7 @@ class CrossBotAnalyzer:
             cursor = conn.cursor()
 
             # Get daily P&L for each bot from their respective tables
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 WITH daily_a AS (
                     SELECT
@@ -771,8 +771,8 @@ class CrossBotAnalyzer:
     def get_all_correlations(self, days: int = 30) -> List[CrossBotCorrelation]:
         """Get correlations between all bot pairs"""
         # Migration 023: Updated bot list to match actual trading bots
-        # IC bots: ARES, TITAN, PEGASUS, PROMETHEUS | Directional bots: ATHENA, ICARUS
-        bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS', 'PROMETHEUS']
+        # IC bots: FORTRESS, SAMSON, PEGASUS, PROMETHEUS | Directional bots: SOLOMON, ICARUS
+        bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS', 'PROMETHEUS']
         correlations = []
 
         for i, bot_a in enumerate(bots):
@@ -805,9 +805,9 @@ class RegimePerformanceTracker:
 
         # Map bot names to their actual position tables
         BOT_TABLES = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
-            'TITAN': 'titan_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
             'PEGASUS': 'pegasus_positions',
             'ICARUS': 'icarus_positions',
             'PROMETHEUS': 'prometheus_ic_positions',
@@ -822,7 +822,7 @@ class RegimePerformanceTracker:
             cursor = conn.cursor()
 
             # Join trades with regime classifications
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
                     rc.regime,
@@ -1272,10 +1272,10 @@ class WeekendPreChecker:
         upcoming_events = self._get_upcoming_events()
 
         # Analyze each bot
-        # Migration 023: Updated bot list to include TITAN and ICARUS
+        # Migration 023: Updated bot list to include SAMSON and ICARUS
         # Migration 024: Added PROMETHEUS (Box Spread + IC Trading)
         bot_recommendations = {}
-        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
             bot_recommendations[bot] = self._analyze_bot_readiness(bot)
 
         # Overall risk assessment
@@ -1430,9 +1430,9 @@ class DailyDigestGenerator:
         total_trades = 0
         total_wins = 0
 
-        # Migration 023: Updated bot list to include TITAN and ICARUS
+        # Migration 023: Updated bot list to include SAMSON and ICARUS
         # Migration 024: Added PROMETHEUS (Box Spread + IC Trading)
-        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
             bot_stats = self._get_bot_daily_stats(bot, for_date)
             digest['bots'][bot] = bot_stats
 
@@ -1467,9 +1467,9 @@ class DailyDigestGenerator:
 
         # Map bot names to their actual position tables
         BOT_TABLES = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
-            'TITAN': 'titan_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
             'PEGASUS': 'pegasus_positions',
             'ICARUS': 'icarus_positions',
             'PROMETHEUS': 'prometheus_ic_positions',
@@ -1483,7 +1483,7 @@ class DailyDigestGenerator:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
                     COUNT(*) as trades,
@@ -2156,7 +2156,7 @@ class ProverbsEnhanced:
 
             # Infer strategy_type from bot_name if not provided
             if not strategy_type:
-                if bot_name in ['ATHENA', 'ICARUS']:
+                if bot_name in ['SOLOMON', 'ICARUS']:
                     strategy_type = 'DIRECTIONAL'
                 else:
                     strategy_type = 'IRON_CONDOR'
@@ -2241,12 +2241,12 @@ class ProverbsEnhanced:
     # Bot strategy configurations - defines goals for each bot
     BOT_STRATEGY_CONFIGS = {
         # Iron Condor bots - want price stability (price stays between strikes)
-        'ARES': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPY'},
-        'TITAN': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
+        'FORTRESS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPY'},
+        'SAMSON': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
         'PEGASUS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
         'PROMETHEUS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},  # Box Spread + IC
         # Directional bots - want price movement in predicted direction
-        'ATHENA': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
+        'SOLOMON': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
         'ICARUS': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
     }
 
@@ -2269,9 +2269,9 @@ class ProverbsEnhanced:
 
             # Bot tables mapping - bots store closed trades in *_positions tables
             BOT_TABLES = {
-                'ARES': 'ares_positions',
-                'ATHENA': 'athena_positions',
-                'TITAN': 'titan_positions',
+                'FORTRESS': 'fortress_positions',
+                'SOLOMON': 'solomon_positions',
+                'SAMSON': 'samson_positions',
                 'PEGASUS': 'pegasus_positions',
                 'ICARUS': 'icarus_positions',
                 'PROMETHEUS': 'prometheus_ic_positions',
@@ -2281,9 +2281,9 @@ class ProverbsEnhanced:
             ic_bot_breakdown = {}
             dir_bot_breakdown = {}
 
-            # IC bots: ARES, TITAN, PEGASUS, PROMETHEUS
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
-            for bot_name in ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']:
+            # IC bots: FORTRESS, SAMSON, PEGASUS, PROMETHEUS
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+            for bot_name in ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']:
                 table = BOT_TABLES.get(bot_name)
                 if table:
                     cursor.execute(f"""
@@ -2305,9 +2305,9 @@ class ProverbsEnhanced:
                             'win_rate': (row[1] / row[0] * 100) if row[0] else 0
                         }
 
-            # Directional bots: ATHENA, ICARUS
+            # Directional bots: SOLOMON, ICARUS
             # Cast to timestamptz to handle TEXT columns where applicable
-            for bot_name in ['ATHENA', 'ICARUS']:
+            for bot_name in ['SOLOMON', 'ICARUS']:
                 table = BOT_TABLES.get(bot_name)
                 if table:
                     cursor.execute(f"""
@@ -2350,7 +2350,7 @@ class ProverbsEnhanced:
                 'win_rate': (ic_wins / ic_trades * 100) if ic_trades > 0 else 0,
                 'total_pnl': ic_total_pnl,
                 'avg_pnl': ic_avg_pnl,
-                'bots': ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS'],
+                'bots': ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS'],
                 'bot_breakdown': ic_bot_breakdown
             }
 
@@ -2360,7 +2360,7 @@ class ProverbsEnhanced:
                 'win_rate': (dir_wins / dir_trades * 100) if dir_trades > 0 else 0,
                 'total_pnl': dir_total_pnl,
                 'avg_pnl': dir_avg_pnl,
-                'bots': ['ATHENA', 'ICARUS'],
+                'bots': ['SOLOMON', 'ICARUS'],
                 'bot_breakdown': dir_bot_breakdown
             }
 
@@ -2441,16 +2441,16 @@ class ProverbsEnhanced:
 
             # Bot tables mapping - all have oracle_advice column
             BOT_TABLES = {
-                'ARES': 'ares_positions',
-                'ATHENA': 'athena_positions',
-                'TITAN': 'titan_positions',
+                'FORTRESS': 'fortress_positions',
+                'SOLOMON': 'solomon_positions',
+                'SAMSON': 'samson_positions',
                 'PEGASUS': 'pegasus_positions',
                 'ICARUS': 'icarus_positions',
                 'PROMETHEUS': 'prometheus_ic_positions',
             }
 
-            ic_bots = ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
-            dir_bots = ['ATHENA', 'ICARUS']
+            ic_bots = ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
+            dir_bots = ['SOLOMON', 'ICARUS']
 
             # Step 1: Get Oracle advice accuracy from actual positions tables
             by_advice = {}
@@ -2462,7 +2462,7 @@ class ProverbsEnhanced:
             for bot_name, table in BOT_TABLES.items():
                 try:
                     # Query oracle_advice accuracy for this bot
-                    # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+                    # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
                     cursor.execute(f"""
                         SELECT
                             COALESCE(oracle_advice, 'UNKNOWN') as advice,
@@ -3082,7 +3082,7 @@ if __name__ == "__main__":
         command = sys.argv[1]
 
         if command == "analysis":
-            bot = sys.argv[2] if len(sys.argv) > 2 else "ARES"
+            bot = sys.argv[2] if len(sys.argv) > 2 else "FORTRESS"
             analysis = enhanced.get_comprehensive_analysis(bot)
             print(json.dumps(analysis, indent=2, default=str))
 

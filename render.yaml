@@ -47,7 +47,7 @@ services:
   # SERVICE 2: Autonomous Trader (Background Worker)
   # Runs ALL trading bots:
   #   - ARES: Aggressive Iron Condor (every 5 min, once daily)
-  #   - ATHENA: GEX Directional Spreads (every 5 min, up to 5/day)
+  #   - SOLOMON: GEX Directional Spreads (every 5 min, up to 5/day)
   #   - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
   #   - ATLAS: SPX Wheel strategy (daily at 9:05 AM CT)
   # Zero-downtime: handles SIGTERM, drains active scans, cleans up DB connections
@@ -71,7 +71,7 @@ services:
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
         sync: false
-      # Tradier API for trade execution (REQUIRED for ARES/ATHENA)
+      # Tradier API for trade execution (REQUIRED for ARES/SOLOMON)
       - key: TRADIER_API_KEY
         sync: false
       - key: TRADIER_ACCOUNT_ID

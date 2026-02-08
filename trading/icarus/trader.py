@@ -2,10 +2,10 @@
 ICARUS - Main Trading Orchestrator
 ====================================
 
-ICARUS is an aggressive clone of ATHENA with relaxed GEX wall filters
+ICARUS is an aggressive clone of SOLOMON with relaxed GEX wall filters
 and trading parameters to give it more room to trade.
 
-Key differences from ATHENA:
+Key differences from SOLOMON:
 - 10% wall filter (vs 3%)
 - 40% min win probability (vs 48%)
 - 4% risk per trade (vs 2%)
@@ -120,7 +120,7 @@ class ICARUSTrader(MathOptimizerMixin):
     """
     ICARUS - Aggressive directional spread trader.
 
-    More aggressive than ATHENA with relaxed filters for more trading opportunities.
+    More aggressive than SOLOMON with relaxed filters for more trading opportunities.
 
     Usage:
         trader = ICARUSTrader()

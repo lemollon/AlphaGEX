@@ -50,9 +50,9 @@ const commands: Command[] = [
   { command: '/backtest', description: 'Recent backtest performance', category: 'Analysis' },
 
   // Bot Control Commands
-  { command: '/start [BOT]', description: 'Start a bot (ares/athena/atlas) - requires confirmation', example: '/start ares', category: 'Bot Control' },
-  { command: '/stop [BOT]', description: 'Stop a bot (ares/athena/atlas) - requires confirmation', example: '/stop ares', category: 'Bot Control' },
-  { command: '/pause [BOT]', description: 'Pause bot for 30 min - requires confirmation', example: '/pause ares', category: 'Bot Control' },
+  { command: '/start [BOT]', description: 'Start a bot (fortress/solomon/atlas) - requires confirmation', example: '/start fortress', category: 'Bot Control' },
+  { command: '/stop [BOT]', description: 'Stop a bot (fortress/solomon/atlas) - requires confirmation', example: '/stop fortress', category: 'Bot Control' },
+  { command: '/pause [BOT]', description: 'Pause bot for 30 min - requires confirmation', example: '/pause fortress', category: 'Bot Control' },
   { command: '/confirm', description: 'Confirm pending bot action', category: 'Bot Control' },
   { command: '/cancel', description: 'Cancel pending bot action', category: 'Bot Control' },
 
@@ -67,7 +67,7 @@ const naturalQueries = [
   "Should I trade today?",
   "Explain my last trade",
   "What economic events are coming up?",
-  "How is ARES performing?",
+  "How is FORTRESS performing?",
   "What's my win rate this month?",
   "Give me a market briefing",
   "What's the call wall on SPY?",

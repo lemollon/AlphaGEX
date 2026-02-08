@@ -67,8 +67,8 @@ interface TradeSignal {
 }
 
 export interface BotStatus {
-  ares?: 'active' | 'idle' | 'trading' | 'error'
-  athena?: 'active' | 'idle' | 'trading' | 'error'
+  fortress?: 'active' | 'idle' | 'trading' | 'error'
+  solomon?: 'active' | 'idle' | 'trading' | 'error'
   phoenix?: 'active' | 'idle' | 'trading' | 'error'
   atlas?: 'active' | 'idle' | 'trading' | 'error'
   oracle?: 'active' | 'idle' | 'trading' | 'error'
@@ -174,27 +174,27 @@ export default function NexusCanvas({
         description: 'ML Prediction Engine',
       },
       {
-        id: 'ares',
-        name: 'ARES',
-        label: 'ARES',
+        id: 'fortress',
+        name: 'FORTRESS',
+        label: 'FORTRESS',
         x: centerX + orbitRadius * 0.95,
         y: centerY - orbitRadius * 0.31,
         radius: nodeRadius,
         color: '#ef4444',
         glowColor: '#f87171',
-        status: botStatus.ares || 'idle',
+        status: botStatus.fortress || 'idle',
         description: 'Iron Condor Strategy',
       },
       {
-        id: 'athena',
-        name: 'ATHENA',
-        label: 'ATHENA',
+        id: 'solomon',
+        name: 'SOLOMON',
+        label: 'SOLOMON',
         x: centerX + orbitRadius * 0.59,
         y: centerY + orbitRadius * 0.81,
         radius: nodeRadius,
         color: '#3b82f6',
         glowColor: '#60a5fa',
-        status: botStatus.athena || 'idle',
+        status: botStatus.solomon || 'idle',
         description: 'Directional Spreads',
       },
       {

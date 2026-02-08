@@ -60,7 +60,7 @@ async def get_bot_drift_status(bot_name: str, lookback_days: int = 90):
     Get drift status for a specific bot.
 
     Args:
-        bot_name: Bot name (ARES, ATHENA, ICARUS, PEGASUS, TITAN)
+        bot_name: Bot name (FORTRESS, SOLOMON, ICARUS, PEGASUS, SAMSON)
         lookback_days: Number of days of live data to analyze
     """
     if not DRIFT_AVAILABLE:

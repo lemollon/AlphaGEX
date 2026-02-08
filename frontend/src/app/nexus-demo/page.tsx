@@ -10,8 +10,8 @@ export default function NexusDemoPage() {
   const [botStatus, setBotStatus] = useState<BotStatus>({
     gex: 'active',
     oracle: 'active',
-    ares: 'idle',
-    athena: 'trading',
+    fortress: 'idle',
+    solomon: 'trading',
     phoenix: 'idle',
     atlas: 'idle',
   })
@@ -144,7 +144,7 @@ export default function NexusDemoPage() {
               { title: 'Central GEX Core', desc: 'Pulsing orb with rotating rings' },
               { title: 'Neural Fibers', desc: 'Organic connections with bezier curves' },
               { title: 'Particle Pulses', desc: 'Data signals flowing between nodes' },
-              { title: 'Bot Nodes', desc: 'ORACLE, ARES, ATHENA, PHOENIX, ATLAS' },
+              { title: 'Bot Nodes', desc: 'ORACLE, FORTRESS, SOLOMON, PHOENIX, ATLAS' },
               { title: 'Status Indicators', desc: 'Active, Idle, Trading, Error states' },
               { title: 'Interactive Hover', desc: 'Highlight and tooltip on hover' },
               { title: 'Full Responsive', desc: 'Scales to any viewport size' },
@@ -175,8 +175,8 @@ import NexusLoadingScreen from '@/components/NexusLoadingScreen'
   botStatus={{
     gex: 'active',
     oracle: 'active',
-    ares: 'trading',
-    athena: 'idle',
+    fortress: 'trading',
+    solomon: 'idle',
   }}
   onNodeClick={(nodeId) => console.log(nodeId)}
 />

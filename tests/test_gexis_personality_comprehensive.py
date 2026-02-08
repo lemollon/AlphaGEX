@@ -145,8 +145,8 @@ class TestGEXISIdentity:
         """Test identity includes bot capabilities"""
         from ai.gexis_personality import GEXIS_IDENTITY
 
-        assert "ARES" in GEXIS_IDENTITY
-        assert "ATHENA" in GEXIS_IDENTITY
+        assert "FORTRESS" in GEXIS_IDENTITY
+        assert "SOLOMON" in GEXIS_IDENTITY
         assert "ATLAS" in GEXIS_IDENTITY
 
 

@@ -109,8 +109,8 @@ def test_decision_logger_import():
         atlas = get_atlas_logger()
         log_result("Get ATLAS logger", True, f"Bot: {atlas.bot_name}")
 
-        ares = get_ares_logger()
-        log_result("Get ARES logger", True, f"Bot: {ares.bot_name}")
+        fortress = get_ares_logger()
+        log_result("Get FORTRESS logger", True, f"Bot: {fortress.bot_name}")
 
         return True
     except Exception as e:
@@ -254,7 +254,7 @@ def test_bot_specific_logging():
         bots = {
             'PHOENIX': get_phoenix_logger(),
             'ATLAS': get_atlas_logger(),
-            'ARES': get_ares_logger(),
+            'FORTRESS': get_ares_logger(),
             'HERMES': get_hermes_logger(),
             'ORACLE': get_oracle_logger(),
         }

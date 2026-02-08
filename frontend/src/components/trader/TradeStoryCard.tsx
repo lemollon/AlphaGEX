@@ -7,10 +7,10 @@ import {
   Activity, DollarSign, Timer, Eye
 } from 'lucide-react'
 
-// Unified Decision interface that works for ARES, ATHENA, and PEGASUS
+// Unified Decision interface that works for FORTRESS, SOLOMON, and PEGASUS
 export interface TradeDecision {
-  id: string | number  // Supports both d.id (ARES) and d.decision_id (ATHENA/PEGASUS)
-  bot_name: 'ARES' | 'ATHENA' | 'PEGASUS'
+  id: string | number  // Supports both d.id (FORTRESS) and d.decision_id (SOLOMON/PEGASUS)
+  bot_name: 'FORTRESS' | 'SOLOMON' | 'PEGASUS'
   symbol: string
   decision_type: string
   action: string
@@ -36,7 +36,7 @@ export interface TradeDecision {
     ml_confidence?: number
   }
 
-  // ML predictions (primarily ATHENA)
+  // ML predictions (primarily SOLOMON)
   ml_predictions?: {
     direction: string
     advice: string
@@ -520,8 +520,8 @@ export default function TradeStoryCard({
                 <span>{decision.symbol}</span>
                 {decision.bot_name && (
                   <span className={`${
-                    decision.bot_name === 'ARES' ? 'text-amber-400' :
-                    decision.bot_name === 'ATHENA' ? 'text-cyan-400' :
+                    decision.bot_name === 'FORTRESS' ? 'text-amber-400' :
+                    decision.bot_name === 'SOLOMON' ? 'text-cyan-400' :
                     decision.bot_name === 'PEGASUS' ? 'text-blue-400' : 'text-gray-400'
                   }`}>
                     {decision.bot_name}

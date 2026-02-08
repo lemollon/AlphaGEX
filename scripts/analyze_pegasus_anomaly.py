@@ -10,7 +10,7 @@ Checks:
 2. Credit/contracts variance - are these constant?
 3. Close price patterns - all zeros (expired worthless)?
 4. Calculation verification - stored vs calculated P&L
-5. Comparison with TITAN (should show variance)
+5. Comparison with SAMSON (should show variance)
 """
 
 import os
@@ -281,15 +281,15 @@ def main():
         check_dates_and_credits(cursor, "pegasus_positions")
         check_losing_trades(cursor, "pegasus_positions")
 
-    # Compare with TITAN for sanity check
+    # Compare with SAMSON for sanity check
     print("\n\n")
     print("=" * 80)
-    print("COMPARISON: TITAN (should show normal variance)")
+    print("COMPARISON: SAMSON (should show normal variance)")
     print("=" * 80)
 
-    titan_stats = analyze_pnl_distribution(cursor, "TITAN", "titan_positions")
+    titan_stats = analyze_pnl_distribution(cursor, "SAMSON", "samson_positions")
     if titan_stats:
-        analyze_close_reasons(cursor, "titan_positions")
+        analyze_close_reasons(cursor, "samson_positions")
 
     # Final diagnosis
     print("\n\n")

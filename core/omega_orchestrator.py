@@ -36,7 +36,7 @@ ARCHITECTURE:
 │                                    ↓                                            │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐│
 │  │ LAYER 4: ORACLE - BOT-SPECIFIC ADAPTATION                                   ││
-│  │ • Adapts ML decision for specific bot (ARES, ATHENA, etc.)                  ││
+│  │ • Adapts ML decision for specific bot (FORTRESS, SOLOMON, etc.)                  ││
 │  │ • Strike selection, risk percentage                                         ││
 │  │ • NO veto power over ML Advisor                                             ││
 │  └─────────────────────────────────────────────────────────────────────────────┘│
@@ -865,8 +865,8 @@ class OmegaOrchestrator:
         """Lazy load ML Advisor"""
         if self._ml_advisor is None:
             try:
-                from quant.ares_ml_advisor import AresMLAdvisor
-                self._ml_advisor = AresMLAdvisor()
+                from quant.fortress_ml_advisor import FortressMLAdvisor
+                self._ml_advisor = FortressMLAdvisor()
             except ImportError as e:
                 logger.warning(f"Could not load ML Advisor: {e}")
         return self._ml_advisor
@@ -1143,7 +1143,7 @@ class OmegaOrchestrator:
         This is the main entry point for all trading decisions.
 
         Args:
-            bot_name: Name of the bot requesting decision (ARES, ATHENA, etc.)
+            bot_name: Name of the bot requesting decision (FORTRESS, SOLOMON, etc.)
             gex_data: GEX analysis data
             features: ML features dict
             psychology_data: Optional psychology trap data
@@ -1459,7 +1459,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="OMEGA Orchestrator")
     parser.add_argument("command", choices=["status", "test", "decision"])
-    parser.add_argument("--bot", default="ARES")
+    parser.add_argument("--bot", default="FORTRESS")
     args = parser.parse_args()
 
     omega = get_omega_orchestrator()

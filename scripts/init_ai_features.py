@@ -234,33 +234,33 @@ def test_bot_learning_memory_integration():
 
     results = []
 
-    # Test ARES
+    # Test FORTRESS
     try:
-        from trading.ares_v2.trader import ARESTrader, LEARNING_MEMORY_AVAILABLE
-        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} ARES Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
+        from trading.fortress_v2.trader import FortressTrader, LEARNING_MEMORY_AVAILABLE
+        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} FORTRESS Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
 
         # Check if methods exist
-        has_prediction = hasattr(ARESTrader, '_record_learning_memory_prediction')
-        has_outcome = hasattr(ARESTrader, '_record_learning_memory_outcome')
-        logger.info(f"{check_mark(has_prediction)} ARES _record_learning_memory_prediction method exists")
-        logger.info(f"{check_mark(has_outcome)} ARES _record_learning_memory_outcome method exists")
+        has_prediction = hasattr(FortressTrader, '_record_learning_memory_prediction')
+        has_outcome = hasattr(FortressTrader, '_record_learning_memory_outcome')
+        logger.info(f"{check_mark(has_prediction)} FORTRESS _record_learning_memory_prediction method exists")
+        logger.info(f"{check_mark(has_outcome)} FORTRESS _record_learning_memory_outcome method exists")
         results.append(LEARNING_MEMORY_AVAILABLE and has_prediction and has_outcome)
     except ImportError as e:
-        logger.error(f"[FAIL] ARES import failed: {e}")
+        logger.error(f"[FAIL] FORTRESS import failed: {e}")
         results.append(False)
 
-    # Test ATHENA
+    # Test SOLOMON
     try:
-        from trading.athena_v2.trader import ATHENATrader, LEARNING_MEMORY_AVAILABLE
-        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} ATHENA Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
+        from trading.solomon_v2.trader import SolomonTrader, LEARNING_MEMORY_AVAILABLE
+        logger.info(f"{check_mark(LEARNING_MEMORY_AVAILABLE)} SOLOMON Learning Memory import: {'Yes' if LEARNING_MEMORY_AVAILABLE else 'No'}")
 
-        has_prediction = hasattr(ATHENATrader, '_record_learning_memory_prediction')
-        has_outcome = hasattr(ATHENATrader, '_record_learning_memory_outcome')
-        logger.info(f"{check_mark(has_prediction)} ATHENA _record_learning_memory_prediction method exists")
-        logger.info(f"{check_mark(has_outcome)} ATHENA _record_learning_memory_outcome method exists")
+        has_prediction = hasattr(SolomonTrader, '_record_learning_memory_prediction')
+        has_outcome = hasattr(SolomonTrader, '_record_learning_memory_outcome')
+        logger.info(f"{check_mark(has_prediction)} SOLOMON _record_learning_memory_prediction method exists")
+        logger.info(f"{check_mark(has_outcome)} SOLOMON _record_learning_memory_outcome method exists")
         results.append(LEARNING_MEMORY_AVAILABLE and has_prediction and has_outcome)
     except ImportError as e:
-        logger.error(f"[FAIL] ATHENA import failed: {e}")
+        logger.error(f"[FAIL] SOLOMON import failed: {e}")
         results.append(False)
 
     return all(results)

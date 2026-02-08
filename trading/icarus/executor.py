@@ -5,7 +5,7 @@ ICARUS - Order Executor
 Clean order execution via Tradier (paper or live).
 
 ICARUS uses aggressive position sizing:
-- 4% risk per trade (vs ATHENA's 2%)
+- 4% risk per trade (vs SOLOMON's 2%)
 """
 
 import logging
@@ -165,7 +165,7 @@ class OrderExecutor:
     Executes spread orders via Tradier.
 
     ICARUS uses aggressive position sizing:
-    - 4% risk per trade (vs ATHENA's 2%)
+    - 4% risk per trade (vs SOLOMON's 2%)
     - Thompson Sampling weight scales position size
     """
 

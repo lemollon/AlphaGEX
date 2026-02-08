@@ -314,7 +314,7 @@ const errorsCount = allScans.filter(...).length  // FILTER 3
 ```javascript
 const allScans = useMemo(() =>
   [...].sort(...).slice(0, 10),
-  [aresScans, athenaScans, pegasusScans, icarusScans, titanScans]
+  [aresScans, solomonScans, pegasusScans, icarusScans, titanScans]
 )
 
 const { tradesCount, skipsCount, errorsCount } = useMemo(() =>
@@ -384,7 +384,7 @@ CREATE INDEX idx_autonomous_open_positions_status ON autonomous_open_positions(s
 CREATE INDEX idx_autonomous_trader_logs_timestamp ON autonomous_trader_logs(timestamp DESC);
 CREATE INDEX idx_ml_decision_logs_timestamp ON ml_decision_logs(timestamp DESC);
 CREATE INDEX idx_ares_positions_open_time ON ares_positions(open_time);
-CREATE INDEX idx_athena_positions_open_time ON athena_positions(open_time);
+CREATE INDEX idx_solomon_positions_open_time ON solomon_positions(open_time);
 ```
 
 #### 5.3 No Connection Pooling

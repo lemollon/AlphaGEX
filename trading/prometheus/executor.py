@@ -76,7 +76,7 @@ def _get_production_tradier_client(underlying: str = "SPX"):
     - Realistic bid-ask spreads
     - Proper mark-to-market calculations
 
-    This follows the same pattern used by TITAN/PEGASUS for SPX quotes.
+    This follows the same pattern used by SAMSON/PEGASUS for SPX quotes.
     """
     if not tradier_available:
         logger.warning("TradierDataFetcher not available")
@@ -772,8 +772,8 @@ class BoxSpreadExecutor:
         EDUCATIONAL NOTE:
         =================
         Capital deployment strategy:
-        1. ARES (SPY 0DTE ICs) - aggressive, daily opportunities
-        2. TITAN (SPX Aggressive ICs) - aggressive SPX plays
+        1. FORTRESS (SPY 0DTE ICs) - aggressive, daily opportunities
+        2. SAMSON (SPX Aggressive ICs) - aggressive SPX plays
         3. PEGASUS (SPX Weekly ICs) - more conservative
         4. RESERVE - buffer for margin and emergencies
 
@@ -793,17 +793,17 @@ class BoxSpreadExecutor:
 
         # Generate reasoning for each allocation
         ares_reasoning = f"""
-ARES receives {self.config.ares_allocation_pct}% (${ares_amount:,.2f}) because:
-- ARES trades SPY 0DTE Iron Condors with proven track record
+FORTRESS receives {self.config.ares_allocation_pct}% (${ares_amount:,.2f}) because:
+- FORTRESS trades SPY 0DTE Iron Condors with proven track record
 - High trade frequency allows rapid capital deployment
 - Recommended for active premium collection
 """.strip()
 
         titan_reasoning = f"""
-TITAN receives {self.config.titan_allocation_pct}% (${titan_amount:,.2f}) because:
-- TITAN runs aggressive SPX Iron Condors
+SAMSON receives {self.config.titan_allocation_pct}% (${titan_amount:,.2f}) because:
+- SAMSON runs aggressive SPX Iron Condors
 - Higher premium per trade than SPY strategies
-- Complements ARES with SPX exposure
+- Complements FORTRESS with SPX exposure
 """.strip()
 
         pegasus_reasoning = f"""
@@ -824,13 +824,13 @@ Reserve holds {self.config.reserve_pct}% (${reserve_amount:,.2f}) because:
 ALLOCATION METHODOLOGY: Configured Percentages
 
 The capital is allocated based on predefined percentages that balance:
-1. Return potential (ARES/TITAN for aggressive returns)
+1. Return potential (FORTRESS/SAMSON for aggressive returns)
 2. Risk management (PEGASUS for stability)
 3. Liquidity needs (Reserve for flexibility)
 
 Total allocated: ${total_cash:,.2f}
-- ARES: {self.config.ares_allocation_pct}% = ${ares_amount:,.2f}
-- TITAN: {self.config.titan_allocation_pct}% = ${titan_amount:,.2f}
+- FORTRESS: {self.config.ares_allocation_pct}% = ${ares_amount:,.2f}
+- SAMSON: {self.config.titan_allocation_pct}% = ${titan_amount:,.2f}
 - PEGASUS: {self.config.pegasus_allocation_pct}% = ${pegasus_amount:,.2f}
 - Reserve: {self.config.reserve_pct}% = ${reserve_amount:,.2f}
 
@@ -893,8 +893,8 @@ The ${signal.cash_received:,.2f} has been deployed to generate returns:
 ┌──────────────────────────────────────────────────────────────────┐
 │ Bot      │ Allocation │ Amount         │ Target Return          │
 ├──────────┼────────────┼────────────────┼────────────────────────┤
-│ ARES     │ {deployment.ares_allocation_pct:>5.1f}%    │ ${deployment.ares_allocation:>12,.2f} │ 2-4% monthly           │
-│ TITAN    │ {deployment.titan_allocation_pct:>5.1f}%    │ ${deployment.titan_allocation:>12,.2f} │ 2-4% monthly           │
+│ FORTRESS     │ {deployment.ares_allocation_pct:>5.1f}%    │ ${deployment.ares_allocation:>12,.2f} │ 2-4% monthly           │
+│ SAMSON    │ {deployment.titan_allocation_pct:>5.1f}%    │ ${deployment.titan_allocation:>12,.2f} │ 2-4% monthly           │
 │ PEGASUS  │ {deployment.pegasus_allocation_pct:>5.1f}%    │ ${deployment.pegasus_allocation:>12,.2f} │ 1-3% monthly           │
 │ Reserve  │ {deployment.reserve_pct:>5.1f}%    │ ${deployment.reserve_amount:>12,.2f} │ Held for flexibility   │
 └──────────┴────────────┴────────────────┴────────────────────────┘
@@ -1157,8 +1157,8 @@ Opened: {position.open_time.strftime('%Y-%m-%d %H:%M:%S CT')}
 Days Held: {days_held} | Days Remaining: {position.current_dte}
 {mtm_section}
 IC BOT RETURNS TO DATE:
-├─ ARES: ${position.returns_from_ares:,.2f}
-├─ TITAN: ${position.returns_from_titan:,.2f}
+├─ FORTRESS: ${position.returns_from_ares:,.2f}
+├─ SAMSON: ${position.returns_from_titan:,.2f}
 ├─ PEGASUS: ${position.returns_from_pegasus:,.2f}
 └─ TOTAL: ${position.total_ic_returns:,.2f}
 {accrual_section}

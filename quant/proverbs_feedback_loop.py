@@ -36,8 +36,8 @@ ARCHITECTURE:
     └─────────────────────────────────────────────────────────────────┘
 
 BOTS COVERED:
-- ARES: Aggressive Iron Condor (0DTE SPX)
-- ATHENA: Directional Spreads (Bull/Bear Call)
+- FORTRESS: Aggressive Iron Condor (0DTE SPX)
+- SOLOMON: Directional Spreads (Bull/Bear Call)
 - PEGASUS: SPX Iron Condor
 - PHOENIX: 0DTE Options Trading
 
@@ -139,9 +139,9 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 class BotName(Enum):
     """Trading bots under Proverbs's oversight"""
-    ARES = "ARES"           # SPY Iron Condor (0DTE)
-    ATHENA = "ATHENA"       # SPY Directional Spreads
-    TITAN = "TITAN"         # SPX Aggressive Iron Condor
+    FORTRESS = "FORTRESS"           # SPY Iron Condor (0DTE)
+    SOLOMON = "SOLOMON"       # SPY Directional Spreads
+    SAMSON = "SAMSON"         # SPX Aggressive Iron Condor
     PEGASUS = "PEGASUS"     # SPX Weekly Iron Condor
     ICARUS = "ICARUS"       # SPY Aggressive Directional
     PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
@@ -1826,9 +1826,9 @@ class ProverbsFeedbackLoop:
             # Map bot names to their actual positions tables
             # Bots store closed trades in *_positions tables with status='closed'
             BOT_TABLES = {
-                'ARES': 'ares_positions',
-                'ATHENA': 'athena_positions',
-                'TITAN': 'titan_positions',
+                'FORTRESS': 'fortress_positions',
+                'SOLOMON': 'solomon_positions',
+                'SAMSON': 'samson_positions',
                 'PEGASUS': 'pegasus_positions',
                 'ICARUS': 'icarus_positions',
                 'PROMETHEUS': 'prometheus_ic_positions',
@@ -1841,7 +1841,7 @@ class ProverbsFeedbackLoop:
 
             # Query closed positions from the bot's actual table
             # Table name is from whitelisted BOT_TABLES dict (safe)
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
                     COUNT(*) as total_trades,
@@ -1967,9 +1967,9 @@ class ProverbsFeedbackLoop:
 
         # Map bot names to their actual positions tables
         BOT_TABLES = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
-            'TITAN': 'titan_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
             'PEGASUS': 'pegasus_positions',
             'ICARUS': 'icarus_positions',
             'PROMETHEUS': 'prometheus_ic_positions',
@@ -1984,7 +1984,7 @@ class ProverbsFeedbackLoop:
             cursor = conn.cursor()
 
             # Get daily P&L for sparkline data
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 SELECT
                     DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
@@ -2036,9 +2036,9 @@ class ProverbsFeedbackLoop:
 
             # Map bot names to their actual positions tables
             BOT_TABLES = {
-                'ARES': 'ares_positions',
-                'ATHENA': 'athena_positions',
-                'TITAN': 'titan_positions',
+                'FORTRESS': 'fortress_positions',
+                'SOLOMON': 'solomon_positions',
+                'SAMSON': 'samson_positions',
                 'PEGASUS': 'pegasus_positions',
                 'ICARUS': 'icarus_positions',
                 'PROMETHEUS': 'prometheus_ic_positions',
@@ -2049,7 +2049,7 @@ class ProverbsFeedbackLoop:
                 return None
 
             # Compare last 7 days vs previous 7 days using bot's actual positions table
-            # Cast to timestamptz to handle ARES TEXT columns and other bots' timestamp columns
+            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
             cursor.execute(f"""
                 WITH period_stats AS (
                     SELECT
@@ -2143,7 +2143,7 @@ class ProverbsFeedbackLoop:
         """
         try:
             # Determine strategy type and appropriate adjustments
-            ic_bots = ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
+            ic_bots = ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
             is_ic = bot_name.upper() in ic_bots
 
             if is_ic:
@@ -2359,8 +2359,8 @@ class ProverbsFeedbackLoop:
         errors = []
         outcomes_processed = 0
 
-        # All active trading bots - IC bots: ARES, TITAN, PEGASUS, PROMETHEUS | Directional: ATHENA, ICARUS
-        bots = [BotName.ARES, BotName.ATHENA, BotName.TITAN, BotName.PEGASUS, BotName.ICARUS, BotName.PROMETHEUS]
+        # All active trading bots - IC bots: FORTRESS, SAMSON, PEGASUS, PROMETHEUS | Directional: SOLOMON, ICARUS
+        bots = [BotName.FORTRESS, BotName.SOLOMON, BotName.SAMSON, BotName.PEGASUS, BotName.ICARUS, BotName.PROMETHEUS]
 
         try:
             # Step 1: Expire old proposals

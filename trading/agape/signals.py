@@ -5,7 +5,7 @@ AGGRESSIVE MODE: Trades on any actionable signal with low confidence thresholds.
 Includes Direction Tracker for nimble reversal detection (ported from HERACLES).
 
 Uses crypto market microstructure (funding, OI, liquidations, crypto GEX)
-as the equivalent of GEX-based signal generation used by ARES/ATHENA.
+as the equivalent of GEX-based signal generation used by FORTRESS/SOLOMON.
 
 Signal Flow:
   1. Fetch crypto market snapshot (CryptoDataProvider)
@@ -229,7 +229,7 @@ class AgapeSignalGenerator:
                 logger.warning(f"AGAPE Signals: Oracle init failed: {e}")
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
-        """Fetch current market snapshot - equivalent to ARES's get_market_data().
+        """Fetch current market snapshot - equivalent to FORTRESS's get_market_data().
 
         Returns crypto microstructure data instead of options/GEX data.
         """
@@ -344,7 +344,7 @@ class AgapeSignalGenerator:
     ) -> AgapeSignal:
         """Generate a trade signal - main entry point.
 
-        Equivalent to ARES's generate_signal() but for directional /MET trades.
+        Equivalent to FORTRESS's generate_signal() but for directional /MET trades.
 
         Flow:
           1. Fetch crypto market microstructure

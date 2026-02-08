@@ -87,8 +87,8 @@ def main():
         print_header("1. CORE TRADING DATA")
 
         core_tables = [
-            ("ares_positions", "open_date", "ARES positions (iron condors)"),
-            ("ares_daily_performance", "trade_date", "ARES daily P&L"),
+            ("fortress_positions", "open_date", "FORTRESS positions (iron condors)"),
+            ("fortress_daily_performance", "trade_date", "FORTRESS daily P&L"),
             ("decision_logs", "created_at", "Trading decisions"),
             ("bot_decision_logs", "created_at", "Bot decisions"),
             ("wheel_cycles", "created_at", "Wheel strategy cycles"),
@@ -159,50 +159,50 @@ def main():
                 results["pass"] += 1
 
         # ============================================================
-        # SECTION 4: ARES SPECIFIC VERIFICATION
+        # SECTION 4: FORTRESS SPECIFIC VERIFICATION
         # ============================================================
-        print_header("4. ARES PIPELINE VERIFICATION")
+        print_header("4. FORTRESS PIPELINE VERIFICATION")
 
-        # Check ARES has position data
+        # Check FORTRESS has position data
         try:
             cursor.execute("""
                 SELECT COUNT(*),
                        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
                        SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count
-                FROM ares_positions
+                FROM fortress_positions
             """)
             row = cursor.fetchone()
             conn.commit()
             if row and row[0] > 0:
-                print_result("ARES positions recorded", True,
+                print_result("FORTRESS positions recorded", True,
                             f"Total: {row[0]}, Open: {row[1] or 0}, Closed: {row[2] or 0}")
                 results["pass"] += 1
             else:
-                print_result("ARES positions recorded", False, "No positions in database")
+                print_result("FORTRESS positions recorded", False, "No positions in database")
                 results["fail"] += 1
         except Exception as e:
             conn.rollback()
-            print_result("ARES positions recorded", False, f"Query error: {str(e)[:40]}")
+            print_result("FORTRESS positions recorded", False, f"Query error: {str(e)[:40]}")
             results["fail"] += 1
 
-        # Check if ARES daily performance is being tracked
+        # Check if FORTRESS daily performance is being tracked
         try:
             cursor.execute("""
                 SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
-                FROM ares_daily_performance
+                FROM fortress_daily_performance
             """)
             row = cursor.fetchone()
             conn.commit()
             if row and row[0] > 0:
-                print_result("ARES daily P&L tracked", True,
+                print_result("FORTRESS daily P&L tracked", True,
                             f"{row[0]} days from {row[1]} to {row[2]}")
                 results["pass"] += 1
             else:
-                print_result("ARES daily P&L tracked", False, "No daily performance records")
+                print_result("FORTRESS daily P&L tracked", False, "No daily performance records")
                 results["warn"] += 1
         except Exception as e:
             conn.rollback()
-            print_result("ARES daily P&L tracked", False, f"Table may not exist")
+            print_result("FORTRESS daily P&L tracked", False, f"Table may not exist")
             results["warn"] += 1
 
         # ============================================================
@@ -213,44 +213,44 @@ def main():
         import requests
         api_base = os.getenv('API_URL', 'https://alphagex-api.onrender.com')
 
-        # Test ARES status returns data from DB
+        # Test FORTRESS status returns data from DB
         try:
-            resp = requests.get(f"{api_base}/api/ares/status", timeout=10)
+            resp = requests.get(f"{api_base}/api/fortress/status", timeout=10)
             data = resp.json()
             if data.get('success') and data.get('data'):
-                ares_data = data['data']
-                print_result("ARES /status returns data", True,
-                           f"Capital: ${ares_data.get('capital', 0):,.0f}, "
-                           f"Trades: {ares_data.get('trade_count', 0)}")
+                fortress_data = data['data']
+                print_result("FORTRESS /status returns data", True,
+                           f"Capital: ${fortress_data.get('capital', 0):,.0f}, "
+                           f"Trades: {fortress_data.get('trade_count', 0)}")
                 results["pass"] += 1
             else:
-                print_result("ARES /status returns data", False, "No data in response")
+                print_result("FORTRESS /status returns data", False, "No data in response")
                 results["fail"] += 1
         except Exception as e:
-            print_result("ARES /status returns data", False, str(e)[:50])
+            print_result("FORTRESS /status returns data", False, str(e)[:50])
             results["fail"] += 1
 
-        # Test ARES positions returns data from DB
+        # Test FORTRESS positions returns data from DB
         try:
-            resp = requests.get(f"{api_base}/api/ares/positions", timeout=10)
+            resp = requests.get(f"{api_base}/api/fortress/positions", timeout=10)
             data = resp.json()
             if data.get('success') and data.get('data'):
                 pos_data = data['data']
                 open_count = pos_data.get('open_count', 0)
                 closed_count = pos_data.get('closed_count', 0)
-                print_result("ARES /positions returns data", True,
+                print_result("FORTRESS /positions returns data", True,
                            f"Open: {open_count}, Closed: {closed_count}")
                 results["pass"] += 1
             else:
-                print_result("ARES /positions returns data", False, "No position data")
+                print_result("FORTRESS /positions returns data", False, "No position data")
                 results["fail"] += 1
         except Exception as e:
-            print_result("ARES /positions returns data", False, str(e)[:50])
+            print_result("FORTRESS /positions returns data", False, str(e)[:50])
             results["fail"] += 1
 
         # Test market data endpoint
         try:
-            resp = requests.get(f"{api_base}/api/ares/market-data", timeout=10)
+            resp = requests.get(f"{api_base}/api/fortress/market-data", timeout=10)
             data = resp.json()
             if data.get('success') and data.get('data'):
                 md = data['data']
@@ -319,7 +319,7 @@ def main():
             print("\n   RECOMMENDED ACTIONS:")
             if results["fail"] > 0:
                 print("   1. Check if data collector worker is running on Render")
-                print("   2. Verify ARES trader is scheduled and executing")
+                print("   2. Verify FORTRESS trader is scheduled and executing")
                 print("   3. Run: python data/automated_data_collector.py --once")
 
         conn.close()

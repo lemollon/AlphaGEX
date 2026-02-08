@@ -3,7 +3,7 @@
 Manual SPX Iron Condor Trade Execution
 =======================================
 
-Execute an ARES-style SPX Iron Condor trade manually.
+Execute an FORTRESS-style SPX Iron Condor trade manually.
 Uses LIVE Tradier connection to trade SPXW options.
 
 Usage:
@@ -53,7 +53,7 @@ def main():
     tradier = TradierDataFetcher(sandbox=False)
     logger.info("Connected to Tradier PRODUCTION")
 
-    # ARES parameters for SPX
+    # FORTRESS parameters for SPX
     SPREAD_WIDTH = 10.0  # $10 wide spreads
     RISK_PCT = 0.10  # 10% risk per trade
     MIN_CREDIT = 3.00  # Minimum $3 credit per spread

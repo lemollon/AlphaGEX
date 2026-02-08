@@ -35,7 +35,7 @@ _apollo_tradier_instance = None
 def get_tradier():
     """
     Get Tradier data fetcher instance with proper credentials.
-    Uses same pattern as ARES - explicitly gets credentials from APIConfig.
+    Uses same pattern as FORTRESS - explicitly gets credentials from APIConfig.
     """
     global _apollo_tradier_instance
 

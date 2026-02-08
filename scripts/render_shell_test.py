@@ -47,7 +47,7 @@ try:
         price_change_1d=0.3, win_rate_30d=0.55,
     )
 
-    pred = oracle.get_athena_advice(context=context, use_gex_walls=True, wall_filter_pct=6.0, bot_name="TEST")
+    pred = oracle.get_solomon_advice(context=context, use_gex_walls=True, wall_filter_pct=6.0, bot_name="TEST")
     if pred:
         conf = pred.confidence
         if conf > 1.0:
@@ -105,7 +105,7 @@ print("\n5. Flip Distance Filter in Oracle:")
 try:
     import inspect
     from quant.oracle_advisor import OracleAdvisor
-    src = inspect.getsource(OracleAdvisor.get_athena_advice)
+    src = inspect.getsource(OracleAdvisor.get_solomon_advice)
     if 'flip_distance_pct' in src and 'FLIP_FILTER' in src:
         print("   ✅ PASS: Flip filter active")
     else:
@@ -118,7 +118,7 @@ print("\n6. Friday Filter in Oracle:")
 try:
     import inspect
     from quant.oracle_advisor import OracleAdvisor
-    src = inspect.getsource(OracleAdvisor.get_athena_advice)
+    src = inspect.getsource(OracleAdvisor.get_solomon_advice)
     if 'is_friday' in src and 'FRIDAY_FILTER' in src:
         print("   ✅ PASS: Friday filter active")
     else:
@@ -126,11 +126,11 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 7: ATHENA Features
-print("\n7. ML Features in ATHENA get_gex_data:")
+# Test 7: SOLOMON Features
+print("\n7. ML Features in SOLOMON get_gex_data:")
 try:
     import inspect
-    from trading.athena_v2.signals import SignalGenerator
+    from trading.solomon_v2.signals import SignalGenerator
     src = inspect.getsource(SignalGenerator.get_gex_data)
     features = ['vix_percentile_30d', 'vix_change_1d', 'price_change_1d', 'win_rate_30d']
     found = [f for f in features if f in src]

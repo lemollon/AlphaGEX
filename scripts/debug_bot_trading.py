@@ -109,15 +109,15 @@ def analyze_scan_activity():
     try:
         cursor.execute("""
             SELECT
-                'ARES' as bot,
+                'FORTRESS' as bot,
                 COUNT(*) as open_positions
-            FROM ares_ic_positions
+            FROM fortress_ic_positions
             WHERE status = 'OPEN'
             UNION ALL
             SELECT
-                'ATHENA' as bot,
+                'SOLOMON' as bot,
                 COUNT(*) as open_positions
-            FROM athena_directional_positions
+            FROM solomon_directional_positions
             WHERE status = 'OPEN'
         """)
 
@@ -132,7 +132,7 @@ def analyze_scan_activity():
     print("\n📝 LATEST 5 SCANS PER BOT (with decision details)")
     print("-" * 80)
 
-    for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX', 'ATLAS', 'ICARUS']:
+    for bot in ['FORTRESS', 'SOLOMON', 'PEGASUS', 'PHOENIX', 'ATLAS', 'ICARUS']:
         cursor.execute("""
             SELECT
                 time_ct,

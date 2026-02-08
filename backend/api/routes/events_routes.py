@@ -41,7 +41,7 @@ router = APIRouter(prefix="/api/events", tags=["Events"])
 
 def _get_ares_capital() -> float:
     """
-    Get ARES starting capital from database config.
+    Get FORTRESS starting capital from database config.
 
     CRITICAL: Do NOT use Tradier balance as starting capital!
     Tradier balance = starting_capital + all P&L (double-counting issue).
@@ -65,7 +65,7 @@ def _get_ares_capital() -> float:
         return 100000
 
     except Exception as e:
-        logger.warning(f"Could not fetch ARES capital: {e}")
+        logger.warning(f"Could not fetch FORTRESS capital: {e}")
         return 100000
 
 
@@ -73,26 +73,26 @@ def _get_bot_capital(bot_name: str) -> float:
     """
     Get starting capital for a bot.
 
-    - ARES: Fetched from Tradier sandbox account (real money)
-    - ATHENA: $100,000 paper trading capital
-    - ICARUS: $100,000 paper trading (aggressive ATHENA clone)
+    - FORTRESS: Fetched from Tradier sandbox account (real money)
+    - SOLOMON: $100,000 paper trading capital
+    - ICARUS: $100,000 paper trading (aggressive SOLOMON clone)
     - PEGASUS: $200,000 paper trading SPX
-    - TITAN: $200,000 paper trading (aggressive PEGASUS clone)
+    - SAMSON: $200,000 paper trading (aggressive PEGASUS clone)
     """
     if not bot_name:
         return 200000
 
     bot_upper = bot_name.upper()
 
-    if bot_upper == 'ARES':
+    if bot_upper == 'FORTRESS':
         return _get_ares_capital()
-    elif bot_upper == 'ATHENA':
+    elif bot_upper == 'SOLOMON':
         return 100000  # Paper trading
     elif bot_upper == 'ICARUS':
-        return 100000  # Paper trading - aggressive ATHENA clone
+        return 100000  # Paper trading - aggressive SOLOMON clone
     elif bot_upper == 'PEGASUS':
         return 200000  # Paper trading SPX
-    elif bot_upper == 'TITAN':
+    elif bot_upper == 'SAMSON':
         return 200000  # Paper trading SPX - aggressive PEGASUS clone
     else:
         return 200000  # Default
@@ -157,7 +157,7 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
     """
     Auto-detect trading events from historical trade data.
 
-    IMPORTANT: V2 bots (ARES, ATHENA, PEGASUS) store trades in their own tables.
+    IMPORTANT: V2 bots (FORTRESS, SOLOMON, PEGASUS) store trades in their own tables.
     This function reads from the correct table based on the bot filter.
 
     Detects:
@@ -179,8 +179,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
 
         # V2 bot table mapping
         v2_bot_tables = {
-            'ARES': 'ares_positions',
-            'ATHENA': 'athena_positions',
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
             'PEGASUS': 'pegasus_positions'
         }
 
@@ -583,7 +583,7 @@ def _calculate_bot_unrealized_pnl(cursor, bot_filter: str = None) -> float:
     Calculate unrealized P&L from open positions for a specific bot.
 
     Uses MTM (mark-to-market) pricing when available, falls back to estimation.
-    Handles both Iron Condor bots (ARES, TITAN, PEGASUS) and Directional bots (ATHENA, ICARUS).
+    Handles both Iron Condor bots (FORTRESS, SAMSON, PEGASUS) and Directional bots (SOLOMON, ICARUS).
     """
     if not bot_filter:
         return 0.0
@@ -592,11 +592,11 @@ def _calculate_bot_unrealized_pnl(cursor, bot_filter: str = None) -> float:
     unrealized_pnl = 0.0
 
     # Bot-specific table and position structure mapping
-    ic_bots = {'ARES': ('ares_positions', 'SPY'),
-               'TITAN': ('titan_positions', 'SPX'),
+    ic_bots = {'FORTRESS': ('fortress_positions', 'SPY'),
+               'SAMSON': ('samson_positions', 'SPX'),
                'PEGASUS': ('pegasus_positions', 'SPX')}
 
-    directional_bots = {'ATHENA': ('athena_positions', 'SPY'),
+    directional_bots = {'SOLOMON': ('solomon_positions', 'SPY'),
                         'ICARUS': ('icarus_positions', 'SPY')}
 
     try:
@@ -675,13 +675,13 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
     For 'daily' timeframe: Returns individual trade points for granular charts
     For 'weekly'/'monthly': Returns aggregated data by period
 
-    IMPORTANT: V2 bots (ARES, ATHENA, PEGASUS) store trades in their own tables,
+    IMPORTANT: V2 bots (FORTRESS, SOLOMON, PEGASUS) store trades in their own tables,
     not in autonomous_closed_trades. This function reads from the correct table
     based on the bot filter to ensure proper equity curve synchronization.
 
     Args:
         days: Number of days of history
-        bot_filter: Optional bot name filter (ARES, ATHENA, PEGASUS)
+        bot_filter: Optional bot name filter (FORTRESS, SOLOMON, PEGASUS)
         timeframe: 'daily', 'weekly', or 'monthly'
     """
     conn = get_connection()
@@ -693,17 +693,17 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         # Bot-specific table mapping for V2 bots
         # Each V2 bot stores closed trades in its own positions table
         bot_tables = {
-            'ARES': 'ares_positions',      # SPY Iron Condors - capital from Tradier
-            'ATHENA': 'athena_positions',  # SPY Directional - $100k paper
+            'FORTRESS': 'fortress_positions',      # SPY Iron Condors - capital from Tradier
+            'SOLOMON': 'solomon_positions',  # SPY Directional - $100k paper
             'ICARUS': 'icarus_positions',  # SPY Aggressive Directional - $100k paper
             'PEGASUS': 'pegasus_positions', # SPX Iron Condors - $200k paper
-            'TITAN': 'titan_positions',    # SPX Aggressive Iron Condors - $200k paper
+            'SAMSON': 'samson_positions',    # SPX Aggressive Iron Condors - $200k paper
         }
 
         rows = []
         is_individual_trades = (timeframe == 'daily')  # For daily, get individual trades
 
-        # Get starting capital dynamically (ARES fetches from Tradier)
+        # Get starting capital dynamically (FORTRESS fetches from Tradier)
         starting_capital = _get_bot_capital(bot_filter)
 
         if bot_filter and bot_filter.upper() in bot_tables:
@@ -1014,7 +1014,7 @@ async def get_trading_events(
 
     Args:
         days: Number of days of history (default 90)
-        bot: Filter by bot name (ARES, ATHENA, etc.)
+        bot: Filter by bot name (FORTRESS, SOLOMON, etc.)
         event_type: Filter by event type
     """
     try:
@@ -1044,7 +1044,7 @@ async def get_equity_curve(
 
     Args:
         days: Number of days of history (default 90)
-        bot: Filter by bot name (ARES, ATHENA, etc.)
+        bot: Filter by bot name (FORTRESS, SOLOMON, etc.)
         timeframe: 'daily', 'weekly', or 'monthly'
         auto_sync: Automatically sync events to database (default True)
     """
@@ -1063,7 +1063,7 @@ async def get_equity_curve(
             except Exception as e:
                 print(f"Event sync failed (non-critical): {e}")
 
-        # Get correct starting capital for bot (ARES fetches from Tradier)
+        # Get correct starting capital for bot (FORTRESS fetches from Tradier)
         starting_capital = _get_bot_capital(bot)
 
         # Calculate summary stats
@@ -1122,7 +1122,7 @@ async def sync_trading_events(
 
     Args:
         days: Number of days of history to scan (default 90)
-        bot: Optional bot name filter (ARES, ATHENA, etc.)
+        bot: Optional bot name filter (FORTRESS, SOLOMON, etc.)
     """
     try:
         result = sync_events(days=days, bot_filter=bot)
@@ -1147,7 +1147,7 @@ async def get_persisted_trading_events(
 
     Args:
         days: Number of days of history (default 90)
-        bot: Filter by bot name (ARES, ATHENA, etc.)
+        bot: Filter by bot name (FORTRESS, SOLOMON, etc.)
         event_type: Filter by event type
     """
     try:

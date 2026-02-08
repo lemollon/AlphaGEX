@@ -246,7 +246,7 @@ def run_bot_integration_tests(base_url: str, verbose: bool = False) -> Tuple[int
     """
     print(f"\n{Colors.BOLD}=== Bot Integration Tests ==={Colors.END}\n")
 
-    bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+    bots = ['fortress', 'solomon', 'samson', 'pegasus', 'icarus']
     passed = 0
     total = len(bots)
 

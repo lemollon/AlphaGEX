@@ -3,13 +3,13 @@
 Verify Direction Fix - Complete End-to-End Test
 
 This script verifies the ENTIRE execution chain from database config
-to direction logic for the ATHENA/ICARUS direction fix.
+to direction logic for the SOLOMON/ICARUS direction fix.
 
 Run on Render:
     python scripts/verify_direction_fix.py
 
 What it checks:
-1. Database config values (ATHENA_wall_filter_pct, ICARUS_wall_filter_pct)
+1. Database config values (SOLOMON_wall_filter_pct, ICARUS_wall_filter_pct)
 2. Config loading in bot code
 3. Direction logic in price_trend_tracker
 4. Oracle integration
@@ -60,19 +60,19 @@ try:
     if not DATABASE_URL:
         print("  WARNING: DATABASE_URL not set - skipping database tests")
         print("  (This is expected when running locally without .env)")
-        db_athena_value = None
+        db_solomon_value = None
         db_icarus_value = None
     else:
         conn = psycopg2.connect(DATABASE_URL)
         c = conn.cursor()
 
-        # Check ATHENA config
-        c.execute("SELECT value FROM autonomous_config WHERE key = 'ATHENA_wall_filter_pct'")
+        # Check SOLOMON config
+        c.execute("SELECT value FROM autonomous_config WHERE key = 'SOLOMON_wall_filter_pct'")
         result = c.fetchone()
-        db_athena_value = result[0] if result else None
-        check("ATHENA_wall_filter_pct in database",
-              db_athena_value == '1.0',
-              f"Got: {db_athena_value}, Expected: 1.0")
+        db_solomon_value = result[0] if result else None
+        check("SOLOMON_wall_filter_pct in database",
+              db_solomon_value == '1.0',
+              f"Got: {db_solomon_value}, Expected: 1.0")
 
         # Check ICARUS config
         c.execute("SELECT value FROM autonomous_config WHERE key = 'ICARUS_wall_filter_pct'")
@@ -86,7 +86,7 @@ try:
 
 except Exception as e:
     print(f"  ERROR: Database check failed: {e}")
-    db_athena_value = None
+    db_solomon_value = None
     db_icarus_value = None
 
 # ============================================================================
@@ -96,28 +96,28 @@ print("\n[2] CONFIG LOADING IN BOT CODE")
 print("-" * 70)
 
 try:
-    from trading.athena_v2.db import ATHENADatabase
-    from trading.athena_v2.models import ATHENAConfig
+    from trading.solomon_v2.db import SolomonDatabase
+    from trading.solomon_v2.models import SolomonConfig
 
     # Test default config
-    default_config = ATHENAConfig()
-    check("ATHENA default wall_filter_pct is 1.0",
+    default_config = SolomonConfig()
+    check("SOLOMON default wall_filter_pct is 1.0",
           default_config.wall_filter_pct == 1.0,
           f"Got: {default_config.wall_filter_pct}, Expected: 1.0")
 
     # Test loading from database (if available)
     if DATABASE_URL:
         try:
-            db = ATHENADatabase()
+            db = SolomonDatabase()
             loaded_config = db.load_config()
-            check("ATHENA loaded wall_filter_pct is 1.0",
+            check("SOLOMON loaded wall_filter_pct is 1.0",
                   loaded_config.wall_filter_pct == 1.0,
                   f"Got: {loaded_config.wall_filter_pct}, Expected: 1.0")
         except Exception as e:
-            print(f"  WARNING: Could not load ATHENA config from DB: {e}")
+            print(f"  WARNING: Could not load SOLOMON config from DB: {e}")
 
 except Exception as e:
-    print(f"  ERROR: ATHENA config test failed: {e}")
+    print(f"  ERROR: SOLOMON config test failed: {e}")
 
 try:
     from trading.icarus.db import ICARUSDatabase
@@ -295,7 +295,7 @@ try:
     )
 
     # Call Oracle with wall_filter_pct
-    prediction = oracle.get_athena_advice(
+    prediction = oracle.get_solomon_advice(
         context=context,
         use_gex_walls=True,
         wall_filter_pct=1.0
@@ -339,8 +339,8 @@ print("""
 """)
 
 try:
-    from trading.athena_v2.models import ATHENAConfig
-    config = ATHENAConfig()
+    from trading.solomon_v2.models import SolomonConfig
+    config = SolomonConfig()
 
     print(f"  - wall_filter_pct: {config.wall_filter_pct}%")
     print(f"  - min_win_probability: {config.min_win_probability}")

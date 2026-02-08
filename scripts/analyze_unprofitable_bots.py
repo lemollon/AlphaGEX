@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-COMPREHENSIVE PROFITABILITY ANALYSIS: ATHENA, ICARUS, TITAN
+COMPREHENSIVE PROFITABILITY ANALYSIS: SOLOMON, ICARUS, SAMSON
 ============================================================
 Analyzes why these bots have not been profitable by examining:
 1. Trade win/loss distribution
@@ -25,8 +25,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 BOT_CONFIGS = {
-    'athena': {
-        'table': 'athena_positions',
+    'solomon': {
+        'table': 'solomon_positions',
         'type': 'directional',
         'underlying': 'SPY',
         'pnl_formula': 'debit',  # (close_price - entry_debit) * contracts * 100
@@ -49,8 +49,8 @@ BOT_CONFIGS = {
             'underlying_at_entry': 'underlying_at_entry',
         }
     },
-    'titan': {
-        'table': 'titan_positions',
+    'samson': {
+        'table': 'samson_positions',
         'type': 'iron_condor',
         'underlying': 'SPX',
         'pnl_formula': 'credit',  # (total_credit - close_price) * contracts * 100
@@ -698,7 +698,7 @@ def analyze_backtest_drift(conn, bot_name):
 
     # Apache backtest benchmarks (from the profitable backtest)
     APACHE_BENCHMARKS = {
-        'athena': {
+        'solomon': {
             'win_rate': 0.58,  # 58% win rate
             'avg_win_pct': 45.0,  # 45% of max profit
             'avg_loss_pct': 35.0,  # 35% of max loss
@@ -712,7 +712,7 @@ def analyze_backtest_drift(conn, bot_name):
             'expectancy': 5.0,  # Lower expectancy due to aggression
             'trades_per_week': 15,
         },
-        'titan': {
+        'samson': {
             'win_rate': 0.72,  # 72% win rate for IC
             'avg_win_pct': 30.0,  # Take profit at 30%
             'avg_loss_pct': 100.0,  # Full loss when breached
@@ -952,7 +952,7 @@ def generate_recommendations(all_results):
 
 def main():
     print("=" * 80)
-    print("ATHENA, ICARUS, TITAN PROFITABILITY ANALYSIS")
+    print("SOLOMON, ICARUS, SAMSON PROFITABILITY ANALYSIS")
     print(f"Generated: {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S CT')}")
     print("=" * 80)
 
@@ -960,7 +960,7 @@ def main():
 
     all_results = {}
 
-    for bot_name in ['athena', 'icarus', 'titan']:
+    for bot_name in ['solomon', 'icarus', 'samson']:
         config = BOT_CONFIGS[bot_name]
         results = analyze_bot(conn, bot_name, config)
         all_results[bot_name] = results

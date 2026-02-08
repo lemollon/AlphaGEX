@@ -253,7 +253,7 @@ class PEGASUSTrader(MathOptimizerMixin):
                 return result
 
             # Check Oracle strategy recommendation
-            # Oracle may suggest ATHENA (directional) instead of PEGASUS (IC) in high VIX
+            # Oracle may suggest SOLOMON (directional) instead of PEGASUS (IC) in high VIX
             strategy_rec = self._check_strategy_recommendation()
             if strategy_rec:
                 scan_context['strategy_recommendation'] = {
@@ -271,8 +271,8 @@ class PEGASUSTrader(MathOptimizerMixin):
                         self.db.log("INFO", f"Oracle strategy suggests SKIP: {strategy_rec.reasoning} (proceeding to trade check)")
                         result['details']['strategy_suggestion'] = f"SKIP: {strategy_rec.reasoning}"
                     elif strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                        self.db.log("INFO", f"Oracle suggests ATHENA: {strategy_rec.reasoning} (PEGASUS will still check)")
-                        result['details']['oracle_suggests_athena'] = True
+                        self.db.log("INFO", f"Oracle suggests SOLOMON: {strategy_rec.reasoning} (PEGASUS will still check)")
+                        result['details']['oracle_suggests_solomon'] = True
                         result['details']['ic_suitability'] = strategy_rec.ic_suitability
 
             # Manage positions
@@ -365,7 +365,7 @@ class PEGASUSTrader(MathOptimizerMixin):
 
         Oracle determines if current conditions favor:
         - IRON_CONDOR: Price will stay pinned (good for PEGASUS)
-        - DIRECTIONAL: Price will move (better for ATHENA)
+        - DIRECTIONAL: Price will move (better for SOLOMON)
         - SKIP: Too risky to trade
 
         Returns:

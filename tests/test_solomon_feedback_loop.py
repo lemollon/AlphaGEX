@@ -43,7 +43,7 @@ def sample_proposal():
     """Sample proposal for testing"""
     return {
         'proposal_id': 'PROP-TEST-001',
-        'bot_name': 'ARES',
+        'bot_name': 'FORTRESS',
         'proposal_type': 'PARAMETER_CHANGE',
         'title': 'Increase wing width',
         'description': 'Increase iron condor wing width from 50 to 60 points',
@@ -61,7 +61,7 @@ def sample_validation():
     return {
         'validation_id': 'VAL-TEST-001',
         'proposal_id': 'PROP-TEST-001',
-        'bot_name': 'ARES',
+        'bot_name': 'FORTRESS',
         'method': 'AB_TEST',
         'started_at': datetime.now(CENTRAL_TZ).isoformat(),
         'status': 'RUNNING',
@@ -394,7 +394,7 @@ class TestProverbsFullFlow:
             mock_proverbs = MagicMock()
             mock_proverbs.get_pending_proposals.return_value = [{
                 'proposal_id': 'PROP-FLOW-TEST',
-                'bot_name': 'ARES',
+                'bot_name': 'FORTRESS',
                 'status': 'PENDING',
                 'expires_at': (datetime.now(CENTRAL_TZ) + timedelta(days=7)).isoformat(),
             }]
@@ -410,7 +410,7 @@ class TestProverbsFullFlow:
             # Start validation
             val_id = validator.start_validation(
                 proposal_id='PROP-FLOW-TEST',
-                bot_name='ARES',
+                bot_name='FORTRESS',
                 method='AB_TEST',
                 current_config={'param': 1},
                 proposed_config={'param': 2},
@@ -563,10 +563,10 @@ class TestMigration023StrategyAnalysis:
         configs = ProverbsEnhanced.BOT_STRATEGY_CONFIGS
 
         # Verify all 5 bots are configured
-        assert 'ARES' in configs
-        assert 'TITAN' in configs
+        assert 'FORTRESS' in configs
+        assert 'SAMSON' in configs
         assert 'PEGASUS' in configs
-        assert 'ATHENA' in configs
+        assert 'SOLOMON' in configs
         assert 'ICARUS' in configs
 
     def test_bot_strategy_types_correct(self):
@@ -576,12 +576,12 @@ class TestMigration023StrategyAnalysis:
         configs = ProverbsEnhanced.BOT_STRATEGY_CONFIGS
 
         # Iron Condor bots
-        assert configs['ARES']['strategy_type'] == 'IRON_CONDOR'
-        assert configs['TITAN']['strategy_type'] == 'IRON_CONDOR'
+        assert configs['FORTRESS']['strategy_type'] == 'IRON_CONDOR'
+        assert configs['SAMSON']['strategy_type'] == 'IRON_CONDOR'
         assert configs['PEGASUS']['strategy_type'] == 'IRON_CONDOR'
 
         # Directional bots
-        assert configs['ATHENA']['strategy_type'] == 'DIRECTIONAL'
+        assert configs['SOLOMON']['strategy_type'] == 'DIRECTIONAL'
         assert configs['ICARUS']['strategy_type'] == 'DIRECTIONAL'
 
     def test_get_bot_strategy_config(self):
@@ -593,11 +593,11 @@ class TestMigration023StrategyAnalysis:
         enhanced.proverbs = MagicMock()
         enhanced.proposal_validator = MagicMock()
 
-        config = enhanced.get_bot_strategy_config('ARES')
+        config = enhanced.get_bot_strategy_config('FORTRESS')
         assert config['strategy_type'] == 'IRON_CONDOR'
         assert config['goal'] == 'stability'
 
-        config = enhanced.get_bot_strategy_config('ATHENA')
+        config = enhanced.get_bot_strategy_config('SOLOMON')
         assert config['strategy_type'] == 'DIRECTIONAL'
         assert config['goal'] == 'movement'
 
@@ -641,13 +641,13 @@ class TestMigration023StrategyAnalysis:
             assert result['iron_condor']['trades'] == 10
             assert result['iron_condor']['wins'] == 7
             assert result['iron_condor']['win_rate'] == 70.0
-            assert 'ARES' in result['iron_condor']['bots']
+            assert 'FORTRESS' in result['iron_condor']['bots']
 
             # Check Directional metrics
             assert result['directional']['trades'] == 8
             assert result['directional']['wins'] == 5
             assert 'direction_accuracy' in result['directional']
-            assert 'ATHENA' in result['directional']['bots']
+            assert 'SOLOMON' in result['directional']['bots']
 
     def test_get_oracle_accuracy_structure(self):
         """Test get_oracle_accuracy returns correct structure"""

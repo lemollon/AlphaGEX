@@ -14,7 +14,7 @@ Usage:
     from trading.bot_logger import log_bot_decision, BotDecision, ExecutionTimeline
 
     decision = BotDecision(
-        bot_name="ARES",
+        bot_name="FORTRESS",
         decision_type="ENTRY",
         action="SELL",
         symbol="SPY",
@@ -42,13 +42,13 @@ class BotName(Enum):
     """Bot identifiers"""
     PHOENIX = "PHOENIX"
     ATLAS = "ATLAS"
-    ARES = "ARES"
+    FORTRESS = "FORTRESS"
     HERMES = "HERMES"
     ORACLE = "ORACLE"
-    ATHENA = "ATHENA"    # Directional Spreads (Bull Call / Bear Call)
+    SOLOMON = "SOLOMON"    # Directional Spreads (Bull Call / Bear Call)
     ICARUS = "ICARUS"    # Aggressive Directional Spreads (relaxed GEX filters)
     PEGASUS = "PEGASUS"  # SPX Iron Condor ($10 spreads, weekly)
-    TITAN = "TITAN"      # Aggressive SPX Iron Condor ($12 spreads)
+    SAMSON = "SAMSON"      # Aggressive SPX Iron Condor ($12 spreads)
     PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
 
 
@@ -188,7 +188,7 @@ class BotDecision:
     This is the main data structure that captures everything about a decision.
     """
     # IDENTIFICATION
-    bot_name: str  # PHOENIX, ATLAS, ARES, HERMES, ORACLE
+    bot_name: str  # PHOENIX, ATLAS, FORTRESS, HERMES, ORACLE
     decision_type: str  # ENTRY, EXIT, SKIP, ADJUSTMENT
     action: str  # BUY, SELL, HOLD
     symbol: str = "SPY"
@@ -338,7 +338,7 @@ class SessionTracker:
     Track scan_cycle and decision_sequence within a trading session.
 
     Usage:
-        tracker = get_session_tracker("ARES")
+        tracker = get_session_tracker("FORTRESS")
         tracker.new_cycle()  # Start a new scan cycle (scan_cycle += 1)
         scan = tracker.current_cycle
         seq = tracker.next_decision()  # Get next decision_sequence
@@ -874,8 +874,8 @@ def get_session_decisions(session_id: str) -> List[Dict]:
 
 # Convenience functions for each bot
 def get_ares_logger():
-    """Get a pre-configured logger for ARES"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ARES" else None
+    """Get a pre-configured logger for FORTRESS"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "FORTRESS" else None
 
 
 def get_atlas_logger():
@@ -898,9 +898,9 @@ def get_oracle_logger():
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "ORACLE" else None
 
 
-def get_athena_logger():
-    """Get a pre-configured logger for ATHENA"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ATHENA" else None
+def get_solomon_logger():
+    """Get a pre-configured logger for SOLOMON"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "SOLOMON" else None
 
 
 def get_pegasus_logger():
@@ -914,8 +914,8 @@ def get_icarus_logger():
 
 
 def get_titan_logger():
-    """Get a pre-configured logger for TITAN"""
-    return lambda decision: log_bot_decision(decision) if decision.bot_name == "TITAN" else None
+    """Get a pre-configured logger for SAMSON"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "SAMSON" else None
 
 
 def get_prometheus_logger():

@@ -29,7 +29,7 @@ The AlphaGEX platform has **significant test coverage gaps** that represent risk
 
 **Untested Routes (High Risk):**
 - `ares_routes.py` - Iron Condor trading (40 KB)
-- `athena_routes.py` - Directional spreads (38 KB)
+- `solomon_routes.py` - Directional spreads (38 KB)
 - `apollo_routes.py` - ML predictions (26 KB)
 - `wheel_routes.py` - Wheel strategy execution
 - `vix_routes.py` - VIX hedging signals
@@ -339,7 +339,7 @@ class TestBacktestFramework:
 
 **Under-tested Modules:**
 - `ares_iron_condor.py` (181 KB) - Iron Condor
-- `athena_directional_spreads.py` (187 KB) - Spreads
+- `solomon_directional_spreads.py` (187 KB) - Spreads
 - `circuit_breaker.py` - Risk controls
 - `risk_management.py` - Risk rules
 
@@ -381,7 +381,7 @@ class TestBacktestFramework:
 
 3. **Expand E2E Coverage**
    - Add ARES flow tests
-   - Add ATHENA flow tests
+   - Add SOLOMON flow tests
    - Add Wheel strategy flow tests
    - Add authentication/authorization tests
 
@@ -462,7 +462,7 @@ test:
 
 | Priority | Action | Impact | Effort |
 |----------|--------|--------|--------|
-| 1 | Add tests for `ares_routes.py`, `athena_routes.py` | High | Medium |
+| 1 | Add tests for `ares_routes.py`, `solomon_routes.py` | High | Medium |
 | 2 | Add tests for `gex_calculator.py` | High | Low |
 | 3 | Add tests for AI personality/tools modules | High | High |
 | 4 | Add frontend component tests for trader dashboard | High | Medium |

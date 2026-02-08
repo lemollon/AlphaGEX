@@ -9,7 +9,7 @@ Features:
 - Database-backed persistence for multi-instance deployments
 - In-memory cache for fast lookups
 - Automatic cleanup of expired keys
-- Integration with ARES and ATHENA order flows
+- Integration with FORTRESS and SOLOMON order flows
 
 Usage:
     from trading.idempotency import (
@@ -19,7 +19,7 @@ Usage:
     )
 
     # Before placing order
-    key = generate_idempotency_key("ARES", position_id, expiration)
+    key = generate_idempotency_key("FORTRESS", position_id, expiration)
 
     # Check if already processed
     existing = manager.get_result(key)
@@ -145,7 +145,7 @@ class IdempotencyManager:
         Generate a unique idempotency key.
 
         Args:
-            bot_name: Name of the bot (ARES, ATHENA)
+            bot_name: Name of the bot (FORTRESS, SOLOMON)
             *components: Additional components to include in key
                         (e.g., position_id, expiration, strikes)
 
@@ -521,7 +521,7 @@ def generate_idempotency_key(
     Generate a unique idempotency key for a trade.
 
     Args:
-        bot_name: Name of the bot (ARES, ATHENA)
+        bot_name: Name of the bot (FORTRESS, SOLOMON)
         position_id: Position identifier
         expiration: Option expiration date
         **kwargs: Additional components
@@ -573,8 +573,8 @@ def with_idempotency(
     Decorator/context for idempotent operations.
 
     Usage:
-        key = generate_idempotency_key("ARES", position_id)
-        if with_idempotency(key, "ARES", request_data):
+        key = generate_idempotency_key("FORTRESS", position_id)
+        if with_idempotency(key, "FORTRESS", request_data):
             # Proceed with operation
             result = execute_order()
             mark_idempotency_completed(key, result)

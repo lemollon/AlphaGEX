@@ -90,11 +90,11 @@ def run_diagnostic():
                 conn.rollback()
                 return False
 
-        # ARES positions table
+        # FORTRESS positions table
         try:
-            existed = table_exists('ares_positions')
+            existed = table_exists('fortress_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ares_positions (
+                CREATE TABLE IF NOT EXISTS fortress_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
@@ -128,15 +128,15 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('ares_positions')
+                tables_created.append('fortress_positions')
         except Exception as e:
             conn.rollback()
 
-        # ATHENA positions table
+        # SOLOMON positions table
         try:
-            existed = table_exists('athena_positions')
+            existed = table_exists('solomon_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS athena_positions (
+                CREATE TABLE IF NOT EXISTS solomon_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
@@ -163,7 +163,7 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('athena_positions')
+                tables_created.append('solomon_positions')
         except Exception as e:
             conn.rollback()
 
@@ -229,11 +229,11 @@ def run_diagnostic():
         except Exception as e:
             conn.rollback()
 
-        # TITAN positions table (Aggressive SPX IC)
+        # SAMSON positions table (Aggressive SPX IC)
         try:
-            existed = table_exists('titan_positions')
+            existed = table_exists('samson_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS titan_positions (
+                CREATE TABLE IF NOT EXISTS samson_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
@@ -256,7 +256,7 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('titan_positions')
+                tables_created.append('samson_positions')
         except Exception as e:
             conn.rollback()
 
@@ -351,11 +351,11 @@ def run_diagnostic():
 
     # Correct table names matching actual database schema
     position_tables = [
-        ('ares_positions', 'ARES'),
-        ('athena_positions', 'ATHENA'),
+        ('fortress_positions', 'FORTRESS'),
+        ('solomon_positions', 'SOLOMON'),
         ('pegasus_positions', 'PEGASUS'),
         ('icarus_positions', 'ICARUS'),
-        ('titan_positions', 'TITAN'),
+        ('samson_positions', 'SAMSON'),
     ]
 
     for table, bot in position_tables:
@@ -555,7 +555,7 @@ def run_diagnostic():
     try:
         from quant.proverbs_feedback_loop import get_proverbs
         proverbs = get_proverbs()
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN']:
+        for bot in ['FORTRESS', 'SOLOMON', 'PEGASUS', 'ICARUS', 'SAMSON']:
             # Check if bot is killed via kill switch
             is_killed = proverbs.is_bot_killed(bot) if hasattr(proverbs, 'is_bot_killed') else False
             status_icon = "🔴" if is_killed else "🟢"

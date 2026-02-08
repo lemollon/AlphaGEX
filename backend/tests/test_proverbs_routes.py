@@ -115,6 +115,6 @@ class TestProverbsEndpoints:
             pytest.skip("Test client not available")
         response = test_client.post(
             "/api/proverbs/kill-switch/toggle",
-            json={"bot": "ARES", "enabled": True}
+            json={"bot": "FORTRESS", "enabled": True}
         )
         assert response.status_code in [200, 400, 404, 500]

@@ -150,7 +150,7 @@ class TestPositionAggregation:
             engine = UnifiedTradingEngine()
 
             if hasattr(engine, 'get_positions_by_bot'):
-                positions = engine.get_positions_by_bot('ARES')
+                positions = engine.get_positions_by_bot('FORTRESS')
                 assert isinstance(positions, list)
         except ImportError:
             pytest.skip("UnifiedTradingEngine not available")
@@ -294,7 +294,7 @@ class TestTradeLogging:
 
             if hasattr(engine, 'log_trade'):
                 trade = {
-                    'bot': 'ARES',
+                    'bot': 'FORTRESS',
                     'symbol': 'SPX',
                     'action': 'SELL',
                     'quantity': 1,

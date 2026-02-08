@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES' | 'AGAPE'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'ICARUS' | 'PEGASUS' | 'SAMSON' | 'PHOENIX' | 'ATLAS' | 'PROMETHEUS' | 'HERACLES' | 'AGAPE'
 
 export interface BotBrand {
   name: BotName
@@ -49,10 +49,10 @@ export interface BotBrand {
 }
 
 export const BOT_BRANDS: Record<BotName, BotBrand> = {
-  ARES: {
-    name: 'ARES',
-    displayName: BOT_DISPLAY_NAMES.ARES,  // FORTRESS - Psalm 18:2
-    fullName: `${BOT_DISPLAY_NAMES.ARES} Iron Condor`,
+  FORTRESS: {
+    name: 'FORTRESS',
+    displayName: BOT_DISPLAY_NAMES.FORTRESS,  // FORTRESS - Psalm 18:2
+    fullName: `${BOT_DISPLAY_NAMES.FORTRESS} Iron Condor`,
     description: 'Paper Trading with Real Market Data',
     strategy: '0DTE Iron Condor Strategy',
     // Primary - Amber/Gold (professional, not aggressive red)
@@ -85,10 +85,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#FCD34D',
     hexDark: '#D97706',
   },
-  ATHENA: {
-    name: 'ATHENA',
-    displayName: BOT_DISPLAY_NAMES.ATHENA,  // SOLOMON - 1 Kings 4:29
-    fullName: `${BOT_DISPLAY_NAMES.ATHENA} Directional`,
+  SOLOMON: {
+    name: 'SOLOMON',
+    displayName: BOT_DISPLAY_NAMES.SOLOMON,  // SOLOMON - 1 Kings 4:29
+    fullName: `${BOT_DISPLAY_NAMES.SOLOMON} Directional`,
     description: 'GEX-Based Directional Spreads',
     strategy: 'Directional Spread Trading',
     // Primary - Cyan/Teal (wisdom, strategy)
@@ -193,10 +193,10 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#93C5FD',
     hexDark: '#1D4ED8',
   },
-  TITAN: {
-    name: 'TITAN',
-    displayName: BOT_DISPLAY_NAMES.TITAN,  // SAMSON - Judges 16:28
-    fullName: `${BOT_DISPLAY_NAMES.TITAN} Aggressive SPX Iron Condor`,
+  SAMSON: {
+    name: 'SAMSON',
+    displayName: BOT_DISPLAY_NAMES.SAMSON,  // SAMSON - Judges 16:28
+    fullName: `${BOT_DISPLAY_NAMES.SAMSON} Aggressive SPX Iron Condor`,
     description: 'Aggressive Daily SPX Iron Condor Trading',
     strategy: 'Aggressive SPX Iron Condor Strategy',
     // Primary - Violet/Purple (powerful, aggressive, primordial)

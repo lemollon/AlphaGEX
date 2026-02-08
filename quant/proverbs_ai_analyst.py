@@ -154,8 +154,8 @@ class ProverbsAIAnalyst:
 Your role is to analyze trading bot performance and provide actionable recommendations.
 
 You analyze:
-- ARES: Aggressive 0DTE Iron Condor strategy on SPX
-- ATHENA: GEX-based directional spreads
+- FORTRESS: Aggressive 0DTE Iron Condor strategy on SPX
+- SOLOMON: GEX-based directional spreads
 - PEGASUS: SPX Iron Condor
 - PHOENIX: 0DTE SPY/SPX options
 
@@ -435,8 +435,8 @@ Provide analysis in JSON format:
     "volatility_expectation": "high/medium/low",
     "findings": ["Finding 1", ...],
     "bot_recommendations": {
-        "ARES": {"action": "TRADE/PAUSE/REDUCE_SIZE", "reason": "why"},
-        "ATHENA": {"action": "...", "reason": "..."},
+        "FORTRESS": {"action": "TRADE/PAUSE/REDUCE_SIZE", "reason": "why"},
+        "SOLOMON": {"action": "...", "reason": "..."},
         "PEGASUS": {"action": "...", "reason": "..."},
         "PHOENIX": {"action": "...", "reason": "..."}
     },
@@ -492,7 +492,7 @@ What should we do on Monday? Be specific about each bot."""
         """
         Analyze patterns across all bots to find correlations.
 
-        Example: "When ARES loses, ATHENA also loses 70% of the time"
+        Example: "When FORTRESS loses, SOLOMON also loses 70% of the time"
         """
         if not self.client:
             return None

@@ -605,7 +605,7 @@ def get_tradier():
     """
     Get the Tradier data fetcher instance.
 
-    Uses the same pattern as ARES: explicitly gets credentials from APIConfig
+    Uses the same pattern as FORTRESS: explicitly gets credentials from APIConfig
     and tries sandbox mode first (for market data), then production.
 
     This fixes the bug where ARGUS defaulted to production mode but credentials
@@ -624,7 +624,7 @@ def get_tradier():
     try:
         from unified_config import APIConfig
 
-        # Try sandbox credentials first (like ARES does for market data)
+        # Try sandbox credentials first (like FORTRESS does for market data)
         # Sandbox API still provides real market data for quotes/options
         sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
         sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
@@ -3441,10 +3441,10 @@ async def get_bot_positions():
     """
     Get active bot positions for ARGUS context.
 
-    Shows what ARES, ATHENA, TITAN, ICARUS, PEGASUS are doing relative to gamma structure.
+    Shows what FORTRESS, SOLOMON, SAMSON, ICARUS, PEGASUS are doing relative to gamma structure.
 
     Returns BotPosition interface matching frontend:
-    - bot: string (ARES, ATHENA, TITAN, etc.)
+    - bot: string (FORTRESS, SOLOMON, SAMSON, etc.)
     - strategy: string (Iron Condor, Directional Spread, etc.)
     - status: string (open, watching, closed)
     - strikes: string (format: "590/610" for IC, "595" for directional)
@@ -3455,17 +3455,17 @@ async def get_bot_positions():
     try:
         positions = []
 
-        # Check ARES positions (Iron Condors - always NEUTRAL direction)
+        # Check FORTRESS positions (Iron Condors - always NEUTRAL direction)
         try:
-            from backend.api.routes.ares_routes import get_ares_positions
-            ares_data = await get_ares_positions()
-            if ares_data.get('success') and ares_data.get('data', {}).get('positions'):
-                for pos in ares_data['data']['positions']:
+            from backend.api.routes.fortress_routes import get_fortress_positions
+            fortress_data = await get_fortress_positions()
+            if fortress_data.get('success') and fortress_data.get('data', {}).get('positions'):
+                for pos in fortress_data['data']['positions']:
                     # Calculate P&L: For open ICs, estimate based on credit received
                     # Real P&L would require current option prices
                     pnl = pos.get('realized_pnl') or pos.get('max_profit', 0) * 0.3  # Estimate 30% of max for open
                     positions.append({
-                        'bot': 'ARES',
+                        'bot': 'FORTRESS',
                         'strategy': 'Iron Condor',
                         'status': pos.get('status', 'open'),
                         'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
@@ -3474,14 +3474,14 @@ async def get_bot_positions():
                         'safe': True  # Will be calculated based on magnets
                     })
         except Exception as e:
-            logger.debug(f"Could not fetch ARES positions: {e}")
+            logger.debug(f"Could not fetch FORTRESS positions: {e}")
 
-        # Check ATHENA positions (Directional spreads)
+        # Check SOLOMON positions (Directional spreads)
         try:
-            from backend.api.routes.athena_routes import get_athena_positions
-            athena_data = await get_athena_positions()
-            if athena_data.get('success') and athena_data.get('data', {}).get('positions'):
-                for pos in athena_data['data']['positions']:
+            from backend.api.routes.solomon_routes import get_solomon_positions
+            solomon_data = await get_solomon_positions()
+            if solomon_data.get('success') and solomon_data.get('data', {}).get('positions'):
+                for pos in solomon_data['data']['positions']:
                     # Determine direction from spread type or explicit field
                     direction = pos.get('direction', 'NEUTRAL')
                     if not direction or direction == 'NEUTRAL':
@@ -3496,7 +3496,7 @@ async def get_bot_positions():
 
                     pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
                     positions.append({
-                        'bot': 'ATHENA',
+                        'bot': 'SOLOMON',
                         'strategy': pos.get('strategy', 'Directional Spread'),
                         'status': pos.get('status', 'open'),
                         'strikes': str(pos.get('strike', pos.get('short_strike', 'N/A'))),
@@ -3505,17 +3505,17 @@ async def get_bot_positions():
                         'safe': True
                     })
         except Exception as e:
-            logger.debug(f"Could not fetch ATHENA positions: {e}")
+            logger.debug(f"Could not fetch SOLOMON positions: {e}")
 
-        # Check TITAN positions (Aggressive Iron Condors on SPX)
+        # Check SAMSON positions (Aggressive Iron Condors on SPX)
         try:
-            from backend.api.routes.titan_routes import get_titan_positions
-            titan_data = await get_titan_positions()
-            if titan_data.get('success') and titan_data.get('data', {}).get('positions'):
-                for pos in titan_data['data']['positions']:
+            from backend.api.routes.samson_routes import get_samson_positions
+            samson_data = await get_samson_positions()
+            if samson_data.get('success') and samson_data.get('data', {}).get('positions'):
+                for pos in samson_data['data']['positions']:
                     pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
                     positions.append({
-                        'bot': 'TITAN',
+                        'bot': 'SAMSON',
                         'strategy': 'Aggressive IC (SPX)',
                         'status': pos.get('status', 'open'),
                         'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
@@ -3524,7 +3524,7 @@ async def get_bot_positions():
                         'safe': True
                     })
         except Exception as e:
-            logger.debug(f"Could not fetch TITAN positions: {e}")
+            logger.debug(f"Could not fetch SAMSON positions: {e}")
 
         # Check ICARUS positions (Aggressive Directional)
         try:

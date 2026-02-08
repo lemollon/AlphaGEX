@@ -674,11 +674,11 @@ AlphaGEX runs three specialized trading bots:
 - **Parameters:** GEX-driven regime detection
 - **Location:** `core/autonomous_paper_trader.py`
 
-### ATHENA (Directional)
+### SOLOMON (Directional)
 - **Focus:** Directional spreads during negative gamma
 - **Strategy:** Long calls/puts during momentum regimes
 - **Parameters:** Momentum and breakout detection
-- **Location:** `trading/athena_directional_spreads.py`
+- **Location:** `trading/solomon_directional_spreads.py`
 
 ---
 

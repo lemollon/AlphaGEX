@@ -2,7 +2,7 @@
 AGAPE Executor - Executes /MET trades via tastytrade API.
 
 Handles both PAPER mode (simulated fills) and LIVE mode (real tastytrade orders).
-Mirrors ARES V2 executor pattern.
+Mirrors FORTRESS V2 executor pattern.
 """
 
 import logging

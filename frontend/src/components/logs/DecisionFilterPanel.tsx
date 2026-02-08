@@ -23,8 +23,8 @@ interface DecisionFilterPanelProps {
 
 const BOTS = [
   { id: 'all', name: 'All Bots' },
-  { id: 'ARES', name: 'ARES', color: 'text-red-400' },
-  { id: 'ATHENA', name: 'ATHENA', color: 'text-pink-400' },
+  { id: 'FORTRESS', name: 'FORTRESS', color: 'text-red-400' },
+  { id: 'SOLOMON', name: 'SOLOMON', color: 'text-pink-400' },
   { id: 'ATLAS', name: 'ATLAS', color: 'text-blue-400' },
   { id: 'PEGASUS', name: 'PEGASUS', color: 'text-cyan-400' },
   { id: 'PHOENIX', name: 'PHOENIX', color: 'text-orange-400' },

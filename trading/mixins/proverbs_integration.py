@@ -71,7 +71,7 @@ class ProverbsIntegrationMixin:
         Initialize Proverbs integration for this bot.
 
         Args:
-            bot_name: The bot identifier (ARES, ATHENA, PEGASUS, PHOENIX)
+            bot_name: The bot identifier (FORTRESS, SOLOMON, PEGASUS, PHOENIX)
         """
         self._proverbs_bot_name = bot_name
         self._proverbs_enabled = True

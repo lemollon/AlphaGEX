@@ -137,28 +137,28 @@ except Exception as e:
 # Bot Learning Memory Integration
 print("\n-- Bot Learning Memory Integration --")
 try:
-    from trading.ares_v2.trader import ARESTrader, LEARNING_MEMORY_AVAILABLE as ARES_LM
-    has_pred = hasattr(ARESTrader, '_record_learning_memory_prediction')
-    has_out = hasattr(ARESTrader, '_record_learning_memory_outcome')
+    from trading.fortress_v2.trader import FortressTrader, LEARNING_MEMORY_AVAILABLE as ARES_LM
+    has_pred = hasattr(FortressTrader, '_record_learning_memory_prediction')
+    has_out = hasattr(FortressTrader, '_record_learning_memory_outcome')
 
     if ARES_LM and has_pred and has_out:
-        ok("ARES: Learning Memory fully integrated")
+        ok("FORTRESS: Learning Memory fully integrated")
     else:
-        warn(f"ARES: LM={ARES_LM}, pred={has_pred}, out={has_out}")
+        warn(f"FORTRESS: LM={ARES_LM}, pred={has_pred}, out={has_out}")
 except Exception as e:
-    warn(f"ARES check skipped: {e}")
+    warn(f"FORTRESS check skipped: {e}")
 
 try:
-    from trading.athena_v2.trader import ATHENATrader, LEARNING_MEMORY_AVAILABLE as ATHENA_LM
-    has_pred = hasattr(ATHENATrader, '_record_learning_memory_prediction')
-    has_out = hasattr(ATHENATrader, '_record_learning_memory_outcome')
+    from trading.solomon_v2.trader import SolomonTrader, LEARNING_MEMORY_AVAILABLE as SOLOMON_LM
+    has_pred = hasattr(SolomonTrader, '_record_learning_memory_prediction')
+    has_out = hasattr(SolomonTrader, '_record_learning_memory_outcome')
 
-    if ATHENA_LM and has_pred and has_out:
-        ok("ATHENA: Learning Memory fully integrated")
+    if SOLOMON_LM and has_pred and has_out:
+        ok("SOLOMON: Learning Memory fully integrated")
     else:
-        warn(f"ATHENA: LM={ATHENA_LM}, pred={has_pred}, out={has_out}")
+        warn(f"SOLOMON: LM={SOLOMON_LM}, pred={has_pred}, out={has_out}")
 except Exception as e:
-    warn(f"ATHENA check skipped: {e}")
+    warn(f"SOLOMON check skipped: {e}")
 
 # Summary
 print("\n" + "=" * 60)

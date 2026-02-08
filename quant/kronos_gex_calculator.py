@@ -6,7 +6,7 @@ PURPOSE:
 Calculate Gamma Exposure (GEX) from ORAT historical options data used by KRONOS.
 This enables:
 1. Historical GEX analysis for backtesting
-2. GEX as ML feature for ARES advisor
+2. GEX as ML feature for FORTRESS advisor
 3. Understanding how GEX correlates with Iron Condor outcomes
 
 GEX FORMULA:

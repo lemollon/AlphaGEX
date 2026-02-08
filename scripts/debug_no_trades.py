@@ -101,7 +101,7 @@ def main():
     # 4. Check for open positions (blocking new entries)
     print(f"\n4. OPEN POSITIONS (May block new entries)")
     print("-" * 60)
-    for table, bot in [('ares_positions', 'ARES'), ('athena_positions', 'ATHENA')]:
+    for table, bot in [('fortress_positions', 'FORTRESS'), ('solomon_positions', 'SOLOMON')]:
         try:
             cursor.execute(f'''
                 SELECT position_id, status, open_time

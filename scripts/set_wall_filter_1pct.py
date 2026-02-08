@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Set wall_filter_pct to 1.0% for ATHENA and ICARUS.
+Set wall_filter_pct to 1.0% for SOLOMON and ICARUS.
 
 This is the Apache backtest optimal value that achieved 58% win rate.
 
@@ -23,7 +23,7 @@ if not DATABASE_URL:
     sys.exit(1)
 
 print("=" * 60)
-print("SETTING wall_filter_pct = 1.0% FOR ATHENA AND ICARUS")
+print("SETTING wall_filter_pct = 1.0% FOR SOLOMON AND ICARUS")
 print("=" * 60)
 
 try:
@@ -54,7 +54,7 @@ try:
     # Simple key-value table (key, value) - no bot_name column
     if columns == ['key', 'value'] or set(columns) == {'key', 'value'}:
         print("\n[3] Simple key-value table detected")
-        print("    Will use prefixed keys: ATHENA_wall_filter_pct, ICARUS_wall_filter_pct")
+        print("    Will use prefixed keys: SOLOMON_wall_filter_pct, ICARUS_wall_filter_pct")
 
         # Check current values
         print("\n[4] Current wall_filter values...")
@@ -66,14 +66,14 @@ try:
         else:
             print("    (none set)")
 
-        # Set ATHENA
-        print("\n[5] Setting ATHENA_wall_filter_pct = 1.0...")
+        # Set SOLOMON
+        print("\n[5] Setting SOLOMON_wall_filter_pct = 1.0...")
         c.execute("""
             INSERT INTO autonomous_config (key, value)
-            VALUES ('ATHENA_wall_filter_pct', '1.0')
+            VALUES ('SOLOMON_wall_filter_pct', '1.0')
             ON CONFLICT (key) DO UPDATE SET value = '1.0'
         """)
-        print("    ✅ ATHENA_wall_filter_pct = 1.0")
+        print("    ✅ SOLOMON_wall_filter_pct = 1.0")
 
         # Set ICARUS
         print("\n[6] Setting ICARUS_wall_filter_pct = 1.0...")
@@ -113,14 +113,14 @@ try:
         else:
             print("    (none set)")
 
-        # Set ATHENA
-        print("\n[5] Setting ATHENA wall_filter_pct = 1.0%...")
+        # Set SOLOMON
+        print("\n[5] Setting SOLOMON wall_filter_pct = 1.0%...")
         c.execute(f"""
             INSERT INTO autonomous_config ({bot_col}, {key_col}, {val_col})
-            VALUES ('ATHENA', 'wall_filter_pct', '1.0')
+            VALUES ('SOLOMON', 'wall_filter_pct', '1.0')
             ON CONFLICT ({bot_col}, {key_col}) DO UPDATE SET {val_col} = '1.0'
         """)
-        print("    ✅ ATHENA = 1.0%")
+        print("    ✅ SOLOMON = 1.0%")
 
         # Set ICARUS
         print("\n[6] Setting ICARUS wall_filter_pct = 1.0%...")
@@ -152,7 +152,7 @@ try:
     print("SUCCESS! Bots will use 1.0% threshold on next scan.")
     print("=" * 60)
     print("\nNOTE: You may need to update the bot code to read these keys.")
-    print("Check trading/athena_v2/db.py and trading/icarus/db.py")
+    print("Check trading/solomon_v2/db.py and trading/icarus/db.py")
 
 except Exception as e:
     print(f"\nERROR: {e}")

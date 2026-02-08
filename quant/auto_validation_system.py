@@ -163,10 +163,10 @@ class MLModelRegistry:
         )
 
         # =====================================================================
-        # 4. ARES ML ADVISOR (Iron Condor)
+        # 4. FORTRESS ML ADVISOR (Iron Condor)
         # =====================================================================
         self.register_model(
-            name="ares_ml_advisor",
+            name="fortress_ml_advisor",
             description="Predicts iron condor win probability from KRONOS backtest data",
             validate_func=self._validate_ares_advisor,
             retrain_func=self._retrain_ares_advisor,
@@ -178,7 +178,7 @@ class MLModelRegistry:
         # =====================================================================
         self.register_model(
             name="oracle_advisor",
-            description="Central advisory system for ARES, ATLAS, PHOENIX - aggregates signals",
+            description="Central advisory system for FORTRESS, ATLAS, PHOENIX - aggregates signals",
             validate_func=self._validate_oracle_advisor,
             retrain_func=self._retrain_oracle_advisor,
             degradation_threshold=0.20
@@ -229,13 +229,13 @@ class MLModelRegistry:
         )
 
         # =====================================================================
-        # 11. ATHENA ML (if exists)
+        # 11. SOLOMON ML (if exists)
         # =====================================================================
         self.register_model(
-            name="athena_ml",
-            description="Directional spread entry/exit predictions for ATHENA",
-            validate_func=self._validate_athena_ml,
-            retrain_func=self._retrain_athena_ml,
+            name="solomon_ml",
+            description="Directional spread entry/exit predictions for SOLOMON",
+            validate_func=self._validate_solomon_ml,
+            retrain_func=self._retrain_solomon_ml,
             degradation_threshold=0.20
         )
 
@@ -345,9 +345,9 @@ class MLModelRegistry:
             )
 
     def _validate_ares_advisor(self) -> ModelValidationResult:
-        """Validate ARES ML Advisor"""
+        """Validate FORTRESS ML Advisor"""
         try:
-            from quant.ares_ml_advisor import ARESMLAdvisor
+            from quant.fortress_ml_advisor import ARESMLAdvisor
 
             advisor = ARESMLAdvisor()
 
@@ -361,7 +361,7 @@ class MLModelRegistry:
             is_robust = degradation < 0.20
 
             return ModelValidationResult(
-                model_name="ares_ml_advisor",
+                model_name="fortress_ml_advisor",
                 validated_at=datetime.now(CENTRAL_TZ).isoformat(),
                 in_sample_accuracy=is_accuracy,
                 out_of_sample_accuracy=oos_accuracy,
@@ -372,9 +372,9 @@ class MLModelRegistry:
                 details=metrics
             )
         except Exception as e:
-            logger.warning(f"ARES ML Advisor validation failed: {e}")
+            logger.warning(f"FORTRESS ML Advisor validation failed: {e}")
             return ModelValidationResult(
-                model_name="ares_ml_advisor",
+                model_name="fortress_ml_advisor",
                 validated_at=datetime.now(CENTRAL_TZ).isoformat(),
                 in_sample_accuracy=0,
                 out_of_sample_accuracy=0,
@@ -424,22 +424,22 @@ class MLModelRegistry:
             return False
 
     def _retrain_ares_advisor(self) -> bool:
-        """Retrain ARES ML Advisor"""
+        """Retrain FORTRESS ML Advisor"""
         try:
-            from quant.ares_ml_advisor import ARESMLAdvisor
+            from quant.fortress_ml_advisor import ARESMLAdvisor
 
             advisor = ARESMLAdvisor()
             if hasattr(advisor, 'train') or hasattr(advisor, 'retrain'):
                 train_func = getattr(advisor, 'retrain', getattr(advisor, 'train', None))
                 if train_func:
                     train_func()
-                    logger.info("ARES ML Advisor retrained successfully")
+                    logger.info("FORTRESS ML Advisor retrained successfully")
                     return True
 
-            logger.warning("ARES ML Advisor has no train/retrain method")
+            logger.warning("FORTRESS ML Advisor has no train/retrain method")
             return False
         except Exception as e:
-            logger.error(f"ARES ML Advisor retrain failed: {e}")
+            logger.error(f"FORTRESS ML Advisor retrain failed: {e}")
             return False
 
     # =========================================================================
@@ -733,19 +733,19 @@ class MLModelRegistry:
             return False
 
     # =========================================================================
-    # ATHENA ML
+    # SOLOMON ML
     # =========================================================================
 
-    def _validate_athena_ml(self) -> ModelValidationResult:
-        """Validate ATHENA ML (Directional Spread Predictions)"""
+    def _validate_solomon_ml(self) -> ModelValidationResult:
+        """Validate SOLOMON ML (Directional Spread Predictions)"""
         try:
-            # ATHENA may use GEX directional or have its own ML
+            # SOLOMON may use GEX directional or have its own ML
             from quant.gex_directional_ml import GEXDirectionalPredictor
 
             predictor = GEXDirectionalPredictor()
             metrics = predictor.get_performance_metrics() if hasattr(predictor, 'get_performance_metrics') else {}
 
-            # For ATHENA, we check directional accuracy
+            # For SOLOMON, we check directional accuracy
             is_accuracy = metrics.get('train_accuracy', 0.60)
             oos_accuracy = metrics.get('test_accuracy', 0.50)
             degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
@@ -753,7 +753,7 @@ class MLModelRegistry:
             is_robust = degradation < 0.20
 
             return ModelValidationResult(
-                model_name="athena_ml",
+                model_name="solomon_ml",
                 validated_at=datetime.now(CENTRAL_TZ).isoformat(),
                 in_sample_accuracy=is_accuracy,
                 out_of_sample_accuracy=oos_accuracy,
@@ -764,11 +764,11 @@ class MLModelRegistry:
                 details=metrics
             )
         except Exception as e:
-            logger.warning(f"ATHENA ML validation failed: {e}")
-            return self._failed_validation("athena_ml", str(e))
+            logger.warning(f"SOLOMON ML validation failed: {e}")
+            return self._failed_validation("solomon_ml", str(e))
 
-    def _retrain_athena_ml(self) -> bool:
-        """Retrain ATHENA ML"""
+    def _retrain_solomon_ml(self) -> bool:
+        """Retrain SOLOMON ML"""
         try:
             from quant.gex_directional_ml import GEXDirectionalPredictor
 
@@ -776,11 +776,11 @@ class MLModelRegistry:
             train_func = getattr(predictor, 'retrain', getattr(predictor, 'train', None))
             if train_func:
                 train_func()
-                logger.info("ATHENA ML retrained successfully")
+                logger.info("SOLOMON ML retrained successfully")
                 return True
             return False
         except Exception as e:
-            logger.error(f"ATHENA ML retrain failed: {e}")
+            logger.error(f"SOLOMON ML retrain failed: {e}")
             return False
 
     # =========================================================================
@@ -823,7 +823,7 @@ class AutoValidationSystem:
         allocation = system.get_capital_allocation(total_capital=100000)
 
         # Record bot outcome (call after each trade)
-        system.record_bot_outcome('ARES', win=True, pnl=150.0)
+        system.record_bot_outcome('FORTRESS', win=True, pnl=150.0)
     """
 
     def __init__(
@@ -850,7 +850,7 @@ class AutoValidationSystem:
         self.model_registry = MLModelRegistry()
 
         # Thompson Sampling Allocator
-        self.bot_names = bot_names or ['ARES', 'ATHENA', 'PHOENIX', 'ATLAS']
+        self.bot_names = bot_names or ['FORTRESS', 'SOLOMON', 'PHOENIX', 'ATLAS']
         if THOMPSON_AVAILABLE:
             self.thompson = ThompsonSamplingAllocator(self.bot_names)
         else:
@@ -1435,10 +1435,10 @@ if __name__ == "__main__":
     print("\n=== Capital Allocation ===")
 
     # Simulate some outcomes
-    system.record_bot_outcome('ARES', win=True, pnl=200)
-    system.record_bot_outcome('ARES', win=True, pnl=150)
-    system.record_bot_outcome('ATHENA', win=False, pnl=-100)
-    system.record_bot_outcome('ATHENA', win=True, pnl=300)
+    system.record_bot_outcome('FORTRESS', win=True, pnl=200)
+    system.record_bot_outcome('FORTRESS', win=True, pnl=150)
+    system.record_bot_outcome('SOLOMON', win=False, pnl=-100)
+    system.record_bot_outcome('SOLOMON', win=True, pnl=300)
     system.record_bot_outcome('PHOENIX', win=True, pnl=50)
 
     allocation = system.get_capital_allocation(100000)

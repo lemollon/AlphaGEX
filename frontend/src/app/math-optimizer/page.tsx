@@ -513,7 +513,7 @@ const AggressiveModeSection = () => {
           <h4 className="font-bold text-yellow-400 mb-2">Thompson Sampling</h4>
           <p className="text-sm text-gray-400">
             Allocates up to <span className="text-green-400 font-bold">50%</span> capital to hot bots
-            (vs 25% fixed). When ARES is winning, it gets more capital automatically.
+            (vs 25% fixed). When FORTRESS is winning, it gets more capital automatically.
           </p>
         </div>
 
@@ -843,7 +843,7 @@ MARKET DATA → [KALMAN FILTER] → Smoothed Greeks
     ┌────────────────┴────────────────┐
     ↓                                 ↓
 YOUR BOTS                     [THOMPSON SAMPLING]
-(ARES, ATHENA, etc.)              Capital Allocation
+(FORTRESS, SOLOMON, etc.)              Capital Allocation
     │                                 │
     └────────────────┬────────────────┘
                      ↓

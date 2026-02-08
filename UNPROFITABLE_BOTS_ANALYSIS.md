@@ -1,8 +1,8 @@
-# Why ATHENA, ICARUS, and TITAN Are Not Profitable
+# Why SOLOMON, ICARUS, and TITAN Are Not Profitable
 
 ## Analysis Date: January 25, 2026
 
-This document analyzes the root causes of unprofitability for the ATHENA, ICARUS, and TITAN trading bots based on a comprehensive code review and data structure analysis.
+This document analyzes the root causes of unprofitability for the SOLOMON, ICARUS, and TITAN trading bots based on a comprehensive code review and data structure analysis.
 
 ---
 
@@ -20,7 +20,7 @@ After analyzing the codebase, verification reports, and data structures, there a
 
 ## Detailed Analysis by Bot
 
-### ATHENA (Directional Spreads on SPY)
+### SOLOMON (Directional Spreads on SPY)
 
 **Strategy**: Bull Call Spreads (bullish) and Bear Put Spreads (bearish) based on GEX signals.
 
@@ -35,7 +35,7 @@ After analyzing the codebase, verification reports, and data structures, there a
 | Falsy value check skips zero prices | MEDIUM | Incomplete P&L reports |
 | Partial close retry missing | HIGH | One leg closed, other stays at risk |
 
-**Code Issues Found** (`trading/athena_v2/trader.py`):
+**Code Issues Found** (`trading/solomon_v2/trader.py`):
 ```python
 # Line 632-633: Silent exit failure
 if current_value is None:
@@ -51,8 +51,8 @@ if current_value is None:
 
 ### ICARUS (Aggressive Directional Spreads on SPY)
 
-**Strategy**: Same as ATHENA but with AGGRESSIVE parameters:
-- 48% min win probability (vs ATHENA's 55%)
+**Strategy**: Same as SOLOMON but with AGGRESSIVE parameters:
+- 48% min win probability (vs SOLOMON's 55%)
 - 3% risk per trade (vs 2%)
 - 8 max daily trades (vs 5)
 - Wider VIX range (12-30 vs 15-25)
@@ -68,9 +68,9 @@ if current_value is None:
 | Wider VIX acceptance | HIGH | Trades in unfavorable volatility |
 | No retry for failed closes | HIGH | Failed exits abandoned |
 
-**Why ICARUS Loses More Than ATHENA**:
+**Why ICARUS Loses More Than SOLOMON**:
 ```
-ATHENA thresholds:  55% win prob, 2% risk, max 5 trades/day, VIX 15-25
+SOLOMON thresholds:  55% win prob, 2% risk, max 5 trades/day, VIX 15-25
 ICARUS thresholds:  48% win prob, 3% risk, max 8 trades/day, VIX 12-30
 ```
 
@@ -121,7 +121,7 @@ SPX options require Tradier's **production API** - the sandbox doesn't support S
 
 The question isn't "which regime favors which strategy" - it's **"is the direction prediction correct?"**
 
-**Direction Determination Flow** (from `trading/athena_v2/signals.py`):
+**Direction Determination Flow** (from `trading/solomon_v2/signals.py`):
 1. ML 5-model ensemble provides direction (primary)
 2. Oracle provides direction (backup)
 3. If FLAT/NEUTRAL:
@@ -146,7 +146,7 @@ VIX Regime Impact:
 ```
 
 **What's Happening**:
-- ATHENA/ICARUS may take directional trades during POSITIVE GEX (mean-reversion environment)
+- SOLOMON/ICARUS may take directional trades during POSITIVE GEX (mean-reversion environment)
 - TITAN may take Iron Condors during NEGATIVE GEX (trending environment)
 
 ### 2. Disabled Safety Thresholds
@@ -220,7 +220,7 @@ SELECT
 
 ## Specific Recommendations
 
-### For ATHENA
+### For SOLOMON
 
 1. **Raise win probability threshold back to 55%+**
 2. **Add direction confirmation** - require multiple signals to agree
@@ -229,7 +229,7 @@ SELECT
 
 ### For ICARUS
 
-1. **Consider disabling entirely** until ATHENA is profitable
+1. **Consider disabling entirely** until SOLOMON is profitable
 2. If keeping active:
    - Raise win probability to 52%+ (not 48%)
    - Reduce risk to 2% (not 3%)
@@ -289,8 +289,8 @@ This will show:
 | P1 | Review Oracle calibration data | ALL | ML |
 | P1 | Raise win probability thresholds | ICARUS, TITAN | Config |
 | P2 | Restore Monday/Friday penalties | ALL (via Oracle) | Quant |
-| P2 | Add direction confirmation for ATHENA | ATHENA | Trading |
-| P3 | Consider disabling ICARUS until ATHENA profitable | ICARUS | PM |
+| P2 | Add direction confirmation for SOLOMON | SOLOMON | Trading |
+| P3 | Consider disabling ICARUS until SOLOMON profitable | ICARUS | PM |
 
 ---
 

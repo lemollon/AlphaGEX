@@ -37,8 +37,8 @@ def diagnose():
     print("=" * 60)
 
     for table, bot in [
-        ('ares_ic_positions', 'ARES'),
-        ('athena_directional_positions', 'ATHENA'),
+        ('fortress_ic_positions', 'FORTRESS'),
+        ('solomon_directional_positions', 'SOLOMON'),
         ('pegasus_ic_positions', 'PEGASUS'),
         ('icarus_directional_positions', 'ICARUS'),
     ]:
@@ -64,8 +64,8 @@ def diagnose():
     print("=" * 60)
 
     for table, bot, max_trades in [
-        ('ares_ic_positions', 'ARES', 3),
-        ('athena_directional_positions', 'ATHENA', 5),
+        ('fortress_ic_positions', 'FORTRESS', 3),
+        ('solomon_directional_positions', 'SOLOMON', 5),
         ('pegasus_ic_positions', 'PEGASUS', 5),
         ('icarus_directional_positions', 'ICARUS', 8),
     ]:

@@ -6,7 +6,7 @@ AlphaGEX Comprehensive End-to-End Test Suite
 Tests all major systems to ensure they are properly configured and working:
 1. Database tables - exist and can accept data
 2. Scheduler configuration - timing matches trading windows
-3. Trading bots - ATHENA, ARES, PHOENIX status
+3. Trading bots - SOLOMON, FORTRESS, PHOENIX status
 4. API endpoints - health and data flow
 5. Data providers - Tradier, VIX sources
 6. ARGUS live data feed
@@ -98,13 +98,13 @@ def test_database_tables():
             # Trading decisions
             'trading_decisions',
             'bot_decision_logs',
-            # ARES
+            # FORTRESS
             'ares_iron_condor_positions',
             'ares_iron_condor_performance',
-            # ATHENA
-            'athena_spread_positions',
-            'athena_signals',
-            'athena_logs',
+            # SOLOMON
+            'solomon_spread_positions',
+            'solomon_signals',
+            'solomon_logs',
             # ARGUS
             'argus_commentary',
             # VIX
@@ -149,33 +149,33 @@ def test_scheduler_config():
     section_header("TEST 2: Scheduler Configuration")
 
     try:
-        # Check ARES trading window vs scheduler
-        from trading.ares_iron_condor import ARESConfig
+        # Check FORTRESS trading window vs scheduler
+        from trading.ares_iron_condor import FortressConfig
 
-        ares_config = ARESConfig()
-        log_info(f"ARES entry_time_start: {ares_config.entry_time_start}")
-        log_info(f"ARES entry_time_end: {ares_config.entry_time_end}")
+        fortress_config = FortressConfig()
+        log_info(f"FORTRESS entry_time_start: {fortress_config.entry_time_start}")
+        log_info(f"FORTRESS entry_time_end: {fortress_config.entry_time_end}")
 
         # The scheduler should run at 8:30 AM CT (same as entry_time_start)
-        if ares_config.entry_time_start == "08:30":
-            log_pass(section, "ARES trading window", f"{ares_config.entry_time_start} - {ares_config.entry_time_end}")
+        if fortress_config.entry_time_start == "08:30":
+            log_pass(section, "FORTRESS trading window", f"{fortress_config.entry_time_start} - {fortress_config.entry_time_end}")
         else:
-            log_warn(section, "ARES trading window", f"Starts at {ares_config.entry_time_start}, scheduler should match")
+            log_warn(section, "FORTRESS trading window", f"Starts at {fortress_config.entry_time_start}, scheduler should match")
 
-        # Check ATHENA
-        from trading.athena_directional_spreads import ATHENAConfig
+        # Check SOLOMON
+        from trading.solomon_directional_spreads import SolomonConfig
 
-        athena_config = ATHENAConfig()
-        log_info(f"ATHENA max_daily_trades: {athena_config.max_daily_trades}")
-        log_info(f"ATHENA max_open_positions: {athena_config.max_open_positions}")
-        log_pass(section, "ATHENA config loaded", f"ticker={athena_config.ticker}")
+        solomon_config = SolomonConfig()
+        log_info(f"SOLOMON max_daily_trades: {solomon_config.max_daily_trades}")
+        log_info(f"SOLOMON max_open_positions: {solomon_config.max_open_positions}")
+        log_pass(section, "SOLOMON config loaded", f"ticker={solomon_config.ticker}")
 
         # Scheduler timing summary
         log_info("")
         log_info("Expected Scheduler Times (CT):")
         log_info("  ATLAS:  9:05 AM daily")
-        log_info("  ARES:   8:30 AM - 3:30 PM, every 5 min")
-        log_info("  ATHENA: Every 5 min (8:35 AM - 2:30 PM)")
+        log_info("  FORTRESS:   8:30 AM - 3:30 PM, every 5 min")
+        log_info("  SOLOMON: Every 5 min (8:35 AM - 2:30 PM)")
         log_info("  ARGUS:  Every 5 min (8:30 AM - 3:00 PM)")
 
         return True
@@ -196,25 +196,25 @@ def test_trading_bots(base_url):
     try:
         import requests
 
-        # Test ATHENA
+        # Test SOLOMON
         try:
-            r = requests.get(f"{base_url}/api/athena/status", timeout=30)
+            r = requests.get(f"{base_url}/api/solomon/status", timeout=30)
             if r.status_code == 200:
                 data = r.json().get('data', {})
                 mode = data.get('mode', 'unknown')
                 capital = data.get('capital', 0)
                 gex_ml = data.get('gex_ml_available', False)
                 oracle = data.get('oracle_available', False)
-                log_pass(section, "ATHENA status", f"mode={mode}, capital=${capital:,.0f}")
+                log_pass(section, "SOLOMON status", f"mode={mode}, capital=${capital:,.0f}")
                 log_info(f"  GEX ML: {'✓' if gex_ml else '✗'}, Oracle: {'✓' if oracle else '✗'}")
             else:
-                log_fail(section, "ATHENA status", f"HTTP {r.status_code}")
+                log_fail(section, "SOLOMON status", f"HTTP {r.status_code}")
         except Exception as e:
-            log_fail(section, "ATHENA status", str(e))
+            log_fail(section, "SOLOMON status", str(e))
 
-        # Test ARES
+        # Test FORTRESS
         try:
-            r = requests.get(f"{base_url}/api/ares/status", timeout=30)
+            r = requests.get(f"{base_url}/api/fortress/status", timeout=30)
             if r.status_code == 200:
                 data = r.json().get('data', {})
                 mode = data.get('mode', 'unknown')
@@ -222,12 +222,12 @@ def test_trading_bots(base_url):
                 open_pos = data.get('open_positions', 0)
                 traded_today = data.get('traded_today', False)
                 in_window = data.get('in_trading_window', False)
-                log_pass(section, "ARES status", f"mode={mode}, capital=${capital:,.0f}")
+                log_pass(section, "FORTRESS status", f"mode={mode}, capital=${capital:,.0f}")
                 log_info(f"  Open positions: {open_pos}, Traded today: {traded_today}, In window: {in_window}")
             else:
-                log_fail(section, "ARES status", f"HTTP {r.status_code}")
+                log_fail(section, "FORTRESS status", f"HTTP {r.status_code}")
         except Exception as e:
-            log_fail(section, "ARES status", str(e))
+            log_fail(section, "FORTRESS status", str(e))
 
         return True
 
@@ -351,32 +351,32 @@ def test_decision_logging(base_url):
     try:
         import requests
 
-        # Test ATHENA decisions
-        r = requests.get(f"{base_url}/api/athena/decisions?limit=10", timeout=30)
+        # Test SOLOMON decisions
+        r = requests.get(f"{base_url}/api/solomon/decisions?limit=10", timeout=30)
         if r.status_code == 200:
             data = r.json()
             decisions = data.get('data', [])
-            log_pass(section, "ATHENA decisions", f"{len(decisions)} decisions")
+            log_pass(section, "SOLOMON decisions", f"{len(decisions)} decisions")
             if decisions:
                 latest = decisions[0]
                 what = latest.get('what', '')[:50]
                 log_info(f"  Latest: {what}...")
                 # Check for detailed logging
                 if 'ML:' in what or 'Oracle:' in what or '$' in what:
-                    log_pass(section, "ATHENA detailed logs", "Contains market context")
+                    log_pass(section, "SOLOMON detailed logs", "Contains market context")
                 else:
-                    log_warn(section, "ATHENA detailed logs", "May be old format")
+                    log_warn(section, "SOLOMON detailed logs", "May be old format")
         else:
-            log_warn(section, "ATHENA decisions", f"HTTP {r.status_code}")
+            log_warn(section, "SOLOMON decisions", f"HTTP {r.status_code}")
 
-        # Test ARES decisions
-        r = requests.get(f"{base_url}/api/ares/decisions?limit=10", timeout=30)
+        # Test FORTRESS decisions
+        r = requests.get(f"{base_url}/api/fortress/decisions?limit=10", timeout=30)
         if r.status_code == 200:
             data = r.json()
             decisions = data.get('data', [])
-            log_pass(section, "ARES decisions", f"{len(decisions)} decisions")
+            log_pass(section, "FORTRESS decisions", f"{len(decisions)} decisions")
         else:
-            log_warn(section, "ARES decisions", f"HTTP {r.status_code}")
+            log_warn(section, "FORTRESS decisions", f"HTTP {r.status_code}")
 
         return True
 
@@ -433,8 +433,8 @@ def test_ml_and_oracle(base_url):
     try:
         import requests
 
-        # Test ATHENA ML signal
-        r = requests.get(f"{base_url}/api/athena/ml-signal", timeout=30)
+        # Test SOLOMON ML signal
+        r = requests.get(f"{base_url}/api/solomon/ml-signal", timeout=30)
         if r.status_code == 200:
             data = r.json()
             if data.get('success') and data.get('data'):
@@ -447,8 +447,8 @@ def test_ml_and_oracle(base_url):
         else:
             log_warn(section, "GEX ML Signal", f"HTTP {r.status_code}")
 
-        # Test ATHENA Oracle
-        r = requests.get(f"{base_url}/api/athena/oracle-advice", timeout=30)
+        # Test SOLOMON Oracle
+        r = requests.get(f"{base_url}/api/solomon/oracle-advice", timeout=30)
         if r.status_code == 200:
             data = r.json()
             if data.get('success') and data.get('data'):

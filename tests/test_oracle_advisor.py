@@ -532,14 +532,14 @@ class TestOracleAPIEndpoints:
 class TestBotOracleIntegration:
     """Integration tests for bot <-> Oracle wiring"""
 
-    def test_ares_trader_has_strategy_recommendation_check(self):
-        """Test ARES trader has _check_strategy_recommendation method"""
+    def test_fortress_trader_has_strategy_recommendation_check(self):
+        """Test FORTRESS trader has _check_strategy_recommendation method"""
         try:
             # Import will fail in test environment, check file instead
-            from trading.ares_v2.trader import ARESTrader
-            assert hasattr(ARESTrader, '_check_strategy_recommendation')
+            from trading.fortress_v2.trader import FortressTrader
+            assert hasattr(FortressTrader, '_check_strategy_recommendation')
         except ImportError:
-            pytest.skip("ARESTrader not available")
+            pytest.skip("FortressTrader not available")
 
     def test_pegasus_trader_has_strategy_recommendation_check(self):
         """Test PEGASUS trader has _check_strategy_recommendation method"""
@@ -550,7 +550,7 @@ class TestBotOracleIntegration:
             pytest.skip("PEGASUSTrader not available")
 
     def test_ares_oracle_imports_available(self):
-        """Test that ARES can import Oracle components"""
+        """Test that FORTRESS can import Oracle components"""
         try:
             from quant.oracle_advisor import (
                 OracleAdvisor, MarketContext, GEXRegime,

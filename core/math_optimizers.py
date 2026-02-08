@@ -664,7 +664,7 @@ class ThompsonSamplingAllocator:
         Args:
             bot_names: List of bot names to allocate between
         """
-        self.bot_names = bot_names or ['ARES', 'ATHENA', 'PHOENIX', 'ATLAS']
+        self.bot_names = bot_names or ['FORTRESS', 'SOLOMON', 'PHOENIX', 'ATLAS']
 
         # Beta distribution parameters (α=wins+1, β=losses+1)
         # Start with uninformative prior Beta(1,1) = uniform
@@ -1681,9 +1681,9 @@ if __name__ == "__main__":
 
     # Test Thompson Sampling
     print("\n3. Testing Thompson Sampling...")
-    orchestrator.thompson.record_outcome('ARES', True, 150)
-    orchestrator.thompson.record_outcome('ATHENA', True, 80)
-    orchestrator.thompson.record_outcome('ARES', False, -50)
+    orchestrator.thompson.record_outcome('FORTRESS', True, 150)
+    orchestrator.thompson.record_outcome('SOLOMON', True, 80)
+    orchestrator.thompson.record_outcome('FORTRESS', False, -50)
     allocation = orchestrator.thompson.sample_allocation(100000)
     print(f"   Allocation: {', '.join(f'{b}: {a:.1%}' for b, a in allocation.allocations.items())}")
 
@@ -1718,8 +1718,8 @@ if __name__ == "__main__":
     # Test MDP Sequencer
     print("\n6. Testing MDP Trade Sequencer...")
     pending = [
-        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'ARES'},
-        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'ATHENA'},
+        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'FORTRESS'},
+        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'SOLOMON'},
         {'symbol': 'QQQ', 'direction': 'short', 'expected_pnl': 120, 'win_probability': 0.55, 'bot': 'PHOENIX'},
     ]
     sequence = orchestrator.mdp_sequencer.sequence_trades(

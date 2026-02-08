@@ -17,7 +17,7 @@ Usage:
 Models stored:
     - gex_probability: GEXSignalGenerator (5 sub-models)
     - gex_directional: GEXDirectionalPredictor
-    - ares_ml: ARES ML Advisor
+    - ares_ml: FORTRESS ML Advisor
     - regime_classifier: ML Regime Classifier (per symbol)
 """
 

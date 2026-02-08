@@ -2,10 +2,10 @@
 ICARUS - Aggressive Directional Spread Trading Bot
 ===================================================
 
-ICARUS is an aggressive clone of ATHENA with relaxed GEX wall filters
+ICARUS is an aggressive clone of SOLOMON with relaxed GEX wall filters
 and trading parameters to give it more room to trade.
 
-Key differences from ATHENA:
+Key differences from SOLOMON:
 - 10% wall filter (vs 3%) - trades far from walls
 - 40% min win probability (vs 48%)
 - 0.5 min R:R ratio (vs 0.8)

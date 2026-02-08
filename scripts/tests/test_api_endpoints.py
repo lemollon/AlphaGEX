@@ -385,7 +385,7 @@ def test_decision_log_endpoints():
                 response_time=resp.get('response_time'))
 
     # Get logs for specific bot
-    for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX', 'HERMES', 'ORACLE']:
+    for bot in ['FORTRESS', 'SOLOMON', 'PEGASUS', 'PHOENIX', 'HERMES', 'ORACLE']:
         resp = api_request(f'/api/logs/decisions?bot_name={bot}&limit=5')
         passed = resp['success']
         results.append(passed or resp['status'] == 200)

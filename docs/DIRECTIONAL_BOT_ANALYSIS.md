@@ -1,4 +1,4 @@
-# ATHENA & ICARUS Directional Bot Analysis
+# SOLOMON & ICARUS Directional Bot Analysis
 
 ## Executive Summary
 
@@ -13,18 +13,18 @@ Both directional bots are losing money due to several structural issues that nee
 **Current Settings:**
 | Bot | Profit Target | Stop Loss | Effective R:R |
 |-----|--------------|-----------|---------------|
-| ATHENA | 50% of max profit | 50% of max loss | 1:1 |
+| SOLOMON | 50% of max profit | 50% of max loss | 1:1 |
 | ICARUS | 40% of max profit | 60% of max loss | 0.67:1 |
 
 **Why This Is A Problem:**
-- At 50% win rate with ATHENA's 1:1 R:R: `0.50 * $100 - 0.50 * $100 = $0` (breakeven)
+- At 50% win rate with SOLOMON's 1:1 R:R: `0.50 * $100 - 0.50 * $100 = $0` (breakeven)
 - At 50% win rate with ICARUS's 0.67:1 R:R: `0.50 * $80 - 0.50 * $120 = -$20` (NET LOSS!)
 
 **ICARUS is mathematically designed to lose money at 50% win rate!**
 
 ### 2. MAGNET THEORY INVERSION (Trading Backwards!)
 
-The optimizer script (`scripts/optimize_athena_strategy.py`) documents:
+The optimizer script (`scripts/optimize_solomon_strategy.py`) documents:
 ```
 MAGNET THEORY (KEY INSIGHT):
 - High put GEX = price pulled DOWN toward puts = BEARISH
@@ -41,7 +41,7 @@ MAGNET THEORY (KEY INSIGHT):
 
 Both bots use ATM strikes for the long leg:
 ```python
-# Current ATHENA code
+# Current SOLOMON code
 long_strike = round(spot_price)      # ATM
 short_strike = round(spot_price) + 2 # $2 OTM
 ```
@@ -75,7 +75,7 @@ if oracle_says_trade:
 
 ### 6. BACKTEST PARAMETERS DON'T MATCH LIVE
 
-| Parameter | Backtest Optimal | ATHENA Live | ICARUS Live |
+| Parameter | Backtest Optimal | SOLOMON Live | ICARUS Live |
 |-----------|-----------------|-------------|-------------|
 | VIX Range | 15-25 | 12-35 | 12-30 |
 | Wall Proximity | 3% | 1% | 1% |
@@ -91,7 +91,7 @@ For a directional spread bot to be profitable, this equation must be positive:
 Expected Value = (Win Rate * Avg Win) - (Loss Rate * Avg Loss)
 ```
 
-**ATHENA Example (1:1 R:R):**
+**SOLOMON Example (1:1 R:R):**
 - Need >50% win rate to profit
 - At 45% WR: `0.45 * $100 - 0.55 * $100 = -$10` per trade
 
@@ -118,7 +118,7 @@ profit_target_pct: float = 70.0   # Take profit at 70%
 stop_loss_pct: float = 50.0       # Stop at 50%
 ```
 
-**ATHENA:** Consider 60/40 for positive expectancy
+**SOLOMON:** Consider 60/40 for positive expectancy
 ```python
 profit_target_pct: float = 60.0   # Take profit at 60%
 stop_loss_pct: float = 40.0       # Stop at 40%

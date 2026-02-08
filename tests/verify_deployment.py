@@ -48,9 +48,9 @@ def check_frontend(frontend_url: str):
         "/dashboard",
         "/heracles",
         "/prometheus-box",
-        "/ares",
-        "/athena",
-        "/titan",
+        "/fortress",
+        "/solomon",
+        "/samson",
         "/pegasus",
         "/icarus",
     ]
@@ -103,9 +103,9 @@ def check_bot_status(backend_url: str):
     bots = [
         ("heracles", "/api/heracles/status"),
         ("prometheus", "/api/prometheus-box/status"),
-        ("ares", "/api/ares/status"),
-        ("athena", "/api/athena/status"),
-        ("titan", "/api/titan/status"),
+        ("fortress", "/api/fortress/status"),
+        ("solomon", "/api/solomon/status"),
+        ("samson", "/api/samson/status"),
         ("pegasus", "/api/pegasus/status"),
         ("icarus", "/api/icarus/status"),
     ]

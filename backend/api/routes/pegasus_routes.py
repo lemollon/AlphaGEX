@@ -40,7 +40,7 @@ try:
 except ImportError as e:
     logger.debug(f"Mark-to-market import failed: {e}")
 
-# Try to import Tradier for account balance (same pattern as ARES)
+# Try to import Tradier for account balance (same pattern as FORTRESS)
 TradierDataFetcher = None
 TRADIER_AVAILABLE = False
 

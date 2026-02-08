@@ -192,9 +192,9 @@ test.describe('Pages WITHOUT SWR (should still work)', () => {
     await expect(page.locator('text=Gamma Intelligence').or(page.locator('text=Market Maker'))).toBeVisible({ timeout: 10000 })
   })
 
-  test('ARES page loads independently', async ({ page }) => {
-    await page.goto(BASE_URL + '/ares')
+  test('FORTRESS page loads independently', async ({ page }) => {
+    await page.goto(BASE_URL + '/fortress')
 
-    await expect(page.locator('text=ARES')).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('text=FORTRESS')).toBeVisible({ timeout: 10000 })
   })
 })

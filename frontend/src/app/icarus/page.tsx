@@ -574,7 +574,7 @@ export default function IcarusPage() {
               <div>
                 <span className="text-orange-400 font-semibold">AGGRESSIVE APACHE MODE</span>
                 <p className="text-gray-400 text-sm">
-                  ICARUS runs with aggressive Apache GEX backtest parameters: {config?.wall_filter_pct || 2}% wall filter (vs ATHENA 1%), {config?.min_win_probability || 48}% min win prob (vs 55%), VIX {config?.min_vix || 12}-{config?.max_vix || 30} (vs 15-25), {config?.risk_per_trade || 3}% risk/trade
+                  ICARUS runs with aggressive Apache GEX backtest parameters: {config?.wall_filter_pct || 2}% wall filter (vs SOLOMON 1%), {config?.min_win_probability || 48}% min win prob (vs 55%), VIX {config?.min_vix || 12}-{config?.max_vix || 30} (vs 15-25), {config?.risk_per_trade || 3}% risk/trade
                 </p>
               </div>
             </div>
@@ -762,66 +762,66 @@ export default function IcarusPage() {
                   <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">GEX Wall Filter</span>
                     <span className="text-xl font-bold text-orange-400">{config?.wall_filter_pct || 2}%</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 1%</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 1%</span>
                   </div>
                   <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Min Win Prob</span>
                     <span className="text-xl font-bold text-orange-400">{config?.min_win_probability || 48}%</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 55%</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 55%</span>
                   </div>
                   <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Min R:R Ratio</span>
                     <span className="text-xl font-bold text-orange-400">{config?.min_rr_ratio || 1.2}:1</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 1.5:1</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 1.5:1</span>
                   </div>
                   <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Risk Per Trade</span>
                     <span className="text-xl font-bold text-orange-400">{config?.risk_per_trade || 3}%</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 2%</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 2%</span>
                   </div>
                   {/* VIX Filter */}
                   <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">VIX Range</span>
                     <span className="text-xl font-bold text-orange-400">{config?.min_vix || 12}-{config?.max_vix || 30}</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 15-25</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 15-25</span>
                   </div>
                   {/* GEX Ratio */}
                   <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">GEX Ratio (Bearish)</span>
                     <span className="text-xl font-bold text-orange-400">&gt;{config?.min_gex_ratio_bearish || 1.3}</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA &gt;1.5</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON &gt;1.5</span>
                   </div>
                   <div className="bg-orange-900/20 border border-orange-500/30 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">GEX Ratio (Bullish)</span>
                     <span className="text-xl font-bold text-orange-400">&lt;{config?.max_gex_ratio_bullish || 0.77}</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA &lt;0.67</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON &lt;0.67</span>
                   </div>
                   {/* Trade Limits */}
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Max Daily Trades</span>
                     <span className="text-xl font-bold text-white">{config?.max_daily_trades || 8}</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 5</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 5</span>
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Max Open Positions</span>
                     <span className="text-xl font-bold text-white">{config?.max_open_positions || 4}</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 3</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 3</span>
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Spread Width</span>
                     <span className="text-xl font-bold text-white">${config?.spread_width || 3}</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA $2</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON $2</span>
                   </div>
                   {/* Exit Thresholds */}
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Profit Target</span>
                     <span className="text-xl font-bold text-green-400">{config?.profit_target_pct || 40}%</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 50%</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 50%</span>
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Stop Loss</span>
                     <span className="text-xl font-bold text-red-400">{config?.stop_loss_pct || 60}%</span>
-                    <span className="text-xs text-gray-500 block mt-1">vs ATHENA 50%</span>
+                    <span className="text-xs text-gray-500 block mt-1">vs SOLOMON 50%</span>
                   </div>
                   {/* System Status */}
                   <div className="bg-gray-800/50 rounded-lg p-4">

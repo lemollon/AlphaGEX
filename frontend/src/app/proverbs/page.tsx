@@ -1071,7 +1071,7 @@ export default function ProverbsPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'proposals' | 'audit' | 'versions' | 'analytics'>('overview')
 
   // Analytics data
-  const [analyticsBot, setAnalyticsBot] = useState<string>('ARES')
+  const [analyticsBot, setAnalyticsBot] = useState<string>('FORTRESS')
   const [dailyDigest, setDailyDigest] = useState<any>(null)
   const [correlations, setCorrelations] = useState<any>(null)
   const [timeAnalysis, setTimeAnalysis] = useState<any>(null)
@@ -1511,9 +1511,9 @@ export default function ProverbsPage() {
                 }}
                 className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm"
               >
-                <option value="ARES">ARES</option>
-                <option value="ATHENA">ATHENA</option>
-                <option value="TITAN">TITAN</option>
+                <option value="FORTRESS">FORTRESS</option>
+                <option value="SOLOMON">SOLOMON</option>
+                <option value="SAMSON">SAMSON</option>
                 <option value="PEGASUS">PEGASUS</option>
                 <option value="ICARUS">ICARUS</option>
                 <option value="PROMETHEUS">PROMETHEUS</option>
@@ -1589,7 +1589,7 @@ export default function ProverbsPage() {
                       </div>
                       <div>
                         <div className="text-sm font-bold text-blue-400">Iron Condor</div>
-                        <div className="text-xs text-gray-500">ARES, TITAN, PEGASUS</div>
+                        <div className="text-xs text-gray-500">FORTRESS, SAMSON, PEGASUS</div>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2">
@@ -1623,7 +1623,7 @@ export default function ProverbsPage() {
                       </div>
                       <div>
                         <div className="text-sm font-bold text-orange-400">Directional</div>
-                        <div className="text-xs text-gray-500">ATHENA, ICARUS</div>
+                        <div className="text-xs text-gray-500">SOLOMON, ICARUS</div>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2">

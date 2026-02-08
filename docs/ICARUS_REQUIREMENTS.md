@@ -2,7 +2,7 @@
 
 ## Overview
 
-**ICARUS** is an aggressive directional spreads trading bot, duplicated from ATHENA with relaxed trading parameters to give it more room to trade.
+**ICARUS** is an aggressive directional spreads trading bot, duplicated from SOLOMON with relaxed trading parameters to give it more room to trade.
 
 | Field | Value |
 |-------|-------|
@@ -11,15 +11,15 @@
 | **Description** | Aggressive GEX-Based Directional Spreads |
 | **Strategy** | Aggressive Directional Spread Trading |
 | **Category** | Live Trading |
-| **Based On** | ATHENA (duplicate, not refactor) |
+| **Based On** | SOLOMON (duplicate, not refactor) |
 
 ---
 
 ## Backend Configuration
 
-### Aggressive Parameters (vs ATHENA baseline)
+### Aggressive Parameters (vs SOLOMON baseline)
 
-| Parameter | ATHENA | ICARUS | Rationale |
+| Parameter | SOLOMON | ICARUS | Rationale |
 |-----------|--------|--------|-----------|
 | `wall_filter_pct` | 3.0% | **10.0%** | Most relaxed - room to trade far from walls |
 | `min_win_probability` | 48% | **40%** | Lower bar = more opportunities |
@@ -88,7 +88,7 @@ ICARUS: {
 
 ---
 
-## Frontend Features (Full Parity with ATHENA)
+## Frontend Features (Full Parity with SOLOMON)
 
 ### Tabs (5 Tabs)
 
@@ -179,7 +179,7 @@ backend/api/routes/icarus_routes.py  # API endpoints
 ## Implementation Checklist
 
 ### Backend Tasks
-- [ ] Duplicate `trading/athena_v2/` → `trading/icarus/`
+- [ ] Duplicate `trading/solomon_v2/` → `trading/icarus/`
 - [ ] Update `ICARUSConfig` with aggressive defaults
 - [ ] Create `icarus_routes.py`
 - [ ] Create `icarus_positions` DB table
@@ -200,7 +200,7 @@ backend/api/routes/icarus_routes.py  # API endpoints
 
 ---
 
-## Key Differentiators from ATHENA
+## Key Differentiators from SOLOMON
 
 1. **10% GEX Wall Filter** - Trades allowed far from walls (vs 3%)
 2. **40% Win Probability Threshold** - More trades pass filter (vs 48%)

@@ -241,8 +241,8 @@ class TestIdempotency:
         """Should generate unique keys"""
         from trading.idempotency import generate_idempotency_key
 
-        key1 = generate_idempotency_key("ARES", "pos-1", "2024-01-15")
-        key2 = generate_idempotency_key("ARES", "pos-1", "2024-01-15")
+        key1 = generate_idempotency_key("FORTRESS", "pos-1", "2024-01-15")
+        key2 = generate_idempotency_key("FORTRESS", "pos-1", "2024-01-15")
 
         # Keys should be unique (random suffix)
         assert key1 != key2
@@ -264,7 +264,7 @@ class TestIdempotency:
         from trading.idempotency import IdempotencyManager
 
         manager = IdempotencyManager(use_database=False)
-        success = manager.mark_pending("TEST-KEY-001", "ARES", "hash123")
+        success = manager.mark_pending("TEST-KEY-001", "FORTRESS", "hash123")
 
         assert success is True
 
@@ -277,7 +277,7 @@ class TestIdempotency:
         from trading.idempotency import IdempotencyManager
 
         manager = IdempotencyManager(use_database=False)
-        manager.mark_pending("TEST-KEY-002", "ARES", "hash123")
+        manager.mark_pending("TEST-KEY-002", "FORTRESS", "hash123")
         manager.mark_completed("TEST-KEY-002", {"order_id": "123", "status": "filled"})
 
         result = manager.get_result("TEST-KEY-002")
@@ -290,8 +290,8 @@ class TestIdempotency:
 
         manager = IdempotencyManager(use_database=False)
 
-        success1 = manager.mark_pending("DUPE-KEY", "ARES", "hash1")
-        success2 = manager.mark_pending("DUPE-KEY", "ARES", "hash2")
+        success1 = manager.mark_pending("DUPE-KEY", "FORTRESS", "hash1")
+        success2 = manager.mark_pending("DUPE-KEY", "FORTRESS", "hash2")
 
         assert success1 is True
         assert success2 is False  # Rejected as duplicate
@@ -304,11 +304,11 @@ class TestIdempotency:
 class TestPydanticModels:
     """Tests for backend/api/models.py"""
 
-    def test_ares_config_update_valid(self):
+    def test_fortress_config_update_valid(self):
         """Valid config update should pass"""
-        from backend.api.models import ARESConfigUpdate
+        from backend.api.models import FortressConfigUpdate
 
-        config = ARESConfigUpdate(
+        config = FortressConfigUpdate(
             risk_per_trade_pct=5.0,
             sd_multiplier=0.7
         )
@@ -316,33 +316,33 @@ class TestPydanticModels:
         assert config.risk_per_trade_pct == 5.0
         assert config.sd_multiplier == 0.7
 
-    def test_ares_config_update_invalid_range(self):
+    def test_fortress_config_update_invalid_range(self):
         """Out of range values should fail"""
-        from backend.api.models import ARESConfigUpdate
+        from backend.api.models import FortressConfigUpdate
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            ARESConfigUpdate(risk_per_trade_pct=20.0)  # Max is 15
+            FortressConfigUpdate(risk_per_trade_pct=20.0)  # Max is 15
 
         with pytest.raises(ValidationError):
-            ARESConfigUpdate(sd_multiplier=0.1)  # Min is 0.3
+            FortressConfigUpdate(sd_multiplier=0.1)  # Min is 0.3
 
-    def test_ares_config_update_optional_fields(self):
+    def test_fortress_config_update_optional_fields(self):
         """Optional fields should be None when not provided"""
-        from backend.api.models import ARESConfigUpdate
+        from backend.api.models import FortressConfigUpdate
 
-        config = ARESConfigUpdate()  # All optional
+        config = FortressConfigUpdate()  # All optional
 
         assert config.risk_per_trade_pct is None
         assert config.sd_multiplier is None
 
-    def test_ares_config_rejects_unknown_fields(self):
+    def test_fortress_config_rejects_unknown_fields(self):
         """Unknown fields should be rejected"""
-        from backend.api.models import ARESConfigUpdate
+        from backend.api.models import FortressConfigUpdate
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            ARESConfigUpdate(unknown_field="value")
+            FortressConfigUpdate(unknown_field="value")
 
     def test_strategy_preset_request_valid(self):
         """Valid preset should pass"""
@@ -483,10 +483,10 @@ class TestIntegration:
         manager = IdempotencyManager(use_database=False)
 
         # Simulate trade attempt
-        key = generate_idempotency_key("ARES", "IC-001", "2024-01-15")
+        key = generate_idempotency_key("FORTRESS", "IC-001", "2024-01-15")
 
         # First attempt - should succeed
-        success = manager.mark_pending(key, "ARES", "hash123")
+        success = manager.mark_pending(key, "FORTRESS", "hash123")
         assert success is True
 
         # Complete the trade

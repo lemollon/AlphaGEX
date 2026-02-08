@@ -9,7 +9,7 @@ Oracle is the central advisory system that aggregates multiple signals
 (GEX, ML predictions, VIX regime, market conditions) and provides
 curated recommendations to each trading bot:
 
-    - ARES: Iron Condor advice (strikes, risk %, skip signals)
+    - FORTRESS: Iron Condor advice (strikes, risk %, skip signals)
     - ATLAS: Wheel strategy advice (CSP entry, assignment handling)
     - PHOENIX: Directional call advice (entry timing, position sizing)
 
@@ -29,7 +29,7 @@ ARCHITECTURE:
            │                  │                  │
            ▼                  ▼                  ▼
       ┌─────────┐       ┌─────────┐       ┌─────────┐
-      │  ARES   │       │  ATLAS  │       │ PHOENIX │
+      │  FORTRESS   │       │  ATLAS  │       │ PHOENIX │
       │   IC    │       │  Wheel  │       │  Calls  │
       └─────────┘       └─────────┘       └─────────┘
 
@@ -117,7 +117,7 @@ except ImportError:
     get_proverbs_enhanced = None
     print("Info: Proverbs enhanced features not available")
 
-# GEX Signal Integration - ML direction for ATHENA/ICARUS
+# GEX Signal Integration - ML direction for SOLOMON/ICARUS
 GEX_ML_AVAILABLE = False
 _gex_signal_integration = None
 try:
@@ -178,14 +178,14 @@ logger = logging.getLogger(__name__)
 
 class BotName(Enum):
     """Trading bots that Oracle advises"""
-    ARES = "ARES"          # Aggressive Iron Condor (SPY 0DTE)
+    FORTRESS = "FORTRESS"          # Aggressive Iron Condor (SPY 0DTE)
     ATLAS = "ATLAS"        # SPX Wheel Strategy
     PHOENIX = "PHOENIX"    # Directional Calls
     HERMES = "HERMES"      # Manual Wheel via UI
-    ATHENA = "ATHENA"      # Directional Spreads (Bull Call / Bear Call)
+    SOLOMON = "SOLOMON"      # Directional Spreads (Bull Call / Bear Call)
     PEGASUS = "PEGASUS"    # SPX Iron Condor ($10 spreads, weekly)
     ICARUS = "ICARUS"      # Aggressive Directional Spreads (relaxed filters)
-    TITAN = "TITAN"        # Aggressive SPX Iron Condor ($12 spreads)
+    SAMSON = "SAMSON"        # Aggressive SPX Iron Condor ($12 spreads)
     PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
 
 
@@ -208,8 +208,8 @@ class TradingAdvice(Enum):
 
 class StrategyType(Enum):
     """Strategy types for IC vs Directional selection"""
-    IRON_CONDOR = "IRON_CONDOR"         # ARES/PEGASUS - profit when pinned
-    DIRECTIONAL = "DIRECTIONAL"         # ATHENA - profit when price moves
+    IRON_CONDOR = "IRON_CONDOR"         # FORTRESS/PEGASUS - profit when pinned
+    DIRECTIONAL = "DIRECTIONAL"         # SOLOMON - profit when price moves
     SKIP = "SKIP"                       # Market too uncertain
 
 
@@ -284,7 +284,7 @@ class OraclePrediction:
     suggested_risk_pct: float
     suggested_sd_multiplier: float
 
-    # GEX-specific for ARES
+    # GEX-specific for FORTRESS
     use_gex_walls: bool = False
     suggested_put_strike: Optional[float] = None
     suggested_call_strike: Optional[float] = None
@@ -301,7 +301,7 @@ class OraclePrediction:
     claude_analysis: Optional['ClaudeAnalysis'] = None
 
     # Strategy recommendation: When SKIP_TODAY, may suggest alternative bot
-    # e.g., ARES skip due to high VIX -> suggest ATHENA directional
+    # e.g., FORTRESS skip due to high VIX -> suggest SOLOMON directional
     suggested_alternative: Optional[BotName] = None
     strategy_recommendation: Optional['StrategyRecommendation'] = None
 
@@ -338,8 +338,8 @@ class StrategyRecommendation:
     """
     Strategy recommendation based on VIX + GEX regime analysis.
 
-    This helps decide: Should we trade Iron Condors (ARES/PEGASUS)
-    or Directional Spreads (ATHENA) given current market conditions?
+    This helps decide: Should we trade Iron Condors (FORTRESS/PEGASUS)
+    or Directional Spreads (SOLOMON) given current market conditions?
 
     Decision Matrix:
     ┌─────────────┬────────────────┬────────────────┬────────────────┐
@@ -1558,7 +1558,7 @@ class OracleAdvisor:
         Oracle uses this historical performance data to adjust its scores.
 
         Args:
-            bot_name: The bot requesting advice (ARES, ATHENA, TITAN, etc.)
+            bot_name: The bot requesting advice (FORTRESS, SOLOMON, SAMSON, etc.)
             current_hour: Current trading hour (0-23, CT timezone)
             market_regime: Current market regime (BULLISH, BEARISH, NEUTRAL)
             is_friday: Whether it's Friday (for weekend pre-check)
@@ -1618,7 +1618,7 @@ class OracleAdvisor:
                         for rp in regime_perf:
                             if rp.regime and rp.regime.upper() == market_regime.upper():
                                 # Check if this is an IC or directional bot
-                                is_ic_bot = bot_name.upper() in ['ARES', 'TITAN', 'PEGASUS', 'PROMETHEUS']
+                                is_ic_bot = bot_name.upper() in ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
                                 if is_ic_bot:
                                     advisory.regime_ic_win_rate = rp.win_rate
                                 else:
@@ -2021,8 +2021,8 @@ class OracleAdvisor:
         whether to proceed with their specific strategy.
 
         Key Insight:
-        - IC (ARES/PEGASUS) profits when price stays PINNED
-        - Directional (ATHENA) profits when price MOVES
+        - IC (FORTRESS/PEGASUS) profits when price stays PINNED
+        - Directional (SOLOMON) profits when price MOVES
 
         Decision Logic:
         1. HIGH VIX + NEGATIVE GEX = TRENDING = Favor DIRECTIONAL
@@ -2292,8 +2292,8 @@ class OracleAdvisor:
                 return {"error": "No outcome data available", "days": days}
 
             # Categorize by strategy and regime
-            ic_bots = ['ARES', 'PEGASUS']
-            dir_bots = ['ATHENA']
+            ic_bots = ['FORTRESS', 'PEGASUS']
+            dir_bots = ['SOLOMON']
 
             results = {
                 'ic_by_vix_regime': {
@@ -2417,7 +2417,7 @@ class OracleAdvisor:
         recent_losses: int = 0
     ) -> OraclePrediction:
         """
-        Get Iron Condor advice for ARES.
+        Get Iron Condor advice for FORTRESS.
 
         Args:
             context: Current market conditions
@@ -2435,7 +2435,7 @@ class OracleAdvisor:
         self._check_and_reload_model_if_stale()
 
         # Log prediction request
-        self.live_log.log("PREDICT", "ARES advice requested", {
+        self.live_log.log("PREDICT", "FORTRESS advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
@@ -2487,22 +2487,22 @@ class OracleAdvisor:
             })
 
         # If any VIX skip rule triggered, return SKIP_TODAY
-        # BUT: Check if conditions favor directional trading (ATHENA)
+        # BUT: Check if conditions favor directional trading (SOLOMON)
         if skip_reason:
-            # Get strategy recommendation to see if ATHENA directional is better
+            # Get strategy recommendation to see if SOLOMON directional is better
             strategy_rec = self.get_strategy_recommendation(context)
 
-            # Determine if we should suggest ATHENA instead of just skipping
-            suggest_athena = False
+            # Determine if we should suggest SOLOMON instead of just skipping
+            suggest_solomon = False
             enhanced_reasoning = skip_reason
 
             if strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                suggest_athena = True
-                enhanced_reasoning = f"{skip_reason} | Consider ATHENA directional: {strategy_rec.reasoning}"
+                suggest_solomon = True
+                enhanced_reasoning = f"{skip_reason} | Consider SOLOMON directional: {strategy_rec.reasoning}"
             elif context.gex_regime == GEXRegime.NEGATIVE and context.vix < 40:
                 # Trending market with elevated VIX = good for directional
-                suggest_athena = True
-                enhanced_reasoning = f"{skip_reason} | GEX NEGATIVE (trending) favors ATHENA directional"
+                suggest_solomon = True
+                enhanced_reasoning = f"{skip_reason} | GEX NEGATIVE (trending) favors SOLOMON directional"
 
             self.live_log.log("VIX_SKIP", skip_reason, {
                 "vix": context.vix,
@@ -2510,11 +2510,11 @@ class OracleAdvisor:
                 "day_of_week": context.day_of_week,
                 "recent_losses": recent_losses,
                 "action": "SKIP_TODAY",
-                "suggest_athena": suggest_athena,
+                "suggest_solomon": suggest_solomon,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
             skip_prediction = OraclePrediction(
-                bot_name=BotName.ARES,
+                bot_name=BotName.FORTRESS,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
                 confidence=0.95,  # High confidence in the skip decision
@@ -2526,10 +2526,10 @@ class OracleAdvisor:
                     ("skip_threshold", skip_threshold_used),
                     ("day_of_week", context.day_of_week),
                     ("recent_losses", recent_losses),
-                    ("suggest_athena", 1.0 if suggest_athena else 0.0)
+                    ("suggest_solomon", 1.0 if suggest_solomon else 0.0)
                 ],
                 model_version=self.model_version,
-                suggested_alternative=BotName.ATHENA if suggest_athena else None,
+                suggested_alternative=BotName.SOLOMON if suggest_solomon else None,
                 strategy_recommendation=strategy_rec
             )
             return self._add_staleness_to_prediction(skip_prediction)
@@ -2554,13 +2554,13 @@ class OracleAdvisor:
             "win_rate_30d": context.win_rate_30d,
             "expected_move_pct": context.expected_move_pct
         }
-        self.live_log.log_data_flow("ARES", "INPUT", input_data)
+        self.live_log.log_data_flow("FORTRESS", "INPUT", input_data)
 
         # Get base prediction
         base_pred = self._get_base_prediction(context)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
-        self.live_log.log_data_flow("ARES", "ML_OUTPUT", {
+        self.live_log.log_data_flow("FORTRESS", "ML_OUTPUT", {
             "win_probability": base_pred.get('win_probability'),
             "top_factors": base_pred.get('top_factors', []),
             "probabilities": base_pred.get('probabilities', {}),
@@ -2621,7 +2621,7 @@ class OracleAdvisor:
         position_in_range_pct = 50.0
         trend_direction_str = "SIDEWAYS"
         trend_strength = 0.0
-        # NEUTRAL regime fields for consistency with ATHENA
+        # NEUTRAL regime fields for consistency with SOLOMON
         neutral_derived_direction = ""
         neutral_confidence = 0.0
         neutral_reasoning = ""
@@ -2704,10 +2704,10 @@ class OracleAdvisor:
                         neutral_confidence = 0.7
                     neutral_reasoning = f"IC: Position {position_in_range_pct:.0f}% in wall range, trend {trend_direction_str}"
 
-                    logger.info(f"[ARES NEUTRAL] IC suitability: {ic_suitability:.0%}, trend: {trend_direction_str}")
+                    logger.info(f"[FORTRESS NEUTRAL] IC suitability: {ic_suitability:.0%}, trend: {trend_direction_str}")
 
                 except Exception as e:
-                    logger.warning(f"[ARES] Trend tracker error: {e}")
+                    logger.warning(f"[FORTRESS] Trend tracker error: {e}")
                     # Still boost IC for NEUTRAL regime even without tracker
                     ic_suitability += 0.10
 
@@ -2727,7 +2727,7 @@ class OracleAdvisor:
         # =========================================================================
         claude_analysis = None
         if use_claude_validation and self.claude_available:
-            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.ARES)
+            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.FORTRESS)
 
             # Apply Claude's confidence adjustment
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
@@ -2747,7 +2747,7 @@ class OracleAdvisor:
                 penalty = 0.05  # REDUCED from 10% to 5%
                 base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
-                logger.warning(f"[ARES] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                logger.warning(f"[FORTRESS] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
                 if hasattr(claude_analysis, 'hallucination_warnings') and claude_analysis.hallucination_warnings:
                     for warning in claude_analysis.hallucination_warnings:
                         logger.warning(f"  - {warning}")
@@ -2755,7 +2755,7 @@ class OracleAdvisor:
                 penalty = 0.02  # REDUCED from 5% to 2%
                 base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
-                logger.info(f"[ARES] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
+                logger.info(f"[FORTRESS] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
         # Determine final advice
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
@@ -2773,7 +2773,7 @@ class OracleAdvisor:
             sd_mult = 1.4  # FIX: Was 1.2 - low confidence = much wider for safety
 
         prediction = OraclePrediction(
-            bot_name=BotName.ARES,
+            bot_name=BotName.FORTRESS,
             advice=advice,
             win_probability=base_pred['win_probability'],
             confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
@@ -2801,7 +2801,7 @@ class OracleAdvisor:
         )
 
         # Log prediction result
-        self.live_log.log("PREDICT_DONE", f"ARES: {advice.value} ({base_pred['win_probability']:.1%})", {
+        self.live_log.log("PREDICT_DONE", f"FORTRESS: {advice.value} ({base_pred['win_probability']:.1%})", {
             "advice": advice.value,
             "win_probability": base_pred['win_probability'],
             "risk_pct": risk_pct,
@@ -2826,7 +2826,7 @@ class OracleAdvisor:
             "model_version": self.model_version,
             "hours_since_training": self._get_hours_since_training()
         }
-        self.live_log.log_data_flow("ARES", "DECISION", decision_data)
+        self.live_log.log_data_flow("FORTRESS", "DECISION", decision_data)
 
         return self._add_staleness_to_prediction(prediction)
 
@@ -3053,18 +3053,18 @@ class OracleAdvisor:
 
         return self._add_staleness_to_prediction(prediction)
 
-    def get_athena_advice(
+    def get_solomon_advice(
         self,
         context: MarketContext,
         use_gex_walls: bool = True,
         use_claude_validation: bool = True,
         wall_filter_pct: float = 1.0,  # Default 1.0%, backtest showed 0.5% = 98% WR
-        bot_name: str = "ATHENA"  # Allow ICARUS to pass its own name for proper logging
+        bot_name: str = "SOLOMON"  # Allow ICARUS to pass its own name for proper logging
     ) -> OraclePrediction:
         """
-        Get directional spread advice for ATHENA (or ICARUS).
+        Get directional spread advice for SOLOMON (or ICARUS).
 
-        ATHENA trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
+        SOLOMON trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
         Uses GEX walls for entry timing and direction confirmation.
 
         Strategy:
@@ -3076,7 +3076,7 @@ class OracleAdvisor:
         - Near Call Wall (resistance) + BEARISH signal = Strong entry for Bear Call Spread
 
         Args:
-            bot_name: Bot identifier for logging (ATHENA or ICARUS)
+            bot_name: Bot identifier for logging (SOLOMON or ICARUS)
         """
         # Log prediction request
         # Check for newer model version in DB and reload if available (Issue #1 fix)
@@ -3140,7 +3140,7 @@ class OracleAdvisor:
             position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
 
         # =====================================================================
-        # ML DIRECTION IS THE PRIMARY SOURCE FOR ATHENA/ICARUS
+        # ML DIRECTION IS THE PRIMARY SOURCE FOR SOLOMON/ICARUS
         # Oracle uses GEX probability models (ORION) to determine direction
         # This ensures Oracle direction matches what ML says
         # =====================================================================
@@ -3263,10 +3263,10 @@ class OracleAdvisor:
                     bullish_suitability = suitability.bullish_suitability
                     bearish_suitability = suitability.bearish_suitability
 
-                    logger.info(f"[ATHENA NEUTRAL] Trend tracker: {direction} ({direction_confidence:.0%})")
+                    logger.info(f"[SOLOMON NEUTRAL] Trend tracker: {direction} ({direction_confidence:.0%})")
 
                 except Exception as e:
-                    logger.warning(f"[ATHENA] Trend tracker error: {e}, using fallback")
+                    logger.warning(f"[SOLOMON] Trend tracker error: {e}, using fallback")
                     # Fallback to wall-proximity based direction
                     direction, direction_confidence, neutral_reasoning = \
                         self._get_neutral_direction_fallback(
@@ -3333,7 +3333,7 @@ class OracleAdvisor:
         # =========================================================================
         claude_analysis = None
         if use_claude_validation and self.claude_available:
-            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.ATHENA)
+            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.SOLOMON)
 
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
                 base_pred['win_probability'] = max(0.45, min(0.85,
@@ -3347,12 +3347,12 @@ class OracleAdvisor:
                 penalty = 0.05  # REDUCED from 10%
                 base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
-                logger.warning(f"[ATHENA] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                logger.warning(f"[SOLOMON] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
             elif hallucination_risk == 'MEDIUM':
                 penalty = 0.02  # REDUCED from 5%
                 base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
-                logger.info(f"[ATHENA] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
+                logger.info(f"[SOLOMON] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
         # =====================================================================
         # FLIP DISTANCE FILTER - Data showed trades far from flip point lose
@@ -3426,9 +3426,9 @@ class OracleAdvisor:
 
         # Map bot_name string to BotName enum
         try:
-            prediction_bot_name = BotName[bot_name.upper()] if bot_name else BotName.ATHENA
+            prediction_bot_name = BotName[bot_name.upper()] if bot_name else BotName.SOLOMON
         except (KeyError, AttributeError):
-            prediction_bot_name = BotName.ATHENA
+            prediction_bot_name = BotName.SOLOMON
 
         prediction = OraclePrediction(
             bot_name=prediction_bot_name,
@@ -3515,7 +3515,7 @@ class OracleAdvisor:
         Get Iron Condor advice for PEGASUS (SPX Weekly Iron Condors).
 
         PEGASUS trades SPX weekly options with $10 spread widths.
-        Key differences from ARES:
+        Key differences from FORTRESS:
         - SPX (cash-settled) vs SPY
         - Weekly expirations vs 0DTE
         - Larger notional value per contract
@@ -3551,7 +3551,7 @@ class OracleAdvisor:
         })
 
         # =========================================================================
-        # VIX-BASED SKIP LOGIC (Similar to ARES but tuned for SPX weekly)
+        # VIX-BASED SKIP LOGIC (Similar to FORTRESS but tuned for SPX weekly)
         # =========================================================================
         skip_reason = None
         skip_threshold_used = 0.0
@@ -3575,22 +3575,22 @@ class OracleAdvisor:
                 skip_threshold_used = vix_streak_skip
 
         # If any VIX skip rule triggered, return SKIP_TODAY
-        # BUT: Check if conditions favor directional trading (ATHENA)
+        # BUT: Check if conditions favor directional trading (SOLOMON)
         if skip_reason:
-            # Get strategy recommendation to see if ATHENA directional is better
+            # Get strategy recommendation to see if SOLOMON directional is better
             strategy_rec = self.get_strategy_recommendation(context)
 
-            # Determine if we should suggest ATHENA instead of just skipping
-            suggest_athena = False
+            # Determine if we should suggest SOLOMON instead of just skipping
+            suggest_solomon = False
             enhanced_reasoning = skip_reason
 
             if strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                suggest_athena = True
-                enhanced_reasoning = f"{skip_reason} | Consider ATHENA directional: {strategy_rec.reasoning}"
+                suggest_solomon = True
+                enhanced_reasoning = f"{skip_reason} | Consider SOLOMON directional: {strategy_rec.reasoning}"
             elif context.gex_regime == GEXRegime.NEGATIVE and context.vix < 40:
                 # Trending market with elevated VIX = good for directional
-                suggest_athena = True
-                enhanced_reasoning = f"{skip_reason} | GEX NEGATIVE (trending) favors ATHENA directional"
+                suggest_solomon = True
+                enhanced_reasoning = f"{skip_reason} | GEX NEGATIVE (trending) favors SOLOMON directional"
 
             self.live_log.log("VIX_SKIP", skip_reason, {
                 "vix": context.vix,
@@ -3598,7 +3598,7 @@ class OracleAdvisor:
                 "day_of_week": context.day_of_week,
                 "recent_losses": recent_losses,
                 "action": "SKIP_TODAY",
-                "suggest_athena": suggest_athena,
+                "suggest_solomon": suggest_solomon,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
             skip_prediction = OraclePrediction(
@@ -3614,10 +3614,10 @@ class OracleAdvisor:
                     ("skip_threshold", skip_threshold_used),
                     ("day_of_week", context.day_of_week),
                     ("recent_losses", recent_losses),
-                    ("suggest_athena", 1.0 if suggest_athena else 0.0)
+                    ("suggest_solomon", 1.0 if suggest_solomon else 0.0)
                 ],
                 model_version=self.model_version,
-                suggested_alternative=BotName.ATHENA if suggest_athena else None,
+                suggested_alternative=BotName.SOLOMON if suggest_solomon else None,
                 strategy_recommendation=strategy_rec
             )
             return self._add_staleness_to_prediction(skip_prediction)
@@ -3893,7 +3893,7 @@ class OracleAdvisor:
         return self._add_staleness_to_prediction(prediction)
 
     # =========================================================================
-    # TITAN ADVICE (AGGRESSIVE SPX IRON CONDOR - DAILY)
+    # SAMSON ADVICE (AGGRESSIVE SPX IRON CONDOR - DAILY)
     # =========================================================================
 
     def get_titan_advice(
@@ -3905,12 +3905,12 @@ class OracleAdvisor:
         vix_monday_friday_skip: float = 0.0,
         vix_streak_skip: float = 0.0,
         recent_losses: int = 0,
-        spread_width: float = 12.0  # TITAN uses $12 spread width (more aggressive)
+        spread_width: float = 12.0  # SAMSON uses $12 spread width (more aggressive)
     ) -> OraclePrediction:
         """
-        Get Iron Condor advice for TITAN (Aggressive SPX Daily Iron Condors).
+        Get Iron Condor advice for SAMSON (Aggressive SPX Daily Iron Condors).
 
-        TITAN is similar to PEGASUS but more aggressive:
+        SAMSON is similar to PEGASUS but more aggressive:
         - Trades daily vs weekly
         - Uses $12 spreads vs $10 spreads
         - Lower win probability threshold (more trades)
@@ -3924,16 +3924,16 @@ class OracleAdvisor:
             vix_monday_friday_skip: Skip on Mon/Fri if VIX > this (0 = disabled)
             vix_streak_skip: Skip after recent losses if VIX > this (0 = disabled)
             recent_losses: Number of recent consecutive losses
-            spread_width: Width of IC spreads (default $12 for TITAN)
+            spread_width: Width of IC spreads (default $12 for SAMSON)
 
         Returns:
-            OraclePrediction with TITAN-specific advice
+            OraclePrediction with SAMSON-specific advice
         """
         # Check for newer model version in DB and reload if available (Issue #1 fix)
         self._check_and_reload_model_if_stale()
 
         # Log prediction request
-        self.live_log.log("PREDICT", "TITAN advice requested", {
+        self.live_log.log("PREDICT", "SAMSON advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
@@ -3945,8 +3945,8 @@ class OracleAdvisor:
             "hours_since_training": self._get_hours_since_training()
         })
 
-        # TITAN uses the same logic as PEGASUS but with more aggressive parameters
-        # Delegate to PEGASUS with TITAN-specific adjustments
+        # SAMSON uses the same logic as PEGASUS but with more aggressive parameters
+        # Delegate to PEGASUS with SAMSON-specific adjustments
         prediction = self.get_pegasus_advice(
             context=context,
             use_gex_walls=use_gex_walls,
@@ -3958,17 +3958,17 @@ class OracleAdvisor:
             spread_width=spread_width
         )
 
-        # Override bot name to TITAN for proper tracking
-        prediction.bot_name = BotName.TITAN
+        # Override bot name to SAMSON for proper tracking
+        prediction.bot_name = BotName.SAMSON
 
-        # TITAN is more aggressive - boost win probability slightly for valid signals
+        # SAMSON is more aggressive - boost win probability slightly for valid signals
         if prediction.advice != TradingAdvice.SKIP_TODAY:
-            # TITAN accepts lower win probability (42% vs 45% for PEGASUS)
+            # SAMSON accepts lower win probability (42% vs 45% for PEGASUS)
             if prediction.win_probability >= 0.42:
-                prediction.reasoning = f"[TITAN Aggressive] {prediction.reasoning}"
+                prediction.reasoning = f"[SAMSON Aggressive] {prediction.reasoning}"
 
-        # Log TITAN-specific decision
-        self.live_log.log_data_flow("TITAN", "DECISION", {
+        # Log SAMSON-specific decision
+        self.live_log.log_data_flow("SAMSON", "DECISION", {
             "advice": prediction.advice.value,
             "win_probability": prediction.win_probability,
             "confidence": prediction.confidence,
@@ -4210,7 +4210,7 @@ class OracleAdvisor:
     def get_claude_analysis(
         self,
         context: MarketContext,
-        bot_name: BotName = BotName.ARES
+        bot_name: BotName = BotName.FORTRESS
     ) -> Optional[ClaudeAnalysis]:
         """
         Get standalone Claude AI analysis of market conditions.
@@ -4459,9 +4459,9 @@ class OracleAdvisor:
             record['dir_suitability'] = max(0.0, min(1.0, dir_score))
 
             # Track strategy type from bot name if available
-            bot_name = trade.get('bot_name', 'ARES')
-            record['is_ic_strategy'] = 1 if bot_name in ['ARES', 'PEGASUS'] else 0
-            record['is_dir_strategy'] = 1 if bot_name in ['ATHENA'] else 0
+            bot_name = trade.get('bot_name', 'FORTRESS')
+            record['is_ic_strategy'] = 1 if bot_name in ['FORTRESS', 'PEGASUS'] else 0
+            record['is_dir_strategy'] = 1 if bot_name in ['SOLOMON'] else 0
 
             records.append(record)
 
@@ -4695,7 +4695,7 @@ class OracleAdvisor:
                     suggested_sd_multiplier REAL,
                     model_version TEXT,
 
-                    -- GEX-Specific (ARES)
+                    -- GEX-Specific (FORTRESS)
                     use_gex_walls BOOLEAN DEFAULT FALSE,
                     suggested_put_strike REAL,
                     suggested_call_strike REAL,
@@ -4899,7 +4899,7 @@ class OracleAdvisor:
 
         Feedback Loop Enhancement (Migration 023):
         - outcome_type: Specific outcome classification (MAX_PROFIT, PUT_BREACHED, etc.)
-        - direction_predicted: For directional bots (ATHENA, ICARUS) - BULLISH or BEARISH
+        - direction_predicted: For directional bots (SOLOMON, ICARUS) - BULLISH or BEARISH
         - direction_correct: Whether the directional prediction was correct
 
         This data flows to Proverbs for strategy-level analysis.
@@ -5007,7 +5007,7 @@ class OracleAdvisor:
                 """)
 
                 # Determine strategy type from bot name
-                strategy_type = 'DIRECTIONAL' if bot_name.value in ['ATHENA', 'ICARUS'] else 'IRON_CONDOR'
+                strategy_type = 'DIRECTIONAL' if bot_name.value in ['SOLOMON', 'ICARUS'] else 'IRON_CONDOR'
 
                 # Store training outcome for ML retraining (Migration 023: added direction tracking)
                 cursor.execute("""
@@ -5094,7 +5094,7 @@ def get_ares_advice(
     use_gex_walls: bool = False,
     **kwargs
 ) -> OraclePrediction:
-    """Quick helper to get ARES advice"""
+    """Quick helper to get FORTRESS advice"""
     if day_of_week is None:
         day_of_week = datetime.now().weekday()
 
@@ -5122,7 +5122,7 @@ def get_ares_advice(
 
 
 # Backward compatibility aliases
-AresMLAdvisor = OracleAdvisor
+FortressMLAdvisor = OracleAdvisor
 get_advisor = get_oracle
 get_trading_advice = get_ares_advice
 
@@ -5668,7 +5668,7 @@ if __name__ == "__main__":
     print(f"Claude AI: {'ENABLED' if oracle.claude_available else 'DISABLED'}")
 
     # Demo predictions
-    print("\n--- ARES Advice Demo ---")
+    print("\n--- FORTRESS Advice Demo ---")
     context = MarketContext(
         spot_price=5900,
         vix=20,

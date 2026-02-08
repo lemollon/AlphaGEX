@@ -8,7 +8,7 @@ Replaces the Bayesian probability estimator with an XGBoost model trained
 on actual trade outcomes from heracles_scan_activity.
 
 PATTERN:
-Follows the exact same architecture as SAGE (quant/ares_ml_advisor.py):
+Follows the exact same architecture as SAGE (quant/fortress_ml_advisor.py):
 - XGBoost classifier with calibrated probabilities
 - Model persistence in PostgreSQL (survives Render deploys)
 - Fallback to Bayesian when ML not available

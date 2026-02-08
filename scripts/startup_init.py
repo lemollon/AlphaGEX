@@ -23,9 +23,9 @@ if not logger.handlers:
 
 # Bot position tables that need close_time migration
 BOT_POSITION_TABLES = [
-    'ares_positions',
-    'athena_positions',
-    'titan_positions',
+    'fortress_positions',
+    'solomon_positions',
+    'samson_positions',
     'pegasus_positions',
     'icarus_positions',
 ]

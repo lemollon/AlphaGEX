@@ -61,11 +61,11 @@ class TradeSyncValidator:
                 pass
 
     # =========================================================================
-    # ARES VALIDATION
+    # FORTRESS VALIDATION
     # =========================================================================
 
-    def validate_ares_open_positions(self) -> dict:
-        """Validate ARES open positions sync"""
+    def validate_fortress_open_positions(self) -> dict:
+        """Validate FORTRESS open positions sync"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -81,7 +81,7 @@ class TradeSyncValidator:
                     put_short_strike, put_long_strike,
                     call_short_strike, call_long_strike,
                     total_credit, contracts, max_loss, open_time
-                FROM ares_positions
+                FROM fortress_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
             """)
@@ -103,7 +103,7 @@ class TradeSyncValidator:
             if stale_positions:
                 results["passed"] = False
                 results["details"]["stale_positions"] = stale_positions
-                self.errors.append(f"ARES has {len(stale_positions)} stale position(s) - expired but not closed")
+                self.errors.append(f"FORTRESS has {len(stale_positions)} stale position(s) - expired but not closed")
 
             # Check for positions with missing critical fields
             incomplete = []
@@ -116,7 +116,7 @@ class TradeSyncValidator:
 
             if incomplete:
                 results["details"]["incomplete_positions"] = incomplete
-                self.warnings.append(f"ARES has {len(incomplete)} incomplete position(s)")
+                self.warnings.append(f"FORTRESS has {len(incomplete)} incomplete position(s)")
 
             # Validate position data integrity
             for pos in db_positions:
@@ -126,25 +126,25 @@ class TradeSyncValidator:
 
                 # Put spread: long < short (buying lower strike, selling higher)
                 if put_long and put_short and put_long >= put_short:
-                    self.warnings.append(f"ARES {position_id}: Put spread strikes invalid ({put_long} >= {put_short})")
+                    self.warnings.append(f"FORTRESS {position_id}: Put spread strikes invalid ({put_long} >= {put_short})")
 
                 # Call spread: short < long (selling lower strike, buying higher)
                 if call_short and call_long and call_short >= call_long:
-                    self.warnings.append(f"ARES {position_id}: Call spread strikes invalid ({call_short} >= {call_long})")
+                    self.warnings.append(f"FORTRESS {position_id}: Call spread strikes invalid ({call_short} >= {call_long})")
 
             results["details"]["integrity_checked"] = True
 
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"ARES open position validation failed: {e}")
+            self.errors.append(f"FORTRESS open position validation failed: {e}")
         finally:
             self.safe_close(conn)
 
         return results
 
-    def validate_ares_closed_positions(self) -> dict:
-        """Validate ARES closed positions have proper P&L"""
+    def validate_fortress_closed_positions(self) -> dict:
+        """Validate FORTRESS closed positions have proper P&L"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -158,7 +158,7 @@ class TradeSyncValidator:
                     position_id, expiration, status,
                     total_credit, contracts, close_price, realized_pnl,
                     close_time
-                FROM ares_positions
+                FROM fortress_positions
                 WHERE status IN ('closed', 'expired')
                 ORDER BY close_time DESC
                 LIMIT 20
@@ -180,7 +180,7 @@ class TradeSyncValidator:
 
             if missing_pnl:
                 results["details"]["missing_pnl_positions"] = missing_pnl
-                self.warnings.append(f"ARES has {len(missing_pnl)} closed position(s) without P&L")
+                self.warnings.append(f"FORTRESS has {len(missing_pnl)} closed position(s) without P&L")
 
             # Calculate summary stats
             if closed_positions:
@@ -193,14 +193,14 @@ class TradeSyncValidator:
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"ARES closed position validation failed: {e}")
+            self.errors.append(f"FORTRESS closed position validation failed: {e}")
         finally:
             self.safe_close(conn)
 
         return results
 
-    def validate_ares_equity_curve(self) -> dict:
-        """Validate ARES equity curve data"""
+    def validate_fortress_equity_curve(self) -> dict:
+        """Validate FORTRESS equity curve data"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -209,14 +209,14 @@ class TradeSyncValidator:
             cursor = conn.cursor()
 
             # Get daily P&L from closed positions
-            # ARES stores close_time as TEXT - some entries may be time-only or invalid
+            # FORTRESS stores close_time as TEXT - some entries may be time-only or invalid
             # Use a safer query that filters out invalid timestamps
             cursor.execute("""
                 SELECT
                     DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
-                FROM ares_positions
+                FROM fortress_positions
                 WHERE status IN ('closed', 'expired')
                 AND COALESCE(close_time, open_time)::timestamptz >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
                 GROUP BY DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago')
@@ -234,7 +234,7 @@ class TradeSyncValidator:
             # Check for today's open positions affecting equity
             cursor.execute("""
                 SELECT COUNT(*), SUM(total_credit * contracts * 100)
-                FROM ares_positions
+                FROM fortress_positions
                 WHERE status = 'open'
             """)
             open_stats = cursor.fetchone()
@@ -245,18 +245,18 @@ class TradeSyncValidator:
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"ARES equity curve validation failed: {e}")
+            self.errors.append(f"FORTRESS equity curve validation failed: {e}")
         finally:
             self.safe_close(conn)
 
         return results
 
     # =========================================================================
-    # ATHENA VALIDATION
+    # SOLOMON VALIDATION
     # =========================================================================
 
-    def validate_athena_open_positions(self) -> dict:
-        """Validate ATHENA open positions sync"""
+    def validate_solomon_open_positions(self) -> dict:
+        """Validate SOLOMON open positions sync"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -293,26 +293,26 @@ class TradeSyncValidator:
             if stale_positions:
                 results["passed"] = False
                 results["details"]["stale_positions"] = stale_positions
-                self.errors.append(f"ATHENA has {len(stale_positions)} stale position(s) - expired but not closed")
+                self.errors.append(f"SOLOMON has {len(stale_positions)} stale position(s) - expired but not closed")
 
             # Check spread type validity
             valid_types = ['BULL_CALL_SPREAD', 'BEAR_CALL_SPREAD', 'BULL_PUT_SPREAD', 'BEAR_PUT_SPREAD']
             for pos in db_positions:
                 spread_type = pos[1]
                 if spread_type and spread_type not in valid_types:
-                    self.warnings.append(f"ATHENA {pos[0]}: Unknown spread type '{spread_type}'")
+                    self.warnings.append(f"SOLOMON {pos[0]}: Unknown spread type '{spread_type}'")
 
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"ATHENA open position validation failed: {e}")
+            self.errors.append(f"SOLOMON open position validation failed: {e}")
         finally:
             self.safe_close(conn)
 
         return results
 
-    def validate_athena_closed_positions(self) -> dict:
-        """Validate ATHENA closed positions have proper P&L"""
+    def validate_solomon_closed_positions(self) -> dict:
+        """Validate SOLOMON closed positions have proper P&L"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -346,19 +346,19 @@ class TradeSyncValidator:
 
             if missing_pnl:
                 results["details"]["missing_pnl_positions"] = missing_pnl
-                self.warnings.append(f"ATHENA has {len(missing_pnl)} closed position(s) without P&L")
+                self.warnings.append(f"SOLOMON has {len(missing_pnl)} closed position(s) without P&L")
 
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"ATHENA closed position validation failed: {e}")
+            self.errors.append(f"SOLOMON closed position validation failed: {e}")
         finally:
             self.safe_close(conn)
 
         return results
 
-    def validate_athena_equity_curve(self) -> dict:
-        """Validate ATHENA equity curve data"""
+    def validate_solomon_equity_curve(self) -> dict:
+        """Validate SOLOMON equity curve data"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -390,7 +390,7 @@ class TradeSyncValidator:
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"ATHENA equity curve validation failed: {e}")
+            self.errors.append(f"SOLOMON equity curve validation failed: {e}")
         finally:
             self.safe_close(conn)
 
@@ -409,7 +409,7 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # PEGASUS uses same schema as ARES (Iron Condor) - no ticker column
+            # PEGASUS uses same schema as FORTRESS (Iron Condor) - no ticker column
             cursor.execute("""
                 SELECT
                     position_id, expiration, status,
@@ -459,7 +459,7 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # PEGASUS uses same schema as ARES - no ticker column
+            # PEGASUS uses same schema as FORTRESS - no ticker column
             cursor.execute("""
                 SELECT
                     position_id, status,
@@ -537,25 +537,25 @@ class TradeSyncValidator:
 
         try:
             import asyncio
-            from backend.api.routes.ares_routes import get_ares_positions, get_ares_live_pnl
-            from backend.api.routes.athena_routes import get_athena_positions, get_athena_live_pnl
+            from backend.api.routes.fortress_routes import get_fortress_positions, get_ares_live_pnl
+            from backend.api.routes.solomon_routes import get_solomon_positions, get_solomon_live_pnl
             from backend.api.routes.pegasus_routes import get_pegasus_positions, get_pegasus_live_pnl
 
             loop = asyncio.get_event_loop()
 
-            # Test ARES API
+            # Test FORTRESS API
             try:
-                ares_pos = loop.run_until_complete(get_ares_positions())
+                ares_pos = loop.run_until_complete(get_fortress_positions())
                 results["details"]["ares_api_positions"] = ares_pos.get("data", {}).get("open_count", 0) if isinstance(ares_pos.get("data"), dict) else "N/A"
             except Exception as e:
                 results["details"]["ares_api_error"] = str(e)[:100]
 
-            # Test ATHENA API
+            # Test SOLOMON API
             try:
-                athena_pos = loop.run_until_complete(get_athena_positions())
-                results["details"]["athena_api_positions"] = athena_pos.get("count", 0)
+                solomon_pos = loop.run_until_complete(get_solomon_positions())
+                results["details"]["solomon_api_positions"] = solomon_pos.get("count", 0)
             except Exception as e:
-                results["details"]["athena_api_error"] = str(e)[:100]
+                results["details"]["solomon_api_error"] = str(e)[:100]
 
             # Test PEGASUS API
             try:
@@ -584,59 +584,59 @@ class TradeSyncValidator:
         all_passed = 0
         all_failed = 0
 
-        # ARES Tests
-        print_header("ARES Iron Condor Sync")
+        # FORTRESS Tests
+        print_header("FORTRESS Iron Condor Sync")
 
-        result = self.validate_ares_open_positions()
+        result = self.validate_fortress_open_positions()
         print_result("Open positions sync", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["ares_open"] = result
+        all_results["fortress_open"] = result
 
-        result = self.validate_ares_closed_positions()
+        result = self.validate_fortress_closed_positions()
         print_result("Closed positions P&L", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["ares_closed"] = result
+        all_results["fortress_closed"] = result
 
-        result = self.validate_ares_equity_curve()
+        result = self.validate_fortress_equity_curve()
         print_result("Equity curve data", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["ares_equity"] = result
+        all_results["fortress_equity"] = result
 
-        # ATHENA Tests
-        print_header("ATHENA Directional Spreads Sync")
+        # SOLOMON Tests
+        print_header("SOLOMON Directional Spreads Sync")
 
-        result = self.validate_athena_open_positions()
+        result = self.validate_solomon_open_positions()
         print_result("Open positions sync", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["athena_open"] = result
+        all_results["solomon_open"] = result
 
-        result = self.validate_athena_closed_positions()
+        result = self.validate_solomon_closed_positions()
         print_result("Closed positions P&L", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["athena_closed"] = result
+        all_results["solomon_closed"] = result
 
-        result = self.validate_athena_equity_curve()
+        result = self.validate_solomon_equity_curve()
         print_result("Equity curve data", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["athena_equity"] = result
+        all_results["solomon_equity"] = result
 
         # PEGASUS Tests
         print_header("PEGASUS SPX Iron Condor Sync")
@@ -723,7 +723,7 @@ def cleanup_stale_positions(dry_run: bool = True):
 
     today = datetime.now(CENTRAL_TZ).date()
 
-    # ATHENA (apache_positions)
+    # SOLOMON (apache_positions)
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -733,11 +733,11 @@ def cleanup_stale_positions(dry_run: bool = True):
             FROM apache_positions
             WHERE status = 'open' AND expiration < %s
         """, (today,))
-        stale_athena = cursor.fetchall()
+        stale_solomon = cursor.fetchall()
 
-        if stale_athena:
-            print(f"\n  ATHENA: Found {len(stale_athena)} stale position(s)")
-            for pos in stale_athena:
+        if stale_solomon:
+            print(f"\n  SOLOMON: Found {len(stale_solomon)} stale position(s)")
+            for pos in stale_solomon:
                 pos_id, spread_type, exp, entry_price, contracts = pos
                 # Expired positions are max loss (entry price * contracts * 100)
                 # For options that expired worthless, P&L = -entry_price * contracts * 100
@@ -756,29 +756,29 @@ def cleanup_stale_positions(dry_run: bool = True):
 
             if not dry_run:
                 conn.commit()
-                print(f"      ✅ Updated {len(stale_athena)} ATHENA position(s)")
+                print(f"      ✅ Updated {len(stale_solomon)} SOLOMON position(s)")
         else:
-            print("\n  ATHENA: No stale positions")
+            print("\n  SOLOMON: No stale positions")
 
         conn.close()
     except Exception as e:
-        print(f"  ❌ ATHENA cleanup failed: {e}")
+        print(f"  ❌ SOLOMON cleanup failed: {e}")
 
-    # ARES (ares_positions)
-    # Note: ARES stores expiration as TEXT, need to cast for comparison
+    # FORTRESS (fortress_positions)
+    # Note: FORTRESS stores expiration as TEXT, need to cast for comparison
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
             SELECT position_id, expiration, total_credit, contracts
-            FROM ares_positions
+            FROM fortress_positions
             WHERE status = 'open' AND expiration::date < %s
         """, (today,))
         stale_ares = cursor.fetchall()
 
         if stale_ares:
-            print(f"\n  ARES: Found {len(stale_ares)} stale position(s)")
+            print(f"\n  FORTRESS: Found {len(stale_ares)} stale position(s)")
             for pos in stale_ares:
                 pos_id, exp, total_credit, contracts = pos
                 # Iron Condor that expired worthless = max profit (credit received)
@@ -787,7 +787,7 @@ def cleanup_stale_positions(dry_run: bool = True):
 
                 if not dry_run:
                     cursor.execute("""
-                        UPDATE ares_positions
+                        UPDATE fortress_positions
                         SET status = 'expired',
                             close_time = %s,
                             close_reason = 'auto_expired',
@@ -797,13 +797,13 @@ def cleanup_stale_positions(dry_run: bool = True):
 
             if not dry_run:
                 conn.commit()
-                print(f"      ✅ Updated {len(stale_ares)} ARES position(s)")
+                print(f"      ✅ Updated {len(stale_ares)} FORTRESS position(s)")
         else:
-            print("\n  ARES: No stale positions")
+            print("\n  FORTRESS: No stale positions")
 
         conn.close()
     except Exception as e:
-        print(f"  ❌ ARES cleanup failed: {e}")
+        print(f"  ❌ FORTRESS cleanup failed: {e}")
 
     # PEGASUS (pegasus_positions)
     try:
@@ -857,7 +857,7 @@ def reset_bot_account(bot_name: str, confirm: bool = False):
     Reset a bot's trading account - delete all positions and start fresh.
 
     Args:
-        bot_name: ARES, ATHENA, or PEGASUS
+        bot_name: FORTRESS, SOLOMON, or PEGASUS
         confirm: Must be True to actually delete (safety check)
     """
     from database_adapter import get_connection
@@ -865,13 +865,13 @@ def reset_bot_account(bot_name: str, confirm: bool = False):
     bot_name = bot_name.upper()
 
     table_map = {
-        'ATHENA': 'apache_positions',
-        'ARES': 'ares_positions',
+        'SOLOMON': 'apache_positions',
+        'FORTRESS': 'fortress_positions',
         'PEGASUS': 'pegasus_positions'
     }
 
     if bot_name not in table_map:
-        print(f"❌ Unknown bot: {bot_name}. Use ARES, ATHENA, or PEGASUS")
+        print(f"❌ Unknown bot: {bot_name}. Use FORTRESS, SOLOMON, or PEGASUS")
         return
 
     table = table_map[bot_name]
@@ -917,13 +917,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trade Sync Validation and Cleanup")
     parser.add_argument("--fix", action="store_true", help="Fix stale positions (mark expired)")
     parser.add_argument("--cleanup-only", action="store_true", help="Only run cleanup, skip validation")
-    parser.add_argument("--reset", type=str, help="Reset bot account (ARES, ATHENA, PEGASUS, or ALL)")
+    parser.add_argument("--reset", type=str, help="Reset bot account (FORTRESS, SOLOMON, PEGASUS, or ALL)")
     parser.add_argument("--confirm", action="store_true", help="Confirm destructive operations")
     args = parser.parse_args()
 
     if args.reset:
         if args.reset.upper() == 'ALL':
-            for bot in ['ATHENA', 'ARES', 'PEGASUS']:
+            for bot in ['SOLOMON', 'FORTRESS', 'PEGASUS']:
                 reset_bot_account(bot, confirm=args.confirm)
         else:
             reset_bot_account(args.reset, confirm=args.confirm)

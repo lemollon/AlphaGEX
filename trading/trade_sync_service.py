@@ -27,23 +27,23 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # Bot configurations: (positions_table, bot_name, has_iron_condor)
 BOT_CONFIGS = {
-    'ares': {
-        'table': 'ares_positions',
-        'name': 'ARES',
+    'fortress': {
+        'table': 'fortress_positions',
+        'name': 'FORTRESS',
         'type': 'iron_condor',
         'credit_field': 'total_credit',
         'has_legs': True
     },
-    'athena': {
-        'table': 'athena_positions',
-        'name': 'ATHENA',
+    'solomon': {
+        'table': 'solomon_positions',
+        'name': 'SOLOMON',
         'type': 'directional',
         'credit_field': 'entry_price',
         'has_legs': False
     },
-    'titan': {
-        'table': 'titan_positions',
-        'name': 'TITAN',
+    'samson': {
+        'table': 'samson_positions',
+        'name': 'SAMSON',
         'type': 'iron_condor',
         'credit_field': 'entry_credit',
         'has_legs': True
@@ -523,7 +523,7 @@ class TradeSyncService:
         Uses SELECT FOR UPDATE to lock the row during the close operation.
 
         Args:
-            bot_key: Bot identifier (ares, athena, titan, pegasus, icarus)
+            bot_key: Bot identifier (fortress, solomon, samson, pegasus, icarus)
             position_id: Position to close
             close_price: Exit price
             realized_pnl: Calculated P&L

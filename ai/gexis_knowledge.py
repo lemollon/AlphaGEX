@@ -17,15 +17,15 @@ This module contains ALL knowledge GEXIS needs about:
 DATABASE_TABLES = """
 === CORE TRADING TABLES ===
 
-ares_positions:
-  - Primary table for ARES Iron Condor positions
+fortress_positions:
+  - Primary table for FORTRESS Iron Condor positions
   - Columns: position_id, open_date, close_date, expiration, status (open/closed/expired)
   - Columns: put_spread, call_spread, contracts, total_credit, realized_pnl
   - Columns: underlying_at_entry, vix_at_entry, entry_reason
-  - Used by: ARES bot, ARES dashboard, P&L calculations
+  - Used by: FORTRESS bot, FORTRESS dashboard, P&L calculations
 
-ares_daily_performance:
-  - Daily P&L tracking for ARES
+fortress_daily_performance:
+  - Daily P&L tracking for FORTRESS
   - Columns: trade_date, daily_pnl, cumulative_pnl, win_count, loss_count
   - Used for: Equity curve, performance metrics
 
@@ -214,7 +214,7 @@ DEPLOYMENT INFRASTRUCTURE:
      * Auto-deploy from main branch
 
    - alphagex-trader (Background Worker)
-     * Runs ARES bot scheduler
+     * Runs FORTRESS bot scheduler
      * Checks trading windows
      * Executes trades via Tradier
 
@@ -245,12 +245,12 @@ Signal Generation:
 ```
 gex_snapshots → KRONOS (GEX Calculator) → regime_signals
 regime_signals → ORACLE (AI Advisor) → oracle_predictions
-oracle_predictions → Bots (ARES/ATHENA) → decision_logs
+oracle_predictions → Bots (FORTRESS/SOLOMON) → decision_logs
 ```
 
 Trade Execution:
 ```
-Bot Decision → Tradier API → Order Placed → ares_positions updated
+Bot Decision → Tradier API → Order Placed → fortress_positions updated
 Position Monitor → Check Greeks → Alert if needed
 Expiration/Exit → realized_pnl calculated → performance updated
 ```
@@ -259,8 +259,8 @@ Expiration/Exit → realized_pnl calculated → performance updated
 
 Backend Routes:
 - /api/ai/* - GEXIS chat, analysis, learning
-- /api/ares/* - ARES bot control and status
-- /api/athena/* - ATHENA bot control
+- /api/fortress/* - FORTRESS bot control and status
+- /api/solomon/* - SOLOMON bot control
 - /api/gex/* - GEX data endpoints
 - /api/vix/* - VIX data endpoints
 - /api/autonomous/* - Bot orchestration
@@ -269,7 +269,7 @@ Backend Routes:
 Key Files:
 - backend/main.py - FastAPI app, CORS, startup
 - backend/api/routes/ai_routes.py - GEXIS endpoints (1,700+ lines)
-- backend/api/routes/ares_routes.py - ARES endpoints
+- backend/api/routes/fortress_routes.py - FORTRESS endpoints
 - backend/api/dependencies.py - Shared instances
 
 === FRONTEND ARCHITECTURE ===
@@ -295,8 +295,8 @@ AI & TESTING:
 - /proverbs - PROVERBS Feedback Loop and learning system
 
 LIVE TRADING:
-- /ares - ARES Iron Condor dashboard (SPX live/SPY sandbox)
-- /athena - ATHENA Directional Spreads dashboard
+- /fortress - FORTRESS Iron Condor dashboard (SPX live/SPY sandbox)
+- /solomon - SOLOMON Directional Spreads dashboard
 
 VOLATILITY:
 - /vix - VIX Dashboard with term structure
@@ -333,7 +333,7 @@ Components:
 # =============================================================================
 
 TRADING_STRATEGIES = """
-=== ARES STRATEGY (0DTE Iron Condor) ===
+=== FORTRESS STRATEGY (0DTE Iron Condor) ===
 
 Overview:
 - Trades 0DTE (same-day expiry) Iron Condors on SPX
@@ -360,11 +360,11 @@ Position Sizing:
 - Round down to nearest contract
 
 P&L Tracking:
-- Daily P&L recorded in ares_daily_performance
-- Position details in ares_positions
+- Daily P&L recorded in fortress_daily_performance
+- Position details in fortress_positions
 - All decisions logged in decision_logs
 
-=== ATHENA STRATEGY (Directional Spreads) ===
+=== SOLOMON STRATEGY (Directional Spreads) ===
 
 Overview:
 - GEX-based directional credit spreads
@@ -523,9 +523,9 @@ ANALYSIS COMMANDS:
 /backtest      - Recent backtest performance
 
 BOT CONTROL COMMANDS (Requires Confirmation):
-/start ares    - Start ARES bot
-/stop ares     - Stop ARES bot
-/cycle athena  - Run one ATHENA trading cycle
+/start fortress    - Start FORTRESS bot
+/stop fortress     - Stop FORTRESS bot
+/cycle solomon  - Run one SOLOMON trading cycle
 /calibrate     - Recalibrate probability weights
 
 LEARNING COMMANDS:
@@ -538,7 +538,7 @@ NATURAL LANGUAGE QUERIES:
 - "Should I trade today?"
 - "Explain my last trade"
 - "What economic events are coming up?"
-- "How is ARES performing?"
+- "How is FORTRESS performing?"
 - "What's my win rate this month?"
 """
 

@@ -458,7 +458,7 @@ Show what each bot is doing based on current gamma:
 │ 🤖 BOT STATUS                                                   │
 ├─────────────────────────────────────────────────────────────────┤
 │ ARES: IC open 590/598 - ✅ SAFE (magnets at 594-596)           │
-│ ATHENA: No position - Watching for breakout signal             │
+│ SOLOMON: No position - Watching for breakout signal             │
 │ PHOENIX: Long 595C - ⚠️ Near magnet, monitor closely           │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -629,7 +629,7 @@ Store all predictions and outcomes to continuously improve bot trading performan
          ▼
 ┌─────────────────┐
 │  Improved Bots  │
-│ ARES, ATHENA,   │
+│ ARES, SOLOMON,   │
 │ PHOENIX, etc.   │
 └─────────────────┘
 ```
@@ -661,7 +661,7 @@ Store all predictions and outcomes to continuously improve bot trading performan
 | Bot | How ARGUS Feeds It |
 |-----|-------------------|
 | **ARES** | "Is my IC short strike safe from magnets?" |
-| **ATHENA** | "Which direction has highest probability?" |
+| **SOLOMON** | "Which direction has highest probability?" |
 | **PHOENIX** | "Where should I target for 0DTE entry?" |
 | **PROMETHEUS** | "What's the ML confidence for this structure?" |
 
@@ -695,7 +695,7 @@ Store all predictions and outcomes to continuously improve bot trading performan
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │  ⚠️ DANGER ZONES: 596 BUILDING (+28%)  |  📊 PATTERN: Matches Dec 15 (pinned)   │
 ├─────────────────────────────────────────────────────────────────────────────────┤
-│  🤖 BOTS: ARES IC 590/598 ✅ | ATHENA: Watching | PHOENIX: Long 595C ⚠️          │
+│  🤖 BOTS: ARES IC 590/598 ✅ | SOLOMON: Watching | PHOENIX: Long 595C ⚠️          │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │  📊 Yesterday Comparison: [Toggle] Magnet was at 592 (-$2 from today)           │
 ├─────────────────────────────────────────────────────────────────────────────────┤

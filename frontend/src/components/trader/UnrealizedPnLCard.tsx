@@ -185,7 +185,7 @@ export default function UnrealizedPnLCard({
           <div className="mt-3 pt-3 border-t border-gray-800 flex items-center justify-center gap-2 text-sm text-gray-400">
             <Activity className="w-3 h-3" />
             <span>
-              {botName === 'TITAN' || botName === 'PEGASUS' ? 'SPX' : 'SPY'}: <span className="text-white font-medium">${data.underlying_price.toFixed(2)}</span>
+              {botName === 'SAMSON' || botName === 'PEGASUS' ? 'SPX' : 'SPY'}: <span className="text-white font-medium">${data.underlying_price.toFixed(2)}</span>
             </span>
           </div>
         )}

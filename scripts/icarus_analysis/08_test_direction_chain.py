@@ -55,8 +55,8 @@ def test_direction_chain():
     except Exception as e:
         print(f"   ❌ Error importing Oracle: {e}")
 
-    # Test 3: Check Oracle get_athena_advice
-    print("\n3. Testing Oracle.get_athena_advice()...")
+    # Test 3: Check Oracle get_solomon_advice
+    print("\n3. Testing Oracle.get_solomon_advice()...")
     try:
         from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
 
@@ -83,7 +83,7 @@ def test_direction_chain():
             win_rate_30d=0.55,
         )
 
-        prediction = oracle.get_athena_advice(
+        prediction = oracle.get_solomon_advice(
             context=context,
             use_gex_walls=True,
             use_claude_validation=False,
@@ -145,7 +145,7 @@ def test_direction_chain():
     print("""
   Expected Flow:
   1. ML (ORION) → get_combined_signal() → BULLISH/BEARISH
-  2. Oracle → get_athena_advice() → Uses ML direction
+  2. Oracle → get_solomon_advice() → Uses ML direction
   3. ICARUS → generate_signal() → Follows Oracle direction
   4. Trade → BULL_CALL (if BULLISH) or BEAR_PUT (if BEARISH)
 

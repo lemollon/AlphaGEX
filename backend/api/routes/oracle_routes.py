@@ -6,9 +6,9 @@ API endpoints for the Oracle ML Advisory System.
 Provides strategy recommendations, performance analysis, and training status.
 
 Oracle advises all trading bots:
-- ARES: Iron Condor advice (SPY 0DTE)
+- FORTRESS: Iron Condor advice (SPY 0DTE)
 - PEGASUS: Iron Condor advice (SPX weekly)
-- ATHENA: Directional spread advice
+- SOLOMON: Directional spread advice
 - ATLAS: Wheel strategy advice
 """
 
@@ -170,8 +170,8 @@ async def get_strategy_recommendation(request: StrategyRecommendationRequest):
     Get IC vs Directional strategy recommendation based on market conditions.
 
     Decision Matrix:
-    - HIGH VIX + NEGATIVE GEX = Favor DIRECTIONAL (ATHENA)
-    - NORMAL VIX + POSITIVE GEX = Favor IRON_CONDOR (ARES/PEGASUS)
+    - HIGH VIX + NEGATIVE GEX = Favor DIRECTIONAL (SOLOMON)
+    - NORMAL VIX + POSITIVE GEX = Favor IRON_CONDOR (FORTRESS/PEGASUS)
     - EXTREME VIX = SKIP or reduced exposure
     """
     if not ORACLE_AVAILABLE:
@@ -456,8 +456,8 @@ async def get_vix_regimes():
             }
         ],
         "strategy_matrix": {
-            "NORMAL VIX + POSITIVE GEX": "IRON_CONDOR (ARES/PEGASUS)",
-            "HIGH VIX + NEGATIVE GEX": "DIRECTIONAL (ATHENA)",
+            "NORMAL VIX + POSITIVE GEX": "IRON_CONDOR (FORTRESS/PEGASUS)",
+            "HIGH VIX + NEGATIVE GEX": "DIRECTIONAL (SOLOMON)",
             "EXTREME VIX + NO TREND": "SKIP",
             "LOW VIX + NEGATIVE GEX": "DIRECTIONAL (cheap options)"
         }

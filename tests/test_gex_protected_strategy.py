@@ -123,7 +123,7 @@ class TestGEXProtectedStrategy:
         from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
 
         pred = OraclePrediction(
-            bot_name=BotName.ARES,
+            bot_name=BotName.FORTRESS,
             advice=TradingAdvice.TRADE_FULL,
             win_probability=0.72,
             confidence=0.85,
@@ -134,7 +134,7 @@ class TestGEXProtectedStrategy:
             suggested_call_strike=5050.0
         )
 
-        assert pred.bot_name == BotName.ARES
+        assert pred.bot_name == BotName.FORTRESS
         assert pred.advice == TradingAdvice.TRADE_FULL
         assert pred.use_gex_walls is True
 
@@ -365,7 +365,7 @@ class TestOracleClaudeIntegration:
         )
 
         prediction = OraclePrediction(
-            bot_name=BotName.ARES,
+            bot_name=BotName.FORTRESS,
             advice=TradingAdvice.TRADE_FULL,
             win_probability=0.72,
             confidence=85.0,
@@ -410,7 +410,7 @@ class TestOracleClaudeIntegration:
         assert 'not available' in result['error'].lower()
 
     def test_oracle_ares_advice_with_claude_validation_disabled(self):
-        """Test ARES advice works with Claude validation explicitly disabled"""
+        """Test FORTRESS advice works with Claude validation explicitly disabled"""
         from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
 
         oracle = OracleAdvisor(enable_claude=False)
@@ -473,7 +473,7 @@ class TestOracleConvenienceFunctions:
         )
 
         prediction = OraclePrediction(
-            bot_name=BotName.ARES,
+            bot_name=BotName.FORTRESS,
             advice=TradingAdvice.TRADE_REDUCED,
             win_probability=0.60,
             confidence=70.0,

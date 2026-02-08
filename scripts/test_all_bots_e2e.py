@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-E2E Production Test Script for ARES, ATHENA, PEGASUS
+E2E Production Test Script for FORTRESS, SOLOMON, PEGASUS
 =====================================================
 
 Run this in Render shell after deployment to verify all bots are wired up correctly.
@@ -59,19 +59,19 @@ def test_imports():
     except Exception as e:
         log_test("unified_config", False, str(e))
 
-    # ARES
+    # FORTRESS
     try:
-        from trading.ares_v2 import ARESTrader
-        log_test("ARES trader", True)
+        from trading.fortress_v2 import FortressTrader
+        log_test("FORTRESS trader", True)
     except Exception as e:
-        log_test("ARES trader", False, str(e))
+        log_test("FORTRESS trader", False, str(e))
 
-    # ATHENA
+    # SOLOMON
     try:
-        from trading.athena_v2 import ATHENATrader
-        log_test("ATHENA trader", True)
+        from trading.solomon_v2 import SolomonTrader
+        log_test("SOLOMON trader", True)
     except Exception as e:
-        log_test("ATHENA trader", False, str(e))
+        log_test("SOLOMON trader", False, str(e))
 
     # PEGASUS
     try:
@@ -114,34 +114,34 @@ def test_database():
         cursor.execute("SELECT 1")
         log_test("Database connection", True)
 
-        # Check ARES tables
+        # Check FORTRESS tables
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'ares_positions'
+                WHERE table_name = 'fortress_positions'
             )
         """)
         exists = cursor.fetchone()[0]
-        log_test("ares_positions table", exists, "Table missing" if not exists else "")
+        log_test("fortress_positions table", exists, "Table missing" if not exists else "")
 
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'ares_logs'
+                WHERE table_name = 'fortress_logs'
             )
         """)
         exists = cursor.fetchone()[0]
-        log_test("ares_logs table", exists, "Table missing" if not exists else "")
+        log_test("fortress_logs table", exists, "Table missing" if not exists else "")
 
-        # Check ATHENA tables
+        # Check SOLOMON tables
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'athena_positions'
+                WHERE table_name = 'solomon_positions'
             )
         """)
         exists = cursor.fetchone()[0]
-        log_test("athena_positions table", exists, "Table missing" if not exists else "")
+        log_test("solomon_positions table", exists, "Table missing" if not exists else "")
 
         # Check PEGASUS tables
         cursor.execute("""
@@ -177,71 +177,71 @@ def test_api_endpoints():
 
     import asyncio
 
-    # ARES endpoints
+    # FORTRESS endpoints
     try:
-        from backend.api.routes.ares_routes import get_ares_status
-        result = asyncio.get_event_loop().run_until_complete(get_ares_status())
+        from backend.api.routes.fortress_routes import get_fortress_status
+        result = asyncio.get_event_loop().run_until_complete(get_fortress_status())
         has_data = result.get('success') or 'data' in result
-        log_test("ARES /status", has_data, str(result)[:100] if not has_data else "")
+        log_test("FORTRESS /status", has_data, str(result)[:100] if not has_data else "")
     except Exception as e:
-        log_test("ARES /status", False, str(e)[:100])
+        log_test("FORTRESS /status", False, str(e)[:100])
 
     try:
-        from backend.api.routes.ares_routes import get_ares_positions
-        result = asyncio.get_event_loop().run_until_complete(get_ares_positions())
+        from backend.api.routes.fortress_routes import get_fortress_positions
+        result = asyncio.get_event_loop().run_until_complete(get_fortress_positions())
         has_data = result.get('success') or 'data' in result
-        log_test("ARES /positions", has_data)
+        log_test("FORTRESS /positions", has_data)
     except Exception as e:
-        log_test("ARES /positions", False, str(e)[:100])
+        log_test("FORTRESS /positions", False, str(e)[:100])
 
     try:
-        from backend.api.routes.ares_routes import get_ares_logs
-        result = asyncio.get_event_loop().run_until_complete(get_ares_logs())
+        from backend.api.routes.fortress_routes import get_fortress_logs
+        result = asyncio.get_event_loop().run_until_complete(get_fortress_logs())
         has_data = result.get('success') or 'data' in result
-        log_test("ARES /logs", has_data)
+        log_test("FORTRESS /logs", has_data)
     except Exception as e:
-        log_test("ARES /logs", False, str(e)[:100])
+        log_test("FORTRESS /logs", False, str(e)[:100])
 
     try:
-        from backend.api.routes.ares_routes import get_ares_live_pnl
+        from backend.api.routes.fortress_routes import get_ares_live_pnl
         result = asyncio.get_event_loop().run_until_complete(get_ares_live_pnl())
         has_data = result.get('success') or 'data' in result
-        log_test("ARES /live-pnl", has_data)
+        log_test("FORTRESS /live-pnl", has_data)
     except Exception as e:
-        log_test("ARES /live-pnl", False, str(e)[:100])
+        log_test("FORTRESS /live-pnl", False, str(e)[:100])
 
-    # ATHENA endpoints
+    # SOLOMON endpoints
     try:
-        from backend.api.routes.athena_routes import get_athena_status
-        result = asyncio.get_event_loop().run_until_complete(get_athena_status())
+        from backend.api.routes.solomon_routes import get_solomon_status
+        result = asyncio.get_event_loop().run_until_complete(get_solomon_status())
         has_data = result.get('success') or 'data' in result
-        log_test("ATHENA /status", has_data)
+        log_test("SOLOMON /status", has_data)
     except Exception as e:
-        log_test("ATHENA /status", False, str(e)[:100])
-
-    try:
-        from backend.api.routes.athena_routes import get_athena_positions
-        result = asyncio.get_event_loop().run_until_complete(get_athena_positions())
-        has_data = result.get('success') or 'data' in result
-        log_test("ATHENA /positions", has_data)
-    except Exception as e:
-        log_test("ATHENA /positions", False, str(e)[:100])
+        log_test("SOLOMON /status", False, str(e)[:100])
 
     try:
-        from backend.api.routes.athena_routes import get_athena_logs
-        result = asyncio.get_event_loop().run_until_complete(get_athena_logs())
+        from backend.api.routes.solomon_routes import get_solomon_positions
+        result = asyncio.get_event_loop().run_until_complete(get_solomon_positions())
         has_data = result.get('success') or 'data' in result
-        log_test("ATHENA /logs", has_data)
+        log_test("SOLOMON /positions", has_data)
     except Exception as e:
-        log_test("ATHENA /logs", False, str(e)[:100])
+        log_test("SOLOMON /positions", False, str(e)[:100])
 
     try:
-        from backend.api.routes.athena_routes import get_athena_live_pnl
-        result = asyncio.get_event_loop().run_until_complete(get_athena_live_pnl())
+        from backend.api.routes.solomon_routes import get_solomon_logs
+        result = asyncio.get_event_loop().run_until_complete(get_solomon_logs())
         has_data = result.get('success') or 'data' in result
-        log_test("ATHENA /live-pnl", has_data)
+        log_test("SOLOMON /logs", has_data)
     except Exception as e:
-        log_test("ATHENA /live-pnl", False, str(e)[:100])
+        log_test("SOLOMON /logs", False, str(e)[:100])
+
+    try:
+        from backend.api.routes.solomon_routes import get_solomon_live_pnl
+        result = asyncio.get_event_loop().run_until_complete(get_solomon_live_pnl())
+        has_data = result.get('success') or 'data' in result
+        log_test("SOLOMON /live-pnl", has_data)
+    except Exception as e:
+        log_test("SOLOMON /live-pnl", False, str(e)[:100])
 
     # PEGASUS endpoints
     try:
@@ -286,9 +286,9 @@ def test_api_endpoints():
 
 
 def test_tradier_connection():
-    """Test Tradier API connection for ARES"""
+    """Test Tradier API connection for FORTRESS"""
     print("\n" + "=" * 60)
-    print("  TEST 4: Tradier Connection (ARES)")
+    print("  TEST 4: Tradier Connection (FORTRESS)")
     print("=" * 60)
 
     try:
@@ -363,8 +363,8 @@ def test_timezone():
         log_test("Central timezone available", True, now_ct.strftime('%Y-%m-%d %H:%M:%S %Z'))
 
         # Check heartbeat timezone handling
-        from backend.api.routes.ares_routes import _get_heartbeat
-        heartbeat = _get_heartbeat('ARES')
+        from backend.api.routes.fortress_routes import _get_heartbeat
+        heartbeat = _get_heartbeat('FORTRESS')
 
         if heartbeat.get('last_scan'):
             has_ct = 'CT' in heartbeat.get('last_scan', '')

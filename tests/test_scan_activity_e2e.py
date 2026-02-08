@@ -34,7 +34,7 @@ class TestScanExplainer:
         )
 
         context = ScanContext(
-            bot_name="ATHENA",
+            bot_name="SOLOMON",
             scan_number=5,
             decision_type=DecisionType.NO_TRADE,
             market=MarketContext(
@@ -71,7 +71,7 @@ class TestScanExplainer:
         assert "market_insight" in result
 
         # Verify summary contains key info
-        assert "NO_TRADE" in result["summary"] or "ATHENA" in result["summary"]
+        assert "NO_TRADE" in result["summary"] or "SOLOMON" in result["summary"]
         assert "rr_ratio" in result["summary"].lower() or "r:r" in result["summary"].lower()
 
         # Verify what_would_trigger has price targets
@@ -90,7 +90,7 @@ class TestScanExplainer:
         )
 
         context = ScanContext(
-            bot_name="ARES",
+            bot_name="FORTRESS",
             scan_number=3,
             decision_type=DecisionType.NO_TRADE,
             market=MarketContext(
@@ -122,7 +122,7 @@ class TestScanExplainer:
         )
 
         context = ScanContext(
-            bot_name="ATHENA",
+            bot_name="SOLOMON",
             scan_number=2,
             decision_type=DecisionType.TRADED,
             market=MarketContext(
@@ -199,7 +199,7 @@ class TestScanActivityLogger:
 
         # Call the function with all parameters
         result = log_scan_activity(
-            bot_name="ATHENA",
+            bot_name="SOLOMON",
             outcome=ScanOutcome.NO_TRADE,
             decision_summary="R:R 0.92:1 below minimum 1.5:1",
             action_taken="No trade - risk/reward unfavorable",
@@ -283,9 +283,9 @@ class TestScanActivityLogger:
             raise AssertionError(f"kwargs bug not fixed: {e}")
 
     @patch('database_adapter.get_connection')
-    def test_log_athena_scan_with_all_kwargs(self, mock_get_conn):
-        """Test that log_athena_scan handles action_taken and error_type kwargs correctly"""
-        from trading.scan_activity_logger import log_athena_scan, ScanOutcome, CheckResult
+    def test_log_solomon_scan_with_all_kwargs(self, mock_get_conn):
+        """Test that log_solomon_scan handles action_taken and error_type kwargs correctly"""
+        from trading.scan_activity_logger import log_solomon_scan, ScanOutcome, CheckResult
 
         # Mock database connection
         mock_cursor = Mock()
@@ -295,15 +295,15 @@ class TestScanActivityLogger:
 
         # This used to crash with: NameError: name 'action_taken' is not defined
         try:
-            result = log_athena_scan(
+            result = log_solomon_scan(
                 outcome=ScanOutcome.NO_TRADE,
-                decision_summary="Test ATHENA summary",
-                full_reasoning="ATHENA full reasoning",
-                action_taken="ATHENA action taken",
-                error_type="ATHENA_ERROR",
+                decision_summary="Test SOLOMON summary",
+                full_reasoning="SOLOMON full reasoning",
+                action_taken="SOLOMON action taken",
+                error_type="SOLOMON_ERROR",
                 generate_ai_explanation=False
             )
-            print(f"\n[PASS] log_athena_scan accepts action_taken/error_type kwargs without error")
+            print(f"\n[PASS] log_solomon_scan accepts action_taken/error_type kwargs without error")
         except NameError as e:
             raise AssertionError(f"Undefined variable bug not fixed: {e}")
         except TypeError as e:
@@ -332,7 +332,7 @@ class TestAPIRoutes:
         # Create a mock scan record
         mock_scan = {
             'id': 1,
-            'scan_id': 'ATHENA-20241223-101500-0001',
+            'scan_id': 'SOLOMON-20241223-101500-0001',
             'scan_number': 5,
             'timestamp': '2024-12-23T10:15:00',
             'time_ct': '10:15:00 AM',
@@ -374,7 +374,7 @@ class TestIntegration:
         """Test the complete flow from decision to log"""
         from trading.scan_activity_logger import CheckResult, ScanOutcome
 
-        # Simulate ATHENA scan with R:R failure
+        # Simulate SOLOMON scan with R:R failure
         checks = [
             CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
             CheckResult("gex_data", True, "Spot $593.45", "Required", "GEX regime: POSITIVE"),
@@ -409,8 +409,8 @@ class TestIntegration:
         print(f"  GEX: Put ${gex_data['put_wall']} | Call ${gex_data['call_wall']}")
 
     def test_rr_ratio_calculation(self):
-        """Test R:R ratio calculation matches ATHENA logic"""
-        # ATHENA R:R calculation for BULLISH:
+        """Test R:R ratio calculation matches SOLOMON logic"""
+        # SOLOMON R:R calculation for BULLISH:
         # R:R = (call_wall - spot) / (spot - put_wall)
 
         spot = 593.45

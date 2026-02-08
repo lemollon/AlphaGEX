@@ -3,7 +3,7 @@ Comprehensive Logs API Routes
 
 Provides unified access to ALL logging tables in AlphaGEX:
 - Trading Decisions (trading_decisions)
-- ML Logs (ml_decision_logs, ml_predictions, ares_ml_outcomes, spx_wheel_ml_outcomes)
+- ML Logs (ml_decision_logs, ml_predictions, fortress_ml_outcomes, spx_wheel_ml_outcomes)
 - Oracle Predictions (oracle_predictions)
 - Psychology Analysis (psychology_analysis, pattern_learning)
 - System Logs (autonomous_trader_logs, spx_debug_logs, data_collection_log)
@@ -51,7 +51,7 @@ async def get_all_logs_summary(days: int = 7):
             ('ml_decision_logs', 'ML Decision Logs', 'timestamp'),
             ('ml_predictions', 'ML Predictions', 'timestamp'),
             ('oracle_predictions', 'Oracle Predictions', 'created_at'),
-            ('ares_ml_outcomes', 'ARES ML Outcomes', 'trade_date'),
+            ('fortress_ml_outcomes', 'FORTRESS ML Outcomes', 'trade_date'),
             ('spx_wheel_ml_outcomes', 'SPX Wheel ML', 'trade_date'),
             ('psychology_analysis', 'Psychology Analysis', 'timestamp'),
             ('pattern_learning', 'Pattern Learning', 'last_seen'),
@@ -673,15 +673,15 @@ async def get_gex_changes(
 
 
 # ============================================================================
-# ARES ML OUTCOMES
+# FORTRESS ML OUTCOMES
 # ============================================================================
 
-@router.get("/ares-ml")
-async def get_ares_ml_outcomes(
+@router.get("/fortress-ml")
+async def get_fortress_ml_outcomes(
     limit: int = Query(50, le=500),
     days: int = 30
 ):
-    """Get ARES ML model outcomes for learning analysis."""
+    """Get FORTRESS ML model outcomes for learning analysis."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -689,7 +689,7 @@ async def get_ares_ml_outcomes(
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'ares_ml_outcomes'
+                WHERE table_name = 'fortress_ml_outcomes'
             )
         """)
         if not cursor.fetchone()[0]:
@@ -699,7 +699,7 @@ async def get_ares_ml_outcomes(
             SELECT id, trade_date, vix, net_gex, gex_regime, day_of_week,
                    predicted_advice, win_probability, confidence,
                    actual_outcome, is_win, net_pnl, created_at
-            FROM ares_ml_outcomes
+            FROM fortress_ml_outcomes
             WHERE trade_date >= NOW() - INTERVAL '%s days'
             ORDER BY trade_date DESC
             LIMIT %s
@@ -722,7 +722,7 @@ async def get_ares_ml_outcomes(
                 COUNT(*) as total,
                 SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins,
                 AVG(net_pnl) as avg_pnl
-            FROM ares_ml_outcomes
+            FROM fortress_ml_outcomes
             WHERE actual_outcome IS NOT NULL
         """)
         stats = cursor.fetchone()
@@ -746,7 +746,7 @@ async def get_ares_ml_outcomes(
     except Exception as e:
         cursor.close()
         conn.close()
-        logger.error(f"Error getting ARES ML outcomes: {e}")
+        logger.error(f"Error getting FORTRESS ML outcomes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

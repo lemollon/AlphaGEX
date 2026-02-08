@@ -3,11 +3,11 @@
 Bot Signals Extraction Script
 =============================
 
-Extract signal generation logs from ARES and PEGASUS to understand
+Extract signal generation logs from FORTRESS and PEGASUS to understand
 what was happening at decision time.
 
 Usage:
-    python scripts/extract_bot_signals.py [--date YYYY-MM-DD] [--bot ARES|PEGASUS|ALL]
+    python scripts/extract_bot_signals.py [--date YYYY-MM-DD] [--bot FORTRESS|PEGASUS|ALL]
 
 Example:
     python scripts/extract_bot_signals.py --date 2026-02-03 --bot ALL
@@ -35,8 +35,8 @@ def get_connection():
         sys.exit(1)
 
 
-def get_ares_signals(conn, target_date: str) -> list:
-    """Get ARES signals for a date"""
+def get_fortress_signals(conn, target_date: str) -> list:
+    """Get FORTRESS signals for a date"""
     c = conn.cursor()
     c.execute("""
         SELECT
@@ -57,7 +57,7 @@ def get_ares_signals(conn, target_date: str) -> list:
             was_executed,
             skip_reason,
             reasoning
-        FROM ares_signals
+        FROM fortress_signals
         WHERE DATE(signal_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         ORDER BY signal_time
     """, (target_date,))
@@ -245,7 +245,7 @@ def print_signals(bot_name: str, signals: list, analyses: list):
 def main():
     parser = argparse.ArgumentParser(description='Extract bot signals')
     parser.add_argument('--date', type=str, help='Date to analyze (YYYY-MM-DD)')
-    parser.add_argument('--bot', type=str, default='ALL', choices=['ARES', 'PEGASUS', 'ALL'])
+    parser.add_argument('--bot', type=str, default='ALL', choices=['FORTRESS', 'PEGASUS', 'ALL'])
     parser.add_argument('--json', action='store_true', help='Output as JSON')
     args = parser.parse_args()
 
@@ -264,14 +264,14 @@ def main():
     output = {'date': target_date}
 
     try:
-        if args.bot in ['ARES', 'ALL']:
-            ares_signals = get_ares_signals(conn, target_date)
-            ares_analyses = [analyze_signal(s, 'ARES') for s in ares_signals]
-            output['ares_signals'] = ares_signals
+        if args.bot in ['FORTRESS', 'ALL']:
+            fortress_signals = get_fortress_signals(conn, target_date)
+            ares_analyses = [analyze_signal(s, 'FORTRESS') for s in fortress_signals]
+            output['fortress_signals'] = fortress_signals
             output['ares_analyses'] = ares_analyses
 
-            ares_scan = get_scan_activity(conn, target_date, 'ARES')
-            output['ares_scan_activity'] = ares_scan
+            ares_scan = get_scan_activity(conn, target_date, 'FORTRESS')
+            output['fortress_scan_activity'] = ares_scan
 
         if args.bot in ['PEGASUS', 'ALL']:
             pegasus_signals = get_pegasus_signals(conn, target_date)
@@ -285,8 +285,8 @@ def main():
         if args.json:
             print(json.dumps(output, indent=2, default=str))
         else:
-            if args.bot in ['ARES', 'ALL']:
-                print_signals('ARES', ares_signals, ares_analyses)
+            if args.bot in ['FORTRESS', 'ALL']:
+                print_signals('FORTRESS', fortress_signals, ares_analyses)
             if args.bot in ['PEGASUS', 'ALL']:
                 print_signals('PEGASUS', pegasus_signals, pegasus_analyses)
 

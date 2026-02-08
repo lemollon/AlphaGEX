@@ -4,32 +4,32 @@
 -- Date: 2024-12-31
 --
 -- This migration clears ALL bot data:
--- - ARES (Iron Condor)
--- - ATHENA (Directional Spreads)
+-- - FORTRESS (Iron Condor)
+-- - SOLOMON (Directional Spreads)
 -- - PEGASUS (SPX Iron Condor)
 --
 -- Run this after major updates to start fresh with 0 trades, 0 P&L
 
 -- =============================================================================
--- ARES RESET (Iron Condor Bot)
+-- FORTRESS RESET (Iron Condor Bot)
 -- =============================================================================
 
-DELETE FROM ares_positions;
-DELETE FROM ares_daily_performance;
+DELETE FROM fortress_positions;
+DELETE FROM fortress_daily_performance;
 
 DO $$
 BEGIN
-    DELETE FROM ares_scan_activity;
+    DELETE FROM fortress_scan_activity;
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
 DELETE FROM autonomous_config WHERE key LIKE 'ares_%';
 
 -- =============================================================================
--- ATHENA RESET (Directional Spreads Bot)
+-- SOLOMON RESET (Directional Spreads Bot)
 -- =============================================================================
 
-DELETE FROM athena_positions;
+DELETE FROM solomon_positions;
 
 -- Legacy apache_positions table
 DO $$
@@ -40,17 +40,17 @@ END $$;
 
 DO $$
 BEGIN
-    DELETE FROM athena_scan_activity;
+    DELETE FROM solomon_scan_activity;
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
 DO $$
 BEGIN
-    DELETE FROM bot_scan_activity WHERE bot_name = 'ATHENA';
+    DELETE FROM bot_scan_activity WHERE bot_name = 'SOLOMON';
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
-DELETE FROM autonomous_config WHERE key LIKE 'athena_%';
+DELETE FROM autonomous_config WHERE key LIKE 'solomon_%';
 
 -- =============================================================================
 -- PEGASUS RESET (SPX Iron Condor Bot)
@@ -85,14 +85,14 @@ DELETE FROM autonomous_config WHERE key LIKE 'pegasus_%';
 -- Clear unified bot heartbeats (they'll regenerate on next scan)
 DO $$
 BEGIN
-    DELETE FROM bot_heartbeats WHERE bot_name IN ('ARES', 'ATHENA', 'PEGASUS');
+    DELETE FROM bot_heartbeats WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'PEGASUS');
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
 -- Clear unified scan activity for all bots
 DO $$
 BEGIN
-    DELETE FROM bot_scan_activity WHERE bot_name IN ('ARES', 'ATHENA', 'PEGASUS');
+    DELETE FROM bot_scan_activity WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'PEGASUS');
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
@@ -102,5 +102,5 @@ END $$;
 
 DO $$
 BEGIN
-    RAISE NOTICE 'Migration 014: All bots reset to fresh state (ARES, ATHENA, PEGASUS)';
+    RAISE NOTICE 'Migration 014: All bots reset to fresh state (FORTRESS, SOLOMON, PEGASUS)';
 END $$;

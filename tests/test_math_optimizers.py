@@ -130,8 +130,8 @@ def sample_strikes():
 def sample_trades():
     """Sample pending trades"""
     return [
-        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'ARES'},
-        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'ATHENA'},
+        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'FORTRESS'},
+        {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'SOLOMON'},
         {'symbol': 'QQQ', 'direction': 'short', 'expected_pnl': 120, 'win_probability': 0.55, 'bot': 'PHOENIX'},
     ]
 
@@ -281,24 +281,24 @@ class TestThompsonSamplingAllocator:
 
     def test_initialization(self, thompson_allocator):
         """Test Thompson allocator initializes correctly"""
-        assert 'ARES' in thompson_allocator.bot_names
-        assert 'ATHENA' in thompson_allocator.bot_names
-        assert thompson_allocator.alpha['ARES'] == 1.0
-        assert thompson_allocator.beta['ARES'] == 1.0
+        assert 'FORTRESS' in thompson_allocator.bot_names
+        assert 'SOLOMON' in thompson_allocator.bot_names
+        assert thompson_allocator.alpha['FORTRESS'] == 1.0
+        assert thompson_allocator.beta['FORTRESS'] == 1.0
 
     def test_record_win(self, thompson_allocator):
         """Test recording a win updates alpha"""
-        initial_alpha = thompson_allocator.alpha['ARES']
-        thompson_allocator.record_outcome('ARES', win=True, pnl=100)
+        initial_alpha = thompson_allocator.alpha['FORTRESS']
+        thompson_allocator.record_outcome('FORTRESS', win=True, pnl=100)
 
-        assert thompson_allocator.alpha['ARES'] > initial_alpha
+        assert thompson_allocator.alpha['FORTRESS'] > initial_alpha
 
     def test_record_loss(self, thompson_allocator):
         """Test recording a loss updates beta"""
-        initial_beta = thompson_allocator.beta['ARES']
-        thompson_allocator.record_outcome('ARES', win=False, pnl=-50)
+        initial_beta = thompson_allocator.beta['FORTRESS']
+        thompson_allocator.record_outcome('FORTRESS', win=False, pnl=-50)
 
-        assert thompson_allocator.beta['ARES'] > initial_beta
+        assert thompson_allocator.beta['FORTRESS'] > initial_beta
 
     def test_allocation_sums_to_one(self, thompson_allocator):
         """Test allocations sum to 1"""
@@ -317,24 +317,24 @@ class TestThompsonSamplingAllocator:
 
     def test_winning_bot_gets_more(self, thompson_allocator):
         """Test that a winning bot gets higher allocation over time"""
-        # Record many wins for ARES
+        # Record many wins for FORTRESS
         for _ in range(20):
-            thompson_allocator.record_outcome('ARES', win=True, pnl=100)
+            thompson_allocator.record_outcome('FORTRESS', win=True, pnl=100)
 
         # Record many losses for PHOENIX
         for _ in range(20):
             thompson_allocator.record_outcome('PHOENIX', win=False, pnl=-50)
 
         win_rates = thompson_allocator.get_expected_win_rates()
-        assert win_rates['ARES'] > win_rates['PHOENIX']
+        assert win_rates['FORTRESS'] > win_rates['PHOENIX']
 
     def test_reset_bot(self, thompson_allocator):
         """Test resetting a bot's statistics"""
-        thompson_allocator.record_outcome('ARES', win=True, pnl=100)
-        thompson_allocator.reset_bot('ARES')
+        thompson_allocator.record_outcome('FORTRESS', win=True, pnl=100)
+        thompson_allocator.reset_bot('FORTRESS')
 
-        assert thompson_allocator.alpha['ARES'] == 1.0
-        assert thompson_allocator.beta['ARES'] == 1.0
+        assert thompson_allocator.alpha['FORTRESS'] == 1.0
+        assert thompson_allocator.beta['FORTRESS'] == 1.0
 
 
 # =============================================================================
@@ -497,8 +497,8 @@ class TestMDPTradeSequencer:
     def test_redundant_trades_skipped(self, trade_sequencer):
         """Test redundant trades are identified"""
         trades = [
-            {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'ARES'},
-            {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'ATHENA'},
+            {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'FORTRESS'},
+            {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'SOLOMON'},
         ]
         existing = [
             {'symbol': 'SPY', 'direction': 'long'}
@@ -603,7 +603,7 @@ class TestIntegration:
             'symbol': 'SPY',
             'direction': 'long',
             'target_delta': 0.30,
-            'bot': 'ARES',
+            'bot': 'FORTRESS',
             'dte': 1
         }
         trade_opt = orchestrator.optimize_trade(
@@ -620,7 +620,7 @@ class TestIntegration:
         position = {
             'entry_time': datetime.now(CENTRAL_TZ) - timedelta(hours=2),
             'expiry_time': datetime.now(CENTRAL_TZ) + timedelta(hours=6),
-            'bot': 'ARES'
+            'bot': 'FORTRESS'
         }
         exit_signal = orchestrator.check_exit(
             position=position,
@@ -634,17 +634,17 @@ class TestIntegration:
     def test_thompson_feedback_loop(self, orchestrator):
         """Test Thompson learning from trade outcomes"""
         # Record outcomes
-        orchestrator.thompson.record_outcome('ARES', True, 150)
-        orchestrator.thompson.record_outcome('ARES', True, 100)
-        orchestrator.thompson.record_outcome('ATHENA', False, -50)
-        orchestrator.thompson.record_outcome('ATHENA', False, -75)
+        orchestrator.thompson.record_outcome('FORTRESS', True, 150)
+        orchestrator.thompson.record_outcome('FORTRESS', True, 100)
+        orchestrator.thompson.record_outcome('SOLOMON', False, -50)
+        orchestrator.thompson.record_outcome('SOLOMON', False, -75)
 
         # Get allocation
         allocation = orchestrator.thompson.sample_allocation(100000)
 
-        # ARES should have higher expected win rate
+        # FORTRESS should have higher expected win rate
         win_rates = orchestrator.thompson.get_expected_win_rates()
-        assert win_rates['ARES'] > win_rates['ATHENA']
+        assert win_rates['FORTRESS'] > win_rates['SOLOMON']
 
 
 if __name__ == "__main__":

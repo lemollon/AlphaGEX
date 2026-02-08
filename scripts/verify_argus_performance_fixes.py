@@ -11,8 +11,8 @@ Usage:
 Checks:
 1. Database migration applied (performance indexes exist)
 2. ARGUS engine initialization with ML models
-3. ARES expected move validation
-4. ATHENA expected move in skip decisions
+3. FORTRESS expected move validation
+4. SOLOMON expected move in skip decisions
 5. VIX fetcher working
 6. API endpoints responding correctly
 """
@@ -122,65 +122,65 @@ def test_argus_engine():
 
 
 def test_ares_validation():
-    """Test 3: ARES expected move validation"""
+    """Test 3: FORTRESS expected move validation"""
     logger.info("\n" + "="*60)
-    logger.info("TEST 3: ARES Expected Move Validation")
+    logger.info("TEST 3: FORTRESS Expected Move Validation")
     logger.info("="*60)
 
     try:
         import inspect
-        from trading.ares_iron_condor import ARESTrader
+        from trading.ares_iron_condor import FortressTrader
 
-        source = inspect.getsource(ARESTrader.get_current_market_data)
+        source = inspect.getsource(FortressTrader.get_current_market_data)
 
         checks = [
             ("Underlying price validation", "Invalid underlying price" in source),
             ("VIX range validation", "outside normal range" in source),
             ("Expected move validation", "expected_move_pct" in source),
             ("Fallback calculation", "Fallback" in source or "fallback" in source),
-            ("Market data logging", "ARES Market Data" in source),
+            ("Market data logging", "FORTRESS Market Data" in source),
         ]
 
         for name, condition in checks:
             check(name, condition)
 
     except ImportError as e:
-        check("ARES import", False, str(e))
+        check("FORTRESS import", False, str(e))
     except Exception as e:
-        check("ARES validation code", False, str(e))
+        check("FORTRESS validation code", False, str(e))
 
 
-def test_athena_expected_move():
-    """Test 4: ATHENA expected move in skip decisions"""
+def test_solomon_expected_move():
+    """Test 4: SOLOMON expected move in skip decisions"""
     logger.info("\n" + "="*60)
-    logger.info("TEST 4: ATHENA Expected Move in Skip Decisions")
+    logger.info("TEST 4: SOLOMON Expected Move in Skip Decisions")
     logger.info("="*60)
 
     try:
         import inspect
-        from trading.athena_directional_spreads import ATHENATrader
+        from trading.solomon_directional_spreads import SolomonTrader
 
         # Check _log_skip_decision
-        source = inspect.getsource(ATHENATrader._log_skip_decision)
+        source = inspect.getsource(SolomonTrader._log_skip_decision)
 
         checks = [
             ("expected_move_pct calculation", "expected_move_pct = (vix / 16)" in source),
             ("VIX validation", "outside normal range" in source),
             ("expected_move_pct in MarketContext", "expected_move_pct=expected_move_pct" in source),
-            ("Skip decision logging", "ATHENA Skip Decision" in source),
+            ("Skip decision logging", "SOLOMON Skip Decision" in source),
         ]
 
         for name, condition in checks:
             check(name, condition)
 
         # Also check _log_decision
-        source2 = inspect.getsource(ATHENATrader._log_decision)
+        source2 = inspect.getsource(SolomonTrader._log_decision)
         check("_log_decision has validation", "outside normal range" in source2)
 
     except ImportError as e:
-        check("ATHENA import", False, str(e))
+        check("SOLOMON import", False, str(e))
     except Exception as e:
-        check("ATHENA expected move code", False, str(e))
+        check("SOLOMON expected move code", False, str(e))
 
 
 def test_vix_fetcher():
@@ -270,8 +270,8 @@ def test_api_endpoints():
 
         endpoints = [
             ("/api/argus/gamma", "ARGUS gamma"),
-            ("/api/ares/market-data", "ARES market data"),
-            ("/api/athena/diagnostics", "ATHENA diagnostics"),
+            ("/api/fortress/market-data", "FORTRESS market data"),
+            ("/api/solomon/diagnostics", "SOLOMON diagnostics"),
         ]
 
         for endpoint, name in endpoints:
@@ -284,7 +284,7 @@ def test_api_endpoints():
                         check(f"{name} endpoint", True)
 
                         # Additional checks for specific endpoints
-                        if 'ares' in endpoint:
+                        if 'fortress' in endpoint:
                             em = data.get('data', {}).get('expected_move') or \
                                  data.get('data', {}).get('spx', {}).get('expected_move')
                             if em:
@@ -390,17 +390,17 @@ def print_summary():
 
 3. Check logs after restart for:
    - "ARGUS engine initialized with ML models pre-loaded"
-   - "ARES Market Data: SPX=$XXXX, VIX=XX.XX, EM=$XX.XX"
-   - "ATHENA Skip Decision: VIX=XX.XX, Expected Move=X.XX%"
+   - "FORTRESS Market Data: SPX=$XXXX, VIX=XX.XX, EM=$XX.XX"
+   - "SOLOMON Skip Decision: VIX=XX.XX, Expected Move=X.XX%"
 
 4. Test in browser:
    - Open ARGUS page, check Strike Analysis has timestamp
    - Check browser console for [ARGUS] logs
-   - Open ARES/ATHENA pages, verify expected move shows
+   - Open FORTRESS/SOLOMON pages, verify expected move shows
 
 5. Run existing test suites:
    pytest backend/tests/test_argus.py -v
-   python scripts/test_athena_e2e.py
+   python scripts/test_solomon_e2e.py
 """)
     else:
         logger.info("All checks passed! The deployment is verified.")
@@ -415,7 +415,7 @@ def main():
     test_database_indexes()
     test_argus_engine()
     test_ares_validation()
-    test_athena_expected_move()
+    test_solomon_expected_move()
     test_vix_fetcher()
     test_tradier_connection()
     test_api_endpoints()

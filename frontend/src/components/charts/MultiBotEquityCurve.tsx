@@ -18,11 +18,11 @@ import { BOT_BRANDS, BotName } from '@/components/trader/BotBranding'
 // Default starting capitals - used ONLY if API doesn't return starting_capital
 // These should match the config table defaults in the backend
 const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
-  ARES: 100000,
-  ATHENA: 100000,
+  FORTRESS: 100000,
+  SOLOMON: 100000,
   ICARUS: 100000,
   PEGASUS: 200000,
-  TITAN: 200000,
+  SAMSON: 200000,
   PHOENIX: 100000,
   ATLAS: 100000,
   PROMETHEUS: 100000,
@@ -32,11 +32,11 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
 
 // Bot configuration with colors
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
-  { name: 'ARES', endpoint: '/api/ares/equity-curve' },
-  { name: 'ATHENA', endpoint: '/api/athena/equity-curve' },
+  { name: 'FORTRESS', endpoint: '/api/fortress/equity-curve' },
+  { name: 'SOLOMON', endpoint: '/api/solomon/equity-curve' },
   { name: 'ICARUS', endpoint: '/api/icarus/equity-curve' },
   { name: 'PEGASUS', endpoint: '/api/pegasus/equity-curve' },
-  { name: 'TITAN', endpoint: '/api/titan/equity-curve' },
+  { name: 'SAMSON', endpoint: '/api/samson/equity-curve' },
   { name: 'PROMETHEUS', endpoint: '/api/prometheus-box/ic/equity-curve' },
   { name: 'HERACLES', endpoint: '/api/heracles/paper-equity-curve' },
   { name: 'AGAPE', endpoint: '/api/agape/equity-curve' },
@@ -83,11 +83,11 @@ export default function MultiBotEquityCurve({
   showPercentage = true,
 }: MultiBotEquityCurveProps) {
   const [visibleBots, setVisibleBots] = useState<Record<BotName, boolean>>({
-    ARES: true,
-    ATHENA: true,
+    FORTRESS: true,
+    SOLOMON: true,
     ICARUS: true,
     PEGASUS: true,
-    TITAN: true,
+    SAMSON: true,
     PROMETHEUS: true,
     HERACLES: true,
     AGAPE: true,
@@ -102,7 +102,7 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: athenaData, isLoading: athenaLoading } = useSWR<BotEquityData>(
+  const { data: solomonData, isLoading: solomonLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[1].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
@@ -138,15 +138,15 @@ export default function MultiBotEquityCurve({
     { refreshInterval: 300000 }
   )
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
-    ARES: aresData,
-    ATHENA: athenaData,
+    FORTRESS: aresData,
+    SOLOMON: solomonData,
     ICARUS: icarusData,
     PEGASUS: pegasusData,
-    TITAN: titanData,
+    SAMSON: titanData,
     PROMETHEUS: prometheusData,
     HERACLES: heraclesData,
     AGAPE: agapeData,
@@ -197,16 +197,16 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, showPercentage])
+  }, [aresData, solomonData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
     const stats: Record<BotName, { totalReturn: number; currentEquity: number; startingCapital: number } | null> = {
-      ARES: null,
-      ATHENA: null,
+      FORTRESS: null,
+      SOLOMON: null,
       ICARUS: null,
       PEGASUS: null,
-      TITAN: null,
+      SAMSON: null,
       PROMETHEUS: null,
       HERACLES: null,
       AGAPE: null,
@@ -228,7 +228,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData])
+  }, [aresData, solomonData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {

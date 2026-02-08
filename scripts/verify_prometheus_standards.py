@@ -10,7 +10,7 @@ This script verifies:
 2. DATA POPULATION - Data is being written to tables
 3. BACKEND API - Endpoints return real data
 4. SCHEDULER - Jobs are registered and running
-5. IC RETURNS - Real data from ARES/TITAN/PEGASUS
+5. IC RETURNS - Real data from FORTRESS/SAMSON/PEGASUS
 
 Per STANDARDS.md Final Verification Checklist (lines 1336-1447)
 """
@@ -248,9 +248,9 @@ try:
         passes.append("IC Returns TODO removed")
         print(f"  ✓ IC Returns TODO removed")
 
-    if 'ares_positions' in content and 'titan_positions' in content:
-        passes.append("IC Returns queries real ARES/TITAN tables")
-        print(f"  ✓ IC Returns queries real ARES/TITAN/PEGASUS tables")
+    if 'fortress_positions' in content and 'samson_positions' in content:
+        passes.append("IC Returns queries real FORTRESS/SAMSON tables")
+        print(f"  ✓ IC Returns queries real FORTRESS/SAMSON/PEGASUS tables")
     else:
         failures.append("IC Returns not querying real bot tables")
         print(f"  ✗ IC Returns not querying real bot tables")
@@ -264,19 +264,19 @@ try:
     conn = get_connection()
     cur = conn.cursor()
 
-    # Check ARES has data
-    cur.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired')")
-    ares_closed = cur.fetchone()[0]
-    print(f"  ℹ ARES closed positions: {ares_closed}")
+    # Check FORTRESS has data
+    cur.execute("SELECT COUNT(*) FROM fortress_positions WHERE status IN ('closed', 'expired')")
+    fortress_closed = cur.fetchone()[0]
+    print(f"  ℹ FORTRESS closed positions: {fortress_closed}")
 
-    cur.execute("SELECT COUNT(*) FROM titan_positions WHERE status IN ('closed', 'expired')")
+    cur.execute("SELECT COUNT(*) FROM samson_positions WHERE status IN ('closed', 'expired')")
     titan_closed = cur.fetchone()[0]
-    print(f"  ℹ TITAN closed positions: {titan_closed}")
+    print(f"  ℹ SAMSON closed positions: {titan_closed}")
 
     cur.close()
     conn.close()
 
-    if ares_closed > 0 or titan_closed > 0:
+    if fortress_closed > 0 or titan_closed > 0:
         passes.append("IC bots have closed positions for returns calculation")
         print(f"  ✓ IC bots have data for returns calculation")
     else:
@@ -327,8 +327,8 @@ The API endpoints return real data:
   - /api/prometheus-box/analytics/rates
 
 IC Returns now query REAL data from:
-  - ares_positions (realized_pnl)
-  - titan_positions (realized_pnl)
+  - fortress_positions (realized_pnl)
+  - samson_positions (realized_pnl)
   - pegasus_positions (realized_pnl)
 
 The frontend page /prometheus-box displays it with:

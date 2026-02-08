@@ -3,7 +3,7 @@ PEGASUS - Database Layer
 =========================
 
 Database operations for SPX Iron Condor trading.
-Same structure as ARES but with PEGASUS-specific tables.
+Same structure as FORTRESS but with PEGASUS-specific tables.
 """
 
 import logging
@@ -499,7 +499,7 @@ class PEGASUSDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
 
-                # Ensure table exists (shared with ARES)
+                # Ensure table exists (shared with FORTRESS)
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS orphaned_orders (
                         id SERIAL PRIMARY KEY,

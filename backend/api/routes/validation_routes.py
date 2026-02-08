@@ -348,7 +348,7 @@ async def record_outcome(request: ThompsonOutcomeRequest):
     affecting future capital allocation.
 
     Args:
-        bot_name: Name of the bot (ARES, ATHENA, etc.)
+        bot_name: Name of the bot (FORTRESS, SOLOMON, etc.)
         win: Whether the trade was profitable
         pnl: Actual P&L amount
 

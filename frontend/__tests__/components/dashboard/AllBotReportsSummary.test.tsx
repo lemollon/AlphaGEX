@@ -92,7 +92,7 @@ describe('AllBotReportsSummary Component', () => {
   })
 
   describe('Bot Selector Tabs', () => {
-    it('renders ARES bot tab', async () => {
+    it('renders FORTRESS bot tab', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockNoReport),
@@ -102,11 +102,11 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        expect(screen.getByText('ARES')).toBeInTheDocument()
+        expect(screen.getByText('FORTRESS')).toBeInTheDocument()
       })
     })
 
-    it('renders ATHENA bot tab', async () => {
+    it('renders SOLOMON bot tab', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockNoReport),
@@ -116,7 +116,7 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        expect(screen.getByText('ATHENA')).toBeInTheDocument()
+        expect(screen.getByText('SOLOMON')).toBeInTheDocument()
       })
     })
 
@@ -148,7 +148,7 @@ describe('AllBotReportsSummary Component', () => {
       })
     })
 
-    it('renders TITAN bot tab', async () => {
+    it('renders SAMSON bot tab', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockNoReport),
@@ -158,7 +158,7 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        expect(screen.getByText('TITAN')).toBeInTheDocument()
+        expect(screen.getByText('SAMSON')).toBeInTheDocument()
       })
     })
 
@@ -172,7 +172,7 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        const titanTab = screen.getByText('TITAN')
+        const titanTab = screen.getByText('SAMSON')
         expect(titanTab).toBeInTheDocument()
         const titanButton = titanTab.closest('button')
         if (titanButton) {
@@ -264,7 +264,7 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        expect(screen.getByText(/View Full ARES Report/)).toBeInTheDocument()
+        expect(screen.getByText(/View Full FORTRESS Report/)).toBeInTheDocument()
       })
     })
   })
@@ -308,7 +308,7 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        expect(screen.getByText(/Go to ARES Reports/)).toBeInTheDocument()
+        expect(screen.getByText(/Go to FORTRESS Reports/)).toBeInTheDocument()
       })
     })
   })
@@ -409,8 +409,8 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        // Check that the ARES tab has the CheckCircle icon (green check)
-        const aresButton = screen.getByText('ARES').closest('button')
+        // Check that the FORTRESS tab has the CheckCircle icon (green check)
+        const aresButton = screen.getByText('FORTRESS').closest('button')
         expect(aresButton).toBeInTheDocument()
         // The CheckCircle should be visible in the button
         const checkIcon = aresButton?.querySelector('svg.text-green-400')

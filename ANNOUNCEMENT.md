@@ -35,7 +35,7 @@ So I did what any engineer with too much free time would do: I built a system.
 
 🔴 **ARES** — 0DTE Iron Condors with GEX-protected strikes (not your grandma's standard deviation)
 
-⚡ **ATHENA** — Directional spreads that ride GEX flip gravity to magnets
+⚡ **SOLOMON** — Directional spreads that ride GEX flip gravity to magnets
 
 🔥 **PHOENIX** — 0DTE directional plays for trending regimes
 
@@ -196,7 +196,7 @@ Follow along. The alpha testing has begun.
 
 After years of trading, I built what I wished existed:
 
-• 5 autonomous bots (ARES, ATHENA, PHOENIX, ATLAS, PEGASUS)
+• 5 autonomous bots (ARES, SOLOMON, PHOENIX, ATLAS, PEGASUS)
 • GEX (Gamma Exposure) analysis — trade WITH market makers
 • ML ensemble + Claude AI validation on every trade
 • Self-learning feedback loop with human approval gates
@@ -225,7 +225,7 @@ Years of blown accounts led to this.
 AlphaGEX: 5 AI trading bots that use GEX (Gamma Exposure) to trade WITH market makers instead of against them.
 
 🔴 ARES — Iron Condors
-⚡ ATHENA — Directional Spreads
+⚡ SOLOMON — Directional Spreads
 🔥 PHOENIX — 0DTE Plays
 🗺️ ATLAS — SPX Wheel
 🦄 PEGASUS — Weekly IC

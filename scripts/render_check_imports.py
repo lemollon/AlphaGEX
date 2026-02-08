@@ -53,8 +53,8 @@ for mod in ai_modules:
 print("\n-- Backend Routes --")
 routes = [
     "backend.api.routes.ai_routes",
-    "backend.api.routes.ares_routes",
-    "backend.api.routes.athena_routes",
+    "backend.api.routes.fortress_routes",
+    "backend.api.routes.solomon_routes",
     "backend.api.routes.gex_routes",
     "backend.api.routes.trader_routes",
 ]
@@ -69,8 +69,8 @@ for mod in routes:
 # Trading bots
 print("\n-- Trading Bots --")
 bots = [
-    "trading.ares_v2.trader",
-    "trading.athena_v2.trader",
+    "trading.fortress_v2.trader",
+    "trading.solomon_v2.trader",
 ]
 for mod in bots:
     try:

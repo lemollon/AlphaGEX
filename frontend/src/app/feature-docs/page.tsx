@@ -1055,17 +1055,17 @@ def expected_move(price, iv, dte):
     tags: ['iron-condor', 'credit', 'premium', 'structure']
   },
 
-  // ==================== ARES BOT ====================
+  // ==================== FORTRESS BOT ====================
   {
     id: 40,
-    name: 'ARES Expected Move',
+    name: 'FORTRESS Expected Move',
     formula: 'Based on VIX level: VIX<15: 0.7%, 15-20: 0.9%, 20-30: 1.2%, >30: 1.5%',
-    purpose: 'Strike distance for ARES IC',
+    purpose: 'Strike distance for FORTRESS IC',
     file: 'trading/ares_iron_condor.py',
     line: 156,
-    category: 'ARES',
+    category: 'FORTRESS',
     subcategory: 'Strike Selection',
-    description: 'ARES uses VIX-adjusted expected moves for strike selection. Higher VIX means wider strikes to account for increased volatility. These percentages determine short strike distance.',
+    description: 'FORTRESS uses VIX-adjusted expected moves for strike selection. Higher VIX means wider strikes to account for increased volatility. These percentages determine short strike distance.',
     codeSnippet: `def ares_expected_move_pct(vix):
     """Get expected move % based on VIX level"""
     if vix < 15:
@@ -1078,28 +1078,28 @@ def expected_move(price, iv, dte):
         return 0.015  # 1.5%
 
 def ares_strike_distance(spot, vix):
-    """Calculate strike distance for ARES"""
+    """Calculate strike distance for FORTRESS"""
     em_pct = ares_expected_move_pct(vix)
     return spot * em_pct`,
     example: {
       inputs: 'SPY=$450, VIX=22',
       output: 'EM = 1.2%, Strike distance = $5.40'
     },
-    related: ['1 SD Strike', 'ARES Expected Move', 'VIX Regime'],
-    tags: ['ares', 'strike', 'vix-adjusted', 'iron-condor']
+    related: ['1 SD Strike', 'FORTRESS Expected Move', 'VIX Regime'],
+    tags: ['fortress', 'strike', 'vix-adjusted', 'iron-condor']
   },
 
-  // ==================== ATHENA BOT ====================
+  // ==================== SOLOMON BOT ====================
   {
     id: 41,
     name: 'Wall Filter',
     formula: '|distance_to_wall_pct| <= 1%',
-    purpose: 'ATHENA entry filter - trade only near GEX walls',
-    file: 'trading/athena_directional_spreads.py',
+    purpose: 'SOLOMON entry filter - trade only near GEX walls',
+    file: 'trading/solomon_directional_spreads.py',
     line: 89,
-    category: 'ATHENA',
+    category: 'SOLOMON',
     subcategory: 'Entry Filters',
-    description: 'ATHENA only enters directional trades when price is within 1% of a relevant GEX wall. This increases probability of the wall acting as support/resistance.',
+    description: 'SOLOMON only enters directional trades when price is within 1% of a relevant GEX wall. This increases probability of the wall acting as support/resistance.',
     codeSnippet: `def wall_filter_passed(spot, call_wall, put_wall, max_distance_pct=1.0):
     """Check if price is near a GEX wall"""
     distance_to_call = abs(call_wall - spot) / spot * 100
@@ -1118,19 +1118,19 @@ def ares_strike_distance(spot, vix):
       output: 'call distance=0.89%, put distance=1.11% → Near call wall ✓'
     },
     related: ['Call Wall', 'Put Wall', 'R:R Ratio Filter'],
-    tags: ['athena', 'filter', 'wall', 'entry']
+    tags: ['solomon', 'filter', 'wall', 'entry']
   },
   {
     id: 42,
     name: 'Scale-Out Strategy',
     formula: '50% profit → exit 30%; 75% profit → exit 30%; trail remainder',
-    purpose: 'ATHENA profit-taking and trailing',
-    file: 'trading/athena_directional_spreads.py',
+    purpose: 'SOLOMON profit-taking and trailing',
+    file: 'trading/solomon_directional_spreads.py',
     line: 234,
-    category: 'ATHENA',
+    category: 'SOLOMON',
     subcategory: 'Exit Management',
-    description: 'ATHENA uses scaled exits: take partial profits at 50% and 75% of max profit, then trail the remaining 40% of position to capture extended moves.',
-    codeSnippet: `class ATHENAExitManager:
+    description: 'SOLOMON uses scaled exits: take partial profits at 50% and 75% of max profit, then trail the remaining 40% of position to capture extended moves.',
+    codeSnippet: `class SOLOMONExitManager:
     def __init__(self, max_profit, contracts):
         self.max_profit = max_profit
         self.initial_contracts = contracts
@@ -1161,7 +1161,7 @@ def ares_strike_distance(spot, vix):
       output: 'Exit 3 contracts at 50%, 3 at 75%, trail remaining 4'
     },
     related: ['Trailing Stop', 'Profit Threshold', 'R:R Ratio Filter'],
-    tags: ['athena', 'scale-out', 'profit-taking', 'exit']
+    tags: ['solomon', 'scale-out', 'profit-taking', 'exit']
   },
 
   // ==================== ARGUS 0DTE ====================
@@ -1404,7 +1404,7 @@ def ares_strike_distance(spot, vix):
 
 // Add remaining GEX calculations
 for (let i = 46; i <= 268; i++) {
-  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'ARES', 'ATHENA', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation', 'Proverbs']
+  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'FORTRESS', 'SOLOMON', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation', 'Proverbs']
   const subcategories: { [key: string]: string[] } = {
     'GEX': ['Core Gamma', 'Distance Metrics', 'Normalized Metrics', 'Wall Analysis', 'Ratios', 'Changes'],
     'Greeks': ['Black-Scholes', 'First-Order Greeks', 'Second-Order Greeks', 'Volatility'],
@@ -1417,8 +1417,8 @@ for (let i = 46; i <= 268; i++) {
     'Risk': ['Risk-Adjusted Returns', 'Drawdown', 'Profitability'],
     'Volatility': ['IV Metrics', 'Term Structure', 'Surface'],
     'Backtest': ['Options Math', 'Options Structures', 'Signals'],
-    'ARES': ['Strike Selection', 'Position Sizing', 'Exit Rules'],
-    'ATHENA': ['Entry Filters', 'Exit Management', 'Signals'],
+    'FORTRESS': ['Strike Selection', 'Position Sizing', 'Exit Rules'],
+    'SOLOMON': ['Entry Filters', 'Exit Management', 'Signals'],
     'Gamma Exp': ['DTE Buckets', 'Decay', 'Concentration'],
     'ML': ['Predictions', 'Preprocessing', 'Features'],
     'Wheel': ['Premium', 'Assignment', 'Rolling'],
@@ -1445,8 +1445,8 @@ const CATEGORIES = [
   { name: 'Risk', icon: Shield, color: 'text-emerald-400', bgColor: 'bg-emerald-500/20', subcategories: ['Risk-Adjusted Returns', 'Drawdown', 'Profitability'] },
   { name: 'Volatility', icon: Zap, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['IV Metrics', 'Term Structure', 'Surface'] },
   { name: 'Backtest', icon: Clock, color: 'text-indigo-400', bgColor: 'bg-indigo-500/20', subcategories: ['Options Math', 'Options Structures', 'Signals'] },
-  { name: 'ARES', icon: Crosshair, color: 'text-rose-400', bgColor: 'bg-rose-500/20', subcategories: ['Strike Selection', 'Position Sizing', 'Exit Rules'] },
-  { name: 'ATHENA', icon: GitBranch, color: 'text-violet-400', bgColor: 'bg-violet-500/20', subcategories: ['Entry Filters', 'Exit Management', 'Signals'] },
+  { name: 'FORTRESS', icon: Crosshair, color: 'text-rose-400', bgColor: 'bg-rose-500/20', subcategories: ['Strike Selection', 'Position Sizing', 'Exit Rules'] },
+  { name: 'SOLOMON', icon: GitBranch, color: 'text-violet-400', bgColor: 'bg-violet-500/20', subcategories: ['Entry Filters', 'Exit Management', 'Signals'] },
   { name: 'Gamma Exp', icon: Clock, color: 'text-fuchsia-400', bgColor: 'bg-fuchsia-500/20', subcategories: ['DTE Buckets', 'Decay', 'Concentration'] },
   { name: 'ML', icon: Brain, color: 'text-sky-400', bgColor: 'bg-sky-500/20', subcategories: ['Predictions', 'Preprocessing', 'Features'] },
   { name: 'Wheel', icon: ArrowUpDown, color: 'text-lime-400', bgColor: 'bg-lime-500/20', subcategories: ['Premium', 'Assignment', 'Rolling'] },

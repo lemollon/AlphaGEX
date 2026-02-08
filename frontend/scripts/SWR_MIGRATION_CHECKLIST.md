@@ -27,7 +27,7 @@ This document tracks the migration of all AlphaGEX pages from useState/useEffect
 |------|--------|------------|-------|
 | /vix | ✅ Done | useVIX, useVIXHedgeSignal, useVIXSignalHistory | VIX dashboard with cached hedge signals |
 | /ares | ✅ Done | useARESStatus, useARESPerformance, useARESEquityCurve, useARESPositions, useARESMarketData, useARESTradierStatus, useARESConfig | Iron Condor bot with full caching |
-| /athena | ✅ Done | useATHENAStatus, useATHENAPositions, useATHENASignals, useATHENAPerformance, useATHENAOracleAdvice, useATHENAMLSignal, useATHENALogs | Directional spread bot with caching |
+| /solomon | ✅ Done | useATHENAStatus, useATHENAPositions, useATHENASignals, useATHENAPerformance, useATHENAOracleAdvice, useATHENAMLSignal, useATHENALogs | Directional spread bot with caching |
 | /trader | ⏳ Pending | Hooks available | Uses existing trader hooks |
 
 ### Analytics Pages
@@ -142,7 +142,7 @@ Run: `npx playwright test swr-caching.spec.ts`
 1. **Dashboard components** - MarketCommentary, DailyTradingPlan, GammaExpirationWidget
 2. **/vix** - VIX dashboard with hedge signals
 3. **/ares** - ARES Iron Condor bot
-4. **/athena** - ATHENA directional spread bot
+4. **/solomon** - SOLOMON directional spread bot
 5. **/oracle** - Oracle AI predictions
 6. **/logs** - Master logs dashboard
 7. **/gamma** - VIX data via SWR (gamma intelligence uses WebSocket)

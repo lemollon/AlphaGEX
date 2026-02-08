@@ -453,7 +453,7 @@ interface AccuracyMetrics {
 }
 
 interface BotPosition {
-  bot: string  // ARES, ATHENA, PHOENIX
+  bot: string  // FORTRESS, SOLOMON, PHOENIX
   strategy: string  // Iron Condor, Directional Spread, etc.
   status: string  // open, watching, closed
   strikes?: string  // "590/610" format

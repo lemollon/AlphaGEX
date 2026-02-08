@@ -941,7 +941,7 @@ YOUR SAVINGS: {self._margin_rate - implied_rate:.2f}% lower than margin
 
 HOW THIS FUNDS IC BOTS:
 ═══════════════════════
-1. Cash received (${cash_received:,.2f}) is deployed to ARES, TITAN, PEGASUS
+1. Cash received (${cash_received:,.2f}) is deployed to FORTRESS, SAMSON, PEGASUS
 2. These bots trade Iron Condors, generating premium income
 3. Target IC returns: 2-4% monthly
 4. Box spread costs: ~{implied_rate / 12:.2f}% monthly

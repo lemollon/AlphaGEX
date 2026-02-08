@@ -4,8 +4,8 @@ ICARUS - Data Models
 
 All data classes for ICARUS aggressive directional spread trading.
 
-ICARUS uses MORE AGGRESSIVE Apache GEX backtest parameters than ATHENA:
-- 2% wall filter (vs ATHENA's 1%) - more room to trade
+ICARUS uses MORE AGGRESSIVE Apache GEX backtest parameters than SOLOMON:
+- 2% wall filter (vs SOLOMON's 1%) - more room to trade
 - 48% min win probability (vs 55%) - lower threshold
 - 3% risk per trade (vs 2%) - larger positions
 - 8 max daily trades (vs 5) - more opportunities
@@ -51,7 +51,7 @@ class ICARUSConfig:
     """
     ICARUS configuration with AGGRESSIVE Apache GEX backtest parameters.
 
-    Key differences from ATHENA (Apache optimal):
+    Key differences from SOLOMON (Apache optimal):
     - wall_filter_pct: 2% (vs 1%) - more room to trade
     - min_win_probability: 48% (vs 55%) - lower threshold but still positive expectancy
     - min_confidence: 48% (vs 55%) - lower threshold
@@ -62,8 +62,8 @@ class ICARUSConfig:
     - max_daily_trades: 8 (vs 5) - more trades
     - max_open_positions: 4 (vs 3) - more exposure
     - spread_width: $3 (vs $2) - wider spreads
-    - profit_target_pct: 50% (aligned with ATHENA - fixed inverted R:R)
-    - stop_loss_pct: 50% (aligned with ATHENA - fixed inverted R:R)
+    - profit_target_pct: 50% (aligned with SOLOMON - fixed inverted R:R)
+    - stop_loss_pct: 50% (aligned with SOLOMON - fixed inverted R:R)
     """
     # Mode
     mode: TradingMode = TradingMode.PAPER
@@ -71,34 +71,34 @@ class ICARUSConfig:
 
     # Capital management - AGGRESSIVE
     capital: float = 100_000.0
-    risk_per_trade_pct: float = 3.0  # 3% vs ATHENA's 2%
+    risk_per_trade_pct: float = 3.0  # 3% vs SOLOMON's 2%
 
     # Trade limits - AGGRESSIVE
-    max_daily_trades: int = 8  # 8 vs ATHENA's 5
-    max_open_positions: int = 4  # 4 vs ATHENA's 3
+    max_daily_trades: int = 8  # 8 vs SOLOMON's 5
+    max_open_positions: int = 4  # 4 vs SOLOMON's 3
 
     # Spread parameters - AGGRESSIVE
-    spread_width: int = 3  # $3 vs ATHENA's $2
+    spread_width: int = 3  # $3 vs SOLOMON's $2
 
     # Signal thresholds - AGGRESSIVE but with EDGE (Apache-based)
-    wall_filter_pct: float = 1.0  # 1% - Apache backtest optimal (same as ATHENA)
-    min_rr_ratio: float = 1.2  # 1.2 vs ATHENA's 1.5 - still need edge
-    min_win_probability: float = 0.48  # 48% vs ATHENA's 50% - lower but near breakeven
-    min_confidence: float = 0.48  # 48% vs ATHENA's 50%
+    wall_filter_pct: float = 1.0  # 1% - Apache backtest optimal (same as SOLOMON)
+    min_rr_ratio: float = 1.2  # 1.2 vs SOLOMON's 1.5 - still need edge
+    min_win_probability: float = 0.48  # 48% vs SOLOMON's 50% - lower but near breakeven
+    min_confidence: float = 0.48  # 48% vs SOLOMON's 50%
 
-    # VIX filter (AGGRESSIVE - wider range than ATHENA)
-    min_vix: float = 12.0  # 12 vs ATHENA's 15 - allow lower vol
-    max_vix: float = 30.0  # 30 vs ATHENA's 25 - allow higher vol
+    # VIX filter (AGGRESSIVE - wider range than SOLOMON)
+    min_vix: float = 12.0  # 12 vs SOLOMON's 15 - allow lower vol
+    max_vix: float = 30.0  # 30 vs SOLOMON's 25 - allow higher vol
 
     # GEX ratio asymmetry (AGGRESSIVE - weaker asymmetry allowed)
-    min_gex_ratio_bearish: float = 1.3  # 1.3 vs ATHENA's 1.5 for bearish
-    max_gex_ratio_bullish: float = 0.77  # 0.77 vs ATHENA's 0.67 for bullish
+    min_gex_ratio_bearish: float = 1.3  # 1.3 vs SOLOMON's 1.5 for bearish
+    max_gex_ratio_bullish: float = 0.77  # 0.77 vs SOLOMON's 0.67 for bullish
 
-    # Exit thresholds - ALIGNED WITH ATHENA (fixed inverted R:R)
+    # Exit thresholds - ALIGNED WITH SOLOMON (fixed inverted R:R)
     # Previous: 40% profit / 60% stop = 0.67:1 R:R (INVERTED - caused massive losses)
-    # New: 50% profit / 50% stop = 1:1 R:R (matches ATHENA's proven config)
-    profit_target_pct: float = 50.0  # 50% - aligned with ATHENA
-    stop_loss_pct: float = 50.0  # 50% - aligned with ATHENA
+    # New: 50% profit / 50% stop = 1:1 R:R (matches SOLOMON's proven config)
+    profit_target_pct: float = 50.0  # 50% - aligned with SOLOMON
+    stop_loss_pct: float = 50.0  # 50% - aligned with SOLOMON
 
     # Trading hours (Central Time)
     # Market closes at 3:00 PM CT (4:00 PM ET)

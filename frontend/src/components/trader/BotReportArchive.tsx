@@ -59,7 +59,7 @@ interface ArchiveStats {
 }
 
 interface BotReportArchiveProps {
-  botName: 'ARES' | 'ATHENA' | 'ICARUS' | 'TITAN' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'ICARUS' | 'SAMSON' | 'PEGASUS'
   botDisplayName: string
   brandColor: string
   backLink: string

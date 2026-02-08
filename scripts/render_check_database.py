@@ -53,8 +53,8 @@ try:
     # Check tables
     print("\n-- Checking Tables --")
     required_tables = [
-        "ares_positions",
-        "athena_positions",
+        "fortress_positions",
+        "solomon_positions",
         "autonomous_config",
         "bot_heartbeats",
         "bot_scan_activity",
@@ -77,18 +77,18 @@ try:
 
     # Check for fresh start (0 trades)
     print("\n-- Fresh Start Status --")
-    cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'closed'")
-    ares_closed = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM fortress_positions WHERE status = 'closed'")
+    fortress_closed = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
-    ares_open = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM fortress_positions WHERE status = 'open'")
+    fortress_open = cursor.fetchone()[0]
 
-    info(f"ARES: {ares_open} open, {ares_closed} closed")
+    info(f"FORTRESS: {fortress_open} open, {fortress_closed} closed")
 
-    if ares_closed == 0 and ares_open == 0:
-        ok("ARES is in fresh start state (0 trades)")
+    if fortress_closed == 0 and fortress_open == 0:
+        ok("FORTRESS is in fresh start state (0 trades)")
     else:
-        info(f"ARES has trade history")
+        info(f"FORTRESS has trade history")
 
     conn.close()
     print("\n" + "=" * 60)

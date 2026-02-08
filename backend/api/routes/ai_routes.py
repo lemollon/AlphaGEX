@@ -243,7 +243,7 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
                 from unified_config import APIConfig
-                # Use explicit credentials like ARES does
+                # Use explicit credentials like FORTRESS does
                 api_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
                 account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
                 if not api_key or not account_id:
@@ -261,7 +261,7 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
                 if conn:
                     cursor = conn.cursor()
                     cursor.execute("""
-                        SELECT * FROM ares_positions
+                        SELECT * FROM fortress_positions
                         WHERE status = 'open'
                         ORDER BY open_date DESC
                         LIMIT 10
@@ -287,7 +287,7 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
                             SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
                             COALESCE(SUM(realized_pnl), 0) as total_pnl,
                             COALESCE(AVG(realized_pnl), 0) as avg_pnl
-                        FROM ares_positions
+                        FROM fortress_positions
                         WHERE status IN ('closed', 'expired', 'partial_close')
                     """)
                     row = cursor.fetchone()
@@ -318,7 +318,7 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
                 if conn:
                     cursor = conn.cursor()
                     cursor.execute(f"""
-                        SELECT * FROM ares_positions
+                        SELECT * FROM fortress_positions
                         ORDER BY open_date DESC
                         LIMIT {limit}
                     """)
@@ -361,17 +361,17 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
 
         # Bot control commands
         elif command == 'start_bot':
-            bot_name = args.lower() if args else 'ares'
+            bot_name = args.lower() if args else 'fortress'
             result = request_bot_action('start', bot_name)
             return {"type": "bot_control", "action": "start", "bot": bot_name, "data": result}
 
         elif command == 'stop_bot':
-            bot_name = args.lower() if args else 'ares'
+            bot_name = args.lower() if args else 'fortress'
             result = request_bot_action('stop', bot_name)
             return {"type": "bot_control", "action": "stop", "bot": bot_name, "data": result}
 
         elif command == 'pause_bot':
-            bot_name = args.lower() if args else 'ares'
+            bot_name = args.lower() if args else 'fortress'
             result = request_bot_action('pause', bot_name)
             return {"type": "bot_control", "action": "pause", "bot": bot_name, "data": result}
 
@@ -612,7 +612,7 @@ async def ai_analyze_market(request: dict):
                         if len(data) > 5:
                             formatted_response += f"\n...and {len(data) - 5} more positions."
                     else:
-                        formatted_response = f"No open positions at the moment, {USER_NAME}. ARES is standing by."
+                        formatted_response = f"No open positions at the moment, {USER_NAME}. FORTRESS is standing by."
 
                 elif cmd_type == 'pnl':
                     if data:
@@ -1213,7 +1213,7 @@ async def get_daily_briefing():
             c.execute("""
                 SELECT bot_name, is_active, last_heartbeat
                 FROM autonomous_config
-                WHERE bot_name IN ('ARES', 'ATHENA', 'ATLAS')
+                WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'ATLAS')
             """)
             for row in c.fetchall():
                 briefing_data["bots"][row[0]] = {
@@ -1288,8 +1288,8 @@ MARKET DATA:
 - Put Wall: ${briefing_data['market'].get('put_wall', 'N/A')}
 
 BOT STATUS:
-- ARES: {'Active' if briefing_data['bots'].get('ARES', {}).get('active') else 'Inactive'}
-- ATHENA: {'Active' if briefing_data['bots'].get('ATHENA', {}).get('active') else 'Inactive'}
+- FORTRESS: {'Active' if briefing_data['bots'].get('FORTRESS', {}).get('active') else 'Inactive'}
+- SOLOMON: {'Active' if briefing_data['bots'].get('SOLOMON', {}).get('active') else 'Inactive'}
 - ATLAS: {'Active' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Inactive'}
 
 POSITIONS:
@@ -1332,8 +1332,8 @@ Market Overview:
 SPY is trading at ${briefing_data['market'].get('spot_price', 'N/A')} with Net GEX at {briefing_data['market'].get('net_gex', 'N/A')}.
 
 Bot Status:
-- ARES: {'Online' if briefing_data['bots'].get('ARES', {}).get('active') else 'Offline'}
-- ATHENA: {'Online' if briefing_data['bots'].get('ATHENA', {}).get('active') else 'Offline'}
+- FORTRESS: {'Online' if briefing_data['bots'].get('FORTRESS', {}).get('active') else 'Offline'}
+- SOLOMON: {'Online' if briefing_data['bots'].get('SOLOMON', {}).get('active') else 'Offline'}
 - ATLAS: {'Online' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Offline'}
 
 Positions:
@@ -1419,7 +1419,7 @@ async def execute_quick_command(request: dict):
                     SELECT bot_name, is_active, last_heartbeat,
                            COALESCE(config_data->>'mode', 'unknown') as mode
                     FROM autonomous_config
-                    WHERE bot_name IN ('ARES', 'ATHENA', 'ATLAS')
+                    WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'ATLAS')
                 """)
                 for row in c.fetchall():
                     heartbeat_age = None
@@ -1985,8 +1985,8 @@ GEXIS_CLAUDE_TOOLS = [
             "properties": {
                 "bot_name": {
                     "type": "string",
-                    "description": "The bot name: ares, athena, or atlas",
-                    "enum": ["ares", "athena", "atlas"]
+                    "description": "The bot name: fortress, solomon, or atlas",
+                    "enum": ["fortress", "solomon", "atlas"]
                 }
             },
             "required": ["bot_name"]
@@ -2063,7 +2063,7 @@ GEXIS_CLAUDE_TOOLS = [
                 "bot_name": {
                     "type": "string",
                     "description": "The bot to control",
-                    "enum": ["ares", "athena", "atlas"]
+                    "enum": ["fortress", "solomon", "atlas"]
                 }
             },
             "required": ["action", "bot_name"]
@@ -2136,10 +2136,10 @@ def execute_gexis_tool(tool_name: str, tool_input: dict) -> str:
             result = fetch_vix_data()
         elif tool_name == "get_bot_status":
             from ai.gexis_tools import get_bot_status
-            result = get_bot_status(tool_input.get("bot_name", "ares"))
+            result = get_bot_status(tool_input.get("bot_name", "fortress"))
         elif tool_name == "get_positions":
-            from ai.gexis_tools import get_ares_positions
-            result = get_ares_positions()
+            from ai.gexis_tools import get_fortress_positions
+            result = get_fortress_positions()
         elif tool_name == "get_upcoming_events":
             from ai.gexis_tools import get_upcoming_events
             result = get_upcoming_events(tool_input.get("days_ahead", 7))

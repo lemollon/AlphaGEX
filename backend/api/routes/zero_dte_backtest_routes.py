@@ -782,7 +782,7 @@ async def get_backtest_trades(backtest_id: str):
     """
     Get individual trades from a saved backtest for ML training.
 
-    Returns all trades with their features and outcomes for ARES ML advisor training.
+    Returns all trades with their features and outcomes for FORTRESS ML advisor training.
     """
     try:
         conn = get_connection()
@@ -834,7 +834,7 @@ async def get_all_trades_for_ml(limit: int = 10000):
     """
     Get all backtest trades for ML model training.
 
-    Returns trades from all backtests with features suitable for ARES ML advisor.
+    Returns trades from all backtests with features suitable for FORTRESS ML advisor.
     This endpoint is used by the ML training pipeline.
     """
     try:
@@ -2222,7 +2222,7 @@ class OracleAnalysisRequest(BaseModel):
     gex_call_wall: float = Field(default=0.0, description="GEX call wall strike")
     gex_put_wall: float = Field(default=0.0, description="GEX put wall strike")
     day_of_week: int = Field(default=2, description="Day of week (0=Mon, 4=Fri)")
-    bot_name: str = Field(default="ARES", description="Bot name: ARES, ATLAS, PHOENIX")
+    bot_name: str = Field(default="FORTRESS", description="Bot name: FORTRESS, ATLAS, PHOENIX")
 
 
 class OracleExplainRequest(BaseModel):
@@ -2285,7 +2285,7 @@ async def get_oracle_status():
     - ML model status (trained/untrained)
     - Claude AI status (enabled/disabled)
     - Model version
-    - All bot heartbeats (ARES, ATHENA, etc.)
+    - All bot heartbeats (FORTRESS, SOLOMON, etc.)
     """
     try:
         from quant.oracle_advisor import get_oracle
@@ -2364,7 +2364,7 @@ async def oracle_analyze(request: OracleAnalysisRequest):
         )
 
         # Get advice based on bot type
-        if bot_name == BotName.ARES:
+        if bot_name == BotName.FORTRESS:
             prediction = oracle.get_ares_advice(
                 context,
                 use_gex_walls=(request.gex_call_wall > 0 and request.gex_put_wall > 0),
@@ -2448,7 +2448,7 @@ async def oracle_explain(request: OracleExplainRequest):
         # Reconstruct prediction object
         pred_data = request.prediction
         prediction = OraclePrediction(
-            bot_name=BotName[pred_data.get('bot_name', 'ARES')],
+            bot_name=BotName[pred_data.get('bot_name', 'FORTRESS')],
             advice=TradingAdvice[pred_data.get('advice', 'TRADE_FULL')],
             win_probability=pred_data.get('win_probability', 0.68),
             confidence=pred_data.get('confidence', 70),
@@ -2644,7 +2644,7 @@ async def get_oracle_full_transparency(bot_name: str = None):
 
         # Get latest flow per bot
         latest_by_bot = {}
-        for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
+        for bot in ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON', 'PHOENIX']:
             latest = oracle_live_log.get_latest_flow_for_bot(bot)
             if latest:
                 latest_by_bot[bot] = latest
@@ -2815,7 +2815,7 @@ async def get_oracle_predictions_full(
     Args:
         days: Number of days to look back (default: 30)
         limit: Maximum number of predictions (default: 100)
-        bot_name: Filter by bot (ARES, ATLAS, PHOENIX, ATHENA)
+        bot_name: Filter by bot (FORTRESS, ATLAS, PHOENIX, SOLOMON)
         include_claude: Include Claude analysis data (default: True)
 
     Returns comprehensive prediction data including:
@@ -2920,7 +2920,7 @@ async def get_oracle_bot_interactions(
     """
     Get all bot interactions with Oracle.
 
-    Shows every time a bot (ARES, ATLAS, PHOENIX, ATHENA) consulted Oracle
+    Shows every time a bot (FORTRESS, ATLAS, PHOENIX, SOLOMON) consulted Oracle
     with full context and reasoning.
 
     Args:

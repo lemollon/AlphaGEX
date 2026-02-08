@@ -4,7 +4,7 @@
 COMPREHENSIVE DIRECTIONAL BOTS DATA GATHERER
 =============================================================================
 
-Run this script in Render shell to gather ALL data about ATHENA and ICARUS.
+Run this script in Render shell to gather ALL data about SOLOMON and ICARUS.
 
 Usage (in Render shell):
     cd /opt/render/project/src
@@ -16,7 +16,7 @@ Gathers:
 - Oracle prediction accuracy
 - Signal generation patterns
 - Configuration settings
-- Comparison with IC bots (ARES, TITAN, PEGASUS)
+- Comparison with IC bots (FORTRESS, SAMSON, PEGASUS)
 """
 
 import os
@@ -49,9 +49,9 @@ def run_query(cursor, query: str, description: str = ""):
         return []
 
 
-def gather_athena_data(db):
-    """Gather all ATHENA data"""
-    section_header("ATHENA - COMPLETE DATA DUMP")
+def gather_solomon_data(db):
+    """Gather all SOLOMON data"""
+    section_header("SOLOMON - COMPLETE DATA DUMP")
 
     conn = db.connect()
     cursor = conn.cursor()
@@ -70,7 +70,7 @@ def gather_athena_data(db):
             COALESCE(AVG(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl <= 0 THEN realized_pnl END), 0) as avg_loss,
             MIN(open_time) as first_trade,
             MAX(close_time) as last_trade
-        FROM athena_positions
+        FROM solomon_positions
     """)
     if rows and rows[0]:
         r = rows[0]
@@ -98,7 +98,7 @@ def gather_athena_data(db):
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl,
             COALESCE(AVG(realized_pnl), 0) as avg_pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         GROUP BY spread_type
         ORDER BY trades DESC
@@ -116,7 +116,7 @@ def gather_athena_data(db):
             COUNT(*) as trades,
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         GROUP BY gex_regime
         ORDER BY trades DESC
@@ -140,7 +140,7 @@ def gather_athena_data(db):
             COUNT(*) as trades,
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         AND vix_at_entry IS NOT NULL
         GROUP BY 1
@@ -160,7 +160,7 @@ def gather_athena_data(db):
             COUNT(*) as trades,
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         GROUP BY 1, 2
         ORDER BY dow
@@ -178,7 +178,7 @@ def gather_athena_data(db):
             COUNT(*) as trades,
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         GROUP BY 1
         ORDER BY hour
@@ -197,7 +197,7 @@ def gather_athena_data(db):
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl,
             COALESCE(AVG(realized_pnl), 0) as avg_pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         GROUP BY close_reason
         ORDER BY trades DESC
@@ -222,7 +222,7 @@ def gather_athena_data(db):
             COUNT(*) as trades,
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         GROUP BY 1
         ORDER BY 1
@@ -240,7 +240,7 @@ def gather_athena_data(db):
             COUNT(*) as trades,
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         GROUP BY oracle_advice
         ORDER BY trades DESC
@@ -258,7 +258,7 @@ def gather_athena_data(db):
             COUNT(*) as trades,
             SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
             COALESCE(SUM(realized_pnl), 0) as pnl
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         AND close_time >= NOW() - INTERVAL '7 days'
         GROUP BY 1
@@ -287,7 +287,7 @@ def gather_athena_data(db):
             close_reason,
             open_time AT TIME ZONE 'America/Chicago' as open_ct,
             close_time AT TIME ZONE 'America/Chicago' as close_ct
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         ORDER BY close_time DESC
         LIMIT 20
@@ -312,7 +312,7 @@ def gather_athena_data(db):
                 WHEN spread_type LIKE 'BULL%' THEN put_wall
                 ELSE call_wall
             END) / NULLIF(underlying_at_entry, 0) * 100) as avg_wall_dist_pct
-        FROM athena_positions
+        FROM solomon_positions
         WHERE status IN ('closed', 'expired', 'partial_close')
         AND close_time IS NOT NULL
         GROUP BY 1
@@ -335,7 +335,7 @@ def gather_icarus_data(db):
     conn = db.connect()
     cursor = conn.cursor()
 
-    # Same queries as ATHENA but for icarus_positions
+    # Same queries as SOLOMON but for icarus_positions
     # 1. OVERALL STATS
     print("\n--- 1. OVERALL STATISTICS ---")
     rows = run_query(cursor, """
@@ -610,13 +610,13 @@ def gather_icarus_data(db):
 
 def gather_ic_bot_comparison(db):
     """Compare directional bots with IC bots"""
-    section_header("IC BOTS COMPARISON (ARES, TITAN, PEGASUS)")
+    section_header("IC BOTS COMPARISON (FORTRESS, SAMSON, PEGASUS)")
 
     conn = db.connect()
     cursor = conn.cursor()
 
     # Check each IC bot
-    for bot, table in [("ARES", "ares_positions"), ("TITAN", "titan_positions"), ("PEGASUS", "pegasus_positions")]:
+    for bot, table in [("FORTRESS", "fortress_positions"), ("SAMSON", "samson_positions"), ("PEGASUS", "pegasus_positions")]:
         print(f"\n--- {bot} ---")
         rows = run_query(cursor, f"""
             SELECT
@@ -651,7 +651,7 @@ def gather_config_data(db):
     rows = run_query(cursor, """
         SELECT bot_name, config_data, updated_at
         FROM autonomous_config
-        WHERE bot_name IN ('ATHENA', 'ICARUS')
+        WHERE bot_name IN ('SOLOMON', 'ICARUS')
         ORDER BY bot_name
     """)
 
@@ -674,7 +674,7 @@ def gather_signal_data(db):
     conn = db.connect()
     cursor = conn.cursor()
 
-    for bot, table in [("ATHENA", "athena_signals"), ("ICARUS", "icarus_signals")]:
+    for bot, table in [("SOLOMON", "solomon_signals"), ("ICARUS", "icarus_signals")]:
         print(f"\n--- {bot} SIGNALS ---")
         rows = run_query(cursor, f"""
             SELECT
@@ -723,7 +723,7 @@ def main():
         sys.exit(1)
 
     # Gather all data
-    gather_athena_data(db)
+    gather_solomon_data(db)
     gather_icarus_data(db)
     gather_ic_bot_comparison(db)
     gather_config_data(db)

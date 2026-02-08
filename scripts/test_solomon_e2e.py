@@ -1,200 +1,369 @@
 #!/usr/bin/env python3
 """
-Proverbs End-to-End Test Script
-Run this in production to validate the feedback loop system.
+End-to-End Test for SOLOMON Directional Strategy
+
+Tests:
+1. SOLOMON trader initialization
+2. ML signal generation
+3. API endpoints
+4. Database logging
+5. Full trading cycle
+6. Data flow verification
 
 Usage:
-    python scripts/test_proverbs_e2e.py
+    # Test against deployed API
+    API_URL=https://alphagex-api.onrender.com python scripts/test_solomon_e2e.py
+
+    # Test against local API
+    python scripts/test_solomon_e2e.py
 """
 
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+import sys
 import json
+import time
+import requests
 from datetime import datetime
 
+# Configuration
+API_URL = os.environ.get('API_URL', 'http://localhost:8000')
+VERBOSE = os.environ.get('VERBOSE', '1') == '1'
 
-def test_proverbs():
-    """Run comprehensive Proverbs tests"""
-    results = {
-        'timestamp': datetime.now().isoformat(),
-        'tests': [],
-        'passed': 0,
-        'failed': 0
-    }
+def log(msg, level='INFO'):
+    timestamp = datetime.now().strftime('%H:%M:%S')
+    print(f"[{timestamp}] [{level}] {msg}")
 
-    def log_test(name: str, passed: bool, message: str = ""):
-        result = {'name': name, 'passed': passed, 'message': message}
-        results['tests'].append(result)
-        if passed:
-            results['passed'] += 1
-            print(f"  ✅ {name}")
+def test_result(name, passed, details=None):
+    status = '✅ PASS' if passed else '❌ FAIL'
+    print(f"\n{status}: {name}")
+    if details and VERBOSE:
+        if isinstance(details, dict):
+            for k, v in details.items():
+                print(f"    {k}: {v}")
         else:
-            results['failed'] += 1
-            print(f"  ❌ {name}: {message}")
+            print(f"    {details}")
+    return passed
 
-    print("\n" + "=" * 60)
-    print("PROVERBS END-TO-END TEST")
-    print("=" * 60)
-
-    # Test 1: Import Proverbs
-    print("\n1. Testing imports...")
+def test_api_health():
+    """Test 1: API Health Check"""
     try:
-        from quant.proverbs_feedback_loop import (
-            get_proverbs, run_feedback_loop, approve_proposal, reject_proposal,
-            rollback_bot, kill_bot, resume_bot, get_dashboard,
-            BotName, ActionType, ProposalType, ProposalStatus
+        # Try /health first (FastAPI standard), fallback to /api/health
+        resp = requests.get(f"{API_URL}/health", timeout=10)
+        if resp.status_code == 404:
+            resp = requests.get(f"{API_URL}/api/health", timeout=10)
+        return test_result(
+            "API Health Check",
+            resp.status_code == 200,
+            resp.json() if resp.status_code == 200 else f"Status: {resp.status_code}"
         )
-        log_test("Import Proverbs core", True)
     except Exception as e:
-        log_test("Import Proverbs core", False, str(e))
-        return results
+        return test_result("API Health Check", False, str(e))
 
-    # Test 2: Create instance
-    print("\n2. Testing instance creation...")
+def test_solomon_status():
+    """Test 2: SOLOMON Status Endpoint"""
     try:
-        proverbs = get_proverbs()
-        log_test("Create Proverbs instance", True, f"Session: {proverbs.session_id}")
-    except Exception as e:
-        log_test("Create Proverbs instance", False, str(e))
-        return results
+        resp = requests.get(f"{API_URL}/api/solomon/status", timeout=15)
+        if resp.status_code != 200:
+            return test_result("SOLOMON Status", False, f"Status: {resp.status_code}")
 
-    # Test 3: Database schema
-    print("\n3. Testing database schema...")
+        data = resp.json().get('data', {})
+        details = {
+            'mode': data.get('mode', 'unknown'),
+            'capital': f"${data.get('capital', 0):,.0f}",
+            'gex_ml_available': data.get('gex_ml_available', False),
+            'oracle_available': data.get('oracle_available', False),
+            'kronos_available': data.get('kronos_available', False),
+            'is_active': data.get('is_active', False)
+        }
+
+        # Pass if we got a response with expected fields
+        passed = 'mode' in data and 'capital' in data
+        return test_result("SOLOMON Status", passed, details)
+    except Exception as e:
+        return test_result("SOLOMON Status", False, str(e))
+
+def test_ml_signal():
+    """Test 3: ML Signal Endpoint"""
     try:
-        proverbs._ensure_schema()
-        log_test("Ensure schema exists", True)
-    except Exception as e:
-        log_test("Ensure schema exists", False, str(e))
+        resp = requests.get(f"{API_URL}/api/solomon/ml-signal", timeout=20)
+        if resp.status_code == 503:
+            return test_result("ML Signal", False, "SOLOMON not available (503)")
+        if resp.status_code != 200:
+            return test_result("ML Signal", False, f"Status: {resp.status_code}")
 
-    # Test 4: Kill switch operations
-    print("\n4. Testing kill switch...")
+        result = resp.json()
+        data = result.get('data')
+
+        if data is None:
+            msg = result.get('message', 'No data')
+            return test_result("ML Signal", True, f"No signal: {msg}")
+
+        details = {
+            'advice': data.get('advice'),
+            'spread_type': data.get('spread_type'),
+            'confidence': f"{data.get('confidence', 0) * 100:.1f}%",
+            'win_probability': f"{data.get('win_probability', 0) * 100:.1f}%",
+            'reasoning': data.get('reasoning', '')[:100] + '...' if data.get('reasoning') else 'N/A'
+        }
+
+        # Check model predictions
+        if data.get('model_predictions'):
+            mp = data['model_predictions']
+            details['direction'] = mp.get('direction')
+            details['flip_gravity'] = f"{mp.get('flip_gravity', 0) * 100:.0f}%"
+            details['pin_zone'] = f"{mp.get('pin_zone', 0) * 100:.0f}%"
+
+        # Check GEX context
+        if data.get('gex_context'):
+            gc = data['gex_context']
+            details['spot_price'] = gc.get('spot_price')
+            details['regime'] = gc.get('regime')
+
+        passed = data.get('advice') in ['LONG', 'SHORT', 'STAY_OUT']
+        return test_result("ML Signal", passed, details)
+    except Exception as e:
+        return test_result("ML Signal", False, str(e))
+
+def test_oracle_advice():
+    """Test 4: Oracle Advice Endpoint"""
     try:
-        # Check initial state
-        is_killed = proverbs.is_bot_killed('ARES')
-        log_test("Check kill switch (ARES)", True, f"killed={is_killed}")
+        resp = requests.get(f"{API_URL}/api/solomon/oracle-advice", timeout=15)
+        if resp.status_code != 200:
+            return test_result("Oracle Advice", False, f"Status: {resp.status_code}")
 
-        # Activate kill switch
-        proverbs.activate_kill_switch('TEST_BOT', 'E2E test', 'TEST')
-        is_killed = proverbs.is_bot_killed('TEST_BOT')
-        log_test("Activate kill switch", is_killed, f"killed={is_killed}")
+        result = resp.json()
+        data = result.get('data')
 
-        # Deactivate kill switch
-        proverbs.deactivate_kill_switch('TEST_BOT', 'TEST')
-        is_killed = proverbs.is_bot_killed('TEST_BOT')
-        log_test("Deactivate kill switch", not is_killed, f"killed={is_killed}")
+        if data is None:
+            return test_result("Oracle Advice", True, "No oracle advice available")
+
+        details = {
+            'advice': data.get('advice'),
+            'confidence': f"{data.get('confidence', 0) * 100:.1f}%",
+            'win_probability': f"{data.get('win_probability', 0) * 100:.1f}%",
+            'reasoning': data.get('reasoning', '')[:100] + '...' if data.get('reasoning') else 'N/A'
+        }
+
+        return test_result("Oracle Advice", True, details)
     except Exception as e:
-        log_test("Kill switch operations", False, str(e))
+        return test_result("Oracle Advice", False, str(e))
 
-    # Test 5: Audit logging
-    print("\n5. Testing audit logging...")
+def test_signals_history():
+    """Test 5: Signals History Endpoint"""
     try:
-        audit_id = proverbs.log_action(
-            bot_name='TEST',
-            action_type=ActionType.HEALTH_CHECK,
-            description='E2E test action',
-            reason='Testing audit log functionality'
-        )
-        log_test("Log audit action", audit_id is not None or True, f"audit_id={audit_id}")
+        resp = requests.get(f"{API_URL}/api/solomon/signals?limit=5", timeout=15)
+        if resp.status_code != 200:
+            return test_result("Signals History", False, f"Status: {resp.status_code}")
 
-        # Retrieve audit log
-        logs = proverbs.get_audit_log(bot_name='TEST', limit=5)
-        log_test("Retrieve audit log", True, f"found {len(logs)} entries")
+        data = resp.json().get('data', [])
+        details = {
+            'count': len(data),
+            'latest_signal': data[0].get('direction', data[0].get('signal_direction')) if data else 'None'
+        }
+
+        if data:
+            latest = data[0]
+            details['latest_date'] = latest.get('created_at', 'unknown')[:19]
+            conf = latest.get('confidence', latest.get('ml_confidence', 0))
+            details['latest_confidence'] = f"{conf * 100:.1f}%"
+
+        return test_result("Signals History", True, details)
     except Exception as e:
-        log_test("Audit logging", False, str(e))
+        return test_result("Signals History", False, str(e))
 
-    # Test 6: Proposal workflow
-    print("\n6. Testing proposal workflow...")
+def test_positions():
+    """Test 6: Positions Endpoint"""
     try:
-        proposal_id = proverbs.create_proposal(
-            bot_name='TEST',
-            proposal_type=ProposalType.PARAMETER_CHANGE,
-            title='E2E Test Proposal',
-            description='Testing proposal creation',
-            current_value={'test_param': 1},
-            proposed_value={'test_param': 2},
-            reason='E2E testing',
-            supporting_metrics={'test': True},
-            expected_improvement={'test': 'improvement'},
-            risk_level='LOW',
-            risk_factors=['E2E test only'],
-            rollback_plan='Delete after test'
-        )
-        log_test("Create proposal", proposal_id is not None, f"proposal_id={proposal_id}")
+        resp = requests.get(f"{API_URL}/api/solomon/positions", timeout=15)
+        if resp.status_code != 200:
+            return test_result("Positions", False, f"Status: {resp.status_code}")
 
-        # Get pending proposals
-        pending = proverbs.get_pending_proposals()
-        log_test("Get pending proposals", True, f"found {len(pending)} pending")
+        data = resp.json().get('data', [])
+        # Handle both uppercase and lowercase status values
+        open_positions = [p for p in data if p.get('status', '').lower() == 'open']
+        closed_positions = [p for p in data if p.get('status', '').lower() == 'closed']
 
-        # Reject test proposal (cleanup)
-        if proposal_id:
-            proverbs.reject_proposal(proposal_id, 'TEST', 'E2E test cleanup')
-            log_test("Reject proposal", True)
+        details = {
+            'total': len(data),
+            'open': len(open_positions),
+            'closed': len(closed_positions)
+        }
+
+        if closed_positions:
+            total_pnl = sum(p.get('realized_pnl', 0) for p in closed_positions)
+            details['total_pnl'] = f"${total_pnl:,.2f}"
+
+        return test_result("Positions", True, details)
     except Exception as e:
-        log_test("Proposal workflow", False, str(e))
+        return test_result("Positions", False, str(e))
 
-    # Test 7: Version management
-    print("\n7. Testing version management...")
+def test_performance():
+    """Test 7: Performance Endpoint"""
     try:
-        from quant.proverbs_feedback_loop import VersionType
+        resp = requests.get(f"{API_URL}/api/solomon/performance?days=30", timeout=15)
+        if resp.status_code != 200:
+            return test_result("Performance", False, f"Status: {resp.status_code}")
 
-        version_id = proverbs.save_version(
-            bot_name='TEST',
-            version_type=VersionType.PARAMETERS,
-            artifact_name='test_params',
-            artifact_data={'test': True},
-            metadata={'e2e_test': True}
-        )
-        log_test("Save version", version_id is not None, f"version_id={version_id}")
+        result = resp.json().get('data', {})
+        summary = result.get('summary', {})
 
-        # Get version history
-        versions = proverbs.get_version_history('TEST')
-        log_test("Get version history", True, f"found {len(versions)} versions")
+        details = {
+            'total_trades': summary.get('total_trades', 0),
+            'total_wins': summary.get('total_wins', 0),
+            'total_pnl': f"${summary.get('total_pnl', 0):,.2f}",
+            'avg_win_rate': f"{summary.get('avg_win_rate', 0) * 100:.1f}%"
+        }
+
+        return test_result("Performance", True, details)
     except Exception as e:
-        log_test("Version management", False, str(e))
+        return test_result("Performance", False, str(e))
 
-    # Test 8: Performance tracking
-    print("\n8. Testing performance tracking...")
+def test_logs():
+    """Test 8: Logs Endpoint"""
     try:
-        snapshot_id = proverbs.record_performance_snapshot('ARES')
-        log_test("Record performance snapshot", True, f"snapshot_id={snapshot_id}")
+        resp = requests.get(f"{API_URL}/api/solomon/logs?limit=10", timeout=15)
+        if resp.status_code != 200:
+            return test_result("Logs", False, f"Status: {resp.status_code}")
 
-        history = proverbs.get_performance_history('ARES', days=7)
-        log_test("Get performance history", True, f"found {len(history)} snapshots")
+        data = resp.json().get('data', [])
+
+        by_level = {}
+        for log in data:
+            level = log.get('level', 'UNKNOWN')
+            by_level[level] = by_level.get(level, 0) + 1
+
+        details = {
+            'total_logs': len(data),
+            'levels': by_level
+        }
+
+        if data:
+            details['latest'] = data[0].get('message', 'N/A')[:60]
+
+        return test_result("Logs", True, details)
     except Exception as e:
-        log_test("Performance tracking", False, str(e))
+        return test_result("Logs", False, str(e))
 
-    # Test 9: Dashboard data
-    print("\n9. Testing dashboard...")
+def test_run_cycle():
+    """Test 9: Run Trading Cycle (if market hours)"""
     try:
-        dashboard = proverbs.get_dashboard_summary()
-        log_test("Get dashboard summary", True)
-        log_test("Dashboard has bots", len(dashboard.get('bots', {})) >= 4,
-                 f"found {len(dashboard.get('bots', {}))} bots")
-        log_test("Dashboard has health", 'health' in dashboard)
-    except Exception as e:
-        log_test("Dashboard", False, str(e))
+        # First check if we should run during market hours
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
 
-    # Test 10: Feedback loop (dry run)
-    print("\n10. Testing feedback loop...")
-    try:
-        # Don't run full feedback loop in test - just check it's callable
-        from quant.proverbs_feedback_loop import run_feedback_loop
-        log_test("Feedback loop function exists", callable(run_feedback_loop))
+        ct_tz = ZoneInfo("America/Chicago")
+        now = datetime.now(ct_tz)
+
+        # Check if market is open (8:30 AM - 3:00 PM CT, Mon-Fri)
+        is_weekday = now.weekday() < 5
+        is_market_hours = now.hour >= 8 and now.hour < 15
+
+        if not (is_weekday and is_market_hours):
+            return test_result(
+                "Run Cycle",
+                True,
+                f"Skipped (market closed). Current time: {now.strftime('%Y-%m-%d %H:%M %Z')}"
+            )
+
+        # Run the cycle (endpoint is /api/solomon/run)
+        resp = requests.post(f"{API_URL}/api/solomon/run", timeout=60)
+        if resp.status_code != 200:
+            return test_result("Run Cycle", False, f"Status: {resp.status_code}")
+
+        result = resp.json().get('data', {})
+        details = {
+            'signal_source': result.get('signal_source', 'N/A'),
+            'trades_attempted': result.get('trades_attempted', 0),
+            'trades_executed': result.get('trades_executed', 0),
+            'positions_closed': result.get('positions_closed', 0),
+            'daily_pnl': f"${result.get('daily_pnl', 0):,.2f}"
+        }
+
+        return test_result("Run Cycle", True, details)
+    except ImportError:
+        return test_result("Run Cycle", True, "Skipped (pytz not installed)")
     except Exception as e:
-        log_test("Feedback loop", False, str(e))
+        return test_result("Run Cycle", False, str(e))
+
+def test_diagnostics():
+    """Test 10: Diagnostics Endpoint"""
+    try:
+        resp = requests.get(f"{API_URL}/api/solomon/diagnostics", timeout=20)
+        if resp.status_code != 200:
+            return test_result("Diagnostics", False, f"Status: {resp.status_code}")
+
+        data = resp.json().get('data', {})
+
+        # Extract key info
+        subsystems = data.get('subsystems', {})
+        data_avail = data.get('data_availability', {})
+        env = data.get('environment', {})
+
+        details = {
+            'solomon_available': data.get('solomon_available'),
+            'kronos': subsystems.get('kronos', {}).get('available'),
+            'oracle': subsystems.get('oracle', {}).get('available'),
+            'gex_ml': subsystems.get('gex_ml', {}).get('available'),
+            'gex_data_source': data_avail.get('gex_data', {}).get('source'),
+            'ml_model_exists': data_avail.get('ml_model_file', {}).get('exists'),
+            'database_url_set': env.get('database_url')
+        }
+
+        # Check database GEX data
+        db_gex = data_avail.get('database_gex', [])
+        if isinstance(db_gex, list) and db_gex:
+            details['latest_gex_symbol'] = db_gex[0].get('symbol')
+            details['latest_gex_date'] = db_gex[0].get('latest_date')
+
+        return test_result("Diagnostics", True, details)
+    except Exception as e:
+        return test_result("Diagnostics", False, str(e))
+
+def main():
+    print("=" * 70)
+    print("SOLOMON DIRECTIONAL STRATEGY - END-TO-END TEST")
+    print("=" * 70)
+    print(f"API URL: {API_URL}")
+    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 70)
+
+    tests = [
+        test_api_health,
+        test_solomon_status,
+        test_ml_signal,
+        test_oracle_advice,
+        test_signals_history,
+        test_positions,
+        test_performance,
+        test_logs,
+        test_diagnostics,
+        test_run_cycle,
+    ]
+
+    results = []
+    for test in tests:
+        try:
+            results.append(test())
+        except Exception as e:
+            log(f"Test {test.__name__} crashed: {e}", "ERROR")
+            results.append(False)
+        time.sleep(0.5)  # Rate limiting
 
     # Summary
-    print("\n" + "=" * 60)
-    print(f"RESULTS: {results['passed']} passed, {results['failed']} failed")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
+    passed = sum(results)
+    total = len(results)
+    print(f"Tests Passed: {passed}/{total}")
+    print(f"Success Rate: {passed/total*100:.0f}%")
 
-    return results
+    if passed == total:
+        print("\n✅ ALL TESTS PASSED - SOLOMON is ready for trading!")
+    else:
+        print(f"\n⚠️  {total - passed} test(s) failed - review above for details")
 
+    return 0 if passed == total else 1
 
-if __name__ == '__main__':
-    results = test_proverbs()
-
-    # Exit with error code if any tests failed
-    sys.exit(0 if results['failed'] == 0 else 1)
+if __name__ == "__main__":
+    sys.exit(main())

@@ -88,7 +88,7 @@ export default function LogsPage() {
 
   const categories = [
     { id: 'trading', name: 'Trading Decisions', icon: FileText, color: 'bg-blue-500', tables: ['trading_decisions'] },
-    { id: 'ml', name: 'ML/AI Logs', icon: Brain, color: 'bg-purple-500', tables: ['ml_decision_logs', 'ml_predictions', 'ares_ml_outcomes', 'spx_wheel_ml_outcomes'] },
+    { id: 'ml', name: 'ML/AI Logs', icon: Brain, color: 'bg-purple-500', tables: ['ml_decision_logs', 'ml_predictions', 'fortress_ml_outcomes', 'spx_wheel_ml_outcomes'] },
     { id: 'oracle', name: 'Oracle Predictions', icon: Eye, color: 'bg-green-500', tables: ['oracle_predictions'] },
     { id: 'autonomous', name: 'Autonomous Trader', icon: Bot, color: 'bg-orange-500', tables: ['autonomous_trader_logs', 'autonomous_trade_log'] },
     { id: 'psychology', name: 'Psychology Analysis', icon: Activity, color: 'bg-pink-500', tables: ['psychology_analysis', 'pattern_learning'] },
@@ -101,7 +101,7 @@ export default function LogsPage() {
     { id: 'all', name: 'All Bots', color: 'bg-gray-600' },
     { id: 'PHOENIX', name: 'PHOENIX', color: 'bg-orange-500' },
     { id: 'ATLAS', name: 'ATLAS', color: 'bg-blue-500' },
-    { id: 'ARES', name: 'ARES', color: 'bg-red-500' },
+    { id: 'FORTRESS', name: 'FORTRESS', color: 'bg-red-500' },
     { id: 'HERMES', name: 'HERMES', color: 'bg-purple-500' },
     { id: 'ORACLE', name: 'ORACLE', color: 'bg-green-500' },
   ]

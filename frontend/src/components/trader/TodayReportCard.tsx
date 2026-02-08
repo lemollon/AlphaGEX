@@ -3,7 +3,7 @@
 import { TrendingUp, TrendingDown, Target, Activity, Clock, Award, AlertTriangle, CheckCircle } from 'lucide-react'
 
 interface TodayReportCardProps {
-  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botName: 'SOLOMON' | 'FORTRESS' | 'PEGASUS'
   scansToday: number
   tradesToday: number
   winsToday: number

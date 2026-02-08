@@ -55,7 +55,7 @@ def _get_bot_enum(bot_name: str):
     except (KeyError, AttributeError):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid bot name: {bot_name}. Valid options: ARES, ATHENA, ICARUS, TITAN, PEGASUS, HERACLES, AGAPE"
+            detail=f"Invalid bot name: {bot_name}. Valid options: FORTRESS, SOLOMON, ICARUS, SAMSON, PEGASUS, HERACLES, AGAPE"
         )
 
 
@@ -110,7 +110,7 @@ async def get_bot_capital_config(bot: str, force_refresh: bool = False):
     Priority:
     1. Database config (set via /api/metrics/{bot}/capital POST)
     2. Tradier account balance (if connected)
-    3. Default fallback ($100k for ARES/ATHENA/ICARUS, $200k for TITAN/PEGASUS)
+    3. Default fallback ($100k for FORTRESS/SOLOMON/ICARUS, $200k for SAMSON/PEGASUS)
     """
     try:
         from backend.services.bot_metrics_service import get_metrics_service
@@ -338,9 +338,9 @@ async def debug_equity_curve(bot: str):
 
         # Table mapping
         table_map = {
-            "ARES": "ares_positions",
-            "ATHENA": "athena_positions",
-            "TITAN": "titan_positions",
+            "FORTRESS": "fortress_positions",
+            "SOLOMON": "solomon_positions",
+            "SAMSON": "samson_positions",
             "PEGASUS": "pegasus_positions",
             "ICARUS": "icarus_positions",
         }

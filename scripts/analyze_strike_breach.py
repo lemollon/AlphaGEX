@@ -40,11 +40,11 @@ def get_losing_trades(conn, target_date: str) -> list:
     """Get all losing trades from both bots"""
     trades = []
 
-    # ARES losses
+    # FORTRESS losses
     c = conn.cursor()
     c.execute("""
         SELECT
-            'ARES' as bot,
+            'FORTRESS' as bot,
             position_id,
             ticker,
             underlying_at_entry,
@@ -64,7 +64,7 @@ def get_losing_trades(conn, target_date: str) -> list:
             contracts,
             total_credit,
             spread_width
-        FROM ares_positions
+        FROM fortress_positions
         WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
           AND realized_pnl < 0
         ORDER BY realized_pnl ASC
@@ -121,18 +121,18 @@ def get_winning_trades(conn, target_date: str) -> list:
     """Get all winning trades from both bots for comparison"""
     trades = []
 
-    # ARES wins
+    # FORTRESS wins
     c = conn.cursor()
     c.execute("""
         SELECT
-            'ARES' as bot,
+            'FORTRESS' as bot,
             position_id,
             underlying_at_entry,
             expected_move,
             put_short_strike,
             call_short_strike,
             realized_pnl
-        FROM ares_positions
+        FROM fortress_positions
         WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
           AND realized_pnl >= 0
     """, (target_date,))
@@ -315,11 +315,11 @@ def main():
         else:
             # Summary stats
             total_loss = sum(float_val(t['realized_pnl']) for t in losing_trades)
-            ares_losses = [a for a in loss_analyses if a['bot'] == 'ARES']
+            ares_losses = [a for a in loss_analyses if a['bot'] == 'FORTRESS']
             pegasus_losses = [a for a in loss_analyses if a['bot'] == 'PEGASUS']
 
             print(f"\n  Total Loss: ${total_loss:,.2f}")
-            print(f"  ARES Losses: {len(ares_losses)}")
+            print(f"  FORTRESS Losses: {len(ares_losses)}")
             print(f"  PEGASUS Losses: {len(pegasus_losses)}")
 
             # Detailed analysis

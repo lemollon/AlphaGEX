@@ -8,15 +8,15 @@ CAPITAL ALLOCATION:
 Total Capital: $1,000,000
 ├── PHOENIX (0DTE SPY/SPX):      $300,000 (30%)
 ├── ATLAS (SPX Wheel):           $400,000 (40%)
-├── ARES (Aggressive IC):        $200,000 (20%)
+├── FORTRESS (Aggressive IC):        $200,000 (20%)
 └── Reserve:                     $100,000 (10%)
 
 TRADING BOTS:
 ============
 - PHOENIX: 0DTE options trading (hourly 10 AM - 3 PM ET)
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
-- ARES: Aggressive Iron Condor targeting 10% monthly (every 5 min 8:30 AM - 2:55 PM CT)
-- ATHENA: GEX Directional Spreads (every 5 min 8:35 AM - 2:30 PM CT)
+- FORTRESS: Aggressive Iron Condor targeting 10% monthly (every 5 min 8:30 AM - 2:55 PM CT)
+- SOLOMON: GEX Directional Spreads (every 5 min 8:35 AM - 2:30 PM CT)
 - ALL EOD: Process expired positions at 3:01 PM CT (all bots run simultaneously for <5 min reconciliation)
 - ARGUS: Gamma Commentary Generation (every 5 min 8:30 AM - 3:00 PM CT)
 
@@ -26,7 +26,7 @@ decisions with full context when they scan but don't take a trade.
 This partitioning provides:
 - Aggressive short-term trading via PHOENIX
 - Steady premium collection via ATLAS wheel
-- High-return strategy via ARES Iron Condors
+- High-return strategy via FORTRESS Iron Condors
 - Reserve for margin calls and opportunities
 """
 
@@ -36,9 +36,9 @@ This partitioning provides:
 CAPITAL_ALLOCATION = {
     'PHOENIX': 250_000,   # 0DTE options trading
     'ATLAS': 300_000,     # SPX wheel strategy
-    'ARES': 150_000,      # Aggressive Iron Condor (SPY 0DTE)
+    'FORTRESS': 150_000,      # Aggressive Iron Condor (SPY 0DTE)
     'PEGASUS': 200_000,   # SPX Iron Condor ($10 spreads, weekly)
-    'TITAN': 200_000,     # Aggressive SPX Iron Condor ($12 spreads, daily)
+    'SAMSON': 200_000,     # Aggressive SPX Iron Condor ($12 spreads, daily)
     'RESERVE': 100_000,   # Emergency reserve
     'TOTAL': 1_000_000,
 }
@@ -81,27 +81,27 @@ except ImportError:
     TradingMode = None
     print("Warning: SPXWheelTrader not available. ATLAS bot will be disabled.")
 
-# Import ARES V2 (SPY Iron Condors)
+# Import FORTRESS V2 (SPY Iron Condors)
 try:
-    from trading.ares_v2 import ARESTrader, ARESConfig, TradingMode as ARESTradingMode
+    from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode as ARESTradingMode
     ARES_AVAILABLE = True
 except ImportError:
     ARES_AVAILABLE = False
-    ARESTrader = None
-    ARESConfig = None
+    FortressTrader = None
+    FortressConfig = None
     ARESTradingMode = None
-    print("Warning: ARES V2 not available. ARES bot will be disabled.")
+    print("Warning: FORTRESS V2 not available. FORTRESS bot will be disabled.")
 
-# Import ATHENA V2 (SPY Directional Spreads)
+# Import SOLOMON V2 (SPY Directional Spreads)
 try:
-    from trading.athena_v2 import ATHENATrader, ATHENAConfig, TradingMode as ATHENATradingMode
-    ATHENA_AVAILABLE = True
+    from trading.solomon_v2 import SolomonTrader, SolomonConfig, TradingMode as SOLOMONTradingMode
+    SOLOMON_AVAILABLE = True
 except ImportError:
-    ATHENA_AVAILABLE = False
-    ATHENATrader = None
-    ATHENAConfig = None
-    ATHENATradingMode = None
-    print("Warning: ATHENA V2 not available. ATHENA bot will be disabled.")
+    SOLOMON_AVAILABLE = False
+    SolomonTrader = None
+    SolomonConfig = None
+    SOLOMONTradingMode = None
+    print("Warning: SOLOMON V2 not available. SOLOMON bot will be disabled.")
 
 # Import PEGASUS (SPX Iron Condors)
 try:
@@ -125,16 +125,16 @@ except ImportError:
     ICARUSTradingMode = None
     print("Warning: ICARUS not available. Aggressive directional trading will be disabled.")
 
-# Import TITAN (Aggressive SPX Iron Condors - daily trading)
+# Import SAMSON (Aggressive SPX Iron Condors - daily trading)
 try:
-    from trading.titan import TITANTrader, TITANConfig, TradingMode as TITANTradingMode
+    from trading.samson import SamsonTrader, SamsonConfig, TradingMode as TITANTradingMode
     TITAN_AVAILABLE = True
 except ImportError:
     TITAN_AVAILABLE = False
-    TITANTrader = None
-    TITANConfig = None
+    SamsonTrader = None
+    SamsonConfig = None
     TITANTradingMode = None
-    print("Warning: TITAN not available. Aggressive SPX Iron Condor trading will be disabled.")
+    print("Warning: SAMSON not available. Aggressive SPX Iron Condor trading will be disabled.")
 
 # Import PROMETHEUS (Box Spread Synthetic Borrowing)
 try:
@@ -375,7 +375,7 @@ except ImportError:
 # Import scan activity logger for comprehensive scan visibility
 try:
     from trading.scan_activity_logger import (
-        log_ares_scan, log_athena_scan, log_pegasus_scan, log_icarus_scan, log_titan_scan,
+        log_ares_scan, log_solomon_scan, log_pegasus_scan, log_icarus_scan, log_titan_scan,
         ScanOutcome
     )
     SCAN_ACTIVITY_LOGGER_AVAILABLE = True
@@ -383,7 +383,7 @@ try:
 except ImportError as e:
     SCAN_ACTIVITY_LOGGER_AVAILABLE = False
     log_ares_scan = None
-    log_athena_scan = None
+    log_solomon_scan = None
     log_pegasus_scan = None
     log_icarus_scan = None
     log_titan_scan = None
@@ -476,31 +476,31 @@ class AutonomousTraderScheduler:
                 logger.warning(f"ATLAS initialization failed: {e}")
                 self.atlas_trader = None
 
-        # ARES V2 - SPY Iron Condors (10% monthly target)
+        # FORTRESS V2 - SPY Iron Condors (10% monthly target)
         # Capital: Uses AlphaGEX internal capital allocation
         # LIVE mode: Sends orders to Tradier SANDBOX account for testing
-        self.ares_trader = None
+        self.fortress_trader = None
         if ARES_AVAILABLE:
             try:
-                config = ARESConfig(mode=ARESTradingMode.LIVE)
-                self.ares_trader = ARESTrader(config=config)
-                logger.info(f"✅ ARES V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
+                config = FortressConfig(mode=ARESTradingMode.LIVE)
+                self.fortress_trader = FortressTrader(config=config)
+                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
             except Exception as e:
-                logger.warning(f"ARES V2 initialization failed: {e}")
-                self.ares_trader = None
+                logger.warning(f"FORTRESS V2 initialization failed: {e}")
+                self.fortress_trader = None
 
-        # ATHENA V2 - SPY Directional Spreads
+        # SOLOMON V2 - SPY Directional Spreads
         # Uses GEX + ML signals for directional spread trading
         # PAPER mode: Simulated trades with AlphaGEX internal capital, production Tradier for quotes only
-        self.athena_trader = None
-        if ATHENA_AVAILABLE:
+        self.solomon_trader = None
+        if SOLOMON_AVAILABLE:
             try:
-                config = ATHENAConfig(mode=ATHENATradingMode.PAPER)
-                self.athena_trader = ATHENATrader(config=config)
-                logger.info(f"✅ ATHENA V2 initialized (SPY Directional Spreads, PAPER mode - AlphaGEX internal)")
+                config = SolomonConfig(mode=SOLOMONTradingMode.PAPER)
+                self.solomon_trader = SolomonTrader(config=config)
+                logger.info(f"✅ SOLOMON V2 initialized (SPY Directional Spreads, PAPER mode - AlphaGEX internal)")
             except Exception as e:
-                logger.warning(f"ATHENA V2 initialization failed: {e}")
-                self.athena_trader = None
+                logger.warning(f"SOLOMON V2 initialization failed: {e}")
+                self.solomon_trader = None
 
         # PEGASUS - SPX Iron Condors ($10 spreads)
         # Uses larger spread widths for SPX index options
@@ -516,7 +516,7 @@ class AutonomousTraderScheduler:
                 self.pegasus_trader = None
 
         # ICARUS - Aggressive Directional Spreads (relaxed GEX filters)
-        # Uses relaxed parameters vs ATHENA: 10% wall filter, 40% min win prob, 4% risk
+        # Uses relaxed parameters vs SOLOMON: 10% wall filter, 40% min win prob, 4% risk
         # PAPER mode: Simulated trades with AlphaGEX internal capital, production Tradier for quotes
         self.icarus_trader = None
         if ICARUS_AVAILABLE:
@@ -528,18 +528,18 @@ class AutonomousTraderScheduler:
                 logger.warning(f"ICARUS initialization failed: {e}")
                 self.icarus_trader = None
 
-        # TITAN - Aggressive SPX Iron Condors ($12 spreads, daily trading)
+        # SAMSON - Aggressive SPX Iron Condors ($12 spreads, daily trading)
         # Multiple trades per day with relaxed filters vs PEGASUS
         # PAPER mode: Simulated trades with AlphaGEX internal capital, production Tradier for SPX quotes
-        self.titan_trader = None
+        self.samson_trader = None
         if TITAN_AVAILABLE:
             try:
-                config = TITANConfig(mode=TITANTradingMode.PAPER)
-                self.titan_trader = TITANTrader(config=config)
-                logger.info(f"✅ TITAN initialized (Aggressive SPX Iron Condors, PAPER mode - AlphaGEX internal)")
+                config = SamsonConfig(mode=TITANTradingMode.PAPER)
+                self.samson_trader = SamsonTrader(config=config)
+                logger.info(f"✅ SAMSON initialized (Aggressive SPX Iron Condors, PAPER mode - AlphaGEX internal)")
             except Exception as e:
-                logger.warning(f"TITAN initialization failed: {e}")
-                self.titan_trader = None
+                logger.warning(f"SAMSON initialization failed: {e}")
+                self.samson_trader = None
 
         # PROMETHEUS - Box Spread Synthetic Borrowing
         # Generates cash through box spreads to fund IC bot volume scaling
@@ -596,7 +596,7 @@ class AutonomousTraderScheduler:
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
         logger.info(f"   ATLAS:   ${CAPITAL_ALLOCATION['ATLAS']:,}")
-        logger.info(f"   ARES:    ${CAPITAL_ALLOCATION['ARES']:,}")
+        logger.info(f"   FORTRESS:    ${CAPITAL_ALLOCATION['FORTRESS']:,}")
         logger.info(f"   RESERVE: ${CAPITAL_ALLOCATION['RESERVE']:,}")
         logger.info(f"   TOTAL:   ${CAPITAL_ALLOCATION['TOTAL']:,}")
 
@@ -605,7 +605,7 @@ class AutonomousTraderScheduler:
         self.last_position_check = None
         self.last_atlas_check = None
         self.last_ares_check = None
-        self.last_athena_check = None
+        self.last_solomon_check = None
         self.last_pegasus_check = None
         self.last_icarus_check = None
         self.last_titan_check = None
@@ -615,7 +615,7 @@ class AutonomousTraderScheduler:
         self.execution_count = 0
         self.atlas_execution_count = 0
         self.ares_execution_count = 0
-        self.athena_execution_count = 0
+        self.solomon_execution_count = 0
         self.pegasus_execution_count = 0
         self.icarus_execution_count = 0
         self.titan_execution_count = 0
@@ -1111,7 +1111,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_ares_logic(self):
         """
-        ARES V2 (SPY Iron Condor) trading logic - runs every 5 minutes during market hours
+        FORTRESS V2 (SPY Iron Condor) trading logic - runs every 5 minutes during market hours
 
         Uses the new modular V2 architecture:
         - Database is single source of truth
@@ -1125,16 +1125,16 @@ class AutonomousTraderScheduler:
         self.last_ares_check = now
 
         logger.info(f"=" * 80)
-        logger.info(f"ARES V2 (SPY IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"FORTRESS V2 (SPY IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.ares_trader:
-            logger.warning("ARES V2 trader not available - skipping")
-            self._save_heartbeat('ARES', 'UNAVAILABLE')
+        if not self.fortress_trader:
+            logger.warning("FORTRESS V2 trader not available - skipping")
+            self._save_heartbeat('FORTRESS', 'UNAVAILABLE')
             # Log to scan_activity for visibility
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
                 log_ares_scan(
                     outcome=ScanOutcome.UNAVAILABLE,
-                    decision_summary="ARES trader not initialized",
+                    decision_summary="FORTRESS trader not initialized",
                     generate_ai_explanation=False
                 )
             return
@@ -1142,7 +1142,7 @@ class AutonomousTraderScheduler:
         is_open, market_status = self.get_market_status()
 
         # CRITICAL FIX: Allow position management even after market close
-        # ARES needs to close expiring positions up to 15 minutes after market close
+        # FORTRESS needs to close expiring positions up to 15 minutes after market close
         allow_close_only = False
         if not is_open and market_status == 'AFTER_WINDOW':
             # Check if we're within 15 minutes of market close (15:00-15:15 CT)
@@ -1151,7 +1151,7 @@ class AutonomousTraderScheduler:
             if 0 <= minutes_after_close <= 15:
                 # Allow position management but not new entries
                 allow_close_only = True
-                logger.info(f"ARES: {minutes_after_close:.0f}min after market close - running close-only cycle")
+                logger.info(f"FORTRESS: {minutes_after_close:.0f}min after market close - running close-only cycle")
 
         if not is_open and not allow_close_only:
             # Map market status to appropriate message
@@ -1163,8 +1163,8 @@ class AutonomousTraderScheduler:
             }
             message = message_mapping.get(market_status, "Market is closed")
 
-            logger.info(f"Market not open ({market_status}). Skipping ARES logic.")
-            self._save_heartbeat('ARES', market_status)
+            logger.info(f"Market not open ({market_status}). Skipping FORTRESS logic.")
+            self._save_heartbeat('FORTRESS', market_status)
             # Log to scan_activity for visibility
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan and ScanOutcome:
                 # Map market status to scan outcome
@@ -1181,22 +1181,22 @@ class AutonomousTraderScheduler:
                     generate_ai_explanation=False
                 )
                 if scan_id:
-                    logger.info(f"📝 ARES scan logged to database: {scan_id}")
+                    logger.info(f"📝 FORTRESS scan logged to database: {scan_id}")
                 else:
-                    logger.warning("⚠️ ARES scan_activity logging FAILED - check database connection")
+                    logger.warning("⚠️ FORTRESS scan_activity logging FAILED - check database connection")
             else:
-                logger.warning(f"⚠️ ARES scan NOT logged: SCAN_ACTIVITY_LOGGER_AVAILABLE={SCAN_ACTIVITY_LOGGER_AVAILABLE}")
+                logger.warning(f"⚠️ FORTRESS scan NOT logged: SCAN_ACTIVITY_LOGGER_AVAILABLE={SCAN_ACTIVITY_LOGGER_AVAILABLE}")
             return
 
         try:
             # Run the V2 cycle (close_only mode prevents new entries after market close)
-            result = self.ares_trader.run_cycle(close_only=allow_close_only)
+            result = self.fortress_trader.run_cycle(close_only=allow_close_only)
 
             traded = result.get('trade_opened', False)
             closed = result.get('positions_closed', 0)
             action = result.get('action', 'none')
 
-            logger.info(f"ARES V2 cycle completed: {action}")
+            logger.info(f"FORTRESS V2 cycle completed: {action}")
             if traded:
                 logger.info(f"  NEW TRADE OPENED")
             if closed > 0:
@@ -1206,25 +1206,25 @@ class AutonomousTraderScheduler:
                     logger.warning(f"  Skip reason: {err}")
 
             self.ares_execution_count += 1
-            self._save_heartbeat('ARES', 'TRADED' if traded else 'SCAN_COMPLETE', {
+            self._save_heartbeat('FORTRESS', 'TRADED' if traded else 'SCAN_COMPLETE', {
                 'scan_number': self.ares_execution_count,
                 'traded': traded,
                 'action': action
             })
 
             # NOTE: Removed duplicate "BACKUP" logging here.
-            # The ARES V2 trader.py already logs comprehensive scan activity
+            # The FORTRESS V2 trader.py already logs comprehensive scan activity
             # with full Oracle/ML data via _log_scan_activity().
             # The old backup created duplicate entries with incomplete data
             # (Oracle:0%, ML:0%, Thresh:0%) which caused diagnostic confusion.
 
-            logger.info(f"ARES V2 scan #{self.ares_execution_count} completed")
+            logger.info(f"FORTRESS V2 scan #{self.ares_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            logger.error(f"ERROR in ARES V2: {str(e)}")
+            logger.error(f"ERROR in FORTRESS V2: {str(e)}")
             logger.error(traceback.format_exc())
-            self._save_heartbeat('ARES', 'ERROR', {'error': str(e)})
+            self._save_heartbeat('FORTRESS', 'ERROR', {'error': str(e)})
             # BACKUP: Log to scan_activity in case bot's internal logging failed
             # This ensures we always have visibility into what happened
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
@@ -1241,7 +1241,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_ares_eod_logic(self):
         """
-        ARES End-of-Day processing - runs daily at 3:05 PM CT
+        FORTRESS End-of-Day processing - runs daily at 3:05 PM CT
 
         Processes expired 0DTE Iron Condor positions:
         - Calculates realized P&L based on closing price
@@ -1252,21 +1252,21 @@ class AutonomousTraderScheduler:
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"ARES EOD (End-of-Day) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"FORTRESS EOD (End-of-Day) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.ares_trader:
-            logger.warning("ARES trader not available - skipping EOD processing")
+        if not self.fortress_trader:
+            logger.warning("FORTRESS trader not available - skipping EOD processing")
             return
 
         # EOD processing happens after market close, so we don't check is_market_open()
-        logger.info("Processing expired ARES positions...")
+        logger.info("Processing expired FORTRESS positions...")
 
         try:
             # Run the EOD expiration processing
-            result = self.ares_trader.process_expired_positions()
+            result = self.fortress_trader.process_expired_positions()
 
             if result:
-                logger.info(f"ARES EOD processing completed:")
+                logger.info(f"FORTRESS EOD processing completed:")
                 logger.info(f"  Processed: {result.get('processed_count', 0)} positions")
                 logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
                 logger.info(f"  Winners: {result.get('winners', 0)}")
@@ -1281,21 +1281,21 @@ class AutonomousTraderScheduler:
                     for error in result['errors']:
                         logger.warning(f"    Error: {error}")
             else:
-                logger.info("ARES EOD: No positions to process")
+                logger.info("FORTRESS EOD: No positions to process")
 
-            logger.info(f"ARES EOD processing completed successfully")
+            logger.info(f"FORTRESS EOD processing completed successfully")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in ARES EOD processing: {str(e)}"
+            error_msg = f"ERROR in FORTRESS EOD processing: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("ARES EOD will retry next trading day")
+            logger.info("FORTRESS EOD will retry next trading day")
             logger.info(f"=" * 80)
 
-    def scheduled_athena_eod_logic(self):
+    def scheduled_solomon_eod_logic(self):
         """
-        ATHENA End-of-Day processing - runs daily at 3:10 PM CT
+        SOLOMON End-of-Day processing - runs daily at 3:10 PM CT
 
         Processes expired 0DTE directional spread positions:
         - Calculates realized P&L based on closing price
@@ -1305,21 +1305,21 @@ class AutonomousTraderScheduler:
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"ATHENA EOD (End-of-Day) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"SOLOMON EOD (End-of-Day) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.athena_trader:
-            logger.warning("ATHENA trader not available - skipping EOD processing")
+        if not self.solomon_trader:
+            logger.warning("SOLOMON trader not available - skipping EOD processing")
             return
 
         # EOD processing happens after market close, so we don't check is_market_open()
-        logger.info("Processing expired ATHENA positions...")
+        logger.info("Processing expired SOLOMON positions...")
 
         try:
             # Run the EOD expiration processing
-            result = self.athena_trader.process_expired_positions()
+            result = self.solomon_trader.process_expired_positions()
 
             if result:
-                logger.info(f"ATHENA EOD processing completed:")
+                logger.info(f"SOLOMON EOD processing completed:")
                 logger.info(f"  Processed: {result.get('processed_count', 0)} positions")
                 logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
                 logger.info(f"  Winners: {result.get('winners', 0)}")
@@ -1334,16 +1334,16 @@ class AutonomousTraderScheduler:
                     for error in result['errors']:
                         logger.warning(f"    Error: {error}")
             else:
-                logger.info("ATHENA EOD: No positions to process")
+                logger.info("SOLOMON EOD: No positions to process")
 
-            logger.info(f"ATHENA EOD processing completed successfully")
+            logger.info(f"SOLOMON EOD processing completed successfully")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in ATHENA EOD processing: {str(e)}"
+            error_msg = f"ERROR in SOLOMON EOD processing: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("ATHENA EOD will retry next trading day")
+            logger.info("SOLOMON EOD will retry next trading day")
             logger.info(f"=" * 80)
 
     def _log_no_trade_decision(self, bot_name: str, reason: str, context: dict = None):
@@ -1440,9 +1440,9 @@ class AutonomousTraderScheduler:
                 except Exception:
                     pass
 
-    def scheduled_athena_logic(self):
+    def scheduled_solomon_logic(self):
         """
-        ATHENA V2 (SPY Directional Spreads) trading logic - runs every 5 minutes during market hours
+        SOLOMON V2 (SPY Directional Spreads) trading logic - runs every 5 minutes during market hours
 
         Uses the new modular V2 architecture:
         - Database is single source of truth
@@ -1454,19 +1454,19 @@ class AutonomousTraderScheduler:
 
         # Update last check time IMMEDIATELY for health monitoring
         # (even if we return early due to market closed, the job IS running)
-        self.last_athena_check = now
+        self.last_solomon_check = now
 
         logger.info(f"=" * 80)
-        logger.info(f"ATHENA V2 (SPY Spreads) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"SOLOMON V2 (SPY Spreads) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.athena_trader:
-            logger.warning("ATHENA V2 trader not available - skipping")
-            self._save_heartbeat('ATHENA', 'UNAVAILABLE')
+        if not self.solomon_trader:
+            logger.warning("SOLOMON V2 trader not available - skipping")
+            self._save_heartbeat('SOLOMON', 'UNAVAILABLE')
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
-                log_athena_scan(
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_solomon_scan:
+                log_solomon_scan(
                     outcome=ScanOutcome.UNAVAILABLE,
-                    decision_summary="ATHENA trader not initialized",
+                    decision_summary="SOLOMON trader not initialized",
                     generate_ai_explanation=False
                 )
             return
@@ -1474,7 +1474,7 @@ class AutonomousTraderScheduler:
         is_open, market_status = self.get_market_status()
 
         # CRITICAL FIX: Allow position management even after market close
-        # ATHENA needs to close expiring positions up to 15 minutes after market close
+        # SOLOMON needs to close expiring positions up to 15 minutes after market close
         allow_close_only = False
         if not is_open and market_status == 'AFTER_WINDOW':
             # Check if we're within 15 minutes of market close (15:00-15:15 CT)
@@ -1483,7 +1483,7 @@ class AutonomousTraderScheduler:
             if 0 <= minutes_after_close <= 15:
                 # Allow position management but not new entries
                 allow_close_only = True
-                logger.info(f"ATHENA: {minutes_after_close:.0f}min after market close - running close-only cycle")
+                logger.info(f"SOLOMON: {minutes_after_close:.0f}min after market close - running close-only cycle")
 
         if not is_open and not allow_close_only:
             # Map market status to appropriate message
@@ -1495,10 +1495,10 @@ class AutonomousTraderScheduler:
             }
             message = message_mapping.get(market_status, "Market is closed")
 
-            logger.info(f"Market not open ({market_status}). Skipping ATHENA logic.")
-            self._save_heartbeat('ATHENA', market_status)
+            logger.info(f"Market not open ({market_status}). Skipping SOLOMON logic.")
+            self._save_heartbeat('SOLOMON', market_status)
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan and ScanOutcome:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_solomon_scan and ScanOutcome:
                 # Map market status to scan outcome
                 outcome_mapping = {
                     'BEFORE_WINDOW': ScanOutcome.BEFORE_WINDOW,
@@ -1507,7 +1507,7 @@ class AutonomousTraderScheduler:
                     'HOLIDAY': ScanOutcome.MARKET_CLOSED,
                 }
                 outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
-                log_athena_scan(
+                log_solomon_scan(
                     outcome=outcome,
                     decision_summary=message,
                     generate_ai_explanation=False
@@ -1516,14 +1516,14 @@ class AutonomousTraderScheduler:
 
         try:
             # Run the V2 cycle (close_only mode prevents new entries after market close)
-            result = self.athena_trader.run_cycle(close_only=allow_close_only)
+            result = self.solomon_trader.run_cycle(close_only=allow_close_only)
 
-            # ATHENA V2 returns 'trades_opened' (int), not 'trade_opened' (bool)
+            # SOLOMON V2 returns 'trades_opened' (int), not 'trade_opened' (bool)
             traded = result.get('trades_opened', result.get('trade_opened', 0)) > 0
             closed = result.get('trades_closed', result.get('positions_closed', 0))
             action = result.get('action', 'none')
 
-            logger.info(f"ATHENA V2 cycle completed: {action}")
+            logger.info(f"SOLOMON V2 cycle completed: {action}")
             if traded:
                 logger.info(f"  NEW TRADE OPENED")
             if closed > 0:
@@ -1532,28 +1532,28 @@ class AutonomousTraderScheduler:
                 for err in result['errors']:
                     logger.warning(f"  Skip reason: {err}")
 
-            self.athena_execution_count += 1
-            self._save_heartbeat('ATHENA', 'TRADED' if traded else 'SCAN_COMPLETE', {
-                'scan_number': self.athena_execution_count,
+            self.solomon_execution_count += 1
+            self._save_heartbeat('SOLOMON', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.solomon_execution_count,
                 'traded': traded,
                 'action': action
             })
 
             # NOTE: Removed duplicate "BACKUP" logging here.
-            # ATHENA V2 trader already logs comprehensive scan activity
+            # SOLOMON V2 trader already logs comprehensive scan activity
             # with full Oracle/ML data via _log_scan_activity().
 
-            logger.info(f"ATHENA V2 scan #{self.athena_execution_count} completed")
+            logger.info(f"SOLOMON V2 scan #{self.solomon_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            logger.error(f"ERROR in ATHENA V2: {str(e)}")
+            logger.error(f"ERROR in SOLOMON V2: {str(e)}")
             logger.error(traceback.format_exc())
-            self._save_heartbeat('ATHENA', 'ERROR', {'error': str(e)})
+            self._save_heartbeat('SOLOMON', 'ERROR', {'error': str(e)})
             # BACKUP: Log to scan_activity in case bot's internal logging failed
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_solomon_scan:
                 try:
-                    log_athena_scan(
+                    log_solomon_scan(
                         outcome=ScanOutcome.ERROR,
                         decision_summary=f"Scheduler-level error: {str(e)[:200]}",
                         error_message=str(e),
@@ -1728,11 +1728,11 @@ class AutonomousTraderScheduler:
         """
         ICARUS (Aggressive Directional Spreads) trading logic - runs every 5 minutes during market hours
 
-        ICARUS is an aggressive clone of ATHENA with relaxed GEX filters:
-        - 10% wall filter (vs ATHENA's 3%)
-        - 40% min win probability (vs ATHENA's 48%)
-        - 4% risk per trade (vs ATHENA's 2%)
-        - 10 max daily trades (vs ATHENA's 5)
+        ICARUS is an aggressive clone of SOLOMON with relaxed GEX filters:
+        - 10% wall filter (vs SOLOMON's 3%)
+        - 40% min win probability (vs SOLOMON's 48%)
+        - 4% risk per trade (vs SOLOMON's 2%)
+        - 10 max daily trades (vs SOLOMON's 5)
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -1895,9 +1895,9 @@ class AutonomousTraderScheduler:
 
     def scheduled_titan_logic(self):
         """
-        TITAN (Aggressive SPX Iron Condor) trading logic - runs every 5 minutes during market hours
+        SAMSON (Aggressive SPX Iron Condor) trading logic - runs every 5 minutes during market hours
 
-        TITAN is an aggressive clone of PEGASUS with relaxed filters:
+        SAMSON is an aggressive clone of PEGASUS with relaxed filters:
         - 40% VIX skip (vs PEGASUS's 32%)
         - 40% min win probability (vs PEGASUS's 50%)
         - 15% risk per trade (vs PEGASUS's 10%)
@@ -1912,16 +1912,16 @@ class AutonomousTraderScheduler:
         self.last_titan_check = now
 
         logger.info(f"=" * 80)
-        logger.info(f"TITAN (Aggressive SPX IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"SAMSON (Aggressive SPX IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.titan_trader:
-            logger.warning("TITAN trader not available - skipping")
-            self._save_heartbeat('TITAN', 'UNAVAILABLE')
+        if not self.samson_trader:
+            logger.warning("SAMSON trader not available - skipping")
+            self._save_heartbeat('SAMSON', 'UNAVAILABLE')
             # Log to scan_activity for visibility
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
                 log_titan_scan(
                     outcome=ScanOutcome.UNAVAILABLE,
-                    decision_summary="TITAN trader not initialized",
+                    decision_summary="SAMSON trader not initialized",
                     generate_ai_explanation=False
                 )
             return
@@ -1929,7 +1929,7 @@ class AutonomousTraderScheduler:
         is_open, market_status = self.get_market_status()
 
         # CRITICAL FIX: Allow position management even after market close
-        # TITAN needs to close expiring positions up to 15 minutes after market close
+        # SAMSON needs to close expiring positions up to 15 minutes after market close
         allow_close_only = False
         if not is_open and market_status == 'AFTER_WINDOW':
             # Check if we're within 15 minutes of market close (15:00-15:15 CT)
@@ -1938,7 +1938,7 @@ class AutonomousTraderScheduler:
             if 0 <= minutes_after_close <= 15:
                 # Allow position management but not new entries
                 allow_close_only = True
-                logger.info(f"TITAN: {minutes_after_close:.0f}min after market close - running close-only cycle")
+                logger.info(f"SAMSON: {minutes_after_close:.0f}min after market close - running close-only cycle")
 
         if not is_open and not allow_close_only:
             # Map market status to appropriate message
@@ -1950,8 +1950,8 @@ class AutonomousTraderScheduler:
             }
             message = message_mapping.get(market_status, "Market is closed")
 
-            logger.info(f"Market not open ({market_status}). Skipping TITAN logic.")
-            self._save_heartbeat('TITAN', market_status)
+            logger.info(f"Market not open ({market_status}). Skipping SAMSON logic.")
+            self._save_heartbeat('SAMSON', market_status)
             # Log to scan_activity for visibility
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan and ScanOutcome:
                 # Map market status to scan outcome
@@ -1971,13 +1971,13 @@ class AutonomousTraderScheduler:
 
         try:
             # Run the cycle (close_only mode prevents new entries after market close)
-            result = self.titan_trader.run_cycle(close_only=allow_close_only)
+            result = self.samson_trader.run_cycle(close_only=allow_close_only)
 
             traded = result.get('trade_opened', False)
             closed = result.get('positions_closed', 0)
             action = result.get('action', 'none')
 
-            logger.info(f"TITAN cycle completed: {action}")
+            logger.info(f"SAMSON cycle completed: {action}")
             if traded:
                 logger.info(f"  NEW TRADE OPENED")
             if closed > 0:
@@ -1987,23 +1987,23 @@ class AutonomousTraderScheduler:
                     logger.warning(f"  Skip reason: {err}")
 
             self.titan_execution_count += 1
-            self._save_heartbeat('TITAN', 'TRADED' if traded else 'SCAN_COMPLETE', {
+            self._save_heartbeat('SAMSON', 'TRADED' if traded else 'SCAN_COMPLETE', {
                 'scan_number': self.titan_execution_count,
                 'traded': traded,
                 'action': action
             })
 
             # NOTE: Removed duplicate "BACKUP" logging here.
-            # TITAN trader already logs comprehensive scan activity
+            # SAMSON trader already logs comprehensive scan activity
             # with full Oracle/ML data via its internal logger.
 
-            logger.info(f"TITAN scan #{self.titan_execution_count} completed")
+            logger.info(f"SAMSON scan #{self.titan_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            logger.error(f"ERROR in TITAN: {str(e)}")
+            logger.error(f"ERROR in SAMSON: {str(e)}")
             logger.error(traceback.format_exc())
-            self._save_heartbeat('TITAN', 'ERROR', {'error': str(e)})
+            self._save_heartbeat('SAMSON', 'ERROR', {'error': str(e)})
             # BACKUP: Log to scan_activity in case bot's internal logging failed
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
                 try:
@@ -2019,7 +2019,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_titan_eod_logic(self):
         """
-        TITAN End-of-Day processing - runs daily at 3:17 PM CT
+        SAMSON End-of-Day processing - runs daily at 3:17 PM CT
 
         Processes expired SPX Iron Condor positions:
         - Calculates realized P&L based on closing price
@@ -2029,30 +2029,30 @@ class AutonomousTraderScheduler:
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"TITAN EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"SAMSON EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.titan_trader:
-            logger.warning("TITAN trader not available - skipping EOD processing")
+        if not self.samson_trader:
+            logger.warning("SAMSON trader not available - skipping EOD processing")
             return
 
-        logger.info("Processing expired TITAN positions...")
+        logger.info("Processing expired SAMSON positions...")
 
         try:
             # Force close any remaining open positions
-            result = self.titan_trader.force_close_all("EOD_EXPIRATION")
+            result = self.samson_trader.force_close_all("EOD_EXPIRATION")
 
             if result:
-                logger.info(f"TITAN EOD processing completed:")
+                logger.info(f"SAMSON EOD processing completed:")
                 logger.info(f"  Closed: {result.get('closed', 0)} positions")
                 logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
             else:
-                logger.info("TITAN EOD: No positions to process")
+                logger.info("SAMSON EOD: No positions to process")
 
-            logger.info(f"TITAN EOD processing completed successfully")
+            logger.info(f"SAMSON EOD processing completed successfully")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            logger.error(f"ERROR in TITAN EOD: {str(e)}")
+            logger.error(f"ERROR in SAMSON EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
@@ -2750,7 +2750,7 @@ class AutonomousTraderScheduler:
         3. Analyzes strategy-level performance (IC vs Directional)
         4. Tracks Oracle recommendation accuracy
 
-        Bots: ARES, ATHENA, TITAN, PEGASUS, ICARUS
+        Bots: FORTRESS, SOLOMON, SAMSON, PEGASUS, ICARUS
 
         "Iron sharpens iron, and one man sharpens another" - Proverbs 27:17
         """
@@ -3479,14 +3479,14 @@ class AutonomousTraderScheduler:
         - GEX Signal Generator (5 sub-models)
         - GEX Directional ML
         - ML Regime Classifier
-        - ARES ML Advisor
+        - FORTRESS ML Advisor
         - Oracle Advisor
         - Apollo ML Engine
         - Prometheus ML
         - SPX Wheel ML
         - Market Regime Classifier
         - Pattern Learner
-        - ATHENA ML
+        - SOLOMON ML
 
         If degradation exceeds threshold, auto-retrain is triggered.
         Also updates Thompson Sampling capital allocation based on bot performance.
@@ -3704,7 +3704,7 @@ class AutonomousTraderScheduler:
         EQUITY SNAPSHOTS - runs every 5 minutes during market hours
 
         Saves equity snapshots for all bots to enable intraday charting:
-        - ARES, ATHENA, PEGASUS, TITAN, ICARUS
+        - FORTRESS, SOLOMON, PEGASUS, SAMSON, ICARUS
 
         These snapshots power the /equity-curve/intraday endpoints
         showing real-time equity changes throughout the trading day.
@@ -3729,9 +3729,9 @@ class AutonomousTraderScheduler:
             # Bot configurations: (positions_table, snapshot_table, starting_capital_key, default_capital, trader_attr)
             # trader_attr is the scheduler attribute name for the bot's trader instance (for live unrealized P&L)
             bots_config = {
-                'ares': ('ares_positions', 'ares_equity_snapshots', 'ares_starting_capital', 100000, 'ares_trader'),
-                'athena': ('athena_positions', 'athena_equity_snapshots', 'athena_starting_capital', 100000, 'athena_trader'),
-                'titan': ('titan_positions', 'titan_equity_snapshots', 'titan_starting_capital', 200000, 'titan_trader'),
+                'fortress': ('fortress_positions', 'fortress_equity_snapshots', 'ares_starting_capital', 100000, 'fortress_trader'),
+                'solomon': ('solomon_positions', 'solomon_equity_snapshots', 'solomon_starting_capital', 100000, 'solomon_trader'),
+                'samson': ('samson_positions', 'samson_equity_snapshots', 'titan_starting_capital', 200000, 'samson_trader'),
                 'pegasus': ('pegasus_positions', 'pegasus_equity_snapshots', 'pegasus_starting_capital', 200000, 'pegasus_trader'),
                 'icarus': ('icarus_positions', 'icarus_equity_snapshots', 'icarus_starting_capital', 100000, 'icarus_trader'),
             }
@@ -3774,10 +3774,10 @@ class AutonomousTraderScheduler:
 
                     if open_count > 0 and MTM_AVAILABLE:
                         try:
-                            # Iron Condor bots: ARES, TITAN, PEGASUS
-                            if bot_name in ['ares', 'titan', 'pegasus']:
+                            # Iron Condor bots: FORTRESS, SAMSON, PEGASUS
+                            if bot_name in ['fortress', 'samson', 'pegasus']:
                                 # Query IC positions with all MTM fields
-                                underlying = 'SPY' if bot_name == 'ares' else 'SPX'
+                                underlying = 'SPY' if bot_name == 'fortress' else 'SPX'
                                 cursor.execute(f"""
                                     SELECT position_id, total_credit, contracts, spread_width,
                                            put_short_strike, put_long_strike, call_short_strike, call_long_strike,
@@ -3810,8 +3810,8 @@ class AutonomousTraderScheduler:
                                     except Exception as pos_err:
                                         logger.debug(f"EQUITY_SNAPSHOTS: {bot_name.upper()} MTM failed for {pos_id}: {pos_err}")
 
-                            # Directional spread bots: ATHENA, ICARUS
-                            elif bot_name in ['athena', 'icarus']:
+                            # Directional spread bots: SOLOMON, ICARUS
+                            elif bot_name in ['solomon', 'icarus']:
                                 cursor.execute(f"""
                                     SELECT position_id, spread_type, entry_debit, contracts,
                                            long_strike, short_strike, max_profit, max_loss, expiration
@@ -3932,7 +3932,7 @@ class AutonomousTraderScheduler:
         BOT REPORTS - runs daily at 3:15 PM CT after market close
 
         Generates end-of-day analysis reports for all trading bots:
-        - ARES, ATHENA, PEGASUS, TITAN, ICARUS
+        - FORTRESS, SOLOMON, PEGASUS, SAMSON, ICARUS
 
         Reports include:
         - Trade-by-trade analysis with timestamps
@@ -3955,7 +3955,7 @@ class AutonomousTraderScheduler:
             # Import the report generator
             from backend.services.bot_report_generator import generate_report_for_bot
 
-            bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+            bots = ['fortress', 'solomon', 'samson', 'pegasus', 'icarus']
             reports_generated = 0
             reports_failed = 0
 
@@ -4033,15 +4033,15 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, VIX_SIGNAL, PROVERBS, QUANT")
+        logger.info(f"Bots: PHOENIX, ATLAS, FORTRESS (SPY IC), PEGASUS (SPX IC), SOLOMON, ARGUS, VIX_SIGNAL, PROVERBS, QUANT")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
-        logger.info(f"ARES Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"FORTRESS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"PEGASUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
-        logger.info(f"ATHENA Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"SOLOMON Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"ICARUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
-        logger.info(f"TITAN Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"SAMSON Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"ARGUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"VIX_SIGNAL Schedule: HOURLY (9 AM - 3 PM CT), Hedge Signal Generation")
         logger.info(f"PROVERBS Schedule: DAILY at 4:00 PM CT (after market close)")
@@ -4099,12 +4099,12 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ATLAS not available - wheel trading disabled")
 
         # =================================================================
-        # ARES JOB: Aggressive Iron Condor - runs every 5 minutes
+        # FORTRESS JOB: Aggressive Iron Condor - runs every 5 minutes
         # Scans continuously for optimal 0DTE Iron Condor entry timing
         # Jobs run immediately on startup and every 5 min thereafter.
         # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
-        if self.ares_trader:
+        if self.fortress_trader:
             self.scheduler.add_job(
                 self.scheduled_ares_logic,
                 trigger=IntervalTrigger(
@@ -4112,13 +4112,13 @@ class AutonomousTraderScheduler:
                     timezone='America/Chicago'
                 ),
                 id='ares_trading',
-                name='ARES - Aggressive Iron Condor (5-min intervals)',
+                name='FORTRESS - Aggressive Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ARES job scheduled (every 5 min, checks market hours internally)")
+            logger.info("✅ FORTRESS job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # ARES EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # FORTRESS EOD JOB: Process expired positions - runs at 3:01 PM CT
             # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
@@ -4130,51 +4130,51 @@ class AutonomousTraderScheduler:
                     timezone='America/Chicago'
                 ),
                 id='ares_eod',
-                name='ARES - EOD Position Expiration',
+                name='FORTRESS - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ ARES EOD job scheduled (3:01 PM CT daily)")
+            logger.info("✅ FORTRESS EOD job scheduled (3:01 PM CT daily)")
         else:
-            logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
+            logger.warning("⚠️ FORTRESS not available - aggressive IC trading disabled")
 
         # =================================================================
-        # ATHENA JOB: GEX Directional Spreads - runs every 5 minutes
+        # SOLOMON JOB: GEX Directional Spreads - runs every 5 minutes
         # Uses live Tradier GEX data to find intraday opportunities
         # Jobs run immediately on startup and every 5 min thereafter.
         # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
-        if self.athena_trader:
+        if self.solomon_trader:
             self.scheduler.add_job(
-                self.scheduled_athena_logic,
+                self.scheduled_solomon_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
                     timezone='America/Chicago'
                 ),
-                id='athena_trading',
-                name='ATHENA - GEX Directional Spreads (5-min intervals)',
+                id='solomon_trading',
+                name='SOLOMON - GEX Directional Spreads (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ATHENA job scheduled (every 5 min, checks market hours internally)")
+            logger.info("✅ SOLOMON job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # ATHENA EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # SOLOMON EOD JOB: Process expired positions - runs at 3:01 PM CT
             # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
-                self.scheduled_athena_eod_logic,
+                self.scheduled_solomon_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
                     minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='athena_eod',
-                name='ATHENA - EOD Position Expiration',
+                id='solomon_eod',
+                name='SOLOMON - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ ATHENA EOD job scheduled (3:01 PM CT daily)")
+            logger.info("✅ SOLOMON EOD job scheduled (3:01 PM CT daily)")
         else:
-            logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
+            logger.warning("⚠️ SOLOMON not available - GEX directional trading disabled")
 
         # =================================================================
         # PEGASUS JOB: SPX Iron Condors - runs every 5 minutes
@@ -4255,12 +4255,12 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ICARUS not available - aggressive directional trading disabled")
 
         # =================================================================
-        # TITAN JOB: Aggressive SPX Iron Condors - runs every 5 minutes
+        # SAMSON JOB: Aggressive SPX Iron Condors - runs every 5 minutes
         # Trades SPX options with $12 spread widths, multiple trades per day with cooldown
         # Jobs run immediately on startup and every 5 min thereafter.
         # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
-        if self.titan_trader:
+        if self.samson_trader:
             self.scheduler.add_job(
                 self.scheduled_titan_logic,
                 trigger=IntervalTrigger(
@@ -4268,13 +4268,13 @@ class AutonomousTraderScheduler:
                     timezone='America/Chicago'
                 ),
                 id='titan_trading',
-                name='TITAN - Aggressive SPX Iron Condor (5-min intervals)',
+                name='SAMSON - Aggressive SPX Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ TITAN job scheduled (every 5 min, checks market hours internally)")
+            logger.info("✅ SAMSON job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # TITAN EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # SAMSON EOD JOB: Process expired positions - runs at 3:01 PM CT
             # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
@@ -4286,12 +4286,12 @@ class AutonomousTraderScheduler:
                     timezone='America/Chicago'
                 ),
                 id='titan_eod',
-                name='TITAN - EOD Position Expiration',
+                name='SAMSON - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ TITAN EOD job scheduled (3:01 PM CT daily)")
+            logger.info("✅ SAMSON EOD job scheduled (3:01 PM CT daily)")
         else:
-            logger.warning("⚠️ TITAN not available - aggressive SPX IC trading disabled")
+            logger.warning("⚠️ SAMSON not available - aggressive SPX IC trading disabled")
 
         # =================================================================
         # HERACLES JOB: MES Futures Scalping - runs every 1 minute (24/5)
@@ -4742,16 +4742,16 @@ class AutonomousTraderScheduler:
         # If ALL bots failed to initialize, the scheduler will run but do NOTHING
         # =================================================================
         active_bots = []
-        if self.ares_trader:
-            active_bots.append("ARES")
-        if self.athena_trader:
-            active_bots.append("ATHENA")
+        if self.fortress_trader:
+            active_bots.append("FORTRESS")
+        if self.solomon_trader:
+            active_bots.append("SOLOMON")
         if self.pegasus_trader:
             active_bots.append("PEGASUS")
         if self.icarus_trader:
             active_bots.append("ICARUS")
-        if self.titan_trader:
-            active_bots.append("TITAN")
+        if self.samson_trader:
+            active_bots.append("SAMSON")
         if self.atlas_trader:
             active_bots.append("ATLAS")
         if self.trader:
@@ -4810,7 +4810,7 @@ class AutonomousTraderScheduler:
         startup_status = 'STARTING' if is_open else market_status
         startup_details = {'event': 'scheduler_startup', 'market_status': market_status}
 
-        for bot_name in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN', 'ATLAS', 'PHOENIX']:
+        for bot_name in ['FORTRESS', 'SOLOMON', 'PEGASUS', 'ICARUS', 'SAMSON', 'ATLAS', 'PHOENIX']:
             try:
                 self._save_heartbeat(bot_name, startup_status, startup_details)
             except Exception as e:
@@ -4883,7 +4883,7 @@ class AutonomousTraderScheduler:
                 self.scheduler.get_jobs()
 
             # Check 2: Are jobs actually executing?
-            # If ARES/ATHENA haven't run in 15+ minutes, something is wrong
+            # If FORTRESS/SOLOMON haven't run in 15+ minutes, something is wrong
             # (they should run every 5 minutes)
             now = datetime.now(CENTRAL_TZ)
             max_stale_minutes = 15  # Jobs run every 5 min, allow 3x buffer
@@ -4892,15 +4892,15 @@ class AutonomousTraderScheduler:
             # and have had at least one check
             stale_jobs = []
 
-            if self.ares_trader and self.last_ares_check:
+            if self.fortress_trader and self.last_ares_check:
                 ares_age = (now - self.last_ares_check).total_seconds() / 60
                 if ares_age > max_stale_minutes:
-                    stale_jobs.append(f"ARES ({ares_age:.1f} min stale)")
+                    stale_jobs.append(f"FORTRESS ({ares_age:.1f} min stale)")
 
-            if self.athena_trader and self.last_athena_check:
-                athena_age = (now - self.last_athena_check).total_seconds() / 60
-                if athena_age > max_stale_minutes:
-                    stale_jobs.append(f"ATHENA ({athena_age:.1f} min stale)")
+            if self.solomon_trader and self.last_solomon_check:
+                solomon_age = (now - self.last_solomon_check).total_seconds() / 60
+                if solomon_age > max_stale_minutes:
+                    stale_jobs.append(f"SOLOMON ({solomon_age:.1f} min stale)")
 
             if self.pegasus_trader and self.last_pegasus_check:
                 pegasus_age = (now - self.last_pegasus_check).total_seconds() / 60
@@ -4912,10 +4912,10 @@ class AutonomousTraderScheduler:
                 if icarus_age > max_stale_minutes:
                     stale_jobs.append(f"ICARUS ({icarus_age:.1f} min stale)")
 
-            if self.titan_trader and self.last_titan_check:
+            if self.samson_trader and self.last_titan_check:
                 titan_age = (now - self.last_titan_check).total_seconds() / 60
                 if titan_age > max_stale_minutes:
-                    stale_jobs.append(f"TITAN ({titan_age:.1f} min stale)")
+                    stale_jobs.append(f"SAMSON ({titan_age:.1f} min stale)")
 
             if stale_jobs:
                 logger.warning(f"Health check: STALE JOBS detected - {', '.join(stale_jobs)}")
@@ -5007,10 +5007,10 @@ def get_scheduler() -> AutonomousTraderScheduler:
     return _scheduler_instance
 
 
-def get_ares_trader():
-    """Get the ARES trader instance from the scheduler"""
+def get_fortress_trader():
+    """Get the FORTRESS trader instance from the scheduler"""
     scheduler = get_scheduler()
-    return scheduler.ares_trader if scheduler else None
+    return scheduler.fortress_trader if scheduler else None
 
 
 def get_atlas_trader():
@@ -5019,10 +5019,10 @@ def get_atlas_trader():
     return scheduler.atlas_trader if scheduler else None
 
 
-def get_athena_trader():
-    """Get the ATHENA trader instance from the scheduler"""
+def get_solomon_trader():
+    """Get the SOLOMON trader instance from the scheduler"""
     scheduler = get_scheduler()
-    return scheduler.athena_trader if scheduler else None
+    return scheduler.solomon_trader if scheduler else None
 
 
 def get_pegasus_trader():
@@ -5037,10 +5037,10 @@ def get_icarus_trader():
     return scheduler.icarus_trader if scheduler else None
 
 
-def get_titan_trader():
-    """Get the TITAN trader instance from the scheduler"""
+def get_samson_trader():
+    """Get the SAMSON trader instance from the scheduler"""
     scheduler = get_scheduler()
-    return scheduler.titan_trader if scheduler else None
+    return scheduler.samson_trader if scheduler else None
 
 
 # ============================================================================
@@ -5068,7 +5068,7 @@ def run_standalone():
     logger.info("=" * 80)
     logger.info(f"PHOENIX (0DTE):      ${CAPITAL_ALLOCATION['PHOENIX']:,}")
     logger.info(f"ATLAS (Wheel):       ${CAPITAL_ALLOCATION['ATLAS']:,}")
-    logger.info(f"ARES (Aggressive):   ${CAPITAL_ALLOCATION['ARES']:,}")
+    logger.info(f"FORTRESS (Aggressive):   ${CAPITAL_ALLOCATION['FORTRESS']:,}")
     logger.info(f"RESERVE:             ${CAPITAL_ALLOCATION['RESERVE']:,}")
     logger.info("=" * 80)
 
@@ -5139,8 +5139,8 @@ def run_standalone():
 
                         # Log scan counts and last check times for visibility
                         logger.info(f"[HEALTH OK @ {now_ct.strftime('%H:%M:%S')}] "
-                                   f"ARES={scheduler.ares_execution_count} (last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler.last_ares_check else 'never'}), "
-                                   f"ATHENA={scheduler.athena_execution_count} (last: {scheduler.last_athena_check.strftime('%H:%M:%S') if scheduler.last_athena_check else 'never'}), "
+                                   f"FORTRESS={scheduler.ares_execution_count} (last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler.last_ares_check else 'never'}), "
+                                   f"SOLOMON={scheduler.solomon_execution_count} (last: {scheduler.last_solomon_check.strftime('%H:%M:%S') if scheduler.last_solomon_check else 'never'}), "
                                    f"restarts={restart_count}")
 
                         last_status_log = current_time
@@ -5149,8 +5149,8 @@ def run_standalone():
                     now_ct = datetime.now(CENTRAL_TZ)
                     logger.warning(f"[HEALTH FAIL @ {now_ct.strftime('%H:%M:%S')}] "
                                   f"Health check FAILED ({health_check_failures}/{max_health_failures}) - "
-                                  f"ARES last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler and scheduler.last_ares_check else 'never'}, "
-                                  f"ATHENA last: {scheduler.last_athena_check.strftime('%H:%M:%S') if scheduler and scheduler.last_athena_check else 'never'}")
+                                  f"FORTRESS last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler and scheduler.last_ares_check else 'never'}, "
+                                  f"SOLOMON last: {scheduler.last_solomon_check.strftime('%H:%M:%S') if scheduler and scheduler.last_solomon_check else 'never'}")
 
                     if health_check_failures >= max_health_failures:
                         logger.error("SCHEDULER DEAD - Attempting auto-restart...")

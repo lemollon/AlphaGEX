@@ -510,9 +510,9 @@ class ProverbsTestSuite:
 
             # Check each bot's position table
             bots = [
-                ('ARES', 'ares_positions'),
-                ('ATHENA', 'athena_positions'),
-                ('TITAN', 'titan_positions'),
+                ('FORTRESS', 'fortress_positions'),
+                ('SOLOMON', 'solomon_positions'),
+                ('SAMSON', 'samson_positions'),
                 ('PEGASUS', 'pegasus_positions'),
                 ('ICARUS', 'icarus_positions'),
                 ('PROMETHEUS', 'prometheus_ic_positions'),

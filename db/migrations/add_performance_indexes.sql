@@ -40,21 +40,21 @@ CREATE INDEX IF NOT EXISTS idx_ml_decision_logs_timestamp
 -- HIGH: Indexes for bot-specific tables
 -- ============================================================================
 
--- ares_positions: ARES Iron Condor bot positions
-CREATE INDEX IF NOT EXISTS idx_ares_positions_open_time
-    ON ares_positions(open_time DESC);
+-- fortress_positions: FORTRESS Iron Condor bot positions
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_open_time
+    ON fortress_positions(open_time DESC);
 
-CREATE INDEX IF NOT EXISTS idx_ares_positions_status
-    ON ares_positions(status);
+CREATE INDEX IF NOT EXISTS idx_fortress_positions_status
+    ON fortress_positions(status);
 
--- athena_positions: ATHENA Directional Spreads positions
+-- solomon_positions: SOLOMON Directional Spreads positions
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'athena_positions') THEN
-        CREATE INDEX IF NOT EXISTS idx_athena_positions_open_time
-            ON athena_positions(open_time DESC);
-        CREATE INDEX IF NOT EXISTS idx_athena_positions_status
-            ON athena_positions(status);
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'solomon_positions') THEN
+        CREATE INDEX IF NOT EXISTS idx_solomon_positions_open_time
+            ON solomon_positions(open_time DESC);
+        CREATE INDEX IF NOT EXISTS idx_solomon_positions_status
+            ON solomon_positions(status);
     END IF;
 END $$;
 
@@ -129,17 +129,17 @@ END $$;
 
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'ares_scan_activity') THEN
-        CREATE INDEX IF NOT EXISTS idx_ares_scan_activity_timestamp
-            ON ares_scan_activity(timestamp DESC);
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'fortress_scan_activity') THEN
+        CREATE INDEX IF NOT EXISTS idx_fortress_scan_activity_timestamp
+            ON fortress_scan_activity(timestamp DESC);
     END IF;
 END $$;
 
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'athena_scan_activity') THEN
-        CREATE INDEX IF NOT EXISTS idx_athena_scan_activity_timestamp
-            ON athena_scan_activity(timestamp DESC);
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'solomon_scan_activity') THEN
+        CREATE INDEX IF NOT EXISTS idx_solomon_scan_activity_timestamp
+            ON solomon_scan_activity(timestamp DESC);
     END IF;
 END $$;
 

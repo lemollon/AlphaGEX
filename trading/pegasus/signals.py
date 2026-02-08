@@ -26,11 +26,11 @@ except ImportError:
     OracleAdvisor = None
 
 try:
-    from quant.ares_ml_advisor import AresMLAdvisor
+    from quant.fortress_ml_advisor import FortressMLAdvisor
     ARES_ML_AVAILABLE = True
 except ImportError:
     ARES_ML_AVAILABLE = False
-    AresMLAdvisor = None
+    FortressMLAdvisor = None
 
 try:
     from quant.kronos_gex_calculator import KronosGEXCalculator
@@ -104,11 +104,11 @@ class SignalGenerator:
         if not self.gex_calculator:
             logger.error("PEGASUS: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
-        # ARES ML Advisor (PRIMARY - Iron Condor ML model with ~70% win rate)
+        # FORTRESS ML Advisor (PRIMARY - Iron Condor ML model with ~70% win rate)
         self.ares_ml = None
         if ARES_ML_AVAILABLE:
             try:
-                self.ares_ml = AresMLAdvisor()
+                self.ares_ml = FortressMLAdvisor()
                 if self.ares_ml.is_trained:
                     logger.info(f"PEGASUS: ML Advisor v{self.ares_ml.model_version} loaded (PRIMARY)")
                 else:
@@ -313,7 +313,7 @@ class SignalGenerator:
 
     def get_ml_prediction(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
-        Get prediction from ARES ML Advisor (PRIMARY source for Iron Condors).
+        Get prediction from FORTRESS ML Advisor (PRIMARY source for Iron Condors).
 
         This model was trained on KRONOS backtests with ~70% win rate.
         It takes precedence over Oracle for trading decisions.
