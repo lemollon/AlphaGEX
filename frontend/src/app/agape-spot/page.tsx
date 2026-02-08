@@ -64,6 +64,15 @@ type SectionTabId = typeof SECTION_TABS[number]['id']
 
 const TOTAL_CAPITAL = 8000
 
+const TIME_FRAMES = [
+  { id: '7d',  label: '7D',  days: 7 },
+  { id: '14d', label: '14D', days: 14 },
+  { id: '30d', label: '30D', days: 30 },
+  { id: '90d', label: '90D', days: 90 },
+  { id: 'all', label: 'ALL', days: 365 },
+] as const
+type TimeFrameId = typeof TIME_FRAMES[number]['id']
+
 // ==============================================================================
 // SWR FETCHER
 // ==============================================================================
@@ -98,9 +107,12 @@ function useAgapeSpotPerformance(ticker?: string) {
   return useSWR(`/api/agape-spot/performance${param}`, fetcher, { refreshInterval: 30_000 })
 }
 
-function useAgapeSpotEquityCurve(ticker?: string) {
-  const param = ticker && ticker !== 'ALL' ? `?ticker=${ticker}` : ''
-  return useSWR(`/api/agape-spot/equity-curve${param}`, fetcher, { refreshInterval: 30_000 })
+function useAgapeSpotEquityCurve(ticker?: string, days: number = 30) {
+  const params = new URLSearchParams()
+  if (ticker && ticker !== 'ALL') params.set('ticker', ticker)
+  params.set('days', String(days))
+  const qs = params.toString()
+  return useSWR(`/api/agape-spot/equity-curve?${qs}`, fetcher, { refreshInterval: 30_000 })
 }
 
 function useAgapeSpotClosedTrades(ticker?: string, limit: number = 50) {
@@ -306,6 +318,9 @@ export default function AgapeSpotPage() {
 // ==============================================================================
 
 function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
+  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
+  const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
+
   const tickers = summaryData?.tickers || {}
   const combined = summaryData?.combined || {}
 
@@ -315,9 +330,9 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
   const totalTrades = combined.total_trades ?? 0
   const totalPositions = combined.total_open_positions ?? 0
 
-  // Build combined equity from the summary if available
-  const { data: equityData } = useAgapeSpotEquityCurve()
-  const equityPoints = equityData?.data?.points || equityData?.data || []
+  // Build combined equity from closed trades across all coins
+  const { data: equityData } = useAgapeSpotEquityCurve(undefined, eqDays)
+  const equityPoints = equityData?.data?.equity_curve || []
 
   return (
     <div className="space-y-5">
@@ -387,7 +402,11 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
       </div>
 
       {/* Combined Equity Curve */}
-      <SectionCard title="Combined Equity Curve" icon={<TrendingUp className="w-5 h-5 text-cyan-400" />}>
+      <SectionCard
+        title="Combined Equity Curve"
+        icon={<TrendingUp className="w-5 h-5 text-cyan-400" />}
+        headerRight={<TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />}
+      >
         {equityPoints.length === 0 ? (
           <EmptyBox message="No equity data yet. Trades will populate this chart." />
         ) : (
@@ -402,10 +421,10 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
                 <XAxis
-                  dataKey="timestamp"
+                  dataKey="date"
                   tick={{ fill: '#6b7280', fontSize: 11 }}
                   tickFormatter={(v: string) => {
-                    const d = new Date(v)
+                    const d = new Date(v + 'T00:00:00')
                     return `${d.getMonth() + 1}/${d.getDate()}`
                   }}
                 />
@@ -417,7 +436,7 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
                   labelStyle={{ color: '#9ca3af' }}
                   formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
-                  labelFormatter={(label: string) => new Date(label).toLocaleString()}
+                  labelFormatter={(label: string) => label}
                 />
                 <Area
                   type="monotone"
@@ -853,9 +872,12 @@ function ClosedTradesTable({ ticker }: { ticker: TickerId }) {
 // ==============================================================================
 
 function EquityCurveTab({ ticker }: { ticker: TickerId }) {
-  const { data: equityData, isLoading } = useAgapeSpotEquityCurve(ticker)
+  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
+  const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
+
+  const { data: equityData, isLoading } = useAgapeSpotEquityCurve(ticker, eqDays)
   const meta = TICKER_META[ticker]
-  const points = equityData?.data?.points || equityData?.data || []
+  const points = equityData?.data?.equity_curve || []
   const gradientId = `eqFill-${ticker.replace('-', '')}`
 
   if (isLoading) {
@@ -871,7 +893,11 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
   }
 
   return (
-    <SectionCard title={`${meta.symbol} Equity Curve`} icon={<TrendingUp className={`w-5 h-5 ${meta.textActive}`} />}>
+    <SectionCard
+      title={`${meta.symbol} Equity Curve`}
+      icon={<TrendingUp className={`w-5 h-5 ${meta.textActive}`} />}
+      headerRight={<TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />}
+    >
       <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={points} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
@@ -883,10 +909,10 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
             <XAxis
-              dataKey="timestamp"
+              dataKey="date"
               tick={{ fill: '#6b7280', fontSize: 11 }}
               tickFormatter={(v: string) => {
-                const d = new Date(v)
+                const d = new Date(v + 'T00:00:00')
                 return `${d.getMonth() + 1}/${d.getDate()}`
               }}
             />
@@ -898,7 +924,7 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
               contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
               labelStyle={{ color: '#9ca3af' }}
               formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
-              labelFormatter={(label: string) => new Date(label).toLocaleString()}
+              labelFormatter={(label: string) => label}
             />
             <Area
               type="monotone"
@@ -1017,6 +1043,26 @@ function SectionCard({ title, icon, children, headerRight }: {
         {headerRight}
       </div>
       <div className="p-5">{children}</div>
+    </div>
+  )
+}
+
+function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onChange: (id: TimeFrameId) => void }) {
+  return (
+    <div className="flex gap-1">
+      {TIME_FRAMES.map((tf) => (
+        <button
+          key={tf.id}
+          onClick={() => onChange(tf.id)}
+          className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+            selected === tf.id
+              ? 'bg-cyan-600 text-white'
+              : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
+          }`}
+        >
+          {tf.label}
+        </button>
+      ))}
     </div>
   )
 }

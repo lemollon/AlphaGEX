@@ -14,7 +14,7 @@ Standard bot endpoints:
   /status         - Bot health and config (per-ticker or combined)
   /positions      - Open positions with unrealized P&L
   /closed-trades  - Completed trade history
-  /equity-curve   - Historical equity curve (requires ?ticker=)
+  /equity-curve   - Historical equity curve (optional ?ticker=, omit for combined)
   /equity-curve/intraday - Today's intraday equity (requires ?ticker=)
   /performance    - Win rate, P&L, statistics
   /logs           - Activity log
@@ -378,64 +378,84 @@ async def get_equity_curve(
     ticker: Optional[str] = Query(
         default=None,
         description="Ticker to build the equity curve for (e.g. ETH-USD). "
-                    "Required so we know which starting_capital to use.",
+                    "Omit or pass 'ALL' for a combined curve across all coins.",
     ),
     days: int = Query(default=30, ge=1, le=365, description="Number of days to return"),
 ):
     """Get historical equity curve built from closed trades.
 
-    ``?ticker=`` is required so that the correct per-coin starting capital is
-    used.  Without it the endpoint returns an error asking for a ticker.
+    When ``?ticker=`` is a specific coin, returns that coin's equity curve.
+    When omitted (ALL view), returns the combined equity curve across all coins.
 
     Format matches the standard MultiBotEquityCurve component:
     ``{ equity_curve: [...], points: N, days: N, timestamp: "..." }``
     """
-    ticker = _validate_ticker(ticker)
-
-    if ticker is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "The ?ticker= query param is required for equity-curve so we "
-                "know which starting_capital to use. "
-                f"Supported tickers: {sorted(_VALID_TICKERS)}"
-            ),
-        )
-
-    # Determine starting capital for this ticker
-    trader = _get_trader()
-    if trader:
-        starting_capital = trader.config.get_starting_capital(ticker)
+    # Allow "ALL" as a special value
+    if ticker and ticker.strip().upper() == "ALL":
+        ticker = None
     else:
-        starting_capital = SPOT_TICKERS.get(ticker, {}).get("starting_capital", 1000.0)
+        ticker = _validate_ticker(ticker)
+
+    is_combined = ticker is None
+
+    # Determine starting capital
+    trader = _get_trader()
+    if is_combined:
+        # Combined: sum of all tickers' starting_capital
+        starting_capital = sum(
+            tc.get("starting_capital", 1000.0) for tc in SPOT_TICKERS.values()
+        )
+        display_ticker = "ALL"
+    else:
+        if trader:
+            starting_capital = trader.config.get_starting_capital(ticker)
+        else:
+            starting_capital = SPOT_TICKERS.get(ticker, {}).get("starting_capital", 1000.0)
+        display_ticker = ticker
 
     now = datetime.now(CENTRAL_TZ)
 
     if not get_connection:
-        return _equity_curve_empty(now, starting_capital, days, ticker)
+        return _equity_curve_empty(now, starting_capital, days, display_ticker)
 
     conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get ALL closed trades for this ticker ordered chronologically
-        cursor.execute("""
-            SELECT
-                (close_time AT TIME ZONE 'America/Chicago')::date AS trade_date,
-                realized_pnl,
-                position_id
-            FROM agape_spot_positions
-            WHERE status IN ('closed', 'expired', 'stopped')
-              AND close_time IS NOT NULL
-              AND realized_pnl IS NOT NULL
-              AND ticker = %s
-            ORDER BY close_time ASC
-        """, (ticker,))
+        if is_combined:
+            # Combined: get ALL closed trades across all tickers
+            cursor.execute("""
+                SELECT
+                    (close_time AT TIME ZONE 'America/Chicago')::date AS trade_date,
+                    realized_pnl,
+                    ticker,
+                    position_id
+                FROM agape_spot_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                  AND close_time IS NOT NULL
+                  AND realized_pnl IS NOT NULL
+                ORDER BY close_time ASC
+            """)
+        else:
+            # Single ticker
+            cursor.execute("""
+                SELECT
+                    (close_time AT TIME ZONE 'America/Chicago')::date AS trade_date,
+                    realized_pnl,
+                    ticker,
+                    position_id
+                FROM agape_spot_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                  AND close_time IS NOT NULL
+                  AND realized_pnl IS NOT NULL
+                  AND ticker = %s
+                ORDER BY close_time ASC
+            """, (ticker,))
         rows = cursor.fetchall()
 
         if not rows:
-            return _equity_curve_empty(now, starting_capital, days, ticker)
+            return _equity_curve_empty(now, starting_capital, days, display_ticker)
 
         # Aggregate by day
         daily: Dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
@@ -481,7 +501,7 @@ async def get_equity_curve(
                 "total_pnl": round(total_pnl, 2),
                 "total_return_pct": round(total_pnl / starting_capital * 100, 2),
             },
-            "ticker": ticker,
+            "ticker": display_ticker,
             "points": len(equity_curve),
             "days": days,
             "timestamp": now.isoformat(),
