@@ -2,7 +2,7 @@
 
 **Date:** January 10, 2026
 **Auditor:** Claude Code Verification System
-**Scope:** All Live Trading Bots (ARES, SOLOMON, ICARUS, PEGASUS, TITAN, ATLAS)
+**Scope:** All Live Trading Bots (ARES, SOLOMON, GIDEON, ANCHOR, TITAN, ATLAS)
 **Status:** **FIXED** - All critical issues resolved
 
 ---
@@ -28,8 +28,8 @@ A comprehensive code audit was performed on all live trading bots. Critical issu
 |-----|-------|--------|----------|
 | **ALL BOTS** | Position saved to broker but DB save fails | Orphaned positions, capital trapped | `trader.py` ~line 726-728 |
 | **ALL BOTS** | Exit blocked when price unavailable | Positions never close | `trader.py` ~line 650-652 |
-| **ARES/PEGASUS** | Win probability threshold DISABLED | Trades any signal regardless of confidence | `signals.py` ~line 860 |
-| **ARES/PEGASUS** | VIX filter DISABLED | Trades in dangerous volatility | `signals.py` ~line 497 |
+| **ARES/ANCHOR** | Win probability threshold DISABLED | Trades any signal regardless of confidence | `signals.py` ~line 860 |
+| **ARES/ANCHOR** | VIX filter DISABLED | Trades in dangerous volatility | `signals.py` ~line 497 |
 | **SOLOMON** | `AttributeError` on `db_persisted` field | Crashes when DB save fails | `trader.py:822` |
 | **SOLOMON** | Invalid order status creates position | Positions without real orders | `executor.py:371-375` |
 | **ATLAS** | Buy-to-close doesn't verify execution | DB says closed but broker open | `spx_wheel_system.py:1856-1889` |
@@ -42,9 +42,9 @@ A comprehensive code audit was performed on all live trading bots. Critical issu
 | **ALL BOTS** | Partial closes never retried | One leg stays open indefinitely | `trader.py` ~line 643 |
 | **ALL BOTS** | DB close failure not propagated | Inconsistent state between broker/DB | `trader.py` ~line 453 |
 | **ALL BOTS** | No position reconciliation on restart | Orphaned orders can't be recovered | startup logic |
-| **ICARUS** | No retry for failed close orders | Failed closes abandoned | `trader.py:366-378` |
-| **ICARUS** | `db_persisted` flag set but never checked | Can't detect orphaned positions | `trader.py:742` |
-| **PEGASUS/TITAN** | Rollback failure leaves orphaned orders | Manual intervention required | `executor.py:373-416` |
+| **GIDEON** | No retry for failed close orders | Failed closes abandoned | `trader.py:366-378` |
+| **GIDEON** | `db_persisted` flag set but never checked | Can't detect orphaned positions | `trader.py:742` |
+| **ANCHOR/TITAN** | Rollback failure leaves orphaned orders | Manual intervention required | `executor.py:373-416` |
 | **ATLAS** | Roll failure partial execution | Position lost in limbo | `spx_wheel_system.py:1827-1835` |
 
 ### SEVERITY: MEDIUM
@@ -108,7 +108,7 @@ position.db_persisted = False  # SpreadPosition has no db_persisted field!
 
 ---
 
-### ICARUS (Aggressive Directional)
+### GIDEON (Aggressive Directional)
 
 **Entry Logic:**
 - Structurally sound but `db_persisted` flag set and never checked
@@ -131,7 +131,7 @@ if current_value is None:
 
 ---
 
-### PEGASUS (SPX Iron Condor)
+### ANCHOR (SPX Iron Condor)
 
 **Entry Logic:**
 - Win probability threshold **DISABLED** (same as ARES)
@@ -251,7 +251,7 @@ if not self.db.save_position(position):
     return None, signal
 ```
 
-2. **Re-enable win probability threshold (ARES/PEGASUS):**
+2. **Re-enable win probability threshold (ARES/ANCHOR):**
 ```python
 # Remove the disabled check, restore original logic:
 if effective_win_prob < self.config.min_win_probability:
@@ -315,7 +315,7 @@ def _reconcile_positions_on_startup(self):
 
 ## Verification Checklist
 
-| Check | ARES | SOLOMON | ICARUS | PEGASUS | TITAN | ATLAS |
+| Check | ARES | SOLOMON | GIDEON | ANCHOR | TITAN | ATLAS |
 |-------|------|--------|--------|---------|-------|-------|
 | Entry logic traces correctly | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Exit logic handles all cases | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -348,14 +348,14 @@ All critical issues have been fixed:
 - **Added partial close retry** - 3 attempts with exponential backoff (1s, 2s, 4s)
 - **Added `close_call_spread_only`** - Allows recovery from partial close failures
 
-### PEGASUS (SPX Iron Condor)
+### ANCHOR (SPX Iron Condor)
 - **Permissive VIX filter** - Only blocks at VIX > 50 (extreme crisis conditions) to allow daily trading
 - **Win probability threshold** - Returns invalid signal when below threshold
 
 ### SOLOMON (Directional Spreads)
 - **Added pricing fallback** - Force close near expiry, log warnings for pricing failures
 
-### ICARUS (Aggressive Directional)
+### GIDEON (Aggressive Directional)
 - **Added pricing fallback** - Same fix as SOLOMON
 
 ### ATLAS (SPX Wheel)
@@ -371,9 +371,9 @@ All critical issues have been fixed:
 - `trading/ares_v2/signals.py` - VIX filter, win probability threshold, disabled day-specific VIX skips
 - `trading/ares_v2/trader.py` - Pricing fallback, partial close retry
 - `trading/ares_v2/executor.py` - `close_call_spread_only` method
-- `trading/pegasus/signals.py` - VIX filter (only blocks VIX > 50)
+- `trading/anchor/signals.py` - VIX filter (only blocks VIX > 50)
 - `trading/solomon_v2/trader.py` - Pricing fallback
-- `trading/icarus/trader.py` - Pricing fallback
+- `trading/gideon/trader.py` - Pricing fallback
 - `trading/spx_wheel_system.py` - Timezone fix, order verification
 - `quant/oracle_advisor.py` - Removed Monday/Friday penalties, reduced penalty stack
 - `quant/ares_ml_advisor.py` - Reduced fallback prediction penalties

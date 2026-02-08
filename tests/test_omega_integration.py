@@ -302,8 +302,8 @@ class TestGap9CorrelationEnforcer:
         # Register SOLOMON with 15% exposure
         enforcer.register_position("SOLOMON", "BULLISH", 15.0)
 
-        # Now check if PHOENIX can add 10% (total would be 40% > 30% limit)
-        result = enforcer.check_new_position("PHOENIX", "BULLISH", 10.0)
+        # Now check if LAZARUS can add 10% (total would be 40% > 30% limit)
+        result = enforcer.check_new_position("LAZARUS", "BULLISH", 10.0)
 
         # Should be blocked or reduced
         assert result['total_correlated_exposure'] == 40.0

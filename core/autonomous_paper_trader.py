@@ -376,7 +376,7 @@ class AutonomousPaperTrader(
     - PositionManagerMixin: Exit logic, position management
     - PerformanceTrackerMixin: Equity snapshots, statistics
 
-    MATH OPTIMIZER INTEGRATION (PHOENIX):
+    MATH OPTIMIZER INTEGRATION (LAZARUS):
     - HMM Regime Detection: Bayesian regime filtering for 0DTE entries
     - Thompson Sampling: Dynamic capital allocation across strategies
     - HJB Exit Optimizer: Optimal exit timing for short-dated options
@@ -470,8 +470,8 @@ class AutonomousPaperTrader(
         # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("PHOENIX", enabled=False)
-                print("✅ PHOENIX: Math optimizers DISABLED - Oracle controls all trading decisions")
+                self._init_math_optimizers("LAZARUS", enabled=False)
+                print("✅ LAZARUS: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 print(f"⚠️ Math optimizer init failed: {e}")
 
@@ -765,10 +765,10 @@ class AutonomousPaperTrader(
                     market_data = {'spot_price': spot, 'vix': vix, 'symbol': self.symbol}
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
-                        logger.info(f"PHOENIX: Math optimizer regime gate: {regime_reason}")
+                        logger.info(f"LAZARUS: Math optimizer regime gate: {regime_reason}")
                         return False
             except Exception as e:
-                logger.debug(f"PHOENIX: HMM regime check skipped: {e}")
+                logger.debug(f"LAZARUS: HMM regime check skipped: {e}")
 
         # All risk checks passed - can trade
         return True
@@ -1571,7 +1571,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
 
     def _build_oracle_context(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OracleMarketContext']:
         """
-        Build Oracle MarketContext from PHOENIX market data.
+        Build Oracle MarketContext from LAZARUS market data.
 
         Args:
             spot: Current spot price
@@ -1629,7 +1629,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             )
 
         except Exception as e:
-            logger.error(f"PHOENIX: Error building Oracle context: {e}")
+            logger.error(f"LAZARUS: Error building Oracle context: {e}")
             return None
 
     def _consult_oracle(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OraclePrediction']:
@@ -1646,35 +1646,35 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             OraclePrediction with advice, or None if Oracle unavailable
         """
         if not self.oracle:
-            logger.debug("PHOENIX: Oracle not available, proceeding without advice")
+            logger.debug("LAZARUS: Oracle not available, proceeding without advice")
             return None
 
         context = self._build_oracle_context(spot, vix, net_gex, gex_data)
         if not context:
-            logger.debug("PHOENIX: Could not build Oracle context")
+            logger.debug("LAZARUS: Could not build Oracle context")
             return None
 
         try:
             # Get advice from Oracle for directional trades
             advice = self.oracle.get_phoenix_advice(context)
 
-            logger.info(f"PHOENIX Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+            logger.info(f"LAZARUS Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
                        f"Risk: {advice.suggested_risk_pct:.1%}")
 
             if advice.reasoning:
-                logger.info(f"PHOENIX Oracle Reasoning: {advice.reasoning}")
+                logger.info(f"LAZARUS Oracle Reasoning: {advice.reasoning}")
 
             # Store prediction for feedback loop
             try:
                 today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
                 self.oracle.store_prediction(advice, context, today)
             except Exception as e:
-                logger.debug(f"PHOENIX: Could not store Oracle prediction: {e}")
+                logger.debug(f"LAZARUS: Could not store Oracle prediction: {e}")
 
             return advice
 
         except Exception as e:
-            logger.error(f"PHOENIX: Error consulting Oracle: {e}")
+            logger.error(f"LAZARUS: Error consulting Oracle: {e}")
             return None
 
     def record_trade_outcome(self, trade_date: str, outcome_type: str, actual_pnl: float) -> bool:
@@ -1696,14 +1696,14 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             outcome = TradeOutcome[outcome_type]
             self.oracle.update_outcome(
                 trade_date,
-                OracleBotName.PHOENIX,
+                OracleBotName.LAZARUS,
                 outcome,
                 actual_pnl
             )
-            logger.info(f"PHOENIX: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            logger.info(f"LAZARUS: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
             return True
         except Exception as e:
-            logger.error(f"PHOENIX: Failed to record outcome: {e}")
+            logger.error(f"LAZARUS: Failed to record outcome: {e}")
             return False
 
     def _get_momentum(self) -> Dict:

@@ -40,10 +40,10 @@ class BotName(Enum):
     """Supported trading bots"""
     FORTRESS = "FORTRESS"
     SOLOMON = "SOLOMON"
-    ICARUS = "ICARUS"
+    GIDEON = "GIDEON"
     SAMSON = "SAMSON"
-    PEGASUS = "PEGASUS"
-    HERACLES = "HERACLES"
+    ANCHOR = "ANCHOR"
+    VALOR = "VALOR"
     AGAPE = "AGAPE"
 
 
@@ -159,10 +159,10 @@ class BotMetricsService:
     DEFAULT_CAPITAL = {
         BotName.FORTRESS: 100000,
         BotName.SOLOMON: 100000,
-        BotName.ICARUS: 100000,
+        BotName.GIDEON: 100000,
         BotName.SAMSON: 200000,
-        BotName.PEGASUS: 200000,
-        BotName.HERACLES: 100000,  # MES Futures paper trading
+        BotName.ANCHOR: 200000,
+        BotName.VALOR: 100000,  # MES Futures paper trading
         BotName.AGAPE: 5000,       # ETH Micro Futures paper trading
     }
 
@@ -178,9 +178,9 @@ class BotMetricsService:
             'snapshots': 'solomon_equity_snapshots',
             'config_key': 'solomon_starting_capital',
         },
-        BotName.ICARUS: {
-            'positions': 'icarus_positions',
-            'snapshots': 'icarus_equity_snapshots',
+        BotName.GIDEON: {
+            'positions': 'gideon_positions',
+            'snapshots': 'gideon_equity_snapshots',
             'config_key': 'icarus_starting_capital',
         },
         BotName.SAMSON: {
@@ -188,15 +188,15 @@ class BotMetricsService:
             'snapshots': 'samson_equity_snapshots',
             'config_key': 'titan_starting_capital',
         },
-        BotName.PEGASUS: {
-            'positions': 'pegasus_positions',
-            'snapshots': 'pegasus_equity_snapshots',
-            'config_key': 'pegasus_starting_capital',
+        BotName.ANCHOR: {
+            'positions': 'anchor_positions',
+            'snapshots': 'anchor_equity_snapshots',
+            'config_key': 'anchor_starting_capital',
         },
-        BotName.HERACLES: {
-            'positions': 'heracles_positions',
-            'closed_trades': 'heracles_closed_trades',
-            'snapshots': 'heracles_equity_snapshots',
+        BotName.VALOR: {
+            'positions': 'valor_positions',
+            'closed_trades': 'valor_closed_trades',
+            'snapshots': 'valor_equity_snapshots',
             'config_key': 'heracles_starting_capital',
         },
         BotName.AGAPE: {
@@ -415,16 +415,16 @@ class BotMetricsService:
             try:
                 cursor = conn.cursor()
 
-                # HERACLES uses separate tables for positions and closed trades
-                if bot == BotName.HERACLES:
-                    # Query open positions from heracles_positions
+                # VALOR uses separate tables for positions and closed trades
+                if bot == BotName.VALOR:
+                    # Query open positions from valor_positions
                     cursor.execute("""
-                        SELECT COUNT(*) FROM heracles_positions WHERE status = 'open'
+                        SELECT COUNT(*) FROM valor_positions WHERE status = 'open'
                     """)
                     open_row = cursor.fetchone()
                     open_count = int(open_row[0] or 0) if open_row else 0
 
-                    # Query closed trades from heracles_closed_trades
+                    # Query closed trades from valor_closed_trades
                     cursor.execute("""
                         SELECT
                             COUNT(*) as closed_count,
@@ -434,7 +434,7 @@ class BotMetricsService:
                             COALESCE(SUM(CASE
                                 WHEN DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
                                 THEN realized_pnl ELSE 0 END), 0) as today_realized
-                        FROM heracles_closed_trades
+                        FROM valor_closed_trades
                     """, (today,))
                     row = cursor.fetchone()
                     if row:
@@ -445,7 +445,7 @@ class BotMetricsService:
                         today_realized = float(row[4] or 0)
 
                     logger.info(
-                        f"get_metrics_summary(HERACLES): "
+                        f"get_metrics_summary(VALOR): "
                         f"open={open_count}, closed={closed_count}, "
                         f"wins={winning_trades}, losses={losing_trades}, "
                         f"total_realized=${total_realized:.2f}, today_realized=${today_realized:.2f}"
@@ -495,8 +495,8 @@ class BotMetricsService:
                 # The positions table unrealized_pnl column is never updated with live values
                 if open_count > 0 and MTM_AVAILABLE:
                     try:
-                        # Iron Condor bots: FORTRESS, SAMSON, PEGASUS
-                        if bot in [BotName.FORTRESS, BotName.SAMSON, BotName.PEGASUS]:
+                        # Iron Condor bots: FORTRESS, SAMSON, ANCHOR
+                        if bot in [BotName.FORTRESS, BotName.SAMSON, BotName.ANCHOR]:
                             underlying = 'SPY' if bot == BotName.FORTRESS else 'SPX'
                             cursor.execute(f"""
                                 SELECT position_id, total_credit, contracts, spread_width,
@@ -529,8 +529,8 @@ class BotMetricsService:
                                 except Exception as pos_err:
                                     logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
 
-                        # Directional spread bots: SOLOMON, ICARUS
-                        elif bot in [BotName.SOLOMON, BotName.ICARUS]:
+                        # Directional spread bots: SOLOMON, GIDEON
+                        elif bot in [BotName.SOLOMON, BotName.GIDEON]:
                             cursor.execute(f"""
                                 SELECT position_id, spread_type, entry_debit, contracts,
                                        long_strike, short_strike, expiration
@@ -560,11 +560,11 @@ class BotMetricsService:
                                 except Exception as pos_err:
                                     logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
 
-                        # HERACLES: Futures bot - unrealized calculated differently
+                        # VALOR: Futures bot - unrealized calculated differently
                         # For now, just log that we need live price to calculate unrealized
-                        elif bot == BotName.HERACLES:
-                            logger.debug(f"HERACLES unrealized P&L requires live futures quote - skipping in unified metrics")
-                            # Note: HERACLES calculates unrealized P&L directly in its status endpoint
+                        elif bot == BotName.VALOR:
+                            logger.debug(f"VALOR unrealized P&L requires live futures quote - skipping in unified metrics")
+                            # Note: VALOR calculates unrealized P&L directly in its status endpoint
                             # using live Tastytrade quotes. For unified metrics, we use 0 as placeholder.
                             pass
 
@@ -574,8 +574,8 @@ class BotMetricsService:
                 # Calculate high water mark from equity snapshots
                 snapshots_table = tables['snapshots']
                 try:
-                    # HERACLES uses 'account_balance' column, others use 'balance'
-                    balance_col = 'account_balance' if bot == BotName.HERACLES else 'balance'
+                    # VALOR uses 'account_balance' column, others use 'balance'
+                    balance_col = 'account_balance' if bot == BotName.VALOR else 'balance'
                     cursor.execute(f"""
                         SELECT MAX({balance_col}) FROM {snapshots_table}
                     """)
@@ -731,8 +731,8 @@ class BotMetricsService:
                 # Calculate unrealized P&L using MTM for open positions
                 if open_count > 0 and MTM_AVAILABLE:
                     try:
-                        # Iron Condor bots: FORTRESS, SAMSON, PEGASUS
-                        if bot in [BotName.FORTRESS, BotName.SAMSON, BotName.PEGASUS]:
+                        # Iron Condor bots: FORTRESS, SAMSON, ANCHOR
+                        if bot in [BotName.FORTRESS, BotName.SAMSON, BotName.ANCHOR]:
                             underlying = 'SPY' if bot == BotName.FORTRESS else 'SPX'
                             cursor.execute(f"""
                                 SELECT position_id, total_credit, contracts, spread_width,
@@ -765,8 +765,8 @@ class BotMetricsService:
                                 except Exception as pos_err:
                                     logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
 
-                        # Directional spread bots: SOLOMON, ICARUS
-                        elif bot in [BotName.SOLOMON, BotName.ICARUS]:
+                        # Directional spread bots: SOLOMON, GIDEON
+                        elif bot in [BotName.SOLOMON, BotName.GIDEON]:
                             cursor.execute(f"""
                                 SELECT position_id, spread_type, entry_debit, contracts,
                                        long_strike, short_strike, expiration

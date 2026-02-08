@@ -106,9 +106,9 @@ def main():
     bots = [
         ("FORTRESS", "fortress_positions", "ares_starting_capital", 100000),
         ("SAMSON", "samson_positions", "titan_starting_capital", 200000),
-        ("PEGASUS", "pegasus_positions", "pegasus_starting_capital", 200000),
+        ("ANCHOR", "anchor_positions", "anchor_starting_capital", 200000),
         ("SOLOMON", "solomon_positions", "solomon_starting_capital", 50000),
-        ("ICARUS", "icarus_positions", "icarus_starting_capital", 50000),
+        ("GIDEON", "gideon_positions", "icarus_starting_capital", 50000),
     ]
 
     all_stats = {}
@@ -145,9 +145,9 @@ def main():
     events_tables = {
         "FORTRESS": "fortress_positions",
         "SAMSON": "samson_positions",
-        "PEGASUS": "pegasus_positions",
+        "ANCHOR": "anchor_positions",
         "SOLOMON": "solomon_positions",
-        "ICARUS": "icarus_positions",
+        "GIDEON": "gideon_positions",
     }
 
     for bot, table in events_tables.items():

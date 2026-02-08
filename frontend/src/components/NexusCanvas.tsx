@@ -69,8 +69,8 @@ interface TradeSignal {
 export interface BotStatus {
   fortress?: 'active' | 'idle' | 'trading' | 'error'
   solomon?: 'active' | 'idle' | 'trading' | 'error'
-  phoenix?: 'active' | 'idle' | 'trading' | 'error'
-  atlas?: 'active' | 'idle' | 'trading' | 'error'
+  lazarus?: 'active' | 'idle' | 'trading' | 'error'
+  cornerstone?: 'active' | 'idle' | 'trading' | 'error'
   oracle?: 'active' | 'idle' | 'trading' | 'error'
   gex?: 'active' | 'idle' | 'trading' | 'error'
 }
@@ -198,27 +198,27 @@ export default function NexusCanvas({
         description: 'Directional Spreads',
       },
       {
-        id: 'atlas',
-        name: 'ATLAS',
-        label: 'ATLAS',
+        id: 'cornerstone',
+        name: 'CORNERSTONE',
+        label: 'CORNERSTONE',
         x: centerX - orbitRadius * 0.59,
         y: centerY + orbitRadius * 0.81,
         radius: nodeRadius,
         color: '#10b981',
         glowColor: '#34d399',
-        status: botStatus.atlas || 'idle',
+        status: botStatus.cornerstone || 'idle',
         description: 'SPX Wheel Strategy',
       },
       {
-        id: 'phoenix',
-        name: 'PHOENIX',
-        label: 'PHOENIX',
+        id: 'lazarus',
+        name: 'LAZARUS',
+        label: 'LAZARUS',
         x: centerX - orbitRadius * 0.95,
         y: centerY - orbitRadius * 0.31,
         radius: nodeRadius,
         color: '#f59e0b',
         glowColor: '#fbbf24',
-        status: botStatus.phoenix || 'idle',
+        status: botStatus.lazarus || 'idle',
         description: '0DTE Options',
       },
     ]

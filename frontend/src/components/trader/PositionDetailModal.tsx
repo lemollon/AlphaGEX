@@ -89,7 +89,7 @@ interface PositionDetailModalProps {
     exit_reason?: string
   }
   underlyingPrice?: number
-  botType?: 'SOLOMON' | 'FORTRESS' | 'PEGASUS'
+  botType?: 'SOLOMON' | 'FORTRESS' | 'ANCHOR'
 }
 
 export default function PositionDetailModal({

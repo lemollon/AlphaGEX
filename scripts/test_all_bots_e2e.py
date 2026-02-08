@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-E2E Production Test Script for FORTRESS, SOLOMON, PEGASUS
+E2E Production Test Script for FORTRESS, SOLOMON, ANCHOR
 =====================================================
 
 Run this in Render shell after deployment to verify all bots are wired up correctly.
@@ -73,12 +73,12 @@ def test_imports():
     except Exception as e:
         log_test("SOLOMON trader", False, str(e))
 
-    # PEGASUS
+    # ANCHOR
     try:
-        from trading.pegasus import PEGASUSTrader
-        log_test("PEGASUS trader", True)
+        from trading.anchor import AnchorTrader
+        log_test("ANCHOR trader", True)
     except Exception as e:
-        log_test("PEGASUS trader", False, str(e))
+        log_test("ANCHOR trader", False, str(e))
 
     # Tradier
     try:
@@ -143,15 +143,15 @@ def test_database():
         exists = cursor.fetchone()[0]
         log_test("solomon_positions table", exists, "Table missing" if not exists else "")
 
-        # Check PEGASUS tables
+        # Check ANCHOR tables
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'pegasus_positions'
+                WHERE table_name = 'anchor_positions'
             )
         """)
         exists = cursor.fetchone()[0]
-        log_test("pegasus_positions table", exists, "Table missing" if not exists else "")
+        log_test("anchor_positions table", exists, "Table missing" if not exists else "")
 
         # Check bot_heartbeats
         cursor.execute("""
@@ -243,46 +243,46 @@ def test_api_endpoints():
     except Exception as e:
         log_test("SOLOMON /live-pnl", False, str(e)[:100])
 
-    # PEGASUS endpoints
+    # ANCHOR endpoints
     try:
-        from backend.api.routes.pegasus_routes import get_pegasus_status
-        result = asyncio.get_event_loop().run_until_complete(get_pegasus_status())
+        from backend.api.routes.anchor_routes import get_anchor_status
+        result = asyncio.get_event_loop().run_until_complete(get_anchor_status())
         has_data = result.get('success') or 'data' in result
-        log_test("PEGASUS /status", has_data)
+        log_test("ANCHOR /status", has_data)
     except Exception as e:
-        log_test("PEGASUS /status", False, str(e)[:100])
+        log_test("ANCHOR /status", False, str(e)[:100])
 
     try:
-        from backend.api.routes.pegasus_routes import get_pegasus_positions
-        result = asyncio.get_event_loop().run_until_complete(get_pegasus_positions())
+        from backend.api.routes.anchor_routes import get_anchor_positions
+        result = asyncio.get_event_loop().run_until_complete(get_anchor_positions())
         has_data = result.get('success') or 'data' in result
-        log_test("PEGASUS /positions", has_data)
+        log_test("ANCHOR /positions", has_data)
     except Exception as e:
-        log_test("PEGASUS /positions", False, str(e)[:100])
+        log_test("ANCHOR /positions", False, str(e)[:100])
 
     try:
-        from backend.api.routes.pegasus_routes import get_pegasus_logs
-        result = asyncio.get_event_loop().run_until_complete(get_pegasus_logs())
+        from backend.api.routes.anchor_routes import get_anchor_logs
+        result = asyncio.get_event_loop().run_until_complete(get_anchor_logs())
         has_data = result.get('success') or 'data' in result
-        log_test("PEGASUS /logs", has_data)
+        log_test("ANCHOR /logs", has_data)
     except Exception as e:
-        log_test("PEGASUS /logs", False, str(e)[:100])
+        log_test("ANCHOR /logs", False, str(e)[:100])
 
     try:
-        from backend.api.routes.pegasus_routes import get_pegasus_performance
-        result = asyncio.get_event_loop().run_until_complete(get_pegasus_performance())
+        from backend.api.routes.anchor_routes import get_anchor_performance
+        result = asyncio.get_event_loop().run_until_complete(get_anchor_performance())
         has_data = result.get('success') or 'data' in result
-        log_test("PEGASUS /performance", has_data)
+        log_test("ANCHOR /performance", has_data)
     except Exception as e:
-        log_test("PEGASUS /performance", False, str(e)[:100])
+        log_test("ANCHOR /performance", False, str(e)[:100])
 
     try:
-        from backend.api.routes.pegasus_routes import get_pegasus_live_pnl
-        result = asyncio.get_event_loop().run_until_complete(get_pegasus_live_pnl())
+        from backend.api.routes.anchor_routes import get_anchor_live_pnl
+        result = asyncio.get_event_loop().run_until_complete(get_anchor_live_pnl())
         has_data = result.get('success') or 'data' in result
-        log_test("PEGASUS /live-pnl", has_data)
+        log_test("ANCHOR /live-pnl", has_data)
     except Exception as e:
-        log_test("PEGASUS /live-pnl", False, str(e)[:100])
+        log_test("ANCHOR /live-pnl", False, str(e)[:100])
 
 
 def test_tradier_connection():

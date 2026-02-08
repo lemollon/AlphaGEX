@@ -565,9 +565,9 @@ class TestMigration023StrategyAnalysis:
         # Verify all 5 bots are configured
         assert 'FORTRESS' in configs
         assert 'SAMSON' in configs
-        assert 'PEGASUS' in configs
+        assert 'ANCHOR' in configs
         assert 'SOLOMON' in configs
-        assert 'ICARUS' in configs
+        assert 'GIDEON' in configs
 
     def test_bot_strategy_types_correct(self):
         """Test that bots have correct strategy types"""
@@ -578,11 +578,11 @@ class TestMigration023StrategyAnalysis:
         # Iron Condor bots
         assert configs['FORTRESS']['strategy_type'] == 'IRON_CONDOR'
         assert configs['SAMSON']['strategy_type'] == 'IRON_CONDOR'
-        assert configs['PEGASUS']['strategy_type'] == 'IRON_CONDOR'
+        assert configs['ANCHOR']['strategy_type'] == 'IRON_CONDOR'
 
         # Directional bots
         assert configs['SOLOMON']['strategy_type'] == 'DIRECTIONAL'
-        assert configs['ICARUS']['strategy_type'] == 'DIRECTIONAL'
+        assert configs['GIDEON']['strategy_type'] == 'DIRECTIONAL'
 
     def test_get_bot_strategy_config(self):
         """Test get_bot_strategy_config method"""

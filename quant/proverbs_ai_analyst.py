@@ -156,8 +156,8 @@ Your role is to analyze trading bot performance and provide actionable recommend
 You analyze:
 - FORTRESS: Aggressive 0DTE Iron Condor strategy on SPX
 - SOLOMON: GEX-based directional spreads
-- PEGASUS: SPX Iron Condor
-- PHOENIX: 0DTE SPY/SPX options
+- ANCHOR: SPX Iron Condor
+- LAZARUS: 0DTE SPY/SPX options
 
 Provide your analysis in JSON format with these fields:
 {
@@ -437,8 +437,8 @@ Provide analysis in JSON format:
     "bot_recommendations": {
         "FORTRESS": {"action": "TRADE/PAUSE/REDUCE_SIZE", "reason": "why"},
         "SOLOMON": {"action": "...", "reason": "..."},
-        "PEGASUS": {"action": "...", "reason": "..."},
-        "PHOENIX": {"action": "...", "reason": "..."}
+        "ANCHOR": {"action": "...", "reason": "..."},
+        "LAZARUS": {"action": "...", "reason": "..."}
     },
     "suggested_actions": [...]
 }"""

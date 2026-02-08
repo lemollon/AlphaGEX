@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS oracle_predictions (
 
     -- Prediction context
     trade_date DATE NOT NULL,
-    bot_name VARCHAR(20) NOT NULL,  -- FORTRESS, ATLAS, PHOENIX
+    bot_name VARCHAR(20) NOT NULL,  -- FORTRESS, CORNERSTONE, LAZARUS
     prediction_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 
     -- Prediction details

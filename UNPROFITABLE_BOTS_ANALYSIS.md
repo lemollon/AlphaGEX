@@ -1,8 +1,8 @@
-# Why SOLOMON, ICARUS, and TITAN Are Not Profitable
+# Why SOLOMON, GIDEON, and TITAN Are Not Profitable
 
 ## Analysis Date: January 25, 2026
 
-This document analyzes the root causes of unprofitability for the SOLOMON, ICARUS, and TITAN trading bots based on a comprehensive code review and data structure analysis.
+This document analyzes the root causes of unprofitability for the SOLOMON, GIDEON, and TITAN trading bots based on a comprehensive code review and data structure analysis.
 
 ---
 
@@ -49,7 +49,7 @@ if current_value is None:
 
 ---
 
-### ICARUS (Aggressive Directional Spreads on SPY)
+### GIDEON (Aggressive Directional Spreads on SPY)
 
 **Strategy**: Same as SOLOMON but with AGGRESSIVE parameters:
 - 48% min win probability (vs SOLOMON's 55%)
@@ -68,13 +68,13 @@ if current_value is None:
 | Wider VIX acceptance | HIGH | Trades in unfavorable volatility |
 | No retry for failed closes | HIGH | Failed exits abandoned |
 
-**Why ICARUS Loses More Than SOLOMON**:
+**Why GIDEON Loses More Than SOLOMON**:
 ```
 SOLOMON thresholds:  55% win prob, 2% risk, max 5 trades/day, VIX 15-25
-ICARUS thresholds:  48% win prob, 3% risk, max 8 trades/day, VIX 12-30
+GIDEON thresholds:  48% win prob, 3% risk, max 8 trades/day, VIX 12-30
 ```
 
-ICARUS trades more often with lower conviction, creating **larger losses more frequently**.
+GIDEON trades more often with lower conviction, creating **larger losses more frequently**.
 
 ---
 
@@ -82,8 +82,8 @@ ICARUS trades more often with lower conviction, creating **larger losses more fr
 
 **Strategy**: Iron Condors on SPX with $12 spread widths, multiple trades daily.
 
-**TITAN vs PEGASUS Parameters**:
-| Parameter | TITAN (Aggressive) | PEGASUS (Standard) |
+**TITAN vs ANCHOR Parameters**:
+| Parameter | TITAN (Aggressive) | ANCHOR (Standard) |
 |-----------|-------------------|-------------------|
 | Risk per trade | 15% | 10% |
 | Min win probability | 40% | 50% |
@@ -146,7 +146,7 @@ VIX Regime Impact:
 ```
 
 **What's Happening**:
-- SOLOMON/ICARUS may take directional trades during POSITIVE GEX (mean-reversion environment)
+- SOLOMON/GIDEON may take directional trades during POSITIVE GEX (mean-reversion environment)
 - TITAN may take Iron Condors during NEGATIVE GEX (trending environment)
 
 ### 2. Disabled Safety Thresholds
@@ -227,7 +227,7 @@ SELECT
 3. **Implement pricing fallback** - if MTM fails, use conservative estimates
 4. **Avoid NEUTRAL GEX regime** - direction is uncertain
 
-### For ICARUS
+### For GIDEON
 
 1. **Consider disabling entirely** until SOLOMON is profitable
 2. If keeping active:
@@ -287,10 +287,10 @@ This will show:
 | P0 | Audit NULL realized_pnl rows and backfill | ALL | Backend |
 | P1 | Run analysis script on production | ALL | Quant |
 | P1 | Review Oracle calibration data | ALL | ML |
-| P1 | Raise win probability thresholds | ICARUS, TITAN | Config |
+| P1 | Raise win probability thresholds | GIDEON, TITAN | Config |
 | P2 | Restore Monday/Friday penalties | ALL (via Oracle) | Quant |
 | P2 | Add direction confirmation for SOLOMON | SOLOMON | Trading |
-| P3 | Consider disabling ICARUS until SOLOMON profitable | ICARUS | PM |
+| P3 | Consider disabling GIDEON until SOLOMON profitable | GIDEON | PM |
 
 ---
 

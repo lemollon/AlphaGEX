@@ -190,8 +190,8 @@ def test_pythia_calibration_flow():
 
 
 def test_ml_training_flow():
-    """Test PROMETHEUS ML training and prediction flow"""
-    print_header("PROMETHEUS ML FLOW TEST")
+    """Test JUBILEE ML training and prediction flow"""
+    print_header("JUBILEE ML FLOW TEST")
     results = []
 
     # Step 1: Check ML status
@@ -298,7 +298,7 @@ def test_trader_decision_flow():
     print_header("TRADER DECISION FLOW TEST")
     results = []
 
-    bots = ['FORTRESS', 'ATLAS', 'PHOENIX', 'HERMES', 'ORACLE', 'SOLOMON', 'PEGASUS']
+    bots = ['FORTRESS', 'CORNERSTONE', 'LAZARUS', 'SHEPHERD', 'ORACLE', 'SOLOMON', 'ANCHOR']
 
     # Check decision logs for each bot
     for bot in bots:

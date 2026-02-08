@@ -3441,7 +3441,7 @@ async def get_bot_positions():
     """
     Get active bot positions for ARGUS context.
 
-    Shows what FORTRESS, SOLOMON, SAMSON, ICARUS, PEGASUS are doing relative to gamma structure.
+    Shows what FORTRESS, SOLOMON, SAMSON, GIDEON, ANCHOR are doing relative to gamma structure.
 
     Returns BotPosition interface matching frontend:
     - bot: string (FORTRESS, SOLOMON, SAMSON, etc.)
@@ -3526,16 +3526,16 @@ async def get_bot_positions():
         except Exception as e:
             logger.debug(f"Could not fetch SAMSON positions: {e}")
 
-        # Check ICARUS positions (Aggressive Directional)
+        # Check GIDEON positions (Aggressive Directional)
         try:
-            from backend.api.routes.icarus_routes import get_icarus_positions
-            icarus_data = await get_icarus_positions()
-            if icarus_data.get('success') and icarus_data.get('data', {}).get('positions'):
-                for pos in icarus_data['data']['positions']:
+            from backend.api.routes.gideon_routes import get_gideon_positions
+            gideon_data = await get_gideon_positions()
+            if gideon_data.get('success') and gideon_data.get('data', {}).get('positions'):
+                for pos in gideon_data['data']['positions']:
                     direction = pos.get('direction', 'NEUTRAL')
                     pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
                     positions.append({
-                        'bot': 'ICARUS',
+                        'bot': 'GIDEON',
                         'strategy': 'Aggressive Directional',
                         'status': pos.get('status', 'open'),
                         'strikes': str(pos.get('strike', 'N/A')),
@@ -3544,17 +3544,17 @@ async def get_bot_positions():
                         'safe': True
                     })
         except Exception as e:
-            logger.debug(f"Could not fetch ICARUS positions: {e}")
+            logger.debug(f"Could not fetch GIDEON positions: {e}")
 
-        # Check PEGASUS positions (Weekly Iron Condors)
+        # Check ANCHOR positions (Weekly Iron Condors)
         try:
-            from backend.api.routes.pegasus_routes import get_pegasus_positions
-            pegasus_data = await get_pegasus_positions()
-            if pegasus_data.get('success') and pegasus_data.get('data', {}).get('positions'):
-                for pos in pegasus_data['data']['positions']:
+            from backend.api.routes.anchor_routes import get_anchor_positions
+            anchor_data = await get_anchor_positions()
+            if anchor_data.get('success') and anchor_data.get('data', {}).get('positions'):
+                for pos in anchor_data['data']['positions']:
                     pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
                     positions.append({
-                        'bot': 'PEGASUS',
+                        'bot': 'ANCHOR',
                         'strategy': 'Weekly IC (SPX)',
                         'status': pos.get('status', 'open'),
                         'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
@@ -3563,7 +3563,7 @@ async def get_bot_positions():
                         'safe': True
                     })
         except Exception as e:
-            logger.debug(f"Could not fetch PEGASUS positions: {e}")
+            logger.debug(f"Could not fetch ANCHOR positions: {e}")
 
         return {
             "success": True,

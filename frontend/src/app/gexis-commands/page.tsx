@@ -50,8 +50,8 @@ const commands: Command[] = [
   { command: '/backtest', description: 'Recent backtest performance', category: 'Analysis' },
 
   // Bot Control Commands
-  { command: '/start [BOT]', description: 'Start a bot (fortress/solomon/atlas) - requires confirmation', example: '/start fortress', category: 'Bot Control' },
-  { command: '/stop [BOT]', description: 'Stop a bot (fortress/solomon/atlas) - requires confirmation', example: '/stop fortress', category: 'Bot Control' },
+  { command: '/start [BOT]', description: 'Start a bot (fortress/solomon/cornerstone) - requires confirmation', example: '/start fortress', category: 'Bot Control' },
+  { command: '/stop [BOT]', description: 'Stop a bot (fortress/solomon/cornerstone) - requires confirmation', example: '/stop fortress', category: 'Bot Control' },
   { command: '/pause [BOT]', description: 'Pause bot for 30 min - requires confirmation', example: '/pause fortress', category: 'Bot Control' },
   { command: '/confirm', description: 'Confirm pending bot action', category: 'Bot Control' },
   { command: '/cancel', description: 'Cancel pending bot action', category: 'Bot Control' },

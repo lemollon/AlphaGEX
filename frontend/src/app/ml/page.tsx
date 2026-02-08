@@ -82,7 +82,7 @@ export default function MLSystemPage() {
             <div>
               <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-3">
                 <Brain className="w-8 h-8 text-purple-400" />
-                PROMETHEUS
+                JUBILEE
               </h1>
               <p className="text-gray-400">
                 Predictive Risk Optimization Through Machine Evaluation & Training for Honest Earnings Utility System

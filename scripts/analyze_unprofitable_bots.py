@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-COMPREHENSIVE PROFITABILITY ANALYSIS: SOLOMON, ICARUS, SAMSON
+COMPREHENSIVE PROFITABILITY ANALYSIS: SOLOMON, GIDEON, SAMSON
 ============================================================
 Analyzes why these bots have not been profitable by examining:
 1. Trade win/loss distribution
@@ -37,8 +37,8 @@ BOT_CONFIGS = {
             'underlying_at_entry': 'underlying_at_entry',
         }
     },
-    'icarus': {
-        'table': 'icarus_positions',
+    'gideon': {
+        'table': 'gideon_positions',
         'type': 'directional',
         'underlying': 'SPY',
         'pnl_formula': 'debit',
@@ -705,7 +705,7 @@ def analyze_backtest_drift(conn, bot_name):
             'expectancy': 12.0,  # 12% expected return per trade
             'trades_per_week': 8,  # ~8 trades per week
         },
-        'icarus': {
+        'gideon': {
             'win_rate': 0.52,  # 52% win rate (aggressive)
             'avg_win_pct': 40.0,
             'avg_loss_pct': 45.0,
@@ -952,7 +952,7 @@ def generate_recommendations(all_results):
 
 def main():
     print("=" * 80)
-    print("SOLOMON, ICARUS, SAMSON PROFITABILITY ANALYSIS")
+    print("SOLOMON, GIDEON, SAMSON PROFITABILITY ANALYSIS")
     print(f"Generated: {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S CT')}")
     print("=" * 80)
 
@@ -960,7 +960,7 @@ def main():
 
     all_results = {}
 
-    for bot_name in ['solomon', 'icarus', 'samson']:
+    for bot_name in ['solomon', 'gideon', 'samson']:
         config = BOT_CONFIGS[bot_name]
         results = analyze_bot(conn, bot_name, config)
         all_results[bot_name] = results

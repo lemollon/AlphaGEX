@@ -39,11 +39,11 @@ except Exception as e:
     print(f"  SOLOMON: Error loading - {e}")
 
 try:
-    from trading.icarus.models import ICARUSConfig
-    icarus_default = ICARUSConfig()
-    print(f"  ICARUS default wall_filter_pct: {icarus_default.wall_filter_pct}%")
+    from trading.gideon.models import GideonConfig
+    icarus_default = GideonConfig()
+    print(f"  GIDEON default wall_filter_pct: {icarus_default.wall_filter_pct}%")
 except Exception as e:
-    print(f"  ICARUS: Error loading - {e}")
+    print(f"  GIDEON: Error loading - {e}")
 
 # ============================================================================
 # 2. CHECK DATABASE CONFIG
@@ -69,17 +69,17 @@ try:
         else:
             print(f"  SOLOMON database wall_filter_pct: NOT SET (will use default {solomon_default.wall_filter_pct}%)")
 
-        # ICARUS config
+        # GIDEON config
         c.execute("""
             SELECT config_key, config_value
             FROM autonomous_config
-            WHERE bot_name = 'ICARUS' AND config_key = 'wall_filter_pct'
+            WHERE bot_name = 'GIDEON' AND config_key = 'wall_filter_pct'
         """)
         result = c.fetchone()
         if result:
-            print(f"  ICARUS database wall_filter_pct: {result[1]}%")
+            print(f"  GIDEON database wall_filter_pct: {result[1]}%")
         else:
-            print(f"  ICARUS database wall_filter_pct: NOT SET (will use default)")
+            print(f"  GIDEON database wall_filter_pct: NOT SET (will use default)")
 
 except Exception as e:
     print(f"  Database error: {e}")

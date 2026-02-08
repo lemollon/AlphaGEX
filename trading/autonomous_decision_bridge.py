@@ -51,7 +51,7 @@ try:
         get_session_tracker  # For scan_cycle and decision_sequence tracking
     )
     BOT_LOGGER_AVAILABLE = True
-    _phoenix_session_tracker = get_session_tracker("PHOENIX") if BOT_LOGGER_AVAILABLE else None
+    _phoenix_session_tracker = get_session_tracker("LAZARUS") if BOT_LOGGER_AVAILABLE else None
 except ImportError:
     BOT_LOGGER_AVAILABLE = False
     log_bot_decision = None
@@ -265,7 +265,7 @@ class DecisionBridge:
             decision_id="",
             timestamp=now.isoformat(),
             decision_type=DecisionType.ENTRY_SIGNAL,
-            bot_name=BotName.PHOENIX,
+            bot_name=BotName.LAZARUS,
             what=what_summary,
             why=why_summary,
             how=how_summary,
@@ -335,7 +335,7 @@ class DecisionBridge:
                     )
 
                 comprehensive = BotDecision(
-                    bot_name="PHOENIX",
+                    bot_name="LAZARUS",
                     decision_type="ENTRY",
                     action="BUY",
                     symbol=symbol,
@@ -427,7 +427,7 @@ class DecisionBridge:
             decision_id="",
             timestamp=now.isoformat(),
             decision_type=DecisionType.NO_TRADE,
-            bot_name=BotName.PHOENIX,
+            bot_name=BotName.LAZARUS,
             what=what_summary,
             why=why_summary,
             how=how_summary,
@@ -461,7 +461,7 @@ class DecisionBridge:
                     )
 
                 comprehensive = BotDecision(
-                    bot_name="PHOENIX",
+                    bot_name="LAZARUS",
                     decision_type="SKIP",
                     action="SKIP",
                     symbol=symbol,
@@ -524,7 +524,7 @@ class DecisionBridge:
             try:
                 now = datetime.now(self.tz)
                 comprehensive = BotDecision(
-                    bot_name="PHOENIX",
+                    bot_name="LAZARUS",
                     decision_type="EXIT",
                     action="SELL",
                     symbol=symbol,

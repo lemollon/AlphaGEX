@@ -89,7 +89,7 @@ class MathOptimizerMixin:
         Initialize math optimizer integration for this bot.
 
         Args:
-            bot_name: The bot identifier (FORTRESS, SOLOMON, PHOENIX, ATLAS)
+            bot_name: The bot identifier (FORTRESS, SOLOMON, LAZARUS, CORNERSTONE)
             enabled: Whether to enable optimizers (default True)
         """
         self._math_bot_name = bot_name
@@ -281,7 +281,7 @@ class MathOptimizerMixin:
         Returns:
             Dict with bot -> allocation amount AND 'allocations' for percentage access
         """
-        bots = ['FORTRESS', 'SOLOMON', 'PHOENIX', 'ATLAS']
+        bots = ['FORTRESS', 'SOLOMON', 'LAZARUS', 'CORNERSTONE']
         equal_fallback = {bot: total_capital / len(bots) for bot in bots}
         equal_fallback['allocations'] = {bot: 1.0 / len(bots) for bot in bots}
 

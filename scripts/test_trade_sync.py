@@ -397,11 +397,11 @@ class TradeSyncValidator:
         return results
 
     # =========================================================================
-    # PEGASUS VALIDATION
+    # ANCHOR VALIDATION
     # =========================================================================
 
-    def validate_pegasus_open_positions(self) -> dict:
-        """Validate PEGASUS open positions sync"""
+    def validate_anchor_open_positions(self) -> dict:
+        """Validate ANCHOR open positions sync"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -409,7 +409,7 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # PEGASUS uses same schema as FORTRESS (Iron Condor) - no ticker column
+            # ANCHOR uses same schema as FORTRESS (Iron Condor) - no ticker column
             cursor.execute("""
                 SELECT
                     position_id, expiration, status,
@@ -417,7 +417,7 @@ class TradeSyncValidator:
                     call_short_strike, call_long_strike,
                     total_credit, contracts, max_loss,
                     open_time
-                FROM pegasus_positions
+                FROM anchor_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
             """)
@@ -439,19 +439,19 @@ class TradeSyncValidator:
             if stale_positions:
                 results["passed"] = False
                 results["details"]["stale_positions"] = stale_positions
-                self.errors.append(f"PEGASUS has {len(stale_positions)} stale position(s) - expired but not closed")
+                self.errors.append(f"ANCHOR has {len(stale_positions)} stale position(s) - expired but not closed")
 
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"PEGASUS open position validation failed: {e}")
+            self.errors.append(f"ANCHOR open position validation failed: {e}")
         finally:
             self.safe_close(conn)
 
         return results
 
-    def validate_pegasus_closed_positions(self) -> dict:
-        """Validate PEGASUS closed positions"""
+    def validate_anchor_closed_positions(self) -> dict:
+        """Validate ANCHOR closed positions"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -459,13 +459,13 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # PEGASUS uses same schema as FORTRESS - no ticker column
+            # ANCHOR uses same schema as FORTRESS - no ticker column
             cursor.execute("""
                 SELECT
                     position_id, status,
                     total_credit, contracts, close_price, realized_pnl,
                     close_time
-                FROM pegasus_positions
+                FROM anchor_positions
                 WHERE status IN ('closed', 'expired')
                 ORDER BY close_time DESC
                 LIMIT 20
@@ -477,19 +477,19 @@ class TradeSyncValidator:
             missing_pnl = [pos[0] for pos in closed_positions if pos[5] is None]
             if missing_pnl:
                 results["details"]["missing_pnl_count"] = len(missing_pnl)
-                self.warnings.append(f"PEGASUS has {len(missing_pnl)} closed position(s) without P&L")
+                self.warnings.append(f"ANCHOR has {len(missing_pnl)} closed position(s) without P&L")
 
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"PEGASUS closed position validation failed: {e}")
+            self.errors.append(f"ANCHOR closed position validation failed: {e}")
         finally:
             self.safe_close(conn)
 
         return results
 
-    def validate_pegasus_equity_curve(self) -> dict:
-        """Validate PEGASUS equity curve"""
+    def validate_anchor_equity_curve(self) -> dict:
+        """Validate ANCHOR equity curve"""
         results = {"passed": True, "details": {}}
         conn = None
 
@@ -503,7 +503,7 @@ class TradeSyncValidator:
                     DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
-                FROM pegasus_positions
+                FROM anchor_positions
                 WHERE status IN ('closed', 'expired')
                 AND COALESCE(close_time, open_time)::timestamptz >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
                 GROUP BY DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago')
@@ -521,7 +521,7 @@ class TradeSyncValidator:
         except Exception as e:
             results["passed"] = False
             results["details"]["error"] = str(e)
-            self.errors.append(f"PEGASUS equity curve validation failed: {e}")
+            self.errors.append(f"ANCHOR equity curve validation failed: {e}")
         finally:
             self.safe_close(conn)
 
@@ -539,7 +539,7 @@ class TradeSyncValidator:
             import asyncio
             from backend.api.routes.fortress_routes import get_fortress_positions, get_ares_live_pnl
             from backend.api.routes.solomon_routes import get_solomon_positions, get_solomon_live_pnl
-            from backend.api.routes.pegasus_routes import get_pegasus_positions, get_pegasus_live_pnl
+            from backend.api.routes.anchor_routes import get_anchor_positions, get_anchor_live_pnl
 
             loop = asyncio.get_event_loop()
 
@@ -557,12 +557,12 @@ class TradeSyncValidator:
             except Exception as e:
                 results["details"]["solomon_api_error"] = str(e)[:100]
 
-            # Test PEGASUS API
+            # Test ANCHOR API
             try:
-                pegasus_pos = loop.run_until_complete(get_pegasus_positions())
-                results["details"]["pegasus_api_positions"] = len(pegasus_pos.get("data", {}).get("open_positions", []))
+                anchor_pos = loop.run_until_complete(get_anchor_positions())
+                results["details"]["anchor_api_positions"] = len(anchor_pos.get("data", {}).get("open_positions", []))
             except Exception as e:
-                results["details"]["pegasus_api_error"] = str(e)[:100]
+                results["details"]["anchor_api_error"] = str(e)[:100]
 
         except Exception as e:
             results["passed"] = False
@@ -638,32 +638,32 @@ class TradeSyncValidator:
             all_failed += 1
         all_results["solomon_equity"] = result
 
-        # PEGASUS Tests
-        print_header("PEGASUS SPX Iron Condor Sync")
+        # ANCHOR Tests
+        print_header("ANCHOR SPX Iron Condor Sync")
 
-        result = self.validate_pegasus_open_positions()
+        result = self.validate_anchor_open_positions()
         print_result("Open positions sync", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["pegasus_open"] = result
+        all_results["anchor_open"] = result
 
-        result = self.validate_pegasus_closed_positions()
+        result = self.validate_anchor_closed_positions()
         print_result("Closed positions P&L", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["pegasus_closed"] = result
+        all_results["anchor_closed"] = result
 
-        result = self.validate_pegasus_equity_curve()
+        result = self.validate_anchor_equity_curve()
         print_result("Equity curve data", result["passed"], str(result["details"]))
         if result["passed"]:
             all_passed += 1
         else:
             all_failed += 1
-        all_results["pegasus_equity"] = result
+        all_results["anchor_equity"] = result
 
         # API Sync Tests
         print_header("API Endpoint Sync")
@@ -805,28 +805,28 @@ def cleanup_stale_positions(dry_run: bool = True):
     except Exception as e:
         print(f"  ❌ FORTRESS cleanup failed: {e}")
 
-    # PEGASUS (pegasus_positions)
+    # ANCHOR (anchor_positions)
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
         cursor.execute("""
             SELECT position_id, expiration, total_credit, contracts
-            FROM pegasus_positions
+            FROM anchor_positions
             WHERE status = 'open' AND expiration < %s
         """, (today,))
-        stale_pegasus = cursor.fetchall()
+        stale_anchor = cursor.fetchall()
 
-        if stale_pegasus:
-            print(f"\n  PEGASUS: Found {len(stale_pegasus)} stale position(s)")
-            for pos in stale_pegasus:
+        if stale_anchor:
+            print(f"\n  ANCHOR: Found {len(stale_anchor)} stale position(s)")
+            for pos in stale_anchor:
                 pos_id, exp, total_credit, contracts = pos
                 realized_pnl = float(total_credit or 0) * int(contracts or 0) * 100
                 print(f"      - {pos_id}: exp {exp}, P&L ${realized_pnl:.2f} (expired worthless)")
 
                 if not dry_run:
                     cursor.execute("""
-                        UPDATE pegasus_positions
+                        UPDATE anchor_positions
                         SET status = 'expired',
                             close_time = %s,
                             close_reason = 'auto_expired',
@@ -836,13 +836,13 @@ def cleanup_stale_positions(dry_run: bool = True):
 
             if not dry_run:
                 conn.commit()
-                print(f"      ✅ Updated {len(stale_pegasus)} PEGASUS position(s)")
+                print(f"      ✅ Updated {len(stale_anchor)} ANCHOR position(s)")
         else:
-            print("\n  PEGASUS: No stale positions")
+            print("\n  ANCHOR: No stale positions")
 
         conn.close()
     except Exception as e:
-        print(f"  ❌ PEGASUS cleanup failed: {e}")
+        print(f"  ❌ ANCHOR cleanup failed: {e}")
 
     print("\n" + "=" * 70)
     if dry_run:
@@ -857,7 +857,7 @@ def reset_bot_account(bot_name: str, confirm: bool = False):
     Reset a bot's trading account - delete all positions and start fresh.
 
     Args:
-        bot_name: FORTRESS, SOLOMON, or PEGASUS
+        bot_name: FORTRESS, SOLOMON, or ANCHOR
         confirm: Must be True to actually delete (safety check)
     """
     from database_adapter import get_connection
@@ -867,11 +867,11 @@ def reset_bot_account(bot_name: str, confirm: bool = False):
     table_map = {
         'SOLOMON': 'apache_positions',
         'FORTRESS': 'fortress_positions',
-        'PEGASUS': 'pegasus_positions'
+        'ANCHOR': 'anchor_positions'
     }
 
     if bot_name not in table_map:
-        print(f"❌ Unknown bot: {bot_name}. Use FORTRESS, SOLOMON, or PEGASUS")
+        print(f"❌ Unknown bot: {bot_name}. Use FORTRESS, SOLOMON, or ANCHOR")
         return
 
     table = table_map[bot_name]
@@ -917,13 +917,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trade Sync Validation and Cleanup")
     parser.add_argument("--fix", action="store_true", help="Fix stale positions (mark expired)")
     parser.add_argument("--cleanup-only", action="store_true", help="Only run cleanup, skip validation")
-    parser.add_argument("--reset", type=str, help="Reset bot account (FORTRESS, SOLOMON, PEGASUS, or ALL)")
+    parser.add_argument("--reset", type=str, help="Reset bot account (FORTRESS, SOLOMON, ANCHOR, or ALL)")
     parser.add_argument("--confirm", action="store_true", help="Confirm destructive operations")
     args = parser.parse_args()
 
     if args.reset:
         if args.reset.upper() == 'ALL':
-            for bot in ['SOLOMON', 'FORTRESS', 'PEGASUS']:
+            for bot in ['SOLOMON', 'FORTRESS', 'ANCHOR']:
                 reset_bot_account(bot, confirm=args.confirm)
         else:
             reset_bot_account(args.reset, confirm=args.confirm)

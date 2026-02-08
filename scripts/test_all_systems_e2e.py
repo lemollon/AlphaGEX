@@ -6,7 +6,7 @@ AlphaGEX Comprehensive End-to-End Test Suite
 Tests all major systems to ensure they are properly configured and working:
 1. Database tables - exist and can accept data
 2. Scheduler configuration - timing matches trading windows
-3. Trading bots - SOLOMON, FORTRESS, PHOENIX status
+3. Trading bots - SOLOMON, FORTRESS, LAZARUS status
 4. API endpoints - health and data flow
 5. Data providers - Tradier, VIX sources
 6. ARGUS live data feed
@@ -173,7 +173,7 @@ def test_scheduler_config():
         # Scheduler timing summary
         log_info("")
         log_info("Expected Scheduler Times (CT):")
-        log_info("  ATLAS:  9:05 AM daily")
+        log_info("  CORNERSTONE:  9:05 AM daily")
         log_info("  FORTRESS:   8:30 AM - 3:30 PM, every 5 min")
         log_info("  SOLOMON: Every 5 min (8:35 AM - 2:30 PM)")
         log_info("  ARGUS:  Every 5 min (8:30 AM - 3:00 PM)")

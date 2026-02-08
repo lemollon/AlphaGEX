@@ -147,7 +147,7 @@ class TestGEXISIdentity:
 
         assert "FORTRESS" in GEXIS_IDENTITY
         assert "SOLOMON" in GEXIS_IDENTITY
-        assert "ATLAS" in GEXIS_IDENTITY
+        assert "CORNERSTONE" in GEXIS_IDENTITY
 
 
 class TestAlphaGEXKnowledge:

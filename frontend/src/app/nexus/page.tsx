@@ -25,9 +25,9 @@ const TRADING_TIPS = [
   "Call walls act as resistance, put walls as support",
   "FORTRESS hunts Iron Condor opportunities when volatility spikes",
   "SOLOMON captures directional momentum with GEX-aligned spreads",
-  "PEGASUS trades weekly SPX Iron Condors with $10 spread protection",
-  "PHOENIX targets 0DTE gamma scalps during high-activity periods",
-  "ATLAS wheels premium through systematic SPX strategies",
+  "ANCHOR trades weekly SPX Iron Condors with $10 spread protection",
+  "LAZARUS targets 0DTE gamma scalps during high-activity periods",
+  "CORNERSTONE wheels premium through systematic SPX strategies",
   "ORACLE's ML models predict direction with 65%+ accuracy",
   "Psychology traps catch 90% of traders - we exploit their fear",
   "VIX below 15 = complacency. Above 30 = panic. Both create edge",
@@ -40,9 +40,9 @@ export default function NexusPage() {
     oracle: 'active',
     fortress: 'idle',
     solomon: 'idle',
-    pegasus: 'idle',
-    phoenix: 'idle',
-    atlas: 'idle',
+    anchor: 'idle',
+    lazarus: 'idle',
+    cornerstone: 'idle',
   })
   const [currentTip, setCurrentTip] = useState(0)
   const [tipOpacity, setTipOpacity] = useState(1)
@@ -56,10 +56,10 @@ export default function NexusPage() {
   useEffect(() => {
     const fetchBotStatus = async () => {
       try {
-        const [aresRes, solomonRes, pegasusRes] = await Promise.all([
+        const [aresRes, solomonRes, anchorRes] = await Promise.all([
           apiClient.getARESStatus().catch(() => null),
           apiClient.getATHENAStatus().catch(() => null),
-          apiClient.getPEGASUSStatus().catch(() => null),
+          apiClient.getANCHORStatus().catch(() => null),
         ])
 
         setBotStatus(prev => ({
@@ -68,8 +68,8 @@ export default function NexusPage() {
                 aresRes?.data?.enabled ? 'active' : 'idle',
           solomon: solomonRes?.data?.status === 'running' ? 'trading' :
                   solomonRes?.data?.enabled ? 'active' : 'idle',
-          pegasus: pegasusRes?.data?.status === 'running' ? 'trading' :
-                   pegasusRes?.data?.enabled ? 'active' : 'idle',
+          anchor: anchorRes?.data?.status === 'running' ? 'trading' :
+                   anchorRes?.data?.enabled ? 'active' : 'idle',
         }))
       } catch (error) {
         console.error('Failed to fetch bot status:', error)
@@ -132,9 +132,9 @@ export default function NexusPage() {
       'oracle': '/oracle',
       'fortress': '/fortress',
       'solomon': '/solomon',
-      'pegasus': '/pegasus',
-      'phoenix': '/trader',
-      'atlas': '/spx-wheel',
+      'anchor': '/anchor',
+      'lazarus': '/trader',
+      'cornerstone': '/spx-wheel',
     }
     const route = routes[nodeId]
     if (route) router.push(route)

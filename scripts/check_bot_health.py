@@ -192,19 +192,19 @@ def check_open_positions():
         except:
             solomon_open = "N/A"
 
-        # Check ICARUS positions
+        # Check GIDEON positions
         try:
-            c.execute("SELECT COUNT(*) FROM icarus_positions WHERE status = 'open'")
+            c.execute("SELECT COUNT(*) FROM gideon_positions WHERE status = 'open'")
             icarus_open = c.fetchone()[0]
         except:
             icarus_open = "N/A"
 
-        # Check PEGASUS positions
+        # Check ANCHOR positions
         try:
-            c.execute("SELECT COUNT(*) FROM pegasus_positions WHERE status = 'open'")
-            pegasus_open = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM anchor_positions WHERE status = 'open'")
+            anchor_open = c.fetchone()[0]
         except:
-            pegasus_open = "N/A"
+            anchor_open = "N/A"
 
         # Check SAMSON positions
         try:
@@ -217,8 +217,8 @@ def check_open_positions():
         print("-" * 30)
         print(f"{'FORTRESS':<12} {fortress_open}")
         print(f"{'SOLOMON':<12} {solomon_open}")
-        print(f"{'ICARUS':<12} {icarus_open}")
-        print(f"{'PEGASUS':<12} {pegasus_open}")
+        print(f"{'GIDEON':<12} {icarus_open}")
+        print(f"{'ANCHOR':<12} {anchor_open}")
         print(f"{'SAMSON':<12} {titan_open}")
 
         conn.close()
@@ -240,10 +240,10 @@ def check_trading_window():
     windows = {
         'FORTRESS': ('08:30', '14:45'),
         'SOLOMON': ('08:35', '14:30'),
-        'ICARUS': ('08:35', '14:30'),
-        'PEGASUS': ('08:30', '14:45'),
+        'GIDEON': ('08:35', '14:30'),
+        'ANCHOR': ('08:30', '14:45'),
         'SAMSON': ('08:30', '14:45'),
-        'ATLAS': ('09:05', '09:10'),  # Daily run
+        'CORNERSTONE': ('09:05', '09:10'),  # Daily run
         'ARGUS': ('08:30', '14:45'),
     }
 

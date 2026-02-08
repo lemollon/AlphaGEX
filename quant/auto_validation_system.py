@@ -178,7 +178,7 @@ class MLModelRegistry:
         # =====================================================================
         self.register_model(
             name="oracle_advisor",
-            description="Central advisory system for FORTRESS, ATLAS, PHOENIX - aggregates signals",
+            description="Central advisory system for FORTRESS, CORNERSTONE, LAZARUS - aggregates signals",
             validate_func=self._validate_oracle_advisor,
             retrain_func=self._retrain_oracle_advisor,
             degradation_threshold=0.20
@@ -850,7 +850,7 @@ class AutoValidationSystem:
         self.model_registry = MLModelRegistry()
 
         # Thompson Sampling Allocator
-        self.bot_names = bot_names or ['FORTRESS', 'SOLOMON', 'PHOENIX', 'ATLAS']
+        self.bot_names = bot_names or ['FORTRESS', 'SOLOMON', 'LAZARUS', 'CORNERSTONE']
         if THOMPSON_AVAILABLE:
             self.thompson = ThompsonSamplingAllocator(self.bot_names)
         else:
@@ -1439,7 +1439,7 @@ if __name__ == "__main__":
     system.record_bot_outcome('FORTRESS', win=True, pnl=150)
     system.record_bot_outcome('SOLOMON', win=False, pnl=-100)
     system.record_bot_outcome('SOLOMON', win=True, pnl=300)
-    system.record_bot_outcome('PHOENIX', win=True, pnl=50)
+    system.record_bot_outcome('LAZARUS', win=True, pnl=50)
 
     allocation = system.get_capital_allocation(100000)
     print(f"  Method: {allocation.method}")

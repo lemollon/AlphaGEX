@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VALOR (HERACLES) Streak Analysis
+VALOR (VALOR) Streak Analysis
 =================================
 Analyzes win/loss streaks to understand the pattern.
 
@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 print("=" * 70)
-print("VALOR (HERACLES) STREAK ANALYSIS")
+print("VALOR (VALOR) STREAK ANALYSIS")
 print("=" * 70)
 
 db = DatabaseAdapter()
@@ -34,7 +34,7 @@ rows = db.fetchall("""
         close_time,
         stop_type,
         stop_points_used
-    FROM heracles_closed_trades
+    FROM valor_closed_trades
     ORDER BY close_time ASC
 """)
 

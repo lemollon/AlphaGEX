@@ -41,16 +41,16 @@ def get_db_connection():
 
 class BotName(Enum):
     """Names for each trading bot"""
-    PHOENIX = "PHOENIX"  # AutonomousPaperTrader - 0DTE SPY/SPX
-    ATLAS = "ATLAS"      # SPXWheelTrader - SPX Cash-Secured Put Wheel
-    HERMES = "HERMES"    # WheelStrategyManager - Manual Wheel via UI
+    LAZARUS = "LAZARUS"  # AutonomousPaperTrader - 0DTE SPY/SPX
+    CORNERSTONE = "CORNERSTONE"      # SPXWheelTrader - SPX Cash-Secured Put Wheel
+    SHEPHERD = "SHEPHERD"    # WheelStrategyManager - Manual Wheel via UI
     ORACLE = "ORACLE"    # MultiStrategyOptimizer - Advisory/Recommendations
     FORTRESS = "FORTRESS"        # FortressTrader - Aggressive Iron Condor (10% monthly target)
     SOLOMON = "SOLOMON"    # SolomonTrader - Directional Spreads (Bull/Bear Call Spreads)
-    PEGASUS = "PEGASUS"  # PEGASUSTrader - SPX Iron Condor ($10 spreads, weekly)
-    ICARUS = "ICARUS"    # ICARUSTrader - Aggressive Directional Spreads
+    ANCHOR = "ANCHOR"  # AnchorTrader - SPX Iron Condor ($10 spreads, weekly)
+    GIDEON = "GIDEON"    # GideonTrader - Aggressive Directional Spreads
     SAMSON = "SAMSON"      # SamsonTrader - Aggressive SPX Iron Condor ($12 spreads)
-    PROMETHEUS = "PROMETHEUS"  # PrometheusTrader - Box Spread Synthetic Borrowing + IC Trading
+    JUBILEE = "JUBILEE"  # JubileeTrader - Box Spread Synthetic Borrowing + IC Trading
 
 
 class DecisionType(Enum):
@@ -268,7 +268,7 @@ class TradeDecision:
     decision_id: str
     timestamp: str
     decision_type: DecisionType
-    bot_name: BotName = BotName.PHOENIX  # Which bot made this decision
+    bot_name: BotName = BotName.LAZARUS  # Which bot made this decision
 
     # The Three Keys: What, Why, How (human-readable summary)
     what: str = ""  # Brief: "BUY 2x SPY $590C expiring today"
@@ -778,7 +778,7 @@ def export_decisions_json(
     Export decision logs as JSON list.
 
     Args:
-        bot_name: Filter by bot (PHOENIX, ATLAS, HERMES, ORACLE)
+        bot_name: Filter by bot (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
         start_date: Filter from date (YYYY-MM-DD)
         end_date: Filter to date (YYYY-MM-DD)
         decision_type: Filter by type (ENTRY_SIGNAL, STAY_FLAT, etc.)
@@ -1052,7 +1052,7 @@ def export_decisions_csv(
     for d in decisions:
         # Extract from full_decision if available
         full_dec = d.get('full_decision') or {}
-        bot = full_dec.get('bot_name', 'PHOENIX') if isinstance(full_dec, dict) else 'PHOENIX'
+        bot = full_dec.get('bot_name', 'LAZARUS') if isinstance(full_dec, dict) else 'LAZARUS'
         reason = (d.get('primary_reason') or '')[:100].replace(',', ';').replace('\n', ' ')
 
         # Get legs array from full_decision
@@ -1131,7 +1131,7 @@ def get_bot_decision_summary(bot_name: str = None, days: int = 7) -> Dict:
             'stay_flat_count': int,
             'blocked_count': int,
             'by_type': {'ENTRY_SIGNAL': 10, ...},
-            'by_bot': {'PHOENIX': 50, 'ATLAS': 20},
+            'by_bot': {'LAZARUS': 50, 'CORNERSTONE': 20},
             'avg_confidence': float,
             'win_count': int,
             'loss_count': int,
@@ -1186,11 +1186,11 @@ def get_bot_decision_summary(bot_name: str = None, days: int = 7) -> Dict:
         if not bot_name:
             cursor.execute("""
                 SELECT
-                    COALESCE(full_decision->>'bot_name', 'PHOENIX') as bot,
+                    COALESCE(full_decision->>'bot_name', 'LAZARUS') as bot,
                     COUNT(*)
                 FROM trading_decisions
                 WHERE timestamp >= NOW() - INTERVAL '%s days'
-                GROUP BY COALESCE(full_decision->>'bot_name', 'PHOENIX')
+                GROUP BY COALESCE(full_decision->>'bot_name', 'LAZARUS')
             """, [days])
             by_bot = dict(cursor.fetchall())
 
@@ -1247,7 +1247,7 @@ def get_recent_decisions(bot_name: str = None, limit: int = 20) -> List[Dict]:
                 primary_reason,
                 position_size_dollars,
                 actual_pnl,
-                COALESCE(full_decision->>'bot_name', 'PHOENIX') as bot_name,
+                COALESCE(full_decision->>'bot_name', 'LAZARUS') as bot_name,
                 COALESCE(full_decision->>'what', '') as what,
                 COALESCE(full_decision->>'why', '') as why
             FROM trading_decisions
@@ -1280,24 +1280,24 @@ _bot_loggers: Dict[str, DecisionLogger] = {}
 
 
 def get_phoenix_logger() -> DecisionLogger:
-    """Get logger for PHOENIX bot (0DTE)"""
-    if 'PHOENIX' not in _bot_loggers:
-        _bot_loggers['PHOENIX'] = DecisionLogger()
-    return _bot_loggers['PHOENIX']
+    """Get logger for LAZARUS bot (0DTE)"""
+    if 'LAZARUS' not in _bot_loggers:
+        _bot_loggers['LAZARUS'] = DecisionLogger()
+    return _bot_loggers['LAZARUS']
 
 
 def get_atlas_logger() -> DecisionLogger:
-    """Get logger for ATLAS bot (Wheel)"""
-    if 'ATLAS' not in _bot_loggers:
-        _bot_loggers['ATLAS'] = DecisionLogger()
-    return _bot_loggers['ATLAS']
+    """Get logger for CORNERSTONE bot (Wheel)"""
+    if 'CORNERSTONE' not in _bot_loggers:
+        _bot_loggers['CORNERSTONE'] = DecisionLogger()
+    return _bot_loggers['CORNERSTONE']
 
 
 def get_hermes_logger() -> DecisionLogger:
-    """Get logger for HERMES (Manual Wheel)"""
-    if 'HERMES' not in _bot_loggers:
-        _bot_loggers['HERMES'] = DecisionLogger()
-    return _bot_loggers['HERMES']
+    """Get logger for SHEPHERD (Manual Wheel)"""
+    if 'SHEPHERD' not in _bot_loggers:
+        _bot_loggers['SHEPHERD'] = DecisionLogger()
+    return _bot_loggers['SHEPHERD']
 
 
 def get_oracle_logger() -> DecisionLogger:
@@ -1321,18 +1321,18 @@ def get_solomon_logger() -> DecisionLogger:
     return _bot_loggers['SOLOMON']
 
 
-def get_pegasus_logger() -> DecisionLogger:
-    """Get logger for PEGASUS (SPX Iron Condor)"""
-    if 'PEGASUS' not in _bot_loggers:
-        _bot_loggers['PEGASUS'] = DecisionLogger()
-    return _bot_loggers['PEGASUS']
+def get_anchor_logger() -> DecisionLogger:
+    """Get logger for ANCHOR (SPX Iron Condor)"""
+    if 'ANCHOR' not in _bot_loggers:
+        _bot_loggers['ANCHOR'] = DecisionLogger()
+    return _bot_loggers['ANCHOR']
 
 
 def get_icarus_logger() -> DecisionLogger:
-    """Get logger for ICARUS (Aggressive Directional Spreads)"""
-    if 'ICARUS' not in _bot_loggers:
-        _bot_loggers['ICARUS'] = DecisionLogger()
-    return _bot_loggers['ICARUS']
+    """Get logger for GIDEON (Aggressive Directional Spreads)"""
+    if 'GIDEON' not in _bot_loggers:
+        _bot_loggers['GIDEON'] = DecisionLogger()
+    return _bot_loggers['GIDEON']
 
 
 def get_titan_logger() -> DecisionLogger:
@@ -1343,7 +1343,7 @@ def get_titan_logger() -> DecisionLogger:
 
 
 def get_prometheus_logger() -> DecisionLogger:
-    """Get logger for PROMETHEUS (Box Spread Synthetic Borrowing + IC Trading)"""
-    if 'PROMETHEUS' not in _bot_loggers:
-        _bot_loggers['PROMETHEUS'] = DecisionLogger()
-    return _bot_loggers['PROMETHEUS']
+    """Get logger for JUBILEE (Box Spread Synthetic Borrowing + IC Trading)"""
+    if 'JUBILEE' not in _bot_loggers:
+        _bot_loggers['JUBILEE'] = DecisionLogger()
+    return _bot_loggers['JUBILEE']

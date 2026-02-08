@@ -7,9 +7,9 @@ Provides strategy recommendations, performance analysis, and training status.
 
 Oracle advises all trading bots:
 - FORTRESS: Iron Condor advice (SPY 0DTE)
-- PEGASUS: Iron Condor advice (SPX weekly)
+- ANCHOR: Iron Condor advice (SPX weekly)
 - SOLOMON: Directional spread advice
-- ATLAS: Wheel strategy advice
+- CORNERSTONE: Wheel strategy advice
 """
 
 import logging
@@ -171,7 +171,7 @@ async def get_strategy_recommendation(request: StrategyRecommendationRequest):
 
     Decision Matrix:
     - HIGH VIX + NEGATIVE GEX = Favor DIRECTIONAL (SOLOMON)
-    - NORMAL VIX + POSITIVE GEX = Favor IRON_CONDOR (FORTRESS/PEGASUS)
+    - NORMAL VIX + POSITIVE GEX = Favor IRON_CONDOR (FORTRESS/ANCHOR)
     - EXTREME VIX = SKIP or reduced exposure
     """
     if not ORACLE_AVAILABLE:
@@ -456,7 +456,7 @@ async def get_vix_regimes():
             }
         ],
         "strategy_matrix": {
-            "NORMAL VIX + POSITIVE GEX": "IRON_CONDOR (FORTRESS/PEGASUS)",
+            "NORMAL VIX + POSITIVE GEX": "IRON_CONDOR (FORTRESS/ANCHOR)",
             "HIGH VIX + NEGATIVE GEX": "DIRECTIONAL (SOLOMON)",
             "EXTREME VIX + NO TREND": "SKIP",
             "LOW VIX + NEGATIVE GEX": "DIRECTIONAL (cheap options)"

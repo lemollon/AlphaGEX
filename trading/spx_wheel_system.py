@@ -611,17 +611,17 @@ class SPXWheelTrader(MathOptimizerMixin):
         if ORACLE_AVAILABLE:
             try:
                 self.oracle = OracleAdvisor()
-                logger.info("ATLAS: Oracle AI advisor initialized")
+                logger.info("CORNERSTONE: Oracle AI advisor initialized")
             except Exception as e:
-                logger.warning(f"ATLAS: Failed to initialize Oracle AI: {e}")
+                logger.warning(f"CORNERSTONE: Failed to initialize Oracle AI: {e}")
 
         # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("ATLAS", enabled=False)
-                logger.info("ATLAS: Math optimizers DISABLED - Oracle controls all trading decisions")
+                self._init_math_optimizers("CORNERSTONE", enabled=False)
+                logger.info("CORNERSTONE: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
-                logger.warning(f"ATLAS: Math optimizer init failed: {e}")
+                logger.warning(f"CORNERSTONE: Math optimizer init failed: {e}")
 
         self._ensure_tables()
 
@@ -722,7 +722,7 @@ class SPXWheelTrader(MathOptimizerMixin):
                 trade_leg = TradeLeg(
                     leg_id=1,
                     action=action,
-                    option_type="put",  # ATLAS is CSP only
+                    option_type="put",  # CORNERSTONE is CSP only
 
                     # REQUIRED: Strike and expiration
                     strike=strike,
@@ -835,7 +835,7 @@ class SPXWheelTrader(MathOptimizerMixin):
                 decision_id="",
                 timestamp=now.isoformat(),
                 decision_type=decision_type_enum,
-                bot_name=BotName.ATLAS,
+                bot_name=BotName.CORNERSTONE,
                 what=what,
                 why=why,
                 how=how,
@@ -860,7 +860,7 @@ class SPXWheelTrader(MathOptimizerMixin):
             )
 
             decision_id = self.decision_logger.log_decision(decision)
-            logger.info(f"ATLAS logged decision: {decision_id} - {action}")
+            logger.info(f"CORNERSTONE logged decision: {decision_id} - {action}")
 
             # === COMPREHENSIVE BOT LOGGER ===
             if BOT_LOGGER_AVAILABLE and log_bot_decision:
@@ -880,7 +880,7 @@ class SPXWheelTrader(MathOptimizerMixin):
                         ))
 
                     comprehensive = BotDecision(
-                        bot_name="ATLAS",
+                        bot_name="CORNERSTONE",
                         decision_type=dt_str,
                         action=action,
                         symbol="SPX",
@@ -916,14 +916,14 @@ class SPXWheelTrader(MathOptimizerMixin):
                         ) if dt_str == "ENTRY" else ExecutionTimeline(),
                     )
                     comp_id = log_bot_decision(comprehensive)
-                    logger.info(f"ATLAS logged to bot_decision_logs: {comp_id}")
+                    logger.info(f"CORNERSTONE logged to bot_decision_logs: {comp_id}")
                 except Exception as comp_e:
-                    logger.warning(f"Could not log ATLAS to comprehensive table: {comp_e}")
+                    logger.warning(f"Could not log CORNERSTONE to comprehensive table: {comp_e}")
 
             return decision_id
 
         except Exception as e:
-            logger.error(f"Failed to log ATLAS decision: {e}")
+            logger.error(f"Failed to log CORNERSTONE decision: {e}")
             return ""
 
     def run_daily_cycle(self) -> Dict:
@@ -1026,7 +1026,7 @@ class SPXWheelTrader(MathOptimizerMixin):
                     )
                     return False, reason
             except Exception as e:
-                logger.debug(f"ATLAS: HMM regime check skipped: {e}")
+                logger.debug(f"CORNERSTONE: HMM regime check skipped: {e}")
 
         # Check market calendar (includes earnings & FOMC)
         if CALENDAR_AVAILABLE and self.params.avoid_earnings:
@@ -1068,13 +1068,13 @@ class SPXWheelTrader(MathOptimizerMixin):
         # If Oracle provides a good win probability, we TRADE regardless of VIX.
         # =========================================================================
         oracle_advice = self.consult_oracle(spot, vix)
-        min_win_prob = 0.55  # ATLAS minimum win probability
+        min_win_prob = 0.55  # CORNERSTONE minimum win probability
 
         if oracle_advice and oracle_advice.win_probability >= min_win_prob:
             # Oracle says trade - bypass VIX filter
             vix_ok = self.params.min_vix <= vix <= self.params.max_vix
             if not vix_ok:
-                print(f"  ATLAS: Oracle SUPERSEDES VIX filter - Oracle predicts {oracle_advice.win_probability:.1%} win prob")
+                print(f"  CORNERSTONE: Oracle SUPERSEDES VIX filter - Oracle predicts {oracle_advice.win_probability:.1%} win prob")
                 print(f"         VIX {vix:.1f} outside {self.params.min_vix}-{self.params.max_vix} but Oracle says TRADE")
 
             if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
@@ -1099,7 +1099,7 @@ class SPXWheelTrader(MathOptimizerMixin):
             # REMOVED: Redundant VIX filter - Oracle already analyzed VIX in MarketContext
             oracle_win_prob = oracle_advice.win_probability if oracle_advice else 0
             reason = f"Oracle win prob {oracle_win_prob:.1%} below threshold {min_win_prob:.1%}"
-            print(f"  ATLAS: {reason}")
+            print(f"  CORNERSTONE: {reason}")
             self._log_decision(
                 decision_type="NO_TRADE",
                 action="SKIP",
@@ -1171,7 +1171,7 @@ class SPXWheelTrader(MathOptimizerMixin):
                     gex_flip = (row[3] or 0) * 10
                 conn.close()
             except Exception as e:
-                logger.debug(f"ATLAS: Could not fetch GEX data: {e}")
+                logger.debug(f"CORNERSTONE: Could not fetch GEX data: {e}")
 
             # Determine GEX regime
             gex_regime = GEXRegime.NEUTRAL
@@ -1206,7 +1206,7 @@ class SPXWheelTrader(MathOptimizerMixin):
             )
 
         except Exception as e:
-            logger.error(f"ATLAS: Error building Oracle context: {e}")
+            logger.error(f"CORNERSTONE: Error building Oracle context: {e}")
             return None
 
     def consult_oracle(self, spot: float, vix: float) -> Optional['OraclePrediction']:
@@ -1221,35 +1221,35 @@ class SPXWheelTrader(MathOptimizerMixin):
             OraclePrediction with advice, or None if Oracle unavailable
         """
         if not self.oracle:
-            logger.debug("ATLAS: Oracle not available, proceeding without advice")
+            logger.debug("CORNERSTONE: Oracle not available, proceeding without advice")
             return None
 
         context = self._build_oracle_context(spot, vix)
         if not context:
-            logger.debug("ATLAS: Could not build Oracle context")
+            logger.debug("CORNERSTONE: Could not build Oracle context")
             return None
 
         try:
             # Get advice from Oracle
             advice = self.oracle.get_atlas_advice(context)
 
-            logger.info(f"ATLAS Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
+            logger.info(f"CORNERSTONE Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
                        f"Risk: {advice.suggested_risk_pct:.1%}")
 
             if advice.reasoning:
-                logger.info(f"ATLAS Oracle Reasoning: {advice.reasoning}")
+                logger.info(f"CORNERSTONE Oracle Reasoning: {advice.reasoning}")
 
             # Store prediction for feedback loop
             try:
                 today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
                 self.oracle.store_prediction(advice, context, today)
             except Exception as e:
-                logger.debug(f"ATLAS: Could not store Oracle prediction: {e}")
+                logger.debug(f"CORNERSTONE: Could not store Oracle prediction: {e}")
 
             return advice
 
         except Exception as e:
-            logger.error(f"ATLAS: Error consulting Oracle: {e}")
+            logger.error(f"CORNERSTONE: Error consulting Oracle: {e}")
             return None
 
     def record_trade_outcome(
@@ -1276,14 +1276,14 @@ class SPXWheelTrader(MathOptimizerMixin):
             outcome = TradeOutcome[outcome_type]
             self.oracle.update_outcome(
                 trade_date,
-                OracleBotName.ATLAS,
+                OracleBotName.CORNERSTONE,
                 outcome,
                 actual_pnl
             )
-            logger.info(f"ATLAS: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
+            logger.info(f"CORNERSTONE: Recorded outcome to Oracle: {outcome_type}, PnL=${actual_pnl:,.2f}")
             return True
         except Exception as e:
-            logger.error(f"ATLAS: Failed to record outcome: {e}")
+            logger.error(f"CORNERSTONE: Failed to record outcome: {e}")
             return False
 
     def _get_account_balance(self) -> Dict:
@@ -1799,7 +1799,7 @@ class SPXWheelTrader(MathOptimizerMixin):
 
                 # CRITICAL: Verify order was placed before updating DB
                 if not result:
-                    logger.error(f"ATLAS: Buy-to-close order failed - no result returned for {tradier_symbol}")
+                    logger.error(f"CORNERSTONE: Buy-to-close order failed - no result returned for {tradier_symbol}")
                     return False
 
                 order_id = result.get('order', {}).get('id')
@@ -1809,14 +1809,14 @@ class SPXWheelTrader(MathOptimizerMixin):
                 # Verify order was accepted (not rejected)
                 if not order_id:
                     error_msg = result.get('error', result.get('errors', 'Unknown error'))
-                    logger.error(f"ATLAS: Buy-to-close order rejected for {tradier_symbol}: {error_msg}")
+                    logger.error(f"CORNERSTONE: Buy-to-close order rejected for {tradier_symbol}: {error_msg}")
                     return False
 
                 if order_status in ['rejected', 'canceled', 'error']:
-                    logger.error(f"ATLAS: Buy-to-close order {order_id} status={order_status}")
+                    logger.error(f"CORNERSTONE: Buy-to-close order {order_id} status={order_status}")
                     return False
 
-                logger.info(f"ATLAS: Buy-to-close order {order_id} placed successfully for {tradier_symbol}")
+                logger.info(f"CORNERSTONE: Buy-to-close order {order_id} placed successfully for {tradier_symbol}")
 
             # Update database (only after order is verified)
             conn = get_connection()
@@ -1846,9 +1846,9 @@ class SPXWheelTrader(MathOptimizerMixin):
             if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
                 try:
                     self.math_record_outcome(win=(pnl > 0), pnl=pnl)
-                    logger.debug(f"ATLAS: Thompson outcome recorded: win={pnl > 0}, pnl=${pnl:.2f}")
+                    logger.debug(f"CORNERSTONE: Thompson outcome recorded: win={pnl > 0}, pnl=${pnl:.2f}")
                 except Exception as e:
-                    logger.debug(f"ATLAS: Thompson outcome recording skipped: {e}")
+                    logger.debug(f"CORNERSTONE: Thompson outcome recording skipped: {e}")
 
             # Log decision with COMPLETE trade data
             spot = self._get_spx_price() or 0

@@ -138,10 +138,10 @@ def verify_indexes(conn):
         ('idx_solomon_positions_open_time', 'solomon_positions'),
         ('idx_solomon_positions_status_open_time', 'solomon_positions'),
         ('idx_solomon_positions_expiration', 'solomon_positions'),
-        # PEGASUS
-        ('idx_pegasus_positions_status', 'pegasus_positions'),
-        ('idx_pegasus_positions_open_time', 'pegasus_positions'),
-        ('idx_pegasus_positions_status_open_time', 'pegasus_positions'),
+        # ANCHOR
+        ('idx_anchor_positions_status', 'anchor_positions'),
+        ('idx_anchor_positions_open_time', 'anchor_positions'),
+        ('idx_anchor_positions_status_open_time', 'anchor_positions'),
         # GEX_HISTORY
         ('idx_gex_history_symbol_timestamp', 'gex_history'),
         ('idx_gex_history_timestamp', 'gex_history'),

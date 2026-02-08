@@ -3,7 +3,7 @@
 Verify Directional Bot Fixes - Render Shell Test Script
 ========================================================
 
-Run this in Render shell to verify all ICARUS/SOLOMON fixes are working.
+Run this in Render shell to verify all GIDEON/SOLOMON fixes are working.
 
 Usage:
     python scripts/verify_directional_bot_fixes.py
@@ -114,11 +114,11 @@ def test_day_of_week():
 
         print(f"  Current day: {day_names[day_of_week]} (index={day_of_week})")
 
-        # Check ICARUS signals.py uses day_of_week
-        from trading.icarus.signals import SignalGenerator
-        from trading.icarus.models import ICARUSConfig
+        # Check GIDEON signals.py uses day_of_week
+        from trading.gideon.signals import SignalGenerator
+        from trading.gideon.models import GideonConfig
 
-        config = ICARUSConfig()
+        config = GideonConfig()
         generator = SignalGenerator(config)
 
         # Check if the generator has day_of_week logic
@@ -126,10 +126,10 @@ def test_day_of_week():
         source = inspect.getsource(generator.get_oracle_advice)
 
         if 'day_of_week=now_ct.weekday()' in source:
-            print(f"  ✅ PASS: ICARUS signals.py passes day_of_week=now_ct.weekday()")
+            print(f"  ✅ PASS: GIDEON signals.py passes day_of_week=now_ct.weekday()")
             return True
         else:
-            print(f"  ❌ FAIL: ICARUS signals.py missing day_of_week=now_ct.weekday()")
+            print(f"  ❌ FAIL: GIDEON signals.py missing day_of_week=now_ct.weekday()")
             return False
 
     except Exception as e:
@@ -146,10 +146,10 @@ def test_ml_features_complete():
     print("="*60)
 
     try:
-        from trading.icarus.signals import SignalGenerator
-        from trading.icarus.models import ICARUSConfig
+        from trading.gideon.signals import SignalGenerator
+        from trading.gideon.models import GideonConfig
 
-        config = ICARUSConfig()
+        config = GideonConfig()
         generator = SignalGenerator(config)
 
         # Get GEX data (includes all ML features)
@@ -278,15 +278,15 @@ def test_friday_filter():
 
 
 def test_icarus_rr_ratio():
-    """Test 6: ICARUS R:R ratio should be 1:1 (50/50)"""
+    """Test 6: GIDEON R:R ratio should be 1:1 (50/50)"""
     print("\n" + "="*60)
-    print("TEST 6: ICARUS R:R Ratio at 1:1 (50/50)")
+    print("TEST 6: GIDEON R:R Ratio at 1:1 (50/50)")
     print("="*60)
 
     try:
-        from trading.icarus.models import ICARUSConfig
+        from trading.gideon.models import GideonConfig
 
-        config = ICARUSConfig()
+        config = GideonConfig()
 
         profit_target = config.profit_target_pct
         stop_loss = config.stop_loss_pct
@@ -296,10 +296,10 @@ def test_icarus_rr_ratio():
         print(f"  R:R Ratio: {profit_target}:{stop_loss}")
 
         if profit_target == 50.0 and stop_loss == 50.0:
-            print(f"\n  ✅ PASS: ICARUS R:R is 1:1 (50:50)")
+            print(f"\n  ✅ PASS: GIDEON R:R is 1:1 (50:50)")
             return True
         else:
-            print(f"\n  ❌ FAIL: ICARUS R:R should be 50:50, got {profit_target}:{stop_loss}")
+            print(f"\n  ❌ FAIL: GIDEON R:R should be 50:50, got {profit_target}:{stop_loss}")
             return False
 
     except Exception as e:
@@ -323,7 +323,7 @@ def main():
         ("ML Features Complete", test_ml_features_complete),
         ("Flip Distance Filter", test_flip_distance_filter),
         ("Friday Filter", test_friday_filter),
-        ("ICARUS R:R Ratio", test_icarus_rr_ratio),
+        ("GIDEON R:R Ratio", test_icarus_rr_ratio),
     ]
 
     results = []

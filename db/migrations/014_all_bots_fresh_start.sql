@@ -6,7 +6,7 @@
 -- This migration clears ALL bot data:
 -- - FORTRESS (Iron Condor)
 -- - SOLOMON (Directional Spreads)
--- - PEGASUS (SPX Iron Condor)
+-- - ANCHOR (SPX Iron Condor)
 --
 -- Run this after major updates to start fresh with 0 trades, 0 P&L
 
@@ -53,30 +53,30 @@ END $$;
 DELETE FROM autonomous_config WHERE key LIKE 'solomon_%';
 
 -- =============================================================================
--- PEGASUS RESET (SPX Iron Condor Bot)
+-- ANCHOR RESET (SPX Iron Condor Bot)
 -- =============================================================================
 
-DELETE FROM pegasus_positions;
+DELETE FROM anchor_positions;
 
 DO $$
 BEGIN
-    DELETE FROM pegasus_scan_activity;
+    DELETE FROM anchor_scan_activity;
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
 DO $$
 BEGIN
-    DELETE FROM pegasus_daily_perf;
+    DELETE FROM anchor_daily_perf;
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
 DO $$
 BEGIN
-    DELETE FROM bot_scan_activity WHERE bot_name = 'PEGASUS';
+    DELETE FROM bot_scan_activity WHERE bot_name = 'ANCHOR';
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
-DELETE FROM autonomous_config WHERE key LIKE 'pegasus_%';
+DELETE FROM autonomous_config WHERE key LIKE 'anchor_%';
 
 -- =============================================================================
 -- UNIFIED BOT TABLES RESET
@@ -85,14 +85,14 @@ DELETE FROM autonomous_config WHERE key LIKE 'pegasus_%';
 -- Clear unified bot heartbeats (they'll regenerate on next scan)
 DO $$
 BEGIN
-    DELETE FROM bot_heartbeats WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'PEGASUS');
+    DELETE FROM bot_heartbeats WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'ANCHOR');
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
 -- Clear unified scan activity for all bots
 DO $$
 BEGIN
-    DELETE FROM bot_scan_activity WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'PEGASUS');
+    DELETE FROM bot_scan_activity WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'ANCHOR');
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
@@ -102,5 +102,5 @@ END $$;
 
 DO $$
 BEGIN
-    RAISE NOTICE 'Migration 014: All bots reset to fresh state (FORTRESS, SOLOMON, PEGASUS)';
+    RAISE NOTICE 'Migration 014: All bots reset to fresh state (FORTRESS, SOLOMON, ANCHOR)';
 END $$;

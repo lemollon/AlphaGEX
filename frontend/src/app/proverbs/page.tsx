@@ -1514,9 +1514,9 @@ export default function ProverbsPage() {
                 <option value="FORTRESS">FORTRESS</option>
                 <option value="SOLOMON">SOLOMON</option>
                 <option value="SAMSON">SAMSON</option>
-                <option value="PEGASUS">PEGASUS</option>
-                <option value="ICARUS">ICARUS</option>
-                <option value="PROMETHEUS">PROMETHEUS</option>
+                <option value="ANCHOR">ANCHOR</option>
+                <option value="GIDEON">GIDEON</option>
+                <option value="JUBILEE">JUBILEE</option>
               </select>
             </div>
 
@@ -1589,7 +1589,7 @@ export default function ProverbsPage() {
                       </div>
                       <div>
                         <div className="text-sm font-bold text-blue-400">Iron Condor</div>
-                        <div className="text-xs text-gray-500">FORTRESS, SAMSON, PEGASUS</div>
+                        <div className="text-xs text-gray-500">FORTRESS, SAMSON, ANCHOR</div>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2">
@@ -1623,7 +1623,7 @@ export default function ProverbsPage() {
                       </div>
                       <div>
                         <div className="text-sm font-bold text-orange-400">Directional</div>
-                        <div className="text-xs text-gray-500">SOLOMON, ICARUS</div>
+                        <div className="text-xs text-gray-500">SOLOMON, GIDEON</div>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2">

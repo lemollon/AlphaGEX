@@ -6,11 +6,11 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from trading.heracles.signals import HERACLESSignalGenerator, is_ab_test_enabled
-from trading.heracles.models import HERACLESConfig, TradingMode
+from trading.valor.signals import HERACLESSignalGenerator, is_ab_test_enabled
+from trading.valor.models import ValorConfig, TradingMode
 
 print("=" * 60)
-print("HERACLES STOP TYPE TEST")
+print("VALOR STOP TYPE TEST")
 print("=" * 60)
 
 # Check A/B test status
@@ -18,7 +18,7 @@ ab_enabled = is_ab_test_enabled()
 print(f"\nA/B Test Enabled: {ab_enabled}")
 
 # Create signal generator
-config = HERACLESConfig(mode=TradingMode.PAPER)
+config = ValorConfig(mode=TradingMode.PAPER)
 print(f"\nConfig initial_stop_points: {config.initial_stop_points} pts (${config.initial_stop_points * 5:.2f})")
 print(f"Config profit_target_points: {config.profit_target_points} pts (${config.profit_target_points * 5:.2f})")
 
@@ -39,7 +39,7 @@ print("-" * 60)
 gen = HERACLESSignalGenerator(config=config)
 
 # Mock a signal to test
-from trading.heracles.models import HERACLESSignal, TradeDirection, GammaRegime, SignalSource
+from trading.valor.models import HERACLESSignal, TradeDirection, GammaRegime, SignalSource
 from datetime import datetime
 import pytz
 

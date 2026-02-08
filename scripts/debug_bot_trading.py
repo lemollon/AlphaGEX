@@ -132,7 +132,7 @@ def analyze_scan_activity():
     print("\n📝 LATEST 5 SCANS PER BOT (with decision details)")
     print("-" * 80)
 
-    for bot in ['FORTRESS', 'SOLOMON', 'PEGASUS', 'PHOENIX', 'ATLAS', 'ICARUS']:
+    for bot in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'LAZARUS', 'CORNERSTONE', 'GIDEON']:
         cursor.execute("""
             SELECT
                 time_ct,

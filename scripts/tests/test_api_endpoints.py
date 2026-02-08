@@ -214,8 +214,8 @@ def test_oracle_endpoints():
 
 
 def test_ml_endpoints():
-    """Test PROMETHEUS (ML system) endpoints"""
-    print_header("PROMETHEUS (ML) ENDPOINTS")
+    """Test JUBILEE (ML system) endpoints"""
+    print_header("JUBILEE (ML) ENDPOINTS")
     results = []
 
     # Get ML status
@@ -385,7 +385,7 @@ def test_decision_log_endpoints():
                 response_time=resp.get('response_time'))
 
     # Get logs for specific bot
-    for bot in ['FORTRESS', 'SOLOMON', 'PEGASUS', 'PHOENIX', 'HERMES', 'ORACLE']:
+    for bot in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'LAZARUS', 'SHEPHERD', 'ORACLE']:
         resp = api_request(f'/api/logs/decisions?bot_name={bot}&limit=5')
         passed = resp['success']
         results.append(passed or resp['status'] == 200)
@@ -437,7 +437,7 @@ def main():
         "market_data": test_market_data_endpoints(),
         "pythia": test_pythia_endpoints(),
         "oracle": test_oracle_endpoints(),
-        "prometheus": test_ml_endpoints(),
+        "jubilee": test_ml_endpoints(),
         "wheel": test_wheel_endpoints(),
         "trader": test_trader_endpoints(),
         "kronos": test_backtest_endpoints(),

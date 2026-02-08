@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HERACLES Momentum Alignment Backtest
+VALOR Momentum Alignment Backtest
 =====================================
 
 Tests the Signal Alignment Probability (SAP) concept:
@@ -11,7 +11,7 @@ Tests the Signal Alignment Probability (SAP) concept:
 Run on Render Shell:
     python scripts/backtest_momentum_alignment.py
 
-Requires: heracles_scan_activity or gex_history data
+Requires: valor_scan_activity or gex_history data
 """
 
 import os
@@ -95,7 +95,7 @@ def calculate_momentum_metrics(
 def run_backtest():
     """Run the momentum alignment backtest."""
     print("=" * 70)
-    print("HERACLES MOMENTUM ALIGNMENT BACKTEST")
+    print("VALOR MOMENTUM ALIGNMENT BACKTEST")
     print("=" * 70)
     print(f"Lookback: {LOOKBACK_MINUTES} minutes")
     print()
@@ -114,16 +114,16 @@ def run_backtest():
     gex_row = cursor.fetchone()
     print(f"  gex_history: {gex_row[0]} records, {gex_row[3]} days ({gex_row[1]} to {gex_row[2]})")
 
-    # Check heracles_scan_activity for trades
+    # Check valor_scan_activity for trades
     cursor.execute("""
-        SELECT COUNT(*) FROM heracles_scan_activity
+        SELECT COUNT(*) FROM valor_scan_activity
         WHERE trade_executed = TRUE AND trade_outcome IS NOT NULL
     """)
     trades_with_outcome = cursor.fetchone()[0]
-    print(f"  heracles_scan_activity trades with outcomes: {trades_with_outcome}")
+    print(f"  valor_scan_activity trades with outcomes: {trades_with_outcome}")
 
     if trades_with_outcome == 0:
-        print("\n⚠️  No HERACLES trade history found. Using simulated backtest instead...")
+        print("\n⚠️  No VALOR trade history found. Using simulated backtest instead...")
         return run_simulated_backtest(cursor)
 
     # Get trades with outcomes
@@ -137,7 +137,7 @@ def run_backtest():
             signal_win_probability,
             trade_outcome,
             realized_pnl
-        FROM heracles_scan_activity
+        FROM valor_scan_activity
         WHERE trade_executed = TRUE
           AND trade_outcome IS NOT NULL
           AND underlying_price > 0
@@ -251,7 +251,7 @@ def run_backtest():
 def run_simulated_backtest(cursor):
     """
     Run a simulated backtest using gex_history data.
-    Simulates what HERACLES signals WOULD have been and estimates outcomes.
+    Simulates what VALOR signals WOULD have been and estimates outcomes.
     """
     print("\n" + "=" * 70)
     print("SIMULATED BACKTEST (No trade history - using GEX data)")
@@ -282,7 +282,7 @@ def run_simulated_backtest(cursor):
         return None
 
     # Simulate signals
-    print("\nSimulating HERACLES signals...")
+    print("\nSimulating VALOR signals...")
 
     # Build price history for momentum lookback
     price_history = {}  # timestamp -> price

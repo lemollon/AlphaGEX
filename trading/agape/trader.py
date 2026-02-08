@@ -1,7 +1,7 @@
 """
 AGAPE Trader - Main orchestrator for ETH Micro Futures trading.
 
-AGGRESSIVE MODE (matching HERACLES/Valor):
+AGGRESSIVE MODE (matching VALOR/Valor):
   - No-loss trailing: Let winners run, only trail after profitable
   - Stop-and-Reverse (SAR): Reverse losing positions to capture momentum
   - Direction Tracker: Nimble reversal detection, cooldown after losses
@@ -58,7 +58,7 @@ def create_agape_trader(config: Optional[AgapeConfig] = None) -> "AgapeTrader":
 class AgapeTrader:
     """Main AGAPE trading bot orchestrator.
 
-    AGGRESSIVE MODE - Matches HERACLES/Valor aggressiveness:
+    AGGRESSIVE MODE - Matches VALOR/Valor aggressiveness:
     - No-loss trailing strategy (let winners run)
     - SAR (Stop-and-Reverse) for losing positions
     - Direction tracker for nimble reversal detection
@@ -83,11 +83,11 @@ class AgapeTrader:
         self._cycle_count: int = 0
         self._enabled: bool = True
 
-        # Loss streak tracking (from HERACLES)
+        # Loss streak tracking (from VALOR)
         self.consecutive_losses: int = 0
         self.loss_streak_pause_until: Optional[datetime] = None
 
-        # Direction tracker (from HERACLES)
+        # Direction tracker (from VALOR)
         self._direction_tracker = get_agape_direction_tracker(self.config)
 
         self.db.log("INFO", "INIT", f"AGAPE trader initialized AGGRESSIVE (mode={self.config.mode.value})")
@@ -262,7 +262,7 @@ class AgapeTrader:
     def _manage_position_no_loss_trailing(
         self, pos: Dict, current_price: float, now: datetime
     ) -> bool:
-        """No-loss trailing position management (ported from HERACLES).
+        """No-loss trailing position management (ported from VALOR).
 
         Strategy:
         1. Check SAR conditions first (reverse clearly wrong trades)
@@ -476,7 +476,7 @@ class AgapeTrader:
     def _execute_sar(self, pos: Dict, current_price: float) -> bool:
         """Execute Stop-and-Reverse: close losing position and open reversal.
 
-        Ported from HERACLES SAR strategy.
+        Ported from VALOR SAR strategy.
         """
         position_id = pos["position_id"]
         entry_price = pos["entry_price"]
@@ -677,7 +677,7 @@ class AgapeTrader:
     def _check_entry_conditions(self, now: datetime) -> Optional[str]:
         """Check if conditions allow new entries.
 
-        Matches HERACLES pattern: no time-based cooldown.
+        Matches VALOR pattern: no time-based cooldown.
         Entry gating is handled by loss streak pause, market hours,
         and signal quality only.
 
@@ -686,7 +686,7 @@ class AgapeTrader:
         if not self._enabled:
             return "BOT_DISABLED"
 
-        # No cooldown - matches HERACLES pattern
+        # No cooldown - matches VALOR pattern
         # Entry frequency is controlled by:
         # 1. Loss streak pause (checked in run_cycle before this)
         # 2. Signal quality (generate_signal returns WAIT if no opportunity)
@@ -831,9 +831,9 @@ class AgapeTrader:
             "starting_capital": self.config.starting_capital,
             "risk_per_trade_pct": self.config.risk_per_trade_pct,
             "max_contracts": self.config.max_contracts,
-            "cooldown_minutes": 0,  # No cooldown - matches HERACLES
+            "cooldown_minutes": 0,  # No cooldown - matches VALOR
             "require_oracle": self.config.require_oracle_approval,
-            # Paper account summary (matches HERACLES pattern)
+            # Paper account summary (matches VALOR pattern)
             "paper_account": {
                 "starting_capital": self.config.starting_capital,
                 "current_balance": round(current_balance, 2),

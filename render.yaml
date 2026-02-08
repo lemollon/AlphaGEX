@@ -48,8 +48,8 @@ services:
   # Runs ALL trading bots:
   #   - ARES: Aggressive Iron Condor (every 5 min, once daily)
   #   - SOLOMON: GEX Directional Spreads (every 5 min, up to 5/day)
-  #   - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
-  #   - ATLAS: SPX Wheel strategy (daily at 9:05 AM CT)
+  #   - LAZARUS: 0DTE SPY/SPX options (hourly during market hours)
+  #   - CORNERSTONE: SPX Wheel strategy (daily at 9:05 AM CT)
   # Zero-downtime: handles SIGTERM, drains active scans, cleans up DB connections
   - type: worker
     name: alphagex-trader
@@ -83,7 +83,7 @@ services:
       # Anthropic API for Claude AI explanations
       - key: ANTHROPIC_API_KEY
         sync: false
-      # Tastytrade API for HERACLES futures trading (REQUIRED for MES scalping)
+      # Tastytrade API for VALOR futures trading (REQUIRED for MES scalping)
       - key: TASTYTRADE_USERNAME
         sync: false
       - key: TASTYTRADE_PASSWORD

@@ -88,7 +88,7 @@ interface ReportData {
 }
 
 interface BotReportPageProps {
-  botName: 'FORTRESS' | 'SOLOMON' | 'ICARUS' | 'SAMSON' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'SAMSON' | 'ANCHOR'
   botDisplayName: string
   brandColor: string  // e.g., 'amber', 'cyan', 'orange', 'violet', 'blue'
   backLink: string    // e.g., '/fortress'

@@ -38,7 +38,7 @@ cursor.execute("""
         SUM(realized_pnl) as total_pnl,
         AVG(realized_pnl) as avg_pnl,
         signal_source
-    FROM heracles_closed_trades
+    FROM valor_closed_trades
     WHERE gamma_regime = 'NEGATIVE'
     GROUP BY direction, signal_source
     ORDER BY direction, signal_source
@@ -92,7 +92,7 @@ cursor.execute("""
         SUM(CASE WHEN trade_outcome = 'WIN' THEN 1 ELSE 0 END) as wins,
         SUM(CASE WHEN trade_outcome = 'LOSS' THEN 1 ELSE 0 END) as losses,
         SUM(realized_pnl) as total_pnl
-    FROM heracles_scan_activity
+    FROM valor_scan_activity
     WHERE gamma_regime = 'NEGATIVE'
       AND signal_direction IS NOT NULL
     GROUP BY signal_direction, signal_source
@@ -138,7 +138,7 @@ cursor.execute("""
         trade_outcome,
         full_reasoning,
         scan_time
-    FROM heracles_scan_activity
+    FROM valor_scan_activity
     WHERE gamma_regime = 'NEGATIVE'
       AND trade_executed = TRUE
       AND trade_outcome IS NOT NULL

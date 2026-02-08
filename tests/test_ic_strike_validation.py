@@ -237,21 +237,21 @@ def test_titan_strike_validation():
     )
 
 
-def test_pegasus_comparison():
-    """Verify PEGASUS still uses 1.0 SD minimum"""
+def test_anchor_comparison():
+    """Verify ANCHOR still uses 1.0 SD minimum"""
     print("\n" + "="*60)
-    print("PEGASUS COMPARISON TESTS")
+    print("ANCHOR COMPARISON TESTS")
     print("="*60 + "\n")
 
     try:
-        from trading.pegasus.models import PEGASUSConfig
+        from trading.anchor.models import AnchorConfig
     except ImportError as e:
-        test("Import PEGASUS modules", False, f"Import failed: {e}")
+        test("Import ANCHOR modules", False, f"Import failed: {e}")
         return
 
-    test("Import PEGASUS modules", True)
+    test("Import ANCHOR modules", True)
 
-    # PEGASUS should use 1.0 SD minimum
+    # ANCHOR should use 1.0 SD minimum
     spot = 6000.0
     expected_move = 60.0  # Simplified
 
@@ -265,9 +265,9 @@ def test_pegasus_comparison():
     should_reject = tight_put > min_put or tight_call < min_call
 
     test(
-        "PEGASUS rejects 0.9 SD walls (below 1.0 minimum)",
+        "ANCHOR rejects 0.9 SD walls (below 1.0 minimum)",
         should_reject,
-        "PEGASUS enforces 1.0 SD minimum"
+        "ANCHOR enforces 1.0 SD minimum"
     )
 
 
@@ -293,10 +293,10 @@ def test_database_queries():
         ares_count = c.fetchone()[0]
         test("fortress_positions table accessible", True, f"Found {ares_count} records")
 
-        # Test pegasus_positions table exists
-        c.execute("SELECT COUNT(*) FROM pegasus_positions")
-        pegasus_count = c.fetchone()[0]
-        test("pegasus_positions table accessible", True, f"Found {pegasus_count} records")
+        # Test anchor_positions table exists
+        c.execute("SELECT COUNT(*) FROM anchor_positions")
+        anchor_count = c.fetchone()[0]
+        test("anchor_positions table accessible", True, f"Found {anchor_count} records")
 
         # Test required columns exist
         c.execute("""
@@ -325,7 +325,7 @@ def main():
     # Run test suites
     test_ares_strike_validation()
     test_titan_strike_validation()
-    test_pegasus_comparison()
+    test_anchor_comparison()
     test_database_queries()
 
     # Summary

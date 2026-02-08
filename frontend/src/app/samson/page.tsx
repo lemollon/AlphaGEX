@@ -612,7 +612,7 @@ export default function TitanPage() {
             <div className="flex items-start gap-3">
               <Zap className="w-5 h-5 text-violet-400 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
-                <h3 className="text-violet-400 font-semibold">SAMSON vs PEGASUS: Aggressive Parameters</h3>
+                <h3 className="text-violet-400 font-semibold">SAMSON vs ANCHOR: Aggressive Parameters</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
                   <div>
                     <span className="text-gray-500">Risk/Trade:</span>

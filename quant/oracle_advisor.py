@@ -10,8 +10,8 @@ Oracle is the central advisory system that aggregates multiple signals
 curated recommendations to each trading bot:
 
     - FORTRESS: Iron Condor advice (strikes, risk %, skip signals)
-    - ATLAS: Wheel strategy advice (CSP entry, assignment handling)
-    - PHOENIX: Directional call advice (entry timing, position sizing)
+    - CORNERSTONE: Wheel strategy advice (CSP entry, assignment handling)
+    - LAZARUS: Directional call advice (entry timing, position sizing)
 
 ARCHITECTURE:
     ┌─────────────────────────────────────────────────────────┐
@@ -29,7 +29,7 @@ ARCHITECTURE:
            │                  │                  │
            ▼                  ▼                  ▼
       ┌─────────┐       ┌─────────┐       ┌─────────┐
-      │  FORTRESS   │       │  ATLAS  │       │ PHOENIX │
+      │  FORTRESS   │       │  CORNERSTONE  │       │ LAZARUS │
       │   IC    │       │  Wheel  │       │  Calls  │
       └─────────┘       └─────────┘       └─────────┘
 
@@ -117,7 +117,7 @@ except ImportError:
     get_proverbs_enhanced = None
     print("Info: Proverbs enhanced features not available")
 
-# GEX Signal Integration - ML direction for SOLOMON/ICARUS
+# GEX Signal Integration - ML direction for SOLOMON/GIDEON
 GEX_ML_AVAILABLE = False
 _gex_signal_integration = None
 try:
@@ -179,14 +179,14 @@ logger = logging.getLogger(__name__)
 class BotName(Enum):
     """Trading bots that Oracle advises"""
     FORTRESS = "FORTRESS"          # Aggressive Iron Condor (SPY 0DTE)
-    ATLAS = "ATLAS"        # SPX Wheel Strategy
-    PHOENIX = "PHOENIX"    # Directional Calls
-    HERMES = "HERMES"      # Manual Wheel via UI
+    CORNERSTONE = "CORNERSTONE"        # SPX Wheel Strategy
+    LAZARUS = "LAZARUS"    # Directional Calls
+    SHEPHERD = "SHEPHERD"      # Manual Wheel via UI
     SOLOMON = "SOLOMON"      # Directional Spreads (Bull Call / Bear Call)
-    PEGASUS = "PEGASUS"    # SPX Iron Condor ($10 spreads, weekly)
-    ICARUS = "ICARUS"      # Aggressive Directional Spreads (relaxed filters)
+    ANCHOR = "ANCHOR"    # SPX Iron Condor ($10 spreads, weekly)
+    GIDEON = "GIDEON"      # Aggressive Directional Spreads (relaxed filters)
     SAMSON = "SAMSON"        # Aggressive SPX Iron Condor ($12 spreads)
-    PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
+    JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
 
 
 class TradeOutcome(Enum):
@@ -208,7 +208,7 @@ class TradingAdvice(Enum):
 
 class StrategyType(Enum):
     """Strategy types for IC vs Directional selection"""
-    IRON_CONDOR = "IRON_CONDOR"         # FORTRESS/PEGASUS - profit when pinned
+    IRON_CONDOR = "IRON_CONDOR"         # FORTRESS/ANCHOR - profit when pinned
     DIRECTIONAL = "DIRECTIONAL"         # SOLOMON - profit when price moves
     SKIP = "SKIP"                       # Market too uncertain
 
@@ -338,7 +338,7 @@ class StrategyRecommendation:
     """
     Strategy recommendation based on VIX + GEX regime analysis.
 
-    This helps decide: Should we trade Iron Condors (FORTRESS/PEGASUS)
+    This helps decide: Should we trade Iron Condors (FORTRESS/ANCHOR)
     or Directional Spreads (SOLOMON) given current market conditions?
 
     Decision Matrix:
@@ -1618,7 +1618,7 @@ class OracleAdvisor:
                         for rp in regime_perf:
                             if rp.regime and rp.regime.upper() == market_regime.upper():
                                 # Check if this is an IC or directional bot
-                                is_ic_bot = bot_name.upper() in ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
+                                is_ic_bot = bot_name.upper() in ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
                                 if is_ic_bot:
                                     advisory.regime_ic_win_rate = rp.win_rate
                                 else:
@@ -2021,7 +2021,7 @@ class OracleAdvisor:
         whether to proceed with their specific strategy.
 
         Key Insight:
-        - IC (FORTRESS/PEGASUS) profits when price stays PINNED
+        - IC (FORTRESS/ANCHOR) profits when price stays PINNED
         - Directional (SOLOMON) profits when price MOVES
 
         Decision Logic:
@@ -2292,7 +2292,7 @@ class OracleAdvisor:
                 return {"error": "No outcome data available", "days": days}
 
             # Categorize by strategy and regime
-            ic_bots = ['FORTRESS', 'PEGASUS']
+            ic_bots = ['FORTRESS', 'ANCHOR']
             dir_bots = ['SOLOMON']
 
             results = {
@@ -2832,13 +2832,13 @@ class OracleAdvisor:
 
     def get_atlas_advice(self, context: MarketContext) -> OraclePrediction:
         """
-        Get Wheel strategy advice for ATLAS.
+        Get Wheel strategy advice for CORNERSTONE.
 
-        ATLAS trades cash-secured puts and covered calls.
+        CORNERSTONE trades cash-secured puts and covered calls.
         GEX signals help with entry timing.
         """
         # Log prediction request
-        self.live_log.log("PREDICT", "ATLAS advice requested", {
+        self.live_log.log("PREDICT", "CORNERSTONE advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price
@@ -2861,12 +2861,12 @@ class OracleAdvisor:
             "day_of_week": context.day_of_week,
             "days_to_opex": context.days_to_opex
         }
-        self.live_log.log_data_flow("ATLAS", "INPUT", input_data)
+        self.live_log.log_data_flow("CORNERSTONE", "INPUT", input_data)
 
         base_pred = self._get_base_prediction(context)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
-        self.live_log.log_data_flow("ATLAS", "ML_OUTPUT", {
+        self.live_log.log_data_flow("CORNERSTONE", "ML_OUTPUT", {
             "win_probability": base_pred.get('win_probability'),
             "top_factors": base_pred.get('top_factors', []),
             "probabilities": base_pred.get('probabilities', {}),
@@ -2890,7 +2890,7 @@ class OracleAdvisor:
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
         prediction = OraclePrediction(
-            bot_name=BotName.ATLAS,
+            bot_name=BotName.CORNERSTONE,
             advice=advice,
             win_probability=base_pred['win_probability'],
             confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
@@ -2903,7 +2903,7 @@ class OracleAdvisor:
         )
 
         # Log prediction result
-        self.live_log.log("PREDICT_DONE", f"ATLAS: {advice.value} ({base_pred['win_probability']:.1%})", {
+        self.live_log.log("PREDICT_DONE", f"CORNERSTONE: {advice.value} ({base_pred['win_probability']:.1%})", {
             "advice": advice.value,
             "win_probability": base_pred['win_probability'],
             "risk_pct": risk_pct
@@ -2918,7 +2918,7 @@ class OracleAdvisor:
             "reasoning": prediction.reasoning,
             "model_version": self.model_version
         }
-        self.live_log.log_data_flow("ATLAS", "DECISION", decision_data)
+        self.live_log.log_data_flow("CORNERSTONE", "DECISION", decision_data)
 
         return self._add_staleness_to_prediction(prediction)
 
@@ -2928,15 +2928,15 @@ class OracleAdvisor:
         use_claude_validation: bool = True
     ) -> OraclePrediction:
         """
-        Get directional call advice for PHOENIX.
+        Get directional call advice for LAZARUS.
 
-        PHOENIX trades long calls, needs directional bias.
+        LAZARUS trades long calls, needs directional bias.
         """
         # Check for newer model version in DB and reload if available (Issue #1 fix)
         self._check_and_reload_model_if_stale()
 
         # Log prediction request
-        self.live_log.log("PREDICT", "PHOENIX advice requested", {
+        self.live_log.log("PREDICT", "LAZARUS advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
@@ -2963,12 +2963,12 @@ class OracleAdvisor:
             "day_of_week": context.day_of_week,
             "days_to_opex": context.days_to_opex
         }
-        self.live_log.log_data_flow("PHOENIX", "INPUT", input_data)
+        self.live_log.log_data_flow("LAZARUS", "INPUT", input_data)
 
         base_pred = self._get_base_prediction(context)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
-        self.live_log.log_data_flow("PHOENIX", "ML_OUTPUT", {
+        self.live_log.log_data_flow("LAZARUS", "ML_OUTPUT", {
             "win_probability": base_pred.get('win_probability'),
             "top_factors": base_pred.get('top_factors', []),
             "probabilities": base_pred.get('probabilities', {}),
@@ -2990,7 +2990,7 @@ class OracleAdvisor:
         # =========================================================================
         claude_analysis = None
         if use_claude_validation and self.claude_available:
-            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.PHOENIX)
+            claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.LAZARUS)
 
             # Apply Claude's confidence adjustment
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
@@ -3005,17 +3005,17 @@ class OracleAdvisor:
                 penalty = 0.05  # REDUCED from 10%
                 base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
-                logger.warning(f"[PHOENIX] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                logger.warning(f"[LAZARUS] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
             elif hallucination_risk == 'MEDIUM':
                 penalty = 0.02  # REDUCED from 5%
                 base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
-                logger.info(f"[PHOENIX] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
+                logger.info(f"[LAZARUS] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
         prediction = OraclePrediction(
-            bot_name=BotName.PHOENIX,
+            bot_name=BotName.LAZARUS,
             advice=advice,
             win_probability=base_pred['win_probability'],
             confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
@@ -3029,7 +3029,7 @@ class OracleAdvisor:
         )
 
         # Log prediction result
-        self.live_log.log("PREDICT_DONE", f"PHOENIX: {advice.value} ({base_pred['win_probability']:.1%})", {
+        self.live_log.log("PREDICT_DONE", f"LAZARUS: {advice.value} ({base_pred['win_probability']:.1%})", {
             "advice": advice.value,
             "win_probability": base_pred['win_probability'],
             "risk_pct": risk_pct,
@@ -3049,7 +3049,7 @@ class OracleAdvisor:
             "model_version": self.model_version,
             "hours_since_training": self._get_hours_since_training()
         }
-        self.live_log.log_data_flow("PHOENIX", "DECISION", decision_data)
+        self.live_log.log_data_flow("LAZARUS", "DECISION", decision_data)
 
         return self._add_staleness_to_prediction(prediction)
 
@@ -3059,10 +3059,10 @@ class OracleAdvisor:
         use_gex_walls: bool = True,
         use_claude_validation: bool = True,
         wall_filter_pct: float = 1.0,  # Default 1.0%, backtest showed 0.5% = 98% WR
-        bot_name: str = "SOLOMON"  # Allow ICARUS to pass its own name for proper logging
+        bot_name: str = "SOLOMON"  # Allow GIDEON to pass its own name for proper logging
     ) -> OraclePrediction:
         """
-        Get directional spread advice for SOLOMON (or ICARUS).
+        Get directional spread advice for SOLOMON (or GIDEON).
 
         SOLOMON trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
         Uses GEX walls for entry timing and direction confirmation.
@@ -3076,7 +3076,7 @@ class OracleAdvisor:
         - Near Call Wall (resistance) + BEARISH signal = Strong entry for Bear Call Spread
 
         Args:
-            bot_name: Bot identifier for logging (SOLOMON or ICARUS)
+            bot_name: Bot identifier for logging (SOLOMON or GIDEON)
         """
         # Log prediction request
         # Check for newer model version in DB and reload if available (Issue #1 fix)
@@ -3140,7 +3140,7 @@ class OracleAdvisor:
             position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
 
         # =====================================================================
-        # ML DIRECTION IS THE PRIMARY SOURCE FOR SOLOMON/ICARUS
+        # ML DIRECTION IS THE PRIMARY SOURCE FOR SOLOMON/GIDEON
         # Oracle uses GEX probability models (ORION) to determine direction
         # This ensures Oracle direction matches what ML says
         # =====================================================================
@@ -3497,10 +3497,10 @@ class OracleAdvisor:
         return self._add_staleness_to_prediction(prediction)
 
     # =========================================================================
-    # PEGASUS ADVICE (SPX IRON CONDOR - WEEKLY)
+    # ANCHOR ADVICE (SPX IRON CONDOR - WEEKLY)
     # =========================================================================
 
-    def get_pegasus_advice(
+    def get_anchor_advice(
         self,
         context: MarketContext,
         use_gex_walls: bool = True,
@@ -3512,9 +3512,9 @@ class OracleAdvisor:
         spread_width: float = 10.0  # Default $10 spread width
     ) -> OraclePrediction:
         """
-        Get Iron Condor advice for PEGASUS (SPX Weekly Iron Condors).
+        Get Iron Condor advice for ANCHOR (SPX Weekly Iron Condors).
 
-        PEGASUS trades SPX weekly options with $10 spread widths.
+        ANCHOR trades SPX weekly options with $10 spread widths.
         Key differences from FORTRESS:
         - SPX (cash-settled) vs SPY
         - Weekly expirations vs 0DTE
@@ -3538,7 +3538,7 @@ class OracleAdvisor:
         self._check_and_reload_model_if_stale()
 
         # Log prediction request
-        self.live_log.log("PREDICT", "PEGASUS advice requested", {
+        self.live_log.log("PREDICT", "ANCHOR advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
@@ -3602,7 +3602,7 @@ class OracleAdvisor:
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
             skip_prediction = OraclePrediction(
-                bot_name=BotName.PEGASUS,
+                bot_name=BotName.ANCHOR,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
                 confidence=0.95,
@@ -3641,13 +3641,13 @@ class OracleAdvisor:
             "days_to_opex": context.days_to_opex,
             "spread_width": spread_width
         }
-        self.live_log.log_data_flow("PEGASUS", "INPUT", input_data)
+        self.live_log.log_data_flow("ANCHOR", "INPUT", input_data)
 
         # Get base prediction
         base_pred = self._get_base_prediction(context)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
-        self.live_log.log_data_flow("PEGASUS", "ML_OUTPUT", {
+        self.live_log.log_data_flow("ANCHOR", "ML_OUTPUT", {
             "win_probability": base_pred.get('win_probability'),
             "top_factors": base_pred.get('top_factors', []),
             "probabilities": base_pred.get('probabilities', {}),
@@ -3735,7 +3735,7 @@ class OracleAdvisor:
                     neutral_reasoning = f"SPX IC: Position {position_in_range_pct:.0f}% in wall range, trend {trend_direction_str}"
 
                 except Exception as e:
-                    logger.warning(f"[PEGASUS] Trend tracker error: {e}")
+                    logger.warning(f"[ANCHOR] Trend tracker error: {e}")
 
         if context.gex_between_walls:
             reasoning_parts.append("SPX between GEX walls - favorable for Iron Condor")
@@ -3773,7 +3773,7 @@ class OracleAdvisor:
             reasoning_parts.append(f"Poor setup: {win_prob:.1%} win probability - skip")
 
         # GEX wall-based strike suggestions for SPX
-        # PEGASUS RULE: Strikes must ALWAYS be at least 1 SD from spot
+        # ANCHOR RULE: Strikes must ALWAYS be at least 1 SD from spot
         suggested_put = None
         suggested_call = None
 
@@ -3812,7 +3812,7 @@ class OracleAdvisor:
         if use_claude_validation and self.claude_available and self.claude:
             try:
                 claude_analysis = self.claude.validate_prediction(
-                    context, base_pred, BotName.PEGASUS
+                    context, base_pred, BotName.ANCHOR
                 )
                 if claude_analysis:
                     reasoning_parts.append(f"Claude: {claude_analysis.recommendation}")
@@ -3826,22 +3826,22 @@ class OracleAdvisor:
                         penalty = 0.10
                         win_prob = max(0.05, win_prob - penalty)
                         reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
-                        logger.warning(f"[PEGASUS] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                        logger.warning(f"[ANCHOR] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
                     elif hallucination_risk == 'MEDIUM':
                         penalty = 0.05
                         win_prob = max(0.05, win_prob - penalty)
                         reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
-                        logger.info(f"[PEGASUS] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
+                        logger.info(f"[ANCHOR] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
             except Exception as e:
-                logger.warning(f"PEGASUS Claude validation failed: {e}")
-                self.live_log.log("CLAUDE_ERROR", f"PEGASUS Claude validation failed: {e}")
+                logger.warning(f"ANCHOR Claude validation failed: {e}")
+                self.live_log.log("CLAUDE_ERROR", f"ANCHOR Claude validation failed: {e}")
 
         # Build final prediction
         # Fixed: confidence should be derived from win_prob, not base_pred (which doesn't have 'confidence' key)
         # Confidence represents certainty in the prediction itself, scaled from win_probability
         model_confidence = min(0.95, 0.5 + abs(win_prob - 0.5) * 2)  # Higher when win_prob is far from 50%
         prediction = OraclePrediction(
-            bot_name=BotName.PEGASUS,
+            bot_name=BotName.ANCHOR,
             advice=advice,
             win_probability=win_prob,
             confidence=model_confidence,
@@ -3867,7 +3867,7 @@ class OracleAdvisor:
         )
 
         # Log prediction result
-        self.live_log.log("PREDICT_DONE", f"PEGASUS: {advice.value} ({win_prob:.1%})", {
+        self.live_log.log("PREDICT_DONE", f"ANCHOR: {advice.value} ({win_prob:.1%})", {
             "advice": advice.value,
             "win_probability": win_prob,
             "spread_width": spread_width,
@@ -3888,7 +3888,7 @@ class OracleAdvisor:
             "model_version": self.model_version,
             "hours_since_training": self._get_hours_since_training()
         }
-        self.live_log.log_data_flow("PEGASUS", "DECISION", decision_data)
+        self.live_log.log_data_flow("ANCHOR", "DECISION", decision_data)
 
         return self._add_staleness_to_prediction(prediction)
 
@@ -3910,7 +3910,7 @@ class OracleAdvisor:
         """
         Get Iron Condor advice for SAMSON (Aggressive SPX Daily Iron Condors).
 
-        SAMSON is similar to PEGASUS but more aggressive:
+        SAMSON is similar to ANCHOR but more aggressive:
         - Trades daily vs weekly
         - Uses $12 spreads vs $10 spreads
         - Lower win probability threshold (more trades)
@@ -3945,9 +3945,9 @@ class OracleAdvisor:
             "hours_since_training": self._get_hours_since_training()
         })
 
-        # SAMSON uses the same logic as PEGASUS but with more aggressive parameters
-        # Delegate to PEGASUS with SAMSON-specific adjustments
-        prediction = self.get_pegasus_advice(
+        # SAMSON uses the same logic as ANCHOR but with more aggressive parameters
+        # Delegate to ANCHOR with SAMSON-specific adjustments
+        prediction = self.get_anchor_advice(
             context=context,
             use_gex_walls=use_gex_walls,
             use_claude_validation=use_claude_validation,
@@ -3963,7 +3963,7 @@ class OracleAdvisor:
 
         # SAMSON is more aggressive - boost win probability slightly for valid signals
         if prediction.advice != TradingAdvice.SKIP_TODAY:
-            # SAMSON accepts lower win probability (42% vs 45% for PEGASUS)
+            # SAMSON accepts lower win probability (42% vs 45% for ANCHOR)
             if prediction.win_probability >= 0.42:
                 prediction.reasoning = f"[SAMSON Aggressive] {prediction.reasoning}"
 
@@ -4460,7 +4460,7 @@ class OracleAdvisor:
 
             # Track strategy type from bot name if available
             bot_name = trade.get('bot_name', 'FORTRESS')
-            record['is_ic_strategy'] = 1 if bot_name in ['FORTRESS', 'PEGASUS'] else 0
+            record['is_ic_strategy'] = 1 if bot_name in ['FORTRESS', 'ANCHOR'] else 0
             record['is_dir_strategy'] = 1 if bot_name in ['SOLOMON'] else 0
 
             records.append(record)
@@ -4899,7 +4899,7 @@ class OracleAdvisor:
 
         Feedback Loop Enhancement (Migration 023):
         - outcome_type: Specific outcome classification (MAX_PROFIT, PUT_BREACHED, etc.)
-        - direction_predicted: For directional bots (SOLOMON, ICARUS) - BULLISH or BEARISH
+        - direction_predicted: For directional bots (SOLOMON, GIDEON) - BULLISH or BEARISH
         - direction_correct: Whether the directional prediction was correct
 
         This data flows to Proverbs for strategy-level analysis.
@@ -5007,7 +5007,7 @@ class OracleAdvisor:
                 """)
 
                 # Determine strategy type from bot name
-                strategy_type = 'DIRECTIONAL' if bot_name.value in ['SOLOMON', 'ICARUS'] else 'IRON_CONDOR'
+                strategy_type = 'DIRECTIONAL' if bot_name.value in ['SOLOMON', 'GIDEON'] else 'IRON_CONDOR'
 
                 # Store training outcome for ML retraining (Migration 023: added direction tracking)
                 cursor.execute("""

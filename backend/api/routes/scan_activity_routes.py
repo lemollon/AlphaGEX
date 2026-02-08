@@ -2,7 +2,7 @@
 Scan Activity API Routes
 
 Provides endpoints for accessing comprehensive scan activity logs
-for FORTRESS, SOLOMON, ICARUS, PEGASUS, and SAMSON trading bots.
+for FORTRESS, SOLOMON, GIDEON, ANCHOR, and SAMSON trading bots.
 
 This is the key endpoint for understanding what each bot is doing
 on every single scan - whether it trades or not.
@@ -20,7 +20,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 @router.get("/activity")
 async def get_scan_activity(
-    bot: Optional[str] = Query(None, description="Filter by bot name (FORTRESS, SOLOMON, ICARUS, PEGASUS, SAMSON)"),
+    bot: Optional[str] = Query(None, description="Filter by bot name (FORTRESS, SOLOMON, GIDEON, ANCHOR, SAMSON)"),
     date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)"),
     outcome: Optional[str] = Query(None, description="Filter by outcome (TRADED, NO_TRADE, ERROR, etc.)"),
     limit: int = Query(50, description="Maximum number of records to return", le=200)
@@ -85,7 +85,7 @@ async def get_bot_scan_activity(
     Get scan activity for a specific bot.
 
     Args:
-        bot_name: FORTRESS, SOLOMON, or PEGASUS
+        bot_name: FORTRESS, SOLOMON, or ANCHOR
         date: Optional date filter (YYYY-MM-DD)
         limit: Max records to return
     """
@@ -125,7 +125,7 @@ async def get_bot_scan_activity(
 
 @router.get("/summary")
 async def get_scan_summary(
-    bot: Optional[str] = Query(None, description="Filter by bot name (FORTRESS, SOLOMON, ICARUS, PEGASUS, SAMSON)"),
+    bot: Optional[str] = Query(None, description="Filter by bot name (FORTRESS, SOLOMON, GIDEON, ANCHOR, SAMSON)"),
     days: int = Query(7, description="Number of days to include in summary", le=30)
 ):
     """
@@ -171,7 +171,7 @@ async def get_scan_summary(
 
 @router.get("/today")
 async def get_todays_scans(
-    bot: Optional[str] = Query(None, description="Filter by bot name (FORTRESS, SOLOMON, PEGASUS)")
+    bot: Optional[str] = Query(None, description="Filter by bot name (FORTRESS, SOLOMON, ANCHOR)")
 ):
     """
     Get all scans from today.
@@ -234,7 +234,7 @@ async def get_solomon_today():
     return await get_todays_scans(bot="SOLOMON")
 
 
-@router.get("/pegasus/today")
-async def get_pegasus_today():
-    """Get all PEGASUS scans from today with summary"""
-    return await get_todays_scans(bot="PEGASUS")
+@router.get("/anchor/today")
+async def get_anchor_today():
+    """Get all ANCHOR scans from today with summary"""
+    return await get_todays_scans(bot="ANCHOR")

@@ -266,8 +266,8 @@ def main():
         ares_capital = CAPITAL_ALLOCATION.get('FORTRESS', 0)
         check("FORTRESS capital allocated", ares_capital > 0, f"${ares_capital:,}")
         print_info(f"  FORTRESS: ${ares_capital:,}")
-        print_info(f"  PHOENIX: ${CAPITAL_ALLOCATION.get('PHOENIX', 0):,}")
-        print_info(f"  ATLAS: ${CAPITAL_ALLOCATION.get('ATLAS', 0):,}")
+        print_info(f"  LAZARUS: ${CAPITAL_ALLOCATION.get('LAZARUS', 0):,}")
+        print_info(f"  CORNERSTONE: ${CAPITAL_ALLOCATION.get('CORNERSTONE', 0):,}")
         print_info(f"  Total: ${CAPITAL_ALLOCATION.get('TOTAL', 0):,}")
 
     except Exception as e:

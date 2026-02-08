@@ -167,11 +167,11 @@ def run_diagnostic():
         except Exception as e:
             conn.rollback()
 
-        # PEGASUS positions table (SPX Iron Condors)
+        # ANCHOR positions table (SPX Iron Condors)
         try:
-            existed = table_exists('pegasus_positions')
+            existed = table_exists('anchor_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS pegasus_positions (
+                CREATE TABLE IF NOT EXISTS anchor_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
@@ -194,15 +194,15 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('pegasus_positions')
+                tables_created.append('anchor_positions')
         except Exception as e:
             conn.rollback()
 
-        # ICARUS positions table (Aggressive directional)
+        # GIDEON positions table (Aggressive directional)
         try:
-            existed = table_exists('icarus_positions')
+            existed = table_exists('gideon_positions')
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS icarus_positions (
+                CREATE TABLE IF NOT EXISTS gideon_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
@@ -225,7 +225,7 @@ def run_diagnostic():
             """)
             conn.commit()
             if not existed:
-                tables_created.append('icarus_positions')
+                tables_created.append('gideon_positions')
         except Exception as e:
             conn.rollback()
 
@@ -353,8 +353,8 @@ def run_diagnostic():
     position_tables = [
         ('fortress_positions', 'FORTRESS'),
         ('solomon_positions', 'SOLOMON'),
-        ('pegasus_positions', 'PEGASUS'),
-        ('icarus_positions', 'ICARUS'),
+        ('anchor_positions', 'ANCHOR'),
+        ('gideon_positions', 'GIDEON'),
         ('samson_positions', 'SAMSON'),
     ]
 
@@ -555,7 +555,7 @@ def run_diagnostic():
     try:
         from quant.proverbs_feedback_loop import get_proverbs
         proverbs = get_proverbs()
-        for bot in ['FORTRESS', 'SOLOMON', 'PEGASUS', 'ICARUS', 'SAMSON']:
+        for bot in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'GIDEON', 'SAMSON']:
             # Check if bot is killed via kill switch
             is_killed = proverbs.is_bot_killed(bot) if hasattr(proverbs, 'is_bot_killed') else False
             status_icon = "🔴" if is_killed else "🟢"

@@ -37,9 +37,9 @@ cursor = conn.cursor()
 bots = [
     ("FORTRESS", "fortress_positions"),
     ("SAMSON", "samson_positions"),
-    ("PEGASUS", "pegasus_positions"),
+    ("ANCHOR", "anchor_positions"),
     ("SOLOMON", "solomon_positions"),
-    ("ICARUS", "icarus_positions"),
+    ("GIDEON", "gideon_positions"),
 ]
 
 GREEN = '\033[0;32m'

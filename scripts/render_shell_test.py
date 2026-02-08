@@ -59,11 +59,11 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 2: ICARUS config
-print("\n2. ICARUS R:R Ratio:")
+# Test 2: GIDEON config
+print("\n2. GIDEON R:R Ratio:")
 try:
-    from trading.icarus.models import ICARUSConfig
-    cfg = ICARUSConfig()
+    from trading.gideon.models import GideonConfig
+    cfg = GideonConfig()
     if cfg.profit_target_pct == 50.0 and cfg.stop_loss_pct == 50.0:
         print(f"   ✅ PASS: 50/50 (1:1 ratio)")
     else:
@@ -71,11 +71,11 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 3: Day of week in ICARUS signals
-print("\n3. Day of Week in ICARUS:")
+# Test 3: Day of week in GIDEON signals
+print("\n3. Day of Week in GIDEON:")
 try:
     import inspect
-    from trading.icarus.signals import SignalGenerator
+    from trading.gideon.signals import SignalGenerator
     src = inspect.getsource(SignalGenerator.get_oracle_advice)
     if 'day_of_week=now_ct.weekday()' in src:
         print("   ✅ PASS: day_of_week passed to Oracle")
@@ -84,11 +84,11 @@ try:
 except Exception as e:
     print(f"   ❌ ERROR: {e}")
 
-# Test 4: ML Features in ICARUS
-print("\n4. ML Features in ICARUS get_gex_data:")
+# Test 4: ML Features in GIDEON
+print("\n4. ML Features in GIDEON get_gex_data:")
 try:
     import inspect
-    from trading.icarus.signals import SignalGenerator
+    from trading.gideon.signals import SignalGenerator
     src = inspect.getsource(SignalGenerator.get_gex_data)
     features = ['vix_percentile_30d', 'vix_change_1d', 'price_change_1d', 'win_rate_30d']
     found = [f for f in features if f in src]

@@ -148,8 +148,8 @@ class BacktestLiveDriftDetector:
         tables = {
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
-            'ICARUS': 'icarus_positions',
-            'PEGASUS': 'pegasus_positions',
+            'GIDEON': 'gideon_positions',
+            'ANCHOR': 'anchor_positions',
             'SAMSON': 'samson_positions'
         }
         return tables.get(bot_name.upper(), 'fortress_positions')
@@ -159,8 +159,8 @@ class BacktestLiveDriftDetector:
         patterns = {
             'FORTRESS': ['FORTRESS', 'IRON_CONDOR', 'SPY_IC', 'IC_'],
             'SOLOMON': ['SOLOMON', 'DIRECTIONAL', 'SPREAD', 'GEX_'],
-            'ICARUS': ['ICARUS', 'AGGRESSIVE', 'DIRECTIONAL'],
-            'PEGASUS': ['PEGASUS', 'SPX_IC', 'SPX_IRON', 'CONDOR'],
+            'GIDEON': ['GIDEON', 'AGGRESSIVE', 'DIRECTIONAL'],
+            'ANCHOR': ['ANCHOR', 'SPX_IC', 'SPX_IRON', 'CONDOR'],
             'SAMSON': ['SAMSON', 'AGGRESSIVE_IC', 'SPX_AGGRESSIVE']
         }
         return patterns.get(bot_name.upper(), [bot_name])
@@ -517,7 +517,7 @@ class BacktestLiveDriftDetector:
         Returns:
             Dict mapping bot name to drift report
         """
-        bots = ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON']
+        bots = ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON']
         reports = {}
 
         for bot in bots:

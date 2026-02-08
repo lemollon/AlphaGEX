@@ -7,10 +7,10 @@ import {
   Activity, DollarSign, Timer, Eye
 } from 'lucide-react'
 
-// Unified Decision interface that works for FORTRESS, SOLOMON, and PEGASUS
+// Unified Decision interface that works for FORTRESS, SOLOMON, and ANCHOR
 export interface TradeDecision {
-  id: string | number  // Supports both d.id (FORTRESS) and d.decision_id (SOLOMON/PEGASUS)
-  bot_name: 'FORTRESS' | 'SOLOMON' | 'PEGASUS'
+  id: string | number  // Supports both d.id (FORTRESS) and d.decision_id (SOLOMON/ANCHOR)
+  bot_name: 'FORTRESS' | 'SOLOMON' | 'ANCHOR'
   symbol: string
   decision_type: string
   action: string
@@ -522,7 +522,7 @@ export default function TradeStoryCard({
                   <span className={`${
                     decision.bot_name === 'FORTRESS' ? 'text-amber-400' :
                     decision.bot_name === 'SOLOMON' ? 'text-cyan-400' :
-                    decision.bot_name === 'PEGASUS' ? 'text-blue-400' : 'text-gray-400'
+                    decision.bot_name === 'ANCHOR' ? 'text-blue-400' : 'text-gray-400'
                   }`}>
                     {decision.bot_name}
                   </span>

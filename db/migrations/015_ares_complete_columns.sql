@@ -107,13 +107,13 @@ EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'fortress_signals.confidence already correct or table missing';
 END $$;
 
--- Fix pegasus_signals confidence precision
+-- Fix anchor_signals confidence precision
 DO $$
 BEGIN
-    ALTER TABLE pegasus_signals ALTER COLUMN confidence TYPE DECIMAL(8, 4);
-    RAISE NOTICE 'Fixed pegasus_signals.confidence precision';
+    ALTER TABLE anchor_signals ALTER COLUMN confidence TYPE DECIMAL(8, 4);
+    RAISE NOTICE 'Fixed anchor_signals.confidence precision';
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'pegasus_signals.confidence already correct or table missing';
+    RAISE NOTICE 'anchor_signals.confidence already correct or table missing';
 END $$;
 
 -- Also fix oracle_confidence in fortress_positions if it was created with wrong precision
@@ -134,55 +134,55 @@ EXCEPTION WHEN OTHERS THEN
 END $$;
 
 -- =============================================================================
--- PEGASUS - SPX IRON CONDOR (Same schema as FORTRESS)
+-- ANCHOR - SPX IRON CONDOR (Same schema as FORTRESS)
 -- =============================================================================
 
--- Core columns for PEGASUS
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS underlying_at_entry DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS vix_at_entry DECIMAL(6, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS expected_move DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS max_profit DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS max_loss DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS spread_width DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS contracts INTEGER;
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS put_credit DECIMAL(10, 4);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS call_credit DECIMAL(10, 4);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS total_credit DECIMAL(10, 4);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS put_short_strike DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS put_long_strike DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS call_short_strike DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS call_long_strike DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS gex_regime VARCHAR(30);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS call_wall DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS put_wall DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS flip_point DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS net_gex DECIMAL(15, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_confidence DECIMAL(8, 4);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_win_probability DECIMAL(8, 4);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_advice VARCHAR(20);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_reasoning TEXT;
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_top_factors TEXT;
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_use_gex_walls BOOLEAN DEFAULT FALSE;
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS put_order_id VARCHAR(50);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS call_order_id VARCHAR(50);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'open';
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS open_time TIMESTAMP WITH TIME ZONE;
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS close_time TIMESTAMP WITH TIME ZONE;
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS close_price DECIMAL(10, 4);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS close_reason VARCHAR(100);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS realized_pnl DECIMAL(10, 2);
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+-- Core columns for ANCHOR
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS underlying_at_entry DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS vix_at_entry DECIMAL(6, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS expected_move DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS max_profit DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS max_loss DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS spread_width DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS contracts INTEGER;
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS put_credit DECIMAL(10, 4);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS call_credit DECIMAL(10, 4);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS total_credit DECIMAL(10, 4);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS put_short_strike DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS put_long_strike DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS call_short_strike DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS call_long_strike DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS gex_regime VARCHAR(30);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS call_wall DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS put_wall DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS flip_point DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS net_gex DECIMAL(15, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_confidence DECIMAL(8, 4);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_win_probability DECIMAL(8, 4);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_advice VARCHAR(20);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_reasoning TEXT;
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_top_factors TEXT;
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_use_gex_walls BOOLEAN DEFAULT FALSE;
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS put_order_id VARCHAR(50);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS call_order_id VARCHAR(50);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'open';
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS open_time TIMESTAMP WITH TIME ZONE;
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS close_time TIMESTAMP WITH TIME ZONE;
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS close_price DECIMAL(10, 4);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS close_reason VARCHAR(100);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS realized_pnl DECIMAL(10, 2);
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
 
--- Fix PEGASUS precision
+-- Fix ANCHOR precision
 DO $$
 BEGIN
-    ALTER TABLE pegasus_positions ALTER COLUMN oracle_confidence TYPE DECIMAL(8, 4);
+    ALTER TABLE anchor_positions ALTER COLUMN oracle_confidence TYPE DECIMAL(8, 4);
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
 DO $$
 BEGIN
-    ALTER TABLE pegasus_positions ALTER COLUMN oracle_win_probability TYPE DECIMAL(8, 4);
+    ALTER TABLE anchor_positions ALTER COLUMN oracle_win_probability TYPE DECIMAL(8, 4);
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
@@ -256,5 +256,5 @@ END $$;
 
 DO $$
 BEGIN
-    RAISE NOTICE 'Migration 015: FORTRESS, PEGASUS, SOLOMON columns added and precision fixed';
+    RAISE NOTICE 'Migration 015: FORTRESS, ANCHOR, SOLOMON columns added and precision fixed';
 END $$;

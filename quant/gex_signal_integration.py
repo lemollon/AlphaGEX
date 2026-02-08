@@ -427,7 +427,7 @@ class GEXSignalIntegration:
         """
         Get combined ML signal from all 5 GEX probability models.
 
-        This is the method SOLOMON/ICARUS call for ML predictions.
+        This is the method SOLOMON/GIDEON call for ML predictions.
         It runs all trained models and returns a unified signal.
 
         Args:

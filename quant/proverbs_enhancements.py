@@ -590,9 +590,9 @@ class TimeOfDayAnalyzer:
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
             'SAMSON': 'samson_positions',
-            'PEGASUS': 'pegasus_positions',
-            'ICARUS': 'icarus_positions',
-            'PROMETHEUS': 'prometheus_ic_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -686,9 +686,9 @@ class CrossBotAnalyzer:
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
             'SAMSON': 'samson_positions',
-            'PEGASUS': 'pegasus_positions',
-            'ICARUS': 'icarus_positions',
-            'PROMETHEUS': 'prometheus_ic_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_a = BOT_TABLES.get(bot_a.upper())
@@ -771,8 +771,8 @@ class CrossBotAnalyzer:
     def get_all_correlations(self, days: int = 30) -> List[CrossBotCorrelation]:
         """Get correlations between all bot pairs"""
         # Migration 023: Updated bot list to match actual trading bots
-        # IC bots: FORTRESS, SAMSON, PEGASUS, PROMETHEUS | Directional bots: SOLOMON, ICARUS
-        bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS', 'PROMETHEUS']
+        # IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE | Directional bots: SOLOMON, GIDEON
+        bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE']
         correlations = []
 
         for i, bot_a in enumerate(bots):
@@ -808,9 +808,9 @@ class RegimePerformanceTracker:
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
             'SAMSON': 'samson_positions',
-            'PEGASUS': 'pegasus_positions',
-            'ICARUS': 'icarus_positions',
-            'PROMETHEUS': 'prometheus_ic_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -1272,10 +1272,10 @@ class WeekendPreChecker:
         upcoming_events = self._get_upcoming_events()
 
         # Analyze each bot
-        # Migration 023: Updated bot list to include SAMSON and ICARUS
-        # Migration 024: Added PROMETHEUS (Box Spread + IC Trading)
+        # Migration 023: Updated bot list to include SAMSON and GIDEON
+        # Migration 024: Added JUBILEE (Box Spread + IC Trading)
         bot_recommendations = {}
-        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE']:
             bot_recommendations[bot] = self._analyze_bot_readiness(bot)
 
         # Overall risk assessment
@@ -1430,9 +1430,9 @@ class DailyDigestGenerator:
         total_trades = 0
         total_wins = 0
 
-        # Migration 023: Updated bot list to include SAMSON and ICARUS
-        # Migration 024: Added PROMETHEUS (Box Spread + IC Trading)
-        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS', 'PROMETHEUS']:
+        # Migration 023: Updated bot list to include SAMSON and GIDEON
+        # Migration 024: Added JUBILEE (Box Spread + IC Trading)
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE']:
             bot_stats = self._get_bot_daily_stats(bot, for_date)
             digest['bots'][bot] = bot_stats
 
@@ -1470,9 +1470,9 @@ class DailyDigestGenerator:
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
             'SAMSON': 'samson_positions',
-            'PEGASUS': 'pegasus_positions',
-            'ICARUS': 'icarus_positions',
-            'PROMETHEUS': 'prometheus_ic_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -2156,7 +2156,7 @@ class ProverbsEnhanced:
 
             # Infer strategy_type from bot_name if not provided
             if not strategy_type:
-                if bot_name in ['SOLOMON', 'ICARUS']:
+                if bot_name in ['SOLOMON', 'GIDEON']:
                     strategy_type = 'DIRECTIONAL'
                 else:
                     strategy_type = 'IRON_CONDOR'
@@ -2243,11 +2243,11 @@ class ProverbsEnhanced:
         # Iron Condor bots - want price stability (price stays between strikes)
         'FORTRESS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPY'},
         'SAMSON': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
-        'PEGASUS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
-        'PROMETHEUS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},  # Box Spread + IC
+        'ANCHOR': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
+        'JUBILEE': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},  # Box Spread + IC
         # Directional bots - want price movement in predicted direction
         'SOLOMON': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
-        'ICARUS': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
+        'GIDEON': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
     }
 
     def get_strategy_analysis(self, days: int = 30) -> Dict:
@@ -2272,18 +2272,18 @@ class ProverbsEnhanced:
                 'FORTRESS': 'fortress_positions',
                 'SOLOMON': 'solomon_positions',
                 'SAMSON': 'samson_positions',
-                'PEGASUS': 'pegasus_positions',
-                'ICARUS': 'icarus_positions',
-                'PROMETHEUS': 'prometheus_ic_positions',
+                'ANCHOR': 'anchor_positions',
+                'GIDEON': 'gideon_positions',
+                'JUBILEE': 'jubilee_ic_positions',
             }
 
             # Get performance from actual bot positions tables
             ic_bot_breakdown = {}
             dir_bot_breakdown = {}
 
-            # IC bots: FORTRESS, SAMSON, PEGASUS, PROMETHEUS
+            # IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE
             # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            for bot_name in ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']:
+            for bot_name in ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']:
                 table = BOT_TABLES.get(bot_name)
                 if table:
                     cursor.execute(f"""
@@ -2305,9 +2305,9 @@ class ProverbsEnhanced:
                             'win_rate': (row[1] / row[0] * 100) if row[0] else 0
                         }
 
-            # Directional bots: SOLOMON, ICARUS
+            # Directional bots: SOLOMON, GIDEON
             # Cast to timestamptz to handle TEXT columns where applicable
-            for bot_name in ['SOLOMON', 'ICARUS']:
+            for bot_name in ['SOLOMON', 'GIDEON']:
                 table = BOT_TABLES.get(bot_name)
                 if table:
                     cursor.execute(f"""
@@ -2350,7 +2350,7 @@ class ProverbsEnhanced:
                 'win_rate': (ic_wins / ic_trades * 100) if ic_trades > 0 else 0,
                 'total_pnl': ic_total_pnl,
                 'avg_pnl': ic_avg_pnl,
-                'bots': ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS'],
+                'bots': ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE'],
                 'bot_breakdown': ic_bot_breakdown
             }
 
@@ -2360,7 +2360,7 @@ class ProverbsEnhanced:
                 'win_rate': (dir_wins / dir_trades * 100) if dir_trades > 0 else 0,
                 'total_pnl': dir_total_pnl,
                 'avg_pnl': dir_avg_pnl,
-                'bots': ['SOLOMON', 'ICARUS'],
+                'bots': ['SOLOMON', 'GIDEON'],
                 'bot_breakdown': dir_bot_breakdown
             }
 
@@ -2444,13 +2444,13 @@ class ProverbsEnhanced:
                 'FORTRESS': 'fortress_positions',
                 'SOLOMON': 'solomon_positions',
                 'SAMSON': 'samson_positions',
-                'PEGASUS': 'pegasus_positions',
-                'ICARUS': 'icarus_positions',
-                'PROMETHEUS': 'prometheus_ic_positions',
+                'ANCHOR': 'anchor_positions',
+                'GIDEON': 'gideon_positions',
+                'JUBILEE': 'jubilee_ic_positions',
             }
 
-            ic_bots = ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
-            dir_bots = ['SOLOMON', 'ICARUS']
+            ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
+            dir_bots = ['SOLOMON', 'GIDEON']
 
             # Step 1: Get Oracle advice accuracy from actual positions tables
             by_advice = {}

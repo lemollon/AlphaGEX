@@ -85,9 +85,9 @@ def _calculate_portfolio_unrealized_pnl(cursor) -> dict:
     bot_configs = [
         ('fortress_positions', 'FORTRESS', 'SPY', 'total_credit'),
         ('solomon_positions', 'SOLOMON', 'SPY', 'entry_price'),
-        ('icarus_positions', 'ICARUS', 'SPY', 'entry_price'),
+        ('gideon_positions', 'GIDEON', 'SPY', 'entry_price'),
         ('samson_positions', 'SAMSON', 'SPX', 'total_credit'),
-        ('pegasus_positions', 'PEGASUS', 'SPX', 'total_credit'),
+        ('anchor_positions', 'ANCHOR', 'SPX', 'total_credit'),
     ]
 
     has_mtm = False
@@ -111,7 +111,7 @@ def _calculate_portfolio_unrealized_pnl(cursor) -> dict:
                 (pos_id, credit, contracts, spread_width,
                  put_short, put_long, call_short, call_long, expiration) = pos
 
-                # Skip non-IC positions (SOLOMON/ICARUS directional)
+                # Skip non-IC positions (SOLOMON/GIDEON directional)
                 if not all([put_short, put_long, call_short, call_long]):
                     continue
 
@@ -1960,7 +1960,7 @@ async def get_decision_logs(
     Get decision logs for all bots or a specific bot.
 
     Args:
-        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
         start_date: Filter from date (YYYY-MM-DD)
         end_date: Filter to date (YYYY-MM-DD)
         decision_type: Filter by type (ENTRY_SIGNAL, STAY_FLAT, etc.)
@@ -2045,7 +2045,7 @@ async def get_decision_summary(bot: str = None, days: int = 7):
     Get summary statistics for bot decisions.
 
     Args:
-        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
         days: Number of days to look back (default 7)
 
     Returns:
@@ -2076,7 +2076,7 @@ async def get_recent_decision_logs(bot: str = None, limit: int = 20):
     Get recent decisions for dashboard display.
 
     Args:
-        bot: Filter by bot name (PHOENIX, ATLAS, HERMES, ORACLE)
+        bot: Filter by bot name (LAZARUS, CORNERSTONE, SHEPHERD, ORACLE)
         limit: Number of recent decisions (default 20)
 
     Returns simplified decision records for quick viewing.
@@ -2106,9 +2106,9 @@ async def get_all_bots_status():
     Get status of all trading bots.
 
     Returns status for all 10 bots:
-    - LIVE: FORTRESS, SOLOMON, PEGASUS
-    - PAPER: SAMSON, ICARUS, PROMETHEUS
-    - LEGACY/MANUAL: PHOENIX, ATLAS, HERMES, ORACLE
+    - LIVE: FORTRESS, SOLOMON, ANCHOR
+    - PAPER: SAMSON, GIDEON, JUBILEE
+    - LEGACY/MANUAL: LAZARUS, CORNERSTONE, SHEPHERD, ORACLE
     """
     try:
         from trading.decision_logger import get_bot_decision_summary
@@ -2137,8 +2137,8 @@ async def get_all_bots_status():
                 "symbol": "SPY",
                 "data_sources": ["GEX Walls", "Oracle", "VIX"]
             },
-            "PEGASUS": {
-                "name": "PEGASUS",
+            "ANCHOR": {
+                "name": "ANCHOR",
                 "description": "SPX Weekly Iron Condor",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2161,8 +2161,8 @@ async def get_all_bots_status():
                 "symbol": "SPX",
                 "data_sources": ["VIX", "Oracle", "GEX"]
             },
-            "ICARUS": {
-                "name": "ICARUS",
+            "GIDEON": {
+                "name": "GIDEON",
                 "description": "Aggressive Directional Spreads",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2172,8 +2172,8 @@ async def get_all_bots_status():
                 "symbol": "SPY",
                 "data_sources": ["GEX", "Oracle", "VIX"]
             },
-            "PROMETHEUS": {
-                "name": "PROMETHEUS",
+            "JUBILEE": {
+                "name": "JUBILEE",
                 "description": "Box Spread Synthetic Borrowing + IC Trading",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2181,12 +2181,12 @@ async def get_all_bots_status():
                 "schedule": "Box: Daily 9:30 AM CT | IC: Every 10 min",
                 "strategy": "Borrow via box spreads, trade ICs with borrowed capital",
                 "symbol": "SPX",
-                "data_sources": ["Fed Funds Rate", "Oracle (PEGASUS rules)", "Tradier Production"]
+                "data_sources": ["Fed Funds Rate", "Oracle (ANCHOR rules)", "Tradier Production"]
             },
 
             # === LEGACY / PARTIAL IMPLEMENTATION ===
-            "PHOENIX": {
-                "name": "PHOENIX",
+            "LAZARUS": {
+                "name": "LAZARUS",
                 "description": "0DTE Options (Partial Implementation)",
                 "type": "autonomous",
                 "mode": "PAPER",
@@ -2196,8 +2196,8 @@ async def get_all_bots_status():
                 "symbol": "SPY/SPX",
                 "data_sources": ["GEX", "Psychology Rules"]
             },
-            "ATLAS": {
-                "name": "ATLAS",
+            "CORNERSTONE": {
+                "name": "CORNERSTONE",
                 "description": "SPX Wheel (Partial Implementation)",
                 "type": "autonomous",
                 "mode": "LIVE",
@@ -2207,8 +2207,8 @@ async def get_all_bots_status():
                 "symbol": "SPX",
                 "data_sources": ["VIX", "Delta Targeting"]
             },
-            "HERMES": {
-                "name": "HERMES",
+            "SHEPHERD": {
+                "name": "SHEPHERD",
                 "description": "Manual Wheel Manager",
                 "type": "manual",
                 "mode": "N/A",
@@ -2276,7 +2276,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
     history for Proverbs learning while allowing the bot to continue trading.
 
     Args:
-        bot: Bot name (FORTRESS, SOLOMON, SAMSON, PEGASUS, ICARUS)
+        bot: Bot name (FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON)
         capital: New starting capital amount
         note: Optional note explaining the recapitalization
 
@@ -2286,7 +2286,7 @@ async def recapitalize_bot(bot: str, capital: float, note: str = None):
         - All decision logs (for Proverbs learning)
         - All scan activity (for signal analysis)
     """
-    valid_bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'PEGASUS', 'ICARUS']
+    valid_bots = ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON']
     bot_upper = bot.upper()
 
     if bot_upper not in valid_bots:
@@ -2374,7 +2374,7 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
     Reset bot data to start fresh with proper tracking.
 
     Args:
-        bot: Bot name to reset (PHOENIX, ATLAS) or None for all
+        bot: Bot name to reset (LAZARUS, CORNERSTONE) or None for all
         confirm: Must be True to actually delete data
 
     DANGEROUS: This deletes all historical trade data for the bot(s).
@@ -2409,7 +2409,7 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
         try:
             if bot:
                 c.execute("DELETE FROM autonomous_open_positions WHERE symbol LIKE %s",
-                         ('%SPY%' if bot == 'PHOENIX' else '%SPX%',))
+                         ('%SPY%' if bot == 'LAZARUS' else '%SPX%',))
             else:
                 c.execute("DELETE FROM autonomous_open_positions")
             deleted_counts["open_positions"] = c.rowcount
@@ -2420,7 +2420,7 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
         try:
             if bot:
                 c.execute("DELETE FROM autonomous_closed_trades WHERE symbol LIKE %s",
-                         ('%SPY%' if bot == 'PHOENIX' else '%SPX%',))
+                         ('%SPY%' if bot == 'LAZARUS' else '%SPX%',))
             else:
                 c.execute("DELETE FROM autonomous_closed_trades")
             deleted_counts["closed_trades"] = c.rowcount
@@ -2939,8 +2939,8 @@ async def get_sync_status():
             ('fortress', 'fortress_positions'),
             ('solomon', 'solomon_positions'),
             ('samson', 'samson_positions'),
-            ('pegasus', 'pegasus_positions'),
-            ('icarus', 'icarus_positions')
+            ('anchor', 'anchor_positions'),
+            ('gideon', 'gideon_positions')
         ]
 
         today = datetime.now().date()

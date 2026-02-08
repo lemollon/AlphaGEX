@@ -41,7 +41,7 @@ So I did what any engineer with too much free time would do: I built a system.
 
 🗺️ **ATLAS** — SPX Wheel strategy with ML-optimized entry timing
 
-🦄 **PEGASUS** — Weekly SPX Iron Condors for lower-volatility environments
+🦄 **ANCHOR** — Weekly SPX Iron Condors for lower-volatility environments
 
 ---
 
@@ -196,7 +196,7 @@ Follow along. The alpha testing has begun.
 
 After years of trading, I built what I wished existed:
 
-• 5 autonomous bots (ARES, SOLOMON, PHOENIX, ATLAS, PEGASUS)
+• 5 autonomous bots (ARES, SOLOMON, PHOENIX, ATLAS, ANCHOR)
 • GEX (Gamma Exposure) analysis — trade WITH market makers
 • ML ensemble + Claude AI validation on every trade
 • Self-learning feedback loop with human approval gates
@@ -228,7 +228,7 @@ AlphaGEX: 5 AI trading bots that use GEX (Gamma Exposure) to trade WITH market m
 ⚡ SOLOMON — Directional Spreads
 🔥 PHOENIX — 0DTE Plays
 🗺️ ATLAS — SPX Wheel
-🦄 PEGASUS — Weekly IC
+🦄 ANCHOR — Weekly IC
 
 Powered by:
 • Claude AI (validates every trade)

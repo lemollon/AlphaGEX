@@ -103,11 +103,11 @@ def test_decision_logger_import():
         log_result("Import DecisionLogger", True)
 
         # Test bot-specific getters
-        phoenix = get_phoenix_logger()
-        log_result("Get PHOENIX logger", True, f"Bot: {phoenix.bot_name}")
+        lazarus = get_phoenix_logger()
+        log_result("Get LAZARUS logger", True, f"Bot: {lazarus.bot_name}")
 
-        atlas = get_atlas_logger()
-        log_result("Get ATLAS logger", True, f"Bot: {atlas.bot_name}")
+        cornerstone = get_atlas_logger()
+        log_result("Get CORNERSTONE logger", True, f"Bot: {cornerstone.bot_name}")
 
         fortress = get_ares_logger()
         log_result("Get FORTRESS logger", True, f"Bot: {fortress.bot_name}")
@@ -252,10 +252,10 @@ def test_bot_specific_logging():
         )
 
         bots = {
-            'PHOENIX': get_phoenix_logger(),
-            'ATLAS': get_atlas_logger(),
+            'LAZARUS': get_phoenix_logger(),
+            'CORNERSTONE': get_atlas_logger(),
             'FORTRESS': get_ares_logger(),
-            'HERMES': get_hermes_logger(),
+            'SHEPHERD': get_hermes_logger(),
             'ORACLE': get_oracle_logger(),
         }
 
@@ -280,17 +280,17 @@ def test_filter_by_bot():
         # Get all decisions
         all_decisions = export_decisions_json(limit=100)
 
-        # Get PHOENIX decisions
-        phoenix_decisions = export_decisions_json(bot_name='PHOENIX', limit=100)
+        # Get LAZARUS decisions
+        phoenix_decisions = export_decisions_json(bot_name='LAZARUS', limit=100)
 
         log_result("All bots query", True, f"Found {len(all_decisions)} total decisions")
-        log_result("PHOENIX filter", True, f"Found {len(phoenix_decisions)} PHOENIX decisions")
+        log_result("LAZARUS filter", True, f"Found {len(phoenix_decisions)} LAZARUS decisions")
 
-        # Verify PHOENIX decisions are actually from PHOENIX
+        # Verify LAZARUS decisions are actually from LAZARUS
         if phoenix_decisions:
-            all_phoenix = all(d.get('bot_name') == 'PHOENIX' for d in phoenix_decisions)
+            all_phoenix = all(d.get('bot_name') == 'LAZARUS' for d in phoenix_decisions)
             log_result("Filter accuracy", all_phoenix,
-                      "All filtered records are PHOENIX" if all_phoenix else "Filter returned wrong bot")
+                      "All filtered records are LAZARUS" if all_phoenix else "Filter returned wrong bot")
 
         return True
     except Exception as e:

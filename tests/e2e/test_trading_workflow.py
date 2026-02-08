@@ -149,11 +149,11 @@ class TestAthenaWorkflow:
 
 
 class TestAtlasWorkflow:
-    """End-to-end tests for ATLAS wheel strategy workflow"""
+    """End-to-end tests for CORNERSTONE wheel strategy workflow"""
 
     @patch('trading.spx_wheel_system.get_connection')
-    def test_atlas_wheel_cycle_workflow(self, mock_conn):
-        """Test ATLAS wheel strategy cycle"""
+    def test_cornerstone_wheel_cycle_workflow(self, mock_conn):
+        """Test CORNERSTONE wheel strategy cycle"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_cursor.fetchall.return_value = []
@@ -162,14 +162,14 @@ class TestAtlasWorkflow:
         try:
             from trading.spx_wheel_system import SPXWheelTrader, TradingMode
 
-            # Step 1: Initialize ATLAS
-            atlas = SPXWheelTrader(mode=TradingMode.PAPER, initial_capital=400000)
+            # Step 1: Initialize CORNERSTONE
+            cornerstone = SPXWheelTrader(mode=TradingMode.PAPER, initial_capital=400000)
 
             # Step 2: Verify initialization
-            assert atlas.initial_capital == 400000
+            assert cornerstone.initial_capital == 400000
 
         except ImportError:
-            pytest.skip("ATLAS not available")
+            pytest.skip("CORNERSTONE not available")
 
 
 class TestSchedulerWorkflow:

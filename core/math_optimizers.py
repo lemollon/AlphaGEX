@@ -664,7 +664,7 @@ class ThompsonSamplingAllocator:
         Args:
             bot_names: List of bot names to allocate between
         """
-        self.bot_names = bot_names or ['FORTRESS', 'SOLOMON', 'PHOENIX', 'ATLAS']
+        self.bot_names = bot_names or ['FORTRESS', 'SOLOMON', 'LAZARUS', 'CORNERSTONE']
 
         # Beta distribution parameters (α=wins+1, β=losses+1)
         # Start with uninformative prior Beta(1,1) = uniform
@@ -1720,7 +1720,7 @@ if __name__ == "__main__":
     pending = [
         {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'FORTRESS'},
         {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'SOLOMON'},
-        {'symbol': 'QQQ', 'direction': 'short', 'expected_pnl': 120, 'win_probability': 0.55, 'bot': 'PHOENIX'},
+        {'symbol': 'QQQ', 'direction': 'short', 'expected_pnl': 120, 'win_probability': 0.55, 'bot': 'LAZARUS'},
     ]
     sequence = orchestrator.mdp_sequencer.sequence_trades(
         pending_trades=pending,

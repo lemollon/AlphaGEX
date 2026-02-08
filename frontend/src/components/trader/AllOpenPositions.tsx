@@ -32,7 +32,7 @@ interface EnhancedPosition extends LivePosition {
 }
 
 interface AllOpenPositionsProps {
-  botName: 'SOLOMON' | 'FORTRESS' | 'PEGASUS'
+  botName: 'SOLOMON' | 'FORTRESS' | 'ANCHOR'
   positions: LivePosition[]
   underlyingPrice?: number
   isLoading?: boolean

@@ -232,10 +232,10 @@ const fetchers = {
     }
   },
 
-  // ICARUS Bot - Aggressive Directional Spreads
+  // GIDEON Bot - Aggressive Directional Spreads
   icarusStatus: async () => {
     try {
-      const response = await api.get('/api/icarus/status')
+      const response = await api.get('/api/gideon/status')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -243,7 +243,7 @@ const fetchers = {
   },
   icarusPositions: async () => {
     try {
-      const response = await api.get('/api/icarus/positions')
+      const response = await api.get('/api/gideon/positions')
       return response.data
     } catch {
       // Return consistent shape - data should always be an array like success case
@@ -252,7 +252,7 @@ const fetchers = {
   },
   icarusSignals: async (limit: number) => {
     try {
-      const response = await api.get(`/api/icarus/signals?limit=${limit}`)
+      const response = await api.get(`/api/gideon/signals?limit=${limit}`)
       return response.data
     } catch {
       return { success: false, data: [] }
@@ -260,7 +260,7 @@ const fetchers = {
   },
   icarusPerformance: async (days: number) => {
     try {
-      const response = await api.get(`/api/icarus/performance?days=${days}`)
+      const response = await api.get(`/api/gideon/performance?days=${days}`)
       return response.data
     } catch {
       return { success: false, data: null }
@@ -268,7 +268,7 @@ const fetchers = {
   },
   icarusOracleAdvice: async () => {
     try {
-      const response = await api.get('/api/icarus/oracle-advice')
+      const response = await api.get('/api/gideon/oracle-advice')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -279,7 +279,7 @@ const fetchers = {
       const params = new URLSearchParams()
       if (level) params.append('level', level)
       params.append('limit', String(limit || 50))
-      const response = await api.get(`/api/icarus/logs?${params}`)
+      const response = await api.get(`/api/gideon/logs?${params}`)
       return response.data
     } catch {
       return { success: false, data: [] }
@@ -287,7 +287,7 @@ const fetchers = {
   },
   icarusLivePnL: async () => {
     try {
-      const response = await api.get('/api/icarus/live-pnl')
+      const response = await api.get('/api/gideon/live-pnl')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -295,7 +295,7 @@ const fetchers = {
   },
   icarusConfig: async () => {
     try {
-      const response = await api.get('/api/icarus/config')
+      const response = await api.get('/api/gideon/config')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -303,7 +303,7 @@ const fetchers = {
   },
   icarusEquityCurve: async (days: number = 30) => {
     try {
-      const response = await api.get(`/api/icarus/equity-curve?days=${days}`)
+      const response = await api.get(`/api/gideon/equity-curve?days=${days}`)
       return response.data
     } catch {
       return { success: false, data: { equity_curve: [] } }
@@ -312,7 +312,7 @@ const fetchers = {
   icarusIntradayEquity: async (date?: string) => {
     try {
       const params = date ? `?date=${date}` : ''
-      const response = await api.get(`/api/icarus/equity-curve/intraday${params}`)
+      const response = await api.get(`/api/gideon/equity-curve/intraday${params}`)
       return response.data
     } catch {
       return { success: false, data: { intraday_curve: [] } }
@@ -323,8 +323,8 @@ const fetchers = {
       const params = new URLSearchParams()
       params.append('limit', String(limit || 50))
       if (date) params.append('date', date)
-      // Use ICARUS-specific scan activity endpoint
-      const response = await api.get(`/api/icarus/scan-activity?${params}`)
+      // Use GIDEON-specific scan activity endpoint
+      const response = await api.get(`/api/gideon/scan-activity?${params}`)
       return response.data
     } catch {
       return { success: false, data: { scans: [] } }
@@ -381,7 +381,7 @@ const fetchers = {
     }
   },
 
-  // PHOENIX Trader
+  // LAZARUS Trader
   traderStatus: async () => {
     const response = await apiClient.getTraderStatus()
     return response.data
@@ -620,62 +620,62 @@ const fetchers = {
     }
   },
 
-  // PEGASUS SPX Iron Condor Bot
-  pegasusStatus: async () => {
+  // ANCHOR SPX Iron Condor Bot
+  anchorStatus: async () => {
     try {
-      const response = await api.get('/api/pegasus/status')
+      const response = await api.get('/api/anchor/status')
       return response.data
     } catch {
       return { success: false, data: null }
     }
   },
-  pegasusPositions: async () => {
+  anchorPositions: async () => {
     try {
-      const response = await api.get('/api/pegasus/positions')
+      const response = await api.get('/api/anchor/positions')
       return response.data
     } catch {
       return { success: false, data: { open_positions: [], closed_positions: [] } }
     }
   },
-  pegasusEquityCurve: async (days: number = 30) => {
+  anchorEquityCurve: async (days: number = 30) => {
     try {
-      const response = await api.get(`/api/pegasus/equity-curve?days=${days}`)
+      const response = await api.get(`/api/anchor/equity-curve?days=${days}`)
       return response.data
     } catch {
       return { success: false, data: { equity_curve: [] } }
     }
   },
-  pegasusIntradayEquity: async (date?: string) => {
+  anchorIntradayEquity: async (date?: string) => {
     try {
       const params = date ? `?date=${date}` : ''
-      const response = await api.get(`/api/pegasus/equity-curve/intraday${params}`)
+      const response = await api.get(`/api/anchor/equity-curve/intraday${params}`)
       return response.data
     } catch {
       return { success: false, data: { intraday_curve: [] } }
     }
   },
-  pegasusConfig: async () => {
+  anchorConfig: async () => {
     try {
-      const response = await api.get('/api/pegasus/config')
+      const response = await api.get('/api/anchor/config')
       return response.data
     } catch {
       return { success: false, data: null }
     }
   },
-  pegasusLivePnL: async () => {
+  anchorLivePnL: async () => {
     try {
-      const response = await api.get('/api/pegasus/live-pnl')
+      const response = await api.get('/api/anchor/live-pnl')
       return response.data
     } catch {
       return { success: false, data: null }
     }
   },
-  scanActivityPegasus: async (limit?: number, date?: string) => {
+  scanActivityAnchor: async (limit?: number, date?: string) => {
     try {
       const params = new URLSearchParams()
       params.append('limit', String(limit || 50))
       if (date) params.append('date', date)
-      const response = await api.get(`/api/scans/activity/PEGASUS?${params}`)
+      const response = await api.get(`/api/scans/activity/ANCHOR?${params}`)
       return response.data
     } catch {
       return { success: false, data: { scans: [] } }
@@ -744,79 +744,79 @@ const fetchers = {
     }
   },
 
-  // HERACLES MES Futures Scalping Bot
+  // VALOR MES Futures Scalping Bot
   // Note: Fetchers throw errors instead of returning fallback values
   // This allows SWR to properly handle retries and error states
   heraclesStatus: async () => {
-    const response = await api.get('/api/heracles/status')
+    const response = await api.get('/api/valor/status')
     return response.data
   },
   heraclesPositions: async () => {
-    const response = await api.get('/api/heracles/positions')
+    const response = await api.get('/api/valor/positions')
     return response.data
   },
   heraclesClosedTrades: async (limit: number = 50) => {
-    const response = await api.get(`/api/heracles/closed-trades?limit=${limit}`)
+    const response = await api.get(`/api/valor/closed-trades?limit=${limit}`)
     return response.data
   },
   heraclesEquityCurve: async (days: number = 30) => {
-    const response = await api.get(`/api/heracles/paper-equity-curve?days=${days}`)
+    const response = await api.get(`/api/valor/paper-equity-curve?days=${days}`)
     return response.data
   },
   heraclesIntradayEquity: async () => {
-    const response = await api.get('/api/heracles/equity-curve/intraday')
+    const response = await api.get('/api/valor/equity-curve/intraday')
     return response.data
   },
   heraclesConfig: async () => {
-    const response = await api.get('/api/heracles/config')
+    const response = await api.get('/api/valor/config')
     return response.data
   },
   heraclesPaperAccount: async () => {
-    const response = await api.get('/api/heracles/paper-account')
+    const response = await api.get('/api/valor/paper-account')
     return response.data
   },
   heraclesScanActivity: async (limit?: number, outcome?: string) => {
     const params = new URLSearchParams()
     params.append('limit', String(limit || 100))
     if (outcome) params.append('outcome', outcome)
-    const response = await api.get(`/api/heracles/scan-activity?${params}`)
+    const response = await api.get(`/api/valor/scan-activity?${params}`)
     return response.data
   },
   heraclesMLTrainingData: async () => {
-    const response = await api.get('/api/heracles/ml-training-data')
+    const response = await api.get('/api/valor/ml-training-data')
     return response.data
   },
   heraclesMLTrainingDataStats: async () => {
-    const response = await api.get('/api/heracles/ml/training-data-stats')
+    const response = await api.get('/api/valor/ml/training-data-stats')
     return response.data
   },
   heraclesSignals: async (limit: number = 50) => {
-    const response = await api.get(`/api/heracles/signals/recent?limit=${limit}`)
+    const response = await api.get(`/api/valor/signals/recent?limit=${limit}`)
     return response.data
   },
   heraclesMLStatus: async () => {
-    const response = await api.get('/api/heracles/ml/status')
+    const response = await api.get('/api/valor/ml/status')
     return response.data
   },
   heraclesMLTrain: async (minSamples: number = 50) => {
     try {
-      const response = await api.post(`/api/heracles/ml/train?min_samples=${minSamples}`)
+      const response = await api.post(`/api/valor/ml/train?min_samples=${minSamples}`)
       return response.data
     } catch (error: any) {
       return { success: false, error: error?.message || 'Training failed' }
     }
   },
   heraclesMLFeatureImportance: async () => {
-    const response = await api.get('/api/heracles/ml/feature-importance')
+    const response = await api.get('/api/valor/ml/feature-importance')
     return response.data
   },
   heraclesMLApprovalStatus: async () => {
-    const response = await api.get('/api/heracles/ml/approval-status')
+    const response = await api.get('/api/valor/ml/approval-status')
     return response.data
   },
   heraclesMLApprove: async () => {
     try {
-      const response = await api.post('/api/heracles/ml/approve')
+      const response = await api.post('/api/valor/ml/approve')
       return response.data
     } catch (error: any) {
       return { success: false, error: error?.message || 'Approval failed' }
@@ -824,7 +824,7 @@ const fetchers = {
   },
   heraclesMLRevoke: async () => {
     try {
-      const response = await api.post('/api/heracles/ml/revoke')
+      const response = await api.post('/api/valor/ml/revoke')
       return response.data
     } catch (error: any) {
       return { success: false, error: error?.message || 'Revoke failed' }
@@ -832,19 +832,19 @@ const fetchers = {
   },
   heraclesMLReject: async () => {
     try {
-      const response = await api.post('/api/heracles/ml/reject')
+      const response = await api.post('/api/valor/ml/reject')
       return response.data
     } catch (error: any) {
       return { success: false, error: error?.message || 'Reject failed' }
     }
   },
   heraclesABTestStatus: async () => {
-    const response = await api.get('/api/heracles/ab-test/status')
+    const response = await api.get('/api/valor/ab-test/status')
     return response.data
   },
   heraclesABTestEnable: async () => {
     try {
-      const response = await api.post('/api/heracles/ab-test/enable')
+      const response = await api.post('/api/valor/ab-test/enable')
       return response.data
     } catch (error: any) {
       return { success: false, error: error?.message || 'Failed to enable A/B test' }
@@ -852,21 +852,21 @@ const fetchers = {
   },
   heraclesABTestDisable: async () => {
     try {
-      const response = await api.post('/api/heracles/ab-test/disable')
+      const response = await api.post('/api/valor/ab-test/disable')
       return response.data
     } catch (error: any) {
       return { success: false, error: error?.message || 'Failed to disable A/B test' }
     }
   },
   heraclesABTestResults: async () => {
-    const response = await api.get('/api/heracles/ab-test/results')
+    const response = await api.get('/api/valor/ab-test/results')
     return response.data
   },
 
-  // PROMETHEUS Box Spread Synthetic Borrowing + IC Trading Bot
+  // JUBILEE Box Spread Synthetic Borrowing + IC Trading Bot
   prometheusStatus: async () => {
     try {
-      const response = await api.get('/api/prometheus-box/status')
+      const response = await api.get('/api/jubilee/status')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -874,7 +874,7 @@ const fetchers = {
   },
   prometheusICStatus: async () => {
     try {
-      const response = await api.get('/api/prometheus-box/ic/status')
+      const response = await api.get('/api/jubilee/ic/status')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -882,7 +882,7 @@ const fetchers = {
   },
   prometheusPositions: async () => {
     try {
-      const response = await api.get('/api/prometheus-box/positions')
+      const response = await api.get('/api/jubilee/positions')
       return response.data
     } catch {
       return { success: false, data: { positions: [] } }
@@ -890,7 +890,7 @@ const fetchers = {
   },
   prometheusICPositions: async () => {
     try {
-      const response = await api.get('/api/prometheus-box/ic/positions')
+      const response = await api.get('/api/jubilee/ic/positions')
       return response.data
     } catch {
       return { success: false, data: { positions: [] } }
@@ -898,7 +898,7 @@ const fetchers = {
   },
   prometheusLivePnL: async () => {
     try {
-      const response = await api.get('/api/prometheus-box/combined/performance')
+      const response = await api.get('/api/jubilee/combined/performance')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -906,7 +906,7 @@ const fetchers = {
   },
   prometheusReconciliation: async () => {
     try {
-      const response = await api.get('/api/prometheus-box/reconciliation')
+      const response = await api.get('/api/jubilee/reconciliation')
       return response.data
     } catch {
       return { success: false, data: null }
@@ -1302,11 +1302,11 @@ export function useARESLogs(level?: string, limit: number = 100, options?: SWRCo
 }
 
 // =============================================================================
-// ICARUS BOT HOOKS - Aggressive Directional Spreads
+// GIDEON BOT HOOKS - Aggressive Directional Spreads
 // =============================================================================
 
 export function useICARUSStatus(options?: SWRConfiguration) {
-  return useSWR('icarus-status', fetchers.icarusStatus, {
+  return useSWR('gideon-status', fetchers.icarusStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1314,7 +1314,7 @@ export function useICARUSStatus(options?: SWRConfiguration) {
 }
 
 export function useICARUSPositions(options?: SWRConfiguration) {
-  return useSWR('icarus-positions', fetchers.icarusPositions, {
+  return useSWR('gideon-positions', fetchers.icarusPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1323,7 +1323,7 @@ export function useICARUSPositions(options?: SWRConfiguration) {
 
 export function useICARUSSignals(limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
-    `icarus-signals-${limit}`,
+    `gideon-signals-${limit}`,
     () => fetchers.icarusSignals(limit),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
@@ -1331,14 +1331,14 @@ export function useICARUSSignals(limit: number = 50, options?: SWRConfiguration)
 
 export function useICARUSPerformance(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `icarus-performance-${days}`,
+    `gideon-performance-${days}`,
     () => fetchers.icarusPerformance(days),
     { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
   )
 }
 
 export function useICARUSOracleAdvice(options?: SWRConfiguration) {
-  return useSWR('icarus-oracle-advice', fetchers.icarusOracleAdvice, {
+  return useSWR('gideon-oracle-advice', fetchers.icarusOracleAdvice, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1347,7 +1347,7 @@ export function useICARUSOracleAdvice(options?: SWRConfiguration) {
 
 export function useICARUSLogs(level?: string, limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
-    `icarus-logs-${level || 'all'}-${limit}`,
+    `gideon-logs-${level || 'all'}-${limit}`,
     () => fetchers.icarusLogs(level, limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -1355,14 +1355,14 @@ export function useICARUSLogs(level?: string, limit: number = 50, options?: SWRC
 
 export function useICARUSLivePnL(options?: SWRConfiguration) {
   return useSWR(
-    'icarus-live-pnl',
+    'gideon-live-pnl',
     fetchers.icarusLivePnL,
     { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
   )
 }
 
-export function useICARUSConfig(options?: SWRConfiguration) {
-  return useSWR('icarus-config', fetchers.icarusConfig, {
+export function useGideonConfig(options?: SWRConfiguration) {
+  return useSWR('gideon-config', fetchers.icarusConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,  // 5 minute refresh for config
     ...options,
@@ -1371,7 +1371,7 @@ export function useICARUSConfig(options?: SWRConfiguration) {
 
 export function useICARUSEquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `icarus-equity-curve-${days}`,
+    `gideon-equity-curve-${days}`,
     () => fetchers.icarusEquityCurve(days),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
@@ -1379,7 +1379,7 @@ export function useICARUSEquityCurve(days: number = 30, options?: SWRConfigurati
 
 export function useICARUSIntradayEquity(date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `icarus-intraday-equity-${date || 'today'}`,
+    `gideon-intraday-equity-${date || 'today'}`,
     () => fetchers.icarusIntradayEquity(date),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
@@ -1387,7 +1387,7 @@ export function useICARUSIntradayEquity(date?: string, options?: SWRConfiguratio
 
 export function useICARUSScanActivity(limit: number = 50, date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `icarus-scan-activity-${limit}-${date || 'all'}`,
+    `gideon-scan-activity-${limit}-${date || 'all'}`,
     () => fetchers.icarusScanActivity(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
@@ -1422,61 +1422,61 @@ export function useScanActivityToday(bot?: string, options?: SWRConfiguration) {
 }
 
 // =============================================================================
-// PEGASUS SPX IRON CONDOR HOOKS
+// ANCHOR SPX IRON CONDOR HOOKS
 // =============================================================================
 
-export function usePEGASUSStatus(options?: SWRConfiguration) {
-  return useSWR('pegasus-status', fetchers.pegasusStatus, {
+export function useANCHORStatus(options?: SWRConfiguration) {
+  return useSWR('anchor-status', fetchers.anchorStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function usePEGASUSPositions(options?: SWRConfiguration) {
-  return useSWR('pegasus-positions', fetchers.pegasusPositions, {
+export function useANCHORPositions(options?: SWRConfiguration) {
+  return useSWR('anchor-positions', fetchers.anchorPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function usePEGASUSEquityCurve(days: number = 30, options?: SWRConfiguration) {
+export function useANCHOREquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `pegasus-equity-curve-${days}`,
-    () => fetchers.pegasusEquityCurve(days),
+    `anchor-equity-curve-${days}`,
+    () => fetchers.anchorEquityCurve(days),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
-export function usePEGASUSIntradayEquity(date?: string, options?: SWRConfiguration) {
+export function useANCHORIntradayEquity(date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `pegasus-intraday-equity-${date || 'today'}`,
-    () => fetchers.pegasusIntradayEquity(date),
+    `anchor-intraday-equity-${date || 'today'}`,
+    () => fetchers.anchorIntradayEquity(date),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
-export function usePEGASUSConfig(options?: SWRConfiguration) {
-  return useSWR('pegasus-config', fetchers.pegasusConfig, {
+export function useAnchorConfig(options?: SWRConfiguration) {
+  return useSWR('anchor-config', fetchers.anchorConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,
   })
 }
 
-export function usePEGASUSLivePnL(options?: SWRConfiguration) {
-  return useSWR('pegasus-live-pnl', fetchers.pegasusLivePnL, {
+export function useANCHORLivePnL(options?: SWRConfiguration) {
+  return useSWR('anchor-live-pnl', fetchers.anchorLivePnL, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function useScanActivityPegasus(limit: number = 50, date?: string, options?: SWRConfiguration) {
+export function useScanActivityAnchor(limit: number = 50, date?: string, options?: SWRConfiguration) {
   return useSWR(
-    `scan-activity-pegasus-${limit}-${date || 'all'}`,
-    () => fetchers.scanActivityPegasus(limit, date),
+    `scan-activity-anchor-${limit}-${date || 'all'}`,
+    () => fetchers.scanActivityAnchor(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
@@ -1542,11 +1542,11 @@ export function useScanActivityTitan(limit: number = 50, date?: string, options?
 }
 
 // =============================================================================
-// HERACLES MES FUTURES SCALPING HOOKS
+// VALOR MES FUTURES SCALPING HOOKS
 // =============================================================================
 
 export function useHERACLESStatus(options?: SWRConfiguration) {
-  return useSWR('heracles-status', fetchers.heraclesStatus, {
+  return useSWR('valor-status', fetchers.heraclesStatus, {
     ...swrConfig,
     refreshInterval: 15 * 1000,  // 15 seconds for real-time position updates
     dedupingInterval: 5000,      // Allow refreshes within 5 seconds
@@ -1556,7 +1556,7 @@ export function useHERACLESStatus(options?: SWRConfiguration) {
 }
 
 export function useHERACLESPositions(options?: SWRConfiguration) {
-  return useSWR('heracles-positions', fetchers.heraclesPositions, {
+  return useSWR('valor-positions', fetchers.heraclesPositions, {
     ...swrConfig,
     dedupingInterval: 5000,
     keepPreviousData: false,
@@ -1567,7 +1567,7 @@ export function useHERACLESPositions(options?: SWRConfiguration) {
 
 export function useHERACLESClosedTrades(limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
-    `heracles-closed-trades-${limit}`,
+    `valor-closed-trades-${limit}`,
     () => fetchers.heraclesClosedTrades(limit),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
@@ -1575,22 +1575,22 @@ export function useHERACLESClosedTrades(limit: number = 50, options?: SWRConfigu
 
 export function useHERACLESEquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
-    `heracles-equity-curve-${days}`,
+    `valor-equity-curve-${days}`,
     () => fetchers.heraclesEquityCurve(days),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
 export function useHERACLESIntradayEquity(options?: SWRConfiguration) {
-  return useSWR('heracles-intraday-equity', fetchers.heraclesIntradayEquity, {
+  return useSWR('valor-intraday-equity', fetchers.heraclesIntradayEquity, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
   })
 }
 
-export function useHERACLESConfig(options?: SWRConfiguration) {
-  return useSWR('heracles-config', fetchers.heraclesConfig, {
+export function useValorConfig(options?: SWRConfiguration) {
+  return useSWR('valor-config', fetchers.heraclesConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,
@@ -1598,7 +1598,7 @@ export function useHERACLESConfig(options?: SWRConfiguration) {
 }
 
 export function useHERACLESPaperAccount(options?: SWRConfiguration) {
-  return useSWR('heracles-paper-account', fetchers.heraclesPaperAccount, {
+  return useSWR('valor-paper-account', fetchers.heraclesPaperAccount, {
     ...swrConfig,
     refreshInterval: 15 * 1000,  // 15 seconds for real-time balance updates
     dedupingInterval: 5000,
@@ -1609,14 +1609,14 @@ export function useHERACLESPaperAccount(options?: SWRConfiguration) {
 
 export function useHERACLESScanActivity(limit: number = 100, outcome?: string, options?: SWRConfiguration) {
   return useSWR(
-    `heracles-scan-activity-${limit}-${outcome || 'all'}`,
+    `valor-scan-activity-${limit}-${outcome || 'all'}`,
     () => fetchers.heraclesScanActivity(limit, outcome),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
 export function useHERACLESMLTrainingData(options?: SWRConfiguration) {
-  return useSWR('heracles-ml-training-data', fetchers.heraclesMLTrainingData, {
+  return useSWR('valor-ml-training-data', fetchers.heraclesMLTrainingData, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,  // Refresh every 5 minutes
     ...options,
@@ -1624,7 +1624,7 @@ export function useHERACLESMLTrainingData(options?: SWRConfiguration) {
 }
 
 export function useHERACLESMLTrainingDataStats(options?: SWRConfiguration) {
-  return useSWR('heracles-ml-training-data-stats', fetchers.heraclesMLTrainingDataStats, {
+  return useSWR('valor-ml-training-data-stats', fetchers.heraclesMLTrainingDataStats, {
     ...swrConfig,
     refreshInterval: 60 * 1000,  // Refresh every minute
     ...options,
@@ -1633,14 +1633,14 @@ export function useHERACLESMLTrainingDataStats(options?: SWRConfiguration) {
 
 export function useHERACLESSignals(limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
-    `heracles-signals-${limit}`,
+    `valor-signals-${limit}`,
     () => fetchers.heraclesSignals(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
 export function useHERACLESMLStatus(options?: SWRConfiguration) {
-  return useSWR('heracles-ml-status', fetchers.heraclesMLStatus, {
+  return useSWR('valor-ml-status', fetchers.heraclesMLStatus, {
     ...swrConfig,
     refreshInterval: 60 * 1000,  // Refresh every minute
     ...options,
@@ -1648,7 +1648,7 @@ export function useHERACLESMLStatus(options?: SWRConfiguration) {
 }
 
 export function useHERACLESMLFeatureImportance(options?: SWRConfiguration) {
-  return useSWR('heracles-ml-feature-importance', fetchers.heraclesMLFeatureImportance, {
+  return useSWR('valor-ml-feature-importance', fetchers.heraclesMLFeatureImportance, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,  // Refresh every 5 minutes
     ...options,
@@ -1662,7 +1662,7 @@ export async function trainHERACLESML(minSamples: number = 50) {
 
 // ML Approval hooks and functions
 export function useHERACLESMLApprovalStatus(options?: SWRConfiguration) {
-  return useSWR('heracles-ml-approval-status', fetchers.heraclesMLApprovalStatus, {
+  return useSWR('valor-ml-approval-status', fetchers.heraclesMLApprovalStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,  // Refresh every 30 seconds
     ...options,
@@ -1683,7 +1683,7 @@ export async function rejectHERACLESML() {
 
 // A/B Test hooks and functions
 export function useHERACLESABTestStatus(options?: SWRConfiguration) {
-  return useSWR('heracles-ab-test-status', fetchers.heraclesABTestStatus, {
+  return useSWR('valor-ab-test-status', fetchers.heraclesABTestStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1691,7 +1691,7 @@ export function useHERACLESABTestStatus(options?: SWRConfiguration) {
 }
 
 export function useHERACLESABTestResults(options?: SWRConfiguration) {
-  return useSWR('heracles-ab-test-results', fetchers.heraclesABTestResults, {
+  return useSWR('valor-ab-test-results', fetchers.heraclesABTestResults, {
     ...swrConfig,
     refreshInterval: 60 * 1000,  // Refresh every minute
     ...options,
@@ -1707,11 +1707,11 @@ export async function disableHERACLESABTest() {
 }
 
 // =============================================================================
-// PROMETHEUS BOX SPREAD + IC TRADING HOOKS
+// JUBILEE BOX SPREAD + IC TRADING HOOKS
 // =============================================================================
 
 export function usePROMETHEUSStatus(options?: SWRConfiguration) {
-  return useSWR('prometheus-status', fetchers.prometheusStatus, {
+  return useSWR('jubilee-status', fetchers.prometheusStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1719,7 +1719,7 @@ export function usePROMETHEUSStatus(options?: SWRConfiguration) {
 }
 
 export function usePROMETHEUSICStatus(options?: SWRConfiguration) {
-  return useSWR('prometheus-ic-status', fetchers.prometheusICStatus, {
+  return useSWR('jubilee-ic-status', fetchers.prometheusICStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1727,7 +1727,7 @@ export function usePROMETHEUSICStatus(options?: SWRConfiguration) {
 }
 
 export function usePROMETHEUSPositions(options?: SWRConfiguration) {
-  return useSWR('prometheus-positions', fetchers.prometheusPositions, {
+  return useSWR('jubilee-positions', fetchers.prometheusPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1735,7 +1735,7 @@ export function usePROMETHEUSPositions(options?: SWRConfiguration) {
 }
 
 export function usePROMETHEUSICPositions(options?: SWRConfiguration) {
-  return useSWR('prometheus-ic-positions', fetchers.prometheusICPositions, {
+  return useSWR('jubilee-ic-positions', fetchers.prometheusICPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1743,7 +1743,7 @@ export function usePROMETHEUSICPositions(options?: SWRConfiguration) {
 }
 
 export function usePROMETHEUSLivePnL(options?: SWRConfiguration) {
-  return useSWR('prometheus-live-pnl', fetchers.prometheusLivePnL, {
+  return useSWR('jubilee-live-pnl', fetchers.prometheusLivePnL, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
@@ -1751,7 +1751,7 @@ export function usePROMETHEUSLivePnL(options?: SWRConfiguration) {
 }
 
 export function usePROMETHEUSReconciliation(options?: SWRConfiguration) {
-  return useSWR('prometheus-reconciliation', fetchers.prometheusReconciliation, {
+  return useSWR('jubilee-reconciliation', fetchers.prometheusReconciliation, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1835,7 +1835,7 @@ export function useAGAPEGexMapping(options?: SWRConfiguration) {
 }
 
 // =============================================================================
-// PHOENIX TRADER HOOKS
+// LAZARUS TRADER HOOKS
 // =============================================================================
 
 export function useTraderStatus(options?: SWRConfiguration) {

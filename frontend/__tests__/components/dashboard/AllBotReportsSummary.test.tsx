@@ -120,7 +120,7 @@ describe('AllBotReportsSummary Component', () => {
       })
     })
 
-    it('renders ICARUS bot tab', async () => {
+    it('renders GIDEON bot tab', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockNoReport),
@@ -130,11 +130,11 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        expect(screen.getByText('ICARUS')).toBeInTheDocument()
+        expect(screen.getByText('GIDEON')).toBeInTheDocument()
       })
     })
 
-    it('renders PEGASUS bot tab', async () => {
+    it('renders ANCHOR bot tab', async () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: () => Promise.resolve(mockNoReport),
@@ -144,7 +144,7 @@ describe('AllBotReportsSummary Component', () => {
       renderWithSWR(<AllBotReportsSummary />)
 
       await waitFor(() => {
-        expect(screen.getByText('PEGASUS')).toBeInTheDocument()
+        expect(screen.getByText('ANCHOR')).toBeInTheDocument()
       })
     })
 

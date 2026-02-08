@@ -48,16 +48,16 @@ BOT_CONFIGS = {
         'credit_field': 'entry_credit',
         'has_legs': True
     },
-    'pegasus': {
-        'table': 'pegasus_positions',
-        'name': 'PEGASUS',
+    'anchor': {
+        'table': 'anchor_positions',
+        'name': 'ANCHOR',
         'type': 'iron_condor',
         'credit_field': 'entry_credit',
         'has_legs': True
     },
-    'icarus': {
-        'table': 'icarus_positions',
-        'name': 'ICARUS',
+    'gideon': {
+        'table': 'gideon_positions',
+        'name': 'GIDEON',
         'type': 'directional',
         'credit_field': 'entry_price',
         'has_legs': False
@@ -523,7 +523,7 @@ class TradeSyncService:
         Uses SELECT FOR UPDATE to lock the row during the close operation.
 
         Args:
-            bot_key: Bot identifier (fortress, solomon, samson, pegasus, icarus)
+            bot_key: Bot identifier (fortress, solomon, samson, anchor, gideon)
             position_id: Position to close
             close_price: Exit price
             realized_pnl: Calculated P&L

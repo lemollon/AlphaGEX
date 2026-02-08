@@ -83,15 +83,15 @@ check_model_has_field("SOLOMON", "trading/solomon_v2/models.py", "SpreadPosition
 check_model_has_field("SAMSON", "trading/samson/models.py", "IronCondorSignal", "oracle_confidence")
 check_model_has_field("SAMSON", "trading/samson/models.py", "IronCondorPosition", "oracle_confidence")
 
-# PEGASUS
-check_model_has_field("PEGASUS", "trading/pegasus/models.py", "IronCondorSignal", "oracle_confidence")
-check_model_has_field("PEGASUS", "trading/pegasus/models.py", "IronCondorPosition", "oracle_confidence")
+# ANCHOR
+check_model_has_field("ANCHOR", "trading/anchor/models.py", "IronCondorSignal", "oracle_confidence")
+check_model_has_field("ANCHOR", "trading/anchor/models.py", "IronCondorPosition", "oracle_confidence")
 
-# ICARUS
-check_model_has_field("ICARUS", "trading/icarus/models.py", "TradeSignal", "oracle_confidence")
-check_model_has_field("ICARUS", "trading/icarus/models.py", "TradeSignal", "oracle_advice")
-check_model_has_field("ICARUS", "trading/icarus/models.py", "SpreadPosition", "oracle_confidence")
-check_model_has_field("ICARUS", "trading/icarus/models.py", "SpreadPosition", "oracle_advice")
+# GIDEON
+check_model_has_field("GIDEON", "trading/gideon/models.py", "TradeSignal", "oracle_confidence")
+check_model_has_field("GIDEON", "trading/gideon/models.py", "TradeSignal", "oracle_advice")
+check_model_has_field("GIDEON", "trading/gideon/models.py", "SpreadPosition", "oracle_confidence")
+check_model_has_field("GIDEON", "trading/gideon/models.py", "SpreadPosition", "oracle_advice")
 
 
 # =============================================================================
@@ -122,8 +122,8 @@ def check_signal_accepts_oracle_confidence(bot_name: str, signals_path: str):
 check_signal_accepts_oracle_confidence("FORTRESS", "trading/fortress_v2/signals.py")
 check_signal_accepts_oracle_confidence("SOLOMON", "trading/solomon_v2/signals.py")
 check_signal_accepts_oracle_confidence("SAMSON", "trading/samson/signals.py")
-check_signal_accepts_oracle_confidence("PEGASUS", "trading/pegasus/signals.py")
-check_signal_accepts_oracle_confidence("ICARUS", "trading/icarus/signals.py")
+check_signal_accepts_oracle_confidence("ANCHOR", "trading/anchor/signals.py")
+check_signal_accepts_oracle_confidence("GIDEON", "trading/gideon/signals.py")
 
 
 # =============================================================================
@@ -162,8 +162,8 @@ def check_position_to_dict_has_oracle(bot_name: str, model_path: str):
 check_position_to_dict_has_oracle("FORTRESS", "trading/fortress_v2/models.py")
 check_position_to_dict_has_oracle("SOLOMON", "trading/solomon_v2/models.py")
 check_position_to_dict_has_oracle("SAMSON", "trading/samson/models.py")
-check_position_to_dict_has_oracle("PEGASUS", "trading/pegasus/models.py")
-check_position_to_dict_has_oracle("ICARUS", "trading/icarus/models.py")
+check_position_to_dict_has_oracle("ANCHOR", "trading/anchor/models.py")
+check_position_to_dict_has_oracle("GIDEON", "trading/gideon/models.py")
 
 
 # =============================================================================
@@ -202,8 +202,8 @@ def check_executor_uses_oracle_confidence(bot_name: str, executor_path: str):
 check_executor_uses_oracle_confidence("FORTRESS", "trading/fortress_v2/executor.py")
 check_executor_uses_oracle_confidence("SOLOMON", "trading/solomon_v2/executor.py")
 check_executor_uses_oracle_confidence("SAMSON", "trading/samson/executor.py")
-check_executor_uses_oracle_confidence("PEGASUS", "trading/pegasus/executor.py")
-check_executor_uses_oracle_confidence("ICARUS", "trading/icarus/executor.py")
+check_executor_uses_oracle_confidence("ANCHOR", "trading/anchor/executor.py")
+check_executor_uses_oracle_confidence("GIDEON", "trading/gideon/executor.py")
 
 
 # =============================================================================
@@ -234,8 +234,8 @@ def check_signals_passes_oracle_confidence(bot_name: str, signals_path: str):
 check_signals_passes_oracle_confidence("FORTRESS", "trading/fortress_v2/signals.py")
 check_signals_passes_oracle_confidence("SOLOMON", "trading/solomon_v2/signals.py")
 check_signals_passes_oracle_confidence("SAMSON", "trading/samson/signals.py")
-check_signals_passes_oracle_confidence("PEGASUS", "trading/pegasus/signals.py")
-check_signals_passes_oracle_confidence("ICARUS", "trading/icarus/signals.py")
+check_signals_passes_oracle_confidence("ANCHOR", "trading/anchor/signals.py")
+check_signals_passes_oracle_confidence("GIDEON", "trading/gideon/signals.py")
 
 
 # =============================================================================
@@ -270,8 +270,8 @@ def check_db_has_oracle_columns(bot_name: str, db_path: str):
 check_db_has_oracle_columns("FORTRESS", "trading/fortress_v2/db.py")
 check_db_has_oracle_columns("SOLOMON", "trading/solomon_v2/db.py")
 check_db_has_oracle_columns("SAMSON", "trading/samson/db.py")
-check_db_has_oracle_columns("PEGASUS", "trading/pegasus/db.py")
-check_db_has_oracle_columns("ICARUS", "trading/icarus/db.py")
+check_db_has_oracle_columns("ANCHOR", "trading/anchor/db.py")
+check_db_has_oracle_columns("GIDEON", "trading/gideon/db.py")
 
 
 # =============================================================================

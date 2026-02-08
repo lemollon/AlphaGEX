@@ -62,8 +62,8 @@ test.describe('Oracle Knowledge Base - Page Load', () => {
     // Check for bot names
     await expect(page.locator('text=FORTRESS')).toBeVisible({ timeout: 5000 })
     await expect(page.locator('text=SOLOMON')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('text=ATLAS')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('text=PHOENIX')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=CORNERSTONE')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=LAZARUS')).toBeVisible({ timeout: 5000 })
   })
 })
 

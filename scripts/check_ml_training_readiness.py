@@ -54,7 +54,7 @@ ML_MODELS = {
         'min_records': 50,
         'data_tables': ['oracle_training_outcomes', 'backtest_results', 'autonomous_closed_trades'],
         'priority': 'HIGH',
-        'used_by': ['FORTRESS', 'SOLOMON', 'PHOENIX'],
+        'used_by': ['FORTRESS', 'SOLOMON', 'LAZARUS'],
     },
     'gex_directional': {
         'name': 'GEX Directional ML',

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Set wall_filter_pct to 1.0% for SOLOMON and ICARUS.
+Set wall_filter_pct to 1.0% for SOLOMON and GIDEON.
 
 This is the Apache backtest optimal value that achieved 58% win rate.
 
@@ -23,7 +23,7 @@ if not DATABASE_URL:
     sys.exit(1)
 
 print("=" * 60)
-print("SETTING wall_filter_pct = 1.0% FOR SOLOMON AND ICARUS")
+print("SETTING wall_filter_pct = 1.0% FOR SOLOMON AND GIDEON")
 print("=" * 60)
 
 try:
@@ -75,7 +75,7 @@ try:
         """)
         print("    ✅ SOLOMON_wall_filter_pct = 1.0")
 
-        # Set ICARUS
+        # Set GIDEON
         print("\n[6] Setting ICARUS_wall_filter_pct = 1.0...")
         c.execute("""
             INSERT INTO autonomous_config (key, value)
@@ -122,14 +122,14 @@ try:
         """)
         print("    ✅ SOLOMON = 1.0%")
 
-        # Set ICARUS
-        print("\n[6] Setting ICARUS wall_filter_pct = 1.0%...")
+        # Set GIDEON
+        print("\n[6] Setting GIDEON wall_filter_pct = 1.0%...")
         c.execute(f"""
             INSERT INTO autonomous_config ({bot_col}, {key_col}, {val_col})
-            VALUES ('ICARUS', 'wall_filter_pct', '1.0')
+            VALUES ('GIDEON', 'wall_filter_pct', '1.0')
             ON CONFLICT ({bot_col}, {key_col}) DO UPDATE SET {val_col} = '1.0'
         """)
-        print("    ✅ ICARUS = 1.0%")
+        print("    ✅ GIDEON = 1.0%")
 
         conn.commit()
 
@@ -152,7 +152,7 @@ try:
     print("SUCCESS! Bots will use 1.0% threshold on next scan.")
     print("=" * 60)
     print("\nNOTE: You may need to update the bot code to read these keys.")
-    print("Check trading/solomon_v2/db.py and trading/icarus/db.py")
+    print("Check trading/solomon_v2/db.py and trading/gideon/db.py")
 
 except Exception as e:
     print(f"\nERROR: {e}")

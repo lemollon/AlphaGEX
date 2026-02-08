@@ -12,8 +12,8 @@ export default function NexusDemoPage() {
     oracle: 'active',
     fortress: 'idle',
     solomon: 'trading',
-    phoenix: 'idle',
-    atlas: 'idle',
+    lazarus: 'idle',
+    cornerstone: 'idle',
   })
 
   const handleNodeClick = (nodeId: string) => {
@@ -144,7 +144,7 @@ export default function NexusDemoPage() {
               { title: 'Central GEX Core', desc: 'Pulsing orb with rotating rings' },
               { title: 'Neural Fibers', desc: 'Organic connections with bezier curves' },
               { title: 'Particle Pulses', desc: 'Data signals flowing between nodes' },
-              { title: 'Bot Nodes', desc: 'ORACLE, FORTRESS, SOLOMON, PHOENIX, ATLAS' },
+              { title: 'Bot Nodes', desc: 'ORACLE, FORTRESS, SOLOMON, LAZARUS, CORNERSTONE' },
               { title: 'Status Indicators', desc: 'Active, Idle, Trading, Error states' },
               { title: 'Interactive Hover', desc: 'Highlight and tooltip on hover' },
               { title: 'Full Responsive', desc: 'Scales to any viewport size' },

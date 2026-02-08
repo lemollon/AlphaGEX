@@ -44,8 +44,8 @@ interface PositionsResponse {
 const LIVE_BOTS: { name: BotName; endpoint: string; link: string }[] = [
   { name: 'FORTRESS', endpoint: '/api/fortress/positions', link: '/fortress' },
   { name: 'SOLOMON', endpoint: '/api/solomon/positions', link: '/solomon' },
-  { name: 'ICARUS', endpoint: '/api/icarus/positions', link: '/icarus' },
-  { name: 'PEGASUS', endpoint: '/api/pegasus/positions', link: '/pegasus' },
+  { name: 'GIDEON', endpoint: '/api/gideon/positions', link: '/gideon' },
+  { name: 'ANCHOR', endpoint: '/api/anchor/positions', link: '/anchor' },
   { name: 'SAMSON', endpoint: '/api/samson/positions', link: '/samson' },
 ]
 
@@ -69,11 +69,11 @@ export default function AllOpenPositionsTable() {
   // Fetch positions for all bots
   const { data: aresData, isLoading: aresLoading } = useSWR('/api/fortress/positions', fetcher, { refreshInterval: 30000 })
   const { data: solomonData, isLoading: solomonLoading } = useSWR('/api/solomon/positions', fetcher, { refreshInterval: 30000 })
-  const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/icarus/positions', fetcher, { refreshInterval: 30000 })
-  const { data: pegasusData, isLoading: pegasusLoading } = useSWR('/api/pegasus/positions', fetcher, { refreshInterval: 30000 })
+  const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/gideon/positions', fetcher, { refreshInterval: 30000 })
+  const { data: anchorData, isLoading: anchorLoading } = useSWR('/api/anchor/positions', fetcher, { refreshInterval: 30000 })
   const { data: titanData, isLoading: titanLoading } = useSWR('/api/samson/positions', fetcher, { refreshInterval: 30000 })
 
-  const isLoading = aresLoading || solomonLoading || icarusLoading || pegasusLoading || titanLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading
 
   // Extract open positions from response (handle different response structures)
   const extractOpenPositions = (response: PositionsResponse | undefined, botName: BotName): Position[] => {
@@ -107,8 +107,8 @@ export default function AllOpenPositionsTable() {
     const positions = [
       ...extractOpenPositions(aresData, 'FORTRESS'),
       ...extractOpenPositions(solomonData, 'SOLOMON'),
-      ...extractOpenPositions(icarusData, 'ICARUS'),
-      ...extractOpenPositions(pegasusData, 'PEGASUS'),
+      ...extractOpenPositions(icarusData, 'GIDEON'),
+      ...extractOpenPositions(anchorData, 'ANCHOR'),
       ...extractOpenPositions(titanData, 'SAMSON'),
     ]
 
@@ -135,7 +135,7 @@ export default function AllOpenPositionsTable() {
 
       return sortDirection === 'asc' ? comparison : -comparison
     })
-  }, [aresData, solomonData, icarusData, pegasusData, titanData, sortField, sortDirection])
+  }, [aresData, solomonData, icarusData, anchorData, titanData, sortField, sortDirection])
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {

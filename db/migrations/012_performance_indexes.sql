@@ -50,20 +50,20 @@ CREATE INDEX IF NOT EXISTS idx_solomon_positions_expiration
     ON solomon_positions(expiration);
 
 -- =============================================================================
--- PEGASUS_POSITIONS (SPX Iron Condor Bot) - Currently has NO indexes
+-- ANCHOR_POSITIONS (SPX Iron Condor Bot) - Currently has NO indexes
 -- =============================================================================
 
 -- Status filtering (10+ queries)
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_status
-    ON pegasus_positions(status);
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_status
+    ON anchor_positions(status);
 
 -- Recent positions lookup
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_open_time
-    ON pegasus_positions(open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_open_time
+    ON anchor_positions(open_time DESC);
 
 -- Combined status + time
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_status_open_time
-    ON pegasus_positions(status, open_time DESC);
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_status_open_time
+    ON anchor_positions(status, open_time DESC);
 
 -- =============================================================================
 -- GEX_HISTORY (GEX Data Snapshots) - Currently has NO indexes

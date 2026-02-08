@@ -4,7 +4,7 @@ SAMSON - Data Models
 
 Data models for SAMSON aggressive SPX Iron Condor trading bot.
 
-SAMSON is an aggressive version of PEGASUS:
+SAMSON is an aggressive version of ANCHOR:
 - Trades DAILY (not once per day)
 - Larger spread widths ($12)
 - Relaxed VIX filter (40 vs 32)
@@ -41,7 +41,7 @@ class StrategyPreset(Enum):
     BASELINE = "baseline"        # Default aggressive settings
     ULTRA_AGGRESSIVE = "ultra_aggressive"  # Maximum trades
     MODERATE = "moderate"        # Slightly relaxed from baseline
-    CONSERVATIVE = "conservative"  # More like PEGASUS
+    CONSERVATIVE = "conservative"  # More like ANCHOR
 
 
 STRATEGY_PRESETS = {
@@ -73,7 +73,7 @@ class IronCondorPosition:
     """
     SPX Iron Condor position.
 
-    Same structure as PEGASUS but with SAMSON context.
+    Same structure as ANCHOR but with SAMSON context.
     """
     # Identity
     position_id: str
@@ -92,7 +92,7 @@ class IronCondorPosition:
 
     # Position sizing
     contracts: int = 1
-    spread_width: float = 12.0  # SAMSON uses $12 spreads (vs $10 for PEGASUS)
+    spread_width: float = 12.0  # SAMSON uses $12 spreads (vs $10 for ANCHOR)
 
     # Calculated values
     total_credit: float = 0
@@ -184,7 +184,7 @@ class SamsonConfig:
     """
     SAMSON configuration for aggressive SPX trading.
 
-    SAMSON is more aggressive than PEGASUS:
+    SAMSON is more aggressive than ANCHOR:
     - Higher risk per trade (15% vs 10%)
     - Lower win probability threshold (40% vs 50%)
     - Higher VIX tolerance (40 vs 32)
@@ -198,28 +198,28 @@ class SamsonConfig:
     ticker: str = "SPX"
 
     # VIX filtering - RELAXED
-    vix_skip: Optional[float] = 40.0  # Higher tolerance (PEGASUS: 32)
+    vix_skip: Optional[float] = 40.0  # Higher tolerance (ANCHOR: 32)
 
     # Strike selection - CLOSER to spot
-    sd_multiplier: float = 0.8  # Closer strikes (PEGASUS: 1.0)
-    spread_width: float = 12.0  # Wider spreads (PEGASUS: 10)
+    sd_multiplier: float = 0.8  # Closer strikes (ANCHOR: 1.0)
+    spread_width: float = 12.0  # Wider spreads (ANCHOR: 10)
     strike_increment: float = 5.0  # SPX trades in $5 increments
 
     # Risk limits - MORE AGGRESSIVE
     capital: float = 200000.0  # Same paper capital
-    risk_per_trade_pct: float = 15.0  # Higher risk (PEGASUS: 10%)
+    risk_per_trade_pct: float = 15.0  # Higher risk (ANCHOR: 10%)
     max_contracts: int = 100
-    min_credit: float = 0.50  # Lower minimum credit (PEGASUS: 0.75)
-    max_open_positions: int = 10  # More positions (PEGASUS: 5)
-    min_ic_suitability: float = 0.2  # Lower bar (PEGASUS: 0.3)
+    min_credit: float = 0.50  # Lower minimum credit (ANCHOR: 0.75)
+    max_open_positions: int = 10  # More positions (ANCHOR: 5)
+    min_ic_suitability: float = 0.2  # Lower bar (ANCHOR: 0.3)
 
     # Oracle thresholds - RELAXED
-    min_win_probability: float = 0.40  # Lower threshold (PEGASUS: 50%)
+    min_win_probability: float = 0.40  # Lower threshold (ANCHOR: 50%)
 
     # Exit rules - FASTER EXITS
     use_stop_loss: bool = True  # Enable stop loss for aggressive trading
     stop_loss_multiple: float = 2.0
-    profit_target_pct: float = 30.0  # Earlier exit (PEGASUS: 50%)
+    profit_target_pct: float = 30.0  # Earlier exit (ANCHOR: 50%)
 
     # Trading window (Central Time)
     # Market closes at 3:00 PM CT (4:00 PM ET)
@@ -360,8 +360,8 @@ class IronCondorSignal:
             )
 
         return (
-            self.confidence >= 0.4 and  # Lower threshold for SAMSON (PEGASUS: 0.5)
-            self.total_credit >= 0.50 and  # Lower min credit (PEGASUS: 0.75)
+            self.confidence >= 0.4 and  # Lower threshold for SAMSON (ANCHOR: 0.5)
+            self.total_credit >= 0.50 and  # Lower min credit (ANCHOR: 0.75)
             self.put_short > self.put_long > 0 and
             self.call_short < self.call_long and
             self.call_short > self.put_short

@@ -46,7 +46,7 @@ import {
 // =============================================================================
 
 interface UnifiedBotMetricsProps {
-  botName: 'FORTRESS' | 'SOLOMON' | 'ICARUS' | 'SAMSON' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'SAMSON' | 'ANCHOR'
   showCapitalSource?: boolean
   showReconciliation?: boolean
   compact?: boolean
@@ -73,9 +73,9 @@ function formatPercent(value: number, decimals: number = 1): string {
 const BOT_COLORS: Record<string, { primary: string; light: string; dark: string }> = {
   FORTRESS: { primary: 'amber', light: 'amber-400', dark: 'amber-600' },
   SOLOMON: { primary: 'cyan', light: 'cyan-400', dark: 'cyan-600' },
-  ICARUS: { primary: 'orange', light: 'orange-400', dark: 'orange-600' },
+  GIDEON: { primary: 'orange', light: 'orange-400', dark: 'orange-600' },
   SAMSON: { primary: 'violet', light: 'violet-400', dark: 'violet-600' },
-  PEGASUS: { primary: 'blue', light: 'blue-400', dark: 'blue-600' },
+  ANCHOR: { primary: 'blue', light: 'blue-400', dark: 'blue-600' },
 }
 
 // =============================================================================

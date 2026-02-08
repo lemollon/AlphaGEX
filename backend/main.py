@@ -56,8 +56,8 @@ from backend.api.routes import (
     zero_dte_backtest_routes,  # 0DTE Iron Condor hybrid scaling backtest
     fortress_routes,  # FORTRESS Aggressive Iron Condor bot endpoints
     solomon_routes,  # SOLOMON Directional Spread bot endpoints
-    icarus_routes,  # ICARUS Aggressive Directional Spread bot endpoints
-    pegasus_routes,  # PEGASUS SPX Iron Condor bot endpoints
+    gideon_routes,  # GIDEON Aggressive Directional Spread bot endpoints
+    anchor_routes,  # ANCHOR SPX Iron Condor bot endpoints
     samson_routes,  # SAMSON Aggressive SPX Iron Condor bot endpoints
     logs_routes,  # Comprehensive logs API for ALL 22 logging tables
     scan_activity_routes,  # Scan Activity - EVERY scan with full reasoning for FORTRESS/SOLOMON
@@ -76,9 +76,9 @@ from backend.api.routes import (
     drift_routes,  # Drift Detection - Backtest vs Live performance comparison
     unified_metrics_routes,  # Unified Bot Metrics - Single source of truth for all bot stats
     bot_reports_routes,  # Bot Daily Reports - End-of-day analysis with Claude AI
-    prometheus_box_routes,  # PROMETHEUS Box Spread - Synthetic Borrowing for IC Volume Scaling
-    tastytrade_routes,  # Tastytrade API - HERACLES futures bot integration
-    heracles_routes,  # HERACLES - MES Futures Scalping Bot using GEX signals
+    jubilee_routes,  # JUBILEE Box Spread - Synthetic Borrowing for IC Volume Scaling
+    tastytrade_routes,  # Tastytrade API - VALOR futures bot integration
+    valor_routes,  # VALOR - MES Futures Scalping Bot using GEX signals
     agape_routes,  # AGAPE - ETH Micro Futures (/MET) bot using crypto microstructure signals
 )
 
@@ -308,8 +308,8 @@ app.include_router(volatility_surface_routes.router)
 app.include_router(zero_dte_backtest_routes.router)
 app.include_router(fortress_routes.router)
 app.include_router(solomon_routes.router)
-app.include_router(icarus_routes.router)
-app.include_router(pegasus_routes.router)
+app.include_router(gideon_routes.router)
+app.include_router(anchor_routes.router)
 app.include_router(samson_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(scan_activity_routes.router)
@@ -328,11 +328,11 @@ app.include_router(validation_routes.router)
 app.include_router(drift_routes.router)
 app.include_router(unified_metrics_routes.router)
 app.include_router(bot_reports_routes.router)
-app.include_router(prometheus_box_routes.router)
+app.include_router(jubilee_routes.router)
 app.include_router(tastytrade_routes.router)
-app.include_router(heracles_routes.router)
+app.include_router(valor_routes.router)
 app.include_router(agape_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, prometheus, argus, docs, proverbs, events, oracle, math-optimizer, validation, drift, bot-reports, tastytrade, heracles, agape")
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, argus, docs, proverbs, events, oracle, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded
@@ -1797,14 +1797,14 @@ async def startup_event():
             traceback.print_exc()
 
         # =====================================================================
-        # Register FORTRESS + ATLAS Scheduler (APScheduler-based trading bots)
+        # Register FORTRESS + CORNERSTONE Scheduler (APScheduler-based trading bots)
         # FORTRESS: Aggressive Iron Condor - 8:30 AM - 3:30 PM CT, every 5 min ($200K)
-        # ATLAS: SPX Wheel Strategy - 9:05 AM CT daily ($400K)
+        # CORNERSTONE: SPX Wheel Strategy - 9:05 AM CT daily ($400K)
         # =====================================================================
         try:
             def run_ares_atlas_scheduler():
                 """
-                Run FORTRESS and ATLAS trading bots via APScheduler.
+                Run FORTRESS and CORNERSTONE trading bots via APScheduler.
                 This function runs continuously and manages both bots.
 
                 CRITICAL: Includes health monitoring to detect zombie scheduler states.
@@ -1815,14 +1815,14 @@ async def startup_event():
                 import time
                 from scheduler.trader_scheduler import get_scheduler
 
-                print("🚀 Starting FORTRESS + ATLAS Scheduler...")
+                print("🚀 Starting FORTRESS + CORNERSTONE Scheduler...")
                 scheduler = get_scheduler()
 
                 if not scheduler.is_running:
                     scheduler.start()
-                    print("✅ FORTRESS + ATLAS Scheduler started successfully")
+                    print("✅ FORTRESS + CORNERSTONE Scheduler started successfully")
                 else:
-                    print("ℹ️  FORTRESS + ATLAS Scheduler already running")
+                    print("ℹ️  FORTRESS + CORNERSTONE Scheduler already running")
 
                 # Health monitoring variables
                 consecutive_unhealthy = 0
@@ -1844,7 +1844,7 @@ async def startup_event():
                         if is_healthy:
                             consecutive_unhealthy = 0  # Reset counter on healthy check
                             if status.get('market_open'):
-                                print(f"📊 FORTRESS/ATLAS Status: Market OPEN | FORTRESS={scheduler.ares_execution_count}, SOLOMON={getattr(scheduler, 'solomon_execution_count', 0)}, PEGASUS={getattr(scheduler, 'pegasus_execution_count', 0)}")
+                                print(f"📊 FORTRESS/CORNERSTONE Status: Market OPEN | FORTRESS={scheduler.ares_execution_count}, SOLOMON={getattr(scheduler, 'solomon_execution_count', 0)}, ANCHOR={getattr(scheduler, 'anchor_execution_count', 0)}")
                         else:
                             consecutive_unhealthy += 1
                             print(f"⚠️ SCHEDULER UNHEALTHY ({consecutive_unhealthy}/{max_unhealthy_before_restart})")
@@ -1878,7 +1878,7 @@ async def startup_event():
             )
             print("✅ Registered: ARES_ATLAS_Scheduler")
             print("   • FORTRESS (Aggressive Iron Condor): 8:30 AM - 3:30 PM CT, every 5 min, $200K capital")
-            print("   • ATLAS (SPX Wheel): 9:05 AM CT daily, $400K capital")
+            print("   • CORNERSTONE (SPX Wheel): 9:05 AM CT daily, $400K capital")
         except Exception as e:
             print(f"⚠️  Could not register ARES_ATLAS_Scheduler: {e}")
             import traceback
@@ -1920,22 +1920,22 @@ async def startup_event():
     print("🎯 ALPHAGEX AUTONOMOUS SYSTEM STATUS")
     print("=" * 80)
     print("✅ Thread Watchdog: ACTIVE (auto-restarts crashed threads)")
-    print("✅ PHOENIX Trader: MONITORED (0DTE options, every 5 min)")
+    print("✅ LAZARUS Trader: MONITORED (0DTE options, every 5 min)")
     print("✅ FORTRESS Trader: MONITORED (Iron Condor, 8:30 AM - 3:30 PM CT, $200K)")
-    print("✅ ATLAS Trader: MONITORED (SPX Wheel, 9:05 AM CT daily, $400K)")
+    print("✅ CORNERSTONE Trader: MONITORED (SPX Wheel, 9:05 AM CT daily, $400K)")
     print("✅ Data Collector: MONITORED (GEX snapshots every 5 min)")
     print("✅ Notification Monitor: RUNNING (checks every 60 sec)")
     print("✅ Database: INITIALIZED")
     print("")
     print("📊 TRADING BOTS (ALL AUTOMATED):")
-    print("   • PHOENIX: 0DTE SPY/SPX options - every 5 min during market hours")
+    print("   • LAZARUS: 0DTE SPY/SPX options - every 5 min during market hours")
     print("   • FORTRESS: Aggressive Iron Condor - 8:30 AM - 3:30 PM CT (targets 10% monthly)")
-    print("   • ATLAS: SPX Cash-Secured Put Wheel - 9:05 AM CT daily")
+    print("   • CORNERSTONE: SPX Cash-Secured Put Wheel - 9:05 AM CT daily")
     print("   • Oracle AI: Provides recommendations to FORTRESS for trade decisions")
     print("")
     print("💰 CAPITAL ALLOCATION:")
-    print("   • PHOENIX: $300,000 (30%)")
-    print("   • ATLAS:   $400,000 (40%)")
+    print("   • LAZARUS: $300,000 (30%)")
+    print("   • CORNERSTONE:   $400,000 (40%)")
     print("   • FORTRESS:    $200,000 (20%)")
     print("   • Reserve: $100,000 (10%)")
     print("")

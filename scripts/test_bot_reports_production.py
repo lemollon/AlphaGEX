@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
-VALID_BOTS = ['fortress', 'solomon', 'samson', 'pegasus', 'icarus']
+VALID_BOTS = ['fortress', 'solomon', 'samson', 'anchor', 'gideon']
 
 def print_header(text):
     print(f"\n{'='*60}")
@@ -132,8 +132,8 @@ def test_position_tables_exist():
         'fortress': 'fortress_positions',
         'solomon': 'solomon_positions',
         'samson': 'samson_positions',
-        'pegasus': 'pegasus_positions',
-        'icarus': 'icarus_positions'
+        'anchor': 'anchor_positions',
+        'gideon': 'gideon_positions'
     }
 
     try:

@@ -972,7 +972,7 @@ async def get_live_dashboard():
             },
             "thompson": {
                 "bot_stats": {bot: {"expected_win_rate": 0.5, "uncertainty": 0.5, "allocation_pct": 0.2, "integrated": False}
-                             for bot in ['FORTRESS', 'SOLOMON', 'ICARUS', 'ATLAS', 'PHOENIX', 'PEGASUS', 'SAMSON']},
+                             for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'CORNERSTONE', 'LAZARUS', 'ANCHOR', 'SAMSON']},
                 "allocation": None,
                 "total_outcomes_recorded": 0
             },
@@ -1003,7 +1003,7 @@ async def get_live_dashboard():
 
         # Build bot-specific stats
         bot_stats = {}
-        bots = ['FORTRESS', 'SOLOMON', 'ICARUS', 'ATLAS', 'PHOENIX', 'PEGASUS', 'SAMSON']
+        bots = ['FORTRESS', 'SOLOMON', 'GIDEON', 'CORNERSTONE', 'LAZARUS', 'ANCHOR', 'SAMSON']
         win_rates = optimizer.thompson.get_expected_win_rates()
         uncertainties = optimizer.thompson.get_uncertainty()
 
@@ -1078,7 +1078,7 @@ async def get_live_dashboard():
             },
             "thompson": {
                 "bot_stats": {bot: {"expected_win_rate": 0.5, "uncertainty": 0.5, "allocation_pct": 0.2, "integrated": False}
-                             for bot in ['FORTRESS', 'SOLOMON', 'ICARUS', 'ATLAS', 'PHOENIX', 'PEGASUS', 'SAMSON']},
+                             for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'CORNERSTONE', 'LAZARUS', 'ANCHOR', 'SAMSON']},
                 "allocation": None,
                 "total_outcomes_recorded": 0
             },

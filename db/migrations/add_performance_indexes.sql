@@ -58,14 +58,14 @@ BEGIN
     END IF;
 END $$;
 
--- pegasus_positions: PEGASUS SPX Iron Condor positions
+-- anchor_positions: ANCHOR SPX Iron Condor positions
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'pegasus_positions') THEN
-        CREATE INDEX IF NOT EXISTS idx_pegasus_positions_open_time
-            ON pegasus_positions(open_time DESC);
-        CREATE INDEX IF NOT EXISTS idx_pegasus_positions_status
-            ON pegasus_positions(status);
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'anchor_positions') THEN
+        CREATE INDEX IF NOT EXISTS idx_anchor_positions_open_time
+            ON anchor_positions(open_time DESC);
+        CREATE INDEX IF NOT EXISTS idx_anchor_positions_status
+            ON anchor_positions(status);
     END IF;
 END $$;
 

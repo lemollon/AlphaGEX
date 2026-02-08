@@ -138,19 +138,19 @@ class TestBotHeartbeatEndpoints:
     """Tests for bot heartbeat endpoints"""
 
     def test_phoenix_heartbeat(self, test_client):
-        """Test PHOENIX heartbeat endpoint"""
+        """Test LAZARUS heartbeat endpoint"""
         if test_client is None:
             pytest.skip("Test client not available")
 
-        response = test_client.get("/api/trader/heartbeat/PHOENIX")
+        response = test_client.get("/api/trader/heartbeat/LAZARUS")
         assert response.status_code in [200, 404, 500]
 
     def test_atlas_heartbeat(self, test_client):
-        """Test ATLAS heartbeat endpoint"""
+        """Test CORNERSTONE heartbeat endpoint"""
         if test_client is None:
             pytest.skip("Test client not available")
 
-        response = test_client.get("/api/trader/heartbeat/ATLAS")
+        response = test_client.get("/api/trader/heartbeat/CORNERSTONE")
         assert response.status_code in [200, 404, 500]
 
     def test_ares_heartbeat(self, test_client):

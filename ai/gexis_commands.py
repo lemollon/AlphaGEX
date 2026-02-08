@@ -218,7 +218,7 @@ def get_strategy_performance(days: int = 30) -> Dict[str, Any]:
         c = conn.cursor()
 
         strategies = {}
-        for bot in ["FORTRESS", "SOLOMON", "PEGASUS", "PHOENIX"]:
+        for bot in ["FORTRESS", "SOLOMON", "ANCHOR", "LAZARUS"]:
             try:
                 c.execute("""
                     SELECT

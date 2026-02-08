@@ -3,7 +3,7 @@ SAMSON - Database Layer
 =======================
 
 Database operations for aggressive SPX Iron Condor trading.
-Uses titan_* tables separate from PEGASUS.
+Uses titan_* tables separate from ANCHOR.
 """
 
 import logging
@@ -551,7 +551,7 @@ class SamsonDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
 
-                # Ensure table exists (shared with FORTRESS/PEGASUS)
+                # Ensure table exists (shared with FORTRESS/ANCHOR)
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS orphaned_orders (
                         id SERIAL PRIMARY KEY,

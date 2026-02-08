@@ -132,9 +132,9 @@ INSERT INTO thompson_parameters (bot_name, alpha, beta, total_trades, total_wins
 VALUES
     ('FORTRESS', 1.0, 1.0, 0, 0, 0.0),
     ('SOLOMON', 1.0, 1.0, 0, 0, 0.0),
-    ('PHOENIX', 1.0, 1.0, 0, 0, 0.0),
-    ('ATLAS', 1.0, 1.0, 0, 0, 0.0),
-    ('ICARUS', 1.0, 1.0, 0, 0, 0.0),
-    ('PEGASUS', 1.0, 1.0, 0, 0, 0.0),
+    ('LAZARUS', 1.0, 1.0, 0, 0, 0.0),
+    ('CORNERSTONE', 1.0, 1.0, 0, 0, 0.0),
+    ('GIDEON', 1.0, 1.0, 0, 0, 0.0),
+    ('ANCHOR', 1.0, 1.0, 0, 0, 0.0),
     ('TITAN', 1.0, 1.0, 0, 0, 0.0)
 ON CONFLICT (bot_name) DO NOTHING;

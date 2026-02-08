@@ -186,7 +186,7 @@ async def get_equity_curve(
 ):
     """Get historical equity curve built from all closed trades.
 
-    Returns EXACT same format as HERACLES /paper-equity-curve so that
+    Returns EXACT same format as VALOR /paper-equity-curve so that
     MultiBotEquityCurve component can render it without any adaptation.
 
     Format: { equity_curve: [...], points: N, days: N, timestamp: "..." }

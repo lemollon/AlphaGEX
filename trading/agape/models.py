@@ -39,7 +39,7 @@ class SignalAction(Enum):
 class AgapeConfig:
     """Configuration for AGAPE bot - loaded from autonomous_config table.
 
-    AGGRESSIVE MODE (matching HERACLES/Valor aggressiveness):
+    AGGRESSIVE MODE (matching VALOR/Valor aggressiveness):
     - High position limits for frequent trading
     - Short cooldown to avoid missing opportunities
     - Low confidence threshold to trade on any signal
@@ -73,7 +73,7 @@ class AgapeConfig:
     trailing_stop_pct: float = 0.0     # 0 = disabled (use no-loss trailing instead)
     max_hold_hours: int = 24           # Max position duration
 
-    # No-Loss Trailing Strategy (ported from HERACLES)
+    # No-Loss Trailing Strategy (ported from VALOR)
     # Let winners run, only trail after profitable
     use_no_loss_trailing: bool = True
     no_loss_activation_pct: float = 1.0   # % profit before trailing activates
@@ -82,7 +82,7 @@ class AgapeConfig:
     max_unrealized_loss_pct: float = 3.0     # Exit if down 3% (safety net)
     no_loss_profit_target_pct: float = 0.0   # 0 = disabled, let winners run
 
-    # Stop-and-Reverse (SAR) Strategy (ported from HERACLES)
+    # Stop-and-Reverse (SAR) Strategy (ported from VALOR)
     # When a trade is clearly wrong, reverse direction to capture momentum
     use_sar: bool = True
     sar_trigger_pct: float = 1.5       # Trigger SAR when down this % from entry
@@ -106,11 +106,11 @@ class AgapeConfig:
     # Cooldown - AGGRESSIVE
     cooldown_minutes: int = 5          # Short cooldown (was 30)
 
-    # Loss streak protection (from HERACLES)
+    # Loss streak protection (from VALOR)
     max_consecutive_losses: int = 3    # Pause after 3 losses in a row
     loss_streak_pause_minutes: int = 5 # How long to pause (minutes)
 
-    # Direction Tracker settings (from HERACLES)
+    # Direction Tracker settings (from VALOR)
     direction_cooldown_scans: int = 2      # Pause direction for 2 scans after loss
     direction_win_streak_caution: int = 100 # Effectively disabled
     direction_memory_size: int = 10         # Track last 10 trades per direction

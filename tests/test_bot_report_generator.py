@@ -48,7 +48,7 @@ class TestDatabaseTableCreation:
 
     def test_valid_bots_list(self):
         """Verify VALID_BOTS contains expected bots."""
-        expected_bots = ['fortress', 'solomon', 'samson', 'pegasus', 'icarus']
+        expected_bots = ['fortress', 'solomon', 'samson', 'anchor', 'gideon']
         assert VALID_BOTS == expected_bots, f"VALID_BOTS mismatch: {VALID_BOTS}"
 
     @patch('backend.services.bot_report_generator.get_connection')

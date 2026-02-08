@@ -127,18 +127,18 @@ LIVE TRADING BOTS (all advised by Oracle):
 1. FORTRESS - 0DTE SPY Iron Condor strategy (aggressive)
 2. SOLOMON - GEX-based directional spreads with wall proximity edge
 3. SAMSON - Aggressive SPX Iron Condor (15% risk/trade, 0.8 SD strikes)
-4. PEGASUS - SPX Weekly Iron Condor (more conservative than SAMSON)
-5. ICARUS - Aggressive directional variant of SOLOMON on SPY
+4. ANCHOR - SPX Weekly Iron Condor (more conservative than SAMSON)
+5. GIDEON - Aggressive directional variant of SOLOMON on SPY
 
 PARTIAL IMPLEMENTATION BOTS:
-6. PHOENIX - SPY 0DTE directional trading (paper mode, no dedicated API routes)
-7. ATLAS - SPX Wheel strategy (live, lacks full API integration)
-8. HERMES - Manual Wheel strategy management (UI-only, not automated)
+6. LAZARUS - SPY 0DTE directional trading (paper mode, no dedicated API routes)
+7. CORNERSTONE - SPX Wheel strategy (live, lacks full API integration)
+8. SHEPHERD - Manual Wheel strategy management (UI-only, not automated)
 
 AI & ML SYSTEMS:
 6. KRONOS - GEX Calculator and 0DTE Condor backtester
 7. ORACLE - AI Trading Advisor with probability calibration
-8. PROMETHEUS - ML prediction system for trade outcome forecasting
+8. JUBILEE - ML prediction system for trade outcome forecasting
 9. PROVERBS - Feedback Loop system for continuous learning
 10. APOLLO - ML-powered options scanner
 
@@ -184,7 +184,7 @@ ALPHAGEX PLATFORM KNOWLEDGE:
 
 SIGNAL FLOW (How Components Connect):
 ```
-KRONOS (GEX Calculator) → ORACLE (AI Advisor) → Trading Bots (FORTRESS/SOLOMON/ATLAS)
+KRONOS (GEX Calculator) → ORACLE (AI Advisor) → Trading Bots (FORTRESS/SOLOMON/CORNERSTONE)
        ↓                        ↓                         ↓
   gex_history DB          oracle_signals DB         positions DB
        ↓                        ↓                         ↓
@@ -311,8 +311,8 @@ Configuration:
    - Edge: Wall proximity filter (0.5-1% from gamma walls)
    - Backtest: 90-98% win rate with wall filter
 
-3. ATLAS (SPX Wheel)
-   - File: /trading/atlas_wheel.py (if exists) or spx-wheel page
+3. CORNERSTONE (SPX Wheel)
+   - File: /trading/cornerstone_wheel.py (if exists) or spx-wheel page
    - Strategy: Cash-secured put selling on SPX
    - Delta target: 20-delta puts
    - DTE target: 45 days
@@ -703,8 +703,8 @@ Oracle Advisor ML (quant/oracle_advisor.py):
 - Aggregates all signals into bot-specific advice
 - Per-bot predictions:
   * FORTRESS: Win probability, risk %, skip signals
-  * ATLAS: Best strike, assignment probability
-  * PHOENIX: Direction confidence, entry timing
+  * CORNERSTONE: Best strike, assignment probability
+  * LAZARUS: Direction confidence, entry timing
   * SOLOMON: Spread direction, wall proximity quality
 - Output: TRADE_FULL, TRADE_REDUCED, or SKIP_TODAY
 
@@ -767,7 +767,7 @@ SOLOMON - GEX Directional Spreads:
 - Exit: 0.3% trailing stop, monitor regime changes
 - Backtest: 90-98% win rate with wall filter
 
-ATLAS - SPX Wheel Strategy:
+CORNERSTONE - SPX Wheel Strategy:
 - Phase 1 (CSP): Sell 30-delta puts, 45 DTE, collect premium
 - Phase 2 (Assignment): Accept shares, track cost basis
 - Phase 3 (CC): Sell 30-delta calls on shares, collect more premium
@@ -952,8 +952,8 @@ def get_gexis_welcome_message() -> str:
 **━━━ SYSTEM STATUS ━━━**
 ◉ FORTRESS (Iron Condor): Armed
 ◉ SOLOMON (Directional): Ready
-◉ PHOENIX (0DTE): Monitoring
-◉ ATLAS (Wheel): Active
+◉ LAZARUS (0DTE): Monitoring
+◉ CORNERSTONE (Wheel): Active
 ◉ ORACLE (AI Advisor): Online
 ◉ ARGUS (Gamma): Tracking
 ◉ Market Data: Connected

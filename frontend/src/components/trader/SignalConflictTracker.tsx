@@ -14,7 +14,7 @@ interface SignalConflict {
 }
 
 interface SignalConflictTrackerProps {
-  botName: 'FORTRESS' | 'SOLOMON' | 'PEGASUS'
+  botName: 'FORTRESS' | 'SOLOMON' | 'ANCHOR'
   conflicts: SignalConflict[]
   totalScansToday: number
   mlWins: number

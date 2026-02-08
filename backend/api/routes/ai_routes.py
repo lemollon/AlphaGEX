@@ -1213,7 +1213,7 @@ async def get_daily_briefing():
             c.execute("""
                 SELECT bot_name, is_active, last_heartbeat
                 FROM autonomous_config
-                WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'ATLAS')
+                WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'CORNERSTONE')
             """)
             for row in c.fetchall():
                 briefing_data["bots"][row[0]] = {
@@ -1290,7 +1290,7 @@ MARKET DATA:
 BOT STATUS:
 - FORTRESS: {'Active' if briefing_data['bots'].get('FORTRESS', {}).get('active') else 'Inactive'}
 - SOLOMON: {'Active' if briefing_data['bots'].get('SOLOMON', {}).get('active') else 'Inactive'}
-- ATLAS: {'Active' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Inactive'}
+- CORNERSTONE: {'Active' if briefing_data['bots'].get('CORNERSTONE', {}).get('active') else 'Inactive'}
 
 POSITIONS:
 - Open positions: {briefing_data['positions'].get('open_count', 0)}
@@ -1334,7 +1334,7 @@ SPY is trading at ${briefing_data['market'].get('spot_price', 'N/A')} with Net G
 Bot Status:
 - FORTRESS: {'Online' if briefing_data['bots'].get('FORTRESS', {}).get('active') else 'Offline'}
 - SOLOMON: {'Online' if briefing_data['bots'].get('SOLOMON', {}).get('active') else 'Offline'}
-- ATLAS: {'Online' if briefing_data['bots'].get('ATLAS', {}).get('active') else 'Offline'}
+- CORNERSTONE: {'Online' if briefing_data['bots'].get('CORNERSTONE', {}).get('active') else 'Offline'}
 
 Positions:
 You have {briefing_data['positions'].get('open_count', 0)} open positions with ${briefing_data['positions'].get('total_unrealized_pnl', 0):.2f} unrealized P&L.
@@ -1419,7 +1419,7 @@ async def execute_quick_command(request: dict):
                     SELECT bot_name, is_active, last_heartbeat,
                            COALESCE(config_data->>'mode', 'unknown') as mode
                     FROM autonomous_config
-                    WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'ATLAS')
+                    WHERE bot_name IN ('FORTRESS', 'SOLOMON', 'CORNERSTONE')
                 """)
                 for row in c.fetchall():
                     heartbeat_age = None
@@ -1985,8 +1985,8 @@ GEXIS_CLAUDE_TOOLS = [
             "properties": {
                 "bot_name": {
                     "type": "string",
-                    "description": "The bot name: fortress, solomon, or atlas",
-                    "enum": ["fortress", "solomon", "atlas"]
+                    "description": "The bot name: fortress, solomon, or cornerstone",
+                    "enum": ["fortress", "solomon", "cornerstone"]
                 }
             },
             "required": ["bot_name"]
@@ -2063,7 +2063,7 @@ GEXIS_CLAUDE_TOOLS = [
                 "bot_name": {
                     "type": "string",
                     "description": "The bot to control",
-                    "enum": ["fortress", "solomon", "atlas"]
+                    "enum": ["fortress", "solomon", "cornerstone"]
                 }
             },
             "required": ["action", "bot_name"]

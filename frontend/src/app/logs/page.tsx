@@ -99,10 +99,10 @@ export default function LogsPage() {
 
   const bots = [
     { id: 'all', name: 'All Bots', color: 'bg-gray-600' },
-    { id: 'PHOENIX', name: 'PHOENIX', color: 'bg-orange-500' },
-    { id: 'ATLAS', name: 'ATLAS', color: 'bg-blue-500' },
+    { id: 'LAZARUS', name: 'LAZARUS', color: 'bg-orange-500' },
+    { id: 'CORNERSTONE', name: 'CORNERSTONE', color: 'bg-blue-500' },
     { id: 'FORTRESS', name: 'FORTRESS', color: 'bg-red-500' },
-    { id: 'HERMES', name: 'HERMES', color: 'bg-purple-500' },
+    { id: 'SHEPHERD', name: 'SHEPHERD', color: 'bg-purple-500' },
     { id: 'ORACLE', name: 'ORACLE', color: 'bg-green-500' },
   ]
 

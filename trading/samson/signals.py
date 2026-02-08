@@ -403,8 +403,8 @@ class SignalGenerator:
                 expected_move_pct=(market_data.get('expected_move', 0) / market_data.get('spot_price', 1) * 100) if market_data.get('spot_price') else 0,
             )
 
-            # Call PEGASUS-specific advice method (SAMSON inherits SPX IC strategy)
-            prediction = self.oracle.get_pegasus_advice(
+            # Call ANCHOR-specific advice method (SAMSON inherits SPX IC strategy)
+            prediction = self.oracle.get_anchor_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=True,  # Enable Claude for transparency logging
@@ -483,7 +483,7 @@ class SignalGenerator:
         # Trust Oracle's win_probability output directly.
 
         # Clamp confidence to reasonable range - LOWER minimum for SAMSON
-        confidence = max(0.35, min(0.95, confidence))  # Lower min (PEGASUS: 0.4)
+        confidence = max(0.35, min(0.95, confidence))  # Lower min (ANCHOR: 0.4)
 
         if adjustments:
             logger.info(f"[SAMSON TOP_FACTORS ADJUSTMENTS] {original_confidence:.0%} -> {confidence:.0%}")
@@ -890,7 +890,7 @@ class SignalGenerator:
         reasoning = " | ".join(reasoning_parts)
 
         # SAMSON: Higher base confidence, easier boost
-        confidence = 0.65  # Higher base (PEGASUS: 0.7 but stricter)
+        confidence = 0.65  # Higher base (ANCHOR: 0.7 but stricter)
         if oracle:
             if oracle['advice'] == 'ENTER' and oracle['confidence'] > 0.5:  # Lower threshold
                 confidence = min(0.9, confidence + oracle['confidence'] * 0.25)

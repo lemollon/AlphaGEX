@@ -413,12 +413,12 @@ async def get_partial_close_positions():
         except Exception:
             pass
 
-        # Check PEGASUS positions
+        # Check ANCHOR positions
         try:
             c.execute("""
-                SELECT position_id, ticker, expiration, 'PEGASUS' as bot_name,
+                SELECT position_id, ticker, expiration, 'ANCHOR' as bot_name,
                        close_reason, close_time, realized_pnl
-                FROM pegasus_positions
+                FROM anchor_positions
                 WHERE status = 'partial_close'
                 ORDER BY COALESCE(close_time, open_time) DESC
             """)
@@ -443,7 +443,7 @@ async def get_partial_close_positions():
             "by_bot": {
                 "FORTRESS": len([p for p in positions if p['bot_name'] == 'FORTRESS']),
                 "SOLOMON": len([p for p in positions if p['bot_name'] == 'SOLOMON']),
-                "PEGASUS": len([p for p in positions if p['bot_name'] == 'PEGASUS'])
+                "ANCHOR": len([p for p in positions if p['bot_name'] == 'ANCHOR'])
             }
         }
 

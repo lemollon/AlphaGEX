@@ -352,8 +352,8 @@ def test_scheduler():
 
     print(f"   ARES_AVAILABLE: {ARES_AVAILABLE}")
     print(f"   FORTRESS Capital: ${CAPITAL_ALLOCATION.get('FORTRESS', 0):,}")
-    print(f"   PHOENIX Capital: ${CAPITAL_ALLOCATION.get('PHOENIX', 0):,}")
-    print(f"   ATLAS Capital: ${CAPITAL_ALLOCATION.get('ATLAS', 0):,}")
+    print(f"   LAZARUS Capital: ${CAPITAL_ALLOCATION.get('LAZARUS', 0):,}")
+    print(f"   CORNERSTONE Capital: ${CAPITAL_ALLOCATION.get('CORNERSTONE', 0):,}")
     print(f"   Total: ${CAPITAL_ALLOCATION.get('TOTAL', 0):,}")
 
     return ARES_AVAILABLE and CAPITAL_ALLOCATION.get('FORTRESS') == 200_000

@@ -26,8 +26,8 @@ BOT_POSITION_TABLES = [
     'fortress_positions',
     'solomon_positions',
     'samson_positions',
-    'pegasus_positions',
-    'icarus_positions',
+    'anchor_positions',
+    'gideon_positions',
 ]
 
 

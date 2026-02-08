@@ -715,8 +715,8 @@ async def run_close_time_migration():
             'fortress_positions',
             'solomon_positions',
             'samson_positions',
-            'pegasus_positions',
-            'icarus_positions',
+            'anchor_positions',
+            'gideon_positions',
         ]
 
         conn = get_connection()

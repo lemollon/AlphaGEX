@@ -2,7 +2,7 @@
 AGAPE Signal Generator - Generates directional /MET trade signals.
 
 AGGRESSIVE MODE: Trades on any actionable signal with low confidence thresholds.
-Includes Direction Tracker for nimble reversal detection (ported from HERACLES).
+Includes Direction Tracker for nimble reversal detection (ported from VALOR).
 
 Uses crypto market microstructure (funding, OI, liquidations, crypto GEX)
 as the equivalent of GEX-based signal generation used by FORTRESS/SOLOMON.
@@ -58,13 +58,13 @@ except ImportError as e:
 
 # ============================================================================
 # DIRECTION TRACKER - Makes bot nimble at detecting direction changes
-# Ported from HERACLES for aggressive trading
+# Ported from VALOR for aggressive trading
 # ============================================================================
 
 class AgapeDirectionTracker:
     """
     Tracks recent trade results by direction to adapt to market changes.
-    Ported from HERACLES DirectionTracker.
+    Ported from VALOR DirectionTracker.
 
     Features:
     1. Loss Cooldown: After a loss, pause that direction for N scans

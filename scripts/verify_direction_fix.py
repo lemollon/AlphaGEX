@@ -3,7 +3,7 @@
 Verify Direction Fix - Complete End-to-End Test
 
 This script verifies the ENTIRE execution chain from database config
-to direction logic for the SOLOMON/ICARUS direction fix.
+to direction logic for the SOLOMON/GIDEON direction fix.
 
 Run on Render:
     python scripts/verify_direction_fix.py
@@ -74,7 +74,7 @@ try:
               db_solomon_value == '1.0',
               f"Got: {db_solomon_value}, Expected: 1.0")
 
-        # Check ICARUS config
+        # Check GIDEON config
         c.execute("SELECT value FROM autonomous_config WHERE key = 'ICARUS_wall_filter_pct'")
         result = c.fetchone()
         db_icarus_value = result[0] if result else None
@@ -120,28 +120,28 @@ except Exception as e:
     print(f"  ERROR: SOLOMON config test failed: {e}")
 
 try:
-    from trading.icarus.db import ICARUSDatabase
-    from trading.icarus.models import ICARUSConfig
+    from trading.gideon.db import GideonDatabase
+    from trading.gideon.models import GideonConfig
 
     # Test default config
-    default_config = ICARUSConfig()
-    check("ICARUS default wall_filter_pct is 1.0",
+    default_config = GideonConfig()
+    check("GIDEON default wall_filter_pct is 1.0",
           default_config.wall_filter_pct == 1.0,
           f"Got: {default_config.wall_filter_pct}, Expected: 1.0")
 
     # Test loading from database (if available)
     if DATABASE_URL:
         try:
-            db = ICARUSDatabase()
+            db = GideonDatabase()
             loaded_config = db.load_config()
-            check("ICARUS loaded wall_filter_pct is 1.0",
+            check("GIDEON loaded wall_filter_pct is 1.0",
                   loaded_config.wall_filter_pct == 1.0,
                   f"Got: {loaded_config.wall_filter_pct}, Expected: 1.0")
         except Exception as e:
-            print(f"  WARNING: Could not load ICARUS config from DB: {e}")
+            print(f"  WARNING: Could not load GIDEON config from DB: {e}")
 
 except Exception as e:
-    print(f"  ERROR: ICARUS config test failed: {e}")
+    print(f"  ERROR: GIDEON config test failed: {e}")
 
 # ============================================================================
 # TEST 3: DIRECTION LOGIC IN PRICE_TREND_TRACKER

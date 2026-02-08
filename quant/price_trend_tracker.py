@@ -103,11 +103,11 @@ class WallPositionAnalysis:
 @dataclass
 class StrategySuitability:
     """Strategy suitability scores based on market conditions"""
-    # Iron Condor suitability (FORTRESS, PEGASUS)
+    # Iron Condor suitability (FORTRESS, ANCHOR)
     ic_suitability: float  # 0-1
     ic_reasoning: List[str] = field(default_factory=list)
 
-    # Directional spread suitability (SOLOMON, ICARUS)
+    # Directional spread suitability (SOLOMON, GIDEON)
     bullish_suitability: float = 0.0  # 0-1
     bearish_suitability: float = 0.0  # 0-1
     directional_reasoning: List[str] = field(default_factory=list)

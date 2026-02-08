@@ -21,8 +21,8 @@ BOTS = {
     'fortress': {'table': 'fortress_positions', 'snapshots': 'fortress_equity_snapshots', 'default_capital': 100000, 'type': 'ic'},
     'solomon': {'table': 'solomon_positions', 'snapshots': 'solomon_equity_snapshots', 'default_capital': 100000, 'type': 'spread'},
     'samson': {'table': 'samson_positions', 'snapshots': 'samson_equity_snapshots', 'default_capital': 200000, 'type': 'ic'},
-    'pegasus': {'table': 'pegasus_positions', 'snapshots': 'pegasus_equity_snapshots', 'default_capital': 200000, 'type': 'ic'},
-    'icarus': {'table': 'icarus_positions', 'snapshots': 'icarus_equity_snapshots', 'default_capital': 100000, 'type': 'spread'},
+    'anchor': {'table': 'anchor_positions', 'snapshots': 'anchor_equity_snapshots', 'default_capital': 200000, 'type': 'ic'},
+    'gideon': {'table': 'gideon_positions', 'snapshots': 'gideon_equity_snapshots', 'default_capital': 100000, 'type': 'spread'},
 }
 
 def run_diagnostics():
@@ -339,7 +339,7 @@ def run_diagnostics():
    ('ares_starting_capital', '100000'),
    ('solomon_starting_capital', '100000'),
    ('titan_starting_capital', '200000'),
-   ('pegasus_starting_capital', '200000'),
+   ('anchor_starting_capital', '200000'),
    ('icarus_starting_capital', '100000')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 """)

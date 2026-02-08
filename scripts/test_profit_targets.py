@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HERACLES Profit Target Backtest
+VALOR Profit Target Backtest
 ================================
 
 Simulates different profit target levels against historical trades
@@ -26,7 +26,7 @@ def backtest_profit_targets():
     """Backtest different profit target levels against historical trades."""
 
     print("=" * 80)
-    print("HERACLES PROFIT TARGET BACKTEST")
+    print("VALOR PROFIT TARGET BACKTEST")
     print("=" * 80)
 
     conn = get_connection()
@@ -44,7 +44,7 @@ def backtest_profit_targets():
             high_price_since_entry,
             low_price_since_entry,
             close_reason
-        FROM heracles_closed_trades
+        FROM valor_closed_trades
         WHERE high_price_since_entry > 0 AND low_price_since_entry > 0
         ORDER BY close_time DESC
     """)
@@ -56,11 +56,11 @@ def backtest_profit_targets():
         print("High/low tracking may have been added recently.")
 
         # Check how many trades exist without high/low data
-        cursor.execute("SELECT COUNT(*) FROM heracles_closed_trades")
+        cursor.execute("SELECT COUNT(*) FROM valor_closed_trades")
         total = cursor.fetchone()[0]
 
         cursor.execute("""
-            SELECT COUNT(*) FROM heracles_closed_trades
+            SELECT COUNT(*) FROM valor_closed_trades
             WHERE high_price_since_entry > 0 AND low_price_since_entry > 0
         """)
         with_data = cursor.fetchone()[0]

@@ -10,7 +10,7 @@ Usage:
 Tests:
 1. Database persistence (model survives restarts)
 2. Auto-training cascade (live → backtests → KRONOS)
-3. Bot advice generation (FORTRESS, ATLAS, PHOENIX, SOLOMON)
+3. Bot advice generation (FORTRESS, CORNERSTONE, LAZARUS, SOLOMON)
 4. Claude AI integration
 5. API endpoints
 6. Scheduler integration
@@ -224,7 +224,7 @@ def main():
         market_trend="NEUTRAL"
     )
 
-    bots = ['FORTRESS', 'ATLAS', 'PHOENIX', 'SOLOMON', 'PEGASUS']
+    bots = ['FORTRESS', 'CORNERSTONE', 'LAZARUS', 'SOLOMON', 'ANCHOR']
 
     for bot_name in bots:
         try:

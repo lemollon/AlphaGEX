@@ -467,6 +467,6 @@ REASON: [one concise sentence explaining why]"""
                         win=(position_data['realized_pnl'] > 0),
                         pnl=position_data['realized_pnl']
                     )
-                    logger.debug(f"PHOENIX: Thompson outcome recorded: win={position_data['realized_pnl'] > 0}")
+                    logger.debug(f"LAZARUS: Thompson outcome recorded: win={position_data['realized_pnl'] > 0}")
                 except Exception as e:
                     logger.debug(f"Thompson outcome recording skipped: {e}")

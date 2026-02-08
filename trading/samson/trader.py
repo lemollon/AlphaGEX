@@ -122,7 +122,7 @@ class SamsonTrader(MathOptimizerMixin):
         trader = SamsonTrader()
         result = trader.run_cycle()
 
-    Key differences from PEGASUS:
+    Key differences from ANCHOR:
     - Multiple trades per day (with cooldown)
     - Higher risk per trade (15% vs 10%)
     - Lower win probability threshold (40% vs 50%)
@@ -770,7 +770,7 @@ class SamsonTrader(MathOptimizerMixin):
         if current is None:
             return False, ""
 
-        # SAMSON: Faster profit target (30% vs PEGASUS 50%)
+        # SAMSON: Faster profit target (30% vs ANCHOR 50%)
         target = pos.total_credit * (1 - self.config.profit_target_pct / 100)
         if current <= target:
             return True, f"PROFIT_{self.config.profit_target_pct:.0f}%"

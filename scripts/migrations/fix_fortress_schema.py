@@ -3,7 +3,7 @@
 Quick fix for ALL bot positions table schemas.
 Run in Render shell: python scripts/migrations/fix_ares_schema.py
 
-This adds all missing columns that prevent FORTRESS, PEGASUS, and SOLOMON from saving positions.
+This adds all missing columns that prevent FORTRESS, ANCHOR, and SOLOMON from saving positions.
 """
 
 import os
@@ -90,9 +90,9 @@ def fix_ares_schema(cursor):
     return added
 
 
-def fix_pegasus_schema(cursor):
-    """Add all missing columns to pegasus_positions table"""
-    print("\n  PEGASUS SPX Iron Condor Positions")
+def fix_anchor_schema(cursor):
+    """Add all missing columns to anchor_positions table"""
+    print("\n  ANCHOR SPX Iron Condor Positions")
     print("  " + "-"*40)
 
     columns_to_add = [
@@ -135,7 +135,7 @@ def fix_pegasus_schema(cursor):
     added = 0
     for col_name, col_type in columns_to_add:
         try:
-            sql = f"ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            sql = f"ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
             cursor.execute(sql)
             added += 1
         except Exception as e:
@@ -214,11 +214,11 @@ def fix_precision(cursor):
         ("fortress_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
         # fortress_signals
         ("fortress_signals", "confidence", "DECIMAL(8, 4)"),
-        # pegasus_positions
-        ("pegasus_positions", "oracle_confidence", "DECIMAL(8, 4)"),
-        ("pegasus_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
-        # pegasus_signals
-        ("pegasus_signals", "confidence", "DECIMAL(8, 4)"),
+        # anchor_positions
+        ("anchor_positions", "oracle_confidence", "DECIMAL(8, 4)"),
+        ("anchor_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
+        # anchor_signals
+        ("anchor_signals", "confidence", "DECIMAL(8, 4)"),
         # solomon_positions
         ("solomon_positions", "oracle_confidence", "DECIMAL(8, 4)"),
         ("solomon_positions", "ml_confidence", "DECIMAL(8, 4)"),
@@ -244,7 +244,7 @@ def fix_precision(cursor):
 
 def main():
     print("\n" + "="*60)
-    print("  ALL BOTS Schema Fix - FORTRESS, PEGASUS, SOLOMON")
+    print("  ALL BOTS Schema Fix - FORTRESS, ANCHOR, SOLOMON")
     print("="*60)
 
     try:
@@ -255,7 +255,7 @@ def main():
         fix_ares_schema(cursor)
         conn.commit()
 
-        fix_pegasus_schema(cursor)
+        fix_anchor_schema(cursor)
         conn.commit()
 
         fix_solomon_schema(cursor)

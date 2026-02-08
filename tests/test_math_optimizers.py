@@ -132,7 +132,7 @@ def sample_trades():
     return [
         {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 100, 'win_probability': 0.65, 'bot': 'FORTRESS'},
         {'symbol': 'SPY', 'direction': 'long', 'expected_pnl': 80, 'win_probability': 0.60, 'bot': 'SOLOMON'},
-        {'symbol': 'QQQ', 'direction': 'short', 'expected_pnl': 120, 'win_probability': 0.55, 'bot': 'PHOENIX'},
+        {'symbol': 'QQQ', 'direction': 'short', 'expected_pnl': 120, 'win_probability': 0.55, 'bot': 'LAZARUS'},
     ]
 
 
@@ -321,12 +321,12 @@ class TestThompsonSamplingAllocator:
         for _ in range(20):
             thompson_allocator.record_outcome('FORTRESS', win=True, pnl=100)
 
-        # Record many losses for PHOENIX
+        # Record many losses for LAZARUS
         for _ in range(20):
-            thompson_allocator.record_outcome('PHOENIX', win=False, pnl=-50)
+            thompson_allocator.record_outcome('LAZARUS', win=False, pnl=-50)
 
         win_rates = thompson_allocator.get_expected_win_rates()
-        assert win_rates['FORTRESS'] > win_rates['PHOENIX']
+        assert win_rates['FORTRESS'] > win_rates['LAZARUS']
 
     def test_reset_bot(self, thompson_allocator):
         """Test resetting a bot's statistics"""

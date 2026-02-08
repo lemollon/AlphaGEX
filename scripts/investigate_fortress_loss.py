@@ -3,7 +3,7 @@
 FORTRESS Loss Investigation Script
 ==============================
 
-Run this script on the Render server to pull yesterday's FORTRESS and PEGASUS trades
+Run this script on the Render server to pull yesterday's FORTRESS and ANCHOR trades
 for comparative analysis of IC widths and outcomes.
 
 Usage:
@@ -140,8 +140,8 @@ def get_fortress_trades(conn, target_date: str) -> list:
     return trades
 
 
-def get_pegasus_trades(conn, target_date: str) -> list:
-    """Get all PEGASUS trades for a specific date"""
+def get_anchor_trades(conn, target_date: str) -> list:
+    """Get all ANCHOR trades for a specific date"""
     c = conn.cursor()
 
     # Try with all columns first, fall back to basic if migration columns missing
@@ -173,7 +173,7 @@ def get_pegasus_trades(conn, target_date: str) -> list:
                 close_time,
                 contracts,
                 max_loss
-            FROM pegasus_positions
+            FROM anchor_positions
             WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY open_time
         """, (target_date,))
@@ -187,7 +187,7 @@ def get_pegasus_trades(conn, target_date: str) -> list:
             'contracts', 'max_loss'
         ]
     except Exception as e:
-        print(f"  Note: Using basic columns for PEGASUS: {e}")
+        print(f"  Note: Using basic columns for ANCHOR: {e}")
         conn.rollback()
         c.execute("""
             SELECT
@@ -216,7 +216,7 @@ def get_pegasus_trades(conn, target_date: str) -> list:
                 close_time,
                 contracts,
                 max_loss
-            FROM pegasus_positions
+            FROM anchor_positions
             WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY open_time
         """, (target_date,))
@@ -400,11 +400,11 @@ def main():
     try:
         # Get trades
         fortress_trades = get_fortress_trades(conn, target_date)
-        pegasus_trades = get_pegasus_trades(conn, target_date)
+        anchor_trades = get_anchor_trades(conn, target_date)
 
         # Analyze
         ares_analyses = [analyze_trade(t) for t in fortress_trades]
-        pegasus_analyses = [analyze_trade(t) for t in pegasus_trades]
+        anchor_analyses = [analyze_trade(t) for t in anchor_trades]
 
         if args.json:
             output = {
@@ -413,37 +413,37 @@ def main():
                     'trades': fortress_trades,
                     'analyses': ares_analyses,
                 },
-                'pegasus': {
-                    'trades': pegasus_trades,
-                    'analyses': pegasus_analyses,
+                'anchor': {
+                    'trades': anchor_trades,
+                    'analyses': anchor_analyses,
                 }
             }
             print(json.dumps(output, indent=2, default=str))
         else:
             print_analysis("FORTRESS", fortress_trades, ares_analyses)
-            print_analysis("PEGASUS", pegasus_trades, pegasus_analyses)
+            print_analysis("ANCHOR", anchor_trades, anchor_analyses)
 
             # Summary comparison
             print(f"\n{'='*80}")
             print(f" COMPARISON SUMMARY")
             print(f"{'='*80}")
 
-            if ares_analyses and pegasus_analyses:
+            if ares_analyses and anchor_analyses:
                 ares_avg_sd = sum(a['avg_sd_multiplier'] or 0 for a in ares_analyses) / len(ares_analyses) if ares_analyses else 0
-                pegasus_avg_sd = sum(a['avg_sd_multiplier'] or 0 for a in pegasus_analyses) / len(pegasus_analyses) if pegasus_analyses else 0
+                anchor_avg_sd = sum(a['avg_sd_multiplier'] or 0 for a in anchor_analyses) / len(anchor_analyses) if anchor_analyses else 0
 
                 print(f"\n  FORTRESS Average SD Multiplier: {ares_avg_sd:.2f}")
-                print(f"  PEGASUS Average SD Multiplier: {pegasus_avg_sd:.2f}")
+                print(f"  ANCHOR Average SD Multiplier: {anchor_avg_sd:.2f}")
 
                 fortress_pnl = sum(a['realized_pnl'] for a in ares_analyses)
-                pegasus_pnl = sum(a['realized_pnl'] for a in pegasus_analyses)
+                anchor_pnl = sum(a['realized_pnl'] for a in anchor_analyses)
 
                 print(f"\n  FORTRESS Total P&L: ${fortress_pnl:,.2f}")
-                print(f"  PEGASUS Total P&L: ${pegasus_pnl:,.2f}")
+                print(f"  ANCHOR Total P&L: ${anchor_pnl:,.2f}")
 
-                if ares_avg_sd < pegasus_avg_sd and fortress_pnl < pegasus_pnl:
-                    print(f"\n  💡 INSIGHT: FORTRESS had tighter strikes ({ares_avg_sd:.2f} SD) than PEGASUS ({pegasus_avg_sd:.2f} SD)")
-                    print(f"              and FORTRESS lost while PEGASUS won. This suggests FORTRESS needs WIDER strikes.")
+                if ares_avg_sd < anchor_avg_sd and fortress_pnl < anchor_pnl:
+                    print(f"\n  💡 INSIGHT: FORTRESS had tighter strikes ({ares_avg_sd:.2f} SD) than ANCHOR ({anchor_avg_sd:.2f} SD)")
+                    print(f"              and FORTRESS lost while ANCHOR won. This suggests FORTRESS needs WIDER strikes.")
 
             # Detailed strike analysis for losses
             ares_losses = [a for a in ares_analyses if a['is_loss']]

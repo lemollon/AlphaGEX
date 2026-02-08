@@ -168,7 +168,7 @@ def run_tests(base_url: str):
         return 1
 
     # Bots to test
-    bots = ["fortress", "samson", "pegasus", "solomon", "icarus"]
+    bots = ["fortress", "samson", "anchor", "solomon", "gideon"]
 
     print(f"\n{BLUE}--- Bot Equity Curves ---{RESET}")
     for bot in bots:
@@ -179,7 +179,7 @@ def run_tests(base_url: str):
         test_positions(base_url, bot)
 
     print(f"\n{BLUE}--- Unified Metrics ---{RESET}")
-    for bot in ["FORTRESS", "SAMSON", "PEGASUS", "SOLOMON", "ICARUS"]:
+    for bot in ["FORTRESS", "SAMSON", "ANCHOR", "SOLOMON", "GIDEON"]:
         test_endpoint(base_url, f"/api/metrics/{bot}/equity-curve")
 
     print(f"\n{BLUE}--- Events/Combined ---{RESET}")

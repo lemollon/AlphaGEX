@@ -4,7 +4,7 @@
 DIRECTIONAL BOTS PERFORMANCE ANALYZER
 =============================================================================
 
-Run this script in Render shell to analyze SOLOMON and ICARUS performance.
+Run this script in Render shell to analyze SOLOMON and GIDEON performance.
 
 Usage (in Render shell):
     cd /opt/render/project/src
@@ -342,9 +342,9 @@ def analyze_bot(db, bot_name: str, table_name: str):
 
 
 def compare_bots(db):
-    """Compare SOLOMON and ICARUS head-to-head"""
+    """Compare SOLOMON and GIDEON head-to-head"""
     print(f"\n{'='*80}")
-    print(f" SOLOMON vs ICARUS COMPARISON")
+    print(f" SOLOMON vs GIDEON COMPARISON")
     print(f"{'='*80}")
 
     conn = db.connect()
@@ -370,7 +370,7 @@ def compare_bots(db):
                 COUNT(*) as trades,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*) * 100 as win_rate,
                 SUM(realized_pnl) as pnl
-            FROM icarus_positions
+            FROM gideon_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time >= NOW() - INTERVAL '30 days'
             GROUP BY 1
@@ -390,7 +390,7 @@ def compare_bots(db):
     """)
     rows = cursor.fetchall()
 
-    print(f"  {'Date':<12} {'SOLOMON':<25} {'ICARUS':<25}")
+    print(f"  {'Date':<12} {'SOLOMON':<25} {'GIDEON':<25}")
     print(f"  {'':<12} {'Trades WR%   P&L':<25} {'Trades WR%   P&L':<25}")
     print(f"  {'-'*60}")
 
@@ -412,7 +412,7 @@ def analyze_losing_patterns(db):
     conn = db.connect()
     cursor = conn.cursor()
 
-    for bot, table in [("SOLOMON", "solomon_positions"), ("ICARUS", "icarus_positions")]:
+    for bot, table in [("SOLOMON", "solomon_positions"), ("GIDEON", "gideon_positions")]:
         print(f"\n--- {bot} Losing Trade Patterns ---")
 
         # Check for consecutive losses
@@ -491,7 +491,7 @@ def main():
 
     # Analyze each bot
     analyze_bot(db, "SOLOMON", "solomon_positions")
-    analyze_bot(db, "ICARUS", "icarus_positions")
+    analyze_bot(db, "GIDEON", "gideon_positions")
 
     # Compare bots
     compare_bots(db)

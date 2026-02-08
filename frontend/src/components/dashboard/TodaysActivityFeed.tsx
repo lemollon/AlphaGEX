@@ -35,8 +35,8 @@ interface PositionsResponse {
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'FORTRESS', endpoint: '/api/fortress/positions' },
   { name: 'SOLOMON', endpoint: '/api/solomon/positions' },
-  { name: 'ICARUS', endpoint: '/api/icarus/positions' },
-  { name: 'PEGASUS', endpoint: '/api/pegasus/positions' },
+  { name: 'GIDEON', endpoint: '/api/gideon/positions' },
+  { name: 'ANCHOR', endpoint: '/api/anchor/positions' },
   { name: 'SAMSON', endpoint: '/api/samson/positions' },
 ]
 
@@ -54,11 +54,11 @@ export default function TodaysActivityFeed() {
   // Fetch positions for all bots
   const { data: aresData, isLoading: aresLoading } = useSWR('/api/fortress/positions', fetcher, { refreshInterval: 30000 })
   const { data: solomonData, isLoading: solomonLoading } = useSWR('/api/solomon/positions', fetcher, { refreshInterval: 30000 })
-  const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/icarus/positions', fetcher, { refreshInterval: 30000 })
-  const { data: pegasusData, isLoading: pegasusLoading } = useSWR('/api/pegasus/positions', fetcher, { refreshInterval: 30000 })
+  const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/gideon/positions', fetcher, { refreshInterval: 30000 })
+  const { data: anchorData, isLoading: anchorLoading } = useSWR('/api/anchor/positions', fetcher, { refreshInterval: 30000 })
   const { data: titanData, isLoading: titanLoading } = useSWR('/api/samson/positions', fetcher, { refreshInterval: 30000 })
 
-  const isLoading = aresLoading || solomonLoading || icarusLoading || pegasusLoading || titanLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading
 
   // Get today's date in Central Time
   const getTodayString = () => {
@@ -150,8 +150,8 @@ export default function TodaysActivityFeed() {
     const allTrades = [
       ...extractTrades(aresData, 'FORTRESS'),
       ...extractTrades(solomonData, 'SOLOMON'),
-      ...extractTrades(icarusData, 'ICARUS'),
-      ...extractTrades(pegasusData, 'PEGASUS'),
+      ...extractTrades(icarusData, 'GIDEON'),
+      ...extractTrades(anchorData, 'ANCHOR'),
       ...extractTrades(titanData, 'SAMSON'),
     ]
 
@@ -159,7 +159,7 @@ export default function TodaysActivityFeed() {
     return allTrades.sort((a, b) => {
       return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     })
-  }, [aresData, solomonData, icarusData, pegasusData, titanData])
+  }, [aresData, solomonData, icarusData, anchorData, titanData])
 
   const formatTime = (timestamp: string) => {
     return new Date(timestamp).toLocaleTimeString('en-US', {

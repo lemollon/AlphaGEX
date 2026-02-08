@@ -1,4 +1,4 @@
-# SOLOMON & ICARUS Directional Bot Analysis
+# SOLOMON & GIDEON Directional Bot Analysis
 
 ## Executive Summary
 
@@ -14,13 +14,13 @@ Both directional bots are losing money due to several structural issues that nee
 | Bot | Profit Target | Stop Loss | Effective R:R |
 |-----|--------------|-----------|---------------|
 | SOLOMON | 50% of max profit | 50% of max loss | 1:1 |
-| ICARUS | 40% of max profit | 60% of max loss | 0.67:1 |
+| GIDEON | 40% of max profit | 60% of max loss | 0.67:1 |
 
 **Why This Is A Problem:**
 - At 50% win rate with SOLOMON's 1:1 R:R: `0.50 * $100 - 0.50 * $100 = $0` (breakeven)
-- At 50% win rate with ICARUS's 0.67:1 R:R: `0.50 * $80 - 0.50 * $120 = -$20` (NET LOSS!)
+- At 50% win rate with GIDEON's 0.67:1 R:R: `0.50 * $80 - 0.50 * $120 = -$20` (NET LOSS!)
 
-**ICARUS is mathematically designed to lose money at 50% win rate!**
+**GIDEON is mathematically designed to lose money at 50% win rate!**
 
 ### 2. MAGNET THEORY INVERSION (Trading Backwards!)
 
@@ -75,7 +75,7 @@ if oracle_says_trade:
 
 ### 6. BACKTEST PARAMETERS DON'T MATCH LIVE
 
-| Parameter | Backtest Optimal | SOLOMON Live | ICARUS Live |
+| Parameter | Backtest Optimal | SOLOMON Live | GIDEON Live |
 |-----------|-----------------|-------------|-------------|
 | VIX Range | 15-25 | 12-35 | 12-30 |
 | Wall Proximity | 3% | 1% | 1% |
@@ -95,7 +95,7 @@ Expected Value = (Win Rate * Avg Win) - (Loss Rate * Avg Loss)
 - Need >50% win rate to profit
 - At 45% WR: `0.45 * $100 - 0.55 * $100 = -$10` per trade
 
-**ICARUS Example (0.67:1 R:R):**
+**GIDEON Example (0.67:1 R:R):**
 - Need >60% win rate to profit!
 - At 50% WR: `0.50 * $67 - 0.50 * $100 = -$16.50` per trade
 - At 55% WR: `0.55 * $67 - 0.45 * $100 = -$8.15` per trade (STILL LOSING!)
@@ -107,7 +107,7 @@ Expected Value = (Win Rate * Avg Win) - (Loss Rate * Avg Loss)
 
 ### Fix 1: Invert Risk/Reward (CRITICAL)
 
-**ICARUS:** Change from 40/60 to 60/50 (or 70/50)
+**GIDEON:** Change from 40/60 to 60/50 (or 70/50)
 ```python
 # OLD (LOSING)
 profit_target_pct: float = 40.0  # Take profit at 40%
@@ -174,7 +174,7 @@ max_daily_loss_pct: float = 5.0
 
 ## Implementation Priority
 
-1. **CRITICAL:** Fix ICARUS profit/stop ratio (biggest impact)
+1. **CRITICAL:** Fix GIDEON profit/stop ratio (biggest impact)
 2. **HIGH:** Add VIX filter 15-25 (match backtest optimal)
 3. **HIGH:** Limit entry window to morning
 4. **MEDIUM:** Implement MAGNET theory direction

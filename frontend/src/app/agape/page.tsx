@@ -43,7 +43,7 @@ import {
 } from '@/lib/hooks/useMarketData'
 
 // ==============================================================================
-// EQUITY CURVE TIMEFRAMES (matching HERACLES/FORTRESS pattern)
+// EQUITY CURVE TIMEFRAMES (matching VALOR/FORTRESS pattern)
 // ==============================================================================
 const EQUITY_TIMEFRAMES = [
   { id: 'intraday', label: 'Today', days: 0 },
@@ -160,7 +160,7 @@ export default function AgapePage() {
             </div>
           </div>
 
-          {/* Loss Streak Warning Banner (matches HERACLES pattern) */}
+          {/* Loss Streak Warning Banner (matches VALOR pattern) */}
           {status?.aggressive_features?.consecutive_losses > 0 && !status?.aggressive_features?.loss_streak_paused && (
             <div className="bg-orange-900/30 border border-orange-500/50 rounded-lg p-3">
               <div className="flex items-center gap-3">
@@ -308,7 +308,7 @@ function PortfolioTab({
 
   return (
     <>
-      {/* Paper Account Summary (matches HERACLES pattern) */}
+      {/* Paper Account Summary (matches VALOR pattern) */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
           <div className="text-sm text-gray-400">Starting Capital</div>

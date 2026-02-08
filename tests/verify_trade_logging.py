@@ -39,10 +39,10 @@ print("=" * 80)
 print("\nThis test PROVES that all required trade data is captured.\n")
 
 # =============================================================================
-# TEST 1: Single-Leg Trade (PHOENIX 0DTE Call)
+# TEST 1: Single-Leg Trade (LAZARUS 0DTE Call)
 # =============================================================================
 print("=" * 80)
-print("TEST 1: SINGLE-LEG TRADE (PHOENIX 0DTE)")
+print("TEST 1: SINGLE-LEG TRADE (LAZARUS 0DTE)")
 print("=" * 80)
 
 phoenix_leg = TradeLeg(
@@ -85,7 +85,7 @@ phoenix_decision = TradeDecision(
     decision_id="DEC-20251203101530-0001",
     timestamp="2025-12-03T10:15:30-05:00",
     decision_type=DecisionType.ENTRY_SIGNAL,
-    bot_name=BotName.PHOENIX,
+    bot_name=BotName.LAZARUS,
     what="BUY 3x SPY $592C exp 2025-12-03 @ $1.85",
     why="GEX squeeze signal. Net GEX: -$2.5B (negative). VIX: 18.5. Delta: 0.42. IV: 18%.",
     how="Kelly sizing: 3 contracts. Entry at mid $1.85. Premium: $555. Risk: $555 (100% of premium).",
@@ -199,7 +199,7 @@ spread_decision = TradeDecision(
     decision_id="DEC-20251203141500-0002",
     timestamp="2025-12-03T14:15:00-05:00",
     decision_type=DecisionType.ENTRY_SIGNAL,
-    bot_name=BotName.ATLAS,
+    bot_name=BotName.CORNERSTONE,
     what="SELL 2x SPX $5800/$5750 Put Credit Spread exp 2025-12-20",
     why="VIX at 16.5 in target range. Selling 5800P, buying 5750P for protection.",
     how="Net credit: $13.00/share ($2,600 total). Max risk: $7,400. Win rate: 72%.",
@@ -242,10 +242,10 @@ print("=" * 80)
 
 
 # =============================================================================
-# TEST 3: ATLAS CSP with Exit (Shows Entry AND Exit Prices)
+# TEST 3: CORNERSTONE CSP with Exit (Shows Entry AND Exit Prices)
 # =============================================================================
 print("\n" + "=" * 80)
-print("TEST 3: ATLAS CSP WITH EXIT (ENTRY + EXIT PRICES)")
+print("TEST 3: CORNERSTONE CSP WITH EXIT (ENTRY + EXIT PRICES)")
 print("=" * 80)
 
 # This simulates a completed trade with both entry and exit
@@ -281,7 +281,7 @@ csp_decision = TradeDecision(
     decision_id="DEC-20251115100000-0003",
     timestamp="2025-11-15T10:00:00-05:00",
     decision_type=DecisionType.EXIT_SIGNAL,
-    bot_name=BotName.ATLAS,
+    bot_name=BotName.CORNERSTONE,
     what="CLOSED SPX $5700P - Profit Target Hit",
     why="Closed at 71% profit. Entry: $28.50, Exit: $8.25.",
     how="Buy-to-close at $8.25. Profit: $2,025 (71%).",
@@ -332,7 +332,7 @@ print("\nCSV Header (all fields exported per leg):\n")
 csv_header = "timestamp,bot,decision_type,action,symbol,strategy,underlying_price,leg_num,option_type,strike,expiration,entry_price,exit_price,contracts,premium,delta,gamma,theta,iv,vix,order_id,pnl,reason"
 print(csv_header)
 
-print("\nSample Row (from PHOENIX trade):\n")
+print("\nSample Row (from LAZARUS trade):\n")
 leg = phoenix_dict['legs'][0]
 sample_row = f"{phoenix_dict['timestamp']},{phoenix_dict['bot_name']},{phoenix_dict['decision_type']},{leg['action']},{phoenix_dict['symbol']},{phoenix_dict['strategy']},{phoenix_dict['underlying_price_at_entry']},{leg['leg_id']},{leg['option_type']},{leg['strike']},{leg['expiration']},{leg['entry_price']},{leg['exit_price']},{leg['contracts']},{leg['premium_per_contract']},{leg['delta']},{leg['gamma']},{leg['theta']},{leg['iv']},18.5,{leg['order_id']},{leg['realized_pnl']},\"GEX squeeze\""
 print(sample_row)

@@ -541,13 +541,13 @@ class TestBotOracleIntegration:
         except ImportError:
             pytest.skip("FortressTrader not available")
 
-    def test_pegasus_trader_has_strategy_recommendation_check(self):
-        """Test PEGASUS trader has _check_strategy_recommendation method"""
+    def test_anchor_trader_has_strategy_recommendation_check(self):
+        """Test ANCHOR trader has _check_strategy_recommendation method"""
         try:
-            from trading.pegasus.trader import PEGASUSTrader
-            assert hasattr(PEGASUSTrader, '_check_strategy_recommendation')
+            from trading.anchor.trader import AnchorTrader
+            assert hasattr(AnchorTrader, '_check_strategy_recommendation')
         except ImportError:
-            pytest.skip("PEGASUSTrader not available")
+            pytest.skip("AnchorTrader not available")
 
     def test_ares_oracle_imports_available(self):
         """Test that FORTRESS can import Oracle components"""

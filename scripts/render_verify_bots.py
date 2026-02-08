@@ -8,7 +8,7 @@ Run in Render shell:
 This verifies:
 1. FORTRESS status endpoint returns correct fields
 2. SOLOMON status endpoint returns correct fields
-3. PEGASUS status endpoint returns correct fields
+3. ANCHOR status endpoint returns correct fields
 4. Tradier connections work for each bot
 5. Trading window calculations are correct
 """
@@ -131,13 +131,13 @@ except Exception as e:
     errors.append(f"SOLOMON: {e}")
 
 # ============================================================
-# PEGASUS STATUS
+# ANCHOR STATUS
 # ============================================================
-print("\n-- PEGASUS Status --")
+print("\n-- ANCHOR Status --")
 try:
-    from backend.api.routes.pegasus_routes import get_pegasus_status
+    from backend.api.routes.anchor_routes import get_anchor_status
 
-    result = asyncio.get_event_loop().run_until_complete(get_pegasus_status())
+    result = asyncio.get_event_loop().run_until_complete(get_anchor_status())
 
     if result.get('success'):
         data = result.get('data', {})
@@ -152,7 +152,7 @@ try:
         missing = [f for f in required_fields if f not in data]
         if missing:
             fail(f"Missing fields: {missing}")
-            errors.append("PEGASUS missing fields")
+            errors.append("ANCHOR missing fields")
         else:
             ok("All required fields present")
 
@@ -170,17 +170,17 @@ try:
         info(f"Capital: ${capital:,.2f}")
 
         if capital_source == 'paper' and capital >= 200000:
-            ok("PEGASUS paper trading with $200k")
+            ok("ANCHOR paper trading with $200k")
         else:
-            warn(f"PEGASUS capital: {capital_source} ${capital:,.2f}")
+            warn(f"ANCHOR capital: {capital_source} ${capital:,.2f}")
 
     else:
-        fail(f"PEGASUS status failed: {result}")
-        errors.append("PEGASUS status failed")
+        fail(f"ANCHOR status failed: {result}")
+        errors.append("ANCHOR status failed")
 
 except Exception as e:
-    fail(f"PEGASUS error: {e}")
-    errors.append(f"PEGASUS: {e}")
+    fail(f"ANCHOR error: {e}")
+    errors.append(f"ANCHOR: {e}")
 
 # ============================================================
 # SOLOMON CONFIG
@@ -240,7 +240,7 @@ try:
     print("\n  Expected Tradier Usage:")
     print("    FORTRESS:    Sandbox (SPY)")
     print("    SOLOMON:  Sandbox (SPY)")
-    print("    PEGASUS: Production (SPX)")
+    print("    ANCHOR: Production (SPX)")
 
 except Exception as e:
     fail(f"Credentials check error: {e}")

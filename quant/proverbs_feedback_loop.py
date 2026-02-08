@@ -38,8 +38,8 @@ ARCHITECTURE:
 BOTS COVERED:
 - FORTRESS: Aggressive Iron Condor (0DTE SPX)
 - SOLOMON: Directional Spreads (Bull/Bear Call)
-- PEGASUS: SPX Iron Condor
-- PHOENIX: 0DTE Options Trading
+- ANCHOR: SPX Iron Condor
+- LAZARUS: 0DTE Options Trading
 
 DATABASE TABLES:
 - proverbs_audit_log: Complete audit trail of every action
@@ -142,12 +142,12 @@ class BotName(Enum):
     FORTRESS = "FORTRESS"           # SPY Iron Condor (0DTE)
     SOLOMON = "SOLOMON"       # SPY Directional Spreads
     SAMSON = "SAMSON"         # SPX Aggressive Iron Condor
-    PEGASUS = "PEGASUS"     # SPX Weekly Iron Condor
-    ICARUS = "ICARUS"       # SPY Aggressive Directional
-    PROMETHEUS = "PROMETHEUS"  # Box Spread Synthetic Borrowing + IC Trading
+    ANCHOR = "ANCHOR"     # SPX Weekly Iron Condor
+    GIDEON = "GIDEON"       # SPY Aggressive Directional
+    JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
     # Legacy bots (not actively traded)
-    ATLAS = "ATLAS"         # SPX Wheel (Cash-Secured Puts)
-    PHOENIX = "PHOENIX"     # 0DTE Options (partial implementation)
+    CORNERSTONE = "CORNERSTONE"         # SPX Wheel (Cash-Secured Puts)
+    LAZARUS = "LAZARUS"     # 0DTE Options (partial implementation)
 
 
 class ActionType(Enum):
@@ -1829,9 +1829,9 @@ class ProverbsFeedbackLoop:
                 'FORTRESS': 'fortress_positions',
                 'SOLOMON': 'solomon_positions',
                 'SAMSON': 'samson_positions',
-                'PEGASUS': 'pegasus_positions',
-                'ICARUS': 'icarus_positions',
-                'PROMETHEUS': 'prometheus_ic_positions',
+                'ANCHOR': 'anchor_positions',
+                'GIDEON': 'gideon_positions',
+                'JUBILEE': 'jubilee_ic_positions',
             }
 
             table = BOT_TABLES.get(bot_name.upper())
@@ -1970,9 +1970,9 @@ class ProverbsFeedbackLoop:
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
             'SAMSON': 'samson_positions',
-            'PEGASUS': 'pegasus_positions',
-            'ICARUS': 'icarus_positions',
-            'PROMETHEUS': 'prometheus_ic_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
         }
 
         table_name = BOT_TABLES.get(bot_name.upper())
@@ -2039,9 +2039,9 @@ class ProverbsFeedbackLoop:
                 'FORTRESS': 'fortress_positions',
                 'SOLOMON': 'solomon_positions',
                 'SAMSON': 'samson_positions',
-                'PEGASUS': 'pegasus_positions',
-                'ICARUS': 'icarus_positions',
-                'PROMETHEUS': 'prometheus_ic_positions',
+                'ANCHOR': 'anchor_positions',
+                'GIDEON': 'gideon_positions',
+                'JUBILEE': 'jubilee_ic_positions',
             }
 
             table = BOT_TABLES.get(bot_name.upper())
@@ -2143,7 +2143,7 @@ class ProverbsFeedbackLoop:
         """
         try:
             # Determine strategy type and appropriate adjustments
-            ic_bots = ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
+            ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
             is_ic = bot_name.upper() in ic_bots
 
             if is_ic:
@@ -2359,8 +2359,8 @@ class ProverbsFeedbackLoop:
         errors = []
         outcomes_processed = 0
 
-        # All active trading bots - IC bots: FORTRESS, SAMSON, PEGASUS, PROMETHEUS | Directional: SOLOMON, ICARUS
-        bots = [BotName.FORTRESS, BotName.SOLOMON, BotName.SAMSON, BotName.PEGASUS, BotName.ICARUS, BotName.PROMETHEUS]
+        # All active trading bots - IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE | Directional: SOLOMON, GIDEON
+        bots = [BotName.FORTRESS, BotName.SOLOMON, BotName.SAMSON, BotName.ANCHOR, BotName.GIDEON, BotName.JUBILEE]
 
         try:
             # Step 1: Expire old proposals

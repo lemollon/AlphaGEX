@@ -162,8 +162,8 @@ BOTS=(
     "FORTRESS:fortress_positions"
     "SOLOMON:solomon_positions"
     "SAMSON:samson_positions"
-    "PEGASUS:pegasus_positions"
-    "ICARUS:icarus_positions"
+    "ANCHOR:anchor_positions"
+    "GIDEON:gideon_positions"
 )
 
 for BOT_TABLE in "${BOTS[@]}"; do

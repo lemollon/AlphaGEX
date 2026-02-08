@@ -75,9 +75,9 @@ def _get_bot_capital(bot_name: str) -> float:
 
     - FORTRESS: Fetched from Tradier sandbox account (real money)
     - SOLOMON: $100,000 paper trading capital
-    - ICARUS: $100,000 paper trading (aggressive SOLOMON clone)
-    - PEGASUS: $200,000 paper trading SPX
-    - SAMSON: $200,000 paper trading (aggressive PEGASUS clone)
+    - GIDEON: $100,000 paper trading (aggressive SOLOMON clone)
+    - ANCHOR: $200,000 paper trading SPX
+    - SAMSON: $200,000 paper trading (aggressive ANCHOR clone)
     """
     if not bot_name:
         return 200000
@@ -88,12 +88,12 @@ def _get_bot_capital(bot_name: str) -> float:
         return _get_ares_capital()
     elif bot_upper == 'SOLOMON':
         return 100000  # Paper trading
-    elif bot_upper == 'ICARUS':
+    elif bot_upper == 'GIDEON':
         return 100000  # Paper trading - aggressive SOLOMON clone
-    elif bot_upper == 'PEGASUS':
+    elif bot_upper == 'ANCHOR':
         return 200000  # Paper trading SPX
     elif bot_upper == 'SAMSON':
-        return 200000  # Paper trading SPX - aggressive PEGASUS clone
+        return 200000  # Paper trading SPX - aggressive ANCHOR clone
     else:
         return 200000  # Default
 
@@ -157,7 +157,7 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
     """
     Auto-detect trading events from historical trade data.
 
-    IMPORTANT: V2 bots (FORTRESS, SOLOMON, PEGASUS) store trades in their own tables.
+    IMPORTANT: V2 bots (FORTRESS, SOLOMON, ANCHOR) store trades in their own tables.
     This function reads from the correct table based on the bot filter.
 
     Detects:
@@ -181,7 +181,7 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
         v2_bot_tables = {
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
-            'PEGASUS': 'pegasus_positions'
+            'ANCHOR': 'anchor_positions'
         }
 
         trades = []
@@ -583,7 +583,7 @@ def _calculate_bot_unrealized_pnl(cursor, bot_filter: str = None) -> float:
     Calculate unrealized P&L from open positions for a specific bot.
 
     Uses MTM (mark-to-market) pricing when available, falls back to estimation.
-    Handles both Iron Condor bots (FORTRESS, SAMSON, PEGASUS) and Directional bots (SOLOMON, ICARUS).
+    Handles both Iron Condor bots (FORTRESS, SAMSON, ANCHOR) and Directional bots (SOLOMON, GIDEON).
     """
     if not bot_filter:
         return 0.0
@@ -594,10 +594,10 @@ def _calculate_bot_unrealized_pnl(cursor, bot_filter: str = None) -> float:
     # Bot-specific table and position structure mapping
     ic_bots = {'FORTRESS': ('fortress_positions', 'SPY'),
                'SAMSON': ('samson_positions', 'SPX'),
-               'PEGASUS': ('pegasus_positions', 'SPX')}
+               'ANCHOR': ('anchor_positions', 'SPX')}
 
     directional_bots = {'SOLOMON': ('solomon_positions', 'SPY'),
-                        'ICARUS': ('icarus_positions', 'SPY')}
+                        'GIDEON': ('gideon_positions', 'SPY')}
 
     try:
         if bot_filter_upper in ic_bots:
@@ -675,13 +675,13 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
     For 'daily' timeframe: Returns individual trade points for granular charts
     For 'weekly'/'monthly': Returns aggregated data by period
 
-    IMPORTANT: V2 bots (FORTRESS, SOLOMON, PEGASUS) store trades in their own tables,
+    IMPORTANT: V2 bots (FORTRESS, SOLOMON, ANCHOR) store trades in their own tables,
     not in autonomous_closed_trades. This function reads from the correct table
     based on the bot filter to ensure proper equity curve synchronization.
 
     Args:
         days: Number of days of history
-        bot_filter: Optional bot name filter (FORTRESS, SOLOMON, PEGASUS)
+        bot_filter: Optional bot name filter (FORTRESS, SOLOMON, ANCHOR)
         timeframe: 'daily', 'weekly', or 'monthly'
     """
     conn = get_connection()
@@ -695,8 +695,8 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         bot_tables = {
             'FORTRESS': 'fortress_positions',      # SPY Iron Condors - capital from Tradier
             'SOLOMON': 'solomon_positions',  # SPY Directional - $100k paper
-            'ICARUS': 'icarus_positions',  # SPY Aggressive Directional - $100k paper
-            'PEGASUS': 'pegasus_positions', # SPX Iron Condors - $200k paper
+            'GIDEON': 'gideon_positions',  # SPY Aggressive Directional - $100k paper
+            'ANCHOR': 'anchor_positions', # SPX Iron Condors - $200k paper
             'SAMSON': 'samson_positions',    # SPX Aggressive Iron Condors - $200k paper
         }
 

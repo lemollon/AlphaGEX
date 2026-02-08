@@ -150,9 +150,9 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
 
   const getBotColor = (botName: string) => {
     const colors: Record<string, string> = {
-      'PHOENIX': 'text-orange-400',
-      'ATLAS': 'text-blue-400',
-      'HERMES': 'text-purple-400',
+      'LAZARUS': 'text-orange-400',
+      'CORNERSTONE': 'text-blue-400',
+      'SHEPHERD': 'text-purple-400',
       'ORACLE': 'text-green-400',
       'FORTRESS': 'text-red-400'
     }
@@ -184,12 +184,12 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
               className="bg-gray-700 border border-gray-600 rounded px-3 py-1 text-sm text-white"
             >
               <option value="all">All Bots</option>
-              <option value="PHOENIX">PHOENIX (0DTE)</option>
-              <option value="ATLAS">ATLAS (Wheel)</option>
+              <option value="LAZARUS">LAZARUS (0DTE)</option>
+              <option value="CORNERSTONE">CORNERSTONE (Wheel)</option>
               <option value="FORTRESS">FORTRESS (SPY IC)</option>
               <option value="SOLOMON">SOLOMON (Spreads)</option>
-              <option value="PEGASUS">PEGASUS (SPX IC)</option>
-              <option value="HERMES">HERMES (Manual)</option>
+              <option value="ANCHOR">ANCHOR (SPX IC)</option>
+              <option value="SHEPHERD">SHEPHERD (Manual)</option>
               <option value="ORACLE">ORACLE (Advisory)</option>
             </select>
           )}

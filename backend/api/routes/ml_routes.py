@@ -1096,7 +1096,7 @@ async def get_sage_status():
     Get SAGE (FORTRESS ML Advisor) status - the PRIMARY ML system for trading bots.
 
     SAGE provides ML-driven predictions for Iron Condor and directional strategies.
-    Used by FORTRESS, SOLOMON, ICARUS, PEGASUS, and SAMSON bots.
+    Used by FORTRESS, SOLOMON, GIDEON, ANCHOR, and SAMSON bots.
     """
     try:
         from quant.fortress_ml_advisor import get_advisor, FortressMLAdvisor
@@ -1528,8 +1528,8 @@ async def get_bot_ml_status():
         bots = [
             {"name": "FORTRESS", "min_win_prob": 50, "description": "SPY Iron Condor"},
             {"name": "SOLOMON", "min_win_prob": 48, "description": "Directional Spreads"},
-            {"name": "ICARUS", "min_win_prob": 40, "description": "Aggressive Directional"},
-            {"name": "PEGASUS", "min_win_prob": 50, "description": "SPX Iron Condor"},
+            {"name": "GIDEON", "min_win_prob": 40, "description": "Aggressive Directional"},
+            {"name": "ANCHOR", "min_win_prob": 50, "description": "SPX Iron Condor"},
             {"name": "SAMSON", "min_win_prob": 40, "description": "Aggressive SPX IC"}
         ]
 

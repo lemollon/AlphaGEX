@@ -152,27 +152,27 @@ describe('MultiBotEquityCurve Component', () => {
       })
     })
 
-    it('renders ICARUS toggle pill', async () => {
+    it('renders GIDEON toggle pill', async () => {
       setupMockFetch()
 
       const MultiBotEquityCurve = require('../../../src/components/charts/MultiBotEquityCurve').default
       renderWithSWR(<MultiBotEquityCurve />)
 
       await waitFor(() => {
-        const icarusElements = screen.getAllByText('ICARUS')
+        const icarusElements = screen.getAllByText('GIDEON')
         expect(icarusElements.length).toBeGreaterThan(0)
       })
     })
 
-    it('renders PEGASUS toggle pill', async () => {
+    it('renders ANCHOR toggle pill', async () => {
       setupMockFetch()
 
       const MultiBotEquityCurve = require('../../../src/components/charts/MultiBotEquityCurve').default
       renderWithSWR(<MultiBotEquityCurve />)
 
       await waitFor(() => {
-        const pegasusElements = screen.getAllByText('PEGASUS')
-        expect(pegasusElements.length).toBeGreaterThan(0)
+        const anchorElements = screen.getAllByText('ANCHOR')
+        expect(anchorElements.length).toBeGreaterThan(0)
       })
     })
 

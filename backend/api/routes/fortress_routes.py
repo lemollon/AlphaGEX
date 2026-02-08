@@ -2655,7 +2655,7 @@ async def get_fortress_performance(
     Get FORTRESS performance metrics from database.
 
     Returns detailed performance statistics from actual trade history,
-    consistent with SAMSON/PEGASUS performance endpoints.
+    consistent with SAMSON/ANCHOR performance endpoints.
 
     Args:
         days: Number of days to include in the summary (default 30)

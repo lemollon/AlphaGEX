@@ -5,7 +5,7 @@ SAMSON Aggressive SPX Iron Condor Bot API Routes
 API endpoints for the SAMSON aggressive SPX Iron Condor trading bot.
 Trades SPX options with $12 spread widths, multiple times per day.
 
-SAMSON is more aggressive than PEGASUS:
+SAMSON is more aggressive than ANCHOR:
 - Multiple trades per day (30min cooldown)
 - Higher risk per trade (15% vs 10%)
 - Lower win probability threshold (40% vs 50%)

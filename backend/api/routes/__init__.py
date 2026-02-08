@@ -29,11 +29,11 @@ from . import ml_routes
 from . import spx_backtest_routes
 from . import fortress_routes
 from . import solomon_routes
-from . import pegasus_routes
+from . import anchor_routes
 from . import daily_manna_routes
 from . import bot_reports_routes
 from . import tastytrade_routes
-from . import heracles_routes
+from . import valor_routes
 
 __all__ = [
     'vix_routes',
@@ -62,9 +62,9 @@ __all__ = [
     'spx_backtest_routes',
     'fortress_routes',
     'solomon_routes',
-    'pegasus_routes',
+    'anchor_routes',
     'daily_manna_routes',
     'bot_reports_routes',
     'tastytrade_routes',
-    'heracles_routes',
+    'valor_routes',
 ]

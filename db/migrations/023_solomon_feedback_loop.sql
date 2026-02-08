@@ -45,14 +45,14 @@ CREATE INDEX IF NOT EXISTS idx_solomon_positions_oracle_pred ON solomon_position
 ALTER TABLE titan_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_titan_positions_oracle_pred ON titan_positions(oracle_prediction_id);
 
--- PEGASUS positions
-ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-CREATE INDEX IF NOT EXISTS idx_pegasus_positions_oracle_pred ON pegasus_positions(oracle_prediction_id);
+-- ANCHOR positions
+ALTER TABLE anchor_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_anchor_positions_oracle_pred ON anchor_positions(oracle_prediction_id);
 
--- ICARUS positions
-ALTER TABLE icarus_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
-ALTER TABLE icarus_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
-CREATE INDEX IF NOT EXISTS idx_icarus_positions_oracle_pred ON icarus_positions(oracle_prediction_id);
+-- GIDEON positions
+ALTER TABLE gideon_positions ADD COLUMN IF NOT EXISTS oracle_prediction_id INTEGER;
+ALTER TABLE gideon_positions ADD COLUMN IF NOT EXISTS direction_taken VARCHAR(10);  -- BULLISH/BEARISH
+CREATE INDEX IF NOT EXISTS idx_gideon_positions_oracle_pred ON gideon_positions(oracle_prediction_id);
 
 -- ============================================================================
 -- 3. SOLOMON PERFORMANCE - Add strategy-level tracking
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS solomon_strategy_analysis (
     oracle_accuracy DECIMAL(5,4),
 
     -- By bot breakdown (JSONB for flexibility)
-    bot_breakdown JSONB,  -- {"FORTRESS": {"trades": 5, "wins": 4}, "PEGASUS": {...}}
+    bot_breakdown JSONB,  -- {"FORTRESS": {"trades": 5, "wins": 4}, "ANCHOR": {...}}
 
     -- Market conditions summary
     avg_vix DECIMAL(5,2),
@@ -170,7 +170,7 @@ VALUES
     ('FORTRESS', 'IRON_CONDOR', 'win_rate', 0.70, 'NORMAL',
      '["win_rate", "put_breach_rate", "call_breach_rate", "max_profit_rate"]',
      '["sd_multiplier", "spread_width", "profit_target_pct"]'),
-    ('PEGASUS', 'IRON_CONDOR', 'win_rate', 0.70, 'CONSERVATIVE',
+    ('ANCHOR', 'IRON_CONDOR', 'win_rate', 0.70, 'CONSERVATIVE',
      '["win_rate", "put_breach_rate", "call_breach_rate", "max_profit_rate"]',
      '["sd_multiplier", "spread_width", "profit_target_pct"]'),
     ('TITAN', 'IRON_CONDOR', 'win_rate', 0.60, 'AGGRESSIVE',
@@ -179,7 +179,7 @@ VALUES
     ('SOLOMON', 'DIRECTIONAL', 'direction_accuracy', 0.55, 'CONSERVATIVE',
      '["direction_accuracy", "avg_rr_achieved", "wall_proximity_at_entry"]',
      '["wall_filter_pct", "profit_target_pct", "stop_loss_pct", "min_rr_ratio"]'),
-    ('ICARUS', 'DIRECTIONAL', 'direction_accuracy', 0.50, 'AGGRESSIVE',
+    ('GIDEON', 'DIRECTIONAL', 'direction_accuracy', 0.50, 'AGGRESSIVE',
      '["direction_accuracy", "avg_rr_achieved", "trade_frequency"]',
      '["wall_filter_pct", "profit_target_pct", "stop_loss_pct", "min_win_probability"]')
 ON CONFLICT (bot_name) DO UPDATE SET

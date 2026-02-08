@@ -420,7 +420,7 @@ export default function SagePage() {
                       SAGE ML predictions feed INTO Oracle as one of its signal sources for enhanced accuracy.
                     </p>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                      {['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON'].map(bot => {
+                      {['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON'].map(bot => {
                         const botStatus = botStatuses.find(b => b.bot_name === bot)
                         return (
                           <div key={bot} className="bg-gray-900 rounded-lg p-4 border border-gray-700">
@@ -433,7 +433,7 @@ export default function SagePage() {
                               )}
                             </div>
                             <p className="text-xs text-gray-500">
-                              Min: {botStatus?.min_win_probability || (bot === 'ICARUS' || bot === 'SAMSON' ? '40' : '50')}%
+                              Min: {botStatus?.min_win_probability || (bot === 'GIDEON' || bot === 'SAMSON' ? '40' : '50')}%
                             </p>
                             {botStatus?.last_prediction?.win_probability && (
                               <p className="text-xs text-emerald-400 mt-1">
@@ -1139,7 +1139,7 @@ export default function SagePage() {
                           <h4 className="text-white font-medium">Live Trade Outcomes</h4>
                         </div>
                         <p className="text-gray-400 text-sm">
-                          Feedback loop from FORTRESS, PEGASUS, and SAMSON live trades for continuous improvement.
+                          Feedback loop from FORTRESS, ANCHOR, and SAMSON live trades for continuous improvement.
                         </p>
                       </div>
                     </div>

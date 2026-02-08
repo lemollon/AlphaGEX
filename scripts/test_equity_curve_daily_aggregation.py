@@ -127,7 +127,7 @@ def test_daily_aggregation_for_bot(bot_name: str, table_name: str, conn) -> dict
             starting_capital = float(config_row[0])
         else:
             # Default based on bot type
-            starting_capital = 200000 if bot_name in ['SAMSON', 'PEGASUS'] else 100000
+            starting_capital = 200000 if bot_name in ['SAMSON', 'ANCHOR'] else 100000
 
         print_info(f"Starting capital: ${starting_capital:,.2f}")
 
@@ -299,9 +299,9 @@ def run_all_tests():
     bots = [
         ("FORTRESS", "fortress_positions"),
         ("SAMSON", "samson_positions"),
-        ("PEGASUS", "pegasus_positions"),
+        ("ANCHOR", "anchor_positions"),
         ("SOLOMON", "solomon_positions"),
-        ("ICARUS", "icarus_positions"),
+        ("GIDEON", "gideon_positions"),
     ]
 
     all_results = []
@@ -353,9 +353,9 @@ def test_single_bot(bot_name: str):
     bot_configs = {
         "FORTRESS": "fortress_positions",
         "SAMSON": "samson_positions",
-        "PEGASUS": "pegasus_positions",
+        "ANCHOR": "anchor_positions",
         "SOLOMON": "solomon_positions",
-        "ICARUS": "icarus_positions",
+        "GIDEON": "gideon_positions",
     }
 
     bot_name = bot_name.upper()

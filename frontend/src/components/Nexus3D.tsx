@@ -29,14 +29,14 @@ const fetcher = async (url: string) => {
 const SYSTEM_API_MAP: Record<string, string> = {
   fortress: '/api/fortress',
   solomon: '/api/solomon',
-  icarus: '/api/icarus',
-  pegasus: '/api/pegasus',
+  gideon: '/api/gideon',
+  anchor: '/api/anchor',
   samson: '/api/samson',
   sage: '/api/sage',
   quant: '/api/quant',
   oracle: '/api/oracle',
-  phoenix: '/api/phoenix',
-  atlas: '/api/atlas',
+  lazarus: '/api/lazarus',
+  cornerstone: '/api/cornerstone',
 }
 
 // Map planet names to their associated bot/metric type
@@ -53,21 +53,21 @@ const PLANET_BOT_MAP: Record<string, string> = {
   'prediction': 'oracle',
   'probability': 'oracle',
   'confidence': 'oracle',
-  // PHOENIX planets
-  'rebirth': 'phoenix',
-  'flame': 'phoenix',
-  'ash': 'phoenix',
-  // ATLAS planets
-  'foundation': 'atlas',
-  'endurance': 'atlas',
-  'strength': 'atlas',
+  // LAZARUS planets
+  'rebirth': 'lazarus',
+  'flame': 'lazarus',
+  'ash': 'lazarus',
+  // CORNERSTONE planets
+  'foundation': 'cornerstone',
+  'endurance': 'cornerstone',
+  'strength': 'cornerstone',
 }
 
 // Route mapping for navigation
 const SYSTEM_ROUTES: Record<string, string> = {
   manna: '/daily-manna',
-  icarus: '/icarus',
-  pegasus: '/pegasus',
+  gideon: '/gideon',
+  anchor: '/anchor',
   samson: '/samson',
   sage: '/sage',
   quant: '/quant',
@@ -80,8 +80,8 @@ const SYSTEM_ROUTES: Record<string, string> = {
   hyperion: '/hyperion',
   fortress: '/fortress',
   solomon: '/solomon',
-  phoenix: '/trader',
-  atlas: '/spx-wheel',
+  lazarus: '/trader',
+  cornerstone: '/spx-wheel',
   gexcore: '/gex',
   vix: '/vix',
 }
@@ -189,10 +189,10 @@ function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
     if (botsStatus?.data) {
       const bots = botsStatus.data
 
-      // PHOENIX
-      if (bots.PHOENIX) {
-        const perf = extractPerf(bots.PHOENIX)
-        data['phoenix'] = {
+      // LAZARUS
+      if (bots.LAZARUS) {
+        const perf = extractPerf(bots.LAZARUS)
+        data['lazarus'] = {
           'rebirth': {
             pnl: perf.total_pnl,
             winRate: perf.win_rate,
@@ -202,10 +202,10 @@ function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
         }
       }
 
-      // ATLAS
-      if (bots.ATLAS) {
-        const perf = extractPerf(bots.ATLAS)
-        data['atlas'] = {
+      // CORNERSTONE
+      if (bots.CORNERSTONE) {
+        const perf = extractPerf(bots.CORNERSTONE)
+        data['cornerstone'] = {
           'foundation': {
             pnl: perf.total_pnl,
             winRate: perf.win_rate,
@@ -304,9 +304,9 @@ class Canvas3DErrorBoundary extends Component<{ children: ReactNode, fallback: R
 export interface BotStatus {
   fortress?: 'active' | 'idle' | 'trading' | 'error'
   solomon?: 'active' | 'idle' | 'trading' | 'error'
-  pegasus?: 'active' | 'idle' | 'trading' | 'error'
-  phoenix?: 'active' | 'idle' | 'trading' | 'error'
-  atlas?: 'active' | 'idle' | 'trading' | 'error'
+  anchor?: 'active' | 'idle' | 'trading' | 'error'
+  lazarus?: 'active' | 'idle' | 'trading' | 'error'
+  cornerstone?: 'active' | 'idle' | 'trading' | 'error'
   oracle?: 'active' | 'idle' | 'trading' | 'error'
   gex?: 'active' | 'idle' | 'trading' | 'error'
 }
@@ -327,7 +327,7 @@ export type SystemCategory = 'center' | 'inner' | 'outer'
 // Get system category based on position
 function getSystemCategory(systemId: string): SystemCategory {
   if (systemId === 'manna') return 'center'
-  const innerRing = ['icarus', 'pegasus', 'samson', 'sage', 'quant']
+  const innerRing = ['gideon', 'anchor', 'samson', 'sage', 'quant']
   if (innerRing.includes(systemId)) return 'inner'
   return 'outer'
 }
@@ -447,9 +447,9 @@ const BOT_NODES = [
   { id: 'oracle', name: 'ORACLE', angle: 0 },
   { id: 'fortress', name: 'FORTRESS', angle: Math.PI / 3 },           // 60°
   { id: 'solomon', name: 'SOLOMON', angle: Math.PI * 2 / 3 },   // 120°
-  { id: 'pegasus', name: 'PEGASUS', angle: Math.PI },          // 180°
-  { id: 'atlas', name: 'ATLAS', angle: Math.PI * 4 / 3 },     // 240°
-  { id: 'phoenix', name: 'PHOENIX', angle: Math.PI * 5 / 3 }, // 300°
+  { id: 'anchor', name: 'ANCHOR', angle: Math.PI },          // 180°
+  { id: 'cornerstone', name: 'CORNERSTONE', angle: Math.PI * 4 / 3 },     // 240°
+  { id: 'lazarus', name: 'LAZARUS', angle: Math.PI * 5 / 3 }, // 300°
 ]
 
 // =============================================================================
@@ -2284,7 +2284,7 @@ const STOCK_TICKERS = [
 // =============================================================================
 // SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
 // MANNA is the CENTER OF THE UNIVERSE - all systems orbit around it
-// Inner Ring: 5 Bot Systems (ICARUS, PEGASUS, SAMSON, SAGE, QUANT) - radius ~45
+// Inner Ring: 5 Bot Systems (GIDEON, ANCHOR, SAMSON, SAGE, QUANT) - radius ~45
 // Outer Ring: 7 Original Systems - radius ~80
 // =============================================================================
 
@@ -2312,10 +2312,10 @@ const SOLAR_SYSTEMS = [
   // Arranged in a pentagon around MANNA
   // =============================================================================
   {
-    id: 'icarus',
-    name: 'ICARUS',
+    id: 'gideon',
+    name: 'GIDEON',
     subtitle: 'Sun Chaser',
-    route: '/icarus',
+    route: '/gideon',
     position: [0, 45, -60] as [number, number, number],  // Top - 12 o'clock
     sunColor: '#fb923c',  // Blazing orange - the sun he dared approach
     glowColor: '#fdba74',
@@ -2327,10 +2327,10 @@ const SOLAR_SYSTEMS = [
     ]
   },
   {
-    id: 'pegasus',
-    name: 'PEGASUS',
+    id: 'anchor',
+    name: 'ANCHOR',
     subtitle: 'Divine Steed',
-    route: '/pegasus',
+    route: '/anchor',
     position: [43, 14, -60] as [number, number, number],  // Upper right - 2 o'clock
     sunColor: '#14b8a6',  // Teal - swift and graceful
     glowColor: '#2dd4bf',
@@ -4441,8 +4441,8 @@ function SystemAmbientEffects({
         return <ApolloEffects color={color} sunColor={sunColor} paused={paused} />
       case 'hyperion':
         return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
-      case 'pegasus':
-        return <PegasusEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'anchor':
+        return <AnchorEffects color={color} sunColor={sunColor} paused={paused} />
       case 'gexcore':
         return <GexCoreEffects color={color} sunColor={sunColor} paused={paused} />
       default:
@@ -6202,8 +6202,8 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
   )
 }
 
-// PEGASUS - Winged Guardian with Iron Condor wings, shield dome, and feather particles
-function PegasusEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+// ANCHOR - Winged Guardian with Iron Condor wings, shield dome, and feather particles
+function AnchorEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
   const wingsRef = useRef<THREE.Group>(null)
   const shieldRef = useRef<THREE.Group>(null)

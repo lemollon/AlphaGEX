@@ -240,9 +240,9 @@ def run_all_tests():
     bots = [
         ("FORTRESS", "fortress_positions", "fortress_equity_snapshots"),
         ("SAMSON", "samson_positions", "samson_equity_snapshots"),
-        ("PEGASUS", "pegasus_positions", "pegasus_equity_snapshots"),
+        ("ANCHOR", "anchor_positions", "anchor_equity_snapshots"),
         ("SOLOMON", "solomon_positions", "solomon_equity_snapshots"),
-        ("ICARUS", "icarus_positions", "icarus_equity_snapshots"),
+        ("GIDEON", "gideon_positions", "gideon_equity_snapshots"),
     ]
 
     results = {
@@ -313,9 +313,9 @@ def test_specific_bot(bot_name: str):
     bot_configs = {
         "FORTRESS": ("fortress_positions", "fortress_equity_snapshots"),
         "SAMSON": ("samson_positions", "samson_equity_snapshots"),
-        "PEGASUS": ("pegasus_positions", "pegasus_equity_snapshots"),
+        "ANCHOR": ("anchor_positions", "anchor_equity_snapshots"),
         "SOLOMON": ("solomon_positions", "solomon_equity_snapshots"),
-        "ICARUS": ("icarus_positions", "icarus_equity_snapshots"),
+        "GIDEON": ("gideon_positions", "gideon_equity_snapshots"),
     }
 
     bot_name = bot_name.upper()

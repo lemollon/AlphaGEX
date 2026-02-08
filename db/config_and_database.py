@@ -2307,7 +2307,7 @@ def init_database():
 
             -- IDENTIFICATION
             decision_id TEXT UNIQUE NOT NULL,
-            bot_name TEXT NOT NULL,  -- PHOENIX, ATLAS, FORTRESS, HERMES, ORACLE
+            bot_name TEXT NOT NULL,  -- LAZARUS, CORNERSTONE, FORTRESS, SHEPHERD, ORACLE
             session_id TEXT,
             scan_cycle INTEGER,
             decision_sequence INTEGER,
@@ -3642,10 +3642,10 @@ def init_bot_tables():
     ''')
 
     # ===========================================================================
-    # PEGASUS - SPX Weekly Iron Condor
+    # ANCHOR - SPX Weekly Iron Condor
     # ===========================================================================
     c.execute('''
-        CREATE TABLE IF NOT EXISTS pegasus_positions (
+        CREATE TABLE IF NOT EXISTS anchor_positions (
             id SERIAL PRIMARY KEY,
             position_id VARCHAR(50) UNIQUE NOT NULL,
             ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
@@ -3690,7 +3690,7 @@ def init_bot_tables():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS pegasus_equity_snapshots (
+        CREATE TABLE IF NOT EXISTS anchor_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             balance DECIMAL(12, 2) NOT NULL,
@@ -3703,10 +3703,10 @@ def init_bot_tables():
     ''')
 
     # ===========================================================================
-    # ICARUS - SPY Aggressive Directional Spreads
+    # GIDEON - SPY Aggressive Directional Spreads
     # ===========================================================================
     c.execute('''
-        CREATE TABLE IF NOT EXISTS icarus_positions (
+        CREATE TABLE IF NOT EXISTS gideon_positions (
             id SERIAL PRIMARY KEY,
             position_id VARCHAR(50) UNIQUE NOT NULL,
             spread_type VARCHAR(30) NOT NULL,
@@ -3751,7 +3751,7 @@ def init_bot_tables():
     ''')
 
     c.execute('''
-        CREATE TABLE IF NOT EXISTS icarus_equity_snapshots (
+        CREATE TABLE IF NOT EXISTS gideon_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
             balance DECIMAL(12, 2) NOT NULL,
@@ -3765,7 +3765,7 @@ def init_bot_tables():
 
     conn.commit()
     conn.close()
-    print("✅ Bot tables initialized (FORTRESS, SOLOMON, SAMSON, PEGASUS, ICARUS)")
+    print("✅ Bot tables initialized (FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON)")
 
 
 def _get_table_columns(cursor, table_name):

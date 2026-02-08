@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-VALOR (HERACLES) Scan-Based Backtester
+VALOR (VALOR) Scan-Based Backtester
 ======================================
-Backtests strategies using REAL scan activity data from heracles_scan_activity.
+Backtests strategies using REAL scan activity data from valor_scan_activity.
 
 This uses actual market conditions recorded at each scan point:
 - Price data (underlying_price, bid, ask)
@@ -57,9 +57,9 @@ CONFIG = {
 # ============================================================================
 
 print("=" * 70)
-print("VALOR (HERACLES) SCAN-BASED BACKTESTER")
+print("VALOR (VALOR) SCAN-BASED BACKTESTER")
 print("=" * 70)
-print("\nUsing REAL scan activity data from heracles_scan_activity")
+print("\nUsing REAL scan activity data from valor_scan_activity")
 
 conn = get_connection()
 cursor = conn.cursor()
@@ -118,7 +118,7 @@ cursor.execute("""
         -- Stop type
         stop_type,
         stop_points_used
-    FROM heracles_scan_activity
+    FROM valor_scan_activity
     ORDER BY scan_time ASC
 """)
 scans = cursor.fetchall()
@@ -1332,5 +1332,5 @@ else:
     print("Consider: Current approach may be near-optimal for this data sample.")
 
 print("\n" + "=" * 70)
-print("NOTE: All simulations use REAL price data from heracles_scan_activity")
+print("NOTE: All simulations use REAL price data from valor_scan_activity")
 print("=" * 70)

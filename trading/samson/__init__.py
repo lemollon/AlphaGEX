@@ -3,14 +3,14 @@ SAMSON - Aggressive SPX Iron Condor Trading Bot
 ===============================================
 
 Named after the powerful primordial deities of Greek mythology.
-SAMSON is an aggressive version of PEGASUS that trades daily.
+SAMSON is an aggressive version of ANCHOR that trades daily.
 
 Usage:
     from trading.samson import SamsonTrader
     trader = SamsonTrader()
     result = trader.run_cycle()
 
-Key differences from PEGASUS:
+Key differences from ANCHOR:
 - Multiple trades per day (with 30min cooldown)
 - Higher risk per trade (15% vs 10%)
 - Lower win probability threshold (40% vs 50%)

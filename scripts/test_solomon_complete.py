@@ -513,9 +513,9 @@ class ProverbsTestSuite:
                 ('FORTRESS', 'fortress_positions'),
                 ('SOLOMON', 'solomon_positions'),
                 ('SAMSON', 'samson_positions'),
-                ('PEGASUS', 'pegasus_positions'),
-                ('ICARUS', 'icarus_positions'),
-                ('PROMETHEUS', 'prometheus_ic_positions'),
+                ('ANCHOR', 'anchor_positions'),
+                ('GIDEON', 'gideon_positions'),
+                ('JUBILEE', 'jubilee_ic_positions'),
             ]
 
             found_data = False

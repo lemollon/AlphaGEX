@@ -2,7 +2,7 @@
 End-to-End Test: V2 Bot Audit Trail Storage
 =============================================
 
-Verifies that FORTRESS V2, SOLOMON V2, and PEGASUS V2 properly store
+Verifies that FORTRESS V2, SOLOMON V2, and ANCHOR V2 properly store
 all Oracle/Kronos audit trail data in the database.
 
 This is critical for live trading - we need FULL visibility into
@@ -351,15 +351,15 @@ class TestATHENAV2AuditTrail:
 
 
 # =============================================================================
-# PEGASUS V2 AUDIT TRAIL TESTS
+# ANCHOR V2 AUDIT TRAIL TESTS
 # =============================================================================
 
-class TestPEGASUSV2AuditTrail:
-    """Test PEGASUS V2 SPX Iron Condor stores full Oracle/Kronos context"""
+class TestANCHORV2AuditTrail:
+    """Test ANCHOR V2 SPX Iron Condor stores full Oracle/Kronos context"""
 
     def test_signal_captures_oracle_context(self):
         """Verify signal captures all Oracle prediction details"""
-        from trading.pegasus.models import IronCondorSignal
+        from trading.anchor.models import IronCondorSignal
 
         signal = IronCondorSignal(
             spot_price=5855.0,
@@ -408,10 +408,10 @@ class TestPEGASUSV2AuditTrail:
 
     def test_position_stores_oracle_context(self):
         """Verify position stores all Oracle context"""
-        from trading.pegasus.models import IronCondorPosition, PositionStatus
+        from trading.anchor.models import IronCondorPosition, PositionStatus
 
         position = IronCondorPosition(
-            position_id="PEGASUS-20241230-GHI789",
+            position_id="ANCHOR-20241230-GHI789",
             ticker="SPX",
             expiration="2024-12-30",
             put_short_strike=5720.0,
@@ -458,11 +458,11 @@ class TestPEGASUSV2AuditTrail:
         assert data["net_gex"] == 1500000000
         assert data["oracle_win_probability"] == 0.72
 
-    @patch("trading.pegasus.db.get_connection")
+    @patch("trading.anchor.db.get_connection")
     def test_db_saves_oracle_context(self, mock_get_conn):
         """Verify DB layer saves all Oracle/Kronos columns"""
-        from trading.pegasus.db import PEGASUSDatabase
-        from trading.pegasus.models import IronCondorPosition, PositionStatus
+        from trading.anchor.db import AnchorDatabase
+        from trading.anchor.models import IronCondorPosition, PositionStatus
 
         # Setup mock
         mock_conn = MagicMock()
@@ -471,7 +471,7 @@ class TestPEGASUSV2AuditTrail:
         mock_get_conn.return_value = mock_conn
 
         position = IronCondorPosition(
-            position_id="PEGASUS-TEST-001",
+            position_id="ANCHOR-TEST-001",
             ticker="SPX",
             expiration="2024-12-30",
             put_short_strike=5720.0,
@@ -500,7 +500,7 @@ class TestPEGASUSV2AuditTrail:
             open_time=datetime.now(CENTRAL_TZ),
         )
 
-        db = PEGASUSDatabase()
+        db = AnchorDatabase()
         db.save_position(position)
 
         # Verify INSERT includes Oracle columns
@@ -614,12 +614,12 @@ class TestExecutorPassesFullContext:
         assert position.wall_type == "PUT_WALL"
         assert position.wall_distance_pct == 1.79
 
-    def test_pegasus_executor_passes_oracle_context(self):
-        """PEGASUS executor should pass all Oracle context to position"""
-        from trading.pegasus.executor import OrderExecutor
-        from trading.pegasus.models import PEGASUSConfig, TradingMode, IronCondorSignal
+    def test_anchor_executor_passes_oracle_context(self):
+        """ANCHOR executor should pass all Oracle context to position"""
+        from trading.anchor.executor import OrderExecutor
+        from trading.anchor.models import AnchorConfig, TradingMode, IronCondorSignal
 
-        config = PEGASUSConfig(mode=TradingMode.PAPER)
+        config = AnchorConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(
@@ -717,12 +717,12 @@ class TestJSONSerialization:
         assert len(factors) == 2
         assert factors[0]["factor"] == "vix_level"
 
-    def test_pegasus_top_factors_json(self):
-        """PEGASUS should serialize oracle_top_factors to JSON string"""
-        from trading.pegasus.executor import OrderExecutor
-        from trading.pegasus.models import PEGASUSConfig, TradingMode, IronCondorSignal
+    def test_anchor_top_factors_json(self):
+        """ANCHOR should serialize oracle_top_factors to JSON string"""
+        from trading.anchor.executor import OrderExecutor
+        from trading.anchor.models import AnchorConfig, TradingMode, IronCondorSignal
 
-        config = PEGASUSConfig(mode=TradingMode.PAPER)
+        config = AnchorConfig(mode=TradingMode.PAPER)
         executor = OrderExecutor(config)
 
         signal = IronCondorSignal(

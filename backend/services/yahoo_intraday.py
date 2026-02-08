@@ -36,9 +36,9 @@ except ImportError:
 BOT_SYMBOLS = {
     'fortress': 'SPY',      # FORTRESS trades SPY
     'solomon': 'SPY',    # SOLOMON trades SPY
-    'icarus': 'SPY',    # ICARUS trades SPY
+    'gideon': 'SPY',    # GIDEON trades SPY
     'samson': '^SPX',    # SAMSON trades SPX (use ^GSPC as backup)
-    'pegasus': '^SPX',  # PEGASUS trades SPX
+    'anchor': '^SPX',  # ANCHOR trades SPX
 }
 
 # Rate limiting - Yahoo can block if too many requests

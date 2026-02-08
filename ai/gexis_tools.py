@@ -330,9 +330,9 @@ PENDING_CONFIRMATIONS: Dict[str, Dict] = {}
 def get_bot_status(bot_name: str = "fortress") -> Dict:
     """Get status of a trading bot
 
-    Supports all 8 bots: FORTRESS, SOLOMON, SAMSON, PEGASUS, ICARUS, PHOENIX, ATLAS, HERMES
+    Supports all 8 bots: FORTRESS, SOLOMON, SAMSON, ANCHOR, GIDEON, LAZARUS, CORNERSTONE, SHEPHERD
     """
-    valid_bots = ["fortress", "solomon", "samson", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
+    valid_bots = ["fortress", "solomon", "samson", "anchor", "gideon", "lazarus", "cornerstone", "shepherd"]
     bot_lower = bot_name.lower()
 
     if bot_lower not in valid_bots:
@@ -373,7 +373,7 @@ def request_bot_action(action: str, bot_name: str = "fortress", session_id: str 
     if action.lower() not in valid_actions:
         return {"error": f"Invalid action. Valid actions: {', '.join(valid_actions)}"}
 
-    valid_bots = ["fortress", "solomon", "samson", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
+    valid_bots = ["fortress", "solomon", "samson", "anchor", "gideon", "lazarus", "cornerstone", "shepherd"]
     if bot_name.lower() not in valid_bots:
         return {"error": f"Invalid bot. Valid bots: {', '.join(valid_bots)}"}
 

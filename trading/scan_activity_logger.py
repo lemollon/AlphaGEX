@@ -1414,7 +1414,7 @@ def log_ares_scan(
     )
 
 
-def log_pegasus_scan(
+def log_anchor_scan(
     outcome: ScanOutcome,
     decision_summary: str,
     market_data: Optional[Dict] = None,
@@ -1435,13 +1435,13 @@ def log_pegasus_scan(
     min_win_probability_threshold: float = 0,
     trade_executed: bool = False,
     error_message: str = "",
-    generate_ai_explanation: bool = False,  # Disable by default for PEGASUS
+    generate_ai_explanation: bool = False,  # Disable by default for ANCHOR
     **kwargs
 ) -> Optional[str]:
     """
-    Log PEGASUS (SPX Iron Condor) scan activity.
+    Log ANCHOR (SPX Iron Condor) scan activity.
 
-    PEGASUS trades SPX Iron Condors with $10 spreads using SPXW weekly options.
+    ANCHOR trades SPX Iron Condors with $10 spreads using SPXW weekly options.
     Similar to FORTRESS but for SPX instead of SPY.
     """
     full_reasoning = kwargs.pop('full_reasoning', '')
@@ -1449,7 +1449,7 @@ def log_pegasus_scan(
     error_type = kwargs.pop('error_type', '')
 
     return log_scan_activity(
-        bot_name="PEGASUS",
+        bot_name="ANCHOR",
         outcome=outcome,
         decision_summary=decision_summary,
         action_taken=action_taken,
@@ -1641,9 +1641,9 @@ def log_phoenix_scan(
     **kwargs
 ):
     """
-    Convenience function to log PHOENIX (0DTE SPY/SPX directional) scan activity.
+    Convenience function to log LAZARUS (0DTE SPY/SPX directional) scan activity.
 
-    PHOENIX is the 0DTE options trader that uses GEX-based directional plays.
+    LAZARUS is the 0DTE options trader that uses GEX-based directional plays.
     Logs every scan attempt with full Oracle context for frontend visibility.
     """
     action_taken = ""
@@ -1651,22 +1651,22 @@ def log_phoenix_scan(
 
     if trade_executed:
         action_taken = "EXECUTED: 0DTE directional trade opened"
-        full_reasoning = f"PHOENIX opened position: {kwargs.get('strategy', 'Call/Put')} | {oracle_reasoning}"
+        full_reasoning = f"LAZARUS opened position: {kwargs.get('strategy', 'Call/Put')} | {oracle_reasoning}"
     elif outcome == ScanOutcome.NO_TRADE:
         action_taken = "NO_TRADE: Conditions not met"
-        full_reasoning = f"PHOENIX scan - no trade: {decision_summary}"
+        full_reasoning = f"LAZARUS scan - no trade: {decision_summary}"
     elif outcome == ScanOutcome.MARKET_CLOSED:
         action_taken = "MARKET_CLOSED"
         full_reasoning = "Market is closed"
     elif outcome == ScanOutcome.ERROR:
         action_taken = f"ERROR: {error_message}"
-        full_reasoning = f"PHOENIX error: {error_message}"
+        full_reasoning = f"LAZARUS error: {error_message}"
     else:
         action_taken = f"{outcome.value}: {decision_summary}"
         full_reasoning = decision_summary
 
     return log_scan_activity(
-        bot_name="PHOENIX",
+        bot_name="LAZARUS",
         outcome=outcome,
         decision_summary=decision_summary,
         action_taken=action_taken,
@@ -1716,9 +1716,9 @@ def log_atlas_scan(
     **kwargs
 ):
     """
-    Convenience function to log ATLAS (SPX Wheel) scan activity.
+    Convenience function to log CORNERSTONE (SPX Wheel) scan activity.
 
-    ATLAS is the SPX cash-secured put wheel strategy.
+    CORNERSTONE is the SPX cash-secured put wheel strategy.
     Logs every scan attempt with full Oracle context for frontend visibility.
     """
     action_taken = ""
@@ -1726,22 +1726,22 @@ def log_atlas_scan(
 
     if trade_executed:
         action_taken = "EXECUTED: SPX wheel position opened/managed"
-        full_reasoning = f"ATLAS wheel action: {kwargs.get('action_type', 'CSP')} | {oracle_reasoning}"
+        full_reasoning = f"CORNERSTONE wheel action: {kwargs.get('action_type', 'CSP')} | {oracle_reasoning}"
     elif outcome == ScanOutcome.NO_TRADE:
         action_taken = "NO_TRADE: No wheel action needed"
-        full_reasoning = f"ATLAS scan - no action: {decision_summary}"
+        full_reasoning = f"CORNERSTONE scan - no action: {decision_summary}"
     elif outcome == ScanOutcome.MARKET_CLOSED:
         action_taken = "MARKET_CLOSED"
         full_reasoning = "Market is closed"
     elif outcome == ScanOutcome.ERROR:
         action_taken = f"ERROR: {error_message}"
-        full_reasoning = f"ATLAS error: {error_message}"
+        full_reasoning = f"CORNERSTONE error: {error_message}"
     else:
         action_taken = f"{outcome.value}: {decision_summary}"
         full_reasoning = decision_summary
 
     return log_scan_activity(
-        bot_name="ATLAS",
+        bot_name="CORNERSTONE",
         outcome=outcome,
         decision_summary=decision_summary,
         action_taken=action_taken,
@@ -1793,9 +1793,9 @@ def log_icarus_scan(
     **kwargs
 ) -> Optional[str]:
     """
-    Log ICARUS scan activity with optional Claude AI explanation.
+    Log GIDEON scan activity with optional Claude AI explanation.
 
-    ICARUS is an aggressive directional spreads bot with relaxed GEX filters:
+    GIDEON is an aggressive directional spreads bot with relaxed GEX filters:
     - 10% wall filter (vs SOLOMON's 3%)
     - 40% min win probability (vs SOLOMON's 48%)
     - 4% risk per trade (vs SOLOMON's 2%)
@@ -1809,7 +1809,7 @@ def log_icarus_scan(
     error_type = kwargs.pop('error_type', '')
 
     # Generate AI explanation if requested and we have enough context
-    # Use SOLOMON's explain function since ICARUS is similar
+    # Use SOLOMON's explain function since GIDEON is similar
     if generate_ai_explanation and market_data:
         try:
             from trading.scan_explainer import explain_solomon_decision
@@ -1830,7 +1830,7 @@ def log_icarus_scan(
                         checks_list.append(check)
 
             # Get scan number
-            scan_number = _get_scan_number_today("ICARUS")
+            scan_number = _get_scan_number_today("GIDEON")
 
             # Get values from market/gex data
             underlying_price = market_data.get('underlying_price', 0) or market_data.get('spot_price', 0)
@@ -1875,14 +1875,14 @@ def log_icarus_scan(
             decision_summary = explanation.get('summary', decision_summary)
             full_reasoning = explanation.get('full_explanation', full_reasoning)
 
-            logger.info(f"[ICARUS] AI explanation generated: {decision_summary}")
+            logger.info(f"[GIDEON] AI explanation generated: {decision_summary}")
 
         except Exception as e:
-            logger.warning(f"Failed to generate AI explanation for ICARUS: {e}")
+            logger.warning(f"Failed to generate AI explanation for GIDEON: {e}")
             # Fall back to provided summary
 
     return log_scan_activity(
-        bot_name="ICARUS",
+        bot_name="GIDEON",
         outcome=outcome,
         decision_summary=decision_summary,
         action_taken=action_taken,
@@ -1933,22 +1933,22 @@ def log_titan_scan(
     trade_executed: bool = False,
     error_message: str = "",
     risk_reward_ratio: float = 0,
-    generate_ai_explanation: bool = False,  # Disable by default for SAMSON (similar to PEGASUS)
+    generate_ai_explanation: bool = False,  # Disable by default for SAMSON (similar to ANCHOR)
     **kwargs
 ) -> Optional[str]:
     """
     Log SAMSON scan activity.
 
-    SAMSON is an aggressive SPX Iron Condor bot with relaxed filters vs PEGASUS:
-    - 40% VIX skip (vs PEGASUS's 32%)
-    - 40% min win probability (vs PEGASUS's 50%)
-    - 15% risk per trade (vs PEGASUS's 10%)
-    - 10 max positions (vs PEGASUS's 5)
-    - 0.8 SD multiplier for closer strikes (vs PEGASUS's 1.0)
-    - $12 spread widths (vs PEGASUS's $10)
+    SAMSON is an aggressive SPX Iron Condor bot with relaxed filters vs ANCHOR:
+    - 40% VIX skip (vs ANCHOR's 32%)
+    - 40% min win probability (vs ANCHOR's 50%)
+    - 15% risk per trade (vs ANCHOR's 10%)
+    - 10 max positions (vs ANCHOR's 5)
+    - 0.8 SD multiplier for closer strikes (vs ANCHOR's 1.0)
+    - $12 spread widths (vs ANCHOR's $10)
     - 30-minute cooldown for multiple trades per day
 
-    Similar to PEGASUS but more aggressive, trading daily with higher frequency.
+    Similar to ANCHOR but more aggressive, trading daily with higher frequency.
     """
     full_reasoning = kwargs.pop('full_reasoning', '')
     action_taken = kwargs.pop('action_taken', '')

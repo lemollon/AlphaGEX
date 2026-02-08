@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test Tastytrade API Connection
-Verifies credentials and account access for HERACLES futures bot
+Verifies credentials and account access for VALOR futures bot
 """
 
 import os

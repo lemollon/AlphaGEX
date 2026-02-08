@@ -314,7 +314,7 @@ const errorsCount = allScans.filter(...).length  // FILTER 3
 ```javascript
 const allScans = useMemo(() =>
   [...].sort(...).slice(0, 10),
-  [aresScans, solomonScans, pegasusScans, icarusScans, titanScans]
+  [aresScans, solomonScans, anchorScans, icarusScans, titanScans]
 )
 
 const { tradesCount, skipsCount, errorsCount } = useMemo(() =>

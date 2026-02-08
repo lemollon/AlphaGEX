@@ -73,7 +73,7 @@ class ResumeRequest(BaseModel):
 
 class ProposalCreateRequest(BaseModel):
     """Request to create a new proposal"""
-    bot_name: str = Field(..., description="Bot name (FORTRESS, SOLOMON, PEGASUS, PHOENIX)")
+    bot_name: str = Field(..., description="Bot name (FORTRESS, SOLOMON, ANCHOR, LAZARUS)")
     proposal_type: str = Field(..., description="Type of proposal (MODEL_UPDATE, PARAMETER_CHANGE, etc.)")
     title: str = Field(..., description="Short title for the proposal")
     description: str = Field(..., description="Detailed description")
@@ -160,7 +160,7 @@ async def get_bot_dashboard(bot_name: str):
         raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     bot_name = bot_name.upper()
-    if bot_name not in ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON', 'PHOENIX']:
+    if bot_name not in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'LAZARUS']:
         raise HTTPException(status_code=400, detail=f"Invalid bot name: {bot_name}")
 
     try:
@@ -596,7 +596,7 @@ async def get_kill_switch_status():
         status = proverbs.get_kill_switch_status()
 
         # Add bots not yet in the table
-        for bot in ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON', 'PHOENIX']:
+        for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'LAZARUS']:
             if bot not in status:
                 status[bot] = {
                     'bot_name': bot,
@@ -879,9 +879,9 @@ async def get_realtime_status(
             'FORTRESS': 'fortress_positions',
             'SOLOMON': 'solomon_positions',
             'SAMSON': 'samson_positions',
-            'PEGASUS': 'pegasus_positions',
-            'ICARUS': 'icarus_positions',
-            'PROMETHEUS': 'prometheus_ic_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
         }
 
         # Collect performance from each bot's actual table
@@ -965,8 +965,8 @@ async def get_realtime_status(
 
         # Build bot status
         bots = {}
-        ic_bots = ['FORTRESS', 'SAMSON', 'PEGASUS', 'PROMETHEUS']
-        dir_bots = ['SOLOMON', 'ICARUS']
+        ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
+        dir_bots = ['SOLOMON', 'GIDEON']
 
         for row in bot_rows:
             bot_name, total_trades, wins, losses, total_pnl, avg_pnl, last_trade = row
@@ -1033,8 +1033,8 @@ async def get_strategy_analysis(
     Directional strategy performance across all bots.
 
     Returns:
-    - Iron Condor metrics (FORTRESS, SAMSON, PEGASUS)
-    - Directional metrics (SOLOMON, ICARUS)
+    - Iron Condor metrics (FORTRESS, SAMSON, ANCHOR)
+    - Directional metrics (SOLOMON, GIDEON)
     - Win rate comparison
     - Average P&L comparison
     - Strategy recommendation
@@ -1532,7 +1532,7 @@ class ValidatedProposalRequest(BaseModel):
     This is the recommended way to create proposals as it enforces
     the "proven improvement required" policy.
     """
-    bot_name: str = Field(..., description="Bot name (FORTRESS, SOLOMON, PEGASUS, PHOENIX)")
+    bot_name: str = Field(..., description="Bot name (FORTRESS, SOLOMON, ANCHOR, LAZARUS)")
     title: str = Field(..., description="Short title for the proposal")
 
     # DETAILED REASONING (WHY)

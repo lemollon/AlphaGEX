@@ -304,10 +304,10 @@ VOLATILITY:
 - /alerts - Trading alerts management
 
 BETA FEATURES:
-- /prometheus - PROMETHEUS ML prediction system
-- /trader - PHOENIX SPY 0DTE trading
-- /wheel - HERMES Manual Wheel strategy
-- /spx-wheel - ATLAS SPX Wheel automation
+- /jubilee - JUBILEE ML prediction system
+- /trader - LAZARUS SPY 0DTE trading
+- /wheel - SHEPHERD Manual Wheel strategy
+- /spx-wheel - CORNERSTONE SPX Wheel automation
 - /spx - SPX Institutional flow analysis
 
 SYSTEM:
@@ -386,7 +386,7 @@ Wall Filter Logic:
 - Near Put Wall → Bullish bias → Bull Put Spread
 - Backtest shows 90-98% win rate with wall filter
 
-=== ATLAS STRATEGY (SPX Wheel) ===
+=== CORNERSTONE STRATEGY (SPX Wheel) ===
 
 Overview:
 - Cash-secured put selling on SPX

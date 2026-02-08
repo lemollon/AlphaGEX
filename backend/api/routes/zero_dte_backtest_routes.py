@@ -2222,7 +2222,7 @@ class OracleAnalysisRequest(BaseModel):
     gex_call_wall: float = Field(default=0.0, description="GEX call wall strike")
     gex_put_wall: float = Field(default=0.0, description="GEX put wall strike")
     day_of_week: int = Field(default=2, description="Day of week (0=Mon, 4=Fri)")
-    bot_name: str = Field(default="FORTRESS", description="Bot name: FORTRESS, ATLAS, PHOENIX")
+    bot_name: str = Field(default="FORTRESS", description="Bot name: FORTRESS, CORNERSTONE, LAZARUS")
 
 
 class OracleExplainRequest(BaseModel):
@@ -2370,9 +2370,9 @@ async def oracle_analyze(request: OracleAnalysisRequest):
                 use_gex_walls=(request.gex_call_wall > 0 and request.gex_put_wall > 0),
                 use_claude_validation=True
             )
-        elif bot_name == BotName.ATLAS:
+        elif bot_name == BotName.CORNERSTONE:
             prediction = oracle.get_atlas_advice(context)
-        elif bot_name == BotName.PHOENIX:
+        elif bot_name == BotName.LAZARUS:
             prediction = oracle.get_phoenix_advice(context)
         else:
             prediction = oracle.get_ares_advice(context)
@@ -2644,7 +2644,7 @@ async def get_oracle_full_transparency(bot_name: str = None):
 
         # Get latest flow per bot
         latest_by_bot = {}
-        for bot in ['FORTRESS', 'SOLOMON', 'ICARUS', 'PEGASUS', 'SAMSON', 'PHOENIX']:
+        for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'LAZARUS']:
             latest = oracle_live_log.get_latest_flow_for_bot(bot)
             if latest:
                 latest_by_bot[bot] = latest
@@ -2815,7 +2815,7 @@ async def get_oracle_predictions_full(
     Args:
         days: Number of days to look back (default: 30)
         limit: Maximum number of predictions (default: 100)
-        bot_name: Filter by bot (FORTRESS, ATLAS, PHOENIX, SOLOMON)
+        bot_name: Filter by bot (FORTRESS, CORNERSTONE, LAZARUS, SOLOMON)
         include_claude: Include Claude analysis data (default: True)
 
     Returns comprehensive prediction data including:
@@ -2920,7 +2920,7 @@ async def get_oracle_bot_interactions(
     """
     Get all bot interactions with Oracle.
 
-    Shows every time a bot (FORTRESS, ATLAS, PHOENIX, SOLOMON) consulted Oracle
+    Shows every time a bot (FORTRESS, CORNERSTONE, LAZARUS, SOLOMON) consulted Oracle
     with full context and reasoning.
 
     Args:
