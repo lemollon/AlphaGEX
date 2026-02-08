@@ -94,12 +94,14 @@ class AgapeSpotTrader:
 
         self.db.log(
             "INFO", "INIT",
-            f"AGAPE-SPOT trader initialized (mode={self.config.mode.value}, "
+            f"AGAPE-SPOT trader initialized "
+            f"(live_tickers={self.config.live_tickers}, "
             f"tickers={self.config.tickers}, 24/7 Coinbase spot, LONG-ONLY)",
         )
         logger.info(
-            f"AGAPE-SPOT: Initialized (mode={self.config.mode.value}, "
-            f"tickers={self.config.tickers}, "
+            f"AGAPE-SPOT: Initialized "
+            f"(live={self.config.live_tickers}, "
+            f"paper={[t for t in self.config.tickers if t not in self.config.live_tickers]}, "
             f"max_pos_per_ticker={self.config.max_open_positions_per_ticker}, "
             f"oracle_required={self.config.require_oracle_approval})"
         )
@@ -226,19 +228,20 @@ class AgapeSpotTrader:
                 return result
 
             # Step 8: Execute trade (always LONG)
+            trade_mode = "LIVE" if self.config.is_live(ticker) else "PAPER"
             position = self.executor.execute_trade(signal)
             if position:
                 self.db.save_position(position)
                 result["new_trade"] = True
-                result["outcome"] = f"TRADED_LONG_{ticker}"
+                result["outcome"] = f"TRADED_LONG_{ticker}_{trade_mode}"
                 result["position_id"] = position.position_id
                 scan_context["position_id"] = position.position_id
 
                 notional = signal.quantity * position.entry_price
                 self.db.log(
                     "INFO", "NEW_TRADE",
-                    f"LONG {ticker} {signal.quantity} @ ${position.entry_price:.2f} "
-                    f"(${notional:.2f})",
+                    f"[{trade_mode}] LONG {ticker} {signal.quantity} "
+                    f"@ ${position.entry_price:.2f} (${notional:.2f})",
                     details=signal.to_dict(),
                 )
             else:
@@ -745,7 +748,12 @@ class AgapeSpotTrader:
         return {
             "bot_name": "AGAPE-SPOT",
             "status": "ACTIVE" if self._enabled else "DISABLED",
-            "mode": self.config.mode.value,
+            "mode": "mixed",
+            "live_tickers": self.config.live_tickers,
+            "paper_tickers": [
+                t for t in self.config.tickers
+                if t not in self.config.live_tickers
+            ],
             "tickers": self.config.tickers,
             "side": "long",
             "instrument": "Multi-ticker spot",
@@ -830,10 +838,11 @@ class AgapeSpotTrader:
         loss_streak = self._loss_streaks.get(ticker, 0)
         pause_until = self._loss_pause_until.get(ticker)
 
+        is_live = self.config.is_live(ticker)
         return {
             "bot_name": "AGAPE-SPOT",
             "status": "ACTIVE" if self._enabled else "DISABLED",
-            "mode": self.config.mode.value,
+            "mode": "live" if is_live else "paper",
             "ticker": ticker,
             "display_name": ticker_config.get("display_name", ticker),
             "side": "long",

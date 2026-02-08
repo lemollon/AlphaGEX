@@ -123,17 +123,23 @@ async def list_tickers():
     if trader:
         active_tickers = list(trader.config.tickers)
 
+    live_tickers: List[str] = []
+    if trader:
+        live_tickers = list(trader.config.live_tickers)
+
     tickers_out = {}
     for ticker_key, cfg in SPOT_TICKERS.items():
         tickers_out[ticker_key] = {
             **cfg,
             "active": ticker_key in active_tickers,
+            "mode": "live" if ticker_key in live_tickers else "paper",
         }
 
     return {
         "success": True,
         "data": tickers_out,
         "active_tickers": active_tickers,
+        "live_tickers": live_tickers,
         "count": len(tickers_out),
         "fetched_at": _format_ct(),
     }
@@ -193,9 +199,11 @@ async def get_summary():
 
             display_name = SPOT_TICKERS.get(ticker, {}).get("display_name", ticker)
 
+            is_live = trader.config.is_live(ticker)
             per_ticker[ticker] = {
                 "ticker": ticker,
                 "display_name": display_name,
+                "mode": "live" if is_live else "paper",
                 "current_price": current_price,
                 "starting_capital": starting_capital,
                 "current_balance": round(current_balance, 2),
