@@ -138,6 +138,16 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
     reference: '1 Corinthians 13:4,7',
     why: 'Agape (ἀγάπη) is the highest form of love—unconditional and steadfast. Trading crypto requires patience through extreme volatility and unwavering commitment to the system. Like love that always perseveres, this bot holds discipline through wild swings.',
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-SPOT → AGAPE-SPOT (24/7 Coinbase Spot - Unconditional Love, Extended)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_SPOT: {
+    displayName: 'AGAPE-SPOT',
+    verse: '"Love never fails. But where there are prophecies, they will cease; where there are tongues, they will be stilled; where there is knowledge, it will pass away."',
+    reference: '1 Corinthians 13:8',
+    why: 'AGAPE-SPOT extends the unconditional love of AGAPE to 24/7 spot trading across multiple coins. Like love that never fails and never ceases, this bot trades around the clock with unwavering patience through every market cycle.',
+  },
 }
 
 // =============================================================================
@@ -212,30 +222,33 @@ export const ADVISOR_SCRIPTURES: Record<string, BotScripture> = {
 // =============================================================================
 
 export const BOT_DISPLAY_NAMES = {
-  ARES: BOT_SCRIPTURES.ARES.displayName,
-  ATHENA: BOT_SCRIPTURES.ATHENA.displayName,
-  ICARUS: BOT_SCRIPTURES.ICARUS.displayName,
-  PEGASUS: BOT_SCRIPTURES.PEGASUS.displayName,
-  TITAN: BOT_SCRIPTURES.TITAN.displayName,
-  PHOENIX: BOT_SCRIPTURES.PHOENIX.displayName,
-  ATLAS: BOT_SCRIPTURES.ATLAS.displayName,
-  HERMES: BOT_SCRIPTURES.HERMES.displayName,
-  PROMETHEUS: BOT_SCRIPTURES.PROMETHEUS.displayName,
-  HERACLES: BOT_SCRIPTURES.HERACLES.displayName,
+  // New biblical names (used in navigation and UI)
+  FORTRESS: BOT_SCRIPTURES.ARES.displayName,
+  SOLOMON: BOT_SCRIPTURES.ATHENA.displayName,
+  GIDEON: BOT_SCRIPTURES.ICARUS.displayName,
+  ANCHOR: BOT_SCRIPTURES.PEGASUS.displayName,
+  SAMSON: BOT_SCRIPTURES.TITAN.displayName,
+  LAZARUS: BOT_SCRIPTURES.PHOENIX.displayName,
+  CORNERSTONE: BOT_SCRIPTURES.ATLAS.displayName,
+  SHEPHERD: BOT_SCRIPTURES.HERMES.displayName,
+  JUBILEE: BOT_SCRIPTURES.PROMETHEUS.displayName,
+  VALOR: BOT_SCRIPTURES.HERACLES.displayName,
   AGAPE: BOT_SCRIPTURES.AGAPE.displayName,
+  AGAPE_SPOT: BOT_SCRIPTURES.AGAPE_SPOT.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {
-  ORACLE: ADVISOR_SCRIPTURES.ORACLE.displayName,
-  SAGE: ADVISOR_SCRIPTURES.SAGE.displayName,
-  ARGUS: ADVISOR_SCRIPTURES.ARGUS.displayName,
-  ORION: ADVISOR_SCRIPTURES.ORION.displayName,
-  GEXIS: ADVISOR_SCRIPTURES.GEXIS.displayName,
-  KRONOS: ADVISOR_SCRIPTURES.KRONOS.displayName,
-  HYPERION: ADVISOR_SCRIPTURES.HYPERION.displayName,
-  APOLLO: ADVISOR_SCRIPTURES.APOLLO.displayName,
+  // New biblical names (used in navigation and UI)
+  PROPHET: ADVISOR_SCRIPTURES.ORACLE.displayName,
+  WISDOM: ADVISOR_SCRIPTURES.SAGE.displayName,
+  WATCHTOWER: ADVISOR_SCRIPTURES.ARGUS.displayName,
+  STARS: ADVISOR_SCRIPTURES.ORION.displayName,
+  COUNSELOR: ADVISOR_SCRIPTURES.GEXIS.displayName,
+  CHRONICLES: ADVISOR_SCRIPTURES.KRONOS.displayName,
+  GLORY: ADVISOR_SCRIPTURES.HYPERION.displayName,
+  DISCERNMENT: ADVISOR_SCRIPTURES.APOLLO.displayName,
   PROVERBS: ADVISOR_SCRIPTURES.PROVERBS.displayName,
-  NEXUS: ADVISOR_SCRIPTURES.NEXUS.displayName,
+  COVENANT: ADVISOR_SCRIPTURES.NEXUS.displayName,
 } as const
 
 // =============================================================================

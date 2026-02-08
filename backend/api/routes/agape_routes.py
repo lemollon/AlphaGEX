@@ -135,7 +135,7 @@ async def get_positions():
         for pos in positions:
             if current_price:
                 direction = 1 if pos["side"] == "long" else -1
-                pnl = (current_price - pos["entry_price"]) * 0.1 * direction * pos.get("contracts", 1)
+                pnl = (current_price - pos["entry_price"]) * trader.config.contract_size * direction * pos.get("contracts", 1)
                 pos["unrealized_pnl"] = round(pnl, 2)
                 pos["current_price"] = current_price
             else:
@@ -294,7 +294,7 @@ async def get_equity_curve(
                 "cumulative_pnl": round(cumulative_pnl, 2),
                 "equity": round(equity, 2),
                 "trades": day_trades,
-                "return_pct": round(cumulative_pnl / starting_capital, 4),
+                "return_pct": round(cumulative_pnl / starting_capital * 100, 2),
             })
 
         # Filter to requested days (output filter only, not SQL)

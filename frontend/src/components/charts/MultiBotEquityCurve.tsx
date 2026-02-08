@@ -28,6 +28,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   JUBILEE: 100000,
   VALOR: 100000,
   AGAPE: 5000,
+  AGAPE_SPOT: 8000,
 }
 
 // Bot configuration with colors
@@ -40,6 +41,7 @@ const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'JUBILEE', endpoint: '/api/jubilee/ic/equity-curve' },
   { name: 'VALOR', endpoint: '/api/valor/paper-equity-curve' },
   { name: 'AGAPE', endpoint: '/api/agape/equity-curve' },
+  { name: 'AGAPE_SPOT', endpoint: '/api/agape-spot/equity-curve' },
 ]
 
 interface EquityCurvePoint {
@@ -91,6 +93,7 @@ export default function MultiBotEquityCurve({
     JUBILEE: true,
     VALOR: true,
     AGAPE: true,
+    AGAPE_SPOT: true,
     LAZARUS: false,
     CORNERSTONE: false,
   })
@@ -137,8 +140,13 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
+  const { data: agapeSpotData, isLoading: agapeSpotLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[8].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
 
-  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading
+  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading || agapeSpotLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -150,6 +158,7 @@ export default function MultiBotEquityCurve({
     JUBILEE: prometheusData,
     VALOR: heraclesData,
     AGAPE: agapeData,
+    AGAPE_SPOT: agapeSpotData,
     LAZARUS: undefined,
     CORNERSTONE: undefined,
   }
@@ -197,7 +206,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData, showPercentage])
+  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -210,6 +219,7 @@ export default function MultiBotEquityCurve({
       JUBILEE: null,
       VALOR: null,
       AGAPE: null,
+      AGAPE_SPOT: null,
       LAZARUS: null,
       CORNERSTONE: null,
     }
@@ -228,7 +238,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData])
+  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {

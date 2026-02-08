@@ -91,6 +91,7 @@ export default function AllBotReportsSummary() {
     JUBILEE: undefined,
     VALOR: undefined,
     AGAPE: undefined,
+    AGAPE_SPOT: undefined,
   }
 
   // Calculate aggregate stats

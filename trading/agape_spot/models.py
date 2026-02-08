@@ -1,7 +1,9 @@
 """
-AGAPE Models - Data structures for the ETH Micro Futures bot.
+AGAPE-SPOT Models - Multi-ticker 24/7 Coinbase Spot trading.
 
-Mirrors FORTRESS V2 models pattern with crypto-specific fields.
+Supports: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
+P&L = (exit - entry) * quantity (always long).
 """
 
 from dataclasses import dataclass, field
@@ -10,19 +12,60 @@ from enum import Enum
 from typing import Optional, List, Dict, Any
 
 
+# ==============================================================================
+# SUPPORTED TICKERS - Per-coin configuration
+# ==============================================================================
+
+SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
+    "ETH-USD": {
+        "symbol": "ETH",
+        "display_name": "Ethereum",
+        "starting_capital": 5000.0,
+        "default_quantity": 0.1,
+        "min_order": 0.001,
+        "max_per_trade": 1.0,
+        "quantity_decimals": 4,
+        "price_decimals": 2,
+    },
+    "XRP-USD": {
+        "symbol": "XRP",
+        "display_name": "XRP",
+        "starting_capital": 1000.0,
+        "live_capital": 50.0,
+        "default_quantity": 100.0,
+        "min_order": 1.0,
+        "max_per_trade": 5000.0,
+        "quantity_decimals": 0,
+        "price_decimals": 4,
+    },
+    "SHIB-USD": {
+        "symbol": "SHIB",
+        "display_name": "Shiba Inu",
+        "starting_capital": 1000.0,
+        "live_capital": 50.0,
+        "default_quantity": 1000000.0,
+        "min_order": 1000.0,
+        "max_per_trade": 100000000.0,
+        "quantity_decimals": 0,
+        "price_decimals": 8,
+    },
+    "DOGE-USD": {
+        "symbol": "DOGE",
+        "display_name": "Dogecoin",
+        "starting_capital": 1000.0,
+        "live_capital": 50.0,
+        "default_quantity": 500.0,
+        "min_order": 1.0,
+        "max_per_trade": 50000.0,
+        "quantity_decimals": 0,
+        "price_decimals": 4,
+    },
+}
+
+
 class TradingMode(Enum):
     PAPER = "paper"
     LIVE = "live"
-
-
-class Exchange(Enum):
-    TASTYTRADE_CME = "tastytrade"    # CME /MET futures (Sun 5PM - Fri 4PM CT)
-    COINBASE_SPOT = "coinbase"       # Spot ETH-USD (24/7/365)
-
-
-class PositionSide(Enum):
-    LONG = "long"
-    SHORT = "short"
 
 
 class PositionStatus(Enum):
@@ -34,105 +77,114 @@ class PositionStatus(Enum):
 
 class SignalAction(Enum):
     LONG = "LONG"
-    SHORT = "SHORT"
-    RANGE_BOUND = "RANGE_BOUND"   # For future premium selling
+    RANGE_BOUND = "RANGE_BOUND"
     WAIT = "WAIT"
     CLOSE = "CLOSE"
 
 
 @dataclass
-class AgapeConfig:
-    """Configuration for AGAPE bot - loaded from autonomous_config table.
+class AgapeSpotConfig:
+    """Configuration for AGAPE-SPOT bot.
 
-    AGGRESSIVE MODE (matching VALOR/Valor aggressiveness):
-    - High position limits for frequent trading
-    - Short cooldown to avoid missing opportunities
-    - Low confidence threshold to trade on any signal
-    - Prophet advisory only (not blocking)
-    - No-loss trailing to let winners run
-    - SAR to reverse losing positions
+    LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
+    MULTI-TICKER: Trades ETH-USD, XRP-USD, SHIB-USD, DOGE-USD.
     """
 
-    # Identity
-    bot_name: str = "AGAPE"
-    ticker: str = "ETH"
-    instrument: str = "/MET"          # CME Micro Ether Futures
-
-    # Trading mode
+    bot_name: str = "AGAPE-SPOT"
     mode: TradingMode = TradingMode.PAPER
-    exchange: Exchange = Exchange.TASTYTRADE_CME  # or COINBASE_SPOT for 24/7
 
-    # Risk management
-    starting_capital: float = 5000.0   # Small account for micro futures
-    risk_per_trade_pct: float = 5.0    # 5% risk per trade ($250 on $5K)
-    max_contracts: int = 10
-    max_open_positions: int = 20       # Aggressive: allow many concurrent positions
+    # Active tickers
+    tickers: List[str] = field(default_factory=lambda: list(SPOT_TICKERS.keys()))
 
-    # Position sizing
-    contract_size: float = 0.1         # /MET = 0.1 ETH
-    tick_size: float = 0.50            # Minimum price increment
-    tick_value: float = 0.05           # Dollar value per tick
+    # Per-ticker live trading: tickers in this list execute real Coinbase orders.
+    # Tickers NOT in this list run in paper mode regardless of global mode.
+    live_tickers: List[str] = field(
+        default_factory=lambda: ["XRP-USD", "SHIB-USD", "DOGE-USD"]
+    )
+
+    # Risk management (shared)
+    risk_per_trade_pct: float = 5.0
+    max_open_positions_per_ticker: int = 5
 
     # Entry/exit rules
-    profit_target_pct: float = 50.0    # Close at 50% of expected move captured
-    stop_loss_pct: float = 100.0       # Stop at 100% of risk (1:1 R:R)
-    trailing_stop_pct: float = 0.0     # 0 = disabled (use no-loss trailing instead)
-    max_hold_hours: int = 24           # Max position duration
+    profit_target_pct: float = 50.0
+    stop_loss_pct: float = 100.0
+    trailing_stop_pct: float = 0.0
+    max_hold_hours: int = 24
 
-    # No-Loss Trailing Strategy (ported from VALOR)
-    # Let winners run, only trail after profitable
+    # No-Loss Trailing
     use_no_loss_trailing: bool = True
-    no_loss_activation_pct: float = 1.0   # % profit before trailing activates
-    no_loss_trail_distance_pct: float = 0.75  # % behind best price (< activation_pct to lock in profit)
-    no_loss_emergency_stop_pct: float = 5.0  # Emergency stop for catastrophic moves
-    max_unrealized_loss_pct: float = 3.0     # Exit if down 3% (safety net)
-    no_loss_profit_target_pct: float = 0.0   # 0 = disabled, let winners run
+    no_loss_activation_pct: float = 1.0
+    no_loss_trail_distance_pct: float = 0.75
+    no_loss_emergency_stop_pct: float = 5.0
+    max_unrealized_loss_pct: float = 3.0
+    no_loss_profit_target_pct: float = 0.0
 
-    # Stop-and-Reverse (SAR) Strategy (ported from VALOR)
-    # When a trade is clearly wrong, reverse direction to capture momentum
-    use_sar: bool = True
-    sar_trigger_pct: float = 1.5       # Trigger SAR when down this % from entry
-    sar_mfe_threshold_pct: float = 0.3 # Only reverse if MFE < this % (never profitable)
+    # SAR disabled for long-only (can't reverse to short)
+    use_sar: bool = False
 
-    # Timing (crypto trades 23hrs/day Sun-Fri)
-    entry_start: str = "18:00"         # 6 PM CT Sunday open
-    entry_end: str = "15:30"           # 3:30 PM CT Friday
-    force_exit: str = "15:45"          # Force close before CME close
+    # Signal thresholds
+    min_confidence: str = "LOW"
+    min_funding_rate_signal: float = 0.001
+    min_ls_ratio_extreme: float = 1.1
+    min_liquidation_proximity_pct: float = 5.0
 
-    # Signal thresholds - AGGRESSIVE
-    min_confidence: str = "LOW"        # Trade on any signal (was MEDIUM)
-    min_funding_rate_signal: float = 0.001  # Lower threshold for directional signals
-    min_ls_ratio_extreme: float = 1.1       # Lower extreme threshold
-    min_liquidation_proximity_pct: float = 5.0  # Wider liquidation zone
+    # Oracle
+    require_oracle_approval: bool = False
+    min_oracle_win_probability: float = 0.35
 
-    # Prophet integration - ADVISORY ONLY (not blocking)
-    require_oracle_approval: bool = False   # Don't let Prophet block trades
-    min_oracle_win_probability: float = 0.35  # Lower threshold when advisory
+    # Cooldown
+    cooldown_minutes: int = 5
 
-    # Cooldown - AGGRESSIVE
-    cooldown_minutes: int = 5          # Short cooldown (was 30)
+    # Loss streak
+    max_consecutive_losses: int = 3
+    loss_streak_pause_minutes: int = 5
 
-    # Loss streak protection (from VALOR)
-    max_consecutive_losses: int = 3    # Pause after 3 losses in a row
-    loss_streak_pause_minutes: int = 5 # How long to pause (minutes)
+    # Direction Tracker
+    direction_cooldown_scans: int = 2
+    direction_win_streak_caution: int = 100
+    direction_memory_size: int = 10
 
-    # Direction Tracker settings (from VALOR)
-    direction_cooldown_scans: int = 2      # Pause direction for 2 scans after loss
-    direction_win_streak_caution: int = 100 # Effectively disabled
-    direction_memory_size: int = 10         # Track last 10 trades per direction
+    def is_live(self, ticker: str) -> bool:
+        """Return True if *ticker* should execute real Coinbase orders."""
+        return ticker in self.live_tickers
+
+    def get_ticker_config(self, ticker: str) -> Dict[str, Any]:
+        """Get per-ticker config (capital, sizing, etc.)."""
+        return SPOT_TICKERS.get(ticker, SPOT_TICKERS["ETH-USD"])
+
+    def get_starting_capital(self, ticker: str) -> float:
+        """Get starting capital for a specific ticker (paper tracking)."""
+        return self.get_ticker_config(ticker).get("starting_capital", 1000.0)
+
+    def get_trading_capital(self, ticker: str) -> float:
+        """Get capital used for position sizing.
+
+        LIVE tickers use live_capital (real Coinbase balance).
+        PAPER tickers use starting_capital.
+        """
+        cfg = self.get_ticker_config(ticker)
+        if self.is_live(ticker):
+            return cfg.get("live_capital", cfg.get("starting_capital", 1000.0))
+        return cfg.get("starting_capital", 1000.0)
 
     @classmethod
-    def load_from_db(cls, db) -> "AgapeConfig":
+    def load_from_db(cls, db) -> "AgapeSpotConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        # These keys are code-controlled and should NOT be overridden by DB
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions_per_ticker"}
         try:
             db_config = db.load_config()
             if db_config:
                 for key, value in db_config.items():
                     if key in code_controlled_keys:
-                        continue  # Skip DB override for code-controlled settings
+                        continue
+                    if key == "tickers":
+                        config.tickers = [t.strip() for t in str(value).split(",") if t.strip()]
+                        continue
+                    if key == "live_tickers":
+                        config.live_tickers = [t.strip() for t in str(value).split(",") if t.strip()]
+                        continue
                     if hasattr(config, key):
                         attr_type = type(getattr(config, key))
                         if attr_type == float:
@@ -145,24 +197,19 @@ class AgapeConfig:
                             setattr(config, key, str(value))
                         elif attr_type == TradingMode:
                             setattr(config, key, TradingMode(value))
-                        elif attr_type == Exchange:
-                            setattr(config, key, Exchange(value))
         except Exception:
-            pass  # Use defaults
+            pass
         return config
 
 
 @dataclass
-class AgapeSignal:
-    """Trading signal generated by AGAPE signal engine.
-
-    Equivalent to FORTRESS's IronCondorSignal but for directional /MET trades.
-    """
-    # Market data at signal time
+class AgapeSpotSignal:
+    """Trading signal for AGAPE-SPOT. LONG-ONLY, multi-ticker."""
+    ticker: str
     spot_price: float
     timestamp: datetime
 
-    # Crypto microstructure (replaces GEX data)
+    # Crypto microstructure
     funding_rate: float = 0.0
     funding_regime: str = "UNKNOWN"
     ls_ratio: float = 1.0
@@ -173,7 +220,6 @@ class AgapeSignal:
     leverage_regime: str = "UNKNOWN"
     max_pain: Optional[float] = None
 
-    # Crypto GEX (from Deribit options)
     crypto_gex: float = 0.0
     crypto_gex_regime: str = "NEUTRAL"
 
@@ -181,38 +227,34 @@ class AgapeSignal:
     action: SignalAction = SignalAction.WAIT
     confidence: str = "LOW"
     reasoning: str = ""
-    source: str = "agape"
+    source: str = "agape_spot"
 
-    # Prophet context (audit trail)
+    # Oracle
     oracle_advice: str = "UNKNOWN"
     oracle_win_probability: float = 0.0
     oracle_confidence: float = 0.0
     oracle_top_factors: List[str] = field(default_factory=list)
 
-    # Trade parameters (populated if action != WAIT)
-    side: Optional[str] = None             # "long" or "short"
+    # Trade parameters - LONG ONLY
     entry_price: Optional[float] = None
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
-    contracts: int = 0
+    quantity: float = 0.0
     max_risk_usd: float = 0.0
 
     @property
     def is_valid(self) -> bool:
-        """Signal is tradeable.
-
-        AGGRESSIVE MODE: Accepts LOW confidence signals since
-        min_confidence is set to LOW in AgapeConfig.
-        """
+        """Signal is tradeable (LONG only)."""
         return (
-            self.action in (SignalAction.LONG, SignalAction.SHORT)
+            self.action == SignalAction.LONG
             and self.confidence in ("HIGH", "MEDIUM", "LOW")
-            and self.contracts > 0
+            and self.quantity > 0
             and self.entry_price is not None
         )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "ticker": self.ticker,
             "spot_price": self.spot_price,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "funding_rate": self.funding_rate,
@@ -233,24 +275,24 @@ class AgapeSignal:
             "oracle_win_probability": self.oracle_win_probability,
             "oracle_confidence": self.oracle_confidence,
             "oracle_top_factors": self.oracle_top_factors,
-            "side": self.side,
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
-            "contracts": self.contracts,
+            "quantity": self.quantity,
             "max_risk_usd": self.max_risk_usd,
         }
 
 
 @dataclass
-class AgapePosition:
-    """An open or closed AGAPE position.
+class AgapeSpotPosition:
+    """LONG-ONLY spot position.
 
-    Equivalent to FORTRESS's IronCondorPosition but for directional /MET trades.
+    P&L = (current - entry) * quantity
+    No direction multiplier - always long.
     """
     position_id: str
-    side: PositionSide
-    contracts: int
+    ticker: str
+    quantity: float
     entry_price: float
     stop_loss: float
     take_profit: float
@@ -266,13 +308,13 @@ class AgapePosition:
     crypto_gex_at_entry: float
     crypto_gex_regime_at_entry: str
 
-    # Prophet context (full audit)
+    # Oracle
     oracle_advice: str
     oracle_win_probability: float
     oracle_confidence: float
     oracle_top_factors: List[str]
 
-    # Signal reasoning
+    # Signal
     signal_action: str
     signal_confidence: str
     signal_reasoning: str
@@ -287,24 +329,20 @@ class AgapePosition:
 
     # Tracking
     unrealized_pnl: float = 0.0
-    high_water_mark: float = 0.0      # For trailing stop
+    high_water_mark: float = 0.0
     last_update: Optional[datetime] = None
 
     def calculate_pnl(self, current_price: float) -> float:
-        """Calculate P&L for current price.
-
-        /MET: Each $1 move in ETH = $0.10 per contract.
-        P&L = (current - entry) * contract_size * contracts * direction
-        """
-        direction = 1 if self.side == PositionSide.LONG else -1
-        pnl_per_contract = (current_price - self.entry_price) * 0.1 * direction
-        return round(pnl_per_contract * self.contracts, 2)
+        """LONG-ONLY: P&L = (current - entry) * quantity."""
+        pnl = (current_price - self.entry_price) * self.quantity
+        return round(pnl, 2)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "position_id": self.position_id,
-            "side": self.side.value,
-            "contracts": self.contracts,
+            "ticker": self.ticker,
+            "side": "long",
+            "quantity": self.quantity,
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,

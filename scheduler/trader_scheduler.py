@@ -182,6 +182,15 @@ except ImportError:
     AgapeTradingMode = None
     print("Warning: AGAPE not available. ETH crypto trading will be disabled.")
 
+# Import AGAPE-SPOT (24/7 Coinbase Spot ETH)
+try:
+    from trading.agape_spot.trader import AgapeSpotTrader, create_agape_spot_trader
+    AGAPE_SPOT_AVAILABLE = True
+except ImportError:
+    AGAPE_SPOT_AVAILABLE = False
+    AgapeSpotTrader = None
+    print("Warning: AGAPE-SPOT not available. 24/7 spot ETH trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -591,6 +600,18 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"AGAPE initialization failed: {e}")
                 self.agape_trader = None
+
+        # AGAPE-SPOT - 24/7 Coinbase Spot ETH-USD
+        # Trades around the clock, no market hours restrictions
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_spot_trader = None
+        if AGAPE_SPOT_AVAILABLE:
+            try:
+                self.agape_spot_trader = create_agape_spot_trader()
+                logger.info("✅ AGAPE-SPOT initialized (24/7 Coinbase Spot ETH-USD, PAPER mode)")
+            except Exception as e:
+                logger.warning(f"AGAPE-SPOT initialization failed: {e}")
+                self.agape_spot_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -2265,6 +2286,32 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in AGAPE EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"{'=' * 80}")
+
+    def scheduled_agape_spot_logic(self):
+        """
+        AGAPE-SPOT 24/7 Coinbase Spot ETH-USD - runs every 5 minutes.
+        No market hours restrictions - trades around the clock.
+        """
+        if not self.agape_spot_trader:
+            return
+
+        try:
+            result = self.agape_spot_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-SPOT: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-SPOT: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-SPOT: Cycle error: {result['error']}")
+            else:
+                if self.agape_spot_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-SPOT scan #{self.agape_spot_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-SPOT scan: {str(e)}")
+            logger.error(traceback.format_exc())
 
     def scheduled_prometheus_daily_logic(self):
         """
@@ -4383,6 +4430,25 @@ class AutonomousTraderScheduler:
             logger.info("✅ AGAPE EOD job scheduled (3:45 PM CT daily)")
         else:
             logger.warning("⚠️ AGAPE not available - ETH crypto trading disabled")
+
+        # =================================================================
+        # AGAPE-SPOT JOB: 24/7 Coinbase Spot ETH-USD - every 5 minutes
+        # Trades around the clock, no market hours restrictions
+        # =================================================================
+        if self.agape_spot_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_spot_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_spot_trading',
+                name='AGAPE-SPOT - 24/7 Coinbase Spot ETH-USD (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-SPOT job scheduled (every 5 min, 24/7)")
+        else:
+            logger.warning("⚠️ AGAPE-SPOT not available - 24/7 spot ETH trading disabled")
 
         # =================================================================
         # JUBILEE JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT
