@@ -25,6 +25,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_order": 0.001,
         "max_per_trade": 1.0,
         "quantity_decimals": 4,
+        "price_decimals": 2,
     },
     "XRP-USD": {
         "symbol": "XRP",
@@ -34,6 +35,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_order": 1.0,
         "max_per_trade": 5000.0,
         "quantity_decimals": 0,
+        "price_decimals": 4,
     },
     "SHIB-USD": {
         "symbol": "SHIB",
@@ -43,6 +45,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_order": 1000.0,
         "max_per_trade": 100000000.0,
         "quantity_decimals": 0,
+        "price_decimals": 8,
     },
     "DOGE-USD": {
         "symbol": "DOGE",
@@ -52,6 +55,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_order": 1.0,
         "max_per_trade": 50000.0,
         "quantity_decimals": 0,
+        "price_decimals": 4,
     },
 }
 
