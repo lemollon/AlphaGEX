@@ -962,7 +962,7 @@ class AgapeSpotTrader:
             ),
             "profit_factor": (
                 round(total_wins / total_losses, 2) if total_losses > 0
-                else float("inf")
+                else None
             ),
             "return_pct": (
                 round(total_pnl / total_starting * 100, 2)
@@ -1039,7 +1039,7 @@ class AgapeSpotTrader:
             ),
             "profit_factor": (
                 round(total_wins / total_losses, 2) if total_losses > 0
-                else float("inf")
+                else None
             ),
             "return_pct": (
                 round(total_pnl / starting_capital * 100, 2)

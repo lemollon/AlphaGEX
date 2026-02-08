@@ -322,13 +322,13 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
   const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
 
   const tickers = summaryData?.tickers || {}
-  const combined = summaryData?.combined || {}
+  const totals = summaryData?.totals || {}
 
-  const totalPnl = combined.total_pnl ?? 0
-  const totalReturn = combined.return_pct ?? 0
-  const totalUnrealized = combined.total_unrealized_pnl ?? 0
-  const totalTrades = combined.total_trades ?? 0
-  const totalPositions = combined.total_open_positions ?? 0
+  const totalPnl = totals.total_pnl ?? 0
+  const totalReturn = totals.return_pct ?? 0
+  const totalUnrealized = totals.unrealized_pnl ?? 0
+  const totalTrades = totals.total_trades ?? 0
+  const totalPositions = totals.open_positions ?? 0
 
   // Build combined equity from closed trades across all coins
   const { data: equityData } = useAgapeSpotEquityCurve(undefined, eqDays)
