@@ -61,7 +61,8 @@ class AgapeSpotExecutor:
         self.db = db
         self._client: Optional[object] = None
 
-        if config.mode == TradingMode.LIVE and coinbase_available:
+        # Always init Coinbase client (needed for price data even in paper mode)
+        if coinbase_available:
             self._init_coinbase()
 
     def _init_coinbase(self):
@@ -339,7 +340,21 @@ class AgapeSpotExecutor:
             except Exception as e:
                 logger.debug(f"AGAPE-SPOT Executor: Coinbase quote failed for {ticker}: {e}")
 
-        # Fallback to crypto data provider
+        # Fallback: Public Coinbase API (no auth required, works for all coins)
+        try:
+            import urllib.request
+            import json as _json
+            url = f"https://api.coinbase.com/v2/prices/{ticker}/spot"
+            req = urllib.request.Request(url, headers={"User-Agent": "AlphaGEX/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = _json.loads(resp.read())
+                price = float(data["data"]["amount"])
+                if price > 0:
+                    return price
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT Executor: Public Coinbase API failed for {ticker}: {e}")
+
+        # Last resort: crypto data provider (Deribit - only supports ETH/BTC)
         try:
             from data.crypto_data_provider import get_crypto_data_provider
             provider = get_crypto_data_provider()
