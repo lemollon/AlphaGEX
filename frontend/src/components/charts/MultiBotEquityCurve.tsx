@@ -28,7 +28,7 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   PROMETHEUS: 100000,
   HERACLES: 100000,
   AGAPE: 5000,
-  AGAPE_SPOT: 5000,
+  AGAPE_SPOT: 8000,
 }
 
 // Bot configuration with colors
@@ -41,6 +41,7 @@ const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'PROMETHEUS', endpoint: '/api/prometheus-box/ic/equity-curve' },
   { name: 'HERACLES', endpoint: '/api/heracles/paper-equity-curve' },
   { name: 'AGAPE', endpoint: '/api/agape/equity-curve' },
+  { name: 'AGAPE_SPOT', endpoint: '/api/agape-spot/equity-curve' },
 ]
 
 interface EquityCurvePoint {
@@ -92,6 +93,7 @@ export default function MultiBotEquityCurve({
     PROMETHEUS: true,
     HERACLES: true,
     AGAPE: true,
+    AGAPE_SPOT: true,
     PHOENIX: false,
     ATLAS: false,
     AGAPE_SPOT: false,
@@ -139,8 +141,13 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
+  const { data: agapeSpotData, isLoading: agapeSpotLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[8].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
 
-  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading
+  const isLoading = aresLoading || athenaLoading || icarusLoading || pegasusLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading || agapeSpotLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -152,6 +159,7 @@ export default function MultiBotEquityCurve({
     PROMETHEUS: prometheusData,
     HERACLES: heraclesData,
     AGAPE: agapeData,
+    AGAPE_SPOT: agapeSpotData,
     PHOENIX: undefined,
     ATLAS: undefined,
     AGAPE_SPOT: undefined,
@@ -200,7 +208,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, showPercentage])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -213,6 +221,7 @@ export default function MultiBotEquityCurve({
       PROMETHEUS: null,
       HERACLES: null,
       AGAPE: null,
+      AGAPE_SPOT: null,
       PHOENIX: null,
       ATLAS: null,
       AGAPE_SPOT: null,
@@ -232,7 +241,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData])
+  }, [aresData, athenaData, icarusData, pegasusData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {

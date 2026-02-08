@@ -90,7 +90,7 @@ class AgapeSpotTrader:
         for ticker in self.config.tickers:
             self._loss_streaks[ticker] = 0
             self._loss_pause_until[ticker] = None
-            self._direction_trackers[ticker] = get_spot_direction_tracker(self.config)
+            self._direction_trackers[ticker] = get_spot_direction_tracker(ticker, self.config)
 
         self.db.log(
             "INFO", "INIT",
@@ -262,7 +262,7 @@ class AgapeSpotTrader:
     def _get_direction_tracker(self, ticker: str):
         """Get or create a direction tracker for a given ticker."""
         if ticker not in self._direction_trackers:
-            self._direction_trackers[ticker] = get_spot_direction_tracker(self.config)
+            self._direction_trackers[ticker] = get_spot_direction_tracker(ticker, self.config)
         return self._direction_trackers[ticker]
 
     def _get_open_positions_for_ticker(self, ticker: str) -> List[Dict]:
