@@ -51,6 +51,9 @@ yfinance>=0.2.50
 # Tastytrade SDK for HERACLES futures trading (DXLinkStreamer for real-time quotes)
 tastytrade>=11.0.0
 
+# Coinbase Advanced Trade SDK for AGAPE-SPOT (24/7 crypto spot trading)
+coinbase-advanced-py>=1.6.0
+
 # ============================================================================
 # Scientific Computing
 # ============================================================================
