@@ -82,7 +82,7 @@ class AgapeSpotExecutor:
             verify_ticker = self.config.tickers[0] if self.config.tickers else "ETH-USD"
             product = self._client.get_product(verify_ticker)
             if product:
-                price = float(product.get("price", 0))
+                price = float(self._resp(product, "price", 0))
                 logger.info(
                     f"AGAPE-SPOT Executor: Connected. {verify_ticker} = ${price:,.2f}"
                 )
@@ -100,6 +100,23 @@ class AgapeSpotExecutor:
     def _price_decimals(ticker: str) -> int:
         """Get the number of decimal places for a ticker's price."""
         return SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
+
+    @staticmethod
+    def _resp(obj, key, default=None):
+        """Safely get a value from a Coinbase SDK response or dict.
+
+        The coinbase-advanced-py SDK returns typed response objects (not dicts).
+        They support attribute access (obj.key) and bracket access (obj[key])
+        via __getitem__, but NOT .get().
+        """
+        # Attribute access (SDK response objects)
+        if hasattr(obj, key):
+            val = getattr(obj, key)
+            return val if val is not None else default
+        # Dict access
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return default
 
     # =========================================================================
     # Trade execution
@@ -181,7 +198,14 @@ class AgapeSpotExecutor:
             ticker_config = SPOT_TICKERS.get(signal.ticker, {})
             qty_decimals = ticker_config.get("quantity_decimals", 8)
             quantity = round(signal.quantity, qty_decimals)
-            client_order_id = f"spot-{uuid.uuid4().hex[:12]}"
+            client_order_id = str(uuid.uuid4())
+
+            notional_est = quantity * signal.spot_price
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIVE BUY {signal.ticker} "
+                f"qty={quantity} base_size='{quantity}' "
+                f"(~${notional_est:.2f}) client_order_id={client_order_id}"
+            )
 
             # LONG-ONLY: Always buy to open
             order = self._client.market_order_buy(
@@ -190,26 +214,44 @@ class AgapeSpotExecutor:
                 base_size=str(quantity),
             )
 
-            if order and order.get("success"):
-                order_id = order["success_response"]["order_id"]
+            # Log the raw response for debugging
+            try:
+                if hasattr(order, "to_dict"):
+                    logger.info(f"AGAPE-SPOT: Order response: {order.to_dict()}")
+                else:
+                    logger.info(f"AGAPE-SPOT: Order response: {order}")
+            except Exception:
+                logger.info(f"AGAPE-SPOT: Order response type={type(order).__name__}")
+
+            # Check success -- SDK returns typed object, not dict
+            success = self._resp(order, "success", False)
+
+            if success:
+                # Get order_id from success_response
+                success_resp = self._resp(order, "success_response")
+                order_id = self._resp(success_resp, "order_id", client_order_id[:8])
+
                 fill_price = signal.spot_price
                 try:
-                    fills = self._client.get_fills(order_id=order_id)
-                    if fills and fills.get("fills"):
+                    fills = self._client.get_fills(order_id=str(order_id))
+                    fills_list = self._resp(fills, "fills", [])
+                    if fills_list:
                         total_value = sum(
-                            float(f["price"]) * float(f["size"])
-                            for f in fills["fills"]
+                            float(self._resp(f, "price", 0))
+                            * float(self._resp(f, "size", 0))
+                            for f in fills_list
                         )
                         total_size = sum(
-                            float(f["size"]) for f in fills["fills"]
+                            float(self._resp(f, "size", 0))
+                            for f in fills_list
                         )
                         if total_size > 0:
                             fill_price = total_value / total_size
-                except Exception:
-                    pass
+                except Exception as fe:
+                    logger.debug(f"AGAPE-SPOT: Fill lookup skipped: {fe}")
 
                 ticker_symbol = ticker_config.get("symbol", signal.ticker.split("-")[0])
-                position_id = f"SPOT-{ticker_symbol}-{order_id[:8]}"
+                position_id = f"SPOT-{ticker_symbol}-{str(order_id)[:8]}"
                 now = datetime.now(CENTRAL_TZ)
 
                 pd = self._price_decimals(signal.ticker)
@@ -243,17 +285,25 @@ class AgapeSpotExecutor:
                 )
 
                 logger.info(
-                    f"AGAPE-SPOT: LIVE BUY {signal.ticker} "
-                    f"{quantity:.4f} @ ${fill_price:.2f} (order={order_id})"
+                    f"AGAPE-SPOT: LIVE BUY SUCCESS {signal.ticker} "
+                    f"{quantity} @ ${fill_price:.{pd}f} (order={order_id})"
                 )
                 return position
 
-            error = order.get("error_response", {}) if order else "No response"
-            logger.error(f"AGAPE-SPOT Executor: Order failed: {error}")
+            # Order was rejected
+            error_resp = self._resp(order, "error_response", "unknown")
+            failure = self._resp(order, "failure_reason", "unknown")
+            logger.error(
+                f"AGAPE-SPOT Executor: LIVE ORDER REJECTED {signal.ticker}: "
+                f"failure_reason={failure}, error_response={error_resp}"
+            )
             return None
 
         except Exception as e:
-            logger.error(f"AGAPE-SPOT Executor: Live execution failed: {e}")
+            logger.error(
+                f"AGAPE-SPOT Executor: LIVE EXECUTION EXCEPTION {signal.ticker}: {e}",
+                exc_info=True,
+            )
             return None
 
     # =========================================================================
@@ -301,7 +351,12 @@ class AgapeSpotExecutor:
             ticker_config = SPOT_TICKERS.get(position.ticker, {})
             qty_decimals = ticker_config.get("quantity_decimals", 8)
             quantity = round(position.quantity, qty_decimals)
-            client_order_id = f"spot-close-{uuid.uuid4().hex[:12]}"
+            client_order_id = str(uuid.uuid4())
+
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIVE SELL {position.ticker} "
+                f"{position.position_id} qty={quantity} ({reason})"
+            )
 
             # LONG-ONLY: Always sell to close
             order = self._client.market_order_sell(
@@ -310,38 +365,61 @@ class AgapeSpotExecutor:
                 base_size=str(quantity),
             )
 
-            if order and order.get("success"):
-                order_id = order["success_response"]["order_id"]
+            # Log the raw response
+            try:
+                if hasattr(order, "to_dict"):
+                    logger.info(f"AGAPE-SPOT: Sell response: {order.to_dict()}")
+                else:
+                    logger.info(f"AGAPE-SPOT: Sell response: {order}")
+            except Exception:
+                pass
+
+            success = self._resp(order, "success", False)
+
+            if success:
+                success_resp = self._resp(order, "success_response")
+                order_id = self._resp(success_resp, "order_id", "")
                 close_price = current_price
                 try:
-                    fills = self._client.get_fills(order_id=order_id)
-                    if fills and fills.get("fills"):
+                    fills = self._client.get_fills(order_id=str(order_id))
+                    fills_list = self._resp(fills, "fills", [])
+                    if fills_list:
                         total_value = sum(
-                            float(f["price"]) * float(f["size"])
-                            for f in fills["fills"]
+                            float(self._resp(f, "price", 0))
+                            * float(self._resp(f, "size", 0))
+                            for f in fills_list
                         )
                         total_size = sum(
-                            float(f["size"]) for f in fills["fills"]
+                            float(self._resp(f, "size", 0))
+                            for f in fills_list
                         )
                         if total_size > 0:
                             close_price = total_value / total_size
-                except Exception:
-                    pass
+                except Exception as fe:
+                    logger.debug(f"AGAPE-SPOT: Sell fill lookup skipped: {fe}")
 
                 realized_pnl = position.calculate_pnl(close_price)
-                logger.info(
-                    f"AGAPE-SPOT: LIVE SELL {position.ticker} {position.position_id} "
-                    f"@ ${close_price:.2f} P&L=${realized_pnl:.2f}"
-                )
                 pd = self._price_decimals(position.ticker)
+                logger.info(
+                    f"AGAPE-SPOT: LIVE SELL SUCCESS {position.ticker} "
+                    f"{position.position_id} @ ${close_price:.{pd}f} "
+                    f"P&L=${realized_pnl:.2f} (order={order_id})"
+                )
                 return (True, round(close_price, pd), realized_pnl)
 
-            error = order.get("error_response", {}) if order else "No response"
-            logger.error(f"AGAPE-SPOT Executor: Close failed: {error}")
+            error_resp = self._resp(order, "error_response", "unknown")
+            failure = self._resp(order, "failure_reason", "unknown")
+            logger.error(
+                f"AGAPE-SPOT Executor: LIVE SELL REJECTED {position.ticker}: "
+                f"failure_reason={failure}, error_response={error_resp}"
+            )
             return self._close_paper(position, current_price, reason)
 
         except Exception as e:
-            logger.error(f"AGAPE-SPOT Executor: Live close failed: {e}")
+            logger.error(
+                f"AGAPE-SPOT Executor: LIVE SELL EXCEPTION {position.ticker}: {e}",
+                exc_info=True,
+            )
             return self._close_paper(position, current_price, reason)
 
     # =========================================================================
@@ -353,8 +431,10 @@ class AgapeSpotExecutor:
         if self._client:
             try:
                 product = self._client.get_product(ticker)
-                if product and product.get("price"):
-                    return float(product["price"])
+                if product:
+                    price = self._resp(product, "price")
+                    if price:
+                        return float(price)
             except Exception as e:
                 logger.debug(f"AGAPE-SPOT Executor: Coinbase quote failed for {ticker}: {e}")
 
@@ -388,7 +468,8 @@ class AgapeSpotExecutor:
             return None
         try:
             accounts = self._client.get_accounts()
-            if accounts and accounts.get("accounts"):
+            acct_list = self._resp(accounts, "accounts", [])
+            if acct_list:
                 balances: Dict[str, float] = {}
                 # Collect all currencies we care about
                 tracked_currencies = {"USD"}
@@ -397,12 +478,11 @@ class AgapeSpotExecutor:
                     if symbol:
                         tracked_currencies.add(symbol)
 
-                for acct in accounts["accounts"]:
-                    currency = acct.get("currency", "")
+                for acct in acct_list:
+                    currency = self._resp(acct, "currency", "")
                     if currency in tracked_currencies:
-                        available = float(
-                            acct.get("available_balance", {}).get("value", 0)
-                        )
+                        avail_bal = self._resp(acct, "available_balance", {})
+                        available = float(self._resp(avail_bal, "value", 0))
                         balances[currency.lower() + "_balance"] = available
 
                 balances["exchange"] = "coinbase"
