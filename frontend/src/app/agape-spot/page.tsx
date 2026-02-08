@@ -65,11 +65,12 @@ type SectionTabId = typeof SECTION_TABS[number]['id']
 const TOTAL_CAPITAL = 8000
 
 const TIME_FRAMES = [
-  { id: '7d',  label: '7D',  days: 7 },
-  { id: '14d', label: '14D', days: 14 },
-  { id: '30d', label: '30D', days: 30 },
-  { id: '90d', label: '90D', days: 90 },
-  { id: 'all', label: 'ALL', days: 365 },
+  { id: 'today', label: 'Today', days: 0 },
+  { id: '7d',    label: '7D',    days: 7 },
+  { id: '14d',   label: '14D',   days: 14 },
+  { id: '30d',   label: '30D',   days: 30 },
+  { id: '90d',   label: '90D',   days: 90 },
+  { id: 'all',   label: 'ALL',   days: 365 },
 ] as const
 type TimeFrameId = typeof TIME_FRAMES[number]['id']
 
@@ -113,6 +114,13 @@ function useAgapeSpotEquityCurve(ticker?: string, days: number = 30) {
   params.set('days', String(days))
   const qs = params.toString()
   return useSWR(`/api/agape-spot/equity-curve?${qs}`, fetcher, { refreshInterval: 30_000 })
+}
+
+function useAgapeSpotIntradayEquity(ticker?: string) {
+  const params = new URLSearchParams()
+  if (ticker && ticker !== 'ALL') params.set('ticker', ticker)
+  const qs = params.toString()
+  return useSWR(`/api/agape-spot/equity-curve/intraday${qs ? `?${qs}` : ''}`, fetcher, { refreshInterval: 15_000 })
 }
 
 function useAgapeSpotClosedTrades(ticker?: string, limit: number = 50) {
@@ -319,6 +327,7 @@ export default function AgapeSpotPage() {
 
 function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
   const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
+  const isIntraday = eqTimeFrame === 'today'
   const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
 
   const tickers = summaryData?.tickers || {}
@@ -330,9 +339,13 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
   const totalTrades = totals.total_trades ?? 0
   const totalPositions = totals.open_positions ?? 0
 
-  // Build combined equity from closed trades across all coins
+  // Historical equity curve (non-intraday)
   const { data: equityData } = useAgapeSpotEquityCurve(undefined, eqDays)
-  const equityPoints = equityData?.data?.equity_curve || []
+  // Intraday equity curve (5-min snapshots)
+  const { data: intradayData } = useAgapeSpotIntradayEquity(undefined)
+  const equityPoints = isIntraday
+    ? (intradayData?.data_points || [])
+    : (equityData?.data?.equity_curve || [])
 
   return (
     <div className="space-y-5">
@@ -403,12 +416,21 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
 
       {/* Combined Equity Curve */}
       <SectionCard
-        title="Combined Equity Curve"
+        title={isIntraday ? "Today's Combined Equity (5-min)" : "Combined Equity Curve"}
         icon={<TrendingUp className="w-5 h-5 text-cyan-400" />}
-        headerRight={<TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />}
+        headerRight={
+          <div className="flex items-center gap-3">
+            {isIntraday && intradayData && (
+              <span className={`text-xs font-mono ${pnlColor(intradayData.day_pnl ?? 0)}`}>
+                Day P&L: {fmtUsd(intradayData.day_pnl)}
+              </span>
+            )}
+            <TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />
+          </div>
+        }
       >
         {equityPoints.length === 0 ? (
-          <EmptyBox message="No equity data yet. Trades will populate this chart." />
+          <EmptyBox message={isIntraday ? "No intraday snapshots yet. The bot saves equity every 5 minutes." : "No equity data yet. Trades will populate this chart."} />
         ) : (
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
@@ -421,9 +443,13 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
                 <XAxis
-                  dataKey="date"
+                  dataKey={isIntraday ? 'time' : 'date'}
                   tick={{ fill: '#6b7280', fontSize: 11 }}
                   tickFormatter={(v: string) => {
+                    if (isIntraday) {
+                      // "HH:MM:SS" → "HH:MM"
+                      return v?.slice(0, 5) || v
+                    }
                     const d = new Date(v + 'T00:00:00')
                     return `${d.getMonth() + 1}/${d.getDate()}`
                   }}
@@ -436,7 +462,7 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
                   contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
                   labelStyle={{ color: '#9ca3af' }}
                   formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
-                  labelFormatter={(label: string) => label}
+                  labelFormatter={(label: string) => isIntraday ? `Time: ${label}` : label}
                 />
                 <Area
                   type="monotone"
@@ -873,12 +899,17 @@ function ClosedTradesTable({ ticker }: { ticker: TickerId }) {
 
 function EquityCurveTab({ ticker }: { ticker: TickerId }) {
   const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
+  const isIntraday = eqTimeFrame === 'today'
   const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
 
-  const { data: equityData, isLoading } = useAgapeSpotEquityCurve(ticker, eqDays)
+  const { data: equityData, isLoading: histLoading } = useAgapeSpotEquityCurve(ticker, eqDays)
+  const { data: intradayData, isLoading: intradayLoading } = useAgapeSpotIntradayEquity(ticker)
   const meta = TICKER_META[ticker]
-  const points = equityData?.data?.equity_curve || []
+  const points = isIntraday
+    ? (intradayData?.data_points || [])
+    : (equityData?.data?.equity_curve || [])
   const gradientId = `eqFill-${ticker.replace('-', '')}`
+  const isLoading = isIntraday ? intradayLoading : histLoading
 
   if (isLoading) {
     return (
@@ -889,14 +920,34 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
   }
 
   if (points.length === 0) {
-    return <EmptyBox message={`No equity data for ${ticker} yet. Complete trades to populate this chart.`} />
+    return (
+      <SectionCard
+        title={isIntraday ? `${meta.symbol} Today (5-min)` : `${meta.symbol} Equity Curve`}
+        icon={<TrendingUp className={`w-5 h-5 ${meta.textActive}`} />}
+        headerRight={<TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />}
+      >
+        <EmptyBox message={isIntraday
+          ? `No intraday snapshots for ${ticker} yet. The bot saves equity every 5 minutes.`
+          : `No equity data for ${ticker} yet. Complete trades to populate this chart.`
+        } />
+      </SectionCard>
+    )
   }
 
   return (
     <SectionCard
-      title={`${meta.symbol} Equity Curve`}
+      title={isIntraday ? `${meta.symbol} Today (5-min)` : `${meta.symbol} Equity Curve`}
       icon={<TrendingUp className={`w-5 h-5 ${meta.textActive}`} />}
-      headerRight={<TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />}
+      headerRight={
+        <div className="flex items-center gap-3">
+          {isIntraday && intradayData && (
+            <span className={`text-xs font-mono ${pnlColor(intradayData.day_pnl ?? 0)}`}>
+              Day P&L: {fmtUsd(intradayData.day_pnl)}
+            </span>
+          )}
+          <TimeFrameSelector selected={eqTimeFrame} onChange={setEqTimeFrame} />
+        </div>
+      }
     >
       <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
@@ -909,9 +960,12 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
             <XAxis
-              dataKey="date"
+              dataKey={isIntraday ? 'time' : 'date'}
               tick={{ fill: '#6b7280', fontSize: 11 }}
               tickFormatter={(v: string) => {
+                if (isIntraday) {
+                  return v?.slice(0, 5) || v
+                }
                 const d = new Date(v + 'T00:00:00')
                 return `${d.getMonth() + 1}/${d.getDate()}`
               }}
@@ -924,7 +978,7 @@ function EquityCurveTab({ ticker }: { ticker: TickerId }) {
               contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
               labelStyle={{ color: '#9ca3af' }}
               formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
-              labelFormatter={(label: string) => label}
+              labelFormatter={(label: string) => isIntraday ? `Time: ${label}` : label}
             />
             <Area
               type="monotone"
