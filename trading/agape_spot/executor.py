@@ -209,11 +209,13 @@ class AgapeSpotExecutor:
                 position_id = f"SPOT-{ticker_symbol}-{order_id[:8]}"
                 now = datetime.now(CENTRAL_TZ)
 
+                pd = self._price_decimals(signal.ticker)
+
                 position = AgapeSpotPosition(
                     position_id=position_id,
                     ticker=signal.ticker,
                     quantity=quantity,
-                    entry_price=round(fill_price, 2),
+                    entry_price=round(fill_price, pd),
                     stop_loss=signal.stop_loss,
                     take_profit=signal.take_profit,
                     max_risk_usd=signal.max_risk_usd,
@@ -234,7 +236,7 @@ class AgapeSpotExecutor:
                     signal_reasoning=signal.reasoning,
                     status=PositionStatus.OPEN,
                     open_time=now,
-                    high_water_mark=round(fill_price, 2),
+                    high_water_mark=round(fill_price, pd),
                 )
 
                 logger.info(
@@ -282,7 +284,8 @@ class AgapeSpotExecutor:
             f"AGAPE-SPOT: PAPER SELL {position.ticker} {position.position_id} "
             f"@ ${close_price:.2f} P&L=${realized_pnl:.2f} ({reason})"
         )
-        return (True, round(close_price, 2), realized_pnl)
+        pd = self._price_decimals(position.ticker)
+        return (True, round(close_price, pd), realized_pnl)
 
     def _close_live(
         self,
@@ -327,7 +330,8 @@ class AgapeSpotExecutor:
                     f"AGAPE-SPOT: LIVE SELL {position.ticker} {position.position_id} "
                     f"@ ${close_price:.2f} P&L=${realized_pnl:.2f}"
                 )
-                return (True, round(close_price, 2), realized_pnl)
+                pd = self._price_decimals(position.ticker)
+                return (True, round(close_price, pd), realized_pnl)
 
             error = order.get("error_response", {}) if order else "No response"
             logger.error(f"AGAPE-SPOT Executor: Close failed: {error}")
