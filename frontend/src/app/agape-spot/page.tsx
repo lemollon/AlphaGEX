@@ -3,152 +3,174 @@
 import { useState } from 'react'
 import useSWR from 'swr'
 import {
+  XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, Area, AreaChart,
+} from 'recharts'
+import {
   TrendingUp,
-  TrendingDown,
-  DollarSign,
-  Clock,
   Activity,
   Eye,
-  CheckCircle,
-  Zap,
   RefreshCw,
-  Shield,
-  Target,
-  ArrowUpDown,
   Wallet,
   History,
-  LayoutDashboard,
-  Settings,
   BarChart3,
-  Globe,
+  Layers,
+  ArrowRight,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
-import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
-import {
-  BotPageHeader,
-  BotCard,
-  StatCard,
-  LoadingState,
-  EmptyState,
-} from '@/components/trader'
 
 // ==============================================================================
-// API BASE & INLINE SWR HOOKS (AGAPE-SPOT specific)
+// TYPES
 // ==============================================================================
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
 
-const fetcher = (url: string) => fetch(`${API_BASE}${url}`).then(r => r.json())
+type TickerId = 'ALL' | 'ETH-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD'
 
-function useAgapeSpotStatus() {
-  return useSWR('/api/agape-spot/status', fetcher, { refreshInterval: 10_000 })
-}
-
-function useAgapeSpotPerformance() {
-  return useSWR('/api/agape-spot/performance', fetcher, { refreshInterval: 30_000 })
-}
-
-function useAgapeSpotPositions() {
-  return useSWR('/api/agape-spot/positions', fetcher, { refreshInterval: 10_000 })
-}
-
-function useAgapeSpotSnapshot() {
-  return useSWR('/api/agape-spot/snapshot', fetcher, { refreshInterval: 15_000 })
-}
-
-function useAgapeSpotScanActivity(limit: number = 30) {
-  return useSWR(`/api/agape-spot/scan-activity?limit=${limit}`, fetcher, { refreshInterval: 15_000 })
-}
-
-function useAgapeSpotClosedTrades(limit: number = 50) {
-  return useSWR(`/api/agape-spot/closed-trades?limit=${limit}`, fetcher, { refreshInterval: 60_000 })
+interface TickerSummary {
+  ticker: string
+  current_price: number
+  open_positions: number
+  total_pnl: number
+  return_pct: number
+  win_rate: number | null
+  total_trades: number
+  unrealized_pnl: number
 }
 
 // ==============================================================================
-// BRAND DEFINITION (Cyan/Blue theme to distinguish from AGAPE's fuchsia)
+// CONSTANTS
 // ==============================================================================
-const SPOT_BRAND = {
-  primaryColor: 'cyan',
-  primaryBg: 'bg-cyan-600',
-  primaryBorder: 'border-cyan-500',
-  primaryText: 'text-cyan-400',
-  lightBg: 'bg-cyan-900/20',
-  lightText: 'text-cyan-300',
-  lightBorder: 'border-cyan-700/50',
-  chartLine: 'stroke-cyan-400',
-  chartFill: 'fill-cyan-500/20',
-  chartPositive: 'text-cyan-400',
-  chartNegative: 'text-cyan-600',
-  positionBorder: 'border-cyan-600/50',
-  positionBg: 'bg-cyan-950/30',
-  positionAccent: 'bg-cyan-500',
-  badgeBg: 'bg-cyan-900/50',
-  badgeText: 'text-cyan-300',
-  gradientFrom: 'from-cyan-500',
-  gradientTo: 'to-cyan-900',
-  hexPrimary: '#06B6D4',
-  hexLight: '#22D3EE',
-  hexDark: '#0891B2',
+
+const API = process.env.NEXT_PUBLIC_API_URL || ''
+
+const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD']
+
+const TICKER_META: Record<string, { symbol: string; label: string; colorClass: string; hexColor: string; bgActive: string; borderActive: string; textActive: string; bgCard: string; borderCard: string }> = {
+  'ALL':      { symbol: 'ALL',  label: 'All Coins',  colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
+  'ETH-USD':  { symbol: 'ETH',  label: 'Ethereum',   colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
+  'XRP-USD':  { symbol: 'XRP',  label: 'Ripple',     colorClass: 'blue',   hexColor: '#3B82F6', bgActive: 'bg-blue-600',   borderActive: 'border-blue-500',   textActive: 'text-blue-400',   bgCard: 'bg-blue-950/30',   borderCard: 'border-blue-700/40' },
+  'SHIB-USD': { symbol: 'SHIB', label: 'Shiba Inu',  colorClass: 'orange', hexColor: '#F97316', bgActive: 'bg-orange-600', borderActive: 'border-orange-500', textActive: 'text-orange-400', bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
+  'DOGE-USD': { symbol: 'DOGE', label: 'Dogecoin',   colorClass: 'yellow', hexColor: '#EAB308', bgActive: 'bg-yellow-600', borderActive: 'border-yellow-500', textActive: 'text-yellow-400', bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40' },
 }
 
-// ==============================================================================
-// EQUITY CURVE TIMEFRAMES (matching AGAPE/ARES pattern)
-// ==============================================================================
-const EQUITY_TIMEFRAMES = [
-  { id: 'intraday', label: 'Today', days: 0 },
-  { id: '7d', label: '7D', days: 7 },
-  { id: '14d', label: '14D', days: 14 },
-  { id: '30d', label: '30D', days: 30 },
-  { id: '90d', label: '90D', days: 90 },
+const SECTION_TABS = [
+  { id: 'overview' as const,    label: 'Overview',      icon: Layers },
+  { id: 'positions' as const,   label: 'Positions',     icon: Wallet },
+  { id: 'performance' as const, label: 'Performance',   icon: BarChart3 },
+  { id: 'equity' as const,      label: 'Equity Curve',  icon: TrendingUp },
+  { id: 'logs' as const,        label: 'Logs',          icon: History },
 ]
+type SectionTabId = typeof SECTION_TABS[number]['id']
+
+const TOTAL_CAPITAL = 8000
 
 // ==============================================================================
-// TABS CONFIGURATION (no GEX Mapping tab for spot)
+// SWR FETCHER
 // ==============================================================================
-const SPOT_TABS = [
-  { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
-  { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
-  { id: 'snapshot' as const, label: 'Market', icon: Globe, description: 'Crypto microstructure' },
-  { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
-  { id: 'history' as const, label: 'History', icon: History, description: 'Closed trades' },
-  { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings' },
-]
-type SpotTabId = typeof SPOT_TABS[number]['id']
+
+const fetcher = (url: string) => fetch(`${API}${url}`).then(r => {
+  if (!r.ok) throw new Error(`API error ${r.status}`)
+  return r.json()
+})
 
 // ==============================================================================
-// MAIN COMPONENT
+// SWR HOOKS
+// ==============================================================================
+
+function useAgapeSpotSummary() {
+  return useSWR('/api/agape-spot/summary', fetcher, { refreshInterval: 10_000 })
+}
+
+function useAgapeSpotStatus(ticker?: string) {
+  const url = ticker && ticker !== 'ALL'
+    ? `/api/agape-spot/status?ticker=${ticker}`
+    : '/api/agape-spot/status'
+  return useSWR(url, fetcher, { refreshInterval: 10_000 })
+}
+
+function useAgapeSpotPositions(ticker?: string) {
+  const param = ticker && ticker !== 'ALL' ? `?ticker=${ticker}` : ''
+  return useSWR(`/api/agape-spot/positions${param}`, fetcher, { refreshInterval: 10_000 })
+}
+
+function useAgapeSpotPerformance(ticker?: string) {
+  const param = ticker && ticker !== 'ALL' ? `?ticker=${ticker}` : ''
+  return useSWR(`/api/agape-spot/performance${param}`, fetcher, { refreshInterval: 30_000 })
+}
+
+function useAgapeSpotEquityCurve(ticker?: string) {
+  const param = ticker && ticker !== 'ALL' ? `?ticker=${ticker}` : ''
+  return useSWR(`/api/agape-spot/equity-curve${param}`, fetcher, { refreshInterval: 30_000 })
+}
+
+function useAgapeSpotClosedTrades(ticker?: string, limit: number = 50) {
+  const params = new URLSearchParams()
+  if (ticker && ticker !== 'ALL') params.set('ticker', ticker)
+  params.set('limit', String(limit))
+  return useSWR(`/api/agape-spot/closed-trades?${params.toString()}`, fetcher, { refreshInterval: 60_000 })
+}
+
+function useAgapeSpotScanActivity(ticker?: string, limit: number = 30) {
+  const params = new URLSearchParams()
+  if (ticker && ticker !== 'ALL') params.set('ticker', ticker)
+  params.set('limit', String(limit))
+  return useSWR(`/api/agape-spot/scan-activity?${params.toString()}`, fetcher, { refreshInterval: 15_000 })
+}
+
+// ==============================================================================
+// HELPERS
+// ==============================================================================
+
+function pnlColor(val: number): string {
+  if (val > 0) return 'text-green-400'
+  if (val < 0) return 'text-red-400'
+  return 'text-gray-400'
+}
+
+function fmtUsd(val: number | null | undefined, decimals = 2): string {
+  if (val == null) return '---'
+  const prefix = val >= 0 ? '' : '-'
+  return `${prefix}$${Math.abs(val).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`
+}
+
+function fmtPct(val: number | null | undefined): string {
+  if (val == null) return '---'
+  const prefix = val >= 0 ? '+' : ''
+  return `${prefix}${val.toFixed(2)}%`
+}
+
+function fmtPrice(val: number | null | undefined): string {
+  if (val == null) return '---'
+  if (val < 0.01) return `$${val.toFixed(6)}`
+  if (val < 1) return `$${val.toFixed(4)}`
+  return `$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+// ==============================================================================
+// MAIN PAGE COMPONENT
 // ==============================================================================
 
 export default function AgapeSpotPage() {
-  const [activeTab, setActiveTab] = useState<SpotTabId>('portfolio')
-  const [equityTimeframe, setEquityTimeframe] = useState('intraday')
+  const [selectedTicker, setSelectedTicker] = useState<TickerId>('ALL')
+  const [activeTab, setActiveTab] = useState<SectionTabId>('overview')
   const sidebarPadding = useSidebarPadding()
 
-  const brand = SPOT_BRAND
+  // Global data
+  const { data: summaryData, isLoading: summaryLoading } = useAgapeSpotSummary()
+  const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAgapeSpotStatus(selectedTicker)
 
-  // Data hooks (inline SWR for AGAPE-SPOT)
-  const { data: statusData, isLoading: statusLoading, mutate: refreshStatus } = useAgapeSpotStatus()
-  const { data: perfData } = useAgapeSpotPerformance()
-  const { data: positionsData, isLoading: posLoading } = useAgapeSpotPositions()
-  const { data: snapshotData, isLoading: snapLoading } = useAgapeSpotSnapshot()
-  const { data: scansData } = useAgapeSpotScanActivity(30)
-  const { data: closedData } = useAgapeSpotClosedTrades(50)
+  const isAllView = selectedTicker === 'ALL'
 
-  const status = statusData?.data
-  const perf = perfData?.data
-  const paperAccount = status?.paper_account || null
-  const startingCapital = paperAccount?.starting_capital ?? status?.starting_capital ?? 5000
-
-  const handleRefresh = async () => {
-    await refreshStatus()
-  }
-
-  if (statusLoading && !statusData) {
+  // Loading state
+  if (summaryLoading && !summaryData && statusLoading && !statusData) {
     return (
       <>
         <Navigation />
-        <div className="flex items-center justify-center h-screen">
-          <LoadingState message="Loading AGAPE-SPOT..." />
+        <div className="flex items-center justify-center h-screen bg-gray-950">
+          <div className="text-center space-y-3">
+            <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
+            <p className="text-gray-400 text-sm">Loading AGAPE-SPOT...</p>
+          </div>
         </div>
       </>
     )
@@ -157,195 +179,122 @@ export default function AgapeSpotPage() {
   return (
     <>
       <Navigation />
-      <main className={`min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
-        <div className="max-w-7xl mx-auto space-y-6">
+      <main className={`min-h-screen bg-gray-950 text-white px-4 pb-6 md:px-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-7xl mx-auto space-y-5">
 
-          {/* Header with 24/7 ACTIVE badge */}
+          {/* ================================================================ */}
+          {/* PAGE HEADER                                                      */}
+          {/* ================================================================ */}
           <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <div>
-                <div className="flex items-center gap-3">
-                  <h1 className="text-2xl md:text-3xl font-bold text-white">
-                    AGAPE-SPOT <span className="text-cyan-400">24/7 Spot ETH</span>
-                  </h1>
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-900/40 border border-green-500/40 rounded-full text-xs font-semibold text-green-400">
-                    <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                    24/7 ACTIVE
-                  </span>
-                </div>
-                <p className="text-gray-400 mt-1">24/7 Coinbase Spot ETH-USD Trading</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              {status?.status === 'ACTIVE' && (
-                <span className="inline-flex items-center gap-1.5 px-2 py-1 bg-cyan-900/30 border border-cyan-500/30 rounded text-xs text-cyan-300">
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                  RUNNING
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl md:text-3xl font-bold text-white">
+                  AGAPE-SPOT <span className="text-cyan-400">Multi-Coin</span>
+                </h1>
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-900/40 border border-green-500/40 rounded-full text-xs font-semibold text-green-400">
+                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                  24/7 ACTIVE
                 </span>
-              )}
-              <button
-                onClick={handleRefresh}
-                disabled={statusLoading}
-                className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
-              >
-                <RefreshCw className={`w-4 h-4 ${statusLoading ? 'animate-spin' : ''}`} />
-              </button>
+              </div>
+              <p className="text-gray-500 text-sm mt-1">
+                Long-only spot trading across ETH, XRP, SHIB, DOGE on Coinbase
+              </p>
             </div>
+            <button
+              onClick={() => refreshStatus()}
+              disabled={statusLoading}
+              className="p-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${statusLoading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
 
-          {/* Aggressive Mode Banner - Cyan themed */}
-          <div className={`${brand.lightBg} border ${brand.lightBorder} rounded-lg p-4`}>
-            <div className="flex items-start gap-3">
-              <Zap className={`w-5 h-5 ${brand.primaryText} mt-0.5 flex-shrink-0`} />
-              <div className="flex-1">
-                <h3 className={`${brand.primaryText} font-semibold`}>Spot Trading - Coinbase ETH-USD</h3>
-                <p className="text-gray-400 text-xs mt-1">
-                  Spot P&L = (exit - entry) x ETH qty
-                </p>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
-                  <div>
-                    <span className="text-gray-500">SAR:</span>
-                    <span className={`ml-2 ${status?.aggressive_features?.use_sar ? 'text-green-400' : 'text-gray-500'}`}>
-                      {status?.aggressive_features?.use_sar ? 'Active' : 'Off'}
+          {/* ================================================================ */}
+          {/* COIN SELECTOR                                                    */}
+          {/* ================================================================ */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {TICKERS.map((ticker) => {
+              const meta = TICKER_META[ticker]
+              const isActive = selectedTicker === ticker
+              const summary: TickerSummary | undefined = summaryData?.data?.tickers?.[ticker]
+              return (
+                <button
+                  key={ticker}
+                  onClick={() => { setSelectedTicker(ticker); setActiveTab('overview') }}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all whitespace-nowrap ${
+                    isActive
+                      ? `${meta.bgActive} border-transparent text-white shadow-lg`
+                      : 'bg-gray-900 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-white hover:border-gray-600'
+                  }`}
+                >
+                  <span className="font-bold">{meta.symbol}</span>
+                  {ticker !== 'ALL' && summary?.current_price != null && (
+                    <span className={`text-xs font-mono ${isActive ? 'text-white/80' : 'text-gray-500'}`}>
+                      {fmtPrice(summary.current_price)}
                     </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">No-Loss Trail:</span>
-                    <span className={`ml-2 ${status?.aggressive_features?.use_no_loss_trailing ? 'text-green-400' : 'text-gray-500'}`}>
-                      {status?.aggressive_features?.use_no_loss_trailing ? 'Active' : 'Off'}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Cooldown:</span>
-                    <span className={`${brand.primaryText} ml-2`}>None</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Max Positions:</span>
-                    <span className={`${brand.primaryText} ml-2`}>Unlimited</span>
-                  </div>
-                </div>
-              </div>
-              {status?.mode && (
-                <span className={`px-2 py-0.5 text-xs rounded font-mono ${
-                  status.mode === 'live' ? 'bg-green-900/50 text-green-300' : 'bg-yellow-900/50 text-yellow-300'
-                }`}>{status.mode.toUpperCase()}</span>
-              )}
-            </div>
+                  )}
+                </button>
+              )
+            })}
           </div>
 
-          {/* Loss Streak Warning Banner */}
-          {status?.aggressive_features?.consecutive_losses > 0 && !status?.aggressive_features?.loss_streak_paused && (
-            <div className="bg-orange-900/30 border border-orange-500/50 rounded-lg p-3">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 rounded-full bg-orange-500" />
-                <p className="text-orange-300 text-sm">
-                  <span className="font-semibold">Loss Streak: {status.aggressive_features.consecutive_losses}</span>
-                  <span className="text-gray-400 ml-2">
-                    (pauses after 3 consecutive losses)
-                  </span>
-                </p>
+          {/* ================================================================ */}
+          {/* ALL VIEW - Combined Summary                                      */}
+          {/* ================================================================ */}
+          {isAllView && <AllCoinsDashboard summaryData={summaryData?.data} />}
+
+          {/* ================================================================ */}
+          {/* SINGLE COIN VIEW                                                 */}
+          {/* ================================================================ */}
+          {!isAllView && (
+            <>
+              {/* Coin header stats */}
+              <SingleCoinHeader ticker={selectedTicker} statusData={statusData?.data} />
+
+              {/* Section Tabs */}
+              <div className="flex gap-1.5 border-b border-gray-800 pb-2 overflow-x-auto">
+                {SECTION_TABS.map((tab) => {
+                  const isActive = activeTab === tab.id
+                  const meta = TICKER_META[selectedTicker]
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap text-sm font-medium ${
+                        isActive
+                          ? `${meta.bgCard} ${meta.textActive} border ${meta.borderCard}`
+                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                      }`}
+                    >
+                      <tab.icon className="w-4 h-4" />
+                      {tab.label}
+                    </button>
+                  )
+                })}
               </div>
-            </div>
+
+              {/* Tab Content */}
+              <div className="space-y-5">
+                {activeTab === 'overview' && (
+                  <OverviewTab ticker={selectedTicker} />
+                )}
+                {activeTab === 'positions' && (
+                  <PositionsTab ticker={selectedTicker} />
+                )}
+                {activeTab === 'performance' && (
+                  <PerformanceTab ticker={selectedTicker} />
+                )}
+                {activeTab === 'equity' && (
+                  <EquityCurveTab ticker={selectedTicker} />
+                )}
+                {activeTab === 'logs' && (
+                  <LogsTab ticker={selectedTicker} />
+                )}
+              </div>
+            </>
           )}
 
-          {/* Loss Streak Pause Banner */}
-          {status?.aggressive_features?.loss_streak_paused && (
-            <div className="bg-red-900/40 border border-red-500/50 rounded-lg p-4 animate-pulse">
-              <div className="flex items-center gap-3">
-                <div className="w-4 h-4 rounded-full bg-red-500 animate-ping" />
-                <div className="flex-1">
-                  <h3 className="text-red-400 font-semibold">PAUSED - Loss Streak Protection Active</h3>
-                  <p className="text-gray-400 text-sm mt-1">
-                    AGAPE-SPOT paused after {status.aggressive_features.consecutive_losses} consecutive losses. Will resume automatically.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Top Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            <StatCard
-              label="ETH Price"
-              value={status?.current_eth_price ? `$${status.current_eth_price.toFixed(2)}` : '---'}
-              icon={<DollarSign className="w-4 h-4" />}
-              color="blue"
-            />
-            <StatCard
-              label="Open Positions"
-              value={`${status?.open_positions || 0}`}
-              icon={<Activity className="w-4 h-4" />}
-              color="blue"
-            />
-            <StatCard
-              label="Unrealized P&L"
-              value={status?.total_unrealized_pnl != null ? `$${status.total_unrealized_pnl.toFixed(2)}` : '$0.00'}
-              icon={status?.total_unrealized_pnl >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-              color={(status?.total_unrealized_pnl || 0) >= 0 ? 'green' : 'red'}
-            />
-            <StatCard
-              label="Total P&L"
-              value={`$${(perf?.total_pnl ?? paperAccount?.cumulative_pnl ?? 0).toFixed(2)}`}
-              icon={<DollarSign className="w-4 h-4" />}
-              color={(perf?.total_pnl ?? paperAccount?.cumulative_pnl ?? 0) >= 0 ? 'green' : 'red'}
-            />
-            <StatCard
-              label="Win Rate"
-              value={(perf?.win_rate ?? paperAccount?.win_rate) != null ? `${perf?.win_rate ?? paperAccount?.win_rate}%` : '---'}
-              icon={<CheckCircle className="w-4 h-4" />}
-              color={(perf?.win_rate ?? paperAccount?.win_rate ?? 0) >= 60 ? 'green' : (perf?.win_rate ?? paperAccount?.win_rate ?? 0) >= 50 ? 'yellow' : 'gray'}
-            />
-            <StatCard
-              label="Trades"
-              value={`${perf?.total_trades ?? paperAccount?.total_trades ?? 0}`}
-              icon={<BarChart3 className="w-4 h-4" />}
-              color="blue"
-            />
-          </div>
-
-          {/* Tabs - Cyan themed */}
-          <div className="flex gap-2 border-b border-gray-800 pb-2 overflow-x-auto">
-            {SPOT_TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${
-                  activeTab === tab.id
-                    ? `${brand.lightBg} ${brand.primaryText} border ${brand.primaryBorder}`
-                    : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                <span className="text-sm font-medium">{tab.label}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Tab Content */}
-          <div className="space-y-6">
-            {activeTab === 'portfolio' && (
-              <PortfolioTab
-                status={status}
-                perf={perf}
-                positions={positionsData?.data}
-                posLoading={posLoading}
-                equityTimeframe={equityTimeframe}
-                setEquityTimeframe={setEquityTimeframe}
-                brand={brand}
-                paperAccount={paperAccount}
-                startingCapital={startingCapital}
-              />
-            )}
-            {activeTab === 'overview' && (
-              <OverviewTab status={status} perf={perf} brand={brand} />
-            )}
-            {activeTab === 'snapshot' && (
-              <SnapshotTab data={snapshotData?.data} loading={snapLoading} brand={brand} />
-            )}
-            {activeTab === 'activity' && <ActivityTab data={scansData?.data} brand={brand} />}
-            {activeTab === 'history' && <HistoryTab data={closedData?.data} brand={brand} />}
-            {activeTab === 'config' && <ConfigTab status={status} brand={brand} />}
-          </div>
         </div>
       </main>
     </>
@@ -353,286 +302,280 @@ export default function AgapeSpotPage() {
 }
 
 // ==============================================================================
-// PORTFOLIO TAB (Primary tab - matches AGAPE pattern with spot adjustments)
+// ALL COINS DASHBOARD
 // ==============================================================================
 
-function PortfolioTab({
-  status,
-  perf,
-  positions,
-  posLoading,
-  equityTimeframe,
-  setEquityTimeframe,
-  brand,
-  paperAccount,
-  startingCapital,
-}: {
-  status: any
-  perf: any
-  positions: any[]
-  posLoading: boolean
-  equityTimeframe: string
-  setEquityTimeframe: (tf: string) => void
-  brand: typeof SPOT_BRAND
-  paperAccount: any
-  startingCapital: number
-}) {
-  const openPositions = positions || []
+function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
+  const tickers = summaryData?.tickers || {}
+  const combined = summaryData?.combined || {}
+
+  const totalPnl = combined.total_pnl ?? 0
+  const totalReturn = combined.return_pct ?? 0
+  const totalUnrealized = combined.total_unrealized_pnl ?? 0
+  const totalTrades = combined.total_trades ?? 0
+  const totalPositions = combined.total_open_positions ?? 0
+
+  // Build combined equity from the summary if available
+  const { data: equityData } = useAgapeSpotEquityCurve()
+  const equityPoints = equityData?.data?.points || equityData?.data || []
 
   return (
-    <>
-      {/* Paper Account Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-          <div className="text-sm text-gray-400">Starting Capital</div>
-          <div className="text-2xl font-bold text-white mt-1">
-            ${startingCapital.toLocaleString()}
-          </div>
-        </div>
-        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-          <div className="text-sm text-gray-400">Current Balance</div>
-          <div className={`text-2xl font-bold mt-1 ${
-            (paperAccount?.current_balance || startingCapital) >= startingCapital
-              ? 'text-green-400' : 'text-red-400'
-          }`}>
-            ${(paperAccount?.current_balance || startingCapital).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-        </div>
-        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-          <div className="text-sm text-gray-400">Cumulative P&L</div>
-          <div className={`text-2xl font-bold mt-1 ${
-            (paperAccount?.cumulative_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-          }`}>
-            {(paperAccount?.cumulative_pnl || 0) >= 0 ? '+' : ''}${(paperAccount?.cumulative_pnl || 0).toFixed(2)}
-          </div>
-        </div>
-        <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
-          <div className="text-sm text-gray-400">Return</div>
-          <div className={`text-2xl font-bold mt-1 ${
-            (paperAccount?.return_pct || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-          }`}>
-            {(paperAccount?.return_pct || 0) >= 0 ? '+' : ''}{(paperAccount?.return_pct || 0).toFixed(2)}%
-          </div>
-        </div>
+    <div className="space-y-5">
+      {/* Combined totals row */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <MetricCard label="Total Capital" value={fmtUsd(TOTAL_CAPITAL)} color="text-white" />
+        <MetricCard label="Total P&L" value={fmtUsd(totalPnl)} color={pnlColor(totalPnl)} />
+        <MetricCard label="Return" value={fmtPct(totalReturn)} color={pnlColor(totalReturn)} />
+        <MetricCard label="Unrealized" value={fmtUsd(totalUnrealized)} color={pnlColor(totalUnrealized)} />
+        <MetricCard label="Open Positions" value={String(totalPositions)} color="text-cyan-400" />
       </div>
 
-      {/* Equity Curve */}
-      <BotCard title="Equity Curve" botName="AGAPE" icon={<TrendingUp className="w-5 h-5" />}
-        headerRight={
-          <div className="flex gap-1">
-            {EQUITY_TIMEFRAMES.map((tf) => (
-              <button
-                key={tf.id}
-                onClick={() => setEquityTimeframe(tf.id)}
-                className={`px-3 py-1 text-xs rounded transition-colors ${
-                  equityTimeframe === tf.id
-                    ? `${brand.primaryBg} text-white font-semibold`
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                }`}
-              >
-                {tf.label}
-              </button>
-            ))}
-          </div>
-        }
-      >
-        <EquityCurveChart
-          title=""
-          botFilter="AGAPE-SPOT"
-          showIntradayOption={equityTimeframe === 'intraday'}
-        />
-      </BotCard>
-
-      {/* Open Positions - eth_quantity instead of contracts */}
-      <BotCard title={`Open Positions (${openPositions.length})`} botName="AGAPE" icon={<Wallet className="w-5 h-5" />}>
-        {posLoading ? (
-          <LoadingState />
-        ) : openPositions.length === 0 ? (
-          <EmptyState
-            icon={<Eye className="w-12 h-12" />}
-            title="No open positions"
-            description="AGAPE-SPOT is scanning for opportunities"
-          />
-        ) : (
-          <div className="space-y-3">
-            {openPositions.map((pos: any) => (
-              <div key={pos.position_id} className={`rounded-lg p-4 border ${brand.positionBorder} ${brand.positionBg}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <span className={`px-2 py-1 rounded text-xs font-bold ${
-                      pos.side === 'long' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
-                    }`}>
-                      {pos.side?.toUpperCase()}
-                    </span>
-                    <span className="text-white font-mono font-semibold">
-                      {pos.eth_quantity ?? pos.quantity ?? '---'} ETH @ ${pos.entry_price?.toFixed(2)}
-                    </span>
-                    {pos.trailing_active && (
-                      <span className={`px-2 py-0.5 ${brand.badgeBg} ${brand.badgeText} text-xs rounded font-mono`}>
-                        TRAILING @ ${pos.current_stop?.toFixed(2)}
-                      </span>
-                    )}
-                  </div>
-                  <span className={`text-lg font-mono font-bold ${
-                    (pos.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {(pos.unrealized_pnl || 0) >= 0 ? '+' : ''}${pos.unrealized_pnl?.toFixed(2) || '0.00'}
-                  </span>
+      {/* Per-coin summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {(['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => {
+          const meta = TICKER_META[ticker]
+          const data: TickerSummary | undefined = tickers[ticker]
+          const pnl = data?.total_pnl ?? 0
+          const returnPct = data?.return_pct ?? 0
+          return (
+            <div
+              key={ticker}
+              className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard} transition-colors`}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <span className={`font-bold text-lg ${meta.textActive}`}>{meta.symbol}</span>
+                  <span className="text-gray-500 text-xs">{meta.label}</span>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
-                  <div>
-                    <span className="text-gray-500">Stop Loss</span>
-                    <p className="text-red-400 font-mono">{pos.stop_loss ? `$${pos.stop_loss.toFixed(2)}` : 'Trailing'}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Take Profit</span>
-                    <p className="text-green-400 font-mono">{pos.take_profit ? `$${pos.take_profit.toFixed(2)}` : 'No-Loss Trail'}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Funding Regime</span>
-                    <p className="text-gray-300">{pos.funding_regime_at_entry}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Oracle</span>
-                    <p className="text-gray-300">
-                      {pos.oracle_advice || 'Advisory'}
-                      {pos.oracle_win_probability ? ` (${(pos.oracle_win_probability * 100).toFixed(0)}%)` : ''}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Opened</span>
-                    <p className="text-white">{pos.open_time ? new Date(pos.open_time).toLocaleTimeString() : '---'}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">ID</span>
-                    <p className="text-white font-mono">{pos.position_id?.slice(0, 8) || '---'}</p>
-                  </div>
+                <span className="text-white font-mono text-sm">
+                  {fmtPrice(data?.current_price)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-y-2 text-sm">
+                <div>
+                  <span className="text-gray-500 text-xs">P&L</span>
+                  <p className={`font-mono font-semibold ${pnlColor(pnl)}`}>{fmtUsd(pnl)}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">Return</span>
+                  <p className={`font-mono font-semibold ${pnlColor(returnPct)}`}>{fmtPct(returnPct)}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">Open</span>
+                  <p className="text-white font-mono">{data?.open_positions ?? 0}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">Trades</span>
+                  <p className="text-white font-mono">{data?.total_trades ?? 0}</p>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">Win Rate</span>
+                  <p className="text-white font-mono">
+                    {data?.win_rate != null ? `${data.win_rate.toFixed(1)}%` : '---'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-gray-500 text-xs">Unrealized</span>
+                  <p className={`font-mono ${pnlColor(data?.unrealized_pnl ?? 0)}`}>
+                    {fmtUsd(data?.unrealized_pnl ?? 0)}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </BotCard>
-
-      {/* P&L Explanation */}
-      <div className="bg-cyan-900/10 border border-cyan-800/30 rounded-lg p-3">
-        <p className="text-cyan-300 text-xs font-mono">
-          Spot P&L = (exit - entry) x ETH qty
-        </p>
+            </div>
+          )
+        })}
       </div>
 
-      {/* Performance Stats */}
-      {(perf?.total_trades > 0 || (paperAccount?.total_trades ?? 0) > 0) && (
-        <BotCard title="Performance" botName="AGAPE" icon={<BarChart3 className="w-5 h-5" />}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div>
-              <span className="text-gray-500">Profit Factor</span>
-              <p className="text-white font-mono text-lg">{perf?.profit_factor ?? '---'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Avg Win</span>
-              <p className="text-green-400 font-mono">${perf?.avg_win ?? '---'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Avg Loss</span>
-              <p className="text-red-400 font-mono">-${perf?.avg_loss ?? '---'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Return</span>
-              <p className={`font-mono ${(perf?.return_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {perf?.return_pct ?? paperAccount?.return_pct ?? 0}%
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500">Realized P&L</span>
-              <p className={`font-mono ${(perf?.realized_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                ${(perf?.realized_pnl ?? paperAccount?.realized_pnl ?? 0).toFixed(2)}
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500">Unrealized P&L</span>
-              <p className={`font-mono ${(perf?.unrealized_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                ${(perf?.unrealized_pnl ?? paperAccount?.unrealized_pnl ?? 0).toFixed(2)}
-              </p>
-            </div>
-            <div>
-              <span className="text-gray-500">Best Trade</span>
-              <p className="text-green-400 font-mono">${perf?.best_trade?.toFixed(2) ?? '---'}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Worst Trade</span>
-              <p className="text-red-400 font-mono">${perf?.worst_trade?.toFixed(2) ?? '---'}</p>
-            </div>
+      {/* Combined Equity Curve */}
+      <SectionCard title="Combined Equity Curve" icon={<TrendingUp className="w-5 h-5 text-cyan-400" />}>
+        {equityPoints.length === 0 ? (
+          <EmptyBox message="No equity data yet. Trades will populate this chart." />
+        ) : (
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={equityPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="eqFillAll" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#06B6D4" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#06B6D4" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                <XAxis
+                  dataKey="timestamp"
+                  tick={{ fill: '#6b7280', fontSize: 11 }}
+                  tickFormatter={(v: string) => {
+                    const d = new Date(v)
+                    return `${d.getMonth() + 1}/${d.getDate()}`
+                  }}
+                />
+                <YAxis
+                  tick={{ fill: '#6b7280', fontSize: 11 }}
+                  tickFormatter={(v: number) => `$${v.toLocaleString()}`}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+                  labelStyle={{ color: '#9ca3af' }}
+                  formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
+                  labelFormatter={(label: string) => new Date(label).toLocaleString()}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="equity"
+                  stroke="#06B6D4"
+                  strokeWidth={2}
+                  fill="url(#eqFillAll)"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
-        </BotCard>
-      )}
-    </>
+        )}
+      </SectionCard>
+
+      {/* Recent activity across all coins */}
+      <AllCoinsRecentTrades />
+    </div>
+  )
+}
+
+function AllCoinsRecentTrades() {
+  const { data: closedData } = useAgapeSpotClosedTrades(undefined, 20)
+  const trades = closedData?.data || []
+
+  if (trades.length === 0) return null
+
+  return (
+    <SectionCard title="Recent Closed Trades (All Coins)" icon={<History className="w-5 h-5 text-gray-400" />}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800">
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Ticker</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Side</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Qty</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-800/60">
+            {trades.map((t: any, i: number) => {
+              const tickerKey = t.ticker || t.symbol || 'ETH-USD'
+              const meta = TICKER_META[tickerKey] || TICKER_META['ETH-USD']
+              return (
+                <tr key={i} className="hover:bg-gray-800/30">
+                  <td className="px-3 py-2 text-gray-500 font-mono text-xs">
+                    {t.close_time ? new Date(t.close_time).toLocaleString() : '---'}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className={`font-bold text-xs ${meta.textActive}`}>{meta.symbol}</span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="text-xs font-bold text-green-400">LONG</span>
+                  </td>
+                  <td className="px-3 py-2 text-gray-300 font-mono text-xs">
+                    {t.quantity ?? '---'}
+                  </td>
+                  <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(t.entry_price)}</td>
+                  <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(t.close_price)}</td>
+                  <td className="px-3 py-2 text-right">
+                    <span className={`font-mono font-semibold text-xs ${pnlColor(t.realized_pnl ?? 0)}`}>
+                      {fmtUsd(t.realized_pnl)}
+                    </span>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
   )
 }
 
 // ==============================================================================
-// OVERVIEW TAB (Bot status, aggressive features, direction tracker)
+// SINGLE COIN HEADER
 // ==============================================================================
 
-function OverviewTab({
-  status,
-  perf,
-  brand,
-}: {
-  status: any
-  perf: any
-  brand: typeof SPOT_BRAND
-}) {
-  const aggressive = status?.aggressive_features || {}
-  const dirTracker = aggressive.direction_tracker || {}
+function SingleCoinHeader({ ticker, statusData }: { ticker: TickerId; statusData: any }) {
+  const meta = TICKER_META[ticker]
+  const status = statusData?.data ?? statusData
+  const tickerDetails = status?.ticker_details?.[ticker] ?? status
+  const price = tickerDetails?.current_price ?? status?.current_price
+  const openPos = tickerDetails?.open_positions ?? status?.open_positions ?? 0
+  const unrealizedPnl = tickerDetails?.total_unrealized_pnl ?? status?.total_unrealized_pnl ?? 0
 
   return (
-    <>
-      {/* Aggressive Features Panel */}
-      <BotCard title="Aggressive Features" botName="AGAPE" icon={<Zap className="w-5 h-5" />}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div className="flex items-start gap-2">
-            <Shield className={`w-4 h-4 ${brand.primaryText} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">No-Loss Trailing</span>
-              <p className={`font-mono font-semibold ${aggressive.use_no_loss_trailing ? 'text-green-400' : 'text-gray-500'}`}>
-                {aggressive.use_no_loss_trailing ? 'ACTIVE' : 'OFF'}
-              </p>
-            </div>
+    <div className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard}`}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <span className={`text-2xl font-bold ${meta.textActive}`}>{meta.symbol}</span>
+          <span className="text-gray-400 text-sm">{meta.label}</span>
+          <ArrowRight className="w-4 h-4 text-gray-600" />
+          <span className="text-white font-mono text-lg">{fmtPrice(price)}</span>
+        </div>
+        <div className="flex items-center gap-4 text-sm">
+          <div className="text-right">
+            <span className="text-gray-500 text-xs block">Open</span>
+            <span className="text-white font-mono">{openPos}</span>
           </div>
-          <div className="flex items-start gap-2">
-            <RefreshCw className={`w-4 h-4 ${brand.primaryText} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">Stop-and-Reverse</span>
-              <p className={`font-mono font-semibold ${aggressive.use_sar ? 'text-green-400' : 'text-gray-500'}`}>
-                {aggressive.use_sar ? 'ACTIVE' : 'OFF'}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <Target className={`w-4 h-4 ${brand.primaryText} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">Consecutive Losses</span>
-              <p className={`font-mono font-semibold ${(aggressive.consecutive_losses || 0) >= 3 ? 'text-red-400' : 'text-white'}`}>
-                {aggressive.consecutive_losses || 0}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-start gap-2">
-            <ArrowUpDown className={`w-4 h-4 ${brand.primaryText} mt-0.5 flex-shrink-0`} />
-            <div>
-              <span className="text-gray-500">Direction Tracker</span>
-              <p className="text-white font-mono text-xs">
-                L: {dirTracker.long_win_rate != null ? `${(dirTracker.long_win_rate * 100).toFixed(0)}%` : '--'}
-                {' '}S: {dirTracker.short_win_rate != null ? `${(dirTracker.short_win_rate * 100).toFixed(0)}%` : '--'}
-              </p>
-            </div>
+          <div className="text-right">
+            <span className="text-gray-500 text-xs block">Unrealized</span>
+            <span className={`font-mono ${pnlColor(unrealizedPnl)}`}>{fmtUsd(unrealizedPnl)}</span>
           </div>
         </div>
-      </BotCard>
+      </div>
+      <p className="text-gray-500 text-xs">
+        Long-only spot trading on Coinbase. P&L = (exit - entry) x quantity.
+      </p>
+    </div>
+  )
+}
+
+// ==============================================================================
+// OVERVIEW TAB (single coin)
+// ==============================================================================
+
+function OverviewTab({ ticker }: { ticker: TickerId }) {
+  const { data: statusData } = useAgapeSpotStatus(ticker)
+  const { data: perfData } = useAgapeSpotPerformance(ticker)
+
+  const status = statusData?.data ?? statusData
+  const perf = perfData?.data ?? perfData
+  const meta = TICKER_META[ticker]
+
+  const startingCapital = status?.starting_capital ?? 2000
+  const currentBalance = status?.paper_account?.current_balance ?? status?.current_balance ?? startingCapital
+  const cumulativePnl = perf?.total_pnl ?? status?.paper_account?.cumulative_pnl ?? 0
+  const returnPct = perf?.return_pct ?? status?.paper_account?.return_pct ?? 0
+  const winRate = perf?.win_rate ?? status?.paper_account?.win_rate
+  const totalTrades = perf?.total_trades ?? status?.paper_account?.total_trades ?? 0
+
+  return (
+    <div className="space-y-5">
+      {/* Capital summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <MetricCard label="Starting Capital" value={fmtUsd(startingCapital)} color="text-white" />
+        <MetricCard label="Current Balance" value={fmtUsd(currentBalance)} color={pnlColor(currentBalance - startingCapital)} />
+        <MetricCard label="Cumulative P&L" value={fmtUsd(cumulativePnl)} color={pnlColor(cumulativePnl)} />
+        <MetricCard label="Return" value={fmtPct(returnPct)} color={pnlColor(returnPct)} />
+      </div>
+
+      {/* Quick stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <MetricCard
+          label="Win Rate"
+          value={winRate != null ? `${Number(winRate).toFixed(1)}%` : '---'}
+          color={winRate != null && winRate >= 55 ? 'text-green-400' : winRate != null && winRate >= 45 ? 'text-yellow-400' : 'text-gray-400'}
+        />
+        <MetricCard label="Total Trades" value={String(totalTrades)} color="text-white" />
+        <MetricCard label="Profit Factor" value={perf?.profit_factor != null ? String(perf.profit_factor) : '---'} color="text-white" />
+        <MetricCard label="Mode" value={(status?.mode || 'paper').toUpperCase()} color={status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'} />
+      </div>
 
       {/* Configuration */}
-      <BotCard title="Bot Configuration" botName="AGAPE" icon={<Settings className="w-5 h-5" />}>
+      <SectionCard title="Configuration" icon={<Activity className={`w-5 h-5 ${meta.textActive}`} />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
             <span className="text-gray-500">Exchange</span>
@@ -640,23 +583,23 @@ function OverviewTab({
           </div>
           <div>
             <span className="text-gray-500">Instrument</span>
-            <p className="text-white font-mono">{status?.instrument || 'ETH-USD'}</p>
+            <p className={`font-mono ${meta.textActive}`}>{ticker}</p>
           </div>
           <div>
-            <span className="text-gray-500">Starting Capital</span>
-            <p className="text-white font-mono">${status?.starting_capital?.toLocaleString() || '5,000'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Risk Per Trade</span>
-            <p className="text-white font-mono">{status?.risk_per_trade_pct || 5}%</p>
+            <span className="text-gray-500">Direction</span>
+            <p className="text-green-400 font-mono">LONG ONLY</p>
           </div>
           <div>
             <span className="text-gray-500">Market Hours</span>
             <p className="text-cyan-400 font-mono">24/7</p>
           </div>
           <div>
+            <span className="text-gray-500">Risk Per Trade</span>
+            <p className="text-white font-mono">{status?.risk_per_trade_pct ?? 5}%</p>
+          </div>
+          <div>
             <span className="text-gray-500">Cooldown</span>
-            <p className="text-white font-mono">{status?.cooldown_minutes || 5} min</p>
+            <p className="text-white font-mono">{status?.cooldown_minutes ?? 5} min</p>
           </div>
           <div>
             <span className="text-gray-500">Oracle</span>
@@ -664,252 +607,376 @@ function OverviewTab({
           </div>
           <div>
             <span className="text-gray-500">Cycles Run</span>
-            <p className="text-white font-mono">{status?.cycle_count || 0}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Mode</span>
-            <p className={`font-mono font-semibold ${status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'}`}>
-              {(status?.mode || 'paper').toUpperCase()}
-            </p>
+            <p className="text-white font-mono">{status?.cycle_count ?? 0}</p>
           </div>
         </div>
-      </BotCard>
-    </>
+      </SectionCard>
+    </div>
   )
 }
 
 // ==============================================================================
-// MARKET SNAPSHOT TAB (Crypto microstructure signals)
+// POSITIONS TAB
 // ==============================================================================
 
-function SnapshotTab({ data, loading, brand }: { data: any; loading: boolean; brand: typeof SPOT_BRAND }) {
-  if (loading) return <LoadingState />
-  if (!data) return (
-    <EmptyState
-      icon={<Globe className="w-12 h-12" />}
-      title="No snapshot available"
-      description="Waiting for crypto market data"
-    />
-  )
+function PositionsTab({ ticker }: { ticker: TickerId }) {
+  const { data: posData, isLoading } = useAgapeSpotPositions(ticker)
+  const positions = posData?.data || []
+  const meta = TICKER_META[ticker]
 
-  const signalColor = (signal: string) => {
-    if (['LONG', 'BULLISH'].some(s => signal?.includes(s))) return 'text-green-400'
-    if (['SHORT', 'BEARISH'].some(s => signal?.includes(s))) return 'text-red-400'
-    if (signal === 'RANGE_BOUND') return 'text-yellow-400'
-    return 'text-gray-400'
-  }
-
-  const riskColor = (risk: string) => {
-    if (risk === 'HIGH') return 'text-red-400 bg-red-900/20'
-    if (risk === 'ELEVATED') return 'text-orange-400 bg-orange-900/20'
-    return 'text-green-400 bg-green-900/20'
-  }
-
-  return (
-    <>
-      {/* Price & Combined Signal */}
-      <BotCard
-        title={`${data.symbol || 'ETH-USD'} $${data.spot_price?.toFixed(2) || '---'}`}
-        botName="AGAPE"
-        icon={<DollarSign className="w-5 h-5" />}
-        headerRight={
-          <span className={`px-3 py-1 rounded-full font-semibold text-sm ${signalColor(data.signals?.combined_signal)}`}>
-            {data.signals?.combined_signal} ({data.signals?.combined_confidence})
-          </span>
-        }
-      >
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-gray-500">Leverage Regime</span>
-            <p className="text-white">{data.signals?.leverage_regime}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Direction Bias</span>
-            <p className={signalColor(data.signals?.directional_bias)}>{data.signals?.directional_bias}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Squeeze Risk</span>
-            <p className={riskColor(data.signals?.squeeze_risk).split(' ')[0]}>{data.signals?.squeeze_risk}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Volatility</span>
-            <p className="text-white">{data.signals?.volatility_regime}</p>
-          </div>
-        </div>
-      </BotCard>
-
-      {/* Crypto Microstructure Signals */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Funding Rate */}
-        <BotCard title="Funding Rate" subtitle="Replaces: Gamma Regime (POSITIVE/NEGATIVE)" botName="AGAPE">
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">Current Rate</span>
-              <span className="text-white font-mono">{data.funding?.rate != null ? `${(data.funding.rate * 100).toFixed(4)}%` : '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Predicted</span>
-              <span className="text-white font-mono">{data.funding?.predicted != null ? `${(data.funding.predicted * 100).toFixed(4)}%` : '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Regime</span>
-              <span className={`font-semibold ${signalColor(data.funding?.regime)}`}>{data.funding?.regime}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Annualized</span>
-              <span className="text-white font-mono">{data.funding?.annualized != null ? `${(data.funding.annualized * 100).toFixed(1)}%` : '---'}</span>
-            </div>
-          </div>
-        </BotCard>
-
-        {/* Long/Short Ratio */}
-        <BotCard title="Long/Short Ratio" subtitle="Replaces: GEX Directional Bias" botName="AGAPE">
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">Ratio</span>
-              <span className="text-white font-mono">{data.long_short?.ratio?.toFixed(2) || '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Long %</span>
-              <span className="text-green-400 font-mono">{data.long_short?.long_pct?.toFixed(1) || '---'}%</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Short %</span>
-              <span className="text-red-400 font-mono">{data.long_short?.short_pct?.toFixed(1) || '---'}%</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Bias</span>
-              <span className={`font-semibold ${signalColor(data.long_short?.bias)}`}>{data.long_short?.bias}</span>
-            </div>
-          </div>
-        </BotCard>
-
-        {/* Liquidations */}
-        <BotCard title="Liquidation Clusters" subtitle="Replaces: Gamma Walls / Price Magnets" botName="AGAPE">
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">Nearest Long Liq</span>
-              <span className="text-red-400 font-mono">{data.liquidations?.nearest_long_liq ? `$${data.liquidations.nearest_long_liq.toFixed(0)}` : '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Nearest Short Liq</span>
-              <span className="text-green-400 font-mono">{data.liquidations?.nearest_short_liq ? `$${data.liquidations.nearest_short_liq.toFixed(0)}` : '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Cluster Count</span>
-              <span className="text-white font-mono">{data.liquidations?.cluster_count || 0}</span>
-            </div>
-          </div>
-          {data.liquidations?.top_clusters?.length > 0 && (
-            <div className="mt-3 border-t border-gray-700 pt-3">
-              <p className="text-xs text-gray-500 mb-2">Top Clusters</p>
-              <div className="space-y-1">
-                {data.liquidations.top_clusters.slice(0, 5).map((c: any, i: number) => (
-                  <div key={i} className="flex justify-between text-xs">
-                    <span className="text-gray-400 font-mono">${c.price?.toFixed(0)}</span>
-                    <span className={`${riskColor(c.intensity).split(' ')[0]} font-mono`}>
-                      {c.intensity} ({c.distance_pct}%)
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </BotCard>
-
-        {/* Crypto GEX */}
-        <BotCard title="Crypto GEX (Deribit)" subtitle="Direct equivalent of Net GEX" botName="AGAPE">
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <span className="text-gray-500">Net GEX</span>
-              <span className="text-white font-mono">{data.crypto_gex?.net_gex?.toFixed(2) || '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Regime</span>
-              <span className={`font-semibold ${signalColor(data.crypto_gex?.regime)}`}>{data.crypto_gex?.regime}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Call GEX</span>
-              <span className="text-green-400 font-mono">{data.crypto_gex?.call_gex?.toFixed(2) || '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Put GEX</span>
-              <span className="text-red-400 font-mono">{data.crypto_gex?.put_gex?.toFixed(2) || '---'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Max Pain / Flip</span>
-              <span className="text-white font-mono">{data.crypto_gex?.flip_point ? `$${data.crypto_gex.flip_point.toFixed(0)}` : '---'}</span>
-            </div>
-          </div>
-        </BotCard>
-      </div>
-    </>
-  )
-}
-
-// ==============================================================================
-// ACTIVITY TAB
-// ==============================================================================
-
-function ActivityTab({ data, brand }: { data: any[]; brand: typeof SPOT_BRAND }) {
-  const scans = data || []
-
-  if (scans.length === 0) {
+  if (isLoading) {
     return (
-      <EmptyState
-        icon={<Activity className="w-12 h-12" />}
-        title="No scan activity yet"
-        description="AGAPE-SPOT scans will appear here as they run"
-      />
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
+      </div>
+    )
+  }
+
+  if (positions.length === 0) {
+    return (
+      <EmptyBox message={`No open positions for ${ticker}. The bot is scanning for opportunities.`} />
     )
   }
 
   return (
-    <BotCard title={`Scan Activity (${scans.length})`} botName="AGAPE" icon={<Activity className="w-5 h-5" />}>
+    <div className="space-y-3">
+      {positions.map((pos: any, idx: number) => (
+        <div key={pos.position_id || idx} className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <span className="px-2 py-1 rounded text-xs font-bold bg-green-900/50 text-green-400">
+                LONG
+              </span>
+              <span className="text-white font-mono font-semibold">
+                {pos.quantity ?? pos.eth_quantity ?? '---'} {TICKER_META[ticker].symbol} @ {fmtPrice(pos.entry_price)}
+              </span>
+              {pos.trailing_active && (
+                <span className="px-2 py-0.5 bg-cyan-900/50 text-cyan-300 text-xs rounded font-mono">
+                  TRAILING @ {fmtPrice(pos.current_stop)}
+                </span>
+              )}
+            </div>
+            <span className={`text-lg font-mono font-bold ${pnlColor(pos.unrealized_pnl ?? 0)}`}>
+              {fmtUsd(pos.unrealized_pnl)}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
+            <div>
+              <span className="text-gray-500">Current Price</span>
+              <p className="text-white font-mono">{fmtPrice(pos.current_price)}</p>
+            </div>
+            <div>
+              <span className="text-gray-500">Stop Loss</span>
+              <p className="text-red-400 font-mono">{pos.stop_loss ? fmtPrice(pos.stop_loss) : 'Trailing'}</p>
+            </div>
+            <div>
+              <span className="text-gray-500">Take Profit</span>
+              <p className="text-green-400 font-mono">{pos.take_profit ? fmtPrice(pos.take_profit) : 'No-Loss Trail'}</p>
+            </div>
+            <div>
+              <span className="text-gray-500">Oracle</span>
+              <p className="text-gray-300">
+                {pos.oracle_advice || 'Advisory'}
+                {pos.oracle_win_probability ? ` (${(pos.oracle_win_probability * 100).toFixed(0)}%)` : ''}
+              </p>
+            </div>
+            <div>
+              <span className="text-gray-500">Opened</span>
+              <p className="text-white">{pos.open_time ? new Date(pos.open_time).toLocaleString() : '---'}</p>
+            </div>
+            <div>
+              <span className="text-gray-500">ID</span>
+              <p className="text-white font-mono">{pos.position_id?.slice(0, 8) || '---'}</p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ==============================================================================
+// PERFORMANCE TAB
+// ==============================================================================
+
+function PerformanceTab({ ticker }: { ticker: TickerId }) {
+  const { data: perfData, isLoading } = useAgapeSpotPerformance(ticker)
+  const perf = perfData?.data ?? perfData
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
+      </div>
+    )
+  }
+
+  if (!perf || (perf.total_trades ?? 0) === 0) {
+    return <EmptyBox message={`No completed trades yet for ${ticker}.`} />
+  }
+
+  const meta = TICKER_META[ticker]
+
+  return (
+    <div className="space-y-5">
+      <SectionCard title="Performance Statistics" icon={<BarChart3 className={`w-5 h-5 ${meta.textActive}`} />}>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <span className="text-gray-500">Total Trades</span>
+            <p className="text-white font-mono text-lg">{perf.total_trades ?? 0}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Win Rate</span>
+            <p className={`font-mono text-lg ${
+              (perf.win_rate ?? 0) >= 55 ? 'text-green-400' : (perf.win_rate ?? 0) >= 45 ? 'text-yellow-400' : 'text-red-400'
+            }`}>
+              {perf.win_rate != null ? `${Number(perf.win_rate).toFixed(1)}%` : '---'}
+            </p>
+          </div>
+          <div>
+            <span className="text-gray-500">Total P&L</span>
+            <p className={`font-mono text-lg ${pnlColor(perf.total_pnl ?? 0)}`}>
+              {fmtUsd(perf.total_pnl)}
+            </p>
+          </div>
+          <div>
+            <span className="text-gray-500">Return</span>
+            <p className={`font-mono text-lg ${pnlColor(perf.return_pct ?? 0)}`}>
+              {fmtPct(perf.return_pct)}
+            </p>
+          </div>
+          <div>
+            <span className="text-gray-500">Profit Factor</span>
+            <p className="text-white font-mono">{perf.profit_factor ?? '---'}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Avg Win</span>
+            <p className="text-green-400 font-mono">{perf.avg_win != null ? fmtUsd(perf.avg_win) : '---'}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Avg Loss</span>
+            <p className="text-red-400 font-mono">{perf.avg_loss != null ? fmtUsd(-Math.abs(perf.avg_loss)) : '---'}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Unrealized P&L</span>
+            <p className={`font-mono ${pnlColor(perf.unrealized_pnl ?? 0)}`}>
+              {fmtUsd(perf.unrealized_pnl)}
+            </p>
+          </div>
+          <div>
+            <span className="text-gray-500">Best Trade</span>
+            <p className="text-green-400 font-mono">{perf.best_trade != null ? fmtUsd(perf.best_trade) : '---'}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Worst Trade</span>
+            <p className="text-red-400 font-mono">{perf.worst_trade != null ? fmtUsd(perf.worst_trade) : '---'}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Wins</span>
+            <p className="text-green-400 font-mono">{perf.wins ?? 0}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Losses</span>
+            <p className="text-red-400 font-mono">{perf.losses ?? 0}</p>
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* Closed Trades */}
+      <ClosedTradesTable ticker={ticker} />
+    </div>
+  )
+}
+
+function ClosedTradesTable({ ticker }: { ticker: TickerId }) {
+  const { data: closedData } = useAgapeSpotClosedTrades(ticker, 50)
+  const trades = closedData?.data || []
+  const meta = TICKER_META[ticker]
+
+  if (trades.length === 0) return null
+
+  return (
+    <SectionCard title={`Closed Trades (${trades.length})`} icon={<History className={`w-5 h-5 ${meta.textActive}`} />}>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-gray-800/50">
-            <tr>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Time</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">ETH</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Funding</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Signal</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Oracle</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Outcome</th>
+          <thead>
+            <tr className="border-b border-gray-800">
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Closed</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Side</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Qty</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Entry</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Exit</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">P&L</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Reason</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-800">
+          <tbody className="divide-y divide-gray-800/60">
+            {trades.map((trade: any, i: number) => (
+              <tr key={i} className="hover:bg-gray-800/30">
+                <td className="px-3 py-2 text-gray-500 font-mono text-xs">
+                  {trade.close_time ? new Date(trade.close_time).toLocaleString() : '---'}
+                </td>
+                <td className="px-3 py-2">
+                  <span className="text-xs font-bold text-green-400">LONG</span>
+                </td>
+                <td className="px-3 py-2 text-gray-300 font-mono text-xs">
+                  {trade.quantity ?? trade.eth_quantity ?? '---'}
+                </td>
+                <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.entry_price)}</td>
+                <td className="px-3 py-2 text-white font-mono text-xs">{fmtPrice(trade.close_price)}</td>
+                <td className="px-3 py-2 text-right">
+                  <span className={`font-mono font-semibold text-xs ${pnlColor(trade.realized_pnl ?? 0)}`}>
+                    {fmtUsd(trade.realized_pnl)}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                    trade.close_reason?.includes('PROFIT') ? 'bg-green-900/30 text-green-300' :
+                    trade.close_reason?.includes('STOP') ? 'bg-red-900/30 text-red-300' :
+                    trade.close_reason?.includes('TRAIL') ? 'bg-cyan-900/30 text-cyan-300' :
+                    'text-gray-400'
+                  }`}>
+                    {trade.close_reason || '---'}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  )
+}
+
+// ==============================================================================
+// EQUITY CURVE TAB
+// ==============================================================================
+
+function EquityCurveTab({ ticker }: { ticker: TickerId }) {
+  const { data: equityData, isLoading } = useAgapeSpotEquityCurve(ticker)
+  const meta = TICKER_META[ticker]
+  const points = equityData?.data?.points || equityData?.data || []
+  const gradientId = `eqFill-${ticker.replace('-', '')}`
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
+      </div>
+    )
+  }
+
+  if (points.length === 0) {
+    return <EmptyBox message={`No equity data for ${ticker} yet. Complete trades to populate this chart.`} />
+  }
+
+  return (
+    <SectionCard title={`${meta.symbol} Equity Curve`} icon={<TrendingUp className={`w-5 h-5 ${meta.textActive}`} />}>
+      <div className="h-80">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={points} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <defs>
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={meta.hexColor} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={meta.hexColor} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+            <XAxis
+              dataKey="timestamp"
+              tick={{ fill: '#6b7280', fontSize: 11 }}
+              tickFormatter={(v: string) => {
+                const d = new Date(v)
+                return `${d.getMonth() + 1}/${d.getDate()}`
+              }}
+            />
+            <YAxis
+              tick={{ fill: '#6b7280', fontSize: 11 }}
+              tickFormatter={(v: number) => `$${v.toLocaleString()}`}
+            />
+            <Tooltip
+              contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
+              labelStyle={{ color: '#9ca3af' }}
+              formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
+              labelFormatter={(label: string) => new Date(label).toLocaleString()}
+            />
+            <Area
+              type="monotone"
+              dataKey="equity"
+              stroke={meta.hexColor}
+              strokeWidth={2}
+              fill={`url(#${gradientId})`}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </SectionCard>
+  )
+}
+
+// ==============================================================================
+// LOGS TAB
+// ==============================================================================
+
+function LogsTab({ ticker }: { ticker: TickerId }) {
+  const { data: scanData, isLoading } = useAgapeSpotScanActivity(ticker, 40)
+  const scans = scanData?.data || []
+  const meta = TICKER_META[ticker]
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <RefreshCw className="w-6 h-6 text-gray-500 animate-spin" />
+      </div>
+    )
+  }
+
+  if (scans.length === 0) {
+    return <EmptyBox message={`No scan activity for ${ticker} yet.`} />
+  }
+
+  return (
+    <SectionCard title={`Scan Activity (${scans.length})`} icon={<Activity className={`w-5 h-5 ${meta.textActive}`} />}>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800">
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Price</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Signal</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Oracle</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Outcome</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-800/60">
             {scans.map((scan: any, i: number) => (
               <tr key={i} className="hover:bg-gray-800/30">
-                <td className="px-4 py-2 text-gray-400 font-mono text-xs">
+                <td className="px-3 py-2 text-gray-500 font-mono text-xs">
                   {scan.timestamp ? new Date(scan.timestamp).toLocaleTimeString() : '---'}
                 </td>
-                <td className="px-4 py-2 text-white font-mono">
-                  ${scan.eth_price?.toFixed(2) || '---'}
+                <td className="px-3 py-2 text-white font-mono text-xs">
+                  {fmtPrice(scan.price ?? scan.eth_price ?? scan.current_price)}
                 </td>
-                <td className="px-4 py-2">
-                  <span className="text-xs text-gray-400">{scan.funding_regime}</span>
-                </td>
-                <td className="px-4 py-2">
+                <td className="px-3 py-2">
                   <span className={`text-xs font-semibold ${
                     scan.combined_signal === 'LONG' ? 'text-green-400' :
                     scan.combined_signal === 'SHORT' ? 'text-red-400' :
                     scan.combined_signal === 'RANGE_BOUND' ? 'text-yellow-400' :
                     'text-gray-500'
                   }`}>
-                    {scan.combined_signal} {scan.combined_confidence && `(${scan.combined_confidence})`}
+                    {scan.combined_signal || '---'}
+                    {scan.combined_confidence ? ` (${scan.combined_confidence})` : ''}
                   </span>
                 </td>
-                <td className="px-4 py-2 text-xs text-gray-400">{scan.oracle_advice || 'Advisory'}</td>
-                <td className="px-4 py-2">
+                <td className="px-3 py-2 text-xs text-gray-400">{scan.oracle_advice || '---'}</td>
+                <td className="px-3 py-2">
                   <span className={`text-xs px-2 py-0.5 rounded ${
-                    scan.outcome?.includes('TRADED') ? `${brand.badgeBg} ${brand.badgeText}` :
-                    scan.outcome?.includes('SAR') ? 'bg-violet-900/50 text-violet-300' :
+                    scan.outcome?.includes('TRADED') ? 'bg-cyan-900/50 text-cyan-300' :
                     scan.outcome?.includes('ERROR') ? 'bg-red-900/50 text-red-300' :
-                    scan.outcome?.includes('LOSS_STREAK') ? 'bg-orange-900/50 text-orange-300' :
+                    scan.outcome?.includes('SKIP') ? 'bg-gray-800 text-gray-500' :
                     'bg-gray-800 text-gray-500'
                   }`}>
-                    {scan.outcome}
+                    {scan.outcome || '---'}
                   </span>
                 </td>
               </tr>
@@ -917,175 +984,48 @@ function ActivityTab({ data, brand }: { data: any[]; brand: typeof SPOT_BRAND })
           </tbody>
         </table>
       </div>
-    </BotCard>
+    </SectionCard>
   )
 }
 
 // ==============================================================================
-// HISTORY TAB (eth_quantity instead of contracts)
+// SHARED UI PRIMITIVES
 // ==============================================================================
 
-function HistoryTab({ data, brand }: { data: any[]; brand: typeof SPOT_BRAND }) {
-  const trades = data || []
-
-  if (trades.length === 0) {
-    return (
-      <EmptyState
-        icon={<History className="w-12 h-12" />}
-        title="No closed trades yet"
-        description="Completed trades will appear here"
-      />
-    )
-  }
-
+function MetricCard({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <BotCard title={`Trade History (${trades.length})`} botName="AGAPE" icon={<History className="w-5 h-5" />}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-800/50">
-            <tr>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Closed</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Side</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">ETH Qty</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Entry</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Exit</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">P&L</th>
-              <th className="text-left px-4 py-3 text-gray-500 font-medium">Reason</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800">
-            {trades.map((trade: any, i: number) => (
-              <tr key={i} className="hover:bg-gray-800/30">
-                <td className="px-4 py-2 text-gray-400 font-mono text-xs">
-                  {trade.close_time ? new Date(trade.close_time).toLocaleString() : '---'}
-                </td>
-                <td className="px-4 py-2">
-                  <span className={`text-xs font-bold ${
-                    trade.side === 'long' ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {trade.side?.toUpperCase()}
-                  </span>
-                </td>
-                <td className="px-4 py-2 text-cyan-300 font-mono text-xs">
-                  {trade.eth_quantity ?? trade.quantity ?? '---'} ETH
-                </td>
-                <td className="px-4 py-2 text-white font-mono">${trade.entry_price?.toFixed(2)}</td>
-                <td className="px-4 py-2 text-white font-mono">${trade.close_price?.toFixed(2) || '---'}</td>
-                <td className="px-4 py-2">
-                  <span className={`font-mono font-semibold ${
-                    (trade.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                  }`}>
-                    {(trade.realized_pnl || 0) >= 0 ? '+' : ''}${trade.realized_pnl?.toFixed(2) || '0.00'}
-                  </span>
-                </td>
-                <td className="px-4 py-2">
-                  <span className={`text-xs px-1.5 py-0.5 rounded ${
-                    trade.close_reason?.includes('SAR') ? 'bg-violet-900/30 text-violet-300' :
-                    trade.close_reason?.includes('TRAIL') ? `${brand.badgeBg} ${brand.badgeText}` :
-                    trade.close_reason?.includes('PROFIT') ? 'bg-green-900/30 text-green-300' :
-                    trade.close_reason?.includes('EMERGENCY') ? 'bg-red-900/30 text-red-300' :
-                    'text-gray-400'
-                  }`}>
-                    {trade.close_reason}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <div className="bg-gray-900 rounded-lg border border-gray-800 p-4">
+      <div className="text-xs text-gray-500 mb-1">{label}</div>
+      <div className={`text-xl font-bold font-mono ${color}`}>{value}</div>
+    </div>
+  )
+}
+
+function SectionCard({ title, icon, children, headerRight }: {
+  title: string
+  icon?: React.ReactNode
+  children: React.ReactNode
+  headerRight?: React.ReactNode
+}) {
+  return (
+    <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+        <div className="flex items-center gap-2">
+          {icon}
+          <h3 className="text-sm font-semibold text-gray-200">{title}</h3>
+        </div>
+        {headerRight}
       </div>
-    </BotCard>
+      <div className="p-5">{children}</div>
+    </div>
   )
 }
 
-// ==============================================================================
-// CONFIG TAB (Settings only - no GEX Mapping for spot)
-// ==============================================================================
-
-function ConfigTab({ status, brand }: { status: any; brand: typeof SPOT_BRAND }) {
+function EmptyBox({ message }: { message: string }) {
   return (
-    <>
-      {/* Configuration */}
-      <BotCard title="Bot Configuration" botName="AGAPE" icon={<Settings className="w-5 h-5" />}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-gray-500">Exchange</span>
-            <p className="text-white font-mono">Coinbase</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Instrument</span>
-            <p className="text-white font-mono">{status?.instrument || 'ETH-USD'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Starting Capital</span>
-            <p className="text-white font-mono">${status?.starting_capital?.toLocaleString() || '5,000'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Risk Per Trade</span>
-            <p className="text-white font-mono">{status?.risk_per_trade_pct || 5}%</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Market Hours</span>
-            <p className="text-cyan-400 font-mono">24/7</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Cooldown</span>
-            <p className="text-white font-mono">{status?.cooldown_minutes || 5} min</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Oracle</span>
-            <p className="text-white font-mono">{status?.require_oracle ? 'Required' : 'Advisory'}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Cycles Run</span>
-            <p className="text-white font-mono">{status?.cycle_count || 0}</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Mode</span>
-            <p className={`font-mono font-semibold ${status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'}`}>
-              {(status?.mode || 'paper').toUpperCase()}
-            </p>
-          </div>
-        </div>
-      </BotCard>
-
-      {/* Trade Instrument Info */}
-      <BotCard title="Trade Instrument" botName="AGAPE" icon={<Target className="w-5 h-5" />}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-gray-500">Symbol</span>
-            <p className="text-white font-mono">ETH-USD</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Type</span>
-            <p className="text-white font-mono">Spot</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Exchange</span>
-            <p className="text-white font-mono">Coinbase</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Trading Hours</span>
-            <p className="text-cyan-400 font-mono">24/7/365</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Settlement</span>
-            <p className="text-white font-mono">Instant</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Min Order</span>
-            <p className="text-white font-mono">0.001 ETH</p>
-          </div>
-          <div>
-            <span className="text-gray-500">Leverage</span>
-            <p className="text-white font-mono">1x (No leverage)</p>
-          </div>
-          <div>
-            <span className="text-gray-500">P&L Formula</span>
-            <p className="text-cyan-300 font-mono text-xs">(exit - entry) x qty</p>
-          </div>
-        </div>
-      </BotCard>
-    </>
+    <div className="bg-gray-900 rounded-xl border border-gray-800 p-12 text-center">
+      <Eye className="w-10 h-10 text-gray-700 mx-auto mb-3" />
+      <p className="text-gray-500 text-sm">{message}</p>
+    </div>
   )
 }

@@ -1,14 +1,16 @@
 """
-AGAPE-SPOT Signal Generator - Generates directional ETH-USD spot trade signals.
+AGAPE-SPOT Signal Generator - Multi-ticker, LONG-ONLY spot trade signals.
 
-Uses the same crypto market microstructure as AGAPE (funding, OI, liquidations, crypto GEX)
-but with spot-native position sizing (ETH quantity instead of contracts).
+Supports: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
+
+Uses crypto market microstructure (funding, OI, liquidations, crypto GEX)
+with spot-native position sizing per ticker.
 
 Reuses AGAPE's DirectionTracker for nimble reversal detection.
 """
 
 import logging
-import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from zoneinfo import ZoneInfo
@@ -17,7 +19,7 @@ from trading.agape_spot.models import (
     AgapeSpotConfig,
     AgapeSpotSignal,
     SignalAction,
-    PositionSide,
+    SPOT_TICKERS,
 )
 
 logger = logging.getLogger(__name__)
@@ -55,18 +57,19 @@ except ImportError as e:
     logger.warning(f"AGAPE-SPOT Signals: OracleAdvisor not available: {e}")
 
 
-# Direction tracker singleton (separate from AGAPE's tracker)
-_spot_direction_tracker = None
+# Per-ticker direction tracker instances
+_spot_direction_trackers: Dict[str, Any] = {}
 
 
-def get_spot_direction_tracker(config: Optional[AgapeSpotConfig] = None):
-    global _spot_direction_tracker
-    if _spot_direction_tracker is None:
+def get_spot_direction_tracker(ticker: str, config: Optional[AgapeSpotConfig] = None):
+    """Get or create a direction tracker for the given ticker."""
+    global _spot_direction_trackers
+    if ticker not in _spot_direction_trackers:
         if AgapeDirectionTracker:
             cooldown = config.direction_cooldown_scans if config else 2
             caution = config.direction_win_streak_caution if config else 100
             memory = config.direction_memory_size if config else 10
-            _spot_direction_tracker = AgapeDirectionTracker(
+            _spot_direction_trackers[ticker] = AgapeDirectionTracker(
                 cooldown_scans=cooldown,
                 win_streak_caution=caution,
                 memory_size=memory,
@@ -78,20 +81,23 @@ def get_spot_direction_tracker(config: Optional[AgapeSpotConfig] = None):
                 def should_skip_direction(self, d): return (False, "")
                 def record_trade(self, d, w, s): pass
                 def get_status(self): return {}
-            _spot_direction_tracker = MinimalTracker()
-    return _spot_direction_tracker
+            _spot_direction_trackers[ticker] = MinimalTracker()
+    return _spot_direction_trackers[ticker]
 
 
-def record_spot_trade_outcome(direction: str, is_win: bool, scan_number: int) -> None:
-    tracker = get_spot_direction_tracker()
+def record_spot_trade_outcome(ticker: str, direction: str, is_win: bool, scan_number: int) -> None:
+    """Record a trade outcome for the given ticker's direction tracker."""
+    tracker = get_spot_direction_tracker(ticker)
     tracker.record_trade(direction, is_win, scan_number)
 
 
 class AgapeSpotSignalGenerator:
-    """Generates directional trade signals for spot ETH-USD.
+    """Generates LONG-ONLY trade signals for multi-ticker spot crypto.
 
-    Same crypto microstructure signals as AGAPE, but position sizing
-    is in ETH quantity (spot-native) instead of futures contracts.
+    Same crypto microstructure signals as AGAPE, but:
+    - LONG-ONLY: never generates SHORT signals (WAIT instead)
+    - Multi-ticker: accepts ticker parameter, uses per-ticker config
+    - Position sizing uses per-ticker capital, min_order, max_per_trade
     """
 
     def __init__(self, config: AgapeSpotConfig):
@@ -111,15 +117,23 @@ class AgapeSpotSignalGenerator:
             except Exception as e:
                 logger.warning(f"AGAPE-SPOT Signals: Oracle init failed: {e}")
 
-    def get_market_data(self) -> Optional[Dict[str, Any]]:
+    def get_market_data(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """Fetch market data for the given ticker.
+
+        Uses the base symbol (e.g., 'ETH' for 'ETH-USD') with CryptoDataProvider.
+        """
         if not self._crypto_provider:
             logger.error("AGAPE-SPOT Signals: No crypto data provider")
             return None
 
         try:
-            snapshot = self._crypto_provider.get_snapshot(self.config.ticker)
+            # Use the base symbol from SPOT_TICKERS (e.g., "ETH" for "ETH-USD")
+            ticker_config = SPOT_TICKERS.get(ticker, {})
+            symbol = ticker_config.get("symbol", ticker.split("-")[0])
+
+            snapshot = self._crypto_provider.get_snapshot(symbol)
             if not snapshot or snapshot.spot_price <= 0:
-                logger.warning("AGAPE-SPOT Signals: Invalid snapshot")
+                logger.warning(f"AGAPE-SPOT Signals: Invalid snapshot for {ticker}")
                 return None
 
             return {
@@ -144,7 +158,7 @@ class AgapeSpotSignalGenerator:
                 "combined_confidence": snapshot.combined_confidence,
             }
         except Exception as e:
-            logger.error(f"AGAPE-SPOT Signals: Market data fetch failed: {e}")
+            logger.error(f"AGAPE-SPOT Signals: Market data fetch failed for {ticker}: {e}")
             return None
 
     def get_oracle_advice(self, market_data: Dict) -> Dict[str, Any]:
@@ -201,12 +215,14 @@ class AgapeSpotSignalGenerator:
             "top_factors": ["oracle_error"],
         }
 
-    def generate_signal(self, oracle_data: Optional[Dict] = None) -> AgapeSpotSignal:
+    def generate_signal(self, ticker: str, oracle_data: Optional[Dict] = None) -> AgapeSpotSignal:
+        """Generate a LONG-ONLY signal for the given ticker."""
         now = datetime.now(CENTRAL_TZ)
 
-        market_data = self.get_market_data()
+        market_data = self.get_market_data(ticker)
         if not market_data:
             return AgapeSpotSignal(
+                ticker=ticker,
                 spot_price=0, timestamp=now,
                 action=SignalAction.WAIT, reasoning="NO_MARKET_DATA",
             )
@@ -223,6 +239,7 @@ class AgapeSpotSignalGenerator:
             oracle_approved = oracle_advice in ("TRADE_FULL", "TRADE_REDUCED", "ENTER", "TRADE")
             if not oracle_approved and oracle_advice != "UNAVAILABLE":
                 return AgapeSpotSignal(
+                    ticker=ticker,
                     spot_price=spot, timestamp=now,
                     funding_rate=market_data.get("funding_rate", 0),
                     funding_regime=market_data.get("funding_regime", "UNKNOWN"),
@@ -245,12 +262,13 @@ class AgapeSpotSignalGenerator:
         combined_signal = market_data.get("combined_signal", "WAIT")
         combined_confidence = market_data.get("combined_confidence", "LOW")
 
-        action, side, reasoning = self._determine_action(
-            combined_signal, combined_confidence, market_data
+        action, reasoning = self._determine_action(
+            ticker, combined_signal, combined_confidence, market_data
         )
 
         if action == SignalAction.WAIT:
             return AgapeSpotSignal(
+                ticker=ticker,
                 spot_price=spot, timestamp=now,
                 funding_rate=market_data.get("funding_rate", 0),
                 funding_regime=market_data.get("funding_regime", "UNKNOWN"),
@@ -270,11 +288,12 @@ class AgapeSpotSignalGenerator:
                 oracle_top_factors=oracle_data.get("top_factors", []),
             )
 
-        # Spot-native position sizing
-        eth_quantity, max_risk = self._calculate_position_size(spot)
-        stop_loss, take_profit = self._calculate_levels(spot, side, market_data)
+        # Spot-native position sizing (per-ticker)
+        quantity, max_risk = self._calculate_position_size(ticker, spot)
+        stop_loss, take_profit = self._calculate_levels(spot, market_data)
 
         return AgapeSpotSignal(
+            ticker=ticker,
             spot_price=spot, timestamp=now,
             funding_rate=market_data.get("funding_rate", 0),
             funding_regime=market_data.get("funding_regime", "UNKNOWN"),
@@ -287,53 +306,54 @@ class AgapeSpotSignalGenerator:
             max_pain=market_data.get("max_pain"),
             crypto_gex=market_data.get("crypto_gex", 0),
             crypto_gex_regime=market_data.get("crypto_gex_regime", "NEUTRAL"),
-            action=action,
+            action=SignalAction.LONG,
             confidence=combined_confidence,
             reasoning=reasoning,
             oracle_advice=oracle_advice,
             oracle_win_probability=oracle_win_prob,
             oracle_confidence=oracle_data.get("confidence", 0),
             oracle_top_factors=oracle_data.get("top_factors", []),
-            side=side,
             entry_price=spot,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            eth_quantity=eth_quantity,
+            quantity=quantity,
             max_risk_usd=max_risk,
         )
 
-    def _determine_action(self, combined_signal, confidence, market_data):
-        """Same logic as AGAPE - translate combined signal into action."""
+    def _determine_action(
+        self, ticker: str, combined_signal: str, confidence: str, market_data: Dict
+    ) -> Tuple[SignalAction, str]:
+        """Translate combined signal into LONG or WAIT (never SHORT)."""
         min_confidence = self.config.min_confidence
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
         if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 1):
-            return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
+            return (SignalAction.WAIT, f"LOW_CONFIDENCE_{confidence}")
 
-        tracker = get_spot_direction_tracker(self.config)
+        tracker = get_spot_direction_tracker(ticker, self.config)
 
         if combined_signal == "LONG":
             should_skip, skip_reason = tracker.should_skip_direction("LONG")
             if should_skip:
-                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
+                return (SignalAction.WAIT, f"DIRECTION_TRACKER_{skip_reason}")
             reasoning = self._build_reasoning("LONG", market_data)
-            return (SignalAction.LONG, "long", reasoning)
+            return (SignalAction.LONG, reasoning)
 
         elif combined_signal == "SHORT":
-            should_skip, skip_reason = tracker.should_skip_direction("SHORT")
-            if should_skip:
-                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
-            reasoning = self._build_reasoning("SHORT", market_data)
-            return (SignalAction.SHORT, "short", reasoning)
+            # LONG-ONLY: bearish signals produce WAIT, not SHORT
+            return (SignalAction.WAIT, "BEARISH_SIGNAL_LONG_ONLY")
 
         elif combined_signal == "RANGE_BOUND":
-            return self._derive_range_bound_direction(market_data, tracker)
+            return self._derive_range_bound_direction(ticker, market_data, tracker)
 
         elif combined_signal == "WAIT":
-            return self._derive_fallback_direction(market_data, tracker)
+            return self._derive_fallback_direction(ticker, market_data, tracker)
 
-        return (SignalAction.WAIT, None, f"NO_SIGNAL_{combined_signal}")
+        return (SignalAction.WAIT, f"NO_SIGNAL_{combined_signal}")
 
-    def _derive_range_bound_direction(self, market_data, tracker):
+    def _derive_range_bound_direction(
+        self, ticker: str, market_data: Dict, tracker
+    ) -> Tuple[SignalAction, str]:
+        """Derive direction from range-bound market. LONG or WAIT only."""
         funding_rate = market_data.get("funding_rate", 0)
         ls_ratio = market_data.get("ls_ratio", 1.0)
         max_pain = market_data.get("max_pain")
@@ -359,41 +379,42 @@ class AgapeSpotSignalGenerator:
         if score > 0:
             should_skip, reason = tracker.should_skip_direction("LONG")
             if should_skip:
-                return (SignalAction.WAIT, None, f"RANGE_BOUND_LONG_BLOCKED_{reason}")
-            return (SignalAction.LONG, "long", self._build_reasoning("RANGE_LONG", market_data))
-        elif score < 0:
-            should_skip, reason = tracker.should_skip_direction("SHORT")
-            if should_skip:
-                return (SignalAction.WAIT, None, f"RANGE_BOUND_SHORT_BLOCKED_{reason}")
-            return (SignalAction.SHORT, "short", self._build_reasoning("RANGE_SHORT", market_data))
+                return (SignalAction.WAIT, f"RANGE_BOUND_LONG_BLOCKED_{reason}")
+            return (SignalAction.LONG, self._build_reasoning("RANGE_LONG", market_data))
 
-        return (SignalAction.WAIT, None, "RANGE_BOUND_NO_BIAS")
+        # Bearish or neutral score -> WAIT (long-only)
+        if score < 0:
+            return (SignalAction.WAIT, "RANGE_BOUND_BEARISH_LONG_ONLY")
 
-    def _derive_fallback_direction(self, market_data, tracker):
+        return (SignalAction.WAIT, "RANGE_BOUND_NO_BIAS")
+
+    def _derive_fallback_direction(
+        self, ticker: str, market_data: Dict, tracker
+    ) -> Tuple[SignalAction, str]:
+        """Derive direction from squeeze/funding fallback. LONG or WAIT only."""
         squeeze_risk = market_data.get("squeeze_risk", "LOW")
         ls_bias = market_data.get("ls_bias", "NEUTRAL")
         funding_regime = market_data.get("funding_regime", "NEUTRAL")
 
         if squeeze_risk == "HIGH":
             if ls_bias == "SHORT_HEAVY":
+                # Short squeeze -> bullish for longs
                 should_skip, _ = tracker.should_skip_direction("LONG")
                 if not should_skip:
-                    return (SignalAction.LONG, "long", self._build_reasoning("SQUEEZE_LONG", market_data))
+                    return (SignalAction.LONG, self._build_reasoning("SQUEEZE_LONG", market_data))
             elif ls_bias == "LONG_HEAVY":
-                should_skip, _ = tracker.should_skip_direction("SHORT")
-                if not should_skip:
-                    return (SignalAction.SHORT, "short", self._build_reasoning("SQUEEZE_SHORT", market_data))
+                # Long squeeze -> bearish, WAIT (long-only)
+                return (SignalAction.WAIT, "SQUEEZE_BEARISH_LONG_ONLY")
 
         if funding_regime in ("HEAVILY_NEGATIVE", "EXTREME_NEGATIVE"):
             should_skip, _ = tracker.should_skip_direction("LONG")
             if not should_skip:
-                return (SignalAction.LONG, "long", self._build_reasoning("FUNDING_LONG", market_data))
+                return (SignalAction.LONG, self._build_reasoning("FUNDING_LONG", market_data))
         elif funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
-            should_skip, _ = tracker.should_skip_direction("SHORT")
-            if not should_skip:
-                return (SignalAction.SHORT, "short", self._build_reasoning("FUNDING_SHORT", market_data))
+            # Bearish funding -> WAIT (long-only)
+            return (SignalAction.WAIT, "FUNDING_BEARISH_LONG_ONLY")
 
-        return (SignalAction.WAIT, None, "NO_FALLBACK_SIGNAL")
+        return (SignalAction.WAIT, "NO_FALLBACK_SIGNAL")
 
     def _build_reasoning(self, direction: str, market_data: Dict) -> str:
         parts = [direction]
@@ -410,33 +431,52 @@ class AgapeSpotSignalGenerator:
             parts.append(f"max_pain_dist={dist:+.1f}%")
         return " | ".join(parts)
 
-    def _calculate_position_size(self, spot_price: float) -> Tuple[float, float]:
-        """Calculate position size in ETH.
+    def _calculate_position_size(self, ticker: str, spot_price: float) -> Tuple[float, float]:
+        """Calculate position size using per-ticker config from SPOT_TICKERS.
 
-        SPOT-NATIVE: Risk-based sizing.
+        SPOT-NATIVE: Risk-based sizing with capital-based cap.
         risk_usd = capital * risk_pct
-        eth_quantity = risk_usd / (spot * stop_distance_pct)
-        Capped at max_eth_per_trade.
+        risk_based_qty = risk_usd / (spot * stop_distance_pct)
+        capital_based_qty = (capital / max_positions) / spot
+        quantity = min(risk_based_qty, capital_based_qty, max_per_trade)
+        Capped at max_per_trade, floored at min_order.
+        Rounded to quantity_decimals for the ticker.
         """
-        capital = self.config.starting_capital
+        ticker_config = SPOT_TICKERS.get(ticker, SPOT_TICKERS.get("ETH-USD", {}))
+        capital = ticker_config.get("starting_capital", 1000.0)
+        min_order = ticker_config.get("min_order", 0.001)
+        max_per_trade = ticker_config.get("max_per_trade", 1.0)
+        quantity_decimals = ticker_config.get("quantity_decimals", 4)
+        default_quantity = ticker_config.get("default_quantity", 0.1)
+
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
 
-        # Risk per ETH based on 2% stop distance
+        # Risk per unit based on 2% stop distance
         stop_distance_pct = 0.02
-        risk_per_eth = spot_price * stop_distance_pct
+        risk_per_unit = spot_price * stop_distance_pct
 
-        if risk_per_eth <= 0:
-            return (self.config.default_eth_size, max_risk_usd)
+        if risk_per_unit <= 0:
+            return (default_quantity, max_risk_usd)
 
-        eth_quantity = max_risk_usd / risk_per_eth
-        eth_quantity = max(self.config.min_eth_order, min(eth_quantity, self.config.max_eth_per_trade))
-        eth_quantity = round(eth_quantity, 4)
+        risk_based_qty = max_risk_usd / risk_per_unit
 
-        actual_risk = eth_quantity * risk_per_eth
-        return (eth_quantity, round(actual_risk, 2))
+        # Capital-based cap: don't allocate more than capital / max_positions_per_ticker
+        max_positions = self.config.max_open_positions_per_ticker
+        if max_positions > 0:
+            max_notional = capital / max_positions
+            capital_based_qty = max_notional / spot_price
+        else:
+            capital_based_qty = risk_based_qty  # no cap
 
-    def _calculate_levels(self, spot, side, market_data) -> Tuple[float, float]:
-        """Same stop/target logic as AGAPE."""
+        quantity = min(risk_based_qty, capital_based_qty, max_per_trade)
+        quantity = max(min_order, quantity)
+        quantity = round(quantity, quantity_decimals)
+
+        actual_risk = quantity * risk_per_unit
+        return (quantity, round(actual_risk, 2))
+
+    def _calculate_levels(self, spot: float, market_data: Dict) -> Tuple[float, float]:
+        """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above."""
         stop_pct = 0.02
         target_pct = 0.03
 
@@ -451,28 +491,19 @@ class AgapeSpotSignalGenerator:
         near_long_liq = market_data.get("nearest_long_liq")
         near_short_liq = market_data.get("nearest_short_liq")
 
-        if side == "long":
-            if near_long_liq and near_long_liq < spot:
-                liq_stop = near_long_liq * 0.995
-                pct_stop = spot * (1 - stop_pct)
-                stop_loss = max(liq_stop, pct_stop)
-            else:
-                stop_loss = spot * (1 - stop_pct)
-            if near_short_liq and near_short_liq > spot:
-                take_profit = near_short_liq * 0.99
-            else:
-                take_profit = spot * (1 + target_pct)
+        # LONG stop: below spot, tightened by long liquidation cluster
+        if near_long_liq and near_long_liq < spot:
+            liq_stop = near_long_liq * 0.995
+            pct_stop = spot * (1 - stop_pct)
+            stop_loss = max(liq_stop, pct_stop)
         else:
-            if near_short_liq and near_short_liq > spot:
-                liq_stop = near_short_liq * 1.005
-                pct_stop = spot * (1 + stop_pct)
-                stop_loss = min(liq_stop, pct_stop)
-            else:
-                stop_loss = spot * (1 + stop_pct)
-            if near_long_liq and near_long_liq < spot:
-                take_profit = near_long_liq * 1.01
-            else:
-                take_profit = spot * (1 - target_pct)
+            stop_loss = spot * (1 - stop_pct)
+
+        # LONG target: above spot, tightened by short liquidation cluster
+        if near_short_liq and near_short_liq > spot:
+            take_profit = near_short_liq * 0.99
+        else:
+            take_profit = spot * (1 + target_pct)
 
         return (round(stop_loss, 2), round(take_profit, 2))
 

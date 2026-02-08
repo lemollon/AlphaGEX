@@ -1,11 +1,12 @@
 """
-AGAPE-SPOT Executor - Executes spot ETH trades via Coinbase Advanced Trade API.
+AGAPE-SPOT Executor - Multi-ticker, long-only spot trades via Coinbase Advanced Trade API.
 
 24/7 Coinbase spot trading. No CME futures, no market hours restrictions.
+LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
 
-Position sizing: Uses eth_quantity directly (not contracts).
-  - eth_quantity = 0.1 ETH default
-  - P&L = (exit - entry) * eth_quantity * direction
+Supported tickers: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+Position sizing: Uses quantity directly (per-coin units).
+  - P&L = (exit - entry) * quantity (always long)
 
 Requires:
   pip install coinbase-advanced-py
@@ -26,10 +27,10 @@ from trading.agape_spot.models import (
     AgapeSpotConfig,
     AgapeSpotSignal,
     AgapeSpotPosition,
-    PositionSide,
     PositionStatus,
     SignalAction,
     TradingMode,
+    SPOT_TICKERS,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,13 +48,12 @@ try:
 except ImportError:
     logger.info("AGAPE-SPOT Executor: coinbase-advanced-py not installed")
 
-PRODUCT_ID = "ETH-USD"
-
 
 class AgapeSpotExecutor:
-    """Executes spot ETH-USD trades via Coinbase Advanced Trade API.
+    """Executes multi-ticker, long-only spot trades via Coinbase Advanced Trade API.
 
     24/7 trading - no market hours restrictions.
+    LONG-ONLY: Opening = market_order_buy, Closing = market_order_sell.
     """
 
     def __init__(self, config: AgapeSpotConfig, db=None):
@@ -77,19 +77,30 @@ class AgapeSpotExecutor:
 
         try:
             self._client = RESTClient(api_key=api_key, api_secret=api_secret)
-            product = self._client.get_product(PRODUCT_ID)
+            # Verify connectivity with the first configured ticker
+            verify_ticker = self.config.tickers[0] if self.config.tickers else "ETH-USD"
+            product = self._client.get_product(verify_ticker)
             if product:
                 price = float(product.get("price", 0))
-                logger.info(f"AGAPE-SPOT Executor: Connected. ETH-USD = ${price:,.2f}")
+                logger.info(
+                    f"AGAPE-SPOT Executor: Connected. {verify_ticker} = ${price:,.2f}"
+                )
             else:
                 logger.warning("AGAPE-SPOT Executor: Connected but no product data")
         except Exception as e:
             logger.error(f"AGAPE-SPOT Executor: Init failed: {e}")
             self._client = None
 
+    # =========================================================================
+    # Trade execution
+    # =========================================================================
+
     def execute_trade(self, signal: AgapeSpotSignal) -> Optional[AgapeSpotPosition]:
+        """Execute a long-only spot trade for signal.ticker."""
         if not signal.is_valid:
-            logger.warning("AGAPE-SPOT Executor: Invalid signal, skipping")
+            logger.warning(
+                f"AGAPE-SPOT Executor: Invalid signal for {signal.ticker}, skipping"
+            )
             return None
 
         if self.config.mode == TradingMode.LIVE:
@@ -97,21 +108,19 @@ class AgapeSpotExecutor:
         return self._execute_paper(signal)
 
     def _execute_paper(self, signal: AgapeSpotSignal) -> Optional[AgapeSpotPosition]:
-        """Simulate a spot ETH trade with slippage."""
+        """Simulate a long-only spot buy with slippage."""
         try:
             slippage = signal.spot_price * 0.001  # 0.1%
-            if signal.side == "long":
-                fill_price = signal.spot_price + slippage
-            else:
-                fill_price = signal.spot_price - slippage
+            fill_price = signal.spot_price + slippage  # Buying = pay more
 
-            position_id = f"SPOT-{uuid.uuid4().hex[:8].upper()}"
+            ticker_symbol = SPOT_TICKERS.get(signal.ticker, {}).get("symbol", signal.ticker.split("-")[0])
+            position_id = f"SPOT-{ticker_symbol}-{uuid.uuid4().hex[:8].upper()}"
             now = datetime.now(CENTRAL_TZ)
 
             position = AgapeSpotPosition(
                 position_id=position_id,
-                side=PositionSide.LONG if signal.side == "long" else PositionSide.SHORT,
-                eth_quantity=signal.eth_quantity,
+                ticker=signal.ticker,
+                quantity=signal.quantity,
                 entry_price=round(fill_price, 2),
                 stop_loss=signal.stop_loss,
                 take_profit=signal.take_profit,
@@ -136,10 +145,10 @@ class AgapeSpotExecutor:
                 high_water_mark=fill_price,
             )
 
-            notional = signal.eth_quantity * fill_price
+            notional = signal.quantity * fill_price
             logger.info(
-                f"AGAPE-SPOT: PAPER {signal.side.upper()} "
-                f"{signal.eth_quantity:.4f} ETH (${notional:.2f}) @ ${fill_price:.2f}"
+                f"AGAPE-SPOT: PAPER BUY {signal.ticker} "
+                f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.2f}"
             )
             return position
 
@@ -148,27 +157,23 @@ class AgapeSpotExecutor:
             return None
 
     def _execute_live(self, signal: AgapeSpotSignal) -> Optional[AgapeSpotPosition]:
-        """Execute a real spot trade via Coinbase."""
+        """Execute a real long-only spot buy via Coinbase."""
         if not self._client:
             logger.error("AGAPE-SPOT Executor: No Coinbase client")
             return self._execute_paper(signal)
 
         try:
-            eth_quantity = round(signal.eth_quantity, 8)
+            ticker_config = SPOT_TICKERS.get(signal.ticker, {})
+            qty_decimals = ticker_config.get("quantity_decimals", 8)
+            quantity = round(signal.quantity, qty_decimals)
             client_order_id = f"spot-{uuid.uuid4().hex[:12]}"
 
-            if signal.side == "long":
-                order = self._client.market_order_buy(
-                    client_order_id=client_order_id,
-                    product_id=PRODUCT_ID,
-                    base_size=str(eth_quantity),
-                )
-            else:
-                order = self._client.market_order_sell(
-                    client_order_id=client_order_id,
-                    product_id=PRODUCT_ID,
-                    base_size=str(eth_quantity),
-                )
+            # LONG-ONLY: Always buy to open
+            order = self._client.market_order_buy(
+                client_order_id=client_order_id,
+                product_id=signal.ticker,
+                base_size=str(quantity),
+            )
 
             if order and order.get("success"):
                 order_id = order["success_response"]["order_id"]
@@ -176,20 +181,26 @@ class AgapeSpotExecutor:
                 try:
                     fills = self._client.get_fills(order_id=order_id)
                     if fills and fills.get("fills"):
-                        total_value = sum(float(f["price"]) * float(f["size"]) for f in fills["fills"])
-                        total_size = sum(float(f["size"]) for f in fills["fills"])
+                        total_value = sum(
+                            float(f["price"]) * float(f["size"])
+                            for f in fills["fills"]
+                        )
+                        total_size = sum(
+                            float(f["size"]) for f in fills["fills"]
+                        )
                         if total_size > 0:
                             fill_price = total_value / total_size
                 except Exception:
                     pass
 
-                position_id = f"SPOT-{order_id[:8]}"
+                ticker_symbol = ticker_config.get("symbol", signal.ticker.split("-")[0])
+                position_id = f"SPOT-{ticker_symbol}-{order_id[:8]}"
                 now = datetime.now(CENTRAL_TZ)
 
                 position = AgapeSpotPosition(
                     position_id=position_id,
-                    side=PositionSide.LONG if signal.side == "long" else PositionSide.SHORT,
-                    eth_quantity=eth_quantity,
+                    ticker=signal.ticker,
+                    quantity=quantity,
                     entry_price=round(fill_price, 2),
                     stop_loss=signal.stop_loss,
                     take_profit=signal.take_profit,
@@ -215,8 +226,8 @@ class AgapeSpotExecutor:
                 )
 
                 logger.info(
-                    f"AGAPE-SPOT: LIVE {signal.side.upper()} "
-                    f"{eth_quantity:.4f} ETH @ ${fill_price:.2f} (order={order_id})"
+                    f"AGAPE-SPOT: LIVE BUY {signal.ticker} "
+                    f"{quantity:.4f} @ ${fill_price:.2f} (order={order_id})"
                 )
                 return position
 
@@ -228,43 +239,58 @@ class AgapeSpotExecutor:
             logger.error(f"AGAPE-SPOT Executor: Live execution failed: {e}")
             return None
 
-    def close_position(self, position: AgapeSpotPosition, current_price: float, reason: str) -> Tuple[bool, float, float]:
+    # =========================================================================
+    # Position closing
+    # =========================================================================
+
+    def close_position(
+        self,
+        position: AgapeSpotPosition,
+        current_price: float,
+        reason: str,
+    ) -> Tuple[bool, float, float]:
+        """Close a long position (always sells)."""
         if self.config.mode == TradingMode.LIVE and self._client:
             return self._close_live(position, current_price, reason)
         return self._close_paper(position, current_price, reason)
 
-    def _close_paper(self, position: AgapeSpotPosition, current_price: float, reason: str) -> Tuple[bool, float, float]:
-        slippage = current_price * 0.001
-        if position.side == PositionSide.LONG:
-            close_price = current_price - slippage
-        else:
-            close_price = current_price + slippage
+    def _close_paper(
+        self,
+        position: AgapeSpotPosition,
+        current_price: float,
+        reason: str,
+    ) -> Tuple[bool, float, float]:
+        """Simulate closing a long position with slippage."""
+        slippage = current_price * 0.001  # 0.1%
+        close_price = current_price - slippage  # Selling = get less
 
         realized_pnl = position.calculate_pnl(close_price)
 
         logger.info(
-            f"AGAPE-SPOT: PAPER CLOSE {position.position_id} "
+            f"AGAPE-SPOT: PAPER SELL {position.ticker} {position.position_id} "
             f"@ ${close_price:.2f} P&L=${realized_pnl:.2f} ({reason})"
         )
         return (True, round(close_price, 2), realized_pnl)
 
-    def _close_live(self, position: AgapeSpotPosition, current_price: float, reason: str) -> Tuple[bool, float, float]:
+    def _close_live(
+        self,
+        position: AgapeSpotPosition,
+        current_price: float,
+        reason: str,
+    ) -> Tuple[bool, float, float]:
+        """Execute a real sell to close a long position via Coinbase."""
         try:
-            eth_quantity = round(position.eth_quantity, 8)
+            ticker_config = SPOT_TICKERS.get(position.ticker, {})
+            qty_decimals = ticker_config.get("quantity_decimals", 8)
+            quantity = round(position.quantity, qty_decimals)
             client_order_id = f"spot-close-{uuid.uuid4().hex[:12]}"
 
-            if position.side == PositionSide.LONG:
-                order = self._client.market_order_sell(
-                    client_order_id=client_order_id,
-                    product_id=PRODUCT_ID,
-                    base_size=str(eth_quantity),
-                )
-            else:
-                order = self._client.market_order_buy(
-                    client_order_id=client_order_id,
-                    product_id=PRODUCT_ID,
-                    base_size=str(eth_quantity),
-                )
+            # LONG-ONLY: Always sell to close
+            order = self._client.market_order_sell(
+                client_order_id=client_order_id,
+                product_id=position.ticker,
+                base_size=str(quantity),
+            )
 
             if order and order.get("success"):
                 order_id = order["success_response"]["order_id"]
@@ -272,8 +298,13 @@ class AgapeSpotExecutor:
                 try:
                     fills = self._client.get_fills(order_id=order_id)
                     if fills and fills.get("fills"):
-                        total_value = sum(float(f["price"]) * float(f["size"]) for f in fills["fills"])
-                        total_size = sum(float(f["size"]) for f in fills["fills"])
+                        total_value = sum(
+                            float(f["price"]) * float(f["size"])
+                            for f in fills["fills"]
+                        )
+                        total_size = sum(
+                            float(f["size"]) for f in fills["fills"]
+                        )
                         if total_size > 0:
                             close_price = total_value / total_size
                 except Exception:
@@ -281,7 +312,7 @@ class AgapeSpotExecutor:
 
                 realized_pnl = position.calculate_pnl(close_price)
                 logger.info(
-                    f"AGAPE-SPOT: LIVE CLOSE {position.position_id} "
+                    f"AGAPE-SPOT: LIVE SELL {position.ticker} {position.position_id} "
                     f"@ ${close_price:.2f} P&L=${realized_pnl:.2f}"
                 )
                 return (True, round(close_price, 2), realized_pnl)
@@ -294,45 +325,55 @@ class AgapeSpotExecutor:
             logger.error(f"AGAPE-SPOT Executor: Live close failed: {e}")
             return self._close_paper(position, current_price, reason)
 
-    def get_current_price(self) -> Optional[float]:
-        """Get current ETH-USD spot price from Coinbase."""
+    # =========================================================================
+    # Market data
+    # =========================================================================
+
+    def get_current_price(self, ticker: str) -> Optional[float]:
+        """Get current spot price for any supported ticker from Coinbase."""
         if self._client:
             try:
-                product = self._client.get_product(PRODUCT_ID)
+                product = self._client.get_product(ticker)
                 if product and product.get("price"):
                     return float(product["price"])
             except Exception as e:
-                logger.debug(f"AGAPE-SPOT Executor: Coinbase quote failed: {e}")
+                logger.debug(f"AGAPE-SPOT Executor: Coinbase quote failed for {ticker}: {e}")
 
         # Fallback to crypto data provider
         try:
             from data.crypto_data_provider import get_crypto_data_provider
             provider = get_crypto_data_provider()
-            snapshot = provider.get_snapshot("ETH")
+            symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
+            snapshot = provider.get_snapshot(symbol)
             return snapshot.spot_price if snapshot else None
         except Exception:
             return None
 
     def get_account_balance(self) -> Optional[Dict]:
+        """Get account balances for USD and all supported crypto currencies."""
         if not self._client:
             return None
         try:
             accounts = self._client.get_accounts()
             if accounts and accounts.get("accounts"):
-                usd_balance = 0.0
-                eth_balance = 0.0
+                balances: Dict[str, float] = {}
+                # Collect all currencies we care about
+                tracked_currencies = {"USD"}
+                for ticker_key in self.config.tickers:
+                    symbol = SPOT_TICKERS.get(ticker_key, {}).get("symbol")
+                    if symbol:
+                        tracked_currencies.add(symbol)
+
                 for acct in accounts["accounts"]:
                     currency = acct.get("currency", "")
-                    available = float(acct.get("available_balance", {}).get("value", 0))
-                    if currency == "USD":
-                        usd_balance = available
-                    elif currency == "ETH":
-                        eth_balance = available
-                return {
-                    "usd_balance": usd_balance,
-                    "eth_balance": eth_balance,
-                    "exchange": "coinbase",
-                }
+                    if currency in tracked_currencies:
+                        available = float(
+                            acct.get("available_balance", {}).get("value", 0)
+                        )
+                        balances[currency.lower() + "_balance"] = available
+
+                balances["exchange"] = "coinbase"
+                return balances
         except Exception as e:
             logger.error(f"AGAPE-SPOT Executor: Balance fetch failed: {e}")
         return None

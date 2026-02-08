@@ -138,6 +138,16 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
     reference: '1 Corinthians 13:4,7',
     why: 'Agape (ἀγάπη) is the highest form of love—unconditional and steadfast. Trading crypto requires patience through extreme volatility and unwavering commitment to the system. Like love that always perseveres, this bot holds discipline through wild swings.',
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-SPOT → AGAPE-SPOT (24/7 Coinbase Spot - Unconditional Love, Extended)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_SPOT: {
+    displayName: 'AGAPE-SPOT',
+    verse: '"Love never fails. But where there are prophecies, they will cease; where there are tongues, they will be stilled; where there is knowledge, it will pass away."',
+    reference: '1 Corinthians 13:8',
+    why: 'AGAPE-SPOT extends the unconditional love of AGAPE to 24/7 spot trading across multiple coins. Like love that never fails and never ceases, this bot trades around the clock with unwavering patience through every market cycle.',
+  },
 }
 
 // =============================================================================
@@ -223,6 +233,7 @@ export const BOT_DISPLAY_NAMES = {
   PROMETHEUS: BOT_SCRIPTURES.PROMETHEUS.displayName,
   HERACLES: BOT_SCRIPTURES.HERACLES.displayName,
   AGAPE: BOT_SCRIPTURES.AGAPE.displayName,
+  AGAPE_SPOT: BOT_SCRIPTURES.AGAPE_SPOT.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {
