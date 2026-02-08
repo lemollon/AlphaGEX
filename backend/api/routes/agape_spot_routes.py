@@ -15,7 +15,7 @@ Standard bot endpoints:
   /positions      - Open positions with unrealized P&L
   /closed-trades  - Completed trade history
   /equity-curve   - Historical equity curve (optional ?ticker=, omit for combined)
-  /equity-curve/intraday - Today's intraday equity (requires ?ticker=)
+  /equity-curve/intraday - Today's intraday equity (optional ?ticker=, omit for combined)
   /performance    - Win rate, P&L, statistics
   /logs           - Activity log
   /scan-activity  - Scan history (every cycle logged)
@@ -548,11 +548,14 @@ def _equity_curve_empty(now: datetime, starting_capital: float, days: int, ticke
 async def get_equity_curve_intraday(
     ticker: Optional[str] = Query(
         default=None,
-        description="Ticker for intraday equity (e.g. ETH-USD). Required.",
+        description="Ticker for intraday equity (e.g. ETH-USD). Omit for combined.",
     ),
     date: Optional[str] = None,
 ):
-    """Get today's intraday equity curve for a specific ticker.
+    """Get today's intraday equity curve.
+
+    When ``?ticker=`` is provided, returns per-ticker snapshots.
+    When omitted (or ``ALL``), returns a combined view summing all tickers.
 
     Returns data_points[], snapshots_count, current_equity, day_pnl,
     starting_equity, high_of_day, low_of_day -- same format as ARES/TITAN.
@@ -561,14 +564,13 @@ async def get_equity_curve_intraday(
     """
     ticker = _validate_ticker(ticker)
 
+    # Support "ALL" as explicit combined keyword
+    if ticker and ticker.strip().upper() == "ALL":
+        ticker = None
+
+    # Combined intraday: aggregate all tickers
     if ticker is None:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "The ?ticker= query param is required for intraday equity. "
-                f"Supported: {sorted(_VALID_TICKERS)}"
-            ),
-        )
+        return await _get_combined_intraday_equity(date)
 
     now = datetime.now(CENTRAL_TZ)
     today = date or now.strftime("%Y-%m-%d")
@@ -755,6 +757,173 @@ async def get_equity_curve_intraday(
         import traceback
         traceback.print_exc()
         return _intraday_fallback(today, now, current_time, starting_capital, ticker, str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+async def _get_combined_intraday_equity(date: Optional[str] = None):
+    """Aggregate intraday equity across ALL tickers for the combined view."""
+    now = datetime.now(CENTRAL_TZ)
+    today = date or now.strftime("%Y-%m-%d")
+    current_time = now.strftime("%H:%M:%S")
+
+    # Total starting capital across all tickers
+    total_starting = sum(
+        tc.get("starting_capital", 1000.0) for tc in SPOT_TICKERS.values()
+    )
+
+    if not get_connection:
+        return _intraday_fallback(today, now, current_time, total_starting, "ALL")
+
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get all intraday snapshots across all tickers, bucketed by 5-min intervals
+        cursor.execute("""
+            SELECT
+                date_trunc('minute', timestamp::timestamptz AT TIME ZONE 'America/Chicago')
+                    - (EXTRACT(MINUTE FROM timestamp::timestamptz AT TIME ZONE 'America/Chicago')::int %% 5) * interval '1 minute'
+                    AS bucket,
+                SUM(equity) AS total_equity,
+                SUM(COALESCE(unrealized_pnl, 0)) AS total_unrealized,
+                SUM(COALESCE(realized_pnl_cumulative, 0)) AS total_realized_cum,
+                SUM(COALESCE(open_positions, 0)) AS total_open
+            FROM agape_spot_equity_snapshots
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            GROUP BY bucket
+            ORDER BY bucket ASC
+        """, (today,))
+        bucketed = cursor.fetchall()
+
+        # Total realized P&L across all tickers up to today
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM agape_spot_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+              AND close_time IS NOT NULL AND realized_pnl IS NOT NULL
+              AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
+        """, (today,))
+        row = cursor.fetchone()
+        total_realized_all = float(row[0]) if row and row[0] else 0.0
+
+        # Today's realized P&L across all tickers
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+            FROM agape_spot_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+              AND close_time IS NOT NULL AND realized_pnl IS NOT NULL
+              AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+        """, (today,))
+        trow = cursor.fetchone()
+        today_realized = float(trow[0]) if trow and trow[0] else 0.0
+        today_closed_count = int(trow[1]) if trow and trow[1] else 0
+
+        # Current open positions unrealized P&L across all tickers
+        total_unrealized = 0.0
+        total_open_count = 0
+        trader = _get_trader()
+
+        for t_ticker in _VALID_TICKERS:
+            cursor.execute("""
+                SELECT position_id, quantity, entry_price
+                FROM agape_spot_positions
+                WHERE status = 'open' AND ticker = %s
+            """, (t_ticker,))
+            open_rows = cursor.fetchall()
+            total_open_count += len(open_rows)
+
+            if open_rows and trader:
+                try:
+                    price = trader.executor.get_current_price(t_ticker)
+                    if price:
+                        for pos_row in open_rows:
+                            qty = float(pos_row[1]) if pos_row[1] else 0
+                            entry = float(pos_row[2])
+                            total_unrealized += (price - entry) * qty
+                except Exception:
+                    pass
+
+        conn.close()
+        conn = None
+
+        # Build data points
+        prev_day_realized = total_realized_all - today_realized
+        market_open_equity = round(total_starting + prev_day_realized, 2)
+
+        data_points = [{
+            "timestamp": f"{today}T00:00:00",
+            "time": "00:00:00",
+            "equity": market_open_equity,
+            "cumulative_pnl": round(prev_day_realized, 2),
+            "open_positions": 0,
+            "unrealized_pnl": 0,
+        }]
+        all_equities = [market_open_equity]
+
+        for bucket_row in bucketed:
+            bucket_ts, tot_eq, tot_unreal, tot_real_cum, tot_open = bucket_row
+            eq_val = float(tot_eq) if tot_eq else market_open_equity
+            all_equities.append(round(eq_val, 2))
+
+            bucket_time = bucket_ts
+            if hasattr(bucket_ts, 'strftime'):
+                time_str = bucket_ts.strftime("%H:%M:%S")
+                ts_str = bucket_ts.isoformat()
+            else:
+                time_str = str(bucket_ts)
+                ts_str = str(bucket_ts)
+
+            data_points.append({
+                "timestamp": ts_str,
+                "time": time_str,
+                "equity": round(eq_val, 2),
+                "cumulative_pnl": round(float(tot_real_cum or 0) + float(tot_unreal or 0), 2),
+                "open_positions": int(tot_open or 0),
+                "unrealized_pnl": round(float(tot_unreal or 0), 2),
+            })
+
+        # Live current point
+        current_equity = round(total_starting + total_realized_all + total_unrealized, 2)
+        if today == now.strftime("%Y-%m-%d"):
+            all_equities.append(current_equity)
+            data_points.append({
+                "timestamp": now.isoformat(),
+                "time": current_time,
+                "equity": current_equity,
+                "cumulative_pnl": round(total_realized_all + total_unrealized, 2),
+                "open_positions": total_open_count,
+                "unrealized_pnl": round(total_unrealized, 2),
+            })
+
+        high_of_day = max(all_equities) if all_equities else total_starting
+        low_of_day = min(all_equities) if all_equities else total_starting
+        day_pnl = today_realized + total_unrealized
+
+        return {
+            "success": True,
+            "date": today,
+            "ticker": "ALL",
+            "bot": "AGAPE-SPOT",
+            "data_points": data_points,
+            "current_equity": current_equity,
+            "day_pnl": round(day_pnl, 2),
+            "day_realized": round(today_realized, 2),
+            "day_unrealized": round(total_unrealized, 2),
+            "starting_equity": market_open_equity,
+            "high_of_day": round(high_of_day, 2),
+            "low_of_day": round(low_of_day, 2),
+            "snapshots_count": len(bucketed),
+            "today_closed_count": today_closed_count,
+            "open_positions_count": total_open_count,
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT combined intraday equity error: {e}")
+        import traceback
+        traceback.print_exc()
+        return _intraday_fallback(today, now, current_time, total_starting, "ALL", str(e))
     finally:
         if conn:
             conn.close()
