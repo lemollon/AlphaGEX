@@ -109,7 +109,7 @@ def force_trade_on_second_account():
         print(f"  SPY price: ${spy_price:.2f}")
 
         # Get nearest expiration
-        expirations = tradier_2.get_options_expirations("SPY")
+        expirations = tradier_2.get_option_expirations("SPY")
         if not expirations:
             print("  [FAIL] Could not get expirations")
             return False
