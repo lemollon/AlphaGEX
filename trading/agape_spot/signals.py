@@ -47,14 +47,14 @@ try:
 except ImportError as e:
     logger.warning(f"AGAPE-SPOT Signals: CryptoDataProvider not available: {e}")
 
-OracleAdvisor = None
+ProphetAdvisor = None
 MarketContext = None
 GEXRegime = None
 try:
-    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
-    logger.info("AGAPE-SPOT Signals: OracleAdvisor loaded")
+    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
+    logger.info("AGAPE-SPOT Signals: ProphetAdvisor loaded")
 except ImportError as e:
-    logger.warning(f"AGAPE-SPOT Signals: OracleAdvisor not available: {e}")
+    logger.warning(f"AGAPE-SPOT Signals: ProphetAdvisor not available: {e}")
 
 
 # Per-ticker direction tracker instances
@@ -111,9 +111,9 @@ class AgapeSpotSignalGenerator:
             except Exception as e:
                 logger.warning(f"AGAPE-SPOT Signals: Crypto provider init failed: {e}")
 
-        if OracleAdvisor:
+        if ProphetAdvisor:
             try:
-                self._oracle = OracleAdvisor()
+                self._oracle = ProphetAdvisor()
             except Exception as e:
                 logger.warning(f"AGAPE-SPOT Signals: Oracle init failed: {e}")
 

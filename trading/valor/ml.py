@@ -745,21 +745,6 @@ def get_heracles_ml_advisor() -> HERACLESMLAdvisor:
     return _advisor
 
 
-def train_heracles_ml(min_samples: int = 50, use_new_params_only: bool = True) -> Optional[HERACLESTrainingMetrics]:
-    """
-    Train the VALOR ML model.
-
-    Convenience function for API/scheduler use.
-
-    Args:
-        min_samples: Minimum trades required for training (default 50)
-        use_new_params_only: Only train on trades after PARAMETER_VERSION_DATE (default True)
-                             Set to False to use ALL historical data (not recommended)
-    """
-    advisor = get_heracles_ml_advisor()
-    return advisor.train(min_samples=min_samples, use_new_params_only=use_new_params_only)
-
-
 def get_training_data_stats() -> Dict[str, Any]:
     """
     Get statistics about available training data (old vs new parameters).
