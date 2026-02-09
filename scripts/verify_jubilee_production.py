@@ -81,13 +81,13 @@ def check_database_connectivity() -> VerificationResult:
         tables_to_check = [
             'jubilee_positions',
             'jubilee_signals',
-            'prometheus_rate_analysis',      # Rate analysis history
+            'jubilee_rate_analysis',      # Rate analysis history
             'jubilee_logs',
-            'prometheus_capital_deployments', # Capital deployment tracking
+            'jubilee_capital_deployments', # Capital deployment tracking
             'jubilee_equity_snapshots',
             'jubilee_config',
-            'prometheus_daily_briefings',
-            'prometheus_roll_decisions',
+            'jubilee_daily_briefings',
+            'jubilee_roll_decisions',
         ]
 
         cursor.execute("""

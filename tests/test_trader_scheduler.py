@@ -231,7 +231,7 @@ class TestPhoenixScheduling:
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_phoenix_trade_logic_market_open(self, mock_conn, mock_api, mock_trader):
+    def test_lazarus_trade_logic_market_open(self, mock_conn, mock_api, mock_trader):
         """Test LAZARUS trading logic during market hours"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -259,7 +259,7 @@ class TestPhoenixScheduling:
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_phoenix_trade_logic_market_closed(self, mock_conn, mock_api, mock_trader):
+    def test_lazarus_trade_logic_market_closed(self, mock_conn, mock_api, mock_trader):
         """Test LAZARUS trading logic when market closed"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None

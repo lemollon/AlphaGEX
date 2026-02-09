@@ -81,7 +81,7 @@ def test_db() -> bool:
             'valor_closed_trades',
             'valor_equity_snapshots',
             'valor_signals',
-            'heracles_paper_account',      # Paper trading account
+            'valor_paper_account',      # Paper trading account
             'valor_scan_activity',      # ML training data
         ]
 

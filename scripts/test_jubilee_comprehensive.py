@@ -78,7 +78,7 @@ def test_prometheus_tables(db):
         'jubilee_positions',
         'jubilee_closed',
         'jubilee_ic_positions',
-        'prometheus_ic_closed',
+        'jubilee_ic_closed',
         'jubilee_scan_activity',
         'jubilee_equity_snapshots',
         'jubilee_config',
@@ -240,7 +240,7 @@ def test_ic_positions(db):
                    SUM(realized_pnl) as total_pnl,
                    COUNT(CASE WHEN realized_pnl > 0 THEN 1 END) as wins,
                    COUNT(CASE WHEN realized_pnl <= 0 THEN 1 END) as losses
-            FROM prometheus_ic_closed
+            FROM jubilee_ic_closed
         """)
 
         if result:

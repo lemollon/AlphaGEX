@@ -1239,7 +1239,7 @@ async def get_fortress_status():
         try:
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
             config_row = cursor.fetchone()
             if config_row and config_row[0]:
                 starting_capital = float(config_row[0])
@@ -1385,7 +1385,7 @@ async def get_fortress_status():
         try:
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
             config_row = cursor.fetchone()
             if config_row and config_row[0]:
                 starting_capital = float(config_row[0])
@@ -1707,7 +1707,7 @@ async def get_fortress_equity_curve(days: int = 30):
         from database_adapter import get_connection
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
         config_row = cursor.fetchone()
         if config_row and config_row[0]:
             starting_capital = float(config_row[0])
@@ -2117,7 +2117,7 @@ async def get_ares_intraday_equity(date: str = None):
 
         # Get starting capital from config (if stored)
         cursor.execute("""
-            SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'
+            SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'
         """)
         row = cursor.fetchone()
         if row and row[0]:
@@ -2308,7 +2308,7 @@ async def get_ares_live_equity_curve():
     Live Equity = Starting Capital + Realized P&L + Unrealized P&L
 
     Where:
-    - Starting Capital: Stored in database (ares_starting_capital)
+    - Starting Capital: Stored in database (fortress_starting_capital)
     - Realized P&L: Sum of realized_pnl from closed positions in fortress_positions
     - Unrealized P&L: Calculated from open positions + current SPY price
 
@@ -2340,7 +2340,7 @@ async def get_ares_live_equity_curve():
         # Get or create starting capital record
         cursor.execute('''
             SELECT value FROM autonomous_config
-            WHERE key = 'ares_starting_capital'
+            WHERE key = 'fortress_starting_capital'
         ''')
         row = cursor.fetchone()
 
@@ -2353,7 +2353,7 @@ async def get_ares_live_equity_curve():
             # Store it for future reference
             cursor.execute('''
                 INSERT INTO autonomous_config (key, value)
-                VALUES ('ares_starting_capital', %s)
+                VALUES ('fortress_starting_capital', %s)
                 ON CONFLICT (key) DO UPDATE SET value = %s
             ''', (str(starting_capital), str(starting_capital)))
             conn.commit()
@@ -2555,7 +2555,7 @@ async def save_equity_snapshot():
 
         # Get starting capital from config (same as scheduler)
         starting_capital = 100000  # Default for FORTRESS
-        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
         config_row = cursor.fetchone()
         if config_row and config_row[0]:
             try:
@@ -2670,7 +2670,7 @@ async def get_fortress_performance(
         cursor = conn.cursor()
 
         # Get starting capital from config table
-        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
         row = cursor.fetchone()
         if row and row[0]:
             starting_capital = float(row[0])
@@ -4387,7 +4387,7 @@ async def get_ares_intraday_diagnostics():
             result["issues"].append(f"Outside market hours ({now.strftime('%H:%M')} CT) - scheduler won't save snapshots")
 
         # ========== CONFIG CHECK ==========
-        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
         row = cursor.fetchone()
         result["fortress"]["starting_capital_config"] = float(row[0]) if row and row[0] else "NOT SET (default 100000)"
 

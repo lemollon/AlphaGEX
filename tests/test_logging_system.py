@@ -99,17 +99,17 @@ def test_decision_logger_import():
     """Test 3: DecisionLogger can be imported and initialized."""
     print("\n--- Test 3: DecisionLogger Import ---")
     try:
-        from trading.decision_logger import DecisionLogger, get_phoenix_logger, get_atlas_logger, get_ares_logger
+        from trading.decision_logger import DecisionLogger, get_lazarus_logger, get_cornerstone_logger, get_fortress_logger
         log_result("Import DecisionLogger", True)
 
         # Test bot-specific getters
-        lazarus = get_phoenix_logger()
+        lazarus = get_lazarus_logger()
         log_result("Get LAZARUS logger", True, f"Bot: {lazarus.bot_name}")
 
-        cornerstone = get_atlas_logger()
+        cornerstone = get_cornerstone_logger()
         log_result("Get CORNERSTONE logger", True, f"Bot: {cornerstone.bot_name}")
 
-        fortress = get_ares_logger()
+        fortress = get_fortress_logger()
         log_result("Get FORTRESS logger", True, f"Bot: {fortress.bot_name}")
 
         return True
@@ -123,10 +123,10 @@ def test_log_decision():
     print("\n--- Test 4: Log Test Decision ---")
     try:
         from trading.decision_logger import (
-            DecisionLogger, TradeDecision, MarketContext, get_phoenix_logger
+            DecisionLogger, TradeDecision, MarketContext, get_lazarus_logger
         )
 
-        logger = get_phoenix_logger()
+        logger = get_lazarus_logger()
 
         # Create test decision
         test_decision = TradeDecision(
@@ -247,16 +247,16 @@ def test_bot_specific_logging():
     print("\n--- Test 7: Bot-Specific Logging ---")
     try:
         from trading.decision_logger import (
-            get_phoenix_logger, get_atlas_logger, get_ares_logger,
-            get_hermes_logger, get_oracle_logger, TradeDecision, MarketContext
+            get_lazarus_logger, get_cornerstone_logger, get_fortress_logger,
+            get_shepherd_logger, get_prophet_logger, TradeDecision, MarketContext
         )
 
         bots = {
-            'LAZARUS': get_phoenix_logger(),
-            'CORNERSTONE': get_atlas_logger(),
-            'FORTRESS': get_ares_logger(),
-            'SHEPHERD': get_hermes_logger(),
-            'PROPHET': get_oracle_logger(),
+            'LAZARUS': get_lazarus_logger(),
+            'CORNERSTONE': get_cornerstone_logger(),
+            'FORTRESS': get_fortress_logger(),
+            'SHEPHERD': get_shepherd_logger(),
+            'PROPHET': get_prophet_logger(),
         }
 
         for bot_name, logger in bots.items():

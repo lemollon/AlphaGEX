@@ -100,7 +100,7 @@ def main():
     print_section("2. IC CONFIGURATION")
 
     try:
-        db = JubileeDatabase(bot_name="PROMETHEUS_IC")
+        db = JubileeDatabase(bot_name="JUBILEE_IC")
         config = db.load_ic_config()
 
         if config:

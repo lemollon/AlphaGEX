@@ -1617,7 +1617,7 @@ def log_solomon_scan(
     )
 
 
-def log_phoenix_scan(
+def log_lazarus_scan(
     outcome: ScanOutcome,
     decision_summary: str,
     market_data: Optional[Dict] = None,
@@ -1693,7 +1693,7 @@ def log_phoenix_scan(
     )
 
 
-def log_atlas_scan(
+def log_cornerstone_scan(
     outcome: ScanOutcome,
     decision_summary: str,
     market_data: Optional[Dict] = None,

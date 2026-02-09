@@ -104,11 +104,11 @@ def main():
 
     # Bot configurations
     bots = [
-        ("FORTRESS", "fortress_positions", "ares_starting_capital", 100000),
-        ("SAMSON", "samson_positions", "titan_starting_capital", 200000),
+        ("FORTRESS", "fortress_positions", "fortress_starting_capital", 100000),
+        ("SAMSON", "samson_positions", "samson_starting_capital", 200000),
         ("ANCHOR", "anchor_positions", "anchor_starting_capital", 200000),
         ("SOLOMON", "solomon_positions", "solomon_starting_capital", 50000),
-        ("GIDEON", "gideon_positions", "icarus_starting_capital", 50000),
+        ("GIDEON", "gideon_positions", "gideon_starting_capital", 50000),
     ]
 
     all_stats = {}

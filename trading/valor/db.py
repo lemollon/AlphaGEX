@@ -232,7 +232,7 @@ class ValorDatabase:
 
                 # Win tracker for Bayesian probability
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS heracles_win_tracker (
+                    CREATE TABLE IF NOT EXISTS valor_win_tracker (
                         id SERIAL PRIMARY KEY,
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         alpha DECIMAL(10, 4) DEFAULT 1.0,
@@ -273,7 +273,7 @@ class ValorDatabase:
 
                 # Paper trading account - tracks virtual balance for simulation
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS heracles_paper_account (
+                    CREATE TABLE IF NOT EXISTS valor_paper_account (
                         id SERIAL PRIMARY KEY,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -1235,7 +1235,7 @@ class ValorDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    SELECT * FROM heracles_win_tracker ORDER BY id DESC LIMIT 1
+                    SELECT * FROM valor_win_tracker ORDER BY id DESC LIMIT 1
                 """)
                 row = c.fetchone()
 
@@ -1263,7 +1263,7 @@ class ValorDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO heracles_win_tracker (
+                    INSERT INTO valor_win_tracker (
                         alpha, beta, total_trades,
                         positive_gamma_wins, positive_gamma_losses,
                         negative_gamma_wins, negative_gamma_losses
@@ -1537,7 +1537,7 @@ class ValorDatabase:
                 c = conn.cursor()
 
                 # Check if active account exists
-                c.execute("SELECT id FROM heracles_paper_account WHERE is_active = TRUE")
+                c.execute("SELECT id FROM valor_paper_account WHERE is_active = TRUE")
                 existing = c.fetchone()
 
                 if existing:
@@ -1546,7 +1546,7 @@ class ValorDatabase:
 
                 # Create new paper account
                 c.execute("""
-                    INSERT INTO heracles_paper_account (
+                    INSERT INTO valor_paper_account (
                         starting_capital, current_balance, cumulative_pnl,
                         margin_available, high_water_mark
                     ) VALUES (%s, %s, 0, %s, %s)
@@ -1566,7 +1566,7 @@ class ValorDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    SELECT * FROM heracles_paper_account
+                    SELECT * FROM valor_paper_account
                     WHERE is_active = TRUE
                     ORDER BY id DESC LIMIT 1
                 """)
@@ -1611,7 +1611,7 @@ class ValorDatabase:
                 c.execute("""
                     SELECT id, current_balance, cumulative_pnl, total_trades,
                            margin_used, high_water_mark, max_drawdown, starting_capital
-                    FROM heracles_paper_account
+                    FROM valor_paper_account
                     WHERE is_active = TRUE
                     ORDER BY id DESC LIMIT 1
                 """)
@@ -1644,7 +1644,7 @@ class ValorDatabase:
 
                 # Update database
                 c.execute("""
-                    UPDATE heracles_paper_account
+                    UPDATE valor_paper_account
                     SET current_balance = %s,
                         cumulative_pnl = %s,
                         total_trades = %s,
@@ -1716,7 +1716,7 @@ class ValorDatabase:
 
                     # Reset win tracker to default Bayesian priors
                     c.execute("""
-                        UPDATE heracles_win_tracker
+                        UPDATE valor_win_tracker
                         SET alpha = 1.0, beta = 1.0, total_trades = 0,
                             positive_gamma_wins = 0, positive_gamma_losses = 0,
                             negative_gamma_wins = 0, negative_gamma_losses = 0,
@@ -1728,11 +1728,11 @@ class ValorDatabase:
                                   f"{deleted_scans} scans cleared")
 
                 # Deactivate existing accounts
-                c.execute("UPDATE heracles_paper_account SET is_active = FALSE")
+                c.execute("UPDATE valor_paper_account SET is_active = FALSE")
 
                 # Create new account
                 c.execute("""
-                    INSERT INTO heracles_paper_account (
+                    INSERT INTO valor_paper_account (
                         starting_capital, current_balance, cumulative_pnl,
                         margin_available, high_water_mark
                     ) VALUES (%s, %s, 0, %s, %s)
@@ -1778,7 +1778,7 @@ class ValorDatabase:
                 # Get paper account P&L
                 c.execute("""
                     SELECT cumulative_pnl, total_trades
-                    FROM heracles_paper_account
+                    FROM valor_paper_account
                     WHERE is_active = TRUE
                     ORDER BY id DESC LIMIT 1
                 """)
@@ -1838,7 +1838,7 @@ class ValorDatabase:
                 c.execute("""
                     SELECT id, starting_capital, current_balance, cumulative_pnl,
                            total_trades, is_active, created_at
-                    FROM heracles_paper_account
+                    FROM valor_paper_account
                     ORDER BY id DESC LIMIT 5
                 """)
                 rows = c.fetchall()

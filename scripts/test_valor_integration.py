@@ -249,7 +249,7 @@ def test_full_scan():
     print("="*60)
 
     try:
-        from trading.valor import run_heracles_scan
+        from trading.valor import run_valor_scan
         from trading.valor.trader import get_valor_trader
 
         # First check market status
@@ -278,7 +278,7 @@ def test_full_scan():
                 print(f"   Min distance needed: {trader.config.flip_point_proximity_pct}%")
 
         # Run the scan
-        result = run_heracles_scan()
+        result = run_valor_scan()
 
         print(f"\n   Scan Result:")
         print(f"   Status: {result.get('status', 'unknown')}")

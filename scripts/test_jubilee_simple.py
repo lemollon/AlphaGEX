@@ -61,7 +61,7 @@ def test_database():
             ("jubilee_config", "Configuration"),
             ("jubilee_equity_snapshots", "Equity snapshots"),
             ("jubilee_ic_positions", "IC positions"),
-            ("prometheus_ic_closed_trades", "IC closed trades"),
+            ("jubilee_ic_closed_trades", "IC closed trades"),
             ("jubilee_ic_signals", "IC signals"),
             ("jubilee_ic_config", "IC config"),
             ("jubilee_ic_equity_snapshots", "IC equity snapshots"),

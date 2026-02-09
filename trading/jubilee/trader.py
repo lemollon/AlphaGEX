@@ -866,7 +866,7 @@ For box spreads to be profitable:
 
 
 # Convenience function for scheduler
-def run_prometheus_daily_cycle():
+def run_jubilee_daily_cycle():
     """Run the daily JUBILEE cycle - called by scheduler"""
     trader = JubileeTrader()
     return trader.run_daily_cycle()
@@ -909,7 +909,7 @@ class JubileeICTrader:
     """
 
     def __init__(self, config: Optional[PrometheusICConfig] = None):
-        self.db = JubileeDatabase(bot_name="PROMETHEUS_IC")
+        self.db = JubileeDatabase(bot_name="JUBILEE_IC")
 
         # Load and validate config
         self.config = config or self.db.load_ic_config()
@@ -1447,15 +1447,15 @@ class JubileeICTrader:
 
 
 # Convenience functions for scheduler
-def run_prometheus_ic_cycle():
+def run_jubilee_ic_cycle():
     """Run the JUBILEE IC trading cycle - called every 5-15 minutes"""
     trader = JubileeICTrader()
     return trader.run_trading_cycle()
 
 
-def run_prometheus_ic_mtm_update():
+def run_jubilee_ic_mtm_update():
     """Update mark-to-market for all open IC positions and record equity snapshot"""
-    db = JubileeDatabase(bot_name="PROMETHEUS_IC")
+    db = JubileeDatabase(bot_name="JUBILEE_IC")
     config = db.load_ic_config()
     executor = PrometheusICExecutor(config, db)
 

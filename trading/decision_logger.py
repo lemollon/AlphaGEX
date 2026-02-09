@@ -1279,35 +1279,35 @@ def get_recent_decisions(bot_name: str = None, limit: int = 20) -> List[Dict]:
 _bot_loggers: Dict[str, DecisionLogger] = {}
 
 
-def get_phoenix_logger() -> DecisionLogger:
+def get_lazarus_logger() -> DecisionLogger:
     """Get logger for LAZARUS bot (0DTE)"""
     if 'LAZARUS' not in _bot_loggers:
         _bot_loggers['LAZARUS'] = DecisionLogger()
     return _bot_loggers['LAZARUS']
 
 
-def get_atlas_logger() -> DecisionLogger:
+def get_cornerstone_logger() -> DecisionLogger:
     """Get logger for CORNERSTONE bot (Wheel)"""
     if 'CORNERSTONE' not in _bot_loggers:
         _bot_loggers['CORNERSTONE'] = DecisionLogger()
     return _bot_loggers['CORNERSTONE']
 
 
-def get_hermes_logger() -> DecisionLogger:
+def get_shepherd_logger() -> DecisionLogger:
     """Get logger for SHEPHERD (Manual Wheel)"""
     if 'SHEPHERD' not in _bot_loggers:
         _bot_loggers['SHEPHERD'] = DecisionLogger()
     return _bot_loggers['SHEPHERD']
 
 
-def get_oracle_logger() -> DecisionLogger:
+def get_prophet_logger() -> DecisionLogger:
     """Get logger for PROPHET (Advisor)"""
     if 'PROPHET' not in _bot_loggers:
         _bot_loggers['PROPHET'] = DecisionLogger()
     return _bot_loggers['PROPHET']
 
 
-def get_ares_logger() -> DecisionLogger:
+def get_fortress_logger() -> DecisionLogger:
     """Get logger for FORTRESS (Aggressive Iron Condor)"""
     if 'FORTRESS' not in _bot_loggers:
         _bot_loggers['FORTRESS'] = DecisionLogger()

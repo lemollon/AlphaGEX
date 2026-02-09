@@ -53,7 +53,7 @@ def _get_ares_capital() -> float:
 
         cursor.execute('''
             SELECT value FROM autonomous_config
-            WHERE key = 'ares_starting_capital'
+            WHERE key = 'fortress_starting_capital'
         ''')
         row = cursor.fetchone()
         conn.close()

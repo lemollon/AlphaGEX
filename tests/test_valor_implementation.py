@@ -255,10 +255,10 @@ class HERACLESImplementationVerifier:
                 'valor_signals',
                 'valor_equity_snapshots',
                 'valor_config',
-                'heracles_win_tracker',
+                'valor_win_tracker',
                 'valor_logs',
                 'valor_daily_perf',
-                'heracles_paper_account',
+                'valor_paper_account',
                 'valor_scan_activity',
             ]
 

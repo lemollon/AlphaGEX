@@ -507,7 +507,7 @@ async def get_gideon_status():
             # Get starting capital from config table (consistent with intraday endpoint)
             starting_capital = 100000  # Default for GIDEON (SPY bot)
             try:
-                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'")
+                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'gideon_starting_capital'")
                 config_row = cursor.fetchone()
                 if config_row and config_row[0]:
                     starting_capital = float(config_row[0])
@@ -629,7 +629,7 @@ async def get_gideon_status():
         try:
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'")
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'gideon_starting_capital'")
             config_row = cursor.fetchone()
             if config_row and config_row[0]:
                 starting_capital = float(config_row[0])
@@ -1396,7 +1396,7 @@ async def get_gideon_equity_curve(days: int = 30):
 
         # Get starting capital from config
         cursor.execute("""
-            SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'
+            SELECT value FROM autonomous_config WHERE key = 'gideon_starting_capital'
         """)
         row = cursor.fetchone()
         if row and row[0]:
@@ -1635,7 +1635,7 @@ async def get_icarus_intraday_equity(date: str = None):
 
         # Get starting capital from config
         cursor.execute("""
-            SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'
+            SELECT value FROM autonomous_config WHERE key = 'gideon_starting_capital'
         """)
         row = cursor.fetchone()
         if row and row[0]:
@@ -1878,7 +1878,7 @@ async def save_gideon_equity_snapshot():
 
         # Get starting capital
         cursor.execute("""
-            SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'
+            SELECT value FROM autonomous_config WHERE key = 'gideon_starting_capital'
         """)
         row = cursor.fetchone()
         if row and row[0]:
