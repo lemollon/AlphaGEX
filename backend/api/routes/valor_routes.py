@@ -27,13 +27,13 @@ router = APIRouter(tags=["VALOR"])
 # Import VALOR components with graceful fallback
 ValorTrader = None
 get_valor_trader = None
-run_heracles_scan = None
+run_valor_scan = None
 
 try:
     from trading.valor import (
         ValorTrader,
         get_valor_trader,
-        run_heracles_scan,
+        run_valor_scan,
     )
     logger.info("✅ VALOR module loaded")
 except ImportError as e:
@@ -295,13 +295,13 @@ async def trigger_heracles_scan():
     This is for testing - in production, scans are triggered by the scheduler.
     """
     try:
-        if run_heracles_scan is None:
+        if run_valor_scan is None:
             raise HTTPException(
                 status_code=503,
                 detail="VALOR module not available"
             )
 
-        result = run_heracles_scan()
+        result = run_valor_scan()
         return {
             "success": True,
             "scan_result": result,
@@ -1399,13 +1399,13 @@ async def run_heracles_cycle():
     Equivalent to /scan but named for consistency with other bots.
     """
     try:
-        if run_heracles_scan is None:
+        if run_valor_scan is None:
             raise HTTPException(
                 status_code=503,
                 detail="VALOR module not available"
             )
 
-        result = run_heracles_scan()
+        result = run_valor_scan()
         return {
             "success": True,
             "action": "run_cycle",

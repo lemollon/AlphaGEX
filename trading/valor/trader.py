@@ -1876,7 +1876,7 @@ def get_valor_trader() -> ValorTrader:
     return _trader_instance
 
 
-def run_heracles_scan() -> Dict[str, Any]:
+def run_valor_scan() -> Dict[str, Any]:
     """
     Entry point for scheduler.
 

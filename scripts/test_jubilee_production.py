@@ -332,7 +332,7 @@ def test_scheduler_jobs():
         # Check scheduler imports
         from scheduler.trader_scheduler import (
             PROMETHEUS_BOX_AVAILABLE,
-            PROMETHEUS_IC_AVAILABLE,
+            JUBILEE_IC_AVAILABLE,
         )
 
         if PROMETHEUS_BOX_AVAILABLE:
@@ -340,10 +340,10 @@ def test_scheduler_jobs():
         else:
             test_fail("PROMETHEUS_BOX_AVAILABLE = False - box spread jobs won't run")
 
-        if PROMETHEUS_IC_AVAILABLE:
-            test_pass("PROMETHEUS_IC_AVAILABLE = True")
+        if JUBILEE_IC_AVAILABLE:
+            test_pass("JUBILEE_IC_AVAILABLE = True")
         else:
-            test_fail("PROMETHEUS_IC_AVAILABLE = False - IC jobs won't run")
+            test_fail("JUBILEE_IC_AVAILABLE = False - IC jobs won't run")
 
         # Check scheduler has the methods
         from scheduler.trader_scheduler import AutonomousTraderScheduler

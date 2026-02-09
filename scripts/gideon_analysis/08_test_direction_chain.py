@@ -88,7 +88,7 @@ def test_direction_chain():
             use_gex_walls=True,
             use_claude_validation=False,
             wall_filter_pct=6.0,  # GIDEON uses 6%
-            bot_name="ICARUS_TEST"
+            bot_name="GIDEON_TEST"
         )
 
         if prediction:

@@ -873,27 +873,27 @@ def get_session_decisions(session_id: str) -> List[Dict]:
 
 
 # Convenience functions for each bot
-def get_ares_logger():
+def get_fortress_logger():
     """Get a pre-configured logger for FORTRESS"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "FORTRESS" else None
 
 
-def get_atlas_logger():
+def get_cornerstone_logger():
     """Get a pre-configured logger for CORNERSTONE"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "CORNERSTONE" else None
 
 
-def get_phoenix_logger():
+def get_lazarus_logger():
     """Get a pre-configured logger for LAZARUS"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "LAZARUS" else None
 
 
-def get_hermes_logger():
+def get_shepherd_logger():
     """Get a pre-configured logger for SHEPHERD"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "SHEPHERD" else None
 
 
-def get_oracle_logger():
+def get_prophet_logger():
     """Get a pre-configured logger for PROPHET"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "PROPHET" else None
 

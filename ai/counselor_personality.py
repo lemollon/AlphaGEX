@@ -431,7 +431,7 @@ Key Logging Functions:
 Decision Logging (trading/decision_logger.py):
 - DecisionLogger class - Full audit trail for every trade decision
 - TradeDecision dataclass - Complete trade record
-- Bot loggers: get_ares_logger(), get_phoenix_logger(), get_atlas_logger()
+- Bot loggers: get_fortress_logger(), get_lazarus_logger(), get_cornerstone_logger()
 - Export functions: export_decisions_json(), export_decisions_csv()
 
 Viewing Logs:

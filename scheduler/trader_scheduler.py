@@ -151,9 +151,9 @@ except ImportError:
 try:
     from trading.jubilee.trader import JubileeICTrader, run_jubilee_ic_cycle
     from trading.jubilee.models import PrometheusICConfig
-    PROMETHEUS_IC_AVAILABLE = True
+    JUBILEE_IC_AVAILABLE = True
 except ImportError:
-    PROMETHEUS_IC_AVAILABLE = False
+    JUBILEE_IC_AVAILABLE = False
     JubileeICTrader = None
     PrometheusICConfig = None
     run_jubilee_ic_cycle = None
@@ -208,7 +208,7 @@ except ImportError:
 
 # Import decision logger for comprehensive logging
 try:
-    from trading.decision_logger import get_phoenix_logger, get_atlas_logger, get_ares_logger, BotName
+    from trading.decision_logger import get_lazarus_logger, get_cornerstone_logger, get_fortress_logger, BotName
     DECISION_LOGGER_AVAILABLE = True
 except ImportError:
     DECISION_LOGGER_AVAILABLE = False
@@ -567,7 +567,7 @@ class AutonomousTraderScheduler:
         # Uses capital from box spreads to trade SPX Iron Condors
         # This is the "returns engine" of the JUBILEE system
         self.jubilee_ic_trader = None
-        if PROMETHEUS_IC_AVAILABLE:
+        if JUBILEE_IC_AVAILABLE:
             try:
                 ic_config = PrometheusICConfig()
                 self.jubilee_ic_trader = JubileeICTrader(config=ic_config)

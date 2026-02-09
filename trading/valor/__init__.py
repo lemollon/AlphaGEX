@@ -16,14 +16,14 @@ Features:
 - Tastytrade API integration
 
 Usage:
-    from trading.valor import ValorTrader, run_heracles_scan
+    from trading.valor import ValorTrader, run_valor_scan
 
     # Manual usage
     trader = ValorTrader()
     result = trader.run_scan()
 
     # Or use the scheduler entry point
-    result = run_heracles_scan()
+    result = run_valor_scan()
 """
 
 from .models import (
@@ -47,7 +47,7 @@ from .signals import HERACLESSignalGenerator, get_gex_data_for_heracles
 
 from .executor import TastytradeExecutor
 
-from .trader import ValorTrader, get_valor_trader, run_heracles_scan
+from .trader import ValorTrader, get_valor_trader, run_valor_scan
 
 __all__ = [
     # Models
@@ -73,5 +73,5 @@ __all__ = [
     # Trader
     'ValorTrader',
     'get_valor_trader',
-    'run_heracles_scan',
+    'run_valor_scan',
 ]

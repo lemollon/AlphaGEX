@@ -909,7 +909,7 @@ class JubileeICTrader:
     """
 
     def __init__(self, config: Optional[PrometheusICConfig] = None):
-        self.db = JubileeDatabase(bot_name="PROMETHEUS_IC")
+        self.db = JubileeDatabase(bot_name="JUBILEE_IC")
 
         # Load and validate config
         self.config = config or self.db.load_ic_config()
@@ -1455,7 +1455,7 @@ def run_jubilee_ic_cycle():
 
 def run_jubilee_ic_mtm_update():
     """Update mark-to-market for all open IC positions and record equity snapshot"""
-    db = JubileeDatabase(bot_name="PROMETHEUS_IC")
+    db = JubileeDatabase(bot_name="JUBILEE_IC")
     config = db.load_ic_config()
     executor = PrometheusICExecutor(config, db)
 
