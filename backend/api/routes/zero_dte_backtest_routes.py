@@ -2912,7 +2912,7 @@ async def get_prophet_predictions_full(
 
 
 @router.get("/prophet/bot-interactions")
-async def get_oracle_bot_interactions(
+async def get_prophet_bot_interactions(
     days: int = 7,
     limit: int = 200,
     bot_name: Optional[str] = None

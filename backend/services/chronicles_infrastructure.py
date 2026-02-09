@@ -124,7 +124,7 @@ class JobStore:
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS kronos_jobs (
+                CREATE TABLE IF NOT EXISTS chronicles_jobs (
                     job_id VARCHAR(100) PRIMARY KEY,
                     status VARCHAR(20) NOT NULL DEFAULT 'pending',
                     progress INTEGER DEFAULT 0,
@@ -137,13 +137,13 @@ class JobStore:
                     original_query TEXT,
                     parsing_method VARCHAR(50)
                 );
-                CREATE INDEX IF NOT EXISTS idx_kronos_jobs_status ON kronos_jobs(status);
-                CREATE INDEX IF NOT EXISTS idx_kronos_jobs_created ON kronos_jobs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_chronicles_jobs_status ON chronicles_jobs(status);
+                CREATE INDEX IF NOT EXISTS idx_chronicles_jobs_created ON chronicles_jobs(created_at);
             """)
             conn.commit()
             conn.close()
         except Exception as e:
-            logger.error(f"Failed to create kronos_jobs table: {e}")
+            logger.error(f"Failed to create chronicles_jobs table: {e}")
 
     def _redis_key(self, job_id: str) -> str:
         return f"chronicles:job:{job_id}"
@@ -168,7 +168,7 @@ class JobStore:
                 conn = get_connection()
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO kronos_jobs (job_id, status, progress, progress_message, config, created_at, original_query, parsing_method)
+                    INSERT INTO chronicles_jobs (job_id, status, progress, progress_message, config, created_at, original_query, parsing_method)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (job_id) DO UPDATE SET
                         status = EXCLUDED.status,
@@ -208,7 +208,7 @@ class JobStore:
                 import psycopg2.extras
                 conn = get_connection()
                 cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-                cursor.execute("SELECT * FROM kronos_jobs WHERE job_id = %s", (job_id,))
+                cursor.execute("SELECT * FROM chronicles_jobs WHERE job_id = %s", (job_id,))
                 row = cursor.fetchone()
                 conn.close()
                 if row:
@@ -265,7 +265,7 @@ class JobStore:
 
                 values.append(job_id)
                 cursor.execute(
-                    f"UPDATE kronos_jobs SET {', '.join(set_clauses)} WHERE job_id = %s",
+                    f"UPDATE chronicles_jobs SET {', '.join(set_clauses)} WHERE job_id = %s",
                     values
                 )
                 conn.commit()
@@ -310,7 +310,7 @@ class JobStore:
                 cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
                 cursor.execute("""
                     SELECT job_id, status, progress, progress_message, created_at
-                    FROM kronos_jobs
+                    FROM chronicles_jobs
                     WHERE status IN ('pending', 'running')
                     ORDER BY created_at DESC
                 """)

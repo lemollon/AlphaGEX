@@ -32,7 +32,7 @@ except ImportError:
 
 
 def test_database_table():
-    """Test that argus_gamma_history table exists and has correct structure."""
+    """Test that watchtower_gamma_history table exists and has correct structure."""
     print("\n" + "="*60)
     print("TEST 1: Database Table Structure")
     print("="*60)
@@ -52,7 +52,7 @@ def test_database_table():
     cursor.execute("""
         SELECT EXISTS (
             SELECT FROM information_schema.tables
-            WHERE table_name = 'argus_gamma_history'
+            WHERE table_name = 'watchtower_gamma_history'
         );
     """)
     exists = cursor.fetchone()[0]
@@ -63,13 +63,13 @@ def test_database_table():
         conn.close()
         return True
 
-    print("✅ Table exists: argus_gamma_history")
+    print("✅ Table exists: watchtower_gamma_history")
 
     # Check columns
     cursor.execute("""
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_name = 'argus_gamma_history'
+        WHERE table_name = 'watchtower_gamma_history'
         ORDER BY ordinal_position;
     """)
     columns = cursor.fetchall()
@@ -83,7 +83,7 @@ def test_database_table():
     # Check indexes
     cursor.execute("""
         SELECT indexname FROM pg_indexes
-        WHERE tablename = 'argus_gamma_history';
+        WHERE tablename = 'watchtower_gamma_history';
     """)
     indexes = [row[0] for row in cursor.fetchall()]
     print("\nIndexes:")
@@ -91,14 +91,14 @@ def test_database_table():
         print(f"  ✅ {idx}")
 
     # Check row count
-    cursor.execute("SELECT COUNT(*) FROM argus_gamma_history;")
+    cursor.execute("SELECT COUNT(*) FROM watchtower_gamma_history;")
     count = cursor.fetchone()[0]
     print(f"\nTotal rows: {count}")
 
     # Check recent data
     cursor.execute("""
         SELECT symbol, COUNT(*), MIN(recorded_at), MAX(recorded_at)
-        FROM argus_gamma_history
+        FROM watchtower_gamma_history
         WHERE recorded_at > NOW() - INTERVAL '1 hour'
         GROUP BY symbol;
     """)
@@ -240,8 +240,8 @@ def test_persistence_functions():
 
     # Check for key SQL statements
     sql_checks = [
-        ('CREATE TABLE IF NOT EXISTS argus_gamma_history', 'Table creation SQL'),
-        ('CREATE INDEX IF NOT EXISTS idx_argus_gamma_history', 'Index creation SQL'),
+        ('CREATE TABLE IF NOT EXISTS watchtower_gamma_history', 'Table creation SQL'),
+        ('CREATE INDEX IF NOT EXISTS idx_watchtower_gamma_history', 'Index creation SQL'),
         ("INTERVAL '420 minutes'", 'History load interval (7 hours)'),
         ("INTERVAL '8 hours'", 'Cleanup interval'),
     ]

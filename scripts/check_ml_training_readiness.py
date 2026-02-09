@@ -50,7 +50,7 @@ ML_MODELS = {
         'description': 'Trade/skip decision with win probability',
         'train_script': 'scripts/train_prophet_model.py',
         'model_path': None,  # Stored in database
-        'db_model_table': 'oracle_trained_models',
+        'db_model_table': 'prophet_trained_models',
         'min_records': 50,
         'data_tables': ['prophet_training_outcomes', 'backtest_results', 'autonomous_closed_trades'],
         'priority': 'HIGH',
@@ -130,7 +130,7 @@ def check_model_exists(model_config: Dict, model_id: str = None) -> bool:
         if os.path.exists(model_config['model_path']):
             return True
 
-    # Check legacy database-stored model (oracle_trained_models)
+    # Check legacy database-stored model (prophet_trained_models)
     if model_config.get('db_model_table'):
         try:
             conn = get_connection()

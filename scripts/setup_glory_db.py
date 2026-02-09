@@ -2,7 +2,7 @@
 """
 Setup script for GLORY ROC persistence database table.
 
-Run this in Render shell to create the hyperion_gamma_history table:
+Run this in Render shell to create the glory_gamma_history table:
     python scripts/setup_hyperion_db.py
 
 The table will also be auto-created on first API call, but running this
@@ -31,9 +31,9 @@ def setup_hyperion_tables():
     cursor = conn.cursor()
 
     # Create table
-    print("Creating hyperion_gamma_history table...")
+    print("Creating glory_gamma_history table...")
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS hyperion_gamma_history (
+        CREATE TABLE IF NOT EXISTS glory_gamma_history (
             id SERIAL PRIMARY KEY,
             symbol VARCHAR(10) NOT NULL,
             strike DECIMAL(10, 2) NOT NULL,
@@ -46,13 +46,13 @@ def setup_hyperion_tables():
     # Create indexes
     print("Creating indexes...")
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_hyperion_gamma_history_strike_time
-        ON hyperion_gamma_history(symbol, strike, recorded_at DESC)
+        CREATE INDEX IF NOT EXISTS idx_glory_gamma_history_strike_time
+        ON glory_gamma_history(symbol, strike, recorded_at DESC)
     """)
 
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_hyperion_gamma_history_recorded_at
-        ON hyperion_gamma_history(recorded_at)
+        CREATE INDEX IF NOT EXISTS idx_glory_gamma_history_recorded_at
+        ON glory_gamma_history(recorded_at)
     """)
 
     conn.commit()
@@ -61,18 +61,18 @@ def setup_hyperion_tables():
     cursor.execute("""
         SELECT EXISTS (
             SELECT FROM information_schema.tables
-            WHERE table_name = 'hyperion_gamma_history'
+            WHERE table_name = 'glory_gamma_history'
         );
     """)
     exists = cursor.fetchone()[0]
 
     if exists:
-        print("SUCCESS: hyperion_gamma_history table created")
+        print("SUCCESS: glory_gamma_history table created")
 
         # Show indexes
         cursor.execute("""
             SELECT indexname FROM pg_indexes
-            WHERE tablename = 'hyperion_gamma_history';
+            WHERE tablename = 'glory_gamma_history';
         """)
         indexes = [row[0] for row in cursor.fetchall()]
         print(f"Indexes: {', '.join(indexes)}")

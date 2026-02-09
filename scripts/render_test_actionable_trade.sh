@@ -23,9 +23,9 @@ FAILED=0
 # ============================================
 echo "TEST 1: Database Table Exists"
 echo "-------------------------------------------"
-TABLE_EXISTS=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'argus_trade_signals';" 2>/dev/null | tr -d ' ')
+TABLE_EXISTS=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'watchtower_trade_signals';" 2>/dev/null | tr -d ' ')
 if [ "$TABLE_EXISTS" = "1" ]; then
-    pass "Table argus_trade_signals exists"
+    pass "Table watchtower_trade_signals exists"
     ((PASSED++))
 else
     fail "Table does not exist"
@@ -36,7 +36,7 @@ fi
 echo ""
 echo "TEST 2: Table Has Required Columns"
 echo "-------------------------------------------"
-COLUMNS=$(psql $DATABASE_URL -t -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'argus_trade_signals' ORDER BY ordinal_position;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+COLUMNS=$(psql $DATABASE_URL -t -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'watchtower_trade_signals' ORDER BY ordinal_position;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 
 for col in action direction confidence trade_description spot_at_signal status actual_pnl max_profit max_loss; do
     if echo "$COLUMNS" | grep -qw "$col"; then
@@ -274,7 +274,7 @@ fi
 echo ""
 echo "TEST 8: Database Records Verification"
 echo "-------------------------------------------"
-RECORD_COUNT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM argus_trade_signals WHERE symbol = 'SPY';" 2>/dev/null | tr -d ' ')
+RECORD_COUNT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM watchtower_trade_signals WHERE symbol = 'SPY';" 2>/dev/null | tr -d ' ')
 if [ "$RECORD_COUNT" -gt "0" ]; then
     pass "Found $RECORD_COUNT signal records in database"
     ((PASSED++))
@@ -286,7 +286,7 @@ if [ "$RECORD_COUNT" -gt "0" ]; then
         SELECT id, action, direction, confidence, status,
                COALESCE(actual_pnl::text, 'NULL') as pnl,
                created_at::date as date
-        FROM argus_trade_signals
+        FROM watchtower_trade_signals
         WHERE symbol = 'SPY'
         ORDER BY created_at DESC
         LIMIT 5;
@@ -314,7 +314,7 @@ psql $DATABASE_URL -c "
                  COUNT(*) FILTER (WHERE status IN ('WIN','LOSS'))
             ELSE 0 END, 1
         ) as win_rate_pct
-    FROM argus_trade_signals
+    FROM watchtower_trade_signals
     WHERE symbol = 'SPY'
     AND created_at > NOW() - INTERVAL '30 days';
 " 2>/dev/null

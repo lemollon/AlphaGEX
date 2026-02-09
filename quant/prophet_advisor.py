@@ -1729,7 +1729,7 @@ class ProphetAdvisor:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT model_version
-                    FROM oracle_trained_models
+                    FROM prophet_trained_models
                     WHERE is_active = TRUE
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -1846,7 +1846,7 @@ class ProphetAdvisor:
                 cursor.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables
-                        WHERE table_name = 'oracle_trained_models'
+                        WHERE table_name = 'prophet_trained_models'
                     )
                 """)
                 if not cursor.fetchone()[0]:
@@ -1855,7 +1855,7 @@ class ProphetAdvisor:
                 # Get the most recent active model (including created_at for staleness tracking)
                 cursor.execute("""
                     SELECT model_version, model_data, training_metrics, has_gex_features, created_at
-                    FROM oracle_trained_models
+                    FROM prophet_trained_models
                     WHERE is_active = TRUE
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -1946,7 +1946,7 @@ class ProphetAdvisor:
 
                 # Create table if not exists
                 cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS oracle_trained_models (
+                    CREATE TABLE IF NOT EXISTS prophet_trained_models (
                         id SERIAL PRIMARY KEY,
                         model_version VARCHAR(20) NOT NULL,
                         model_data BYTEA NOT NULL,
@@ -1958,7 +1958,7 @@ class ProphetAdvisor:
                 """)
 
                 # Deactivate previous active models (only update those that are currently active)
-                cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE WHERE is_active = TRUE")
+                cursor.execute("UPDATE prophet_trained_models SET is_active = FALSE WHERE is_active = TRUE")
 
                 # Serialize model data
                 model_data = pickle.dumps({
@@ -1972,7 +1972,7 @@ class ProphetAdvisor:
 
                 # Insert new model
                 cursor.execute("""
-                    INSERT INTO oracle_trained_models
+                    INSERT INTO prophet_trained_models
                     (model_version, model_data, training_metrics, has_gex_features, is_active)
                     VALUES (%s, %s, %s, %s, TRUE)
                 """, (
@@ -5206,7 +5206,7 @@ def get_training_status() -> Dict[str, Any]:
             # Try to get last training date from model save time
             try:
                 cursor.execute("""
-                    SELECT MAX(created_at) FROM oracle_trained_models
+                    SELECT MAX(created_at) FROM prophet_trained_models
                     WHERE is_active = TRUE
                 """)
                 row = cursor.fetchone()
@@ -5221,12 +5221,12 @@ def get_training_status() -> Dict[str, Any]:
                 cursor.execute("""
                     SELECT EXISTS (
                         SELECT FROM information_schema.tables
-                        WHERE table_name = 'oracle_trained_models'
+                        WHERE table_name = 'prophet_trained_models'
                     )
                 """)
                 if cursor.fetchone()[0]:
                     cursor.execute("""
-                        SELECT model_version, created_at FROM oracle_trained_models
+                        SELECT model_version, created_at FROM prophet_trained_models
                         WHERE is_active = TRUE
                         ORDER BY created_at DESC LIMIT 1
                     """)
@@ -5426,7 +5426,7 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
         prophet._save_model()
 
         # Note: used_in_model_version column tracking removed for simplicity
-        # Training outcomes are tracked by the oracle_trained_models table
+        # Training outcomes are tracked by the prophet_trained_models table
 
         prophet.live_log.log("TRAIN_DONE", f"Auto-trained v{new_version} - Accuracy: {prophet.training_metrics.accuracy:.1%}", {
             "accuracy": prophet.training_metrics.accuracy,

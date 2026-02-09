@@ -9,7 +9,7 @@ Usage:
 
 This script tests:
 1. Database connection
-2. oracle_trained_models table creation
+2. prophet_trained_models table creation
 3. Model training and saving to database
 4. Model loading from database
 5. Full persistence verification
@@ -63,9 +63,9 @@ def main():
             conn.close()
 
     # ========================================
-    # TEST 2: Check/Create oracle_trained_models Table
+    # TEST 2: Check/Create prophet_trained_models Table
     # ========================================
-    print_header("TEST 2: oracle_trained_models Table")
+    print_header("TEST 2: prophet_trained_models Table")
     conn = None
     try:
         conn = get_db_connection()
@@ -75,7 +75,7 @@ def main():
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'oracle_trained_models'
+                WHERE table_name = 'prophet_trained_models'
             )
         """)
         table_exists = cursor.fetchone()[0]
@@ -83,7 +83,7 @@ def main():
         if not table_exists:
             print("  Table doesn't exist, creating...")
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS oracle_trained_models (
+                CREATE TABLE IF NOT EXISTS prophet_trained_models (
                     id SERIAL PRIMARY KEY,
                     model_version VARCHAR(20) NOT NULL,
                     model_data BYTEA NOT NULL,
@@ -94,7 +94,7 @@ def main():
                 )
             """)
             conn.commit()
-            print_result("Table creation", True, "Created oracle_trained_models table")
+            print_result("Table creation", True, "Created prophet_trained_models table")
         else:
             print_result("Table exists", True)
 
@@ -102,7 +102,7 @@ def main():
         cursor.execute("""
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_name = 'oracle_trained_models'
+            WHERE table_name = 'prophet_trained_models'
             ORDER BY ordinal_position
         """)
         columns = cursor.fetchall()
@@ -130,7 +130,7 @@ def main():
         cursor.execute("""
             SELECT id, model_version, has_gex_features, is_active,
                    created_at, LENGTH(model_data) as data_size
-            FROM oracle_trained_models
+            FROM prophet_trained_models
             ORDER BY created_at DESC
             LIMIT 5
         """)
@@ -286,7 +286,7 @@ def main():
                         "Model survives restart! Loaded from database.")
             print(f"\n  ✅ YOUR MODEL IS SAFE!")
             print(f"     - Stored in: PostgreSQL database")
-            print(f"     - Table: oracle_trained_models")
+            print(f"     - Table: prophet_trained_models")
             print(f"     - Will survive Render restarts: YES")
         elif status.get('model_trained'):
             print_result("PERSISTENCE VERIFICATION", False,

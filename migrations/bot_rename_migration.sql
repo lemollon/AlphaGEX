@@ -160,6 +160,31 @@ ALTER TABLE IF EXISTS solomon_validations RENAME TO proverbs_validations;
 --   SHEPHERD (formerly HERMES) - UI-only, no database tables
 -- ---------------------------------------------------------------------------
 
+-- ---------------------------------------------------------------------------
+-- 1l. Additional tables discovered in verification sweep (2026-02-09)
+--     These tables were missed in the initial inventory because they don't
+--     follow the standard bot_positions/bot_closed_trades pattern.
+-- ---------------------------------------------------------------------------
+
+-- WATCHTOWER (formerly ARGUS) - additional data tables
+ALTER TABLE IF EXISTS argus_gamma_history RENAME TO watchtower_gamma_history;
+ALTER TABLE IF EXISTS argus_pin_predictions RENAME TO watchtower_pin_predictions;
+ALTER TABLE IF EXISTS argus_accuracy RENAME TO watchtower_accuracy;
+ALTER TABLE IF EXISTS argus_order_flow_history RENAME TO watchtower_order_flow_history;
+ALTER TABLE IF EXISTS argus_trade_signals RENAME TO watchtower_trade_signals;
+ALTER TABLE IF EXISTS argus_strikes RENAME TO watchtower_strikes;
+ALTER TABLE IF EXISTS argus_gamma_flips RENAME TO watchtower_gamma_flips;
+
+-- CHRONICLES (formerly KRONOS) - background job tracking
+ALTER TABLE IF EXISTS kronos_jobs RENAME TO chronicles_jobs;
+
+-- PROPHET (formerly ORACLE) - additional ML tables
+ALTER TABLE IF EXISTS oracle_bot_interactions RENAME TO prophet_bot_interactions;
+ALTER TABLE IF EXISTS oracle_trained_models RENAME TO prophet_trained_models;
+
+-- GLORY (formerly HYPERION) - weekly gamma history
+ALTER TABLE IF EXISTS hyperion_gamma_history RENAME TO glory_gamma_history;
+
 
 -- =============================================================================
 -- SECTION 2: CONFIG KEY UPDATES
@@ -472,7 +497,12 @@ BEGIN
         'fortress_equity_snapshots', 'solomon_equity_snapshots',
         'samson_equity_snapshots', 'anchor_equity_snapshots',
         'gideon_equity_snapshots', 'valor_equity_snapshots',
-        'prophet_predictions'
+        'prophet_predictions',
+        -- Additional tables from verification sweep
+        'watchtower_gamma_history', 'watchtower_pin_predictions',
+        'watchtower_accuracy', 'watchtower_trade_signals',
+        'chronicles_jobs', 'prophet_bot_interactions',
+        'prophet_trained_models', 'glory_gamma_history'
     ]
     LOOP
         IF NOT EXISTS (
@@ -557,7 +587,7 @@ BEGIN
     AND table_name LIKE ANY(ARRAY[
         'ares_%', 'athena_%', 'titan_%', 'pegasus_%', 'icarus_%',
         'heracles_%', 'prometheus_%', 'oracle_%', 'argus_%', 'apollo_%',
-        'solomon_%'
+        'solomon_%', 'kronos_%', 'hyperion_%'
     ]);
 
     IF old_tables IS NULL THEN

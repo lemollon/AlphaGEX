@@ -339,7 +339,7 @@ def main():
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'oracle_trained_models'
+                WHERE table_name = 'prophet_trained_models'
             )
         """)
         table_exists = cursor.fetchone()[0]
@@ -348,7 +348,7 @@ def main():
             cursor.execute("""
                 SELECT id, model_version, LENGTH(model_data) as size,
                        is_active, created_at
-                FROM oracle_trained_models
+                FROM prophet_trained_models
                 WHERE is_active = TRUE
                 ORDER BY created_at DESC
                 LIMIT 1
@@ -370,7 +370,7 @@ def main():
                 print("  Run: python scripts/test_oracle_db_persistence.py")
                 results['db_persistence'] = False
         else:
-            print_warning("oracle_trained_models table doesn't exist!")
+            print_warning("prophet_trained_models table doesn't exist!")
             print("  Table will be created on first training.")
             results['db_persistence'] = False
 

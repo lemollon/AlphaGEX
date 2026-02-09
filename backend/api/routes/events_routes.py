@@ -374,14 +374,14 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                         'bot': None
                     })
 
-        # Check for model version changes from oracle_bot_interactions
+        # Check for model version changes from prophet_bot_interactions
         try:
             cursor.execute('''
                 SELECT DISTINCT
                     DATE(timestamp) as event_date,
                     model_version,
                     bot_name
-                FROM oracle_bot_interactions
+                FROM prophet_bot_interactions
                 WHERE timestamp >= %s
                 AND model_version IS NOT NULL
                 ORDER BY event_date
