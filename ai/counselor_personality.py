@@ -186,7 +186,7 @@ SIGNAL FLOW (How Components Connect):
 ```
 CHRONICLES (GEX Calculator) → PROPHET (AI Advisor) → Trading Bots (FORTRESS/SOLOMON/CORNERSTONE)
        ↓                        ↓                         ↓
-  gex_history DB          oracle_signals DB         positions DB
+  gex_history DB          prophet_signals DB         positions DB
        ↓                        ↓                         ↓
    Frontend GEX Page      AI Intelligence          Trader Control Center
 ```

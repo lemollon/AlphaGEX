@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class TestPrometheusModelsImport:
     """Tests for JUBILEE models import"""
 
-    def test_import_prometheus_models(self):
+    def test_import_jubilee_models(self):
         """Test that JUBILEE models can be imported"""
         from trading.jubilee.models import (
             BoxSpreadPosition,

@@ -59,11 +59,11 @@ try:
 
     # Initialize bot-specific starting capitals (for equity curves)
     bot_capitals = {
-        'ares_starting_capital': '100000',
+        'fortress_starting_capital': '100000',
         'solomon_starting_capital': '100000',
-        'titan_starting_capital': '200000',
+        'samson_starting_capital': '200000',
         'anchor_starting_capital': '200000',
-        'icarus_starting_capital': '100000',
+        'gideon_starting_capital': '100000',
     }
     for key, value in bot_capitals.items():
         c.execute("""

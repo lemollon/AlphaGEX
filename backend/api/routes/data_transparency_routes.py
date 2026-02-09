@@ -1122,8 +1122,8 @@ async def get_argus_gamma_details(
             cur.execute("""
                 SELECT p.*, o.actual_close, o.actual_pin_strike,
                        o.pin_accuracy, o.direction_correct, o.magnet_touched
-                FROM argus_predictions p
-                LEFT JOIN argus_outcomes o ON p.id = o.prediction_id
+                FROM watchtower_predictions p
+                LEFT JOIN watchtower_outcomes o ON p.id = o.prediction_id
                 ORDER BY p.prediction_time DESC
                 LIMIT %s
             """, (limit,))

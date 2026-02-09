@@ -86,7 +86,7 @@ def check_database_connectivity() -> VerificationResult:
             'prometheus_capital_deployments', # Capital deployment tracking
             'jubilee_equity_snapshots',
             'jubilee_config',
-            'prometheus_daily_briefings',
+            'jubilee_daily_briefings',
             'prometheus_roll_decisions',
         ]
 

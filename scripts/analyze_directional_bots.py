@@ -364,7 +364,7 @@ def compare_bots(db):
             AND close_time >= NOW() - INTERVAL '30 days'
             GROUP BY 1
         ),
-        icarus_daily AS (
+        gideon_daily AS (
             SELECT
                 DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
                 COUNT(*) as trades,
@@ -384,7 +384,7 @@ def compare_bots(db):
             i.win_rate as icarus_wr,
             i.pnl as icarus_pnl
         FROM solomon_daily a
-        FULL OUTER JOIN icarus_daily i ON a.trade_date = i.trade_date
+        FULL OUTER JOIN gideon_daily i ON a.trade_date = i.trade_date
         ORDER BY trade_date DESC
         LIMIT 15
     """)

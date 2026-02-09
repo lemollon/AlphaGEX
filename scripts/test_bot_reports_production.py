@@ -104,7 +104,7 @@ def test_table_schema():
         cursor.execute("""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_name = 'ares_daily_reports'
+            WHERE table_name = 'fortress_daily_reports'
         """)
         columns = [row[0] for row in cursor.fetchall()]
 

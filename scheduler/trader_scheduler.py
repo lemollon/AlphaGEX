@@ -149,14 +149,14 @@ except ImportError:
 
 # Import JUBILEE IC Trader (Iron Condor trading with borrowed capital)
 try:
-    from trading.jubilee.trader import JubileeICTrader, run_prometheus_ic_cycle
+    from trading.jubilee.trader import JubileeICTrader, run_jubilee_ic_cycle
     from trading.jubilee.models import PrometheusICConfig
     PROMETHEUS_IC_AVAILABLE = True
 except ImportError:
     PROMETHEUS_IC_AVAILABLE = False
     JubileeICTrader = None
     PrometheusICConfig = None
-    run_prometheus_ic_cycle = None
+    run_jubilee_ic_cycle = None
     print("Warning: JUBILEE IC Trader not available. IC trading will be disabled.")
 
 # Import VALOR (MES Futures Scalping with GEX)
@@ -2313,7 +2313,7 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in AGAPE-SPOT scan: {str(e)}")
             logger.error(traceback.format_exc())
 
-    def scheduled_prometheus_daily_logic(self):
+    def scheduled_jubilee_daily_logic(self):
         """
         JUBILEE Box Spread Daily Cycle - runs once daily at 9:30 AM CT
 
@@ -2439,7 +2439,7 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in JUBILEE Equity Snapshot: {str(e)}")
             logger.error(traceback.format_exc())
 
-    def scheduled_prometheus_rate_analysis(self):
+    def scheduled_jubilee_rate_analysis(self):
         """
         JUBILEE Rate Analysis - runs hourly during market hours.
 
@@ -2479,7 +2479,7 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in JUBILEE Rate Analysis: {str(e)}")
             logger.error(traceback.format_exc())
 
-    def scheduled_prometheus_ic_cycle(self):
+    def scheduled_jubilee_ic_cycle(self):
         """
         JUBILEE IC Trading Cycle - runs every 5 minutes during market hours (MATCHES ANCHOR).
 
@@ -2522,7 +2522,7 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in JUBILEE IC Trading Cycle: {str(e)}")
             logger.error(traceback.format_exc())
 
-    def scheduled_prometheus_ic_mtm_update(self):
+    def scheduled_jubilee_ic_mtm_update(self):
         """
         JUBILEE IC Mark-to-Market Update - runs every 30 minutes.
 
@@ -2542,8 +2542,8 @@ class AutonomousTraderScheduler:
             return
 
         try:
-            from trading.jubilee.trader import run_prometheus_ic_mtm_update
-            result = run_prometheus_ic_mtm_update()
+            from trading.jubilee.trader import run_jubilee_ic_mtm_update
+            result = run_jubilee_ic_mtm_update()
             logger.info(f"JUBILEE IC MTM: Updated {result.get('updated', 0)}/{result.get('total', 0)} positions")
 
         except Exception as e:
@@ -3776,11 +3776,11 @@ class AutonomousTraderScheduler:
             # Bot configurations: (positions_table, snapshot_table, starting_capital_key, default_capital, trader_attr)
             # trader_attr is the scheduler attribute name for the bot's trader instance (for live unrealized P&L)
             bots_config = {
-                'fortress': ('fortress_positions', 'fortress_equity_snapshots', 'ares_starting_capital', 100000, 'fortress_trader'),
+                'fortress': ('fortress_positions', 'fortress_equity_snapshots', 'fortress_starting_capital', 100000, 'fortress_trader'),
                 'solomon': ('solomon_positions', 'solomon_equity_snapshots', 'solomon_starting_capital', 100000, 'solomon_trader'),
-                'samson': ('samson_positions', 'samson_equity_snapshots', 'titan_starting_capital', 200000, 'samson_trader'),
+                'samson': ('samson_positions', 'samson_equity_snapshots', 'samson_starting_capital', 200000, 'samson_trader'),
                 'anchor': ('anchor_positions', 'anchor_equity_snapshots', 'anchor_starting_capital', 200000, 'anchor_trader'),
-                'gideon': ('gideon_positions', 'gideon_equity_snapshots', 'icarus_starting_capital', 100000, 'gideon_trader'),
+                'gideon': ('gideon_positions', 'gideon_equity_snapshots', 'gideon_starting_capital', 100000, 'gideon_trader'),
             }
 
             for bot_name, (pos_table, snap_table, cap_key, default_cap, trader_attr) in bots_config.items():
@@ -4457,14 +4457,14 @@ class AutonomousTraderScheduler:
         # =================================================================
         if self.jubilee_trader:
             self.scheduler.add_job(
-                self.scheduled_prometheus_daily_logic,
+                self.scheduled_jubilee_daily_logic,
                 trigger=CronTrigger(
                     hour=9,
                     minute=30,
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='prometheus_daily',
+                id='jubilee_daily',
                 name='JUBILEE - Box Spread Daily Cycle',
                 replace_existing=True
             )
@@ -4485,7 +4485,7 @@ class AutonomousTraderScheduler:
 
             # JUBILEE Rate Analysis - runs hourly during market hours
             self.scheduler.add_job(
-                self.scheduled_prometheus_rate_analysis,
+                self.scheduled_jubilee_rate_analysis,
                 trigger=IntervalTrigger(
                     hours=1,
                     timezone='America/Chicago'
@@ -4505,7 +4505,7 @@ class AutonomousTraderScheduler:
         # =================================================================
         if self.jubilee_ic_trader:
             self.scheduler.add_job(
-                self.scheduled_prometheus_ic_cycle,
+                self.scheduled_jubilee_ic_cycle,
                 trigger=IntervalTrigger(
                     minutes=5,
                     timezone='America/Chicago'
@@ -4518,7 +4518,7 @@ class AutonomousTraderScheduler:
 
             # JUBILEE IC MTM Update - runs every 30 minutes
             self.scheduler.add_job(
-                self.scheduled_prometheus_ic_mtm_update,
+                self.scheduled_jubilee_ic_mtm_update,
                 trigger=IntervalTrigger(
                     minutes=30,
                     timezone='America/Chicago'

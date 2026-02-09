@@ -537,11 +537,11 @@ export default function DataTransparencyPage() {
     return (
       <div className="space-y-6">
         {/* Jubilee Training History */}
-        {mlData.prometheus_training?.length > 0 && (
+        {mlData.jubilee_training?.length > 0 && (
           <div>
             <h3 className="text-lg font-semibold text-white mb-4">Jubilee Training History</h3>
             <div className="space-y-3">
-              {mlData.prometheus_training.map((training: any, index: number) => (
+              {mlData.jubilee_training.map((training: any, index: number) => (
                 <div key={index} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-white font-medium">{training.training_id}</span>

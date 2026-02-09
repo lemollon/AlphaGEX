@@ -336,11 +336,11 @@ def run_diagnostics():
 2. SET STARTING CAPITAL IN CONFIG:
 
    INSERT INTO autonomous_config (key, value) VALUES
-   ('ares_starting_capital', '100000'),
+   ('fortress_starting_capital', '100000'),
    ('solomon_starting_capital', '100000'),
-   ('titan_starting_capital', '200000'),
+   ('samson_starting_capital', '200000'),
    ('anchor_starting_capital', '200000'),
-   ('icarus_starting_capital', '100000')
+   ('gideon_starting_capital', '100000')
    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 """)
 

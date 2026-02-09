@@ -297,7 +297,7 @@ class JubileeDatabase:
 
             # Daily briefings
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prometheus_daily_briefings (
+                CREATE TABLE IF NOT EXISTS jubilee_daily_briefings (
                     id SERIAL PRIMARY KEY,
                     briefing_date DATE UNIQUE,
                     briefing_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -1621,7 +1621,7 @@ class JubileeDatabase:
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO prometheus_daily_briefings (
+                INSERT INTO jubilee_daily_briefings (
                     briefing_date, briefing_time, system_status,
                     total_open_positions, total_borrowed_amount, total_cash_deployed,
                     total_margin_used, margin_remaining,
@@ -1702,7 +1702,7 @@ class JubileeDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM prometheus_daily_briefings
+                SELECT * FROM jubilee_daily_briefings
                 ORDER BY briefing_date DESC
                 LIMIT %s
             """, (days,))

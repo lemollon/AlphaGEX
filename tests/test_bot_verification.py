@@ -334,7 +334,7 @@ def test_vix_data():
 # LAYER 3: DECISION MAKING TESTS
 # ============================================================================
 
-def test_phoenix_market_regime():
+def test_lazarus_market_regime():
     """Test LAZARUS market regime classifier"""
     print("\n" + "="*60)
     print("TEST 7: LAZARUS MARKET REGIME CLASSIFIER")
@@ -370,7 +370,7 @@ def test_phoenix_market_regime():
         return True
 
 
-def test_phoenix_psychology_rules():
+def test_lazarus_psychology_rules():
     """Test LAZARUS psychology trap detection"""
     print("\n" + "="*60)
     print("TEST 8: LAZARUS PSYCHOLOGY RULES")
@@ -481,7 +481,7 @@ def test_quant_modules():
 # LAYER 4: TRADE EXECUTION TESTS
 # ============================================================================
 
-def test_phoenix_position_sizing():
+def test_lazarus_position_sizing():
     """Test LAZARUS Kelly criterion position sizing"""
     print("\n" + "="*60)
     print("TEST 11: LAZARUS POSITION SIZING")
@@ -639,7 +639,7 @@ def test_decision_logging():
 # LAYER 5: END-TO-END TESTS
 # ============================================================================
 
-def test_phoenix_full_cycle():
+def test_lazarus_full_cycle():
     """Test LAZARUS complete trading cycle (no actual trades)"""
     print("\n" + "="*60)
     print("TEST 14: LAZARUS FULL TRADING CYCLE")
@@ -813,18 +813,18 @@ def run_all_tests():
         ("2.3", "VIX Data", test_vix_data),
 
         # Layer 3: Decision Making
-        ("3.1", "LAZARUS Market Regime", test_phoenix_market_regime),
-        ("3.2", "LAZARUS Psychology Rules", test_phoenix_psychology_rules),
+        ("3.1", "LAZARUS Market Regime", test_lazarus_market_regime),
+        ("3.2", "LAZARUS Psychology Rules", test_lazarus_psychology_rules),
         ("3.3", "CORNERSTONE ML System", test_atlas_ml_system),
         ("3.4", "Quant Modules", test_quant_modules),
 
         # Layer 4: Trade Execution
-        ("4.1", "LAZARUS Position Sizing", test_phoenix_position_sizing),
+        ("4.1", "LAZARUS Position Sizing", test_lazarus_position_sizing),
         ("4.2", "CORNERSTONE Wheel Parameters", test_cornerstone_wheel_parameters),
         ("4.3", "Decision Logging", test_decision_logging),
 
         # Layer 5: End-to-End
-        ("5.1", "LAZARUS Full Cycle", test_phoenix_full_cycle),
+        ("5.1", "LAZARUS Full Cycle", test_lazarus_full_cycle),
         ("5.2", "CORNERSTONE Full Cycle", test_atlas_full_cycle),
         ("5.3", "Scheduler Integration", test_scheduler_integration),
     ]

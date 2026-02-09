@@ -44,7 +44,7 @@ try:
         'jubilee_signals',
         'prometheus_capital_deployments',
         'prometheus_rate_analysis',
-        'prometheus_daily_briefings',
+        'jubilee_daily_briefings',
         'prometheus_roll_decisions',
         'jubilee_config',
         'jubilee_logs',
@@ -211,7 +211,7 @@ try:
         content = f.read()
 
     jobs = [
-        ('prometheus_daily', 'Daily cycle job'),
+        ('jubilee_daily', 'Daily cycle job'),
         ('jubilee_equity_snapshot', 'Equity snapshot job'),
         ('prometheus_rate_analysis', 'Rate analysis job'),
     ]

@@ -171,7 +171,7 @@ class BotMetricsService:
         BotName.FORTRESS: {
             'positions': 'fortress_positions',
             'snapshots': 'fortress_equity_snapshots',
-            'config_key': 'ares_starting_capital',
+            'config_key': 'fortress_starting_capital',
         },
         BotName.SOLOMON: {
             'positions': 'solomon_positions',
@@ -181,12 +181,12 @@ class BotMetricsService:
         BotName.GIDEON: {
             'positions': 'gideon_positions',
             'snapshots': 'gideon_equity_snapshots',
-            'config_key': 'icarus_starting_capital',
+            'config_key': 'gideon_starting_capital',
         },
         BotName.SAMSON: {
             'positions': 'samson_positions',
             'snapshots': 'samson_equity_snapshots',
-            'config_key': 'titan_starting_capital',
+            'config_key': 'samson_starting_capital',
         },
         BotName.ANCHOR: {
             'positions': 'anchor_positions',
@@ -197,7 +197,7 @@ class BotMetricsService:
             'positions': 'valor_positions',
             'closed_trades': 'valor_closed_trades',
             'snapshots': 'valor_equity_snapshots',
-            'config_key': 'heracles_starting_capital',
+            'config_key': 'valor_starting_capital',
         },
         BotName.AGAPE: {
             'positions': 'agape_positions',

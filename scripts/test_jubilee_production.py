@@ -349,11 +349,11 @@ def test_scheduler_jobs():
         from scheduler.trader_scheduler import AutonomousTraderScheduler
 
         methods_to_check = [
-            'scheduled_prometheus_daily_logic',
+            'scheduled_jubilee_daily_logic',
             'scheduled_jubilee_equity_snapshot',
-            'scheduled_prometheus_rate_analysis',
-            'scheduled_prometheus_ic_cycle',
-            'scheduled_prometheus_ic_mtm_update',
+            'scheduled_jubilee_rate_analysis',
+            'scheduled_jubilee_ic_cycle',
+            'scheduled_jubilee_ic_mtm_update',
         ]
 
         for method in methods_to_check:

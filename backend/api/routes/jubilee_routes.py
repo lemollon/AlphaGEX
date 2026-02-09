@@ -1610,8 +1610,8 @@ async def update_ic_mtm():
         raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
 
     try:
-        from trading.jubilee.trader import run_prometheus_ic_mtm_update
-        result = run_prometheus_ic_mtm_update()
+        from trading.jubilee.trader import run_jubilee_ic_mtm_update
+        result = run_jubilee_ic_mtm_update()
         return {
             "available": True,
             "result": result,

@@ -137,7 +137,7 @@ class TestTraderControlEndpoints:
 class TestBotHeartbeatEndpoints:
     """Tests for bot heartbeat endpoints"""
 
-    def test_phoenix_heartbeat(self, test_client):
+    def test_lazarus_heartbeat(self, test_client):
         """Test LAZARUS heartbeat endpoint"""
         if test_client is None:
             pytest.skip("Test client not available")
