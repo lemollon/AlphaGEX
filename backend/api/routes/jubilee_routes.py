@@ -1175,10 +1175,10 @@ async def get_transparency_summary():
 
 # Import IC components
 JubileeICTrader = None
-PrometheusICConfig = None
+JubileeICConfig = None
 try:
     from trading.jubilee.trader import JubileeICTrader
-    from trading.jubilee.models import PrometheusICConfig, ICPositionStatus
+    from trading.jubilee.models import JubileeICConfig, ICPositionStatus
     logger.info("JUBILEE IC Trader modules loaded successfully")
 except ImportError as e:
     logger.warning(f"JUBILEE IC Trader modules not available: {e}")
@@ -1311,10 +1311,10 @@ async def reset_ic_config_aggressive():
         raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
 
     try:
-        from trading.jubilee.models import PrometheusICConfig
+        from trading.jubilee.models import JubileeICConfig
 
         # Create fresh config with aggressive defaults
-        aggressive_config = PrometheusICConfig()
+        aggressive_config = JubileeICConfig()
 
         # Explicitly set aggressive values to ensure they're not overridden
         aggressive_config.spread_width = 10.0      # Match ANCHOR
@@ -2197,9 +2197,9 @@ async def get_full_reconciliation():
 # ==============================================================================
 
 # Import tracing module
-PrometheusTracer = None
+JubileeTracer = None
 try:
-    from trading.jubilee.tracing import get_tracer, PrometheusTracer
+    from trading.jubilee.tracing import get_tracer, JubileeTracer
     logger.info("JUBILEE tracing module loaded successfully")
 except ImportError as e:
     logger.warning(f"JUBILEE tracing module not available: {e}")
@@ -2216,7 +2216,7 @@ async def get_tracing_metrics():
     - Operation counts and durations
     - JUBILEE-specific metrics (quotes, rates, positions)
     """
-    if PrometheusTracer is None:
+    if JubileeTracer is None:
         return {
             "available": False,
             "message": "Tracing module not available",
@@ -2241,7 +2241,7 @@ async def get_recent_traces(limit: int = Query(50, ge=1, le=200)):
 
     Returns completed trace spans with timing and attributes.
     """
-    if PrometheusTracer is None:
+    if JubileeTracer is None:
         return {
             "available": False,
             "message": "Tracing module not available",
@@ -2267,7 +2267,7 @@ async def get_rate_audit_trail(limit: int = Query(50, ge=1, le=100)):
 
     Shows history of implied rate calculations for transparency.
     """
-    if PrometheusTracer is None:
+    if JubileeTracer is None:
         return {
             "available": False,
             "message": "Tracing module not available",
@@ -2293,7 +2293,7 @@ async def reset_tracing_metrics():
 
     Clears all accumulated metrics and trace history.
     """
-    if PrometheusTracer is None:
+    if JubileeTracer is None:
         return {
             "available": False,
             "message": "Tracing module not available",

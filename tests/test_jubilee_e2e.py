@@ -107,7 +107,7 @@ class TestJubileeDatabaseSchema:
 # Data Flow Tests
 # =============================================================================
 
-class TestPrometheusDataFlow:
+class TestJubileeDataFlow:
     """Tests for data flow from signal to position to database."""
 
     @pytest.fixture
@@ -290,7 +290,7 @@ class TestRateCalculationAccuracy:
 # Tracing Tests
 # =============================================================================
 
-class TestPrometheusTracing:
+class TestJubileeTracing:
     """Tests for JUBILEE tracing functionality."""
 
     def test_tracer_initialization(self):
@@ -537,7 +537,7 @@ class TestAPIDataValidation:
 # Integration Tests
 # =============================================================================
 
-class TestPrometheusIntegration:
+class TestJubileeIntegration:
     """Integration tests for JUBILEE components."""
 
     def test_full_signal_to_position_flow(self):

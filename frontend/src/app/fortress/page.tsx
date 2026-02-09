@@ -14,12 +14,12 @@ import { useToast } from '@/components/ui/Toast'
 import { apiClient } from '@/lib/api'
 import { RotateCcw, AlertTriangle } from 'lucide-react'
 import {
-  useARESStatus,
-  useARESPositions,
-  useARESEquityCurve,
+  useFortressStatus,
+  useFortressPositions,
+  useFortressEquityCurve,
   useFortressConfig,
-  useARESLivePnL,
-  useScanActivityAres,
+  useFortressLivePnL,
+  useScanActivityFortress,
   useUnifiedBotSummary,  // UNIFIED: Single source of truth for stats
 } from '@/lib/hooks/useMarketData'
 import {
@@ -52,7 +52,7 @@ interface Heartbeat {
   details: Record<string, any>
 }
 
-interface ARESStatus {
+interface FortressStatus {
   mode: string
   ticker: string
   capital: number
@@ -137,7 +137,7 @@ interface IronCondorPosition {
 // TABS CONFIGURATION
 // ==============================================================================
 
-const ARES_TABS = [
+const FORTRESS_TABS = [
   { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
   { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
   { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
@@ -145,7 +145,7 @@ const ARES_TABS = [
   { id: 'reports' as const, label: 'Reports', icon: FileText, description: 'Daily AI analysis' },
   { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and controls' },
 ]
-type AresTabId = typeof ARES_TABS[number]['id']
+type FortressTabId = typeof FORTRESS_TABS[number]['id']
 
 // ==============================================================================
 // HELPER FUNCTIONS
@@ -487,25 +487,25 @@ function PositionCard({ position, isOpen }: { position: IronCondorPosition; isOp
 // MAIN PAGE COMPONENT
 // ==============================================================================
 
-export default function AresPage() {
+export default function FortressPage() {
   const sidebarPadding = useSidebarPadding()
-  const [activeTab, setActiveTab] = useState<AresTabId>('portfolio')
+  const [activeTab, setActiveTab] = useState<FortressTabId>('portfolio')
   const { addToast } = useToast()
 
   // Data hooks
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useARESStatus()
-  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useARESPositions()
-  const { data: equityData, error: equityError, isLoading: equityLoading } = useARESEquityCurve(30)
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useFortressStatus()
+  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useFortressPositions()
+  const { data: equityData, error: equityError, isLoading: equityLoading } = useFortressEquityCurve(30)
   const { data: configData } = useFortressConfig()
-  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useARESLivePnL()
-  const { data: scanData, isLoading: scansLoading } = useScanActivityAres(50)
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useFortressLivePnL()
+  const { data: scanData, isLoading: scansLoading } = useScanActivityFortress(50)
 
   // UNIFIED METRICS: Single source of truth for all stats (replaces frontend calculations)
   const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('FORTRESS')
   const unifiedMetrics = unifiedData?.data
 
   // Extract data
-  const status: ARESStatus | null = statusData?.data || statusData || null
+  const status: FortressStatus | null = statusData?.data || statusData || null
   const allPositions: IronCondorPosition[] = positionsData?.data?.positions || positionsData?.positions || []
   const allClosedPositions: IronCondorPosition[] = positionsData?.data?.closed_positions || positionsData?.closed_positions || []
   const equityCurve = equityData?.data?.equity_curve || equityData?.equity_curve || []
@@ -535,7 +535,7 @@ export default function AresPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetARESData(true)
+    const response = await apiClient.resetFortressData(true)
     if (response.data?.success) {
       addToast({ type: 'success', title: 'Reset Complete', message: 'FORTRESS data has been reset successfully' })
       // Refresh status after reset
@@ -652,7 +652,7 @@ export default function AresPage() {
 
           {/* Tabs - Branded */}
           <div className="flex gap-2 border-b border-gray-800 pb-2">
-            {ARES_TABS.map((tab) => (
+            {FORTRESS_TABS.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}

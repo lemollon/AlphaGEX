@@ -29,9 +29,9 @@ from .models import (
     PositionStatus,
     TradingMode,
     # IC Trading Models
-    PrometheusICSignal,
-    PrometheusICPosition,
-    PrometheusICConfig,
+    JubileeICSignal,
+    JubileeICPosition,
+    JubileeICConfig,
     ICPositionStatus,
 )
 from .db import JubileeDatabase
@@ -1503,7 +1503,7 @@ def calculate_ic_mark_to_market(
     return result
 
 
-class PrometheusICExecutor:
+class JubileeICExecutor:
     """
     Executes Iron Condor orders for JUBILEE.
 
@@ -1516,7 +1516,7 @@ class PrometheusICExecutor:
 
     def __init__(
         self,
-        config: PrometheusICConfig,
+        config: JubileeICConfig,
         db: JubileeDatabase
     ):
         self.config = config
@@ -1525,8 +1525,8 @@ class PrometheusICExecutor:
 
     def execute_signal(
         self,
-        signal: PrometheusICSignal
-    ) -> Optional[PrometheusICPosition]:
+        signal: JubileeICSignal
+    ) -> Optional[JubileeICPosition]:
         """
         Execute an IC signal and create a position.
 
@@ -1594,7 +1594,7 @@ class PrometheusICExecutor:
         max_loss = (signal.put_spread_width - signal.total_credit) * signal.contracts * 100
 
         # Create position object
-        position = PrometheusICPosition(
+        position = JubileeICPosition(
             position_id=position_id,
             source_box_position_id=signal.source_box_position_id,
             ticker=signal.ticker,
@@ -1660,7 +1660,7 @@ class PrometheusICExecutor:
             logger.error(f"Failed to save IC position {position_id}")
             return None
 
-    def _build_option_symbols(self, signal: PrometheusICSignal) -> Dict[str, str]:
+    def _build_option_symbols(self, signal: JubileeICSignal) -> Dict[str, str]:
         """Build OCC symbols for all 4 IC legs"""
         return {
             'put_short': build_occ_symbol(signal.ticker, signal.expiration, signal.put_short_strike, 'put'),
@@ -1671,7 +1671,7 @@ class PrometheusICExecutor:
 
     def _execute_put_spread(
         self,
-        signal: PrometheusICSignal,
+        signal: JubileeICSignal,
         symbols: Dict[str, str]
     ) -> Optional[Dict[str, Any]]:
         """Execute the put spread leg (sell put_short, buy put_long for credit)"""
@@ -1696,7 +1696,7 @@ class PrometheusICExecutor:
 
     def _execute_call_spread(
         self,
-        signal: PrometheusICSignal,
+        signal: JubileeICSignal,
         symbols: Dict[str, str]
     ) -> Optional[Dict[str, Any]]:
         """Execute the call spread leg (sell call_short, buy call_long for credit)"""
@@ -1719,7 +1719,7 @@ class PrometheusICExecutor:
             logger.error(f"Error executing call spread: {e}")
             return None
 
-    def update_position_mtm(self, position_id: str) -> Optional[PrometheusICPosition]:
+    def update_position_mtm(self, position_id: str) -> Optional[JubileeICPosition]:
         """Update mark-to-market for a position"""
         position = self.db.get_ic_position(position_id)
         if not position:
@@ -1751,7 +1751,7 @@ class PrometheusICExecutor:
 
     def check_exit_conditions(
         self,
-        position: PrometheusICPosition
+        position: JubileeICPosition
     ) -> Tuple[bool, str]:
         """
         Check if position should be closed based on exit conditions.

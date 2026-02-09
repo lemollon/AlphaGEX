@@ -27,7 +27,7 @@ T = TypeVar('T')
 
 
 @dataclass
-class PrometheusSpan:
+class JubileeSpan:
     """A single trace span representing a JUBILEE operation."""
     span_id: str
     trace_id: str
@@ -87,12 +87,12 @@ class PrometheusSpan:
         }
 
 
-class PrometheusTracer:
+class JubileeTracer:
     """
     Tracer for JUBILEE box spread operations.
 
     Usage:
-        tracer = PrometheusTracer()
+        tracer = JubileeTracer()
 
         # Context manager for tracing
         with tracer.trace("jubilee.quote.fetch") as span:
@@ -124,8 +124,8 @@ class PrometheusTracer:
             return
 
         self._service_name = "jubilee"
-        self._active_traces: Dict[str, PrometheusSpan] = {}
-        self._completed_traces: List[PrometheusSpan] = []
+        self._active_traces: Dict[str, JubileeSpan] = {}
+        self._completed_traces: List[JubileeSpan] = []
         self._trace_lock = threading.RLock()
         self._max_completed = 500
 
@@ -149,7 +149,7 @@ class PrometheusTracer:
         }
 
         self._initialized = True
-        logger.info("PrometheusTracer initialized")
+        logger.info("JubileeTracer initialized")
 
     @property
     def current_trace_id(self) -> Optional[str]:
@@ -181,7 +181,7 @@ class PrometheusTracer:
             trace_id: Optional trace ID (generates new if not provided)
 
         Yields:
-            PrometheusSpan object
+            JubileeSpan object
         """
         # Get or create trace ID
         parent_span_id = self.current_span_id
@@ -189,7 +189,7 @@ class PrometheusTracer:
             trace_id = self.current_trace_id or self._generate_id()
 
         # Create span
-        span = PrometheusSpan(
+        span = JubileeSpan(
             span_id=self._generate_id(),
             trace_id=trace_id,
             parent_id=parent_span_id,
@@ -424,14 +424,14 @@ class PrometheusTracer:
 
 
 # Global tracer instance
-_tracer: Optional[PrometheusTracer] = None
+_tracer: Optional[JubileeTracer] = None
 
 
-def get_tracer() -> PrometheusTracer:
+def get_tracer() -> JubileeTracer:
     """Get the global JUBILEE tracer instance."""
     global _tracer
     if _tracer is None:
-        _tracer = PrometheusTracer()
+        _tracer = JubileeTracer()
     return _tracer
 
 

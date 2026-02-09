@@ -99,7 +99,7 @@ class TestFullTradingWorkflow:
             pytest.skip("Regime classifier not available")
 
 
-class TestAresWorkflow:
+class TestFortressWorkflow:
     """End-to-end tests for FORTRESS Iron Condor workflow"""
 
     @patch('trading.fortress_v2.get_connection')
@@ -124,7 +124,7 @@ class TestAresWorkflow:
             pytest.skip("FORTRESS not available")
 
 
-class TestAthenaWorkflow:
+class TestSolomonWorkflow:
     """End-to-end tests for SOLOMON directional spreads workflow"""
 
     @patch('trading.solomon_v2.get_connection')
@@ -148,7 +148,7 @@ class TestAthenaWorkflow:
             pytest.skip("SOLOMON not available")
 
 
-class TestAtlasWorkflow:
+class TestCornerstoneWorkflow:
     """End-to-end tests for CORNERSTONE wheel strategy workflow"""
 
     @patch('trading.spx_wheel_system.get_connection')

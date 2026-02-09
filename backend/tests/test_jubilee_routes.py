@@ -23,7 +23,7 @@ client = TestClient(app)
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
-class TestPrometheusBoxStatusEndpoint:
+class TestJubileeBoxStatusEndpoint:
     """Tests for /api/jubilee/status endpoint"""
 
     def test_get_status_success(self):
@@ -50,7 +50,7 @@ class TestPrometheusBoxStatusEndpoint:
         assert has_expected_key or 'error' not in data
 
 
-class TestPrometheusBoxPositionsEndpoint:
+class TestJubileeBoxPositionsEndpoint:
     """Tests for /api/jubilee/positions endpoint"""
 
     def test_get_positions_success(self):
@@ -74,7 +74,7 @@ class TestPrometheusBoxPositionsEndpoint:
             assert isinstance(data["positions"], list)
 
 
-class TestPrometheusBoxClosedTradesEndpoint:
+class TestJubileeBoxClosedTradesEndpoint:
     """Tests for /api/jubilee/closed-trades endpoint"""
 
     def test_get_closed_trades_success(self):
@@ -97,7 +97,7 @@ class TestPrometheusBoxClosedTradesEndpoint:
         assert "closed_trades" in data
 
 
-class TestPrometheusBoxEquityCurveEndpoint:
+class TestJubileeBoxEquityCurveEndpoint:
     """Tests for /api/jubilee/equity-curve endpoint"""
 
     def test_get_equity_curve_success(self):
@@ -120,7 +120,7 @@ class TestPrometheusBoxEquityCurveEndpoint:
         assert isinstance(data, dict)
 
 
-class TestPrometheusBoxLogsEndpoint:
+class TestJubileeBoxLogsEndpoint:
     """Tests for /api/jubilee/logs endpoint"""
 
     def test_get_logs_success(self):
@@ -142,7 +142,7 @@ class TestPrometheusBoxLogsEndpoint:
         assert "logs" in data
 
 
-class TestPrometheusBoxScanActivityEndpoint:
+class TestJubileeBoxScanActivityEndpoint:
     """Tests for /api/jubilee/scan-activity endpoint"""
 
     def test_get_scan_activity_success(self):
@@ -157,7 +157,7 @@ class TestPrometheusBoxScanActivityEndpoint:
         assert isinstance(data["scans"], list)
 
 
-class TestPrometheusBoxSignalsEndpoint:
+class TestJubileeBoxSignalsEndpoint:
     """Tests for /api/jubilee/signals/* endpoints"""
 
     def test_get_recent_signals_success(self):
@@ -171,7 +171,7 @@ class TestPrometheusBoxSignalsEndpoint:
         assert isinstance(data, dict) or isinstance(data, list)
 
 
-class TestPrometheusBoxRateHistoryEndpoint:
+class TestJubileeBoxRateHistoryEndpoint:
     """Tests for /api/jubilee/analytics/rates/history endpoint"""
 
     def test_get_rate_history_success(self):
@@ -185,7 +185,7 @@ class TestPrometheusBoxRateHistoryEndpoint:
         assert "history" in data or "rates" in data or isinstance(data, list)
 
 
-class TestPrometheusBoxBorrowingAnalysisEndpoint:
+class TestJubileeBoxBorrowingAnalysisEndpoint:
     """Tests for /api/jubilee/analytics/rates endpoint (borrowing rate analysis)"""
 
     def test_get_borrowing_analysis_success(self):
@@ -199,7 +199,7 @@ class TestPrometheusBoxBorrowingAnalysisEndpoint:
         assert isinstance(data, dict)
 
 
-class TestPrometheusBoxDeploymentsEndpoint:
+class TestJubileeBoxDeploymentsEndpoint:
     """Tests for /api/jubilee/deployments endpoint"""
 
     def test_get_deployments_success(self):
@@ -213,7 +213,7 @@ class TestPrometheusBoxDeploymentsEndpoint:
         assert isinstance(data["deployments"], list)
 
 
-class TestPrometheusBoxDailyBriefingEndpoint:
+class TestJubileeBoxDailyBriefingEndpoint:
     """Tests for /api/jubilee/operations/daily-briefing endpoint"""
 
     def test_get_daily_briefing_success(self):
@@ -227,7 +227,7 @@ class TestPrometheusBoxDailyBriefingEndpoint:
         assert isinstance(data, dict)
 
 
-class TestPrometheusBoxConfigEndpoint:
+class TestJubileeBoxConfigEndpoint:
     """Tests for /api/jubilee/config endpoint"""
 
     def test_get_config_success(self):
@@ -241,7 +241,7 @@ class TestPrometheusBoxConfigEndpoint:
         assert "config" in data or "mode" in data or "ticker" in data or isinstance(data, dict)
 
 
-class TestPrometheusBoxDataValidation:
+class TestJubileeBoxDataValidation:
     """Tests for data validation in JUBILEE endpoints"""
 
     def test_equity_curve_days_validation(self):
@@ -261,7 +261,7 @@ class TestPrometheusBoxDataValidation:
         assert response.status_code in [200, 400, 422]
 
 
-class TestPrometheusBoxErrorHandling:
+class TestJubileeBoxErrorHandling:
     """Tests for error handling in JUBILEE endpoints"""
 
     def test_invalid_endpoint_returns_404(self):
@@ -280,7 +280,7 @@ class TestPrometheusBoxErrorHandling:
         assert response.status_code in [200, 503]
 
 
-class TestPrometheusBoxRequiredEndpoints:
+class TestJubileeBoxRequiredEndpoints:
     """
     Tests verifying all required endpoints per STANDARDS.md exist.
 
@@ -324,7 +324,7 @@ class TestPrometheusBoxRequiredEndpoints:
         assert response.status_code != 404
 
 
-class TestPrometheusBoxRoutesSyntax:
+class TestJubileeBoxRoutesSyntax:
     """Tests for routes file syntax and structure"""
 
     def test_routes_syntax(self):

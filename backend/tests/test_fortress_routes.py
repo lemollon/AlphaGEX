@@ -27,7 +27,7 @@ client = TestClient(app)
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
-class TestAresStatusEndpoint:
+class TestFortressStatusEndpoint:
     """Tests for /api/fortress/status endpoint"""
 
     def test_get_status_success(self):
@@ -73,7 +73,7 @@ class TestAresStatusEndpoint:
         assert "scan_count_today" in heartbeat
 
 
-class TestAresPositionsEndpoint:
+class TestFortressPositionsEndpoint:
     """Tests for /api/fortress/positions endpoint"""
 
     def test_get_positions_success(self):
@@ -104,7 +104,7 @@ class TestAresPositionsEndpoint:
         assert data["success"] is True
 
 
-class TestAresPerformanceEndpoint:
+class TestFortressPerformanceEndpoint:
     """Tests for /api/fortress/performance endpoint"""
 
     def test_get_performance_success(self):
@@ -126,7 +126,7 @@ class TestAresPerformanceEndpoint:
         assert data["success"] is True
 
 
-class TestAresEquityCurveEndpoint:
+class TestFortressEquityCurveEndpoint:
     """Tests for /api/fortress/equity endpoint"""
 
     def test_get_equity_curve_success(self):
@@ -148,7 +148,7 @@ class TestAresEquityCurveEndpoint:
         assert data["success"] is True
 
 
-class TestAresTradesEndpoint:
+class TestFortressTradesEndpoint:
     """Tests for /api/fortress/trades endpoint"""
 
     def test_get_trades_success(self):
@@ -179,7 +179,7 @@ class TestAresTradesEndpoint:
         assert data["success"] is True
 
 
-class TestAresConfigEndpoint:
+class TestFortressConfigEndpoint:
     """Tests for /api/fortress/config endpoint"""
 
     def test_get_config_success(self):
@@ -193,7 +193,7 @@ class TestAresConfigEndpoint:
         assert data["success"] is True
 
 
-class TestAresPresetsEndpoint:
+class TestFortressPresetsEndpoint:
     """Tests for /api/fortress/presets endpoint"""
 
     def test_get_presets_success(self):
@@ -207,7 +207,7 @@ class TestAresPresetsEndpoint:
         assert data["success"] is True
 
 
-class TestAresAnalysisEndpoint:
+class TestFortressAnalysisEndpoint:
     """Tests for /api/fortress/analysis endpoint"""
 
     def test_get_analysis_success(self):
@@ -221,7 +221,7 @@ class TestAresAnalysisEndpoint:
         assert data["success"] is True
 
 
-class TestAresSignalsEndpoint:
+class TestFortressSignalsEndpoint:
     """Tests for /api/fortress/signals endpoint"""
 
     def test_get_signals_success(self):
@@ -235,7 +235,7 @@ class TestAresSignalsEndpoint:
         assert data["success"] is True
 
 
-class TestAresLogsEndpoint:
+class TestFortressLogsEndpoint:
     """Tests for /api/fortress/logs endpoint"""
 
     def test_get_logs_success(self):
@@ -257,7 +257,7 @@ class TestAresLogsEndpoint:
         assert data["success"] is True
 
 
-class TestAresDataValidation:
+class TestFortressDataValidation:
     """Tests for data validation in FORTRESS endpoints"""
 
     def test_capital_is_positive(self):
@@ -291,7 +291,7 @@ class TestAresDataValidation:
         assert mode in ["paper", "live"]
 
 
-class TestAresErrorHandling:
+class TestFortressErrorHandling:
     """Tests for error handling in FORTRESS endpoints"""
 
     def test_invalid_status_filter(self):

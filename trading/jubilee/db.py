@@ -29,10 +29,10 @@ from .models import (
     RollDecision,
     # IC Trading Models
     ICPositionStatus,
-    PrometheusICSignal,
-    PrometheusICPosition,
-    PrometheusICConfig,
-    PrometheusPerformanceSummary,
+    JubileeICSignal,
+    JubileeICPosition,
+    JubileeICConfig,
+    JubileePerformanceSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -1955,7 +1955,7 @@ class JubileeDatabase:
 
     # ========== IC Configuration Methods ==========
 
-    def load_ic_config(self) -> PrometheusICConfig:
+    def load_ic_config(self) -> JubileeICConfig:
         """Load IC trading configuration from database or return defaults"""
         try:
             conn = self._get_connection()
@@ -1968,14 +1968,14 @@ class JubileeDatabase:
             cursor.close()
 
             if row and row[0]:
-                return PrometheusICConfig.from_dict(row[0])
-            return PrometheusICConfig()
+                return JubileeICConfig.from_dict(row[0])
+            return JubileeICConfig()
 
         except Exception as e:
             logger.error(f"Error loading IC config: {e}")
-            return PrometheusICConfig()
+            return JubileeICConfig()
 
-    def save_ic_config(self, config: PrometheusICConfig) -> bool:
+    def save_ic_config(self, config: JubileeICConfig) -> bool:
         """Save IC trading configuration to database"""
         try:
             conn = self._get_connection()
@@ -1995,7 +1995,7 @@ class JubileeDatabase:
 
     # ========== IC Position Methods ==========
 
-    def get_open_ic_positions(self) -> List[PrometheusICPosition]:
+    def get_open_ic_positions(self) -> List[JubileeICPosition]:
         """Get all open IC positions"""
         try:
             conn = self._get_connection()
@@ -2019,7 +2019,7 @@ class JubileeDatabase:
             logger.error(f"Error getting open IC positions: {e}")
             return []
 
-    def get_ic_position(self, position_id: str) -> Optional[PrometheusICPosition]:
+    def get_ic_position(self, position_id: str) -> Optional[JubileeICPosition]:
         """Get a specific IC position by ID"""
         try:
             conn = self._get_connection()
@@ -2041,7 +2041,7 @@ class JubileeDatabase:
             logger.error(f"Error getting IC position {position_id}: {e}")
             return None
 
-    def save_ic_position(self, position: PrometheusICPosition) -> bool:
+    def save_ic_position(self, position: JubileeICPosition) -> bool:
         """Save a new or updated IC position"""
         try:
             conn = self._get_connection()
@@ -2247,9 +2247,9 @@ class JubileeDatabase:
 
         return self.close_ic_position(position_id, exit_price, close_reason)
 
-    def _row_to_ic_position(self, data: Dict[str, Any]) -> PrometheusICPosition:
-        """Convert database row to PrometheusICPosition object"""
-        return PrometheusICPosition(
+    def _row_to_ic_position(self, data: Dict[str, Any]) -> JubileeICPosition:
+        """Convert database row to JubileeICPosition object"""
+        return JubileeICPosition(
             position_id=data['position_id'],
             source_box_position_id=data['source_box_position_id'] or '',
             ticker=data['ticker'],
@@ -2293,7 +2293,7 @@ class JubileeDatabase:
 
     def log_ic_signal(
         self,
-        signal: PrometheusICSignal,
+        signal: JubileeICSignal,
         was_executed: bool,
         executed_position_id: str = None
     ) -> bool:
@@ -2661,7 +2661,7 @@ class JubileeDatabase:
 
     # ========== Combined Performance Summary ==========
 
-    def get_combined_performance_summary(self) -> PrometheusPerformanceSummary:
+    def get_combined_performance_summary(self) -> JubileePerformanceSummary:
         """
         Get combined performance for both box spreads and IC trading.
 
@@ -2698,7 +2698,7 @@ class JubileeDatabase:
             # Approximate monthly return
             monthly_return = roi * 30 / 365  # Rough annualization
 
-            return PrometheusPerformanceSummary(
+            return JubileePerformanceSummary(
                 summary_time=now,
                 total_box_positions=total_box,
                 total_borrowed=total_borrowed,
@@ -2724,7 +2724,7 @@ class JubileeDatabase:
 
         except Exception as e:
             logger.error(f"Error getting combined performance: {e}")
-            return PrometheusPerformanceSummary(
+            return JubileePerformanceSummary(
                 summary_time=datetime.now(CENTRAL_TZ),
                 total_box_positions=0,
                 total_borrowed=0,

@@ -13,12 +13,12 @@ import { useToast } from '@/components/ui/Toast'
 import { apiClient } from '@/lib/api'
 import { RotateCcw, AlertTriangle } from 'lucide-react'
 import {
-  useATHENAStatus,
-  useATHENAPositions,
-  useATHENAPerformance,
+  useSolomonStatus,
+  useSolomonPositions,
+  useSolomonPerformance,
   useSolomonConfig,
-  useATHENALivePnL,
-  useScanActivityAthena,
+  useSolomonLivePnL,
+  useScanActivitySolomon,
   useUnifiedBotSummary,
 } from '@/lib/hooks/useMarketData'
 import {
@@ -394,12 +394,12 @@ export default function SolomonPage() {
   const { addToast } = useToast()
 
   // Data hooks
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useATHENAStatus()
-  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useATHENAPositions()
-  const { data: performanceData } = useATHENAPerformance(30)
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useSolomonStatus()
+  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useSolomonPositions()
+  const { data: performanceData } = useSolomonPerformance(30)
   const { data: configData } = useSolomonConfig()
-  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useATHENALivePnL()
-  const { data: scanData, isLoading: scansLoading } = useScanActivityAthena(50)
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useSolomonLivePnL()
+  const { data: scanData, isLoading: scansLoading } = useScanActivitySolomon(50)
 
   // UNIFIED METRICS: Single source of truth for all stats
   const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('SOLOMON')
@@ -437,7 +437,7 @@ export default function SolomonPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetATHENAData(true)
+    const response = await apiClient.resetSolomonData(true)
     if (response.data?.success) {
       addToast({ type: 'success', title: 'Reset Complete', message: 'SOLOMON data has been reset successfully' })
       refreshStatus()

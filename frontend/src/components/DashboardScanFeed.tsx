@@ -18,7 +18,7 @@ import {
   Flame,
   Rocket
 } from 'lucide-react'
-import { useScanActivityAres, useScanActivityAthena, useScanActivityAnchor, useICARUSScanActivity, useScanActivityTitan } from '@/lib/hooks/useMarketData'
+import { useScanActivityFortress, useScanActivitySolomon, useScanActivityAnchor, useGideonScanActivity, useScanActivitySamson } from '@/lib/hooks/useMarketData'
 
 // PERFORMANCE FIX: Move helper functions outside component (no re-creation per render)
 const getBotIcon = (botName: string) => {
@@ -90,13 +90,13 @@ export default function DashboardScanFeed() {
   const [expanded, setExpanded] = useState(false)
 
   // Live bots
-  const { data: aresScans, isLoading: aresLoading, mutate: refreshAres } = useScanActivityAres(10)
-  const { data: solomonScans, isLoading: solomonLoading, mutate: refreshAthena } = useScanActivityAthena(10)
+  const { data: aresScans, isLoading: aresLoading, mutate: refreshAres } = useScanActivityFortress(10)
+  const { data: solomonScans, isLoading: solomonLoading, mutate: refreshAthena } = useScanActivitySolomon(10)
   const { data: anchorScans, isLoading: anchorLoading, mutate: refreshAnchor } = useScanActivityAnchor(10)
 
   // Paper bots
-  const { data: icarusScans, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSScanActivity(10)
-  const { data: titanScans, isLoading: titanLoading, mutate: refreshTitan } = useScanActivityTitan(10)
+  const { data: icarusScans, isLoading: icarusLoading, mutate: refreshIcarus } = useGideonScanActivity(10)
+  const { data: titanScans, isLoading: titanLoading, mutate: refreshTitan } = useScanActivitySamson(10)
 
   const isLoading = aresLoading || solomonLoading || anchorLoading || icarusLoading || titanLoading
 

@@ -13,7 +13,7 @@ import math
 from unittest.mock import MagicMock, patch
 
 
-class TestARESStrikeValidation:
+class TestFortressStrikeValidation:
     """Test FORTRESS strike selection enforces minimum 1.2 SD."""
 
     @pytest.fixture
