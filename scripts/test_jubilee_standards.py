@@ -10,7 +10,7 @@ Tests all requirements from STANDARDS.md:
 5. Edge cases handled
 6. No scaffolding/incomplete code
 
-Run: python scripts/test_prometheus_standards.py
+Run: python scripts/test_jubilee_standards.py
 """
 
 import sys
@@ -228,7 +228,7 @@ def test_config_validation():
             record_test("Config - default strike width", False, error=f"Got {config.strike_width}")
 
         # Test allocation percentages sum to 100
-        total = (config.ares_allocation_pct + config.titan_allocation_pct +
+        total = (config.ares_allocation_pct + config.samson_allocation_pct +
                  config.anchor_allocation_pct + config.reserve_pct)
         if total == 100.0:
             record_test("Config - allocations sum to 100", True, f"{total}")

@@ -266,12 +266,12 @@ def main():
     try:
         if args.bot in ['FORTRESS', 'ALL']:
             fortress_signals = get_fortress_signals(conn, target_date)
-            ares_analyses = [analyze_signal(s, 'FORTRESS') for s in fortress_signals]
+            fortress_analyses = [analyze_signal(s, 'FORTRESS') for s in fortress_signals]
             output['fortress_signals'] = fortress_signals
-            output['ares_analyses'] = ares_analyses
+            output['fortress_analyses'] = fortress_analyses
 
-            ares_scan = get_scan_activity(conn, target_date, 'FORTRESS')
-            output['fortress_scan_activity'] = ares_scan
+            fortress_scan = get_scan_activity(conn, target_date, 'FORTRESS')
+            output['fortress_scan_activity'] = fortress_scan
 
         if args.bot in ['ANCHOR', 'ALL']:
             anchor_signals = get_anchor_signals(conn, target_date)
@@ -286,7 +286,7 @@ def main():
             print(json.dumps(output, indent=2, default=str))
         else:
             if args.bot in ['FORTRESS', 'ALL']:
-                print_signals('FORTRESS', fortress_signals, ares_analyses)
+                print_signals('FORTRESS', fortress_signals, fortress_analyses)
             if args.bot in ['ANCHOR', 'ALL']:
                 print_signals('ANCHOR', anchor_signals, anchor_analyses)
 

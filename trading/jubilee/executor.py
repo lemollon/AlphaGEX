@@ -584,8 +584,8 @@ class BoxSpreadExecutor:
             fed_funds_at_entry=signal.fed_funds_rate,
             margin_rate_at_entry=signal.margin_rate,
             savings_vs_margin=signal.cash_received * (signal.margin_rate - signal.implied_annual_rate) / 100,
-            cash_deployed_to_ares=deployment.ares_allocation,
-            cash_deployed_to_titan=deployment.titan_allocation,
+            cash_deployed_to_ares=deployment.fortress_allocation,
+            cash_deployed_to_titan=deployment.samson_allocation,
             cash_deployed_to_anchor=deployment.anchor_allocation,
             cash_held_in_reserve=deployment.reserve_amount,
             total_cash_deployed=deployment.total_capital_available,
@@ -786,21 +786,21 @@ class BoxSpreadExecutor:
         now = datetime.now(CENTRAL_TZ)
 
         # Calculate allocations based on config percentages
-        ares_amount = total_cash * (self.config.ares_allocation_pct / 100)
-        titan_amount = total_cash * (self.config.titan_allocation_pct / 100)
+        fortress_amount = total_cash * (self.config.fortress_allocation_pct / 100)
+        samson_amount = total_cash * (self.config.samson_allocation_pct / 100)
         anchor_amount = total_cash * (self.config.anchor_allocation_pct / 100)
         reserve_amount = total_cash * (self.config.reserve_pct / 100)
 
         # Generate reasoning for each allocation
         ares_reasoning = f"""
-FORTRESS receives {self.config.ares_allocation_pct}% (${ares_amount:,.2f}) because:
+FORTRESS receives {self.config.fortress_allocation_pct}% (${fortress_amount:,.2f}) because:
 - FORTRESS trades SPY 0DTE Iron Condors with proven track record
 - High trade frequency allows rapid capital deployment
 - Recommended for active premium collection
 """.strip()
 
         titan_reasoning = f"""
-SAMSON receives {self.config.titan_allocation_pct}% (${titan_amount:,.2f}) because:
+SAMSON receives {self.config.samson_allocation_pct}% (${samson_amount:,.2f}) because:
 - SAMSON runs aggressive SPX Iron Condors
 - Higher premium per trade than SPY strategies
 - Complements FORTRESS with SPX exposure
@@ -829,8 +829,8 @@ The capital is allocated based on predefined percentages that balance:
 3. Liquidity needs (Reserve for flexibility)
 
 Total allocated: ${total_cash:,.2f}
-- FORTRESS: {self.config.ares_allocation_pct}% = ${ares_amount:,.2f}
-- SAMSON: {self.config.titan_allocation_pct}% = ${titan_amount:,.2f}
+- FORTRESS: {self.config.fortress_allocation_pct}% = ${fortress_amount:,.2f}
+- SAMSON: {self.config.samson_allocation_pct}% = ${samson_amount:,.2f}
 - ANCHOR: {self.config.anchor_allocation_pct}% = ${anchor_amount:,.2f}
 - Reserve: {self.config.reserve_pct}% = ${reserve_amount:,.2f}
 
@@ -843,12 +843,12 @@ adequate reserves for risk management.
             deployment_time=now,
             source_box_position_id=position_id,
             total_capital_available=total_cash,
-            ares_allocation=ares_amount,
-            ares_allocation_pct=self.config.ares_allocation_pct,
-            ares_allocation_reasoning=ares_reasoning,
-            titan_allocation=titan_amount,
-            titan_allocation_pct=self.config.titan_allocation_pct,
-            titan_allocation_reasoning=titan_reasoning,
+            fortress_allocation=fortress_amount,
+            fortress_allocation_pct=self.config.fortress_allocation_pct,
+            fortress_allocation_reasoning=ares_reasoning,
+            samson_allocation=samson_amount,
+            samson_allocation_pct=self.config.samson_allocation_pct,
+            samson_allocation_reasoning=titan_reasoning,
             anchor_allocation=anchor_amount,
             anchor_allocation_pct=self.config.anchor_allocation_pct,
             anchor_allocation_reasoning=anchor_reasoning,
@@ -857,8 +857,8 @@ adequate reserves for risk management.
             reserve_reasoning=reserve_reasoning,
             allocation_method="CONFIGURED_PERCENTAGES",
             methodology_explanation=methodology,
-            ares_returns_to_date=0.0,
-            titan_returns_to_date=0.0,
+            fortress_returns_to_date=0.0,
+            samson_returns_to_date=0.0,
             anchor_returns_to_date=0.0,
             total_returns_to_date=0.0,
             is_active=True,
@@ -893,8 +893,8 @@ The ${signal.cash_received:,.2f} has been deployed to generate returns:
 ┌──────────────────────────────────────────────────────────────────┐
 │ Bot      │ Allocation │ Amount         │ Target Return          │
 ├──────────┼────────────┼────────────────┼────────────────────────┤
-│ FORTRESS     │ {deployment.ares_allocation_pct:>5.1f}%    │ ${deployment.ares_allocation:>12,.2f} │ 2-4% monthly           │
-│ SAMSON    │ {deployment.titan_allocation_pct:>5.1f}%    │ ${deployment.titan_allocation:>12,.2f} │ 2-4% monthly           │
+│ FORTRESS     │ {deployment.fortress_allocation_pct:>5.1f}%    │ ${deployment.fortress_allocation:>12,.2f} │ 2-4% monthly           │
+│ SAMSON    │ {deployment.samson_allocation_pct:>5.1f}%    │ ${deployment.samson_allocation:>12,.2f} │ 2-4% monthly           │
 │ ANCHOR  │ {deployment.anchor_allocation_pct:>5.1f}%    │ ${deployment.anchor_allocation:>12,.2f} │ 1-3% monthly           │
 │ Reserve  │ {deployment.reserve_pct:>5.1f}%    │ ${deployment.reserve_amount:>12,.2f} │ Held for flexibility   │
 └──────────┴────────────┴────────────────┴────────────────────────┘
@@ -988,8 +988,8 @@ Track this position through the JUBILEE dashboard:
     def update_position_returns(
         self,
         position_id: str,
-        ares_returns: float = 0.0,
-        titan_returns: float = 0.0,
+        fortress_returns: float = 0.0,
+        samson_returns: float = 0.0,
         anchor_returns: float = 0.0
     ) -> bool:
         """
@@ -1006,10 +1006,10 @@ Track this position through the JUBILEE dashboard:
         now = datetime.now(CENTRAL_TZ)
 
         # Update returns
-        position.returns_from_ares = ares_returns
-        position.returns_from_titan = titan_returns
+        position.returns_from_ares = fortress_returns
+        position.returns_from_titan = samson_returns
         position.returns_from_anchor = anchor_returns
-        position.total_ic_returns = ares_returns + titan_returns + anchor_returns
+        position.total_ic_returns = fortress_returns + samson_returns + anchor_returns
 
         # Update cost accrual with timestamp tracking
         exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()

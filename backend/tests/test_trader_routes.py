@@ -153,7 +153,7 @@ class TestBotHeartbeatEndpoints:
         response = test_client.get("/api/trader/heartbeat/CORNERSTONE")
         assert response.status_code in [200, 404, 500]
 
-    def test_ares_heartbeat(self, test_client):
+    def test_fortress_heartbeat(self, test_client):
         """Test FORTRESS heartbeat endpoint"""
         if test_client is None:
             pytest.skip("Test client not available")

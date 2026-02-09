@@ -4,7 +4,7 @@ GIDEON Analysis - Run All Scripts
 =================================
 Master script to run all GIDEON analysis scripts.
 
-Run: python scripts/icarus_analysis/run_all.py
+Run: python scripts/gideon_analysis/run_all.py
 """
 
 import os

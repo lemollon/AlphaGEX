@@ -71,7 +71,7 @@ class TestJubileeConfig:
         assert data['mode'] == "paper"
         assert 'allocations' in data
         assert data['allocations']['ares_pct'] == 35.0
-        assert data['allocations']['titan_pct'] == 35.0
+        assert data['allocations']['samson_pct'] == 35.0
         assert data['allocations']['anchor_pct'] == 20.0
         assert data['allocations']['reserve_pct'] == 10.0
 
@@ -100,8 +100,8 @@ class TestJubileeConfig:
         config = JubileeConfig()
 
         total = (
-            config.ares_allocation_pct +
-            config.titan_allocation_pct +
+            config.fortress_allocation_pct +
+            config.samson_allocation_pct +
             config.anchor_allocation_pct +
             config.reserve_pct
         )
@@ -529,12 +529,12 @@ class TestCapitalDeployment:
             deployment_time=datetime.now(),
             source_box_position_id="PROM-SPX-20250130-001",
             total_capital_available=100000.0,
-            ares_allocation=35000.0,
-            ares_allocation_pct=35.0,
-            ares_allocation_reasoning="Highest historical performance",
-            titan_allocation=35000.0,
-            titan_allocation_pct=35.0,
-            titan_allocation_reasoning="Strong SPX performance",
+            fortress_allocation=35000.0,
+            fortress_allocation_pct=35.0,
+            fortress_allocation_reasoning="Highest historical performance",
+            samson_allocation=35000.0,
+            samson_allocation_pct=35.0,
+            samson_allocation_reasoning="Strong SPX performance",
             anchor_allocation=20000.0,
             anchor_allocation_pct=20.0,
             anchor_allocation_reasoning="Weekly coverage",
@@ -543,15 +543,15 @@ class TestCapitalDeployment:
             reserve_reasoning="Buffer for margin calls",
             allocation_method="PERFORMANCE_WEIGHTED",
             methodology_explanation="Based on 30-day performance",
-            ares_returns_to_date=0.0,
-            titan_returns_to_date=0.0,
+            fortress_returns_to_date=0.0,
+            samson_returns_to_date=0.0,
             anchor_returns_to_date=0.0,
             total_returns_to_date=0.0,
             is_active=True,
         )
 
         assert deployment.total_capital_available == 100000.0
-        assert deployment.ares_allocation == 35000.0
+        assert deployment.fortress_allocation == 35000.0
         assert deployment.is_active is True
 
     def test_deployment_to_dict(self):
@@ -563,12 +563,12 @@ class TestCapitalDeployment:
             deployment_time=datetime.now(),
             source_box_position_id="PROM-SPX-20250130-001",
             total_capital_available=100000.0,
-            ares_allocation=35000.0,
-            ares_allocation_pct=35.0,
-            ares_allocation_reasoning="",
-            titan_allocation=35000.0,
-            titan_allocation_pct=35.0,
-            titan_allocation_reasoning="",
+            fortress_allocation=35000.0,
+            fortress_allocation_pct=35.0,
+            fortress_allocation_reasoning="",
+            samson_allocation=35000.0,
+            samson_allocation_pct=35.0,
+            samson_allocation_reasoning="",
             anchor_allocation=20000.0,
             anchor_allocation_pct=20.0,
             anchor_allocation_reasoning="",
@@ -577,8 +577,8 @@ class TestCapitalDeployment:
             reserve_reasoning="",
             allocation_method="EQUAL",
             methodology_explanation="",
-            ares_returns_to_date=0.0,
-            titan_returns_to_date=0.0,
+            fortress_returns_to_date=0.0,
+            samson_returns_to_date=0.0,
             anchor_returns_to_date=0.0,
             total_returns_to_date=0.0,
             is_active=True,

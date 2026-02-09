@@ -380,9 +380,9 @@ def compare_bots(db):
             a.trades as solomon_trades,
             a.win_rate as solomon_wr,
             a.pnl as solomon_pnl,
-            i.trades as icarus_trades,
-            i.win_rate as icarus_wr,
-            i.pnl as icarus_pnl
+            i.trades as gideon_trades,
+            i.win_rate as gideon_wr,
+            i.pnl as gideon_pnl
         FROM solomon_daily a
         FULL OUTER JOIN gideon_daily i ON a.trade_date = i.trade_date
         ORDER BY trade_date DESC

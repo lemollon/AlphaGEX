@@ -446,28 +446,28 @@ class JubileeTrader:
         deployments = self.db.get_active_deployments()
 
         # Total by bot
-        ares_total = sum(p.cash_deployed_to_ares for p in positions)
-        titan_total = sum(p.cash_deployed_to_titan for p in positions)
+        fortress_total = sum(p.cash_deployed_to_fortress for p in positions)
+        samson_total = sum(p.cash_deployed_to_samson for p in positions)
         anchor_total = sum(p.cash_deployed_to_anchor for p in positions)
         reserve_total = sum(p.cash_held_in_reserve for p in positions)
 
         # Returns by bot
-        ares_returns = sum(p.returns_from_ares for p in positions)
-        titan_returns = sum(p.returns_from_titan for p in positions)
+        fortress_returns = sum(p.returns_from_ares for p in positions)
+        samson_returns = sum(p.returns_from_titan for p in positions)
         anchor_returns = sum(p.returns_from_anchor for p in positions)
 
         return {
             'total_cash_generated': sum(p.total_credit_received for p in positions),
             'deployment_summary': {
                 'fortress': {
-                    'deployed': ares_total,
-                    'returns': ares_returns,
-                    'roi': ares_returns / ares_total * 100 if ares_total > 0 else 0,
+                    'deployed': fortress_total,
+                    'returns': fortress_returns,
+                    'roi': fortress_returns / fortress_total * 100 if fortress_total > 0 else 0,
                 },
                 'samson': {
-                    'deployed': titan_total,
-                    'returns': titan_returns,
-                    'roi': titan_returns / titan_total * 100 if titan_total > 0 else 0,
+                    'deployed': samson_total,
+                    'returns': samson_returns,
+                    'roi': samson_returns / samson_total * 100 if samson_total > 0 else 0,
                 },
                 'anchor': {
                     'deployed': anchor_total,
@@ -478,8 +478,8 @@ class JubileeTrader:
                     'amount': reserve_total,
                 },
             },
-            'total_deployed': ares_total + titan_total + anchor_total,
-            'total_returns': ares_returns + titan_returns + anchor_returns,
+            'total_deployed': fortress_total + samson_total + anchor_total,
+            'total_returns': fortress_returns + samson_returns + anchor_returns,
             'active_deployments': len(deployments),
         }
 
@@ -742,7 +742,7 @@ For box spreads to be profitable:
             start_date = position.open_time.strftime('%Y-%m-%d')
 
             # Query FORTRESS returns
-            if position.cash_deployed_to_ares > 0:
+            if position.cash_deployed_to_fortress > 0:
                 try:
                     cur.execute("""
                         SELECT COALESCE(SUM(realized_pnl), 0)
@@ -758,11 +758,11 @@ For box spreads to be profitable:
                         SELECT value FROM fortress_config WHERE key = 'starting_capital'
                     """)
                     ares_cap_result = cur.fetchone()
-                    ares_capital = float(ares_cap_result[0]) if ares_cap_result else 100000.0
+                    fortress_capital = float(ares_cap_result[0]) if ares_cap_result else 100000.0
 
                     # Attribute returns proportionally
-                    if ares_capital > 0:
-                        attribution_pct = position.cash_deployed_to_ares / ares_capital
+                    if fortress_capital > 0:
+                        attribution_pct = position.cash_deployed_to_fortress / fortress_capital
                         returns['fortress'] = total_fortress_pnl * min(attribution_pct, 1.0)
 
                     logger.debug(f"FORTRESS returns: ${returns['fortress']:.2f} (total: ${total_fortress_pnl:.2f}, attribution: {attribution_pct*100:.1f}%)")
@@ -770,7 +770,7 @@ For box spreads to be profitable:
                     logger.warning(f"Failed to fetch FORTRESS returns: {e}")
 
             # Query SAMSON returns
-            if position.cash_deployed_to_titan > 0:
+            if position.cash_deployed_to_samson > 0:
                 try:
                     cur.execute("""
                         SELECT COALESCE(SUM(realized_pnl), 0)
@@ -779,17 +779,17 @@ For box spreads to be profitable:
                         AND close_time >= %s::timestamp
                     """, (start_date,))
                     result = cur.fetchone()
-                    total_titan_pnl = float(result[0]) if result and result[0] else 0.0
+                    total_samson_pnl = float(result[0]) if result and result[0] else 0.0
 
                     cur.execute("""
                         SELECT value FROM samson_config WHERE key = 'starting_capital'
                     """)
                     titan_cap_result = cur.fetchone()
-                    titan_capital = float(titan_cap_result[0]) if titan_cap_result else 100000.0
+                    samson_capital = float(titan_cap_result[0]) if titan_cap_result else 100000.0
 
-                    if titan_capital > 0:
-                        attribution_pct = position.cash_deployed_to_titan / titan_capital
-                        returns['samson'] = total_titan_pnl * min(attribution_pct, 1.0)
+                    if samson_capital > 0:
+                        attribution_pct = position.cash_deployed_to_samson / samson_capital
+                        returns['samson'] = total_samson_pnl * min(attribution_pct, 1.0)
 
                     logger.debug(f"SAMSON returns: ${returns['samson']:.2f}")
                 except Exception as e:
@@ -852,8 +852,8 @@ For box spreads to be profitable:
         daily_rate = monthly_return_rate / 30
 
         return {
-            'fortress': position.cash_deployed_to_ares * daily_rate * days_held,
-            'samson': position.cash_deployed_to_titan * daily_rate * days_held,
+            'fortress': position.cash_deployed_to_fortress * daily_rate * days_held,
+            'samson': position.cash_deployed_to_samson * daily_rate * days_held,
             'anchor': position.cash_deployed_to_anchor * daily_rate * days_held,
         }
 
@@ -1206,8 +1206,8 @@ class JubileeICTrader:
                 savings_vs_margin=(8.50 - implied_rate) * total_owed / 100,
 
                 # Capital deployment - ALL goes to JUBILEE IC trading
-                cash_deployed_to_ares=0.0,
-                cash_deployed_to_titan=0.0,
+                cash_deployed_to_fortress=0.0,
+                cash_deployed_to_samson=0.0,
                 cash_deployed_to_anchor=0.0,
                 cash_held_in_reserve=50000.0,  # 10% reserve
                 total_cash_deployed=total_credit,  # $495K available

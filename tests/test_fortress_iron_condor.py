@@ -3,7 +3,7 @@ FORTRESS Iron Condor Strategy Tests
 
 Tests for the FORTRESS iron condor trading strategy.
 
-Run with: pytest tests/test_ares_iron_condor.py -v
+Run with: pytest tests/test_fortress_iron_condor.py -v
 """
 
 import pytest
@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class TestAresIronCondorImport:
     """Tests for FORTRESS iron condor import"""
 
-    def test_import_ares_iron_condor(self):
+    def test_import_fortress_iron_condor(self):
         """Test that FORTRESS IC can be imported"""
         try:
-            from trading.ares_iron_condor import FortressTrader
+            from trading.fortress_v2 import FortressTrader
             assert FortressTrader is not None
         except ImportError:
             pytest.skip("FORTRESS iron condor not available")
@@ -32,7 +32,7 @@ class TestFortressTraderInitialization:
     def test_trader_initialization(self):
         """Test trader can be initialized"""
         try:
-            from trading.ares_iron_condor import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, TradingMode
 
             with patch('database_adapter.get_connection', return_value=MagicMock()):
                 trader = FortressTrader(
@@ -50,7 +50,7 @@ class TestIronCondorConstruction:
     def test_build_iron_condor(self, mock_spx_option_chain):
         """Test IC construction"""
         try:
-            from trading.ares_iron_condor import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, TradingMode
 
             with patch('database_adapter.get_connection', return_value=MagicMock()):
                 trader = FortressTrader(
@@ -78,7 +78,7 @@ class TestIronCondorEntryLogic:
     def test_should_enter_trade(self, mock_market_data):
         """Test entry logic"""
         try:
-            from trading.ares_iron_condor import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, TradingMode
 
             with patch('database_adapter.get_connection', return_value=MagicMock()):
                 trader = FortressTrader(
@@ -100,7 +100,7 @@ class TestIronCondorExitLogic:
     def test_should_exit_trade(self, mock_iron_condor_position):
         """Test exit logic"""
         try:
-            from trading.ares_iron_condor import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, TradingMode
 
             with patch('database_adapter.get_connection', return_value=MagicMock()):
                 trader = FortressTrader(
@@ -122,7 +122,7 @@ class TestIronCondorRiskManagement:
     def test_position_sizing(self):
         """Test position sizing"""
         try:
-            from trading.ares_iron_condor import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, TradingMode
 
             with patch('database_adapter.get_connection', return_value=MagicMock()):
                 trader = FortressTrader(

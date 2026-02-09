@@ -109,8 +109,8 @@ else:
     # Test FORTRESS routes
     print("\n-- FORTRESS Routes --")
     try:
-        from backend.api.routes.fortress_routes import router as ares_router
-        routes = [r.path for r in ares_router.routes]
+        from backend.api.routes.fortress_routes import router as fortress_router
+        routes = [r.path for r in fortress_router.routes]
         ok(f"FORTRESS router loaded: {len(routes)} routes")
 
         # Check Tradier endpoint exists

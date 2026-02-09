@@ -61,7 +61,7 @@ try:
         print("  WARNING: DATABASE_URL not set - skipping database tests")
         print("  (This is expected when running locally without .env)")
         db_solomon_value = None
-        db_icarus_value = None
+        db_gideon_value = None
     else:
         conn = psycopg2.connect(DATABASE_URL)
         c = conn.cursor()
@@ -77,17 +77,17 @@ try:
         # Check GIDEON config
         c.execute("SELECT value FROM autonomous_config WHERE key = 'ICARUS_wall_filter_pct'")
         result = c.fetchone()
-        db_icarus_value = result[0] if result else None
+        db_gideon_value = result[0] if result else None
         check("ICARUS_wall_filter_pct in database",
-              db_icarus_value == '1.0',
-              f"Got: {db_icarus_value}, Expected: 1.0")
+              db_gideon_value == '1.0',
+              f"Got: {db_gideon_value}, Expected: 1.0")
 
         conn.close()
 
 except Exception as e:
     print(f"  ERROR: Database check failed: {e}")
     db_solomon_value = None
-    db_icarus_value = None
+    db_gideon_value = None
 
 # ============================================================================
 # TEST 2: CONFIG LOADING IN BOT CODE

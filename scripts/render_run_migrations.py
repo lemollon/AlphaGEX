@@ -106,15 +106,15 @@ for filename, description in migrations:
 print("\n-- Verifying Fresh Start --")
 try:
     cursor.execute("SELECT COUNT(*) FROM fortress_positions")
-    ares_count = cursor.fetchone()[0]
+    fortress_count = cursor.fetchone()[0]
 
     cursor.execute("SELECT COUNT(*) FROM solomon_positions")
     solomon_count = cursor.fetchone()[0]
 
-    if ares_count == 0:
+    if fortress_count == 0:
         ok(f"FORTRESS: 0 positions (fresh start)")
     else:
-        warn(f"FORTRESS: {ares_count} positions remain")
+        warn(f"FORTRESS: {fortress_count} positions remain")
 
     if solomon_count == 0:
         ok(f"SOLOMON: 0 positions (fresh start)")

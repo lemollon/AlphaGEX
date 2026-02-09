@@ -4,7 +4,7 @@ GIDEON Analysis 00: Quick Summary
 =================================
 Executive summary of key metrics - run this first!
 
-Run: python scripts/icarus_analysis/00_quick_summary.py
+Run: python scripts/gideon_analysis/00_quick_summary.py
 """
 
 import os
@@ -109,7 +109,7 @@ KEY QUESTIONS TO INVESTIGATE:
   5. Is Prophet confidence correlating with win rate?
 
 Run the full analysis:
-  python scripts/icarus_analysis/run_all.py
+  python scripts/gideon_analysis/run_all.py
 """)
 
 print("="*70 + "\n")

@@ -35,7 +35,7 @@ def main():
     print("=" * 60)
 
     try:
-        from trading.ares_iron_condor import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader, TradingMode
 
         mode = TradingMode.LIVE if args.live else TradingMode.PAPER
         print(f"\n🚀 Initializing FORTRESS in {mode.value} mode...")

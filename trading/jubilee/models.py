@@ -390,13 +390,13 @@ class CapitalDeployment:
     total_capital_available: float
 
     # Allocation by bot
-    ares_allocation: float
-    ares_allocation_pct: float
-    ares_allocation_reasoning: str
+    fortress_allocation: float
+    fortress_allocation_pct: float
+    fortress_allocation_reasoning: str
 
-    titan_allocation: float
-    titan_allocation_pct: float
-    titan_allocation_reasoning: str
+    samson_allocation: float
+    samson_allocation_pct: float
+    samson_allocation_reasoning: str
 
     anchor_allocation: float
     anchor_allocation_pct: float
@@ -411,8 +411,8 @@ class CapitalDeployment:
     methodology_explanation: str  # Why this allocation method
 
     # Performance tracking
-    ares_returns_to_date: float
-    titan_returns_to_date: float
+    fortress_returns_to_date: float
+    samson_returns_to_date: float
     anchor_returns_to_date: float
     total_returns_to_date: float
 
@@ -428,16 +428,16 @@ class CapitalDeployment:
             'total_capital_available': self.total_capital_available,
             'allocations': {
                 'fortress': {
-                    'amount': self.ares_allocation,
-                    'pct': self.ares_allocation_pct,
-                    'reasoning': self.ares_allocation_reasoning,
-                    'returns': self.ares_returns_to_date,
+                    'amount': self.fortress_allocation,
+                    'pct': self.fortress_allocation_pct,
+                    'reasoning': self.fortress_allocation_reasoning,
+                    'returns': self.fortress_returns_to_date,
                 },
                 'samson': {
-                    'amount': self.titan_allocation,
-                    'pct': self.titan_allocation_pct,
-                    'reasoning': self.titan_allocation_reasoning,
-                    'returns': self.titan_returns_to_date,
+                    'amount': self.samson_allocation,
+                    'pct': self.samson_allocation_pct,
+                    'reasoning': self.samson_allocation_reasoning,
+                    'returns': self.samson_returns_to_date,
                 },
                 'anchor': {
                     'amount': self.anchor_allocation,
@@ -504,8 +504,8 @@ class JubileeConfig:
     margin_buffer_pct: float = 20.0  # Keep 20% margin buffer
 
     # Capital deployment to IC bots
-    ares_allocation_pct: float = 35.0
-    titan_allocation_pct: float = 35.0
+    fortress_allocation_pct: float = 35.0
+    samson_allocation_pct: float = 35.0
     anchor_allocation_pct: float = 20.0
     reserve_pct: float = 10.0
 
@@ -543,8 +543,8 @@ class JubileeConfig:
             'max_margin_pct': self.max_margin_pct,
             'margin_buffer_pct': self.margin_buffer_pct,
             'allocations': {
-                'ares_pct': self.ares_allocation_pct,
-                'titan_pct': self.titan_allocation_pct,
+                'ares_pct': self.fortress_allocation_pct,
+                'titan_pct': self.samson_allocation_pct,
                 'anchor_pct': self.anchor_allocation_pct,
                 'reserve_pct': self.reserve_pct,
             },
@@ -567,8 +567,8 @@ class JubileeConfig:
             if key == 'mode':
                 continue
             if key == 'allocations':
-                config.ares_allocation_pct = value.get('ares_pct', 35.0)
-                config.titan_allocation_pct = value.get('titan_pct', 35.0)
+                config.fortress_allocation_pct = value.get('ares_pct', 35.0)
+                config.samson_allocation_pct = value.get('titan_pct', 35.0)
                 config.anchor_allocation_pct = value.get('anchor_pct', 20.0)
                 config.reserve_pct = value.get('reserve_pct', 10.0)
             elif hasattr(config, key):

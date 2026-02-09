@@ -10,7 +10,7 @@ Tests that FORTRESS bot is properly integrated and can:
 4. Log decisions to database
 5. Show up on frontend API
 
-Run: python scripts/test_ares_integration.py
+Run: python scripts/test_fortress_integration.py
 """
 
 import os
@@ -204,9 +204,9 @@ def test_options_chain():
 # TEST 5: FORTRESS Bot Initialization
 # =============================================================================
 @test("FORTRESS Bot Initialization")
-def test_ares_init():
+def test_fortress_init():
     """Test that FORTRESS bot initializes correctly"""
-    from trading.ares_iron_condor import FortressTrader, TradingMode
+    from trading.fortress_v2 import FortressTrader, TradingMode
 
     fortress = FortressTrader(
         mode=TradingMode.PAPER,
@@ -373,7 +373,7 @@ def main():
     test_tradier_connection()
     test_market_data()
     test_options_chain()
-    test_ares_init()
+    test_fortress_init()
     test_decision_logger()
     test_backend_api()
     test_scheduler()

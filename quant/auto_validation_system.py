@@ -168,8 +168,8 @@ class MLModelRegistry:
         self.register_model(
             name="fortress_ml_advisor",
             description="Predicts iron condor win probability from CHRONICLES backtest data",
-            validate_func=self._validate_ares_advisor,
-            retrain_func=self._retrain_ares_advisor,
+            validate_func=self._validate_fortress_advisor,
+            retrain_func=self._retrain_fortress_advisor,
             degradation_threshold=0.20
         )
 
@@ -344,12 +344,12 @@ class MLModelRegistry:
                 details={'error': str(e)}
             )
 
-    def _validate_ares_advisor(self) -> ModelValidationResult:
+    def _validate_fortress_advisor(self) -> ModelValidationResult:
         """Validate FORTRESS ML Advisor"""
         try:
-            from quant.fortress_ml_advisor import ARESMLAdvisor
+            from quant.fortress_ml_advisor import FortressMLAdvisor
 
-            advisor = ARESMLAdvisor()
+            advisor = FortressMLAdvisor()
 
             # Get performance metrics
             metrics = advisor.get_model_performance() if hasattr(advisor, 'get_model_performance') else {}
@@ -423,12 +423,12 @@ class MLModelRegistry:
             logger.error(f"Regime Classifier retrain failed: {e}")
             return False
 
-    def _retrain_ares_advisor(self) -> bool:
+    def _retrain_fortress_advisor(self) -> bool:
         """Retrain FORTRESS ML Advisor"""
         try:
-            from quant.fortress_ml_advisor import ARESMLAdvisor
+            from quant.fortress_ml_advisor import FortressMLAdvisor
 
-            advisor = ARESMLAdvisor()
+            advisor = FortressMLAdvisor()
             if hasattr(advisor, 'train') or hasattr(advisor, 'retrain'):
                 train_func = getattr(advisor, 'retrain', getattr(advisor, 'train', None))
                 if train_func:

@@ -270,13 +270,13 @@ try:
     print(f"  ℹ FORTRESS closed positions: {fortress_closed}")
 
     cur.execute("SELECT COUNT(*) FROM samson_positions WHERE status IN ('closed', 'expired')")
-    titan_closed = cur.fetchone()[0]
-    print(f"  ℹ SAMSON closed positions: {titan_closed}")
+    samson_closed = cur.fetchone()[0]
+    print(f"  ℹ SAMSON closed positions: {samson_closed}")
 
     cur.close()
     conn.close()
 
-    if fortress_closed > 0 or titan_closed > 0:
+    if fortress_closed > 0 or samson_closed > 0:
         passes.append("IC bots have closed positions for returns calculation")
         print(f"  ✓ IC bots have data for returns calculation")
     else:
@@ -315,7 +315,7 @@ else:
     print("""
 I implemented JUBILEE Box Spread Synthetic Borrowing.
 
-Data is being written to [prometheus_*] tables by [scheduler jobs].
+Data is being written to [jubilee_*] tables by [scheduler jobs].
   - Daily cycle at 9:30 AM CT
   - Equity snapshots every 30 minutes
   - Rate analysis hourly

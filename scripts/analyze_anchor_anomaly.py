@@ -287,8 +287,8 @@ def main():
     print("COMPARISON: SAMSON (should show normal variance)")
     print("=" * 80)
 
-    titan_stats = analyze_pnl_distribution(cursor, "SAMSON", "samson_positions")
-    if titan_stats:
+    samson_stats = analyze_pnl_distribution(cursor, "SAMSON", "samson_positions")
+    if samson_stats:
         analyze_close_reasons(cursor, "samson_positions")
 
     # Final diagnosis

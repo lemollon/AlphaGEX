@@ -6,9 +6,9 @@ Manual FORTRESS Iron Condor Trade Execution Script
 Run this in Render shell to manually execute an Iron Condor trade.
 
 Usage:
-    python scripts/manual_ares_trade.py
-    python scripts/manual_ares_trade.py --dry-run  # Preview without executing
-    python scripts/manual_ares_trade.py --contracts 2  # Override contract count
+    python scripts/manual_fortress_trade.py
+    python scripts/manual_fortress_trade.py --dry-run  # Preview without executing
+    python scripts/manual_fortress_trade.py --contracts 2  # Override contract count
 """
 
 import os

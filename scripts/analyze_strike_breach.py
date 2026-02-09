@@ -315,11 +315,11 @@ def main():
         else:
             # Summary stats
             total_loss = sum(float_val(t['realized_pnl']) for t in losing_trades)
-            ares_losses = [a for a in loss_analyses if a['bot'] == 'FORTRESS']
+            fortress_losses = [a for a in loss_analyses if a['bot'] == 'FORTRESS']
             anchor_losses = [a for a in loss_analyses if a['bot'] == 'ANCHOR']
 
             print(f"\n  Total Loss: ${total_loss:,.2f}")
-            print(f"  FORTRESS Losses: {len(ares_losses)}")
+            print(f"  FORTRESS Losses: {len(fortress_losses)}")
             print(f"  ANCHOR Losses: {len(anchor_losses)}")
 
             # Detailed analysis

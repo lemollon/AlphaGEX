@@ -179,29 +179,29 @@ def run_diagnostics():
             WHERE table_name = 'samson_equity_snapshots'
         )
     """)
-    titan_exists = cursor.fetchone()[0]
+    samson_exists = cursor.fetchone()[0]
 
-    if titan_exists:
+    if samson_exists:
         cursor.execute("SELECT COUNT(*) FROM samson_equity_snapshots")
-        titan_total = cursor.fetchone()[0]
+        samson_total = cursor.fetchone()[0]
 
         cursor.execute("""
             SELECT COUNT(*) FROM samson_equity_snapshots
             WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
-        titan_today = cursor.fetchone()[0]
+        samson_today = cursor.fetchone()[0]
 
         cursor.execute("SELECT MAX(timestamp) FROM samson_equity_snapshots")
-        titan_last = cursor.fetchone()[0]
+        samson_last = cursor.fetchone()[0]
 
-        print(f"\n   SAMSON total snapshots: {titan_total}")
-        print(f"   SAMSON today's snapshots: {titan_today}")
-        print(f"   SAMSON last snapshot: {titan_last}")
+        print(f"\n   SAMSON total snapshots: {samson_total}")
+        print(f"   SAMSON today's snapshots: {samson_today}")
+        print(f"   SAMSON last snapshot: {samson_last}")
 
-        if titan_today > 0 and today_count == 0:
+        if samson_today > 0 and today_count == 0:
             print("\n   ⚠️  SAMSON has snapshots today but FORTRESS doesn't!")
             print("      This suggests FORTRESS-specific issue in scheduler")
-        elif titan_today == 0 and today_count == 0:
+        elif samson_today == 0 and today_count == 0:
             print("\n   ℹ️  Neither SAMSON nor FORTRESS have snapshots today")
             print("      Scheduler may not be running or market is closed")
     else:

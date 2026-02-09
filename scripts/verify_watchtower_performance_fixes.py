@@ -121,7 +121,7 @@ def test_watchtower_engine():
         check("WATCHTOWER engine", False, str(e))
 
 
-def test_ares_validation():
+def test_fortress_validation():
     """Test 3: FORTRESS expected move validation"""
     logger.info("\n" + "="*60)
     logger.info("TEST 3: FORTRESS Expected Move Validation")
@@ -129,7 +129,7 @@ def test_ares_validation():
 
     try:
         import inspect
-        from trading.ares_iron_condor import FortressTrader
+        from trading.fortress_v2 import FortressTrader
 
         source = inspect.getsource(FortressTrader.get_current_market_data)
 
@@ -158,7 +158,7 @@ def test_solomon_expected_move():
 
     try:
         import inspect
-        from trading.solomon_directional_spreads import SolomonTrader
+        from trading.solomon_v2 import SolomonTrader
 
         # Check _log_skip_decision
         source = inspect.getsource(SolomonTrader._log_skip_decision)
@@ -414,7 +414,7 @@ def main():
 
     test_database_indexes()
     test_watchtower_engine()
-    test_ares_validation()
+    test_fortress_validation()
     test_solomon_expected_move()
     test_vix_fetcher()
     test_tradier_connection()

@@ -4,7 +4,7 @@ GIDEON Analysis 02: Prophet Decision Analysis
 =============================================
 Deep dive into Prophet's predictions and their outcomes.
 
-Run: python scripts/icarus_analysis/02_oracle_analysis.py
+Run: python scripts/gideon_analysis/02_prophet_analysis.py
 """
 
 import os

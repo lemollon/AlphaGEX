@@ -11,7 +11,7 @@ This script tests the complete FORTRESS SPY sandbox trading flow:
 6. Order status verification
 
 Usage:
-    python scripts/test_ares_spy_sandbox.py
+    python scripts/test_fortress_spy_sandbox.py
 
 Environment Variables Required:
     TRADIER_SANDBOX_API_KEY or TRADIER_API_KEY
@@ -109,12 +109,12 @@ def test_tradier_client():
         return None, 0
 
 
-def test_ares_initialization():
+def test_fortress_initialization():
     """Test 3: Initialize FORTRESS in sandbox mode."""
     print_header("TEST 3: FORTRESS Trader Initialization (Sandbox Mode)")
 
     try:
-        from trading.ares_iron_condor import FortressTrader, TradingMode, FortressConfig
+        from trading.fortress_v2 import FortressTrader, TradingMode, FortressConfig
 
         # Create config that forces SPY sandbox mode
         config = FortressConfig(paper_trade_spx=False)  # Use SPY instead of SPX
@@ -338,7 +338,7 @@ def run_all_tests():
         return results
 
     # Test 3: FORTRESS Initialization
-    fortress = test_ares_initialization()
+    fortress = test_fortress_initialization()
     results.append(("FORTRESS Init", fortress is not None))
 
     if not fortress:
