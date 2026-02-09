@@ -283,6 +283,24 @@ WHERE key = 'gideon_starting_capital';
 UPDATE autonomous_config SET key = 'heracles_starting_capital'
 WHERE key = 'valor_starting_capital';
 
+-- Rollback additional config keys from Phase 6B
+UPDATE autonomous_config SET key = 'ares_mode'
+WHERE key = 'fortress_mode';
+
+UPDATE autonomous_config SET key = 'ares_ticker'
+WHERE key = 'fortress_ticker';
+
+
+-- =============================================================================
+-- SECTION 2B ROLLBACK: RESTORE OLD ML_MODELS MODEL_NAME VALUES
+-- =============================================================================
+
+UPDATE ml_models SET model_name = 'ares_ml'
+WHERE model_name = 'fortress_ml';
+
+UPDATE ml_models SET model_name = 'heracles_ml'
+WHERE model_name = 'valor_ml';
+
 
 -- =============================================================================
 -- SECTION 1 ROLLBACK: RESTORE OLD TABLE NAMES (reverse order)

@@ -7,7 +7,8 @@
 --
 -- SCOPE:
 --   Section 1: 40 table renames (10 bots + advisory tables)
---   Section 2: 6 config key updates in autonomous_config
+--   Section 2: 8 config key updates in autonomous_config
+--   Section 2B: 2 ml_models model_name updates (ares_ml→fortress_ml, heracles_ml→valor_ml)
 --   Section 3: bot_name column value updates in 5 tables (20 name mappings)
 --   Section 4: Verification queries
 --
@@ -209,6 +210,26 @@ WHERE key = 'icarus_starting_capital';
 
 UPDATE autonomous_config SET key = 'valor_starting_capital'
 WHERE key = 'heracles_starting_capital';
+
+-- Additional config keys renamed in Phase 6B
+UPDATE autonomous_config SET key = 'fortress_mode'
+WHERE key = 'ares_mode';
+
+UPDATE autonomous_config SET key = 'fortress_ticker'
+WHERE key = 'ares_ticker';
+
+
+-- =============================================================================
+-- SECTION 2B: ML_MODELS MODEL_NAME UPDATES
+-- =============================================================================
+-- The ml_models table stores trained ML models keyed by model_name.
+-- Code now references the new names; DB rows need matching updates.
+
+UPDATE ml_models SET model_name = 'fortress_ml'
+WHERE model_name = 'ares_ml';
+
+UPDATE ml_models SET model_name = 'valor_ml'
+WHERE model_name = 'heracles_ml';
 
 
 -- =============================================================================
