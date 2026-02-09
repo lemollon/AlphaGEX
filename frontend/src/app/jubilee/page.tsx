@@ -63,13 +63,13 @@ interface Position {
   // Capital deployment
   cash_deployed_to_ares: number
   cash_deployed_to_titan: number
-  cash_deployed_to_anchor: number
+  cash_deployed_to_pegasus: number
   cash_held_in_reserve: number
   total_cash_deployed: number
   // Returns tracking
   returns_from_ares: number
   returns_from_titan: number
-  returns_from_anchor: number
+  returns_from_pegasus: number
   total_ic_returns: number
   net_profit: number
   // Context at entry

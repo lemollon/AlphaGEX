@@ -210,14 +210,14 @@ class BoxSpreadPosition:
     # Capital deployment tracking - WHERE DID THE CASH GO?
     cash_deployed_to_ares: float
     cash_deployed_to_titan: float
-    cash_deployed_to_anchor: float
+    cash_deployed_to_pegasus: float
     cash_held_in_reserve: float
     total_cash_deployed: float
 
     # Returns from deployed capital - THE PAYOFF
     returns_from_ares: float
     returns_from_titan: float
-    returns_from_anchor: float
+    returns_from_pegasus: float
     total_ic_returns: float
     net_profit: float             # total_ic_returns - borrowing_cost
 
@@ -269,12 +269,12 @@ class BoxSpreadPosition:
             'savings_vs_margin': self.savings_vs_margin,
             'cash_deployed_to_ares': self.cash_deployed_to_ares,
             'cash_deployed_to_titan': self.cash_deployed_to_titan,
-            'cash_deployed_to_anchor': self.cash_deployed_to_anchor,
+            'cash_deployed_to_pegasus': self.cash_deployed_to_pegasus,
             'cash_held_in_reserve': self.cash_held_in_reserve,
             'total_cash_deployed': self.total_cash_deployed,
             'returns_from_ares': self.returns_from_ares,
             'returns_from_titan': self.returns_from_titan,
-            'returns_from_anchor': self.returns_from_anchor,
+            'returns_from_pegasus': self.returns_from_pegasus,
             'total_ic_returns': self.total_ic_returns,
             'net_profit': self.net_profit,
             'spot_at_entry': self.spot_at_entry,
