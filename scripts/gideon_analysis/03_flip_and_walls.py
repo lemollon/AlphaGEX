@@ -4,7 +4,7 @@ GIDEON Analysis 03: Flip Point & Wall Analysis
 ===============================================
 Analysis of trades relative to GEX flip point and walls.
 
-Run: python scripts/icarus_analysis/03_flip_and_walls.py
+Run: python scripts/gideon_analysis/03_flip_and_walls.py
 """
 
 import os

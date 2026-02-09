@@ -4,7 +4,7 @@ GIDEON Analysis 06: Trade Reasoning & Top Factors
 =================================================
 What factors drove trading decisions?
 
-Run: python scripts/icarus_analysis/06_trade_reasoning.py
+Run: python scripts/gideon_analysis/06_trade_reasoning.py
 """
 
 import os

@@ -1315,7 +1315,7 @@ def log_fortress_scan(
     # Generate AI explanation if requested and we have enough context
     if generate_ai_explanation and market_data:
         try:
-            from trading.scan_explainer import explain_ares_decision
+            from trading.scan_explainer import explain_fortress_decision
 
             # Convert checks to dict format
             checks_list = []
@@ -1355,7 +1355,7 @@ def log_fortress_scan(
                 }
 
             # Generate explanation
-            explanation = explain_ares_decision(
+            explanation = explain_fortress_decision(
                 scan_number=scan_number,
                 outcome=outcome.value,
                 underlying_price=underlying_price,

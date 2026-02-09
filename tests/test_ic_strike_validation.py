@@ -47,7 +47,7 @@ def test(name: str, condition: bool, details: str = ""):
     print(result)
 
 
-def test_ares_strike_validation():
+def test_fortress_strike_validation():
     """Test FORTRESS strike validation logic"""
     print("\n" + "="*60)
     print("FORTRESS STRIKE VALIDATION TESTS")
@@ -153,7 +153,7 @@ def test_ares_strike_validation():
     )
 
 
-def test_titan_strike_validation():
+def test_samson_strike_validation():
     """Test SAMSON strike validation logic"""
     print("\n" + "="*60)
     print("SAMSON STRIKE VALIDATION TESTS")
@@ -323,8 +323,8 @@ def main():
     print("="*60)
 
     # Run test suites
-    test_ares_strike_validation()
-    test_titan_strike_validation()
+    test_fortress_strike_validation()
+    test_samson_strike_validation()
     test_anchor_comparison()
     test_database_queries()
 

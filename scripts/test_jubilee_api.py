@@ -3,7 +3,7 @@
 JUBILEE API Test Script for Render Shell
 
 Run this script in the Render shell to verify all JUBILEE endpoints are working:
-    python scripts/test_prometheus_api.py
+    python scripts/test_jubilee_api.py
 
 This tests all 52 JUBILEE Box Spread API endpoints.
 """

@@ -6,7 +6,7 @@ FORTRESS Full Cycle Debug Script
 Runs a complete FORTRESS cycle and traces every step.
 
 Run on Render shell:
-    python scripts/debug_ares_full_cycle.py
+    python scripts/debug_fortress_full_cycle.py
 """
 
 import os

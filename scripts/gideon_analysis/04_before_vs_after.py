@@ -4,7 +4,7 @@ GIDEON Analysis 04: Before vs After Fix Comparison
 ==================================================
 Compare trades before and after the 2026-02-01 fixes.
 
-Run: python scripts/icarus_analysis/04_before_vs_after.py
+Run: python scripts/gideon_analysis/04_before_vs_after.py
 """
 
 import os

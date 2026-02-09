@@ -18,8 +18,8 @@ class TestARESInitialization(unittest.TestCase):
     """Test FORTRESS initializes with dual Tradier clients."""
 
     @patch('unified_config.APIConfig')
-    @patch('trading.ares_iron_condor.TradierDataFetcher')
-    @patch('trading.ares_iron_condor.TRADIER_AVAILABLE', True)
+    @patch('trading.fortress_v2.TradierDataFetcher')
+    @patch('trading.fortress_v2.TRADIER_AVAILABLE', True)
     def test_paper_mode_creates_both_clients(self, mock_tradier_class, mock_config):
         """PAPER mode should create both production and sandbox clients."""
         # Configure mock APIConfig
@@ -35,7 +35,7 @@ class TestARESInitialization(unittest.TestCase):
         mock_sandbox.sandbox = True
         mock_tradier_class.side_effect = [mock_prod, mock_sandbox]
 
-        from trading.ares_iron_condor import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader, TradingMode
         fortress = FortressTrader(mode=TradingMode.PAPER, initial_capital=200000)
 
         # Verify both clients created
@@ -130,8 +130,8 @@ class TestExecuteIronCondor(unittest.TestCase):
         self.contracts = 2
 
     @patch('unified_config.APIConfig')
-    @patch('trading.ares_iron_condor.TradierDataFetcher')
-    @patch('trading.ares_iron_condor.TRADIER_AVAILABLE', True)
+    @patch('trading.fortress_v2.TradierDataFetcher')
+    @patch('trading.fortress_v2.TRADIER_AVAILABLE', True)
     def test_paper_mode_submits_to_both(self, mock_tradier_class, mock_config):
         """PAPER mode should submit to AlphaGEX AND Tradier sandbox."""
         mock_config.TRADIER_API_KEY = 'test_key'
@@ -152,7 +152,7 @@ class TestExecuteIronCondor(unittest.TestCase):
 
         mock_tradier_class.side_effect = [mock_prod, mock_sandbox]
 
-        from trading.ares_iron_condor import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader, TradingMode
         fortress = FortressTrader(mode=TradingMode.PAPER, initial_capital=200000)
 
         # Execute trade
@@ -182,8 +182,8 @@ class TestExecuteIronCondor(unittest.TestCase):
         print("✓ Tradier sandbox called with correct SPY parameters")
 
     @patch('unified_config.APIConfig')
-    @patch('trading.ares_iron_condor.TradierDataFetcher')
-    @patch('trading.ares_iron_condor.TRADIER_AVAILABLE', True)
+    @patch('trading.fortress_v2.TradierDataFetcher')
+    @patch('trading.fortress_v2.TRADIER_AVAILABLE', True)
     def test_sandbox_error_doesnt_fail_trade(self, mock_tradier_class, mock_config):
         """Sandbox errors should be logged but not fail the trade."""
         mock_config.TRADIER_API_KEY = 'test_key'
@@ -202,7 +202,7 @@ class TestExecuteIronCondor(unittest.TestCase):
 
         mock_tradier_class.side_effect = [mock_prod, mock_sandbox]
 
-        from trading.ares_iron_condor import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader, TradingMode
         fortress = FortressTrader(mode=TradingMode.PAPER, initial_capital=200000)
 
         # Execute trade - should NOT raise exception
@@ -218,8 +218,8 @@ class TestExecuteIronCondor(unittest.TestCase):
         print("✓ Sandbox error logged but trade still tracked in AlphaGEX")
 
     @patch('unified_config.APIConfig')
-    @patch('trading.ares_iron_condor.TradierDataFetcher')
-    @patch('trading.ares_iron_condor.TRADIER_AVAILABLE', True)
+    @patch('trading.fortress_v2.TradierDataFetcher')
+    @patch('trading.fortress_v2.TRADIER_AVAILABLE', True)
     def test_sandbox_exception_doesnt_fail_trade(self, mock_tradier_class, mock_config):
         """Sandbox exceptions should be caught and logged."""
         mock_config.TRADIER_API_KEY = 'test_key'
@@ -236,7 +236,7 @@ class TestExecuteIronCondor(unittest.TestCase):
 
         mock_tradier_class.side_effect = [mock_prod, mock_sandbox]
 
-        from trading.ares_iron_condor import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader, TradingMode
         fortress = FortressTrader(mode=TradingMode.PAPER, initial_capital=200000)
 
         # Execute trade - should NOT raise exception

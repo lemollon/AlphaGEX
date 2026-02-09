@@ -7,7 +7,7 @@ Comprehensive test script to verify ALL components of the JUBILEE
 Box Spread Synthetic Borrowing system are correctly wired and working.
 
 Run this in the Render shell to verify production status:
-    python scripts/test_prometheus_complete.py
+    python scripts/test_jubilee_complete.py
 
 Tests:
 1. Rate Fetcher - FRED API integration and fallback

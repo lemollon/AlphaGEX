@@ -179,7 +179,7 @@ export default function GexChartsPage() {
   // Fetch available expirations for symbol
   const fetchExpirations = useCallback(async (sym: string) => {
     try {
-      const response = await apiClient.getArgusSymbolExpirations(sym)
+      const response = await apiClient.getWatchtowerSymbolExpirations(sym)
       if (response.data?.success && response.data?.data) {
         setExpirations(response.data.data)
         // Auto-select nearest expiration
@@ -199,7 +199,7 @@ export default function GexChartsPage() {
       setLoading(true)
       setError(null)
 
-      const response = await apiClient.getArgusGexAnalysis(sym, exp || undefined)
+      const response = await apiClient.getWatchtowerGexAnalysis(sym, exp || undefined)
       const result = response.data
 
       if (result?.success) {

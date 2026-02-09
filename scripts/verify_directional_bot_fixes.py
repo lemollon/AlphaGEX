@@ -277,7 +277,7 @@ def test_friday_filter():
         return False
 
 
-def test_icarus_rr_ratio():
+def test_gideon_rr_ratio():
     """Test 6: GIDEON R:R ratio should be 1:1 (50/50)"""
     print("\n" + "="*60)
     print("TEST 6: GIDEON R:R Ratio at 1:1 (50/50)")
@@ -323,7 +323,7 @@ def main():
         ("ML Features Complete", test_ml_features_complete),
         ("Flip Distance Filter", test_flip_distance_filter),
         ("Friday Filter", test_friday_filter),
-        ("GIDEON R:R Ratio", test_icarus_rr_ratio),
+        ("GIDEON R:R Ratio", test_gideon_rr_ratio),
     ]
 
     results = []

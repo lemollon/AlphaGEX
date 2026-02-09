@@ -7,10 +7,10 @@ Run this script on the Render server to pull yesterday's FORTRESS and ANCHOR tra
 for comparative analysis of IC widths and outcomes.
 
 Usage:
-    python scripts/investigate_ares_loss.py [--date YYYY-MM-DD]
+    python scripts/investigate_fortress_loss.py [--date YYYY-MM-DD]
 
 Example:
-    python scripts/investigate_ares_loss.py --date 2026-02-03
+    python scripts/investigate_fortress_loss.py --date 2026-02-03
 """
 
 import argparse
@@ -403,7 +403,7 @@ def main():
         anchor_trades = get_anchor_trades(conn, target_date)
 
         # Analyze
-        ares_analyses = [analyze_trade(t) for t in fortress_trades]
+        fortress_analyses = [analyze_trade(t) for t in fortress_trades]
         anchor_analyses = [analyze_trade(t) for t in anchor_trades]
 
         if args.json:
@@ -411,7 +411,7 @@ def main():
                 'date': target_date,
                 'fortress': {
                     'trades': fortress_trades,
-                    'analyses': ares_analyses,
+                    'analyses': fortress_analyses,
                 },
                 'anchor': {
                     'trades': anchor_trades,
@@ -420,7 +420,7 @@ def main():
             }
             print(json.dumps(output, indent=2, default=str))
         else:
-            print_analysis("FORTRESS", fortress_trades, ares_analyses)
+            print_analysis("FORTRESS", fortress_trades, fortress_analyses)
             print_analysis("ANCHOR", anchor_trades, anchor_analyses)
 
             # Summary comparison
@@ -428,30 +428,30 @@ def main():
             print(f" COMPARISON SUMMARY")
             print(f"{'='*80}")
 
-            if ares_analyses and anchor_analyses:
-                ares_avg_sd = sum(a['avg_sd_multiplier'] or 0 for a in ares_analyses) / len(ares_analyses) if ares_analyses else 0
+            if fortress_analyses and anchor_analyses:
+                fortress_avg_sd = sum(a['avg_sd_multiplier'] or 0 for a in fortress_analyses) / len(fortress_analyses) if fortress_analyses else 0
                 anchor_avg_sd = sum(a['avg_sd_multiplier'] or 0 for a in anchor_analyses) / len(anchor_analyses) if anchor_analyses else 0
 
-                print(f"\n  FORTRESS Average SD Multiplier: {ares_avg_sd:.2f}")
+                print(f"\n  FORTRESS Average SD Multiplier: {fortress_avg_sd:.2f}")
                 print(f"  ANCHOR Average SD Multiplier: {anchor_avg_sd:.2f}")
 
-                fortress_pnl = sum(a['realized_pnl'] for a in ares_analyses)
+                fortress_pnl = sum(a['realized_pnl'] for a in fortress_analyses)
                 anchor_pnl = sum(a['realized_pnl'] for a in anchor_analyses)
 
                 print(f"\n  FORTRESS Total P&L: ${fortress_pnl:,.2f}")
                 print(f"  ANCHOR Total P&L: ${anchor_pnl:,.2f}")
 
-                if ares_avg_sd < anchor_avg_sd and fortress_pnl < anchor_pnl:
-                    print(f"\n  💡 INSIGHT: FORTRESS had tighter strikes ({ares_avg_sd:.2f} SD) than ANCHOR ({anchor_avg_sd:.2f} SD)")
+                if fortress_avg_sd < anchor_avg_sd and fortress_pnl < anchor_pnl:
+                    print(f"\n  💡 INSIGHT: FORTRESS had tighter strikes ({fortress_avg_sd:.2f} SD) than ANCHOR ({anchor_avg_sd:.2f} SD)")
                     print(f"              and FORTRESS lost while ANCHOR won. This suggests FORTRESS needs WIDER strikes.")
 
             # Detailed strike analysis for losses
-            ares_losses = [a for a in ares_analyses if a['is_loss']]
-            if ares_losses:
+            fortress_losses = [a for a in fortress_analyses if a['is_loss']]
+            if fortress_losses:
                 print(f"\n  {'─'*76}")
                 print(f"  FORTRESS LOSS ANALYSIS:")
                 print(f"  {'─'*76}")
-                for loss in ares_losses:
+                for loss in fortress_losses:
                     print(f"\n  Position: {loss['position_id']}")
                     print(f"  - Spot: ${loss['spot_at_entry']:.2f}, EM: ${loss['expected_move']:.2f}")
                     print(f"  - Put Strike SD: {loss['put_sd_multiplier']}")

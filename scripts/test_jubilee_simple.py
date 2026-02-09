@@ -4,7 +4,7 @@ JUBILEE Simple Verification Script
 ======================================
 Minimal dependencies - uses only stdlib + psycopg2
 
-Run: python scripts/test_prometheus_simple.py
+Run: python scripts/test_jubilee_simple.py
 """
 
 import os

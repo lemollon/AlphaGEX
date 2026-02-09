@@ -745,7 +745,7 @@ class TestExportFunctionality:
 class TestDualLogging:
     """Verify bots log to both tables correctly."""
 
-    def test_ares_dual_logging(self, db_connection):
+    def test_fortress_dual_logging(self, db_connection):
         """Verify FORTRESS logs to both tables."""
         cursor = db_connection.cursor()
 

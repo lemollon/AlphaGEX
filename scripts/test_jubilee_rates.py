@@ -4,7 +4,7 @@ JUBILEE Rate System Test
 ===========================
 
 RUN IN RENDER SHELL:
-    python scripts/test_prometheus_rates.py
+    python scripts/test_jubilee_rates.py
 
 Tests the rate fetcher -> signals -> API data flow.
 """

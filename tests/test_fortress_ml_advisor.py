@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 class TestFortressMLAdvisorImport:
     """Tests for FORTRESS ML advisor import"""
 
-    def test_import_ares_advisor(self):
+    def test_import_fortress_advisor(self):
         """Test that FORTRESS advisor can be imported"""
         try:
             from quant.fortress_ml_advisor import FortressMLAdvisor

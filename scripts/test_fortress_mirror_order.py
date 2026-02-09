@@ -5,7 +5,7 @@ Test script to place a test order on the second FORTRESS sandbox account.
 This verifies the second account can actually receive orders.
 
 Usage:
-    python scripts/test_ares_mirror_order.py
+    python scripts/test_fortress_mirror_order.py
 """
 
 import os

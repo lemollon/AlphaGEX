@@ -4,7 +4,7 @@ GIDEON Analysis 05: VIX Analysis
 ================================
 How does VIX affect GIDEON performance?
 
-Run: python scripts/icarus_analysis/05_vix_analysis.py
+Run: python scripts/gideon_analysis/05_vix_analysis.py
 """
 
 import os

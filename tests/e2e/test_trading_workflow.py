@@ -102,9 +102,9 @@ class TestFullTradingWorkflow:
 class TestAresWorkflow:
     """End-to-end tests for FORTRESS Iron Condor workflow"""
 
-    @patch('trading.ares_iron_condor.get_connection')
-    @patch('trading.ares_iron_condor.get_data_provider')
-    def test_ares_scan_to_trade_workflow(self, mock_provider, mock_conn):
+    @patch('trading.fortress_v2.get_connection')
+    @patch('trading.fortress_v2.get_data_provider')
+    def test_fortress_scan_to_trade_workflow(self, mock_provider, mock_conn):
         """Test FORTRESS scanning and trade execution workflow"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -112,7 +112,7 @@ class TestAresWorkflow:
         mock_conn.return_value.cursor.return_value = mock_cursor
 
         try:
-            from trading.ares_iron_condor import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, TradingMode
 
             # Step 1: Initialize FORTRESS in paper mode
             fortress = FortressTrader(mode=TradingMode.PAPER, initial_capital=200000)
@@ -127,7 +127,7 @@ class TestAresWorkflow:
 class TestAthenaWorkflow:
     """End-to-end tests for SOLOMON directional spreads workflow"""
 
-    @patch('trading.solomon_directional_spreads.get_connection')
+    @patch('trading.solomon_v2.get_connection')
     def test_solomon_signal_workflow(self, mock_conn):
         """Test SOLOMON signal generation workflow"""
         mock_cursor = MagicMock()
@@ -136,7 +136,7 @@ class TestAthenaWorkflow:
         mock_conn.return_value.cursor.return_value = mock_cursor
 
         try:
-            from trading.solomon_directional_spreads import SolomonTrader
+            from trading.solomon_v2 import SolomonTrader
 
             # Step 1: Initialize SOLOMON
             solomon = SolomonTrader(initial_capital=100000)

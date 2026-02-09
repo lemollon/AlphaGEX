@@ -411,7 +411,7 @@ def check_config_validation() -> VerificationResult:
         # Check allocation percentages sum to 100
         total_alloc = (
             config.ares_allocation_pct +
-            config.titan_allocation_pct +
+            config.samson_allocation_pct +
             config.anchor_allocation_pct +
             config.reserve_pct
         )

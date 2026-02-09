@@ -195,9 +195,9 @@ def check_open_positions():
         # Check GIDEON positions
         try:
             c.execute("SELECT COUNT(*) FROM gideon_positions WHERE status = 'open'")
-            icarus_open = c.fetchone()[0]
+            gideon_open = c.fetchone()[0]
         except:
-            icarus_open = "N/A"
+            gideon_open = "N/A"
 
         # Check ANCHOR positions
         try:
@@ -209,17 +209,17 @@ def check_open_positions():
         # Check SAMSON positions
         try:
             c.execute("SELECT COUNT(*) FROM samson_positions WHERE status = 'open'")
-            titan_open = c.fetchone()[0]
+            samson_open = c.fetchone()[0]
         except:
-            titan_open = "N/A"
+            samson_open = "N/A"
 
         print(f"\n{'Bot':<12} {'Open Positions':<15}")
         print("-" * 30)
         print(f"{'FORTRESS':<12} {fortress_open}")
         print(f"{'SOLOMON':<12} {solomon_open}")
-        print(f"{'GIDEON':<12} {icarus_open}")
+        print(f"{'GIDEON':<12} {gideon_open}")
         print(f"{'ANCHOR':<12} {anchor_open}")
-        print(f"{'SAMSON':<12} {titan_open}")
+        print(f"{'SAMSON':<12} {samson_open}")
 
         conn.close()
 

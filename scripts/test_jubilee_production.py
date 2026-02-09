@@ -5,7 +5,7 @@ JUBILEE Production Readiness Test Script
 Run this in Render shell to verify JUBILEE is fully operational.
 
 Usage:
-    python scripts/test_prometheus_production.py
+    python scripts/test_jubilee_production.py
 
 Tests:
 1. Database tables exist with correct schema

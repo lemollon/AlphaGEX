@@ -150,7 +150,7 @@ def test_scheduler_config():
 
     try:
         # Check FORTRESS trading window vs scheduler
-        from trading.ares_iron_condor import FortressConfig
+        from trading.fortress_v2 import FortressConfig
 
         fortress_config = FortressConfig()
         log_info(f"FORTRESS entry_time_start: {fortress_config.entry_time_start}")
@@ -163,7 +163,7 @@ def test_scheduler_config():
             log_warn(section, "FORTRESS trading window", f"Starts at {fortress_config.entry_time_start}, scheduler should match")
 
         # Check SOLOMON
-        from trading.solomon_directional_spreads import SolomonConfig
+        from trading.solomon_v2 import SolomonConfig
 
         solomon_config = SolomonConfig()
         log_info(f"SOLOMON max_daily_trades: {solomon_config.max_daily_trades}")

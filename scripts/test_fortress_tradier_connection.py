@@ -6,8 +6,8 @@ FORTRESS-Tradier Connection Test Script
 Run this in Render shell to verify FORTRESS can communicate with Tradier.
 
 Usage:
-    python scripts/test_ares_tradier_connection.py          # Test connection only
-    python scripts/test_ares_tradier_connection.py --trade  # Test with a real trade
+    python scripts/test_fortress_tradier_connection.py          # Test connection only
+    python scripts/test_fortress_tradier_connection.py --trade  # Test with a real trade
 
 Tests:
 1. Credentials loaded correctly

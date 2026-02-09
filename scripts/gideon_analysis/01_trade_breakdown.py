@@ -4,7 +4,7 @@ GIDEON Analysis 01: Complete Trade Breakdown
 =============================================
 Detailed breakdown of every trade dimension.
 
-Run: python scripts/icarus_analysis/01_trade_breakdown.py
+Run: python scripts/gideon_analysis/01_trade_breakdown.py
 """
 
 import os

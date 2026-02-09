@@ -549,7 +549,7 @@ class TestBotOracleIntegration:
         except ImportError:
             pytest.skip("AnchorTrader not available")
 
-    def test_ares_oracle_imports_available(self):
+    def test_fortress_prophet_imports_available(self):
         """Test that FORTRESS can import Prophet components"""
         try:
             from quant.prophet_advisor import (

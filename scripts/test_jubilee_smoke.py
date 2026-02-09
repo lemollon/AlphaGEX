@@ -3,7 +3,7 @@
 JUBILEE Smoke Test Script for Render Shell
 
 Quick smoke test to verify JUBILEE is operational:
-    python scripts/test_prometheus_smoke.py
+    python scripts/test_jubilee_smoke.py
 
 This runs minimal checks to verify:
 1. Database connection works
@@ -165,7 +165,7 @@ def main():
         print(f"  2. Set the API URL to your Render deployment:")
         print(f"     export API_BASE_URL='https://your-app.onrender.com'")
         print(f"  3. Verify DATABASE_URL is set for database tests")
-        print(f"  4. Run again: python scripts/test_prometheus_smoke.py")
+        print(f"  4. Run again: python scripts/test_jubilee_smoke.py")
         sys.exit(1)
     else:
         print(f"\n{GREEN}SMOKE TEST PASSED{RESET}")

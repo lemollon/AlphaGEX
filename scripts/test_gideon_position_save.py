@@ -10,7 +10,7 @@ Tests that GIDEON can:
 4. Save position to database with all fields
 5. Retrieve the position back
 
-Run: python scripts/test_icarus_position_save.py
+Run: python scripts/test_gideon_position_save.py
 """
 
 import sys
@@ -78,7 +78,7 @@ def test_db_schema():
         return False
 
 
-def test_icarus_init():
+def test_gideon_init():
     """Test 2: Verify GIDEON trader initializes without errors."""
     print("\n" + "="*60)
     print("TEST 2: GIDEON Trader Initialization")
@@ -304,7 +304,7 @@ def main():
     results['schema'] = test_db_schema()
 
     # Test 2: Initialization
-    trader = test_icarus_init()
+    trader = test_gideon_init()
     results['init'] = trader is not None
 
     if trader:

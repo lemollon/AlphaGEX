@@ -91,7 +91,7 @@ def main():
     print_header("2. FORTRESS MODULE IMPORT")
 
     try:
-        from trading.ares_iron_condor import FortressTrader, TradingMode, FortressConfig
+        from trading.fortress_v2 import FortressTrader, TradingMode, FortressConfig
         check("FortressTrader class imported", True)
         check("TradingMode enum imported", True)
         check("FortressConfig dataclass imported", True)

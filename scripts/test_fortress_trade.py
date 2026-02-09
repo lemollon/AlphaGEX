@@ -3,8 +3,8 @@
 Test script to manually push a trade to Tradier via FORTRESS.
 
 Usage:
-    python scripts/test_ares_trade.py --mode paper
-    python scripts/test_ares_trade.py --mode live  # CAUTION: Real money!
+    python scripts/test_fortress_trade.py --mode paper
+    python scripts/test_fortress_trade.py --mode live  # CAUTION: Real money!
 """
 
 import os
@@ -33,7 +33,7 @@ def main():
     print("=" * 60)
 
     try:
-        from trading.ares_iron_condor import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader, TradingMode
 
         mode = TradingMode.LIVE if args.mode == 'live' else TradingMode.PAPER
         print(f"\nInitializing FORTRESS in {mode.value} mode...")

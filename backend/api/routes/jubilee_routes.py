@@ -4,7 +4,6 @@ JUBILEE Box Spread API Routes - Synthetic Borrowing System
 Comprehensive API for the JUBILEE box spread system with
 enhanced educational endpoints for learning the strategy.
 
-This is different from prometheus_routes.py (ML system).
 This handles the Box Spread Synthetic Borrowing Bot.
 
 Endpoint Categories:

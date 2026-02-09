@@ -669,7 +669,7 @@ class TestExecutorPassesFullContext:
 class TestJSONSerialization:
     """Test that top_factors are properly serialized to JSON"""
 
-    def test_ares_top_factors_json(self):
+    def test_fortress_top_factors_json(self):
         """FORTRESS should serialize oracle_top_factors to JSON string"""
         from trading.fortress_v2.executor import OrderExecutor
         from trading.fortress_v2.models import FortressConfig, TradingMode, IronCondorSignal

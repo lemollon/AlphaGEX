@@ -1061,12 +1061,12 @@ def expected_move(price, iv, dte):
     name: 'FORTRESS Expected Move',
     formula: 'Based on VIX level: VIX<15: 0.7%, 15-20: 0.9%, 20-30: 1.2%, >30: 1.5%',
     purpose: 'Strike distance for FORTRESS IC',
-    file: 'trading/ares_iron_condor.py',
+    file: 'trading/fortress_iron_condor.py',
     line: 156,
     category: 'FORTRESS',
     subcategory: 'Strike Selection',
     description: 'FORTRESS uses VIX-adjusted expected moves for strike selection. Higher VIX means wider strikes to account for increased volatility. These percentages determine short strike distance.',
-    codeSnippet: `def ares_expected_move_pct(vix):
+    codeSnippet: `def fortress_expected_move_pct(vix):
     """Get expected move % based on VIX level"""
     if vix < 15:
         return 0.007  # 0.7%
@@ -1077,9 +1077,9 @@ def expected_move(price, iv, dte):
     else:
         return 0.015  # 1.5%
 
-def ares_strike_distance(spot, vix):
+def fortress_strike_distance(spot, vix):
     """Calculate strike distance for FORTRESS"""
-    em_pct = ares_expected_move_pct(vix)
+    em_pct = fortress_expected_move_pct(vix)
     return spot * em_pct`,
     example: {
       inputs: 'SPY=$450, VIX=22',

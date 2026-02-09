@@ -229,16 +229,16 @@ class JubileeDatabase:
                     total_capital_available DECIMAL(15, 2),
 
                     -- FORTRESS allocation
-                    ares_allocation DECIMAL(15, 2),
-                    ares_allocation_pct DECIMAL(6, 2),
-                    ares_allocation_reasoning TEXT,
-                    ares_returns_to_date DECIMAL(15, 2) DEFAULT 0,
+                    fortress_allocation DECIMAL(15, 2),
+                    fortress_allocation_pct DECIMAL(6, 2),
+                    fortress_allocation_reasoning TEXT,
+                    fortress_returns_to_date DECIMAL(15, 2) DEFAULT 0,
 
                     -- SAMSON allocation
-                    titan_allocation DECIMAL(15, 2),
-                    titan_allocation_pct DECIMAL(6, 2),
-                    titan_allocation_reasoning TEXT,
-                    titan_returns_to_date DECIMAL(15, 2) DEFAULT 0,
+                    samson_allocation DECIMAL(15, 2),
+                    samson_allocation_pct DECIMAL(6, 2),
+                    samson_allocation_reasoning TEXT,
+                    samson_returns_to_date DECIMAL(15, 2) DEFAULT 0,
 
                     -- ANCHOR allocation
                     anchor_allocation DECIMAL(15, 2),
@@ -1245,8 +1245,8 @@ class JubileeDatabase:
                 INSERT INTO jubilee_capital_deployments (
                     deployment_id, deployment_time, source_box_position_id,
                     total_capital_available,
-                    ares_allocation, ares_allocation_pct, ares_allocation_reasoning,
-                    titan_allocation, titan_allocation_pct, titan_allocation_reasoning,
+                    fortress_allocation, fortress_allocation_pct, fortress_allocation_reasoning,
+                    samson_allocation, samson_allocation_pct, samson_allocation_reasoning,
                     anchor_allocation, anchor_allocation_pct, anchor_allocation_reasoning,
                     reserve_amount, reserve_pct, reserve_reasoning,
                     allocation_method, methodology_explanation,
@@ -1258,10 +1258,10 @@ class JubileeDatabase:
                 deployment.deployment_id, deployment.deployment_time,
                 deployment.source_box_position_id,
                 deployment.total_capital_available,
-                deployment.ares_allocation, deployment.ares_allocation_pct,
-                deployment.ares_allocation_reasoning,
-                deployment.titan_allocation, deployment.titan_allocation_pct,
-                deployment.titan_allocation_reasoning,
+                deployment.fortress_allocation, deployment.fortress_allocation_pct,
+                deployment.fortress_allocation_reasoning,
+                deployment.samson_allocation, deployment.samson_allocation_pct,
+                deployment.samson_allocation_reasoning,
                 deployment.anchor_allocation, deployment.anchor_allocation_pct,
                 deployment.anchor_allocation_reasoning,
                 deployment.reserve_amount, deployment.reserve_pct,
@@ -1300,24 +1300,24 @@ class JubileeDatabase:
     def update_deployment_returns(
         self,
         deployment_id: str,
-        ares_returns: float,
-        titan_returns: float,
+        fortress_returns: float,
+        samson_returns: float,
         anchor_returns: float
     ) -> bool:
         """Update returns for a deployment"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
-            total_returns = ares_returns + titan_returns + anchor_returns
+            total_returns = fortress_returns + samson_returns + anchor_returns
             cursor.execute("""
                 UPDATE jubilee_capital_deployments
-                SET ares_returns_to_date = %s,
-                    titan_returns_to_date = %s,
+                SET fortress_returns_to_date = %s,
+                    samson_returns_to_date = %s,
                     anchor_returns_to_date = %s,
                     total_returns_to_date = %s,
                     updated_at = NOW()
                 WHERE deployment_id = %s
-            """, (ares_returns, titan_returns, anchor_returns,
+            """, (fortress_returns, samson_returns, anchor_returns,
                   total_returns, deployment_id))
             conn.commit()
             cursor.close()

@@ -5,7 +5,7 @@ Test script to verify FORTRESS dual sandbox account configuration.
 Run this after setting environment variables to confirm both accounts work.
 
 Usage:
-    python scripts/test_ares_dual_accounts.py
+    python scripts/test_fortress_dual_accounts.py
 """
 
 import os

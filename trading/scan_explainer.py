@@ -441,7 +441,7 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
     }
 
 
-def explain_ares_decision(
+def explain_fortress_decision(
     scan_number: int,
     outcome: str,
     underlying_price: float,

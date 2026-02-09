@@ -3,7 +3,7 @@
 JUBILEE Standalone Test Suite
 =================================
 
-Designed to run in Render shell: python scripts/test_prometheus_standalone.py
+Designed to run in Render shell: python scripts/test_jubilee_standalone.py
 
 This script directly imports modules to avoid dependency chains.
 Tests the specific changes we made:
