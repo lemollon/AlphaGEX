@@ -981,32 +981,32 @@ export const apiClient = {
     api.get('/api/daily-manna/prayer/stats', { params: { user_id: userId } }),
 
   // WATCHTOWER - 0DTE Gamma Live (Real-time gamma visualization)
-  getArgusGamma: (symbol?: string, expiration?: string) =>
+  getWatchtowerGamma: (symbol?: string, expiration?: string) =>
     api.get('/api/watchtower/gamma', { params: { symbol, expiration } }),
-  getArgusHistory: (expiration?: string, minutes?: number) =>
+  getWatchtowerHistory: (expiration?: string, minutes?: number) =>
     api.get('/api/watchtower/history', { params: { expiration, minutes } }),
-  getArgusProbability: () => api.get('/api/watchtower/probability'),
-  getArgusAlerts: (acknowledged?: boolean, priority?: string) =>
+  getWatchtowerProbability: () => api.get('/api/watchtower/probability'),
+  getWatchtowerAlerts: (acknowledged?: boolean, priority?: string) =>
     api.get('/api/watchtower/alerts', { params: { acknowledged, priority } }),
-  acknowledgeArgusAlert: (alertId: number) =>
+  acknowledgeWatchtowerAlert: (alertId: number) =>
     api.post(`/api/watchtower/alerts/${alertId}/acknowledge`),
-  getArgusCommentary: (limit?: number) =>
+  getWatchtowerCommentary: (limit?: number) =>
     api.get('/api/watchtower/commentary', { params: { limit } }),
-  generateArgusCommentary: () => api.post('/api/watchtower/commentary/generate'),
-  getArgusBots: () => api.get('/api/watchtower/bots'),
-  getArgusAccuracy: () => api.get('/api/watchtower/accuracy'),
-  getArgusPatterns: () => api.get('/api/watchtower/patterns'),
-  exportArgusData: (format: 'csv' | 'xlsx' = 'xlsx') =>
+  generateWatchtowerCommentary: () => api.post('/api/watchtower/commentary/generate'),
+  getWatchtowerBots: () => api.get('/api/watchtower/bots'),
+  getWatchtowerAccuracy: () => api.get('/api/watchtower/accuracy'),
+  getWatchtowerPatterns: () => api.get('/api/watchtower/patterns'),
+  exportWatchtowerData: (format: 'csv' | 'xlsx' = 'xlsx') =>
     api.get('/api/watchtower/export', { params: { format }, responseType: 'blob' }),
-  getArgusReplay: (date: string, time?: string) =>
+  getWatchtowerReplay: (date: string, time?: string) =>
     api.get('/api/watchtower/replay', { params: { date, time } }),
-  getArgusReplayDates: () => api.get('/api/watchtower/replay/dates'),
-  getArgusExpirations: () => api.get('/api/watchtower/expirations'),
-  getArgusContext: () => api.get('/api/watchtower/context'),
-  getArgusDangerZoneLogs: () => api.get('/api/watchtower/danger-zones/log'),
-  getArgusStrikeTrends: () => api.get('/api/watchtower/strike-trends'),
-  getArgusGammaFlips: () => api.get('/api/watchtower/gamma-flips'),
-  getArgusTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number, autoLog?: boolean) =>
+  getWatchtowerReplayDates: () => api.get('/api/watchtower/replay/dates'),
+  getWatchtowerExpirations: () => api.get('/api/watchtower/expirations'),
+  getWatchtowerContext: () => api.get('/api/watchtower/context'),
+  getWatchtowerDangerZoneLogs: () => api.get('/api/watchtower/danger-zones/log'),
+  getWatchtowerStrikeTrends: () => api.get('/api/watchtower/strike-trends'),
+  getWatchtowerGammaFlips: () => api.get('/api/watchtower/gamma-flips'),
+  getWatchtowerTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number, autoLog?: boolean) =>
     api.get('/api/watchtower/trade-action', {
       params: {
         symbol,
@@ -1017,45 +1017,45 @@ export const apiClient = {
       }
     }),
   // Signal tracking & performance
-  logArgusSignal: (symbol: string, signalData: object) =>
+  logWatchtowerSignal: (symbol: string, signalData: object) =>
     api.post('/api/watchtower/signals/log', signalData, { params: { symbol } }),
-  getArgusRecentSignals: (symbol?: string, limit?: number, status?: string) =>
+  getWatchtowerRecentSignals: (symbol?: string, limit?: number, status?: string) =>
     api.get('/api/watchtower/signals/recent', { params: { symbol, limit, status } }),
-  getArgusSignalPerformance: (symbol?: string, days?: number) =>
+  getWatchtowerSignalPerformance: (symbol?: string, days?: number) =>
     api.get('/api/watchtower/signals/performance', { params: { symbol, days } }),
-  updateArgusSignalOutcomes: (symbol?: string) =>
+  updateWatchtowerSignalOutcomes: (symbol?: string) =>
     api.post('/api/watchtower/signals/update-outcomes', {}, { params: { symbol } }),
 
   // GEX Charts - Trading Volatility Style Analysis
-  getArgusGexAnalysis: (symbol?: string, expiration?: string) =>
+  getWatchtowerGexAnalysis: (symbol?: string, expiration?: string) =>
     api.get('/api/watchtower/gex-analysis', { params: { symbol, expiration } }),
-  getArgusFlowDiagnostics: (symbol?: string, expiration?: string) =>
+  getWatchtowerFlowDiagnostics: (symbol?: string, expiration?: string) =>
     api.get('/api/watchtower/flow-diagnostics', { params: { symbol, expiration } }),
-  getArgusSymbolExpirations: (symbol?: string) =>
+  getWatchtowerSymbolExpirations: (symbol?: string) =>
     api.get('/api/watchtower/symbol-expirations', { params: { symbol } }),
 
   // GLORY - Weekly Gamma visualization for stocks/ETFs (Enhanced)
-  getHyperionGamma: (symbol?: string, expiration?: string) =>
+  getGloryGamma: (symbol?: string, expiration?: string) =>
     api.get('/api/glory/gamma', { params: { symbol, expiration } }),
-  getHyperionExpirations: (symbol?: string, weeks?: number) =>
+  getGloryExpirations: (symbol?: string, weeks?: number) =>
     api.get('/api/glory/expirations', { params: { symbol, weeks } }),
-  getHyperionSymbols: () => api.get('/api/glory/symbols'),
+  getGlorySymbols: () => api.get('/api/glory/symbols'),
   // New enhanced endpoints (matching WATCHTOWER feature parity)
-  getHyperionAlerts: (symbol?: string, limit?: number, acknowledged?: boolean) =>
+  getGloryAlerts: (symbol?: string, limit?: number, acknowledged?: boolean) =>
     api.get('/api/glory/alerts', { params: { symbol, limit, acknowledged } }),
-  acknowledgeHyperionAlert: (alertId: number) =>
+  acknowledgeGloryAlert: (alertId: number) =>
     api.post(`/api/glory/alerts/${alertId}/acknowledge`),
-  getHyperionPatterns: (symbol?: string, days?: number, minSimilarity?: number) =>
+  getGloryPatterns: (symbol?: string, days?: number, minSimilarity?: number) =>
     api.get('/api/glory/patterns', { params: { symbol, days, min_similarity: minSimilarity } }),
-  getHyperionStrikeTrends: (symbol?: string, date?: string) =>
+  getGloryStrikeTrends: (symbol?: string, date?: string) =>
     api.get('/api/glory/strike-trends', { params: { symbol, date_str: date } }),
-  getHyperionGammaFlips: (symbol?: string, minutes?: number) =>
+  getGloryGammaFlips: (symbol?: string, minutes?: number) =>
     api.get('/api/glory/gamma-flips', { params: { symbol, minutes } }),
-  getHyperionDangerZoneLogs: (symbol?: string, limit?: number, activeOnly?: boolean) =>
+  getGloryDangerZoneLogs: (symbol?: string, limit?: number, activeOnly?: boolean) =>
     api.get('/api/glory/danger-zones/log', { params: { symbol, limit, active_only: activeOnly } }),
-  getHyperionContext: (symbol?: string) =>
+  getGloryContext: (symbol?: string) =>
     api.get('/api/glory/context', { params: { symbol } }),
-  getHyperionAccuracy: (symbol?: string) =>
+  getGloryAccuracy: (symbol?: string) =>
     api.get('/api/glory/accuracy', { params: { symbol } }),
 
   // PROVERBS - Feedback Loop Intelligence System

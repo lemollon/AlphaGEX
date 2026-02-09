@@ -3,7 +3,7 @@
 Setup script for GLORY ROC persistence database table.
 
 Run this in Render shell to create the glory_gamma_history table:
-    python scripts/setup_hyperion_db.py
+    python scripts/setup_glory_db.py
 
 The table will also be auto-created on first API call, but running this
 ensures it's ready before users access GLORY.
@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database_adapter import get_connection
 
 
-def setup_hyperion_tables():
+def setup_glory_tables():
     """Create GLORY gamma history table and indexes."""
     print("Setting up GLORY database tables...")
 
@@ -85,10 +85,10 @@ def setup_hyperion_tables():
     cursor.close()
     conn.close()
 
-    print("\nHYPERION database setup complete!")
+    print("\nGLORY database setup complete!")
     return True
 
 
 if __name__ == "__main__":
-    success = setup_hyperion_tables()
+    success = setup_glory_tables()
     sys.exit(0 if success else 1)

@@ -1433,9 +1433,9 @@ class FortressTrader(MathOptimizerMixin):
                 allocation = self.math_get_allocation()
                 # Convert allocation percentage to weight (20% baseline = 1.0)
                 # So 30% = 1.5x, 10% = 0.5x
-                ares_alloc = allocation.get('allocations', {}).get('FORTRESS', 0.2)
-                thompson_weight = ares_alloc / 0.2  # Normalize to 20% baseline
-                logger.info(f"FORTRESS Thompson weight: {thompson_weight:.2f} (allocation: {ares_alloc:.1%})")
+                fortress_alloc = allocation.get('allocations', {}).get('FORTRESS', 0.2)
+                thompson_weight = fortress_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"FORTRESS Thompson weight: {thompson_weight:.2f} (allocation: {fortress_alloc:.1%})")
             except Exception as e:
                 logger.debug(f"Thompson allocation skipped: {e}")
 

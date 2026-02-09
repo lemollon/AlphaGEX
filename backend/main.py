@@ -1804,7 +1804,7 @@ async def startup_event():
         # CORNERSTONE: SPX Wheel Strategy - 9:05 AM CT daily ($400K)
         # =====================================================================
         try:
-            def run_ares_atlas_scheduler():
+            def run_fortress_cornerstone_scheduler():
                 """
                 Run FORTRESS and CORNERSTONE trading bots via APScheduler.
                 This function runs continuously and manages both bots.
@@ -1846,7 +1846,7 @@ async def startup_event():
                         if is_healthy:
                             consecutive_unhealthy = 0  # Reset counter on healthy check
                             if status.get('market_open'):
-                                print(f"📊 FORTRESS/CORNERSTONE Status: Market OPEN | FORTRESS={scheduler.ares_execution_count}, SOLOMON={getattr(scheduler, 'solomon_execution_count', 0)}, ANCHOR={getattr(scheduler, 'anchor_execution_count', 0)}")
+                                print(f"📊 FORTRESS/CORNERSTONE Status: Market OPEN | FORTRESS={scheduler.fortress_execution_count}, SOLOMON={getattr(scheduler, 'solomon_execution_count', 0)}, ANCHOR={getattr(scheduler, 'anchor_execution_count', 0)}")
                         else:
                             consecutive_unhealthy += 1
                             print(f"⚠️ SCHEDULER UNHEALTHY ({consecutive_unhealthy}/{max_unhealthy_before_restart})")
@@ -1873,16 +1873,16 @@ async def startup_event():
                                 raise RuntimeError(f"Failed to restart scheduler after {consecutive_unhealthy} attempts: {e}")
 
             watchdog.register(
-                name="ARES_ATLAS_Scheduler",
-                target=run_ares_atlas_scheduler,
+                name="FORTRESS_CORNERSTONE_Scheduler",
+                target=run_fortress_cornerstone_scheduler,
                 kwargs={},
                 max_restarts=10
             )
-            print("✅ Registered: ARES_ATLAS_Scheduler")
+            print("✅ Registered: FORTRESS_CORNERSTONE_Scheduler")
             print("   • FORTRESS (Aggressive Iron Condor): 8:30 AM - 3:30 PM CT, every 5 min, $200K capital")
             print("   • CORNERSTONE (SPX Wheel): 9:05 AM CT daily, $400K capital")
         except Exception as e:
-            print(f"⚠️  Could not register ARES_ATLAS_Scheduler: {e}")
+            print(f"⚠️  Could not register FORTRESS_CORNERSTONE_Scheduler: {e}")
             import traceback
             traceback.print_exc()
 

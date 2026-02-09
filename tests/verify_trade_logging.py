@@ -45,7 +45,7 @@ print("=" * 80)
 print("TEST 1: SINGLE-LEG TRADE (LAZARUS 0DTE)")
 print("=" * 80)
 
-phoenix_leg = TradeLeg(
+lazarus_leg = TradeLeg(
     leg_id=1,
     action="BUY",
     option_type="call",
@@ -81,7 +81,7 @@ phoenix_leg = TradeLeg(
     order_status="filled"
 )
 
-phoenix_decision = TradeDecision(
+lazarus_decision = TradeDecision(
     decision_id="DEC-20251203101530-0001",
     timestamp="2025-12-03T10:15:30-05:00",
     decision_type=DecisionType.ENTRY_SIGNAL,
@@ -92,7 +92,7 @@ phoenix_decision = TradeDecision(
     action="BUY",
     symbol="SPY",
     strategy="GEX_SQUEEZE_0DTE",
-    legs=[phoenix_leg],  # THE LEG ARRAY
+    legs=[lazarus_leg],  # THE LEG ARRAY
     underlying_snapshot=PriceSnapshot(symbol="SPY", price=591.25, timestamp="2025-12-03T10:15:30-05:00"),
     underlying_price_at_entry=591.25,
     market_context=MarketContext(
@@ -109,19 +109,19 @@ phoenix_decision = TradeDecision(
 )
 
 # Convert to dict and display
-phoenix_dict = phoenix_decision.to_dict()
+lazarus_dict = lazarus_decision.to_dict()
 
 print("\n--- CAPTURED DATA ---\n")
-print(f"Decision ID: {phoenix_dict['decision_id']}")
-print(f"Bot: {phoenix_dict['bot_name']}")
-print(f"Action: {phoenix_dict['action']}")
-print(f"Symbol: {phoenix_dict['symbol']}")
-print(f"Strategy: {phoenix_dict['strategy']}")
-print(f"Underlying at Entry: ${phoenix_dict['underlying_price_at_entry']:.2f}")
-print(f"Order ID: {phoenix_dict['order_id']}")
+print(f"Decision ID: {lazarus_dict['decision_id']}")
+print(f"Bot: {lazarus_dict['bot_name']}")
+print(f"Action: {lazarus_dict['action']}")
+print(f"Symbol: {lazarus_dict['symbol']}")
+print(f"Strategy: {lazarus_dict['strategy']}")
+print(f"Underlying at Entry: ${lazarus_dict['underlying_price_at_entry']:.2f}")
+print(f"Order ID: {lazarus_dict['order_id']}")
 
 print("\n--- LEG DATA (REQUIRED FIELDS) ---\n")
-leg = phoenix_dict['legs'][0]
+leg = lazarus_dict['legs'][0]
 print(f"  Leg {leg['leg_id']}:")
 print(f"    Action: {leg['action']}")
 print(f"    Option Type: {leg['option_type']}")
@@ -141,9 +141,9 @@ print(f"    Fill Price: ${leg['fill_price']:.2f}")
 print(f"    Fill Time: {leg['fill_timestamp']}")
 
 print("\n--- WHAT/WHY/HOW ---\n")
-print(f"WHAT: {phoenix_dict['what']}")
-print(f"WHY: {phoenix_dict['why']}")
-print(f"HOW: {phoenix_dict['how']}")
+print(f"WHAT: {lazarus_dict['what']}")
+print(f"WHY: {lazarus_dict['why']}")
+print(f"HOW: {lazarus_dict['how']}")
 
 print("\n" + "=" * 80)
 print("TEST 1 RESULT: ALL SINGLE-LEG DATA CAPTURED")
@@ -333,8 +333,8 @@ csv_header = "timestamp,bot,decision_type,action,symbol,strategy,underlying_pric
 print(csv_header)
 
 print("\nSample Row (from LAZARUS trade):\n")
-leg = phoenix_dict['legs'][0]
-sample_row = f"{phoenix_dict['timestamp']},{phoenix_dict['bot_name']},{phoenix_dict['decision_type']},{leg['action']},{phoenix_dict['symbol']},{phoenix_dict['strategy']},{phoenix_dict['underlying_price_at_entry']},{leg['leg_id']},{leg['option_type']},{leg['strike']},{leg['expiration']},{leg['entry_price']},{leg['exit_price']},{leg['contracts']},{leg['premium_per_contract']},{leg['delta']},{leg['gamma']},{leg['theta']},{leg['iv']},18.5,{leg['order_id']},{leg['realized_pnl']},\"GEX squeeze\""
+leg = lazarus_dict['legs'][0]
+sample_row = f"{lazarus_dict['timestamp']},{lazarus_dict['bot_name']},{lazarus_dict['decision_type']},{leg['action']},{lazarus_dict['symbol']},{lazarus_dict['strategy']},{lazarus_dict['underlying_price_at_entry']},{leg['leg_id']},{leg['option_type']},{leg['strike']},{leg['expiration']},{leg['entry_price']},{leg['exit_price']},{leg['contracts']},{leg['premium_per_contract']},{leg['delta']},{leg['gamma']},{leg['theta']},{leg['iv']},18.5,{leg['order_id']},{leg['realized_pnl']},\"GEX squeeze\""
 print(sample_row)
 
 print("\n" + "=" * 80)

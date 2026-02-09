@@ -169,7 +169,7 @@ class MLAdvisorDecision:
 
 
 @dataclass
-class OracleAdaptation:
+class ProphetAdaptation:
     """Prophet bot-specific adaptation"""
     bot_name: str
     suggested_put_strike: Optional[float] = None
@@ -205,7 +205,7 @@ class OmegaDecision:
     proverbs_verdict: ProverbsVerdict
     ensemble_context: EnsembleContext
     ml_decision: MLAdvisorDecision
-    oracle_adaptation: OracleAdaptation
+    prophet_adaptation: ProphetAdaptation
 
     # Gap implementations
     capital_allocation: Dict[str, float]  # From Thompson Sampling
@@ -226,7 +226,7 @@ class OmegaDecision:
             'proverbs_verdict': self.proverbs_verdict.to_dict(),
             'ensemble_context': self.ensemble_context.to_dict(),
             'ml_decision': self.ml_decision.to_dict(),
-            'oracle_adaptation': self.oracle_adaptation.to_dict(),
+            'prophet_adaptation': self.prophet_adaptation.to_dict(),
             'capital_allocation': self.capital_allocation,
             'equity_scaled_risk': self.equity_scaled_risk,
             'correlation_check': self.correlation_check,
@@ -839,7 +839,7 @@ class OmegaOrchestrator:
         self._ml_advisor = None
 
         # Prophet
-        self._oracle = None
+        self._prophet = None
 
         # Decision history
         self.decision_history: List[OmegaDecision] = []
@@ -1087,20 +1087,20 @@ class OmegaOrchestrator:
     # LAYER 4: PROPHET - BOT-SPECIFIC ADAPTATION
     # =========================================================================
 
-    def _get_oracle_adaptation(
+    def _get_prophet_adaptation(
         self,
         bot_name: str,
         ml_decision: MLAdvisorDecision,
         ensemble_context: EnsembleContext,
         gex_data: Dict
-    ) -> OracleAdaptation:
+    ) -> ProphetAdaptation:
         """
         Get Prophet bot-specific adaptation.
 
         NO veto power over ML Advisor decision.
         Only adapts the decision for the specific bot.
         """
-        adaptation = OracleAdaptation(bot_name=bot_name)
+        adaptation = ProphetAdaptation(bot_name=bot_name)
 
         # Use GEX walls for strike selection if available
         if gex_data:
@@ -1183,7 +1183,7 @@ class OmegaOrchestrator:
                     suggested_risk_pct=0, suggested_sd_multiplier=0,
                     top_factors=[], model_version="blocked"
                 ),
-                oracle_adaptation=OracleAdaptation(bot_name=bot_name),
+                prophet_adaptation=ProphetAdaptation(bot_name=bot_name),
                 capital_allocation={},
                 equity_scaled_risk=0,
                 correlation_check={'allowed': False},
@@ -1223,13 +1223,13 @@ class OmegaOrchestrator:
         # LAYER 4: PROPHET ADAPTATION (BOT-SPECIFIC)
         # =====================================================================
         decision_path.append("LAYER 4: Getting Prophet bot-specific adaptation...")
-        oracle_adaptation = self._get_oracle_adaptation(
+        prophet_adaptation = self._get_prophet_adaptation(
             bot_name=bot_name,
             ml_decision=ml_decision,
             ensemble_context=ensemble_context,
             gex_data=gex_data
         )
-        decision_path.append(f"Prophet: Risk adjustment {oracle_adaptation.risk_adjustment:.0%}")
+        decision_path.append(f"Prophet: Risk adjustment {prophet_adaptation.risk_adjustment:.0%}")
 
         # =====================================================================
         # GAP IMPLEMENTATIONS
@@ -1283,7 +1283,7 @@ class OmegaOrchestrator:
         decision_path.append(f"Gap 9 (Correlation): {'ALLOWED' if correlation_check['allowed'] else 'ADJUSTED'}")
 
         # Gap 10: Equity Compound Scaling
-        base_risk = ml_decision.suggested_risk_pct * oracle_adaptation.risk_adjustment
+        base_risk = ml_decision.suggested_risk_pct * prophet_adaptation.risk_adjustment
         equity_scaling = self.equity_scaler.get_position_multiplier(base_risk)
 
         decision_path.append(f"Gap 10 (Equity): Multiplier = {equity_scaling['multiplier']:.2f}")
@@ -1330,7 +1330,7 @@ class OmegaOrchestrator:
             proverbs_verdict=proverbs_verdict,
             ensemble_context=ensemble_context,
             ml_decision=ml_decision,
-            oracle_adaptation=oracle_adaptation,
+            prophet_adaptation=prophet_adaptation,
             capital_allocation=capital_allocation,
             equity_scaled_risk=equity_scaling['adjusted_risk_pct'],
             correlation_check=correlation_check,

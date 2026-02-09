@@ -318,7 +318,7 @@ def _get_heartbeat(bot_name: str) -> dict:
             conn.close()
 
 
-def _is_ares_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
+def _is_fortress_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
     """
     Determine if FORTRESS is actually active based on heartbeat status and recency.
 
@@ -1230,7 +1230,7 @@ async def get_fortress_status():
 
         # Determine if FORTRESS is actually active based on heartbeat
         scan_interval = 5
-        is_active, active_reason = _is_ares_actually_active(heartbeat, scan_interval)
+        is_active, active_reason = _is_fortress_actually_active(heartbeat, scan_interval)
 
         # current_equity = starting_capital + realized + unrealized
         # Unrealized P&L is now always calculated using MTM when open positions exist
@@ -1297,7 +1297,7 @@ async def get_fortress_status():
     try:
         status = fortress.get_status()
         scan_interval = 5
-        is_active, active_reason = _is_ares_actually_active(heartbeat, scan_interval)
+        is_active, active_reason = _is_fortress_actually_active(heartbeat, scan_interval)
         status['is_active'] = is_active
         status['active_reason'] = active_reason
         status['scan_interval_minutes'] = scan_interval
@@ -3046,7 +3046,7 @@ async def get_fortress_market_data():
 
 
 @router.post("/run-cycle")
-async def run_ares_cycle(
+async def run_fortress_cycle(
     request: Request,
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
@@ -3642,7 +3642,7 @@ async def process_expired_positions(
 
 
 @router.post("/skip-today")
-async def skip_ares_today(
+async def skip_fortress_today(
     request: Request,
     auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
 ):
@@ -4113,7 +4113,7 @@ async def reset_fortress_data(confirm: bool = False):
         # Reset FORTRESS config to defaults
         deleted_config = 0
         try:
-            cursor.execute("DELETE FROM autonomous_config WHERE key LIKE 'ares_%'")
+            cursor.execute("DELETE FROM autonomous_config WHERE key LIKE 'fortress_%'")
             deleted_config = cursor.rowcount
         except Exception:
             pass
@@ -4200,7 +4200,7 @@ async def get_fortress_diagnostics():
             "tradier_sandbox": tradier_balance.get('sandbox', False),
             "tradier_account_id": tradier_balance.get('account_id'),
             "tradier_balance": tradier_balance.get('total_equity', 0) if tradier_connected else None,
-            "ares_running": fortress is not None,
+            "fortress_running": fortress is not None,
             "execution_status": execution_status,
             "issues": issues if issues else None,
             "status": "READY" if can_execute and not issues else "NOT_READY",
@@ -4247,10 +4247,10 @@ async def get_fortress_intraday_diagnostics():
                 WHERE table_name = 'fortress_equity_snapshots'
             )
         """)
-        ares_table_exists = cursor.fetchone()[0]
-        result["fortress"]["table_exists"] = ares_table_exists
+        fortress_table_exists = cursor.fetchone()[0]
+        result["fortress"]["table_exists"] = fortress_table_exists
 
-        if not ares_table_exists:
+        if not fortress_table_exists:
             result["issues"].append("fortress_equity_snapshots table does NOT exist")
             result["recommendations"].append("Table will be created when scheduler runs during market hours")
         else:
@@ -4306,20 +4306,20 @@ async def get_fortress_intraday_diagnostics():
                 WHERE table_name = 'fortress_positions'
             )
         """)
-        ares_pos_exists = cursor.fetchone()[0]
-        result["fortress"]["positions_table_exists"] = ares_pos_exists
+        fortress_pos_exists = cursor.fetchone()[0]
+        result["fortress"]["positions_table_exists"] = fortress_pos_exists
 
-        if ares_pos_exists:
+        if fortress_pos_exists:
             # Check required columns exist
             cursor.execute("""
                 SELECT column_name FROM information_schema.columns
                 WHERE table_name = 'fortress_positions'
             """)
-            ares_cols = {r[0] for r in cursor.fetchall()}
+            fortress_cols = {r[0] for r in cursor.fetchall()}
             required_cols = {'position_id', 'total_credit', 'contracts', 'spread_width',
                            'put_short_strike', 'put_long_strike', 'call_short_strike',
                            'call_long_strike', 'expiration', 'status', 'realized_pnl'}
-            missing_cols = required_cols - ares_cols
+            missing_cols = required_cols - fortress_cols
             result["fortress"]["missing_columns"] = list(missing_cols) if missing_cols else None
 
             if missing_cols:

@@ -58,7 +58,7 @@ except ImportError as e:
 _schema_initialized = False
 
 
-def _calculate_icarus_unrealized_pnl(positions: list, spy_price: float = None) -> dict:
+def _calculate_gideon_unrealized_pnl(positions: list, spy_price: float = None) -> dict:
     """
     Calculate unrealized P&L for GIDEON open positions using real option quotes.
 
@@ -160,7 +160,7 @@ def _calculate_icarus_unrealized_pnl(positions: list, spy_price: float = None) -
     }
 
 
-def _ensure_icarus_schema():
+def _ensure_gideon_schema():
     """Ensure GIDEON database tables and columns exist before queries"""
     global _schema_initialized
     if _schema_initialized:
@@ -422,7 +422,7 @@ async def get_gideon_status():
     Returns mode, capital, P&L, positions, configuration, and heartbeat.
     """
     # Ensure database schema exists before querying
-    _ensure_icarus_schema()
+    _ensure_gideon_schema()
 
     gideon = get_gideon_instance()
     heartbeat = _get_heartbeat('GIDEON')
@@ -500,7 +500,7 @@ async def get_gideon_status():
                 ''')
                 open_positions = cursor.fetchall()
                 if open_positions:
-                    mtm_result = _calculate_icarus_unrealized_pnl(open_positions, spy_price)
+                    mtm_result = _calculate_gideon_unrealized_pnl(open_positions, spy_price)
                     unrealized_pnl = mtm_result['total_unrealized_pnl']
                     logger.debug(f"GIDEON status: MTM unrealized=${unrealized_pnl:.2f} via {mtm_result['primary_method']}")
 
@@ -667,7 +667,7 @@ async def get_gideon_positions(
 ):
     """Get GIDEON positions from database."""
     # Ensure database schema exists before querying
-    _ensure_icarus_schema()
+    _ensure_gideon_schema()
 
     status_filter = _resolve_query_param(status_filter, None)
     limit = _resolve_query_param(limit, 500)
@@ -801,7 +801,7 @@ async def get_gideon_signals(
     limit: int = Query(50, description="Max signals to return")
 ):
     """Get GIDEON signals from database."""
-    _ensure_icarus_schema()
+    _ensure_gideon_schema()
 
     try:
         conn = get_connection()
@@ -857,7 +857,7 @@ async def get_gideon_logs(
     limit: int = Query(100, description="Max logs to return")
 ):
     """Get GIDEON logs."""
-    _ensure_icarus_schema()
+    _ensure_gideon_schema()
 
     level = _resolve_query_param(level, None)
     limit = _resolve_query_param(limit, 100)
@@ -909,7 +909,7 @@ async def get_gideon_performance(
     days: int = Query(30, description="Number of days to include")
 ):
     """Get GIDEON performance metrics over time."""
-    _ensure_icarus_schema()
+    _ensure_gideon_schema()
 
     try:
         conn = get_connection()
@@ -1013,7 +1013,7 @@ async def get_gideon_config():
 
 
 @router.post("/run")
-async def run_icarus_cycle(
+async def run_gideon_cycle(
     request: Request,
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
@@ -1035,7 +1035,7 @@ async def run_icarus_cycle(
 
 
 @router.post("/skip-today")
-async def skip_icarus_today(
+async def skip_gideon_today(
     request: Request,
     auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
 ):
@@ -1268,13 +1268,13 @@ async def reset_gideon_data(
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
     """Reset all GIDEON data (positions, signals, logs)."""
-    _ensure_icarus_schema()
+    _ensure_gideon_schema()
 
     try:
         conn = get_connection()
         c = conn.cursor()
 
-        # Delete all GIDEON data (tables are ensured to exist by _ensure_icarus_schema)
+        # Delete all GIDEON data (tables are ensured to exist by _ensure_gideon_schema)
         c.execute("DELETE FROM gideon_positions")
         c.execute("DELETE FROM gideon_signals")
         c.execute("DELETE FROM gideon_logs")
@@ -1733,7 +1733,7 @@ async def get_gideon_intraday_equity(date: str = None):
 
             # Use MTM helper function for accurate unrealized P&L
             if open_rows:
-                pnl_result = _calculate_icarus_unrealized_pnl(open_rows, spy_price)
+                pnl_result = _calculate_gideon_unrealized_pnl(open_rows, spy_price)
                 unrealized_pnl = pnl_result['total_unrealized_pnl']
                 open_positions = pnl_result['position_details']
                 logger.debug(f"GIDEON intraday: unrealized=${unrealized_pnl:.2f} "
@@ -1942,7 +1942,7 @@ async def save_gideon_equity_snapshot():
 
         # Use MTM helper function for accurate unrealized P&L
         if open_positions:
-            pnl_result = _calculate_icarus_unrealized_pnl(open_positions, spy_price)
+            pnl_result = _calculate_gideon_unrealized_pnl(open_positions, spy_price)
             unrealized_pnl = pnl_result['total_unrealized_pnl']
             logger.debug(f"GIDEON snapshot: unrealized=${unrealized_pnl:.2f} "
                        f"(MTM: {pnl_result['mtm_count']}, Est: {pnl_result['estimation_count']})")

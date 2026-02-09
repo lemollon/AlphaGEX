@@ -54,7 +54,7 @@ import {
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import StarsStatusBadge from '@/components/StarsStatusBadge'
-import { ArgusEnhancedPanel } from '@/components/WatchtowerEnhancements'
+import { WatchtowerEnhancedPanel } from '@/components/WatchtowerEnhancements'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -682,7 +682,7 @@ const safeArray = <T,>(arr: T[] | null | undefined): T[] => arr || []
 const safeNum = (value: number | null | undefined, fallback: number = 0): number =>
   value ?? fallback
 
-export default function ArgusPage() {
+export default function WatchtowerPage() {
   const sidebarPadding = useSidebarPadding()
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
   const [lastLiveData, setLastLiveData] = useState<GammaData | null>(null)  // Preserve last live data during market hours
@@ -837,7 +837,7 @@ export default function ArgusPage() {
         setLoading(true)
       }
       const expiration = day && day !== 'today' ? day.toLowerCase() : undefined
-      const response = await apiClient.getArgusGamma(selectedSymbol, expiration)
+      const response = await apiClient.getWatchtowerGamma(selectedSymbol, expiration)
 
       // Handle data_unavailable response (API error, market closed, etc.)
       // Backend returns { success: false, data_unavailable: true, message: ... }
@@ -976,7 +976,7 @@ export default function ArgusPage() {
   const fetchTomorrowGammaData = useCallback(async () => {
     try {
       const tomorrowDate = getTomorrowExpiration()
-      const response = await apiClient.getArgusGamma(selectedSymbol, tomorrowDate)
+      const response = await apiClient.getWatchtowerGamma(selectedSymbol, tomorrowDate)
 
       // Handle data_unavailable at root level (new backend response format)
       if (response.data?.data_unavailable || response.data?.success === false) {
@@ -1005,7 +1005,7 @@ export default function ArgusPage() {
   const fetchGammaHistory = useCallback(async () => {
     try {
       // Fetch full trading day history (420 minutes = 7 hours)
-      const response = await apiClient.getArgusHistory(undefined, 420)
+      const response = await apiClient.getWatchtowerHistory(undefined, 420)
 
       if (response.data?.success && response.data?.data?.history) {
         setGammaHistory(response.data.data as GammaHistoryData)
@@ -1125,7 +1125,7 @@ export default function ArgusPage() {
 
   const fetchDangerZoneLogs = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusDangerZoneLogs()
+      const response = await apiClient.getWatchtowerDangerZoneLogs()
       if (response.data?.success && Array.isArray(response.data?.data?.logs)) {
         setDangerZoneLogs(response.data.data.logs)
       }
@@ -1136,7 +1136,7 @@ export default function ArgusPage() {
 
   const fetchExpirations = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusExpirations()
+      const response = await apiClient.getWatchtowerExpirations()
       if (response.data?.success && Array.isArray(response.data?.data?.expirations)) {
         setExpirations(response.data.data.expirations)
         const today = response.data.data.expirations.find((e: Expiration) => e.is_today)
@@ -1150,7 +1150,7 @@ export default function ArgusPage() {
 
   const fetchAlerts = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusAlerts()
+      const response = await apiClient.getWatchtowerAlerts()
       if (response.data?.success && Array.isArray(response.data?.data?.alerts)) {
         setAlerts(response.data.data.alerts)
       }
@@ -1163,7 +1163,7 @@ export default function ArgusPage() {
   const fetchCommentary = useCallback(async () => {
     try {
       console.log('[WATCHTOWER] Fetching commentary...')
-      const response = await apiClient.getArgusCommentary()
+      const response = await apiClient.getWatchtowerCommentary()
       console.log('[WATCHTOWER] Commentary response:', response)
       if (response.data?.success && Array.isArray(response.data?.data?.commentary)) {
         setCommentary(response.data.data.commentary)
@@ -1178,7 +1178,7 @@ export default function ArgusPage() {
 
   const fetchContext = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusContext()
+      const response = await apiClient.getWatchtowerContext()
       if (response.data?.success && response.data?.data) {
         setMarketContext(response.data.data)
       }
@@ -1190,7 +1190,7 @@ export default function ArgusPage() {
 
   const fetchStrikeTrends = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusStrikeTrends()
+      const response = await apiClient.getWatchtowerStrikeTrends()
       if (response.data?.success && response.data?.data?.trends) {
         setStrikeTrends(response.data.data.trends)
       }
@@ -1201,7 +1201,7 @@ export default function ArgusPage() {
 
   const fetchGammaFlips30m = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusGammaFlips()
+      const response = await apiClient.getWatchtowerGammaFlips()
       if (response.data?.success && Array.isArray(response.data?.data?.flips)) {
         setGammaFlips30m(response.data.data.flips)
       }
@@ -1213,7 +1213,7 @@ export default function ArgusPage() {
   // Fetch accuracy metrics
   const fetchAccuracyMetrics = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusAccuracy()
+      const response = await apiClient.getWatchtowerAccuracy()
       if (response.data?.success && response.data?.data) {
         setAccuracyMetrics(response.data.data)
       }
@@ -1225,7 +1225,7 @@ export default function ArgusPage() {
   // Fetch bot positions - API returns 'positions' array
   const fetchBotPositions = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusBots()
+      const response = await apiClient.getWatchtowerBots()
       if (response.data?.success && Array.isArray(response.data?.data?.positions)) {
         setBotPositions(response.data.data.positions)
       } else if (response.data?.success) {
@@ -1241,7 +1241,7 @@ export default function ArgusPage() {
   // Fetch pattern matches - API may return empty patterns with message
   const fetchPatternMatches = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusPatterns()
+      const response = await apiClient.getWatchtowerPatterns()
       if (response.data?.success && response.data?.data) {
         // Patterns may be empty with a message - that's expected
         const patterns = response.data.data.patterns
@@ -1257,7 +1257,7 @@ export default function ArgusPage() {
   const fetchActionableTrade = useCallback(async () => {
     try {
       // Pass autoLogSignals to backend - backend handles signal logging
-      const response = await apiClient.getArgusTradeAction(selectedSymbol, accountSize, riskPerTrade, 2, autoLogSignals)
+      const response = await apiClient.getWatchtowerTradeAction(selectedSymbol, accountSize, riskPerTrade, 2, autoLogSignals)
       if (response.data?.success && response.data?.data) {
         const newTrade = response.data.data
         // Backend returns signal_id and auto_logged at response level, not inside data
@@ -1273,8 +1273,8 @@ export default function ArgusPage() {
           setTimeout(async () => {
             try {
               const [signalsRes, perfRes] = await Promise.all([
-                apiClient.getArgusRecentSignals(selectedSymbol, 20),
-                apiClient.getArgusSignalPerformance(selectedSymbol, 30)
+                apiClient.getWatchtowerRecentSignals(selectedSymbol, 20),
+                apiClient.getWatchtowerSignalPerformance(selectedSymbol, 30)
               ])
               if (signalsRes.data?.success && signalsRes.data?.data) {
                 setRecentSignals(signalsRes.data.data)
@@ -1296,7 +1296,7 @@ export default function ArgusPage() {
   // Fetch signal performance stats
   const fetchSignalPerformance = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusSignalPerformance(selectedSymbol, 30)
+      const response = await apiClient.getWatchtowerSignalPerformance(selectedSymbol, 30)
       if (response.data?.success && response.data?.data) {
         setSignalPerformance(response.data.data)
       }
@@ -1308,7 +1308,7 @@ export default function ArgusPage() {
   // Fetch recent signals
   const fetchRecentSignals = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusRecentSignals(selectedSymbol, 10)
+      const response = await apiClient.getWatchtowerRecentSignals(selectedSymbol, 10)
       if (response.data?.success && response.data?.data?.signals) {
         setRecentSignals(response.data.data.signals)
       }
@@ -1322,7 +1322,7 @@ export default function ArgusPage() {
     if (!actionableTrade || actionableTrade.action === 'WAIT') return
 
     try {
-      const response = await apiClient.logArgusSignal(selectedSymbol, actionableTrade)
+      const response = await apiClient.logWatchtowerSignal(selectedSymbol, actionableTrade)
       if (response.data?.success) {
         // Refresh signals after logging
         fetchRecentSignals()
@@ -1472,7 +1472,7 @@ export default function ArgusPage() {
   // Historical Replay Functions
   const fetchReplayDates = useCallback(async () => {
     try {
-      const response = await apiClient.getArgusReplayDates()
+      const response = await apiClient.getWatchtowerReplayDates()
       if (response.data?.success && Array.isArray(response.data?.data?.dates)) {
         setReplayDates(response.data.data.dates)
         if (response.data.data.dates.length > 0 && !selectedReplayDate) {
@@ -1485,7 +1485,7 @@ export default function ArgusPage() {
   const fetchReplayData = useCallback(async (date: string, time?: string) => {
     try {
       setLoading(true)
-      const response = await apiClient.getArgusReplay(date, time)
+      const response = await apiClient.getWatchtowerReplay(date, time)
       if (response.data?.success && response.data?.data) {
         setGammaData(response.data.data)
         // Use backend's fetched_at timestamp (when data was recorded), not local time
@@ -1852,7 +1852,7 @@ export default function ArgusPage() {
     // Create download
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const link = document.createElement('a')
-    const filename = `ARGUS_${gammaData.symbol}_${new Date().toISOString().split('T')[0]}.csv`
+    const filename = `WATCHTOWER_${gammaData.symbol}_${new Date().toISOString().split('T')[0]}.csv`
     link.href = URL.createObjectURL(blob)
     link.download = filename
     link.click()
@@ -3147,7 +3147,7 @@ export default function ArgusPage() {
 
         {/* Enhanced Analysis Panel - NEW */}
         <div className="mb-6">
-          <ArgusEnhancedPanel symbol="SPY" />
+          <WatchtowerEnhancedPanel symbol="SPY" />
         </div>
 
         {/* Pattern Similarity Section - Enhanced with price details */}
@@ -4502,7 +4502,7 @@ export default function ArgusPage() {
                       onClick={async () => {
                         try {
                           console.log('[WATCHTOWER] Manually triggering commentary generation...')
-                          await apiClient.generateArgusCommentary()
+                          await apiClient.generateWatchtowerCommentary()
                           await fetchCommentary()
                         } catch (err) {
                           console.error('[WATCHTOWER] Failed to generate commentary:', err)

@@ -630,7 +630,7 @@ class AutonomousTraderScheduler:
         self.last_anchor_check = None
         self.last_gideon_check = None
         self.last_samson_check = None
-        self.last_argus_check = None
+        self.last_watchtower_check = None
         self.last_valor_check = None
         self.last_error = None
         self.execution_count = 0
@@ -640,7 +640,7 @@ class AutonomousTraderScheduler:
         self.anchor_execution_count = 0
         self.gideon_execution_count = 0
         self.samson_execution_count = 0
-        self.argus_execution_count = 0
+        self.watchtower_execution_count = 0
         self.valor_execution_count = 0
 
         # Load saved state from database
@@ -870,8 +870,8 @@ class AutonomousTraderScheduler:
 
         try:
             # Step 0: Consult Prophet for trade signal (if available)
-            oracle_approved = True  # Default to True if Prophet unavailable
-            oracle_prediction = None
+            prophet_approved = True  # Default to True if Prophet unavailable
+            prophet_prediction = None
             if self.lazarus_prophet and PROPHET_AVAILABLE:
                 try:
                     # Get GEX data for Prophet context
@@ -899,14 +899,14 @@ class AutonomousTraderScheduler:
                         )
 
                         # Get LAZARUS advice from Prophet
-                        oracle_prediction = self.lazarus_prophet.get_lazarus_advice(
+                        prophet_prediction = self.lazarus_prophet.get_lazarus_advice(
                             context=context,
                             use_claude_validation=True  # Enable Claude for transparency logging
                         )
 
-                        if oracle_prediction:
-                            logger.info(f"LAZARUS Prophet: {oracle_prediction.advice.value} "
-                                       f"(win_prob={oracle_prediction.win_probability:.1%})")
+                        if prophet_prediction:
+                            logger.info(f"LAZARUS Prophet: {prophet_prediction.advice.value} "
+                                       f"(win_prob={prophet_prediction.win_probability:.1%})")
 
                             # =========================================================
                             # Issue #2 fix: Store LAZARUS prediction in Prophet feedback loop
@@ -915,7 +915,7 @@ class AutonomousTraderScheduler:
                             try:
                                 trade_date = now.strftime('%Y-%m-%d')
                                 self.lazarus_prophet.store_prediction(
-                                    prediction=oracle_prediction,
+                                    prediction=prophet_prediction,
                                     context=context,
                                     trade_date=trade_date
                                 )
@@ -924,25 +924,25 @@ class AutonomousTraderScheduler:
                                 logger.warning(f"LAZARUS: Failed to store prediction: {store_e}")
 
                             # Prophet must approve with at least TRADE_REDUCED advice
-                            if oracle_prediction.advice in [TradingAdvice.SKIP_TODAY, TradingAdvice.STAY_OUT]:
-                                oracle_approved = False
-                                logger.info(f"LAZARUS Prophet says SKIP: {oracle_prediction.reasoning}")
-                                self._log_no_trade_decision('LAZARUS', f'Prophet: {oracle_prediction.reasoning}', {
+                            if prophet_prediction.advice in [TradingAdvice.SKIP_TODAY, TradingAdvice.STAY_OUT]:
+                                prophet_approved = False
+                                logger.info(f"LAZARUS Prophet says SKIP: {prophet_prediction.reasoning}")
+                                self._log_no_trade_decision('LAZARUS', f'Prophet: {prophet_prediction.reasoning}', {
                                     'symbol': 'SPY',
-                                    'oracle_advice': oracle_prediction.advice.value,
-                                    'win_probability': oracle_prediction.win_probability,
+                                    'oracle_advice': prophet_prediction.advice.value,
+                                    'win_probability': prophet_prediction.win_probability,
                                     'market': {'spot': spot_price, 'vix': vix, 'time': now.isoformat()}
                                 })
                     else:
                         logger.warning("LAZARUS: No spot price for Prophet - proceeding without Prophet validation")
-                except Exception as oracle_e:
-                    logger.warning(f"LAZARUS Prophet check failed: {oracle_e} - proceeding without Prophet")
+                except Exception as prophet_e:
+                    logger.warning(f"LAZARUS Prophet check failed: {prophet_e} - proceeding without Prophet")
 
             # Skip trading if Prophet says no
-            if not oracle_approved:
-                self._save_heartbeat('LAZARUS', 'ORACLE_SKIP', {
-                    'oracle_advice': oracle_prediction.advice.value if oracle_prediction else 'UNKNOWN',
-                    'win_probability': oracle_prediction.win_probability if oracle_prediction else 0
+            if not prophet_approved:
+                self._save_heartbeat('LAZARUS', 'PROPHET_SKIP', {
+                    'oracle_advice': prophet_prediction.advice.value if prophet_prediction else 'UNKNOWN',
+                    'win_probability': prophet_prediction.win_probability if prophet_prediction else 0
                 })
                 logger.info("LAZARUS skipping trade due to Prophet advice")
                 logger.info(f"=" * 80)
@@ -2550,7 +2550,7 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in JUBILEE IC MTM Update: {str(e)}")
             logger.error(traceback.format_exc())
 
-    def scheduled_argus_logic(self):
+    def scheduled_watchtower_logic(self):
         """
         WATCHTOWER (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
 
@@ -2574,7 +2574,7 @@ class AutonomousTraderScheduler:
         logger.info("Market is OPEN. Generating WATCHTOWER gamma commentary...")
 
         try:
-            self.last_argus_check = now
+            self.last_watchtower_check = now
 
             # Call the WATCHTOWER commentary generation endpoint via HTTP
             # This ensures we use the same logic as manual generation
@@ -2615,8 +2615,8 @@ class AutonomousTraderScheduler:
             else:
                 logger.warning("WATCHTOWER: Commentary generation returned no result")
 
-            self.argus_execution_count += 1
-            logger.info(f"WATCHTOWER commentary #{self.argus_execution_count} completed (next in 5 min)")
+            self.watchtower_execution_count += 1
+            logger.info(f"WATCHTOWER commentary #{self.watchtower_execution_count} completed (next in 5 min)")
 
             # Also check and update WATCHTOWER signal outcomes (intraday checks for profit/stop)
             try:
@@ -2647,7 +2647,7 @@ class AutonomousTraderScheduler:
             logger.info("WATCHTOWER will retry next interval")
             logger.info(f"=" * 80)
 
-    def scheduled_argus_eod_logic(self):
+    def scheduled_watchtower_eod_logic(self):
         """
         WATCHTOWER End-of-Day processing - runs daily at 3:01 PM CT
 
@@ -3324,9 +3324,9 @@ class AutonomousTraderScheduler:
                 WHERE model_name = 'PROPHET' AND status = 'COMPLETED'
             """)
             row = cursor.fetchone()
-            oracle_last = row[0] if row and row[0] else None
-            if not oracle_last or (now.replace(tzinfo=None) - oracle_last).days > 2:
-                days_since = (now.replace(tzinfo=None) - oracle_last).days if oracle_last else 999
+            prophet_last = row[0] if row and row[0] else None
+            if not prophet_last or (now.replace(tzinfo=None) - prophet_last).days > 2:
+                days_since = (now.replace(tzinfo=None) - prophet_last).days if prophet_last else 999
                 logger.warning(f"PROPHET: Last trained {days_since} days ago - OVERDUE")
                 recovery_needed.append(('PROPHET', days_since))
 
@@ -4119,7 +4119,7 @@ class AutonomousTraderScheduler:
         #         day_of_week='mon-fri',
         #         timezone='America/New_York'
         #     ),
-        #     id='phoenix_trading',
+        #     id='lazarus_trading',
         #     name='LAZARUS - 0DTE Options Trading',
         #     replace_existing=True
         # )
@@ -4538,7 +4538,7 @@ class AutonomousTraderScheduler:
         # Market hours are checked inside the job.
         # =================================================================
         self.scheduler.add_job(
-            self.scheduled_argus_logic,
+            self.scheduled_watchtower_logic,
             trigger=IntervalTrigger(
                 minutes=5,
                 timezone='America/Chicago'
@@ -4555,14 +4555,14 @@ class AutonomousTraderScheduler:
         # accuracy metrics for the pin accuracy tracking feature.
         # =================================================================
         self.scheduler.add_job(
-            self.scheduled_argus_eod_logic,
+            self.scheduled_watchtower_eod_logic,
             trigger=CronTrigger(
                 hour=15,       # 3:00 PM CT - after market close
                 minute=1,      # 3:01 PM CT - immediate post-close
                 day_of_week='mon-fri',
                 timezone='America/Chicago'
             ),
-            id='argus_eod',
+            id='watchtower_eod',
             name='WATCHTOWER - EOD Pin Accuracy Processing',
             replace_existing=True
         )

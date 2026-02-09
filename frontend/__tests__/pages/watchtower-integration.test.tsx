@@ -51,9 +51,9 @@ jest.mock('../../src/components/StarsStatusBadge', () => ({
   default: () => <span data-testid="stars-badge">Stars</span>,
 }))
 
-// Mock the ArgusEnhancedPanel component
+// Mock the WatchtowerEnhancedPanel component
 jest.mock('../../src/components/WatchtowerEnhancements', () => ({
-  ArgusEnhancedPanel: () => <div data-testid="enhanced-panel">Enhanced Panel</div>,
+  WatchtowerEnhancedPanel: () => <div data-testid="enhanced-panel">Enhanced Panel</div>,
 }))
 
 // Mock lucide-react icons
@@ -206,7 +206,7 @@ const createValidExpirationsResponse = () => ({
  * - || 'UNKNOWN' fallback for string properties
  * - safeFixed for number formatting
  */
-const ArgusTestHarness: React.FC<{
+const WatchtowerTestHarness: React.FC<{
   gammaData: ReturnType<typeof createValidGammaResponse>['data'] | null
 }> = ({ gammaData }) => {
   // These are the EXACT utility functions from the WATCHTOWER component
@@ -309,7 +309,7 @@ describe('WATCHTOWER Integration Tests - Verifying Fixes Are Wired Up', () => {
   describe('Render with valid data', () => {
     it('renders all key elements with valid data', () => {
       const gammaData = createValidGammaResponse().data
-      render(<ArgusTestHarness gammaData={gammaData} />)
+      render(<WatchtowerTestHarness gammaData={gammaData} />)
 
       expect(screen.getByTestId('watchtower-harness')).toBeInTheDocument()
       expect(screen.getByTestId('metrics-grid')).toBeInTheDocument()
@@ -332,7 +332,7 @@ describe('WATCHTOWER Integration Tests - Verifying Fixes Are Wired Up', () => {
       // This would crash without the safeArray fix:
       // TypeError: Cannot read properties of null (reading '0')
       expect(() => {
-        render(<ArgusTestHarness gammaData={gammaData} />)
+        render(<WatchtowerTestHarness gammaData={gammaData} />)
       }).not.toThrow()
 
       expect(screen.getByTestId('watchtower-harness')).toBeInTheDocument()
@@ -347,7 +347,7 @@ describe('WATCHTOWER Integration Tests - Verifying Fixes Are Wired Up', () => {
       // This would crash without the || 'UNKNOWN' fix:
       // TypeError: Cannot read properties of null (reading 'replace')
       expect(() => {
-        render(<ArgusTestHarness gammaData={gammaData} />)
+        render(<WatchtowerTestHarness gammaData={gammaData} />)
       }).not.toThrow()
 
       expect(screen.getByTestId('combined-signal')).toHaveTextContent('UNKNOWN')
@@ -361,7 +361,7 @@ describe('WATCHTOWER Integration Tests - Verifying Fixes Are Wired Up', () => {
       // This would crash without the || 'UNKNOWN' fix:
       // TypeError: Cannot read properties of undefined (reading 'replace')
       expect(() => {
-        render(<ArgusTestHarness gammaData={gammaData} />)
+        render(<WatchtowerTestHarness gammaData={gammaData} />)
       }).not.toThrow()
 
       expect(screen.getByTestId('bounds-direction')).toHaveTextContent('UNKNOWN')
@@ -373,7 +373,7 @@ describe('WATCHTOWER Integration Tests - Verifying Fixes Are Wired Up', () => {
       const gammaData = createNullStrikesResponse().data
 
       expect(() => {
-        render(<ArgusTestHarness gammaData={gammaData} />)
+        render(<WatchtowerTestHarness gammaData={gammaData} />)
       }).not.toThrow()
 
       expect(screen.getByTestId('strikes-table')).toBeInTheDocument()
@@ -387,7 +387,7 @@ describe('WATCHTOWER Integration Tests - Verifying Fixes Are Wired Up', () => {
       const gammaData = createEmptyArraysResponse().data
 
       expect(() => {
-        render(<ArgusTestHarness gammaData={gammaData} />)
+        render(<WatchtowerTestHarness gammaData={gammaData} />)
       }).not.toThrow()
 
       expect(screen.getByTestId('top-magnet')).toHaveTextContent('$-')
@@ -398,7 +398,7 @@ describe('WATCHTOWER Integration Tests - Verifying Fixes Are Wired Up', () => {
 
   describe('Render with null gammaData', () => {
     it('shows loading state when gammaData is null', () => {
-      render(<ArgusTestHarness gammaData={null} />)
+      render(<WatchtowerTestHarness gammaData={null} />)
 
       expect(screen.getByTestId('loading')).toBeInTheDocument()
       expect(screen.queryByTestId('watchtower-harness')).not.toBeInTheDocument()

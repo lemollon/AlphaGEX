@@ -431,16 +431,16 @@ def verify_startup_recovery():
 
         has_recovery = '_check_startup_recovery' in content
         has_sage_check = 'WISDOM' in content and 'days_since' in content
-        has_oracle_check = 'PROPHET' in content and 'days_since' in content
+        has_prophet_check = 'PROPHET' in content and 'days_since' in content
 
         result.details = {
             'recovery_function': has_recovery,
             'sage_staleness_check': has_sage_check,
-            'prophet_staleness_check': has_oracle_check,
+            'prophet_staleness_check': has_prophet_check,
             'file_checked': scheduler_path
         }
 
-        if has_recovery and has_sage_check and has_oracle_check:
+        if has_recovery and has_sage_check and has_prophet_check:
             result.passed = True
             result.message = "Startup recovery mechanism implemented"
         else:

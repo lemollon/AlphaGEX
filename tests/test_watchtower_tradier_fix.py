@@ -81,7 +81,7 @@ class TestWatchtowerGetTradier:
         assert 'is_connected' in status
         assert 'credentials_configured' in status
 
-    def test_hyperion_get_tradier_returns_instance(self):
+    def test_glory_get_tradier_returns_instance(self):
         """Verify GLORY get_tradier() also works"""
         from backend.api.routes.glory_routes import get_tradier, TRADIER_AVAILABLE
 

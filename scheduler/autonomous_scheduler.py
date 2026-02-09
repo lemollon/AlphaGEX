@@ -19,9 +19,9 @@ BACKTEST_REFRESH_INTERVAL_DAYS = 7
 
 # Prophet auto-training settings
 # Updated: Daily training instead of weekly for faster learning
-ORACLE_TRAINING_DAY = None  # None = daily training (previously: 6 for Sunday only)
-ORACLE_TRAINING_HOUR = 0  # Midnight CT
-ORACLE_OUTCOME_THRESHOLD = 20  # Train when this many new outcomes available (reduced from 100)
+PROPHET_TRAINING_DAY = None  # None = daily training (previously: 6 for Sunday only)
+PROPHET_TRAINING_HOUR = 0  # Midnight CT
+PROPHET_OUTCOME_THRESHOLD = 20  # Train when this many new outcomes available (reduced from 100)
 
 # Market hours in Central Time (Texas)
 MARKET_OPEN_CT = dt_time(8, 30)   # 8:30 AM CT = 9:30 AM ET
@@ -169,7 +169,7 @@ def check_and_refresh_backtests():
         return False
 
 
-def check_and_train_oracle(force: bool = False):
+def check_and_train_prophet(force: bool = False):
     """
     Check if Prophet ML model needs training and train if necessary.
 
@@ -193,21 +193,21 @@ def check_and_train_oracle(force: bool = False):
         print(f"   Model trained: {prophet.is_trained}")
         print(f"   Model version: {prophet.model_version}")
         print(f"   Pending outcomes: {pending_count}")
-        print(f"   Threshold: {ORACLE_OUTCOME_THRESHOLD}")
+        print(f"   Threshold: {PROPHET_OUTCOME_THRESHOLD}")
 
         # Check if it's scheduled training time
-        # If ORACLE_TRAINING_DAY is None, train daily at ORACLE_TRAINING_HOUR
+        # If PROPHET_TRAINING_DAY is None, train daily at PROPHET_TRAINING_HOUR
         # Otherwise, train weekly on the specified day
-        if ORACLE_TRAINING_DAY is None:
-            is_scheduled_train_time = ct_now.hour == ORACLE_TRAINING_HOUR
+        if PROPHET_TRAINING_DAY is None:
+            is_scheduled_train_time = ct_now.hour == PROPHET_TRAINING_HOUR
         else:
             is_scheduled_train_time = (
-                ct_now.weekday() == ORACLE_TRAINING_DAY and
-                ct_now.hour == ORACLE_TRAINING_HOUR
+                ct_now.weekday() == PROPHET_TRAINING_DAY and
+                ct_now.hour == PROPHET_TRAINING_HOUR
             )
 
         # Check if threshold is reached
-        threshold_reached = pending_count >= ORACLE_OUTCOME_THRESHOLD
+        threshold_reached = pending_count >= PROPHET_OUTCOME_THRESHOLD
 
         # Check if model needs initial training
         needs_initial = not prophet.is_trained
@@ -215,14 +215,14 @@ def check_and_train_oracle(force: bool = False):
         if force or is_scheduled_train_time or threshold_reached or needs_initial:
             reason = "Forced" if force else (
                 "Daily schedule" if is_scheduled_train_time else (
-                    f"Threshold ({pending_count} >= {ORACLE_OUTCOME_THRESHOLD})" if threshold_reached else
+                    f"Threshold ({pending_count} >= {PROPHET_OUTCOME_THRESHOLD})" if threshold_reached else
                     "Initial training"
                 )
             )
             print(f"   🎯 Training triggered: {reason}")
 
             result = auto_train(
-                threshold_outcomes=ORACLE_OUTCOME_THRESHOLD,
+                threshold_outcomes=PROPHET_OUTCOME_THRESHOLD,
                 force=force or needs_initial
             )
 
@@ -436,7 +436,7 @@ def run_continuous_scheduler(check_interval_minutes: int = 5, symbols: list = No
 
     cycle_count = 0
     last_backtest_check_date = None
-    last_oracle_check_hour = None
+    last_prophet_check_hour = None
 
     while True:
         try:
@@ -451,9 +451,9 @@ def run_continuous_scheduler(check_interval_minutes: int = 5, symbols: list = No
                 last_backtest_check_date = current_date
 
             # Check Prophet training once per hour (or at midnight on Sundays)
-            if last_oracle_check_hour != current_hour:
-                check_and_train_oracle(force=False)
-                last_oracle_check_hour = current_hour
+            if last_prophet_check_hour != current_hour:
+                check_and_train_prophet(force=False)
+                last_prophet_check_hour = current_hour
 
             # Check if market is open
             if is_market_hours():

@@ -1,5 +1,5 @@
 /**
- * ARGUS Frontend Test Script
+ * WATCHTOWER Frontend Test Script
  *
  * Run this in browser console on the ARGUS page to verify features work.
  *
@@ -9,9 +9,9 @@
  * 3. Paste this entire script and press Enter
  */
 
-(async function testArgusFrontend() {
+(async function testWatchtowerFrontend() {
   console.log('='.repeat(60));
-  console.log('ARGUS Frontend Feature Tests');
+  console.log('WATCHTOWER Frontend Feature Tests');
   console.log('='.repeat(60));
 
   const API_BASE = window.location.origin;
@@ -32,7 +32,7 @@
 
   // Test 1: Strike Trends API
   await test('Strike Trends API', async () => {
-    const res = await fetch(`${API_BASE}/api/argus/strike-trends`);
+    const res = await fetch(`${API_BASE}/api/watchtower/strike-trends`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.success) throw new Error('success=false');
@@ -41,7 +41,7 @@
 
   // Test 2: Gamma Flips API
   await test('Gamma Flips API', async () => {
-    const res = await fetch(`${API_BASE}/api/argus/gamma-flips`);
+    const res = await fetch(`${API_BASE}/api/watchtower/gamma-flips`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.success) throw new Error('success=false');
@@ -50,7 +50,7 @@
 
   // Test 3: Main Gamma API
   await test('Main Gamma API', async () => {
-    const res = await fetch(`${API_BASE}/api/argus/gamma`);
+    const res = await fetch(`${API_BASE}/api/watchtower/gamma`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.success) throw new Error('success=false');

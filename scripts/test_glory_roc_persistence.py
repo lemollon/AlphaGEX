@@ -10,7 +10,7 @@ This script verifies:
 5. Market hours detection
 
 Usage:
-    python scripts/test_hyperion_roc_persistence.py
+    python scripts/test_glory_roc_persistence.py
 """
 
 import os

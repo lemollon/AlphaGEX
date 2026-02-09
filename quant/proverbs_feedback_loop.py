@@ -729,7 +729,7 @@ class ProverbsFeedbackLoop:
     def __init__(self):
         self.session_id = self._generate_session_id()
         self._ensure_schema()
-        self._oracle = None
+        self._prophet = None
 
         logger.info(f"[PROVERBS] Initialized new session: {self.session_id}")
         logger.info(f"[PROVERBS] Database available: {DB_AVAILABLE}")
@@ -761,9 +761,9 @@ class ProverbsFeedbackLoop:
     @property
     def prophet(self):
         """Lazy-load Prophet advisor"""
-        if self._oracle is None and PROPHET_AVAILABLE:
-            self._oracle = get_prophet()
-        return self._oracle
+        if self._prophet is None and PROPHET_AVAILABLE:
+            self._prophet = get_prophet()
+        return self._prophet
 
     # =========================================================================
     # AUDIT LOGGING

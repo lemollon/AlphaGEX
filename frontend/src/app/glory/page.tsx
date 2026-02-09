@@ -47,7 +47,7 @@ import {
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import StarsStatusBadge from '@/components/StarsStatusBadge'
-import { HyperionEnhancedPanel } from '@/components/HyperionEnhancements'
+import { GloryEnhancedPanel } from '@/components/GloryEnhancements'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -207,7 +207,7 @@ const WEEKLY_SYMBOLS = [
   { symbol: 'TLT', name: 'Treasury Bond ETF', sector: 'Fixed Income' },
 ]
 
-export default function HyperionPage() {
+export default function GloryPage() {
   const sidebarPadding = useSidebarPadding()
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -265,7 +265,7 @@ export default function HyperionPage() {
         setLoading(true)
       }
       const exp = expiration || selectedExpiration || undefined
-      const response = await apiClient.getHyperionGamma(selectedSymbol, exp)
+      const response = await apiClient.getGloryGamma(selectedSymbol, exp)
 
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
@@ -293,7 +293,7 @@ export default function HyperionPage() {
   // Fetch alerts
   const fetchAlerts = useCallback(async () => {
     try {
-      const response = await apiClient.getHyperionAlerts(selectedSymbol, 20, false)
+      const response = await apiClient.getGloryAlerts(selectedSymbol, 20, false)
       if (response.data?.success && response.data?.data?.alerts) {
         setAlerts(response.data.data.alerts)
       }
@@ -311,7 +311,7 @@ export default function HyperionPage() {
       const fetchSymbol = selectedSymbol
       symbolChangeRef.current = fetchSymbol
 
-      const response = await apiClient.getHyperionExpirations(selectedSymbol, 4)
+      const response = await apiClient.getGloryExpirations(selectedSymbol, 4)
 
       if (symbolChangeRef.current !== fetchSymbol) {
         return
@@ -1263,7 +1263,7 @@ export default function HyperionPage() {
 
             {/* Enhanced Analysis Panel - NEW */}
             <div className="mt-6">
-              <HyperionEnhancedPanel symbol={selectedSymbol} />
+              <GloryEnhancedPanel symbol={selectedSymbol} />
             </div>
 
             {/* Info Footer */}

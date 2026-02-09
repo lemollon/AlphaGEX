@@ -44,9 +44,9 @@ jest.mock('../../src/components/StarsStatusBadge', () => ({
   default: () => <span data-testid="stars-badge">Stars</span>,
 }))
 
-// Mock the ArgusEnhancedPanel component
+// Mock the WatchtowerEnhancedPanel component
 jest.mock('../../src/components/WatchtowerEnhancements', () => ({
-  ArgusEnhancedPanel: () => <div data-testid="enhanced-panel">Enhanced Panel</div>,
+  WatchtowerEnhancedPanel: () => <div data-testid="enhanced-panel">Enhanced Panel</div>,
 }))
 
 // Mock lucide-react icons

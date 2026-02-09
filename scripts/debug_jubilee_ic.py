@@ -6,7 +6,7 @@ Run this script to understand why JUBILEE (Jubilee) isn't trading today.
 It checks all the conditions that must be met before a trade can be placed.
 
 Usage:
-    python scripts/debug_prometheus_ic.py
+    python scripts/debug_jubilee_ic.py
 """
 
 import os

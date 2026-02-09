@@ -539,7 +539,7 @@ class TestStrategyPerformanceCommand:
 class TestSuggestionCommand:
     """Test /suggestion command."""
 
-    @patch('ai.counselor_tools.fetch_ares_market_data')
+    @patch('ai.counselor_tools.fetch_fortress_market_data')
     @patch('ai.counselor_tools.get_upcoming_events')
     @patch('ai.counselor_tools.is_market_open')
     def test_generate_trade_suggestion(
@@ -592,7 +592,7 @@ class TestSuggestionCommand:
         assert 'response' in result
         assert 'Test Suggestion' in result['response']
 
-    @patch('ai.counselor_tools.fetch_ares_market_data')
+    @patch('ai.counselor_tools.fetch_fortress_market_data')
     @patch('ai.counselor_tools.get_upcoming_events')
     @patch('ai.counselor_tools.is_market_open')
     def test_suggestion_handles_high_vix(self, mock_open, mock_events, mock_market):
@@ -819,7 +819,7 @@ class TestEdgeCases:
         assert outer_span.status == "ok"
         assert outer_span.attributes["recovered"] is True
 
-    @patch('ai.counselor_tools.fetch_ares_market_data')
+    @patch('ai.counselor_tools.fetch_fortress_market_data')
     @patch('ai.counselor_tools.get_upcoming_events')
     @patch('ai.counselor_tools.is_market_open')
     def test_command_handles_missing_market_data(self, mock_open, mock_events, mock_market):

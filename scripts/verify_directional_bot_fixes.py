@@ -27,7 +27,7 @@ from datetime import datetime
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-def test_oracle_confidence_scale():
+def test_prophet_confidence_scale():
     """Test 1: Prophet confidence should be 0-1, not 0-100"""
     print("\n" + "="*60)
     print("TEST 1: Prophet Confidence Scale (0-1)")
@@ -318,7 +318,7 @@ def main():
     print("="*60)
 
     tests = [
-        ("Prophet Confidence Scale", test_oracle_confidence_scale),
+        ("Prophet Confidence Scale", test_prophet_confidence_scale),
         ("Day of Week", test_day_of_week),
         ("ML Features Complete", test_ml_features_complete),
         ("Flip Distance Filter", test_flip_distance_filter),

@@ -63,8 +63,8 @@ class ConfigUpdateRequest(BaseModel):
     max_implied_rate: Optional[float] = Field(None, description="Max acceptable borrowing rate %")
     capital: Optional[float] = Field(None, description="Total capital for box spreads")
     max_positions: Optional[int] = Field(None, description="Maximum simultaneous positions")
-    ares_allocation_pct: Optional[float] = Field(None, description="% to deploy to FORTRESS")
-    titan_allocation_pct: Optional[float] = Field(None, description="% to deploy to SAMSON")
+    fortress_allocation_pct: Optional[float] = Field(None, description="% to deploy to FORTRESS")
+    samson_allocation_pct: Optional[float] = Field(None, description="% to deploy to SAMSON")
     anchor_allocation_pct: Optional[float] = Field(None, description="% to deploy to ANCHOR")
     educational_mode: Optional[bool] = Field(None, description="Enable extra explanations")
 

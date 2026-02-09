@@ -4440,7 +4440,7 @@ function SystemAmbientEffects({
       case 'discernment':
         return <DiscernmentEffects color={color} sunColor={sunColor} paused={paused} />
       case 'glory':
-        return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
+        return <GloryEffects color={color} sunColor={sunColor} paused={paused} />
       case 'anchor':
         return <AnchorEffects color={color} sunColor={sunColor} paused={paused} />
       case 'gexcore':
@@ -5930,7 +5930,7 @@ function DiscernmentEffects({ color, sunColor, paused }: { color: string, sunCol
 }
 
 // GLORY - Mathematical Samson with Fibonacci spirals, fractals, and equations
-function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+function GloryEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
   const spiralRef = useRef<THREE.Group>(null)
   const ringsRef = useRef<THREE.Group>(null)

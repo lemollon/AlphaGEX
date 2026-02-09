@@ -99,7 +99,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     # JUBILEE endpoints (Box Spread + IC)
-    prometheus_endpoints = [
+    jubilee_endpoints = [
         ("/api/jubilee/status", "GET", 200),
         ("/api/jubilee/positions", "GET", 200),
         ("/api/jubilee/equity-curve", "GET", 200),
@@ -116,7 +116,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     # FORTRESS endpoints (SPY Iron Condor)
-    ares_endpoints = [
+    fortress_endpoints = [
         ("/api/fortress/status", "GET", 200),
         ("/api/fortress/positions", "GET", 200),
         ("/api/fortress/performance", "GET", 200),
@@ -126,7 +126,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     # SAMSON endpoints (SPX Aggressive IC)
-    titan_endpoints = [
+    samson_endpoints = [
         ("/api/samson/status", "GET", 200),
         ("/api/samson/positions", "GET", 200),
         ("/api/samson/equity-curve", "GET", 200),
@@ -150,7 +150,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     # GIDEON endpoints (Aggressive Directional)
-    icarus_endpoints = [
+    gideon_endpoints = [
         ("/api/gideon/status", "GET", 200),
         ("/api/gideon/positions", "GET", 200),
         ("/api/gideon/equity-curve", "GET", 200),
@@ -158,7 +158,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     # Prophet & ML endpoints
-    oracle_endpoints = [
+    prophet_endpoints = [
         ("/api/zero-dte/prophet/status", "GET", 200),
         ("/api/ml/wisdom/status", "GET", 200),
         ("/api/ml/gex-models/status", "GET", 200),
@@ -175,9 +175,9 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     all_endpoints = (
-        core_endpoints + valor_endpoints + prometheus_endpoints +
-        ares_endpoints + titan_endpoints + anchor_endpoints +
-        solomon_endpoints + icarus_endpoints + oracle_endpoints + metrics_endpoints
+        core_endpoints + valor_endpoints + jubilee_endpoints +
+        fortress_endpoints + samson_endpoints + anchor_endpoints +
+        solomon_endpoints + gideon_endpoints + prophet_endpoints + metrics_endpoints
     )
 
     for endpoint, method, expected_status in all_endpoints:
