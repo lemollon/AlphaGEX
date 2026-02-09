@@ -26,9 +26,9 @@ def test_second_account_order():
     print("  TESTING ORDER PLACEMENT ON SECOND ACCOUNT")
     print("=" * 60)
 
-    # Get second account credentials
-    api_key_2 = os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_2')
-    account_id_2 = os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2')
+    # Get second account credentials (check both new FORTRESS and legacy ARES env var names)
+    api_key_2 = os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_2') or os.getenv('TRADIER_ARES_SANDBOX_API_KEY_2')
+    account_id_2 = os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2') or os.getenv('TRADIER_ARES_SANDBOX_ACCOUNT_ID_2')
 
     if not api_key_2 or not account_id_2:
         print("\n[FAIL] Second account credentials not set")

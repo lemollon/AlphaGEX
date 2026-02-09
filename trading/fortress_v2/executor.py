@@ -219,6 +219,7 @@ class OrderExecutor:
         self.tradier_2 = None  # Second sandbox account for trade mirroring
         self.tradier_init_error = None  # Track initialization error for status reporting
         self.db = db  # Optional DB reference for orphaned order tracking
+        self.paper_trading_enabled = True  # Always run paper trades alongside live
 
         if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
             # CRITICAL: Check for sandbox credentials BEFORE attempting init
@@ -262,6 +263,10 @@ class OrderExecutor:
                     logger.info(f"FORTRESS OrderExecutor: Account 2 ID {sandbox_account_2[:4]}...{sandbox_account_2[-4:] if len(sandbox_account_2) > 8 else ''}")
                 except Exception as e:
                     logger.warning(f"FORTRESS OrderExecutor: Second account init failed (trades will still execute on primary): {e}")
+            else:
+                logger.warning("FORTRESS OrderExecutor: Second account NOT configured - set TRADIER_FORTRESS_SANDBOX_API_KEY_2 and TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2")
+
+            logger.info(f"FORTRESS OrderExecutor: Paper trading alongside live: ENABLED")
 
         # Position Management Agent - tracks entry conditions for exit timing
         self.position_mgmt = None
@@ -283,6 +288,12 @@ class OrderExecutor:
             "can_execute": self.can_execute_trades,
             "tradier_initialized": self.tradier is not None,
             "tradier_2_initialized": self.tradier_2 is not None,
+            "paper_trading_enabled": self.paper_trading_enabled,
+            "accounts_active": sum([
+                self.tradier is not None,
+                self.tradier_2 is not None,
+                self.paper_trading_enabled,
+            ]),
             "init_error": self.tradier_init_error,
             "mode": self.config.mode.value if hasattr(self.config.mode, 'value') else str(self.config.mode),
         }
@@ -521,7 +532,12 @@ class OrderExecutor:
         thompson_weight: float = 1.0
     ) -> Optional[IronCondorPosition]:
         """
-        Execute an Iron Condor trade.
+        Execute an Iron Condor trade on all configured accounts.
+
+        In LIVE mode: Executes on primary Tradier, mirrors to secondary Tradier,
+        AND saves a paper trade record for comparison tracking.
+
+        In PAPER mode: Only executes paper trade (internal simulation).
 
         Args:
             signal: The trade signal to execute
@@ -534,7 +550,33 @@ class OrderExecutor:
         if self.config.mode == TradingMode.PAPER:
             return self._execute_paper(signal, thompson_weight)
         else:
-            return self._execute_live(signal, thompson_weight)
+            # LIVE mode: Execute on both Tradier sandbox accounts AND run paper simulation
+            live_position = self._execute_live(signal, thompson_weight)
+
+            # Also run paper trade simulation for comparison tracking
+            # The paper trade uses internal pricing model (not Tradier fills)
+            if self.paper_trading_enabled and live_position:
+                try:
+                    paper_position = self._execute_paper(signal, thompson_weight)
+                    if paper_position and self.db:
+                        self.db.log(
+                            "PAPER_TRADE",
+                            f"Paper trade opened: {paper_position.position_id} "
+                            f"{signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} "
+                            f"x{paper_position.contracts} @ ${signal.total_credit:.2f} credit",
+                            {
+                                'paper_position_id': paper_position.position_id,
+                                'live_position_id': live_position.position_id,
+                                'paper_contracts': paper_position.contracts,
+                                'paper_credit': signal.total_credit,
+                                'live_credit': live_position.total_credit,
+                            }
+                        )
+                        logger.info(f"FORTRESS PAPER: Paper trade {paper_position.position_id} tracked alongside live {live_position.position_id}")
+                except Exception as e:
+                    logger.warning(f"FORTRESS PAPER: Paper trade tracking failed (non-blocking): {e}")
+
+            return live_position
 
     def _execute_paper(self, signal: IronCondorSignal, thompson_weight: float = 1.0) -> Optional[IronCondorPosition]:
         """Execute paper trade (simulation)"""
@@ -715,12 +757,38 @@ class OrderExecutor:
         """
         Close an Iron Condor position.
 
+        In LIVE mode, also closes the corresponding paper position if it exists.
+
         Returns: (success, close_price, realized_pnl)
         """
         if self.config.mode == TradingMode.PAPER:
             return self._close_paper(position, reason)
         else:
-            return self._close_live(position, reason)
+            result = self._close_live(position, reason)
+
+            # Log paper close simulation alongside live close
+            if self.paper_trading_enabled and self.db and result[0] is True:
+                try:
+                    paper_success, paper_close_price, paper_pnl = self._close_paper(position, reason)
+                    if paper_success:
+                        self.db.log(
+                            "PAPER_CLOSE",
+                            f"Paper close for {position.position_id}: "
+                            f"Paper P&L=${paper_pnl:.2f}, Live P&L=${result[2]:.2f}, "
+                            f"Reason={reason}",
+                            {
+                                'position_id': position.position_id,
+                                'paper_pnl': paper_pnl,
+                                'live_pnl': result[2],
+                                'paper_close_price': paper_close_price,
+                                'live_close_price': result[1],
+                            }
+                        )
+                        logger.info(f"FORTRESS PAPER: Close tracked - Paper P&L=${paper_pnl:.2f} vs Live P&L=${result[2]:.2f}")
+                except Exception as e:
+                    logger.debug(f"FORTRESS PAPER: Paper close tracking failed (non-blocking): {e}")
+
+            return result
 
     def _close_paper(
         self,
