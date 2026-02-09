@@ -1077,23 +1077,23 @@ export default function ProverbsPage() {
   const [timeAnalysis, setTimeAnalysis] = useState<any>(null)
   // Migration 023: Strategy Analysis data
   const [strategyAnalysis, setStrategyAnalysis] = useState<any>(null)
-  const [oracleAccuracy, setOracleAccuracy] = useState<any>(null)
+  const [prophetAccuracy, setProphetAccuracy] = useState<any>(null)
 
   const fetchAnalytics = useCallback(async (bot: string) => {
     try {
-      const [digestRes, corrRes, timeRes, strategyRes, oracleRes] = await Promise.all([
+      const [digestRes, corrRes, timeRes, strategyRes, prophetRes] = await Promise.all([
         apiClient.getProverbsEnhancedDigest(),
         apiClient.getProverbsEnhancedCorrelations(),
         apiClient.getProverbsEnhancedTimeAnalysis(bot),
         // Migration 023: Fetch strategy analysis
         apiClient.getProverbsStrategyAnalysis(),
-        apiClient.getProverbsOracleAccuracy()
+        apiClient.getProverbsProphetAccuracy()
       ])
       setDailyDigest(digestRes.data)
       setCorrelations(corrRes.data)
       setTimeAnalysis(timeRes.data)
       setStrategyAnalysis(strategyRes.data)
-      setOracleAccuracy(oracleRes.data)
+      setProphetAccuracy(prophetRes.data)
     } catch (err) {
       console.error('Failed to fetch analytics:', err)
     }
@@ -1664,7 +1664,7 @@ export default function ProverbsPage() {
             )}
 
             {/* Migration 023: Prophet Accuracy */}
-            {oracleAccuracy && oracleAccuracy.status === 'analyzed' && (
+            {prophetAccuracy && prophetAccuracy.status === 'analyzed' && (
               <div className="bg-gray-800 rounded-lg border border-green-500/30 p-4">
                 <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
                   <CheckCircle className="w-5 h-5 text-green-400" />
@@ -1672,16 +1672,16 @@ export default function ProverbsPage() {
                 </h3>
 
                 {/* Summary */}
-                {oracleAccuracy.summary && (
+                {prophetAccuracy.summary && (
                   <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3 mb-4">
-                    <div className="text-sm text-green-400">{oracleAccuracy.summary}</div>
+                    <div className="text-sm text-green-400">{prophetAccuracy.summary}</div>
                   </div>
                 )}
 
                 {/* Accuracy by Advice Type */}
-                {oracleAccuracy.by_advice && (
+                {prophetAccuracy.by_advice && (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-                    {Object.entries(oracleAccuracy.by_advice).map(([advice, data]: [string, any]) => (
+                    {Object.entries(prophetAccuracy.by_advice).map(([advice, data]: [string, any]) => (
                       <div key={advice} className="bg-gray-900/50 rounded-lg p-3">
                         <div className="text-xs text-gray-500 mb-1">{advice.replace(/_/g, ' ')}</div>
                         <div className="flex items-baseline gap-2">
@@ -1699,9 +1699,9 @@ export default function ProverbsPage() {
                 )}
 
                 {/* Accuracy by Strategy */}
-                {oracleAccuracy.by_strategy && (
+                {prophetAccuracy.by_strategy && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {Object.entries(oracleAccuracy.by_strategy).map(([strategy, data]: [string, any]) => (
+                    {Object.entries(prophetAccuracy.by_strategy).map(([strategy, data]: [string, any]) => (
                       <div key={strategy} className={`rounded-lg p-3 ${
                         strategy === 'IRON_CONDOR' ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-orange-500/10 border border-orange-500/30'
                       }`}>

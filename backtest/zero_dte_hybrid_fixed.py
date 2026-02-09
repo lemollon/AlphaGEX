@@ -46,11 +46,11 @@ except ImportError:
 
 # GEX Calculator integration for GEX-Protected strategies
 try:
-    from quant.chronicles_gex_calculator import KronosGEXCalculator, GEXData
+    from quant.chronicles_gex_calculator import ChroniclesGEXCalculator, GEXData
     GEX_AVAILABLE = True
 except ImportError:
     GEX_AVAILABLE = False
-    KronosGEXCalculator = None
+    ChroniclesGEXCalculator = None
     GEXData = None
 
 
@@ -385,7 +385,7 @@ class HybridFixedBacktester:
         self.gex_calculator = None
         self.gex_cache: Dict[str, Optional[GEXData]] = {}
         if GEX_AVAILABLE and self.strategy_type == 'gex_protected_iron_condor':
-            self.gex_calculator = KronosGEXCalculator(ticker)
+            self.gex_calculator = ChroniclesGEXCalculator(ticker)
 
         # GEX strategy stats
         self.gex_stats = {

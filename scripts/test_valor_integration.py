@@ -41,9 +41,9 @@ def test_spx_gex_fetch():
     print("="*60)
     
     try:
-        from trading.valor.signals import get_gex_data_for_heracles
+        from trading.valor.signals import get_gex_data_for_valor
         
-        gex_data = get_gex_data_for_heracles("SPX")
+        gex_data = get_gex_data_for_valor("SPX")
         
         flip_point = gex_data.get('flip_point', 0)
         call_wall = gex_data.get('call_wall', 0)
@@ -176,12 +176,12 @@ def test_signal_generation():
     print("="*60)
 
     try:
-        from trading.valor.signals import HERACLESSignalGenerator
+        from trading.valor.signals import ValorSignalGenerator
         from trading.valor.models import ValorConfig, BayesianWinTracker, GammaRegime
 
         config = ValorConfig()
         win_tracker = BayesianWinTracker()  # Fresh tracker with 50% prior
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         print(f"   Config flip_point_proximity_pct: {config.flip_point_proximity_pct}%")
         print(f"   Config min_win_probability: {config.min_win_probability}")
@@ -259,8 +259,8 @@ def test_full_scan():
         print(f"   Symbol: {trader.config.symbol}")
 
         # Get current GEX data for diagnostics
-        from trading.valor.signals import get_gex_data_for_heracles
-        gex_data = get_gex_data_for_heracles("SPX")
+        from trading.valor.signals import get_gex_data_for_valor
+        gex_data = get_gex_data_for_valor("SPX")
         print(f"   GEX flip_point: {gex_data.get('flip_point', 0):.2f}")
         print(f"   GEX net_gex: {gex_data.get('net_gex', 0):.2e}")
 

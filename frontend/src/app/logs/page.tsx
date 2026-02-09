@@ -9,7 +9,7 @@ import {
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient, api } from '@/lib/api'
-import { useLogsSummary, useMLLogs, useAutonomousLogs, useOraclePredictions } from '@/lib/hooks/useMarketData'
+import { useLogsSummary, useMLLogs, useAutonomousLogs, useProphetPredictions } from '@/lib/hooks/useMarketData'
 
 interface TableSummary {
   display_name: string
@@ -38,7 +38,7 @@ interface MLLog {
   reasoning: string | null
 }
 
-interface OraclePrediction {
+interface ProphetPrediction {
   id: number
   trade_date: string
   bot_name: string
@@ -67,17 +67,17 @@ export default function LogsPage() {
   // SWR hooks for data fetching with caching
   const { data: summaryRes, error: summaryError, isLoading: summaryLoading, isValidating: summaryValidating, mutate: mutateSummary } = useLogsSummary(30)
   const { data: mlLogsRes, isLoading: mlLoading, isValidating: mlValidating, mutate: mutateML } = useMLLogs(50)
-  const { data: oracleRes, isLoading: oracleLoading, isValidating: oracleValidating, mutate: mutateOracle } = useOraclePredictions()
+  const { data: prophetRes, isLoading: prophetLoading, isValidating: prophetValidating, mutate: mutateProphet } = useProphetPredictions()
   const { data: autonomousRes, isLoading: autonomousLoading, isValidating: autonomousValidating, mutate: mutateAutonomous } = useAutonomousLogs(50)
 
   // Extract data from responses
   const summary = summaryRes?.data as LogsSummary | undefined
   const mlLogs = (mlLogsRes?.data?.logs || []) as MLLog[]
-  const oraclePredictions = (oracleRes?.data?.predictions || []) as OraclePrediction[]
+  const prophetPredictions = (prophetRes?.data?.predictions || []) as ProphetPrediction[]
   const autonomousLogs = (autonomousRes?.data?.logs || []) as AutonomousLog[]
 
   const loading = summaryLoading && !summary
-  const isRefreshing = summaryValidating || mlValidating || oracleValidating || autonomousValidating
+  const isRefreshing = summaryValidating || mlValidating || prophetValidating || autonomousValidating
 
   // UI State
   const [activeCategory, setActiveCategory] = useState<LogCategory>('trading')
@@ -110,13 +110,13 @@ export default function LogsPage() {
   const loadSummary = () => {
     mutateSummary()
     mutateML()
-    mutateOracle()
+    mutateProphet()
     mutateAutonomous()
   }
 
   // Loading states for specific tabs
   const loadingLogs = (activeCategory === 'ml' && mlLoading) ||
-                     (activeCategory === 'prophet' && oracleLoading) ||
+                     (activeCategory === 'prophet' && prophetLoading) ||
                      (activeCategory === 'autonomous' && autonomousLoading)
 
   const getTableCount = (tableNames: string[]) => {
@@ -164,7 +164,7 @@ export default function LogsPage() {
       } else if (activeCategory === 'ml') {
         data = mlLogs
       } else if (activeCategory === 'prophet') {
-        data = oraclePredictions
+        data = prophetPredictions
       } else if (activeCategory === 'autonomous') {
         data = autonomousLogs
       }
@@ -413,14 +413,14 @@ export default function LogsPage() {
                   <Eye className="w-5 h-5 text-green-500" />
                   Prophet ML Predictions
                 </h3>
-                <span className="text-gray-400 text-sm">{oraclePredictions.length} predictions</span>
+                <span className="text-gray-400 text-sm">{prophetPredictions.length} predictions</span>
               </div>
               {loadingLogs ? (
                 <div className="p-8 text-center text-gray-400">
                   <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
                   Loading Prophet predictions...
                 </div>
-              ) : oraclePredictions.length === 0 ? (
+              ) : prophetPredictions.length === 0 ? (
                 <div className="p-8 text-center text-gray-400">
                   <Eye className="w-12 h-12 mx-auto mb-3 text-gray-600" />
                   <p>No Prophet predictions yet</p>
@@ -428,7 +428,7 @@ export default function LogsPage() {
                 </div>
               ) : (
                 <div className="divide-y divide-gray-700 max-h-96 overflow-y-auto">
-                  {oraclePredictions.map((pred) => (
+                  {prophetPredictions.map((pred) => (
                     <div key={pred.id} className="p-4 hover:bg-gray-700/50">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">

@@ -4,7 +4,7 @@ WATCHTOWER (0DTE Gamma Live) API Tests
 Tests for the WATCHTOWER backend endpoints that provide real-time
 gamma visualization and predictions for 0DTE options.
 
-Run with: pytest backend/tests/test_argus.py -v
+Run with: pytest backend/tests/test_watchtower.py -v
 """
 
 import pytest
@@ -22,7 +22,7 @@ from main import app
 client = TestClient(app)
 
 
-class TestArgusGammaEndpoint:
+class TestWatchtowerGammaEndpoint:
     """Tests for /api/watchtower/gamma endpoint"""
 
     def test_get_gamma_data_success(self):
@@ -80,7 +80,7 @@ class TestArgusGammaEndpoint:
         assert "pin_probability" in data["data"]
 
 
-class TestArgusExpirationsEndpoint:
+class TestWatchtowerExpirationsEndpoint:
     """Tests for /api/watchtower/expirations endpoint"""
 
     def test_get_expirations_success(self):
@@ -106,7 +106,7 @@ class TestArgusExpirationsEndpoint:
             assert "is_today" in exp
 
 
-class TestArgusAlertsEndpoint:
+class TestWatchtowerAlertsEndpoint:
     """Tests for /api/watchtower/alerts endpoint"""
 
     def test_get_alerts_success(self):
@@ -129,7 +129,7 @@ class TestArgusAlertsEndpoint:
         assert data["success"] is True
 
 
-class TestArgusCommentaryEndpoint:
+class TestWatchtowerCommentaryEndpoint:
     """Tests for /api/watchtower/commentary endpoint"""
 
     def test_get_commentary_success(self):
@@ -155,7 +155,7 @@ class TestArgusCommentaryEndpoint:
         assert len(data["data"]["commentary"]) <= 5
 
 
-class TestArgusHistoryEndpoint:
+class TestWatchtowerHistoryEndpoint:
     """Tests for /api/watchtower/history endpoint"""
 
     def test_get_history_success(self):
@@ -177,7 +177,7 @@ class TestArgusHistoryEndpoint:
         assert data["success"] is True
 
 
-class TestArgusProbabilityEndpoint:
+class TestWatchtowerProbabilityEndpoint:
     """Tests for /api/watchtower/probability endpoint"""
 
     def test_get_probability_success(self):
@@ -191,7 +191,7 @@ class TestArgusProbabilityEndpoint:
         assert "data" in data
 
 
-class TestArgusAccuracyEndpoint:
+class TestWatchtowerAccuracyEndpoint:
     """Tests for /api/watchtower/accuracy endpoint"""
 
     def test_get_accuracy_success(self):
@@ -205,7 +205,7 @@ class TestArgusAccuracyEndpoint:
         assert "data" in data
 
 
-class TestArgusBotsEndpoint:
+class TestWatchtowerBotsEndpoint:
     """Tests for /api/watchtower/bots endpoint"""
 
     def test_get_bots_status_success(self):
@@ -220,7 +220,7 @@ class TestArgusBotsEndpoint:
         assert "bots" in data["data"]
 
 
-class TestArgusPatternsEndpoint:
+class TestWatchtowerPatternsEndpoint:
     """Tests for /api/watchtower/patterns endpoint"""
 
     def test_get_patterns_success(self):
@@ -234,7 +234,7 @@ class TestArgusPatternsEndpoint:
         assert "data" in data
 
 
-class TestArgusExportEndpoint:
+class TestWatchtowerExportEndpoint:
     """Tests for /api/watchtower/export endpoint"""
 
     def test_export_csv_success(self):
@@ -252,7 +252,7 @@ class TestArgusExportEndpoint:
         assert response.status_code in [200, 500]
 
 
-class TestArgusReplayEndpoint:
+class TestWatchtowerReplayEndpoint:
     """Tests for /api/watchtower/replay endpoints"""
 
     def test_get_replay_dates_success(self):
@@ -276,7 +276,7 @@ class TestArgusReplayEndpoint:
         assert data["success"] is True
 
 
-class TestArgusGammaFlipDetection:
+class TestWatchtowerGammaFlipDetection:
     """Tests for gamma flip detection functionality"""
 
     def test_gamma_flips_in_response(self):
@@ -300,7 +300,7 @@ class TestArgusGammaFlipDetection:
         assert "danger_zones" in data["data"]
 
 
-class TestArgusDataValidation:
+class TestWatchtowerDataValidation:
     """Tests for data validation and integrity"""
 
     def test_spot_price_reasonable(self):
@@ -361,7 +361,7 @@ class TestArgusDataValidation:
         assert status in valid_statuses
 
 
-class TestArgusPerformance:
+class TestWatchtowerPerformance:
     """Performance tests for WATCHTOWER endpoints"""
 
     def test_gamma_endpoint_response_time(self):
@@ -389,7 +389,7 @@ class TestArgusPerformance:
         assert elapsed < 1.0
 
 
-class TestArgusOrderFlow:
+class TestWatchtowerOrderFlow:
     """Tests for order flow pressure analysis (GAP fixes verification)"""
 
     def test_order_flow_in_gamma_response(self):
@@ -498,7 +498,7 @@ class TestArgusOrderFlow:
         assert signal in valid_signals, f"Invalid combined_signal: {signal}"
 
 
-class TestArgusErrorHandling:
+class TestWatchtowerErrorHandling:
     """Tests for error handling and edge cases (GAP #2-3 fixes)"""
 
     def test_invalid_symbol_handling(self):
@@ -550,7 +550,7 @@ class TestArgusErrorHandling:
             assert "fetched_at" in data["data"], "Response must have 'fetched_at' timestamp"
 
 
-class TestArgusTradeAction:
+class TestWatchtowerTradeAction:
     """Tests for /api/watchtower/trade-action endpoint (Actionable Trade Recommendations)"""
 
     def test_trade_action_returns_200(self):
@@ -640,7 +640,7 @@ class TestArgusTradeAction:
                 assert "stop_loss" in exit_rules, "Exit must have stop_loss"
 
 
-class TestArgusSignalTracking:
+class TestWatchtowerSignalTracking:
     """Tests for /api/watchtower/signals/* endpoints (Signal Performance Tracking)"""
 
     def test_signals_recent_returns_200(self):

@@ -31,10 +31,10 @@ def test_client():
                 pytest.skip(f"Could not create test client: {e}")
 
 
-class TestGEXISChatEndpoints:
+class TestCounselorChatEndpoints:
     """Tests for COUNSELOR chat endpoints"""
 
-    def test_gexis_chat_endpoint_exists(self, test_client):
+    def test_counselor_chat_endpoint_exists(self, test_client):
         """Test COUNSELOR chat endpoint exists"""
         if test_client is None:
             pytest.skip("Test client not available")
@@ -46,7 +46,7 @@ class TestGEXISChatEndpoints:
         # Should return response (may be 500 if no API key)
         assert response.status_code in [200, 400, 401, 500]
 
-    def test_gexis_greeting_endpoint(self, test_client):
+    def test_counselor_greeting_endpoint(self, test_client):
         """Test COUNSELOR greeting endpoint"""
         if test_client is None:
             pytest.skip("Test client not available")
@@ -101,13 +101,13 @@ class TestAIIntelligenceEndpoints:
 class TestMockedAIRoutes:
     """Tests with mocked AI dependencies"""
 
-    @patch('backend.api.routes.ai_routes.get_gexis_response')
-    def test_gexis_returns_response(self, mock_gexis, test_client):
+    @patch('backend.api.routes.ai_routes.get_counselor_response')
+    def test_counselor_returns_response(self, mock_counselor, test_client):
         """Test COUNSELOR returns valid response"""
         if test_client is None:
             pytest.skip("Test client not available")
 
-        mock_gexis.return_value = {
+        mock_counselor.return_value = {
             "response": "Hello, Optionist Prime. COUNSELOR at your service.",
             "status": "success"
         }
@@ -193,7 +193,7 @@ class TestErrorHandling:
 class TestResponseFormats:
     """Tests for response format consistency"""
 
-    def test_gexis_response_format(self, test_client):
+    def test_counselor_response_format(self, test_client):
         """Test COUNSELOR response has expected format"""
         if test_client is None:
             pytest.skip("Test client not available")

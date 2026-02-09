@@ -123,7 +123,7 @@ def test_day_of_week():
 
         # Check if the generator has day_of_week logic
         import inspect
-        source = inspect.getsource(generator.get_oracle_advice)
+        source = inspect.getsource(generator.get_prophet_advice)
 
         if 'day_of_week=now_ct.weekday()' in source:
             print(f"  ✅ PASS: GIDEON signals.py passes day_of_week=now_ct.weekday()")

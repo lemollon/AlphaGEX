@@ -54,7 +54,7 @@ const mockVIXExtreme = {
 }
 
 // Mock Prophet data
-const mockOracleData = {
+const mockProphetData = {
   success: true,
   status: 'healthy',
   is_trained: true,
@@ -75,7 +75,7 @@ describe('MarketConditionsBanner Component', () => {
     )
   }
 
-  const setupMockFetch = (gex = mockGEXData, vix = mockVIXNormal, prophet = mockOracleData) => {
+  const setupMockFetch = (gex = mockGEXData, vix = mockVIXNormal, prophet = mockProphetData) => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes('/api/gex/')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(gex) })
@@ -103,7 +103,7 @@ describe('MarketConditionsBanner Component', () => {
     })
 
     it('displays LOW regime for VIX < 15', async () => {
-      setupMockFetch(mockGEXData, mockVIXLow, mockOracleData)
+      setupMockFetch(mockGEXData, mockVIXLow, mockProphetData)
 
       const MarketConditionsBanner = require('../../../src/components/dashboard/MarketConditionsBanner').default
       renderWithSWR(<MarketConditionsBanner />)
@@ -114,7 +114,7 @@ describe('MarketConditionsBanner Component', () => {
     })
 
     it('displays NORMAL regime for VIX 15-22', async () => {
-      setupMockFetch(mockGEXData, mockVIXNormal, mockOracleData)
+      setupMockFetch(mockGEXData, mockVIXNormal, mockProphetData)
 
       const MarketConditionsBanner = require('../../../src/components/dashboard/MarketConditionsBanner').default
       renderWithSWR(<MarketConditionsBanner />)
@@ -125,7 +125,7 @@ describe('MarketConditionsBanner Component', () => {
     })
 
     it('displays ELEVATED regime for VIX 22-28', async () => {
-      setupMockFetch(mockGEXData, mockVIXElevated, mockOracleData)
+      setupMockFetch(mockGEXData, mockVIXElevated, mockProphetData)
 
       const MarketConditionsBanner = require('../../../src/components/dashboard/MarketConditionsBanner').default
       renderWithSWR(<MarketConditionsBanner />)
@@ -136,7 +136,7 @@ describe('MarketConditionsBanner Component', () => {
     })
 
     it('displays HIGH regime for VIX 28-35', async () => {
-      setupMockFetch(mockGEXData, mockVIXHigh, mockOracleData)
+      setupMockFetch(mockGEXData, mockVIXHigh, mockProphetData)
 
       const MarketConditionsBanner = require('../../../src/components/dashboard/MarketConditionsBanner').default
       renderWithSWR(<MarketConditionsBanner />)
@@ -147,7 +147,7 @@ describe('MarketConditionsBanner Component', () => {
     })
 
     it('displays EXTREME regime for VIX > 35', async () => {
-      setupMockFetch(mockGEXData, mockVIXExtreme, mockOracleData)
+      setupMockFetch(mockGEXData, mockVIXExtreme, mockProphetData)
 
       const MarketConditionsBanner = require('../../../src/components/dashboard/MarketConditionsBanner').default
       renderWithSWR(<MarketConditionsBanner />)
@@ -184,7 +184,7 @@ describe('MarketConditionsBanner Component', () => {
 
     it('displays NEGATIVE regime with description', async () => {
       const negativeGEX = { ...mockGEXData, data: { ...mockGEXData.data, regime: 'NEGATIVE' } }
-      setupMockFetch(negativeGEX, mockVIXNormal, mockOracleData)
+      setupMockFetch(negativeGEX, mockVIXNormal, mockProphetData)
 
       const MarketConditionsBanner = require('../../../src/components/dashboard/MarketConditionsBanner').default
       renderWithSWR(<MarketConditionsBanner />)

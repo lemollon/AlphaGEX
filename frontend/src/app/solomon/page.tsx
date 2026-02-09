@@ -114,7 +114,7 @@ interface SpreadPosition {
 }
 
 // Helper to parse Prophet top factors
-function parseOracleTopFactors(factorsJson: string | undefined): Array<{factor: string, impact: number}> {
+function parseProphetTopFactors(factorsJson: string | undefined): Array<{factor: string, impact: number}> {
   if (!factorsJson) return []
   try {
     const parsed = JSON.parse(factorsJson)
@@ -184,7 +184,7 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
   const isBullish = position.spread_type?.includes('BULL')
   const pnl = isOpen ? 0 : (position.realized_pnl || 0)
   const pnlColor = pnl >= 0 ? 'text-green-400' : 'text-red-400'
-  const topFactors = parseOracleTopFactors(position.oracle_top_factors)
+  const topFactors = parseProphetTopFactors(position.oracle_top_factors)
 
   return (
     <div className={`bg-gray-800/50 rounded-lg border ${isOpen ? 'border-cyan-500/30' : 'border-gray-700'} overflow-hidden`}>

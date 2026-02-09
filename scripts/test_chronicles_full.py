@@ -11,7 +11,7 @@ Tests all CHRONICLES features including:
 6. Full backtest execution
 
 Usage:
-    python scripts/test_kronos_full.py [--live]
+    python scripts/test_chronicles_full.py [--live]
 
     --live: Also run a live backtest (takes longer)
 
@@ -107,8 +107,8 @@ def test_infrastructure():
 
     # Test 1.3: Create and retrieve job
     try:
-        from backend.services.chronicles_infrastructure import KronosJob
-        test_job = KronosJob(
+        from backend.services.chronicles_infrastructure import ChroniclesJob
+        test_job = ChroniclesJob(
             job_id="test_job_" + datetime.now().strftime("%H%M%S"),
             status="pending",
             progress=0,

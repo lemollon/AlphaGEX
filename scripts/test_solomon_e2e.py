@@ -72,7 +72,7 @@ def test_solomon_status():
             'capital': f"${data.get('capital', 0):,.0f}",
             'gex_ml_available': data.get('gex_ml_available', False),
             'oracle_available': data.get('oracle_available', False),
-            'kronos_available': data.get('kronos_available', False),
+            'chronicles_available': data.get('chronicles_available', False),
             'is_active': data.get('is_active', False)
         }
 

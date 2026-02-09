@@ -913,7 +913,7 @@ async def websocket_positions(websocket: WebSocket):
 # CHRONICLES WebSocket - Real-Time Backtest Progress and GEX Updates
 # ============================================================================
 
-class KronosConnectionManager:
+class ChroniclesConnectionManager:
     """Manage CHRONICLES WebSocket connections for backtest progress and GEX data"""
 
     def __init__(self):
@@ -962,18 +962,18 @@ class KronosConnectionManager:
             self.gex_subscribers.remove(conn)
 
 
-kronos_manager = KronosConnectionManager()
+chronicles_manager = ChroniclesConnectionManager()
 
 
 @app.websocket("/ws/chronicles/job/{job_id}")
-async def websocket_kronos_job(websocket: WebSocket, job_id: str):
+async def websocket_chronicles_job(websocket: WebSocket, job_id: str):
     """
     WebSocket endpoint for real-time CHRONICLES backtest progress updates.
 
     Clients subscribe to a specific job_id to receive progress updates.
     Much faster than SSE or polling for high-frequency updates.
     """
-    await kronos_manager.connect(websocket, job_id)
+    await chronicles_manager.connect(websocket, job_id)
 
     try:
         # Import job store
@@ -1042,22 +1042,22 @@ async def websocket_kronos_job(websocket: WebSocket, job_id: str):
             await asyncio.sleep(0.5)  # Update frequency
 
     except WebSocketDisconnect:
-        kronos_manager.disconnect(websocket, job_id)
+        chronicles_manager.disconnect(websocket, job_id)
     except Exception as e:
-        kronos_manager.disconnect(websocket, job_id)
+        chronicles_manager.disconnect(websocket, job_id)
         if str(e):
             print(f"CHRONICLES WebSocket error: {e}")
 
 
 @app.websocket("/ws/chronicles/gex")
-async def websocket_kronos_gex(websocket: WebSocket):
+async def websocket_chronicles_gex(websocket: WebSocket):
     """
     WebSocket endpoint for real-time GEX data updates.
 
     Clients receive live GEX calculations as they're computed.
     Useful for the CHRONICLES dashboard to show current market gamma exposure.
     """
-    await kronos_manager.connect(websocket, None)
+    await chronicles_manager.connect(websocket, None)
 
     try:
         while True:
@@ -1069,8 +1069,8 @@ async def websocket_kronos_gex(websocket: WebSocket):
                 elif message == "get_gex":
                     # Fetch and send current GEX data
                     try:
-                        from quant.chronicles_gex_calculator import KronosGEXCalculator
-                        calculator = KronosGEXCalculator()
+                        from quant.chronicles_gex_calculator import ChroniclesGEXCalculator
+                        calculator = ChroniclesGEXCalculator()
                         gex_data = calculator.calculate_gex_for_date(datetime.now().strftime('%Y-%m-%d'))
                         if gex_data:
                             await websocket.send_json({
@@ -1095,9 +1095,9 @@ async def websocket_kronos_gex(websocket: WebSocket):
                 await websocket.send_json({"type": "heartbeat", "timestamp": datetime.now(CENTRAL_TZ).isoformat()})
 
     except WebSocketDisconnect:
-        kronos_manager.disconnect(websocket, None)
+        chronicles_manager.disconnect(websocket, None)
     except Exception as e:
-        kronos_manager.disconnect(websocket, None)
+        chronicles_manager.disconnect(websocket, None)
         if str(e):
             print(f"CHRONICLES GEX WebSocket error: {e}")
 
@@ -1111,8 +1111,8 @@ async def get_chronicles_infrastructure_status():
             "success": True,
             "infrastructure": get_infrastructure_status(),
             "websocket_connections": {
-                "job_subscriptions": {k: len(v) for k, v in kronos_manager.active_connections.items()},
-                "gex_subscribers": len(kronos_manager.gex_subscribers)
+                "job_subscriptions": {k: len(v) for k, v in chronicles_manager.active_connections.items()},
+                "gex_subscribers": len(chronicles_manager.gex_subscribers)
             }
         }
     except ImportError:
@@ -1124,8 +1124,8 @@ async def get_chronicles_infrastructure_status():
                 "orat_cache": {"hits": 0, "misses": 0},
             },
             "websocket_connections": {
-                "job_subscriptions": {k: len(v) for k, v in kronos_manager.active_connections.items()},
-                "gex_subscribers": len(kronos_manager.gex_subscribers)
+                "job_subscriptions": {k: len(v) for k, v in chronicles_manager.active_connections.items()},
+                "gex_subscribers": len(chronicles_manager.gex_subscribers)
             }
         }
 

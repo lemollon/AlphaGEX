@@ -160,7 +160,7 @@ export default function SagePage() {
   const handleTrain = async () => {
     setTraining(true)
     try {
-      await api.post('/api/ml/wisdom/train', { min_samples: 30, use_kronos: true })
+      await api.post('/api/ml/wisdom/train', { min_samples: 30, use_chronicles: true })
       mutateStatus()
       mutateQuality()
       mutateFeatures()

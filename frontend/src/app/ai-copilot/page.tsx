@@ -7,8 +7,8 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '../../lib/api'
 
 // COUNSELOR Configuration
-const GEXIS_NAME = 'COUNSELOR'
-const GEXIS_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
+const COUNSELOR_NAME = 'COUNSELOR'
+const COUNSELOR_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
 const USER_NAME = 'Optionist Prime'
 
 // Get Central Time date/time (all AlphaGEX operations use Chicago time)
@@ -25,7 +25,7 @@ function getTimeGreeting(): string {
 }
 
 // Get COUNSELOR welcome message - JARVIS-style sophisticated greeting
-function getGexisWelcomeMessage(): string {
+function getCounselorWelcomeMessage(): string {
   const greeting = getTimeGreeting()
   const ct = getCentralTime()
   const dayOfWeek = ct.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/Chicago' })
@@ -81,7 +81,7 @@ export default function AICopilot() {
     {
       id: '1',
       role: 'assistant',
-      content: getGexisWelcomeMessage(),
+      content: getCounselorWelcomeMessage(),
       timestamp: new Date()
     }
   ])
@@ -193,8 +193,8 @@ export default function AICopilot() {
           <div className="h-[calc(100vh-12rem)] flex flex-col">
             {/* Header */}
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-text-primary">{GEXIS_NAME}</h1>
-        <p className="text-text-secondary mt-1">{GEXIS_FULL_NAME} - Your intelligent trading assistant</p>
+        <h1 className="text-3xl font-bold text-text-primary">{COUNSELOR_NAME}</h1>
+        <p className="text-text-secondary mt-1">{COUNSELOR_FULL_NAME} - Your intelligent trading assistant</p>
       </div>
 
       {/* Chat Container */}
@@ -339,7 +339,7 @@ export default function AICopilot() {
                   handleSend()
                 }
               }}
-              placeholder={`Ask ${GEXIS_NAME} about markets, gamma levels, strategies...`}
+              placeholder={`Ask ${COUNSELOR_NAME} about markets, gamma levels, strategies...`}
               className="input flex-1"
               disabled={loading}
             />

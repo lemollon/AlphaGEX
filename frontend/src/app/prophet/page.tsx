@@ -7,7 +7,7 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import { apiClient } from '@/lib/api'
-import { useProphetStatus, useOracleLogs, useOracleFullTransparency } from '@/lib/hooks/useMarketData'
+import { useProphetStatus, useProphetLogs, useProphetFullTransparency } from '@/lib/hooks/useMarketData'
 
 // Error Boundary for Prophet component-level errors
 interface ErrorBoundaryState {
@@ -21,7 +21,7 @@ interface ErrorBoundaryProps {
   fallback?: ReactNode
 }
 
-class OracleErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ProphetErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props)
     this.state = { hasError: false, error: null, errorInfo: null }
@@ -384,13 +384,13 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
   )
 }
 
-export default function OraclePage() {
+export default function ProphetPage() {
   const sidebarPadding = useSidebarPadding()
 
   // SWR hooks for data fetching with caching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useProphetStatus()
-  const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useOracleLogs()
-  const { data: transparencyRes, isValidating: transparencyValidating, mutate: mutateTransparency } = useOracleFullTransparency()
+  const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useProphetLogs()
+  const { data: transparencyRes, isValidating: transparencyValidating, mutate: mutateTransparency } = useProphetFullTransparency()
 
   // Extract data from responses
   const status = statusRes?.prophet as ProphetStatus | undefined
@@ -419,7 +419,7 @@ export default function OraclePage() {
     setLoadingInteractions(true)
     try {
       const botParam = selectedBot === 'ALL' ? undefined : selectedBot
-      const response = await apiClient.getOracleBotInteractions({
+      const response = await apiClient.getProphetBotInteractions({
         days: interactionDays,
         limit: 200,
         bot_name: botParam
@@ -438,7 +438,7 @@ export default function OraclePage() {
   const fetchTrainingStatus = useCallback(async () => {
     setLoadingTraining(true)
     try {
-      const response = await apiClient.getOracleTrainingStatus()
+      const response = await apiClient.getProphetTrainingStatus()
       if (response.data?.success) {
         setTrainingStatus(response.data)
       }
@@ -452,7 +452,7 @@ export default function OraclePage() {
   // Fetch performance data
   const fetchPerformance = useCallback(async () => {
     try {
-      const response = await apiClient.getOraclePerformance(90)
+      const response = await apiClient.getProphetPerformance(90)
       if (response.data?.success) {
         setPerformance(response.data)
       }
@@ -466,7 +466,7 @@ export default function OraclePage() {
     setTriggeringTraining(true)
     setTrainingResult(null)
     try {
-      const response = await apiClient.triggerOracleTraining(force)
+      const response = await apiClient.triggerProphetTraining(force)
       setTrainingResult(response.data)
       if (response.data?.success) {
         fetchTrainingStatus()
@@ -489,7 +489,7 @@ export default function OraclePage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `oracle_interactions_${new Date().toISOString().split('T')[0]}.json`
+    a.download = `prophet_interactions_${new Date().toISOString().split('T')[0]}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -514,7 +514,7 @@ export default function OraclePage() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `oracle_interactions_${new Date().toISOString().split('T')[0]}.csv`
+    a.download = `prophet_interactions_${new Date().toISOString().split('T')[0]}.csv`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -536,7 +536,7 @@ export default function OraclePage() {
 
   const clearLogs = async () => {
     try {
-      await apiClient.clearOracleLogs()
+      await apiClient.clearProphetLogs()
       mutateLogs()
     } catch (err: any) {
       console.error('Failed to clear logs:', err)
@@ -804,7 +804,7 @@ export default function OraclePage() {
 
           {/* Bot Interactions Tab */}
           {activeTab === 'interactions' && (
-            <OracleErrorBoundary>
+            <ProphetErrorBoundary>
             <div className="space-y-6">
               {/* Filters */}
               <div className="flex flex-wrap items-center gap-4">
@@ -1300,12 +1300,12 @@ export default function OraclePage() {
                 )}
               </div>
             </div>
-            </OracleErrorBoundary>
+            </ProphetErrorBoundary>
           )}
 
           {/* Performance Tab */}
           {activeTab === 'performance' && (
-            <OracleErrorBoundary>
+            <ProphetErrorBoundary>
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-text-primary">Prophet Prediction Performance (90 Days)</h3>
@@ -1403,12 +1403,12 @@ export default function OraclePage() {
                 </div>
               )}
             </div>
-            </OracleErrorBoundary>
+            </ProphetErrorBoundary>
           )}
 
           {/* Training Tab */}
           {activeTab === 'training' && (
-            <OracleErrorBoundary>
+            <ProphetErrorBoundary>
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-text-primary">ML Model Training</h3>
@@ -1622,12 +1622,12 @@ export default function OraclePage() {
                 </div>
               )}
             </div>
-            </OracleErrorBoundary>
+            </ProphetErrorBoundary>
           )}
 
           {/* Live Logs Tab */}
           {activeTab === 'logs' && (
-            <OracleErrorBoundary>
+            <ProphetErrorBoundary>
             <div className="card">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-semibold text-text-primary flex items-center gap-2">
@@ -1687,12 +1687,12 @@ export default function OraclePage() {
                 )}
               </div>
             </div>
-            </OracleErrorBoundary>
+            </ProphetErrorBoundary>
           )}
 
           {/* Decision Log Tab */}
           {activeTab === 'decisions' && (
-            <OracleErrorBoundary>
+            <ProphetErrorBoundary>
             <div className="card">
               <h3 className="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-green-500" />
@@ -1700,12 +1700,12 @@ export default function OraclePage() {
               </h3>
               <DecisionLogViewer defaultBot="PROPHET" />
             </div>
-            </OracleErrorBoundary>
+            </ProphetErrorBoundary>
           )}
 
           {/* Data Flow Tab - FULL TRANSPARENCY */}
           {activeTab === 'dataflow' && (
-            <OracleErrorBoundary>
+            <ProphetErrorBoundary>
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -1983,7 +1983,7 @@ export default function OraclePage() {
                 </div>
               )}
             </div>
-            </OracleErrorBoundary>
+            </ProphetErrorBoundary>
           )}
 
           {/* Decision Formulas Tab */}

@@ -100,7 +100,7 @@ export default function MultiBotEquityCurve({
   const [selectedDays, setSelectedDays] = useState(days)
 
   // Fetch data for all bots in parallel
-  const { data: aresData, isLoading: aresLoading } = useSWR<BotEquityData>(
+  const { data: fortressData, isLoading: fortressLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[0].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
@@ -110,7 +110,7 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: icarusData, isLoading: icarusLoading } = useSWR<BotEquityData>(
+  const { data: gideonData, isLoading: gideonLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[2].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
@@ -120,17 +120,17 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: titanData, isLoading: titanLoading } = useSWR<BotEquityData>(
+  const { data: samsonData, isLoading: samsonLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[4].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: prometheusData, isLoading: prometheusLoading } = useSWR<BotEquityData>(
+  const { data: jubileeData, isLoading: jubileeLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[5].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
   )
-  const { data: heraclesData, isLoading: heraclesLoading } = useSWR<BotEquityData>(
+  const { data: valorData, isLoading: valorLoading } = useSWR<BotEquityData>(
     `${LIVE_BOTS[6].endpoint}?days=${selectedDays}`,
     fetcher,
     { refreshInterval: 300000 }
@@ -146,17 +146,17 @@ export default function MultiBotEquityCurve({
     { refreshInterval: 300000 }
   )
 
-  const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading || prometheusLoading || heraclesLoading || agapeLoading || agapeSpotLoading
+  const isLoading = fortressLoading || solomonLoading || gideonLoading || anchorLoading || samsonLoading || jubileeLoading || valorLoading || agapeLoading || agapeSpotLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
-    FORTRESS: aresData,
+    FORTRESS: fortressData,
     SOLOMON: solomonData,
-    GIDEON: icarusData,
+    GIDEON: gideonData,
     ANCHOR: anchorData,
-    SAMSON: titanData,
-    JUBILEE: prometheusData,
-    VALOR: heraclesData,
+    SAMSON: samsonData,
+    JUBILEE: jubileeData,
+    VALOR: valorData,
     AGAPE: agapeData,
     AGAPE_SPOT: agapeSpotData,
     LAZARUS: undefined,
@@ -206,7 +206,7 @@ export default function MultiBotEquityCurve({
 
       return point
     })
-  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData, showPercentage])
+  }, [fortressData, solomonData, gideonData, anchorData, samsonData, jubileeData, valorData, agapeData, agapeSpotData, showPercentage])
 
   // Calculate summary stats for each bot
   const botStats = useMemo(() => {
@@ -238,7 +238,7 @@ export default function MultiBotEquityCurve({
     })
 
     return stats
-  }, [aresData, solomonData, icarusData, anchorData, titanData, prometheusData, heraclesData, agapeData, agapeSpotData])
+  }, [fortressData, solomonData, gideonData, anchorData, samsonData, jubileeData, valorData, agapeData, agapeSpotData])
 
   // Toggle bot visibility
   const toggleBot = (botName: BotName) => {

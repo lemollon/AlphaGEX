@@ -26,7 +26,7 @@ def test_client():
                 pytest.skip(f"Could not create test client: {e}")
 
 
-class TestArgusEndpoints:
+class TestWatchtowerEndpoints:
     """Tests for Watchtower gamma visualization endpoints"""
 
     def test_watchtower_data_endpoint(self, test_client):
@@ -43,7 +43,7 @@ class TestArgusEndpoints:
         response = test_client.get("/api/watchtower/commentary")
         assert response.status_code in [200, 404, 500]
 
-    def test_argus_levels_endpoint(self, test_client):
+    def test_watchtower_levels_endpoint(self, test_client):
         """Test Watchtower gamma levels endpoint"""
         if test_client is None:
             pytest.skip("Test client not available")

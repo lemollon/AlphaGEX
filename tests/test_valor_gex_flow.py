@@ -48,7 +48,7 @@ class TestGEXDataSourcePriority:
 
                 # Mock persist function
                 with patch.object(signals_module, '_persist_gex_cache_to_db'):
-                    result = signals_module.get_gex_data_for_heracles("SPX")
+                    result = signals_module.get_gex_data_for_valor("SPX")
 
         # Assert: Got valid data from Tradier
         assert result['flip_point'] == 6000.0
@@ -82,7 +82,7 @@ class TestGEXDataSourcePriority:
                 mock_tv_class.return_value = mock_api
 
                 with patch.object(signals_module, '_persist_gex_cache_to_db'):
-                    result = signals_module.get_gex_data_for_heracles("SPX")
+                    result = signals_module.get_gex_data_for_valor("SPX")
 
         # Assert: Got valid data
         assert result['flip_point'] == 5980.0
@@ -97,13 +97,13 @@ class TestSignalGeneration:
 
     def test_signal_generated_with_valid_gex_data(self):
         """With valid GEX data (flip_point > 0), signals should be generated."""
-        from trading.valor.signals import HERACLESSignalGenerator
+        from trading.valor.signals import ValorSignalGenerator
         from trading.valor.models import ValorConfig
 
         # Use default config (no 'enabled' parameter)
         config = ValorConfig()
 
-        generator = HERACLESSignalGenerator(config)
+        generator = ValorSignalGenerator(config)
 
         # Mock GEX data with REAL values
         gex_data = {
@@ -134,12 +134,12 @@ class TestSignalGeneration:
 
     def test_signal_skipped_when_no_gex_data(self):
         """With no GEX data (flip_point = 0), signals should be SKIPPED."""
-        from trading.valor.signals import HERACLESSignalGenerator
+        from trading.valor.signals import ValorSignalGenerator
         from trading.valor.models import ValorConfig
 
         config = ValorConfig()
 
-        generator = HERACLESSignalGenerator(config)
+        generator = ValorSignalGenerator(config)
 
         # Mock GEX data with NO REAL VALUES (simulates API failure)
         gex_data = {
@@ -173,12 +173,12 @@ class TestNegativeGammaLogic:
 
     def test_negative_gamma_generates_momentum_signal(self):
         """In negative gamma, price above flip should generate SHORT (momentum)."""
-        from trading.valor.signals import HERACLESSignalGenerator, GammaRegime
+        from trading.valor.signals import ValorSignalGenerator, GammaRegime
         from trading.valor.models import ValorConfig
 
         config = ValorConfig()
 
-        generator = HERACLESSignalGenerator(config)
+        generator = ValorSignalGenerator(config)
 
         # Mock NEGATIVE gamma (net_gex < 0)
         gex_data = {
@@ -249,8 +249,8 @@ class TestCacheLogic:
             mock_datetime.now.return_value = overnight_time
             mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
 
-            from trading.valor.signals import get_gex_data_for_heracles
-            result = get_gex_data_for_heracles("SPX")
+            from trading.valor.signals import get_gex_data_for_valor
+            result = get_gex_data_for_valor("SPX")
 
         # Assert: Used cached n+1 data
         assert result['flip_point'] == 5990.0

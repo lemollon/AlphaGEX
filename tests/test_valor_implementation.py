@@ -11,8 +11,8 @@ Comprehensive tests that verify:
 5. Gamma regime filter is wired correctly
 6. Position management uses correct parameters
 
-Run: pytest tests/test_heracles_implementation.py -v
-Or:  python tests/test_heracles_implementation.py --api-url http://localhost:8000
+Run: pytest tests/test_valor_implementation.py -v
+Or:  python tests/test_valor_implementation.py --api-url http://localhost:8000
 """
 
 import sys
@@ -37,7 +37,7 @@ class TestResult:
         return f"[{status}] {self.name}: {self.message}" if self.message else f"[{status}] {self.name}"
 
 
-class HERACLESImplementationVerifier:
+class ValorImplementationVerifier:
     """Verifies VALOR implementation is complete and wired correctly"""
 
     def __init__(self, api_url: str = None):
@@ -158,12 +158,12 @@ class HERACLESImplementationVerifier:
     def _test_signal_generation_wiring(self):
         """Verify signal generation properly uses overnight hybrid and gamma filter"""
         try:
-            from trading.valor.signals import HERACLESSignalGenerator
+            from trading.valor.signals import ValorSignalGenerator
             from trading.valor.models import ValorConfig, BayesianWinTracker, GammaRegime
 
             config = ValorConfig()
             win_tracker = BayesianWinTracker()
-            generator = HERACLESSignalGenerator(config, win_tracker)
+            generator = ValorSignalGenerator(config, win_tracker)
 
             # Test 1: _set_stop_levels method accepts is_overnight parameter
             import inspect
@@ -441,7 +441,7 @@ except ImportError:
     pytest = None
 
 if PYTEST_AVAILABLE:
-    class TestHERACLESImplementation:
+    class TestValorImplementation:
         """Pytest-compatible tests"""
 
         @pytest.fixture
@@ -451,9 +451,9 @@ if PYTEST_AVAILABLE:
 
         @pytest.fixture
         def signal_generator(self, config):
-            from trading.valor.signals import HERACLESSignalGenerator
+            from trading.valor.signals import ValorSignalGenerator
             from trading.valor.models import BayesianWinTracker
-            return HERACLESSignalGenerator(config, BayesianWinTracker())
+            return ValorSignalGenerator(config, BayesianWinTracker())
 
         def test_overnight_hybrid_config_exists(self, config):
             """Config has overnight hybrid parameters"""
@@ -506,7 +506,7 @@ if __name__ == '__main__':
     parser.add_argument('--api-url', type=str, help='API base URL (e.g., http://localhost:8000)')
     args = parser.parse_args()
 
-    verifier = HERACLESImplementationVerifier(api_url=args.api_url)
+    verifier = ValorImplementationVerifier(api_url=args.api_url)
     passed, failed = verifier.run_all_tests()
 
     # Exit with appropriate code

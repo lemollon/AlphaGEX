@@ -168,12 +168,12 @@ def test_dynamic_stop_calculation():
     print_header("TEST 4: DYNAMIC STOP CALCULATION")
 
     try:
-        from trading.valor.signals import HERACLESSignalGenerator
+        from trading.valor.signals import ValorSignalGenerator
         from trading.valor.models import ValorConfig, BayesianWinTracker, GammaRegime
 
         config = ValorConfig()
         tracker = BayesianWinTracker()
-        generator = HERACLESSignalGenerator(config, tracker)
+        generator = ValorSignalGenerator(config, tracker)
 
         base_stop = 2.5  # Default
         test_cases = [
@@ -219,12 +219,12 @@ def test_bidirectional_momentum():
     print_header("TEST 5: BIDIRECTIONAL MOMENTUM (WALL BOUNCE)")
 
     try:
-        from trading.valor.signals import HERACLESSignalGenerator
+        from trading.valor.signals import ValorSignalGenerator
         from trading.valor.models import ValorConfig, BayesianWinTracker, GammaRegime, SignalSource
 
         config = ValorConfig()
         tracker = BayesianWinTracker()
-        generator = HERACLESSignalGenerator(config, tracker)
+        generator = ValorSignalGenerator(config, tracker)
 
         # Test parameters
         flip_point = 6100.0
@@ -384,9 +384,9 @@ def test_ml_model_status():
     print_header("TEST 8: ML MODEL STATUS")
 
     try:
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
 
         print(f"\n  ML Advisor Status:")
         print(f"    Model Trained: {advisor.is_trained}")

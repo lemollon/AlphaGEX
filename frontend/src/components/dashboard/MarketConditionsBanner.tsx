@@ -33,7 +33,7 @@ interface VIXData {
   vix_spot?: number
 }
 
-interface OracleData {
+interface ProphetData {
   success?: boolean
   status?: string
   is_trained?: boolean
@@ -92,7 +92,7 @@ const getGEXRegime = (regime: string | undefined): { label: string; color: strin
 }
 
 // Prophet recommendation display
-const getProphetRecommendation = (data: OracleData): { label: string; color: string; bgColor: string; icon: typeof Shield } => {
+const getProphetRecommendation = (data: ProphetData): { label: string; color: string; bgColor: string; icon: typeof Shield } => {
   const rec = data.recommendation?.toUpperCase() || data.strategy?.toUpperCase() || ''
 
   if (rec.includes('IRON') || rec.includes('IC') || rec.includes('CONDOR')) {
@@ -112,7 +112,7 @@ export default function MarketConditionsBanner() {
   // Fetch market data
   const { data: gexData } = useSWR<GEXData>('/api/gex/SPY', fetcher, { refreshInterval: 120000 })
   const { data: vixData } = useSWR<VIXData>('/api/vix/current', fetcher, { refreshInterval: 60000 })
-  const { data: oracleData } = useSWR<OracleData>('/api/prophet/status', fetcher, { refreshInterval: 30000 })
+  const { data: prophetData } = useSWR<ProphetData>('/api/prophet/status', fetcher, { refreshInterval: 30000 })
 
   // Normalize data
   const gex = gexData?.data || gexData || {}
@@ -124,8 +124,8 @@ export default function MarketConditionsBanner() {
 
   const vixRegime = getVIXRegime(vix)
   const gexRegime = getGEXRegime(gex.regime)
-  const prophet = getProphetRecommendation(oracleData || {})
-  const OracleIcon = prophet.icon
+  const prophet = getProphetRecommendation(prophetData || {})
+  const ProphetIcon = prophet.icon
 
   // Calculate distance to walls
   const distanceToCallWall = callWall && spotPrice ? ((callWall - spotPrice) / spotPrice) * 100 : 0
@@ -176,13 +176,13 @@ export default function MarketConditionsBanner() {
 
           {/* Prophet Recommendation */}
           <div className={`flex items-center gap-3 px-4 py-2 rounded-lg ${prophet.bgColor}`}>
-            <OracleIcon className={`w-5 h-5 ${prophet.color}`} />
+            <ProphetIcon className={`w-5 h-5 ${prophet.color}`} />
             <div>
               <div className="text-xs text-gray-500">Prophet Says</div>
               <div className={`font-bold ${prophet.color}`}>{prophet.label}</div>
-              {oracleData?.confidence && (
+              {prophetData?.confidence && (
                 <div className="text-xs text-gray-500">
-                  {(oracleData.confidence * 100).toFixed(0)}% confidence
+                  {(prophetData.confidence * 100).toFixed(0)}% confidence
                 </div>
               )}
             </div>

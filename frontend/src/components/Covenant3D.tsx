@@ -4432,9 +4432,9 @@ function SystemAmbientEffects({
       case 'watchtower':
         return <ArgusEffects color={color} sunColor={sunColor} paused={paused} />
       case 'prophet':
-        return <OracleEffects color={color} sunColor={sunColor} paused={paused} />
+        return <ProphetEffects color={color} sunColor={sunColor} paused={paused} />
       case 'chronicles':
-        return <KronosEffects color={color} sunColor={sunColor} paused={paused} />
+        return <ChroniclesEffects color={color} sunColor={sunColor} paused={paused} />
       case 'systems':
         return <SystemsEffects color={color} sunColor={sunColor} paused={paused} />
       case 'discernment':
@@ -5245,7 +5245,7 @@ function ArgusEffects({ color, sunColor, paused }: { color: string, sunColor: st
 }
 
 // PROPHET - Time portals, prophecy crystals, vision echoes
-function OracleEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+function ProphetEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
   const portalsRef = useRef<THREE.Group>(null)
   const crystalsRef = useRef<THREE.Group>(null)
@@ -5377,7 +5377,7 @@ function OracleEffects({ color, sunColor, paused }: { color: string, sunColor: s
 }
 
 // CHRONICLES - Clock gears, time distortion waves, hourglass particles
-function KronosEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+function ChroniclesEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
   const gearsRef = useRef<THREE.Group>(null)
   const hourglassRef = useRef<THREE.Group>(null)

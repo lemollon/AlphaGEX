@@ -502,13 +502,13 @@ function ZeroDTEBadge({
 function EntryContext({
   mlDirection,
   mlConfidence,
-  oracleConfidence,
+  prophetConfidence,
   gexRegime,
   vixAtEntry
 }: {
   mlDirection?: string
   mlConfidence?: number
-  oracleConfidence?: number
+  prophetConfidence?: number
   gexRegime?: string
   vixAtEntry?: number
 }) {
@@ -537,11 +537,11 @@ function EntryContext({
               </span>
             </div>
           )}
-          {oracleConfidence && (
+          {prophetConfidence && (
             <div>
               <span className="text-gray-600 block">Prophet</span>
               <span className="text-purple-400 font-medium">
-                {(oracleConfidence * 100).toFixed(0)}% conf
+                {(prophetConfidence * 100).toFixed(0)}% conf
               </span>
             </div>
           )}
@@ -748,7 +748,7 @@ function SolomonPositionCard({
       <EntryContext
         mlDirection={position.ml_direction}
         mlConfidence={position.ml_confidence}
-        oracleConfidence={position.oracle_confidence}
+        prophetConfidence={position.oracle_confidence}
         gexRegime={position.gex_regime}
         vixAtEntry={position.vix_at_entry}
       />
@@ -956,7 +956,7 @@ function AresPositionCard({
       <EntryContext
         mlDirection={position.ml_direction}
         mlConfidence={position.ml_confidence}
-        oracleConfidence={position.oracle_confidence}
+        prophetConfidence={position.oracle_confidence}
         gexRegime={position.gex_regime}
         vixAtEntry={position.vix_at_entry}
       />

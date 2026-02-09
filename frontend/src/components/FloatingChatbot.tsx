@@ -21,8 +21,8 @@ interface Message {
 }
 
 // COUNSELOR Configuration
-const GEXIS_NAME = 'COUNSELOR'
-const GEXIS_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
+const COUNSELOR_NAME = 'COUNSELOR'
+const COUNSELOR_FULL_NAME = 'Gamma Exposure eXpert Intelligence System'
 const USER_NAME = 'Optionist Prime'
 
 const STORAGE_KEY = 'alphagex_chat_history'
@@ -99,7 +99,7 @@ function getTimeGreeting(): string {
 }
 
 // Get COUNSELOR welcome message - JARVIS-style sophisticated greeting
-function getGexisWelcomeMessage(): string {
+function getCounselorWelcomeMessage(): string {
   const greeting = getTimeGreeting()
   const ct = getCentralTime()
   const dayOfWeek = ct.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/Chicago' })
@@ -139,7 +139,7 @@ I have full situational awareness of your AlphaGEX ecosystem—real-time gamma e
 }
 
 // Get COUNSELOR chat cleared message - JARVIS-style
-function getGexisClearMessage(): string {
+function getCounselorClearMessage(): string {
   return `Memory banks cleared, ${USER_NAME}.
 
 All previous context purged. Systems recalibrated.
@@ -258,7 +258,7 @@ export default function FloatingChatbot() {
         setMessages([{
           id: '1',
           role: 'assistant',
-          content: getGexisWelcomeMessage(),
+          content: getCounselorWelcomeMessage(),
           timestamp: new Date()
         }])
       }
@@ -271,7 +271,7 @@ export default function FloatingChatbot() {
   useEffect(() => {
     const checkAlerts = async () => {
       try {
-        const response = await apiClient.gexisAlerts()
+        const response = await apiClient.counselorAlerts()
         const data = response.data
         if (data.success && data.count > 0) {
           setAlertCount(data.count)
@@ -391,7 +391,7 @@ export default function FloatingChatbot() {
   // Handle quick commands
   const handleCommand = async (command: string): Promise<string | null> => {
     try {
-      const response = await apiClient.gexisCommand(command)
+      const response = await apiClient.counselorCommand(command)
       const data = response.data
 
       if (data.success) {
@@ -462,7 +462,7 @@ export default function FloatingChatbot() {
           } catch (streamError) {
             console.warn('Streaming failed, falling back to regular endpoint:', streamError)
             // Fallback to non-streaming
-            response = await apiClient.gexisAgenticChat({
+            response = await apiClient.counselorAgenticChat({
               query: currentInput,
               session_id: sessionId,
               market_data: {}
@@ -480,7 +480,7 @@ export default function FloatingChatbot() {
           }
         } else {
           // Use regular agentic chat endpoint
-          response = await apiClient.gexisAgenticChat({
+          response = await apiClient.counselorAgenticChat({
             query: currentInput,
             session_id: sessionId,
             market_data: {}
@@ -576,7 +576,7 @@ export default function FloatingChatbot() {
 
     setLoading(true)
     try {
-      const response = await apiClient.gexisConfirmAction({
+      const response = await apiClient.counselorConfirmAction({
         session_id: sessionId,
         confirm
       })
@@ -694,7 +694,7 @@ export default function FloatingChatbot() {
     setMessages([{
       id: Date.now().toString(),
       role: 'assistant',
-      content: getGexisClearMessage(),
+      content: getCounselorClearMessage(),
       timestamp: new Date()
     }])
     localStorage.removeItem(STORAGE_KEY)
@@ -702,7 +702,7 @@ export default function FloatingChatbot() {
 
   const exportConversation = async () => {
     try {
-      const response = await apiClient.gexisExportConversation(sessionId, 'markdown')
+      const response = await apiClient.counselorExportConversation(sessionId, 'markdown')
       const data = response.data
 
       if (data.success && data.content) {
@@ -791,7 +791,7 @@ export default function FloatingChatbot() {
         }}
       >
         <Bot className="w-5 h-5 text-white" />
-        <span className="text-sm text-white font-medium">{GEXIS_NAME}</span>
+        <span className="text-sm text-white font-medium">{COUNSELOR_NAME}</span>
         {alertCount > 0 && (
           <span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center">
             <AlertTriangle className="w-3 h-3 text-white" />
@@ -834,7 +834,7 @@ export default function FloatingChatbot() {
             <Bot className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white">{GEXIS_NAME}</h3>
+            <h3 className="text-sm font-bold text-white">{COUNSELOR_NAME}</h3>
             <p className="text-xs text-white/70">Session: {sessionId}</p>
           </div>
         </div>

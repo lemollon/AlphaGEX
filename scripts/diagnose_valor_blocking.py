@@ -10,7 +10,7 @@ This script checks ALL conditions that could prevent VALOR from generating trade
 5. Signal generation logic
 
 Run on Render console:
-  python /opt/render/project/src/scripts/diagnose_heracles_blocking.py
+  python /opt/render/project/src/scripts/diagnose_valor_blocking.py
 """
 
 import sys
@@ -45,8 +45,8 @@ def diagnose():
     print("=" * 70)
 
     try:
-        from trading.valor.signals import get_gex_data_for_heracles
-        gex_data = get_gex_data_for_heracles("SPX")
+        from trading.valor.signals import get_gex_data_for_valor
+        gex_data = get_gex_data_for_valor("SPX")
 
         flip_point = gex_data.get('flip_point', 0)
         net_gex = gex_data.get('net_gex', 0)
@@ -195,14 +195,14 @@ def diagnose():
     print("=" * 70)
 
     try:
-        from trading.valor.signals import HERACLESSignalGenerator, GammaRegime
+        from trading.valor.signals import ValorSignalGenerator, GammaRegime
         from trading.valor.models import ValorConfig
         from trading.valor.db import ValorDatabase
 
         db = ValorDatabase()
         config = db.get_config()
         win_tracker = db.get_win_tracker()
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         # Get current MES price
         from trading.valor.executor import TastytradeExecutor

@@ -573,7 +573,7 @@ class TradierGEXCalculator:
         """
         Calculate GEX for ticker - wrapper for signals compatibility.
 
-        This method provides a consistent interface that matches KronosGEXCalculator.calculate_gex()
+        This method provides a consistent interface that matches ChroniclesGEXCalculator.calculate_gex()
         so signals code can call gex_calculator.calculate_gex(ticker) regardless of which
         calculator is in use.
 

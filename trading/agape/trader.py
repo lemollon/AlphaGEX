@@ -139,7 +139,7 @@ class AgapeTrader:
             # Step 2: Get Prophet advice early (avoid double-fetching)
             prophet_data = None
             if market_data:
-                prophet_data = self.signals.get_oracle_advice(market_data)
+                prophet_data = self.signals.get_prophet_advice(market_data)
                 scan_context["prophet_data"] = prophet_data
 
             # Step 3: Manage existing positions FIRST (includes no-loss trailing + SAR)

@@ -2,7 +2,7 @@
 
 import BotLogsPage from '@/components/logs/BotLogsPage'
 
-export default function OracleLogsPage() {
+export default function ProphetLogsPage() {
   return (
     <BotLogsPage
       botName="PROPHET"

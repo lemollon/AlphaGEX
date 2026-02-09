@@ -160,7 +160,7 @@ const fetchers = {
     const response = await apiClient.getATHENAPerformance(days)
     return response.data
   },
-  solomonOracleAdvice: async () => {
+  solomonProphetAdvice: async () => {
     try {
       const response = await api.get('/api/solomon/prophet-advice')
       return response.data
@@ -266,7 +266,7 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
-  icarusOracleAdvice: async () => {
+  icarusProphetAdvice: async () => {
     try {
       const response = await api.get('/api/gideon/prophet-advice')
       return response.data
@@ -402,29 +402,29 @@ const fetchers = {
   },
 
   // Prophet
-  oracleStatus: async () => {
+  prophetStatus: async () => {
     const response = await apiClient.getProphetStatus()
     return response.data
   },
-  oracleLogs: async () => {
-    const response = await apiClient.getOracleLogs()
+  prophetLogs: async () => {
+    const response = await apiClient.getProphetLogs()
     return response.data
   },
-  oraclePredictions: async (params: { days: number; limit: number }) => {
-    const response = await apiClient.getOraclePredictions(params)
+  prophetPredictions: async (params: { days: number; limit: number }) => {
+    const response = await apiClient.getProphetPredictions(params)
     return response.data
   },
   // NEW: Full transparency data
-  oracleDataFlows: async (params?: { limit?: number; bot_name?: string }) => {
-    const response = await apiClient.getOracleDataFlows(params)
+  prophetDataFlows: async (params?: { limit?: number; bot_name?: string }) => {
+    const response = await apiClient.getProphetDataFlows(params)
     return response.data
   },
-  oracleClaudeExchanges: async (params?: { limit?: number; bot_name?: string }) => {
-    const response = await apiClient.getOracleClaudeExchanges(params)
+  prophetClaudeExchanges: async (params?: { limit?: number; bot_name?: string }) => {
+    const response = await apiClient.getProphetClaudeExchanges(params)
     return response.data
   },
-  oracleFullTransparency: async (bot_name?: string) => {
-    const response = await apiClient.getOracleFullTransparency(bot_name)
+  prophetFullTransparency: async (bot_name?: string) => {
+    const response = await apiClient.getProphetFullTransparency(bot_name)
     return response.data
   },
 
@@ -747,58 +747,58 @@ const fetchers = {
   // VALOR MES Futures Scalping Bot
   // Note: Fetchers throw errors instead of returning fallback values
   // This allows SWR to properly handle retries and error states
-  heraclesStatus: async () => {
+  valorStatus: async () => {
     const response = await api.get('/api/valor/status')
     return response.data
   },
-  heraclesPositions: async () => {
+  valorPositions: async () => {
     const response = await api.get('/api/valor/positions')
     return response.data
   },
-  heraclesClosedTrades: async (limit: number = 50) => {
+  valorClosedTrades: async (limit: number = 50) => {
     const response = await api.get(`/api/valor/closed-trades?limit=${limit}`)
     return response.data
   },
-  heraclesEquityCurve: async (days: number = 30) => {
+  valorEquityCurve: async (days: number = 30) => {
     const response = await api.get(`/api/valor/paper-equity-curve?days=${days}`)
     return response.data
   },
-  heraclesIntradayEquity: async () => {
+  valorIntradayEquity: async () => {
     const response = await api.get('/api/valor/equity-curve/intraday')
     return response.data
   },
-  heraclesConfig: async () => {
+  valorConfig: async () => {
     const response = await api.get('/api/valor/config')
     return response.data
   },
-  heraclesPaperAccount: async () => {
+  valorPaperAccount: async () => {
     const response = await api.get('/api/valor/paper-account')
     return response.data
   },
-  heraclesScanActivity: async (limit?: number, outcome?: string) => {
+  valorScanActivity: async (limit?: number, outcome?: string) => {
     const params = new URLSearchParams()
     params.append('limit', String(limit || 100))
     if (outcome) params.append('outcome', outcome)
     const response = await api.get(`/api/valor/scan-activity?${params}`)
     return response.data
   },
-  heraclesMLTrainingData: async () => {
+  valorMLTrainingData: async () => {
     const response = await api.get('/api/valor/ml-training-data')
     return response.data
   },
-  heraclesMLTrainingDataStats: async () => {
+  valorMLTrainingDataStats: async () => {
     const response = await api.get('/api/valor/ml/training-data-stats')
     return response.data
   },
-  heraclesSignals: async (limit: number = 50) => {
+  valorSignals: async (limit: number = 50) => {
     const response = await api.get(`/api/valor/signals/recent?limit=${limit}`)
     return response.data
   },
-  heraclesMLStatus: async () => {
+  valorMLStatus: async () => {
     const response = await api.get('/api/valor/ml/status')
     return response.data
   },
-  heraclesMLTrain: async (minSamples: number = 50) => {
+  valorMLTrain: async (minSamples: number = 50) => {
     try {
       const response = await api.post(`/api/valor/ml/train?min_samples=${minSamples}`)
       return response.data
@@ -806,15 +806,15 @@ const fetchers = {
       return { success: false, error: error?.message || 'Training failed' }
     }
   },
-  heraclesMLFeatureImportance: async () => {
+  valorMLFeatureImportance: async () => {
     const response = await api.get('/api/valor/ml/feature-importance')
     return response.data
   },
-  heraclesMLApprovalStatus: async () => {
+  valorMLApprovalStatus: async () => {
     const response = await api.get('/api/valor/ml/approval-status')
     return response.data
   },
-  heraclesMLApprove: async () => {
+  valorMLApprove: async () => {
     try {
       const response = await api.post('/api/valor/ml/approve')
       return response.data
@@ -822,7 +822,7 @@ const fetchers = {
       return { success: false, error: error?.message || 'Approval failed' }
     }
   },
-  heraclesMLRevoke: async () => {
+  valorMLRevoke: async () => {
     try {
       const response = await api.post('/api/valor/ml/revoke')
       return response.data
@@ -830,7 +830,7 @@ const fetchers = {
       return { success: false, error: error?.message || 'Revoke failed' }
     }
   },
-  heraclesMLReject: async () => {
+  valorMLReject: async () => {
     try {
       const response = await api.post('/api/valor/ml/reject')
       return response.data
@@ -838,11 +838,11 @@ const fetchers = {
       return { success: false, error: error?.message || 'Reject failed' }
     }
   },
-  heraclesABTestStatus: async () => {
+  valorABTestStatus: async () => {
     const response = await api.get('/api/valor/ab-test/status')
     return response.data
   },
-  heraclesABTestEnable: async () => {
+  valorABTestEnable: async () => {
     try {
       const response = await api.post('/api/valor/ab-test/enable')
       return response.data
@@ -850,7 +850,7 @@ const fetchers = {
       return { success: false, error: error?.message || 'Failed to enable A/B test' }
     }
   },
-  heraclesABTestDisable: async () => {
+  valorABTestDisable: async () => {
     try {
       const response = await api.post('/api/valor/ab-test/disable')
       return response.data
@@ -858,7 +858,7 @@ const fetchers = {
       return { success: false, error: error?.message || 'Failed to disable A/B test' }
     }
   },
-  heraclesABTestResults: async () => {
+  valorABTestResults: async () => {
     const response = await api.get('/api/valor/ab-test/results')
     return response.data
   },
@@ -1221,8 +1221,8 @@ export function useATHENAPerformance(days: number = 30, options?: SWRConfigurati
   )
 }
 
-export function useATHENAOracleAdvice(options?: SWRConfiguration) {
-  return useSWR('solomon-prophet-advice', fetchers.solomonOracleAdvice, {
+export function useSolomonProphetAdvice(options?: SWRConfiguration) {
+  return useSWR('solomon-prophet-advice', fetchers.solomonProphetAdvice, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1337,8 +1337,8 @@ export function useICARUSPerformance(days: number = 30, options?: SWRConfigurati
   )
 }
 
-export function useICARUSOracleAdvice(options?: SWRConfiguration) {
-  return useSWR('gideon-prophet-advice', fetchers.icarusOracleAdvice, {
+export function useGideonProphetAdvice(options?: SWRConfiguration) {
+  return useSWR('gideon-prophet-advice', fetchers.icarusProphetAdvice, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1545,8 +1545,8 @@ export function useScanActivityTitan(limit: number = 50, date?: string, options?
 // VALOR MES FUTURES SCALPING HOOKS
 // =============================================================================
 
-export function useHERACLESStatus(options?: SWRConfiguration) {
-  return useSWR('valor-status', fetchers.heraclesStatus, {
+export function useValorStatus(options?: SWRConfiguration) {
+  return useSWR('valor-status', fetchers.valorStatus, {
     ...swrConfig,
     refreshInterval: 15 * 1000,  // 15 seconds for real-time position updates
     dedupingInterval: 5000,      // Allow refreshes within 5 seconds
@@ -1555,8 +1555,8 @@ export function useHERACLESStatus(options?: SWRConfiguration) {
   })
 }
 
-export function useHERACLESPositions(options?: SWRConfiguration) {
-  return useSWR('valor-positions', fetchers.heraclesPositions, {
+export function useValorPositions(options?: SWRConfiguration) {
+  return useSWR('valor-positions', fetchers.valorPositions, {
     ...swrConfig,
     dedupingInterval: 5000,
     keepPreviousData: false,
@@ -1565,24 +1565,24 @@ export function useHERACLESPositions(options?: SWRConfiguration) {
   })
 }
 
-export function useHERACLESClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useValorClosedTrades(limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
     `valor-closed-trades-${limit}`,
-    () => fetchers.heraclesClosedTrades(limit),
+    () => fetchers.valorClosedTrades(limit),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
-export function useHERACLESEquityCurve(days: number = 30, options?: SWRConfiguration) {
+export function useValorEquityCurve(days: number = 30, options?: SWRConfiguration) {
   return useSWR(
     `valor-equity-curve-${days}`,
-    () => fetchers.heraclesEquityCurve(days),
+    () => fetchers.valorEquityCurve(days),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
-export function useHERACLESIntradayEquity(options?: SWRConfiguration) {
-  return useSWR('valor-intraday-equity', fetchers.heraclesIntradayEquity, {
+export function useValorIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('valor-intraday-equity', fetchers.valorIntradayEquity, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,
@@ -1590,15 +1590,15 @@ export function useHERACLESIntradayEquity(options?: SWRConfiguration) {
 }
 
 export function useValorConfig(options?: SWRConfiguration) {
-  return useSWR('valor-config', fetchers.heraclesConfig, {
+  return useSWR('valor-config', fetchers.valorConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,
   })
 }
 
-export function useHERACLESPaperAccount(options?: SWRConfiguration) {
-  return useSWR('valor-paper-account', fetchers.heraclesPaperAccount, {
+export function useValorPaperAccount(options?: SWRConfiguration) {
+  return useSWR('valor-paper-account', fetchers.valorPaperAccount, {
     ...swrConfig,
     refreshInterval: 15 * 1000,  // 15 seconds for real-time balance updates
     dedupingInterval: 5000,
@@ -1607,48 +1607,48 @@ export function useHERACLESPaperAccount(options?: SWRConfiguration) {
   })
 }
 
-export function useHERACLESScanActivity(limit: number = 100, outcome?: string, options?: SWRConfiguration) {
+export function useValorScanActivity(limit: number = 100, outcome?: string, options?: SWRConfiguration) {
   return useSWR(
     `valor-scan-activity-${limit}-${outcome || 'all'}`,
-    () => fetchers.heraclesScanActivity(limit, outcome),
+    () => fetchers.valorScanActivity(limit, outcome),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
-export function useHERACLESMLTrainingData(options?: SWRConfiguration) {
-  return useSWR('valor-ml-training-data', fetchers.heraclesMLTrainingData, {
+export function useValorMLTrainingData(options?: SWRConfiguration) {
+  return useSWR('valor-ml-training-data', fetchers.valorMLTrainingData, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,  // Refresh every 5 minutes
     ...options,
   })
 }
 
-export function useHERACLESMLTrainingDataStats(options?: SWRConfiguration) {
-  return useSWR('valor-ml-training-data-stats', fetchers.heraclesMLTrainingDataStats, {
+export function useValorMLTrainingDataStats(options?: SWRConfiguration) {
+  return useSWR('valor-ml-training-data-stats', fetchers.valorMLTrainingDataStats, {
     ...swrConfig,
     refreshInterval: 60 * 1000,  // Refresh every minute
     ...options,
   })
 }
 
-export function useHERACLESSignals(limit: number = 50, options?: SWRConfiguration) {
+export function useValorSignals(limit: number = 50, options?: SWRConfiguration) {
   return useSWR(
     `valor-signals-${limit}`,
-    () => fetchers.heraclesSignals(limit),
+    () => fetchers.valorSignals(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
-export function useHERACLESMLStatus(options?: SWRConfiguration) {
-  return useSWR('valor-ml-status', fetchers.heraclesMLStatus, {
+export function useValorMLStatus(options?: SWRConfiguration) {
+  return useSWR('valor-ml-status', fetchers.valorMLStatus, {
     ...swrConfig,
     refreshInterval: 60 * 1000,  // Refresh every minute
     ...options,
   })
 }
 
-export function useHERACLESMLFeatureImportance(options?: SWRConfiguration) {
-  return useSWR('valor-ml-feature-importance', fetchers.heraclesMLFeatureImportance, {
+export function useValorMLFeatureImportance(options?: SWRConfiguration) {
+  return useSWR('valor-ml-feature-importance', fetchers.valorMLFeatureImportance, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,  // Refresh every 5 minutes
     ...options,
@@ -1656,54 +1656,54 @@ export function useHERACLESMLFeatureImportance(options?: SWRConfiguration) {
 }
 
 // Training function (not a hook - called imperatively)
-export async function trainHERACLESML(minSamples: number = 50) {
-  return fetchers.heraclesMLTrain(minSamples)
+export async function trainValorML(minSamples: number = 50) {
+  return fetchers.valorMLTrain(minSamples)
 }
 
 // ML Approval hooks and functions
-export function useHERACLESMLApprovalStatus(options?: SWRConfiguration) {
-  return useSWR('valor-ml-approval-status', fetchers.heraclesMLApprovalStatus, {
+export function useValorMLApprovalStatus(options?: SWRConfiguration) {
+  return useSWR('valor-ml-approval-status', fetchers.valorMLApprovalStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,  // Refresh every 30 seconds
     ...options,
   })
 }
 
-export async function approveHERACLESML() {
-  return fetchers.heraclesMLApprove()
+export async function approveValorML() {
+  return fetchers.valorMLApprove()
 }
 
-export async function revokeHERACLESML() {
-  return fetchers.heraclesMLRevoke()
+export async function revokeValorML() {
+  return fetchers.valorMLRevoke()
 }
 
-export async function rejectHERACLESML() {
-  return fetchers.heraclesMLReject()
+export async function rejectValorML() {
+  return fetchers.valorMLReject()
 }
 
 // A/B Test hooks and functions
-export function useHERACLESABTestStatus(options?: SWRConfiguration) {
-  return useSWR('valor-ab-test-status', fetchers.heraclesABTestStatus, {
+export function useValorABTestStatus(options?: SWRConfiguration) {
+  return useSWR('valor-ab-test-status', fetchers.valorABTestStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function useHERACLESABTestResults(options?: SWRConfiguration) {
-  return useSWR('valor-ab-test-results', fetchers.heraclesABTestResults, {
+export function useValorABTestResults(options?: SWRConfiguration) {
+  return useSWR('valor-ab-test-results', fetchers.valorABTestResults, {
     ...swrConfig,
     refreshInterval: 60 * 1000,  // Refresh every minute
     ...options,
   })
 }
 
-export async function enableHERACLESABTest() {
-  return fetchers.heraclesABTestEnable()
+export async function enableValorABTest() {
+  return fetchers.valorABTestEnable()
 }
 
-export async function disableHERACLESABTest() {
-  return fetchers.heraclesABTestDisable()
+export async function disableValorABTest() {
+  return fetchers.valorABTestDisable()
 }
 
 // =============================================================================
@@ -1879,50 +1879,50 @@ export function useScannerHistory(limit: number = 10, options?: SWRConfiguration
 // =============================================================================
 
 export function useProphetStatus(options?: SWRConfiguration) {
-  return useSWR('prophet-status', fetchers.oracleStatus, {
+  return useSWR('prophet-status', fetchers.prophetStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,  // Refresh every 30 seconds for fresher heartbeats
     ...options,
   })
 }
 
-export function useOracleLogs(options?: SWRConfiguration) {
-  return useSWR('prophet-logs', fetchers.oracleLogs, {
+export function useProphetLogs(options?: SWRConfiguration) {
+  return useSWR('prophet-logs', fetchers.prophetLogs, {
     ...swrConfig,
     refreshInterval: 15 * 1000,  // Refresh every 15 seconds for live logs
     ...options,
   })
 }
 
-export function useOraclePredictions(days: number = 30, limit: number = 100, options?: SWRConfiguration) {
+export function useProphetPredictions(days: number = 30, limit: number = 100, options?: SWRConfiguration) {
   return useSWR(
     `prophet-predictions-${days}-${limit}`,
-    () => fetchers.oraclePredictions({ days, limit }),
+    () => fetchers.prophetPredictions({ days, limit }),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
 // NEW: Full transparency hooks with auto-refresh
-export function useOracleDataFlows(limit: number = 50, bot_name?: string, options?: SWRConfiguration) {
+export function useProphetDataFlows(limit: number = 50, bot_name?: string, options?: SWRConfiguration) {
   return useSWR(
     `prophet-data-flows-${limit}-${bot_name || 'all'}`,
-    () => fetchers.oracleDataFlows({ limit, bot_name }),
+    () => fetchers.prophetDataFlows({ limit, bot_name }),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
-export function useOracleClaudeExchanges(limit: number = 20, bot_name?: string, options?: SWRConfiguration) {
+export function useProphetClaudeExchanges(limit: number = 20, bot_name?: string, options?: SWRConfiguration) {
   return useSWR(
     `prophet-claude-exchanges-${limit}-${bot_name || 'all'}`,
-    () => fetchers.oracleClaudeExchanges({ limit, bot_name }),
+    () => fetchers.prophetClaudeExchanges({ limit, bot_name }),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
-export function useOracleFullTransparency(bot_name?: string, options?: SWRConfiguration) {
+export function useProphetFullTransparency(bot_name?: string, options?: SWRConfiguration) {
   return useSWR(
     `prophet-full-transparency-${bot_name || 'all'}`,
-    () => fetchers.oracleFullTransparency(bot_name),
+    () => fetchers.prophetFullTransparency(bot_name),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }

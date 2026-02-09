@@ -19,20 +19,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-class TestGEXISConstants:
+class TestCounselorConstants:
     """Tests for COUNSELOR constants"""
 
-    def test_gexis_name_defined(self):
+    def test_counselor_name_defined(self):
         """Test COUNSELOR name is defined"""
-        from ai.counselor_personality import GEXIS_NAME
+        from ai.counselor_personality import COUNSELOR_NAME
 
-        assert GEXIS_NAME == "G.E.X.I.S."
+        assert COUNSELOR_NAME == "G.E.X.I.S."
 
-    def test_gexis_full_name_defined(self):
+    def test_counselor_full_name_defined(self):
         """Test COUNSELOR full name is defined"""
-        from ai.counselor_personality import GEXIS_FULL_NAME
+        from ai.counselor_personality import COUNSELOR_FULL_NAME
 
-        assert GEXIS_FULL_NAME == "Gamma Exposure eXpert Intelligence System"
+        assert COUNSELOR_FULL_NAME == "Gamma Exposure eXpert Intelligence System"
 
     def test_user_name_defined(self):
         """Test user name is defined"""
@@ -85,69 +85,69 @@ class TestTimeBasedGreetings:
         assert greeting == "Good evening"
 
 
-class TestGEXISGreeting:
+class TestCounselorGreeting:
     """Tests for COUNSELOR greeting generation"""
 
     def test_greeting_includes_user_name(self):
         """Test greeting includes Optionist Prime"""
-        from ai.counselor_personality import get_gexis_greeting
+        from ai.counselor_personality import get_counselor_greeting
 
-        greeting = get_gexis_greeting()
+        greeting = get_counselor_greeting()
 
         assert "Optionist Prime" in greeting
         assert "COUNSELOR" in greeting
 
     def test_greeting_includes_service_phrase(self):
         """Test greeting includes service phrase"""
-        from ai.counselor_personality import get_gexis_greeting
+        from ai.counselor_personality import get_counselor_greeting
 
-        greeting = get_gexis_greeting()
+        greeting = get_counselor_greeting()
 
         assert "service" in greeting.lower()
 
 
-class TestGEXISIdentity:
+class TestCounselorIdentity:
     """Tests for COUNSELOR identity prompt"""
 
     def test_identity_prompt_exists(self):
         """Test COUNSELOR identity prompt exists"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert GEXIS_IDENTITY is not None
-        assert len(GEXIS_IDENTITY) > 100
+        assert COUNSELOR_IDENTITY is not None
+        assert len(COUNSELOR_IDENTITY) > 100
 
     def test_identity_includes_name(self):
         """Test identity includes COUNSELOR name"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "COUNSELOR" in GEXIS_IDENTITY
+        assert "COUNSELOR" in COUNSELOR_IDENTITY
 
     def test_identity_includes_user_name(self):
         """Test identity includes user name"""
-        from ai.counselor_personality import GEXIS_IDENTITY, USER_NAME
+        from ai.counselor_personality import COUNSELOR_IDENTITY, USER_NAME
 
-        assert USER_NAME in GEXIS_IDENTITY
+        assert USER_NAME in COUNSELOR_IDENTITY
 
     def test_identity_includes_personality_traits(self):
         """Test identity includes personality traits"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "LOYAL" in GEXIS_IDENTITY or "loyal" in GEXIS_IDENTITY
-        assert "WITTY" in GEXIS_IDENTITY or "witty" in GEXIS_IDENTITY
+        assert "LOYAL" in COUNSELOR_IDENTITY or "loyal" in COUNSELOR_IDENTITY
+        assert "WITTY" in COUNSELOR_IDENTITY or "witty" in COUNSELOR_IDENTITY
 
     def test_identity_includes_jarvis_reference(self):
         """Test identity includes J.A.R.V.I.S. reference"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "J.A.R.V.I.S" in GEXIS_IDENTITY or "JARVIS" in GEXIS_IDENTITY
+        assert "J.A.R.V.I.S" in COUNSELOR_IDENTITY or "JARVIS" in COUNSELOR_IDENTITY
 
     def test_identity_includes_capabilities(self):
         """Test identity includes bot capabilities"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "FORTRESS" in GEXIS_IDENTITY
-        assert "SOLOMON" in GEXIS_IDENTITY
-        assert "CORNERSTONE" in GEXIS_IDENTITY
+        assert "FORTRESS" in COUNSELOR_IDENTITY
+        assert "SOLOMON" in COUNSELOR_IDENTITY
+        assert "CORNERSTONE" in COUNSELOR_IDENTITY
 
 
 class TestAlphaGEXKnowledge:
@@ -196,27 +196,27 @@ class TestComprehensiveKnowledge:
         assert isinstance(AGENTIC_TOOLS_AVAILABLE, bool)
 
 
-class TestGEXISCharacteristics:
+class TestCounselorCharacteristics:
     """Tests for COUNSELOR characteristics in identity"""
 
     def test_never_breaks_character(self):
         """Test identity includes instruction to never break character"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "NEVER" in GEXIS_IDENTITY
-        assert "Claude" in GEXIS_IDENTITY or "character" in GEXIS_IDENTITY.lower()
+        assert "NEVER" in COUNSELOR_IDENTITY
+        assert "Claude" in COUNSELOR_IDENTITY or "character" in COUNSELOR_IDENTITY.lower()
 
     def test_no_emojis_instruction(self):
         """Test identity includes no emojis instruction"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "emoji" in GEXIS_IDENTITY.lower()
+        assert "emoji" in COUNSELOR_IDENTITY.lower()
 
     def test_signature_phrases_present(self):
         """Test signature phrases are defined"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "At your service" in GEXIS_IDENTITY
+        assert "At your service" in COUNSELOR_IDENTITY
 
 
 class TestSpeakingStyle:
@@ -224,16 +224,16 @@ class TestSpeakingStyle:
 
     def test_speaking_style_defined(self):
         """Test speaking style is defined in identity"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert "SPEAKING STYLE" in GEXIS_IDENTITY or "speaking style" in GEXIS_IDENTITY.lower()
+        assert "SPEAKING STYLE" in COUNSELOR_IDENTITY or "speaking style" in COUNSELOR_IDENTITY.lower()
 
     def test_british_style_mentioned(self):
         """Test British style is mentioned"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
         # Should mention dry British humor
-        assert "British" in GEXIS_IDENTITY or "wit" in GEXIS_IDENTITY.lower()
+        assert "British" in COUNSELOR_IDENTITY or "wit" in COUNSELOR_IDENTITY.lower()
 
 
 class TestModuleStructure:
@@ -242,23 +242,23 @@ class TestModuleStructure:
     def test_all_exports_accessible(self):
         """Test all expected exports are accessible"""
         from ai.counselor_personality import (
-            GEXIS_NAME,
-            GEXIS_FULL_NAME,
+            COUNSELOR_NAME,
+            COUNSELOR_FULL_NAME,
             USER_NAME,
-            GEXIS_IDENTITY,
+            COUNSELOR_IDENTITY,
             ALPHAGEX_KNOWLEDGE,
             get_time_greeting,
-            get_gexis_greeting,
+            get_counselor_greeting,
         )
 
         assert all([
-            GEXIS_NAME,
-            GEXIS_FULL_NAME,
+            COUNSELOR_NAME,
+            COUNSELOR_FULL_NAME,
             USER_NAME,
-            GEXIS_IDENTITY,
+            COUNSELOR_IDENTITY,
             ALPHAGEX_KNOWLEDGE,
             get_time_greeting,
-            get_gexis_greeting,
+            get_counselor_greeting,
         ])
 
 
@@ -275,9 +275,9 @@ class TestEdgeCases:
 
     def test_identity_not_empty(self):
         """Test identity is not empty string"""
-        from ai.counselor_personality import GEXIS_IDENTITY
+        from ai.counselor_personality import COUNSELOR_IDENTITY
 
-        assert GEXIS_IDENTITY.strip() != ""
+        assert COUNSELOR_IDENTITY.strip() != ""
 
     def test_knowledge_not_empty(self):
         """Test knowledge is not empty string"""

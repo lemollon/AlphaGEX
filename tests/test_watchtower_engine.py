@@ -41,7 +41,7 @@ class TestWatchtowerEngineInitialization:
             pytest.skip("Watchtower engine not available")
 
 
-class TestArgusGammaAnalysis:
+class TestWatchtowerGammaAnalysis:
     """Tests for gamma analysis"""
 
     def test_analyze_gamma(self, mock_option_chain):
@@ -63,7 +63,7 @@ class TestArgusGammaAnalysis:
             pytest.skip("Watchtower engine not available")
 
 
-class TestArgusMagnetDetection:
+class TestWatchtowerMagnetDetection:
     """Tests for magnet detection"""
 
     def test_detect_magnets(self, mock_gex_levels):
@@ -82,7 +82,7 @@ class TestArgusMagnetDetection:
             pytest.skip("Watchtower engine not available")
 
 
-class TestArgusPinPrediction:
+class TestWatchtowerPinPrediction:
     """Tests for pin prediction"""
 
     def test_predict_likely_pin(self, mock_gex_levels):
@@ -101,7 +101,7 @@ class TestArgusPinPrediction:
             pytest.skip("Watchtower engine not available")
 
 
-class TestArgusOrderFlowPressure:
+class TestWatchtowerOrderFlowPressure:
     """Tests for order flow pressure calculation (GAP fixes)"""
 
     @pytest.fixture
@@ -229,7 +229,7 @@ class TestArgusOrderFlowPressure:
         assert isinstance(result['is_valid'], bool)
 
 
-class TestArgusNetGexVolume:
+class TestWatchtowerNetGexVolume:
     """Tests for net GEX volume calculation (GAP fixes)"""
 
     @pytest.fixture
@@ -326,7 +326,7 @@ class TestArgusNetGexVolume:
         assert result['signal_confidence'] in valid_confidences
 
 
-class TestArgusResetGammaSmoothing:
+class TestWatchtowerResetGammaSmoothing:
     """Tests for daily reset functionality (GAP #3 fix)"""
 
     @pytest.fixture
