@@ -9,8 +9,8 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: '/jubilee',
-        destination: '/jubilee-box',
+        source: '/jubilee-box',
+        destination: '/jubilee',
         permanent: true,
       },
       {

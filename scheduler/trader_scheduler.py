@@ -139,9 +139,9 @@ except ImportError:
 # Import JUBILEE (Box Spread Synthetic Borrowing)
 try:
     from trading.jubilee import JubileeTrader, JubileeConfig, TradingMode as JubileeTradingMode
-    PROMETHEUS_BOX_AVAILABLE = True
+    JUBILEE_BOX_AVAILABLE = True
 except ImportError:
-    PROMETHEUS_BOX_AVAILABLE = False
+    JUBILEE_BOX_AVAILABLE = False
     JubileeTrader = None
     JubileeConfig = None
     JubileeTradingMode = None
@@ -554,7 +554,7 @@ class AutonomousTraderScheduler:
         # Generates cash through box spreads to fund IC bot volume scaling
         # PAPER mode: Simulated trades for testing the strategy
         self.jubilee_trader = None
-        if PROMETHEUS_BOX_AVAILABLE:
+        if JUBILEE_BOX_AVAILABLE:
             try:
                 config = JubileeConfig(mode=JubileeTradingMode.PAPER)
                 self.jubilee_trader = JubileeTrader(config=config)
