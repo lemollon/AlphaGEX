@@ -28,7 +28,7 @@ export default function SolomonLogsPage() {
     try {
       setLoading(true)
       const levelFilter = filter === 'ALL' ? undefined : filter
-      const res = await apiClient.getATHENALogs(levelFilter, limit)
+      const res = await apiClient.getSolomonLogs(levelFilter, limit)
       if (res.data?.data) {
         setLogs(res.data.data)
       }
