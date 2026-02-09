@@ -32,7 +32,7 @@ except ImportError:
 
 
 def test_database_table():
-    """Test that hyperion_gamma_history table exists and has correct structure."""
+    """Test that glory_gamma_history table exists and has correct structure."""
     print("\n" + "="*60)
     print("TEST 1: Database Table Structure")
     print("="*60)
@@ -52,7 +52,7 @@ def test_database_table():
     cursor.execute("""
         SELECT EXISTS (
             SELECT FROM information_schema.tables
-            WHERE table_name = 'hyperion_gamma_history'
+            WHERE table_name = 'glory_gamma_history'
         );
     """)
     exists = cursor.fetchone()[0]
@@ -63,13 +63,13 @@ def test_database_table():
         conn.close()
         return True
 
-    print("  Table exists: hyperion_gamma_history")
+    print("  Table exists: glory_gamma_history")
 
     # Check columns
     cursor.execute("""
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_name = 'hyperion_gamma_history'
+        WHERE table_name = 'glory_gamma_history'
         ORDER BY ordinal_position;
     """)
     columns = cursor.fetchall()
@@ -83,7 +83,7 @@ def test_database_table():
     # Check indexes
     cursor.execute("""
         SELECT indexname FROM pg_indexes
-        WHERE tablename = 'hyperion_gamma_history';
+        WHERE tablename = 'glory_gamma_history';
     """)
     indexes = [row[0] for row in cursor.fetchall()]
     print("\nIndexes:")
@@ -91,14 +91,14 @@ def test_database_table():
         print(f"    {idx}")
 
     # Check row count
-    cursor.execute("SELECT COUNT(*) FROM hyperion_gamma_history;")
+    cursor.execute("SELECT COUNT(*) FROM glory_gamma_history;")
     count = cursor.fetchone()[0]
     print(f"\nTotal rows: {count}")
 
     # Check recent data by symbol
     cursor.execute("""
         SELECT symbol, COUNT(*), MIN(recorded_at), MAX(recorded_at)
-        FROM hyperion_gamma_history
+        FROM glory_gamma_history
         WHERE recorded_at > NOW() - INTERVAL '1 hour'
         GROUP BY symbol;
     """)
@@ -221,10 +221,10 @@ def test_persistence_functions():
         content = f.read()
 
     functions_to_check = [
-        'def ensure_hyperion_gamma_history_table',
-        'def persist_hyperion_gamma_history',
-        'def load_hyperion_gamma_history',
-        'def cleanup_old_hyperion_gamma_history'
+        'def ensure_glory_gamma_history_table',
+        'def persist_glory_gamma_history',
+        'def load_glory_gamma_history',
+        'def cleanup_old_glory_gamma_history'
     ]
 
     all_present = True
@@ -237,8 +237,8 @@ def test_persistence_functions():
 
     # Check for key SQL statements
     sql_checks = [
-        ('CREATE TABLE IF NOT EXISTS hyperion_gamma_history', 'Table creation SQL'),
-        ('CREATE INDEX IF NOT EXISTS idx_hyperion_gamma_history', 'Index creation SQL'),
+        ('CREATE TABLE IF NOT EXISTS glory_gamma_history', 'Table creation SQL'),
+        ('CREATE INDEX IF NOT EXISTS idx_glory_gamma_history', 'Index creation SQL'),
         ("INTERVAL '420 minutes'", 'History load interval (7 hours)'),
         ("INTERVAL '8 hours'", 'Cleanup interval'),
     ]
@@ -359,9 +359,9 @@ def test_api_integration():
         content = f.read()
 
     integration_checks = [
-        ('load_hyperion_gamma_history(symbol)', 'History loading in fetch_gamma_data'),
-        ('persist_hyperion_gamma_history(symbol)', 'History persistence after fetch'),
-        ('cleanup_old_hyperion_gamma_history()', 'Cleanup call'),
+        ('load_glory_gamma_history(symbol)', 'History loading in fetch_gamma_data'),
+        ('persist_glory_gamma_history(symbol)', 'History persistence after fetch'),
+        ('cleanup_old_glory_gamma_history()', 'Cleanup call'),
         ('cache_ttl = CACHE_TTL_SECONDS if market_open else 300', 'Dynamic cache TTL'),
     ]
 
@@ -395,7 +395,7 @@ def test_data_flow():
 
     # Check if we have any data
     cursor.execute("""
-        SELECT COUNT(*) FROM hyperion_gamma_history
+        SELECT COUNT(*) FROM glory_gamma_history
         WHERE recorded_at > NOW() - INTERVAL '1 hour';
     """)
     recent_count = cursor.fetchone()[0]
@@ -409,7 +409,7 @@ def test_data_flow():
     # Get sample data
     cursor.execute("""
         SELECT symbol, strike, gamma_value, recorded_at
-        FROM hyperion_gamma_history
+        FROM glory_gamma_history
         WHERE recorded_at > NOW() - INTERVAL '1 hour'
         ORDER BY recorded_at DESC
         LIMIT 5;
@@ -423,7 +423,7 @@ def test_data_flow():
     # Check data distribution by symbol
     cursor.execute("""
         SELECT symbol, COUNT(DISTINCT strike) as strikes, COUNT(*) as entries
-        FROM hyperion_gamma_history
+        FROM glory_gamma_history
         WHERE recorded_at > NOW() - INTERVAL '7 hours'
         GROUP BY symbol;
     """)

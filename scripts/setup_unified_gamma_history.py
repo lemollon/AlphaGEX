@@ -5,7 +5,7 @@ Setup Unified Gamma History Table
 Creates a unified gamma history table that can be used by both
 WATCHTOWER (0DTE) and GLORY (Weekly) for ROC calculations.
 
-This replaces the separate hyperion_gamma_history table with a
+This replaces the separate glory_gamma_history table with a
 unified structure that supports both systems.
 
 Usage:
@@ -306,7 +306,7 @@ def create_strike_trends_table():
 
 
 def migrate_glory_history():
-    """Migrate existing hyperion_gamma_history to unified table"""
+    """Migrate existing glory_gamma_history to unified table"""
     conn = get_connection()
     if not conn:
         logger.error("Could not connect to database")
@@ -319,7 +319,7 @@ def migrate_glory_history():
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'hyperion_gamma_history'
+                WHERE table_name = 'glory_gamma_history'
             )
         """)
         old_table_exists = cursor.fetchone()[0]
@@ -336,15 +336,15 @@ def migrate_glory_history():
                     gamma_value,
                     recorded_at,
                     created_at
-                FROM hyperion_gamma_history
+                FROM glory_gamma_history
                 ON CONFLICT DO NOTHING
             """)
             migrated = cursor.rowcount
-            logger.info(f"Migrated {migrated} rows from hyperion_gamma_history")
+            logger.info(f"Migrated {migrated} rows from glory_gamma_history")
 
             conn.commit()
         else:
-            logger.info("No hyperion_gamma_history table to migrate")
+            logger.info("No glory_gamma_history table to migrate")
 
         cursor.close()
         conn.close()

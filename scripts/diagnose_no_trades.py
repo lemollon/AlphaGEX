@@ -40,7 +40,7 @@ def diagnose():
         ('fortress_ic_positions', 'FORTRESS'),
         ('solomon_directional_positions', 'SOLOMON'),
         ('anchor_ic_positions', 'ANCHOR'),
-        ('icarus_directional_positions', 'GIDEON'),
+        ('gideon_directional_positions', 'GIDEON'),
     ]:
         try:
             cursor.execute(f"""
@@ -67,7 +67,7 @@ def diagnose():
         ('fortress_ic_positions', 'FORTRESS', 3),
         ('solomon_directional_positions', 'SOLOMON', 5),
         ('anchor_ic_positions', 'ANCHOR', 5),
-        ('icarus_directional_positions', 'GIDEON', 8),
+        ('gideon_directional_positions', 'GIDEON', 8),
     ]:
         try:
             cursor.execute(f"""

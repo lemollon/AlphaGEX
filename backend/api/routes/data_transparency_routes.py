@@ -1100,7 +1100,7 @@ async def get_argus_gamma_details(
         flips = []
         try:
             cur.execute("""
-                SELECT * FROM argus_gamma_flips
+                SELECT * FROM watchtower_gamma_flips
                 ORDER BY flip_time DESC
                 LIMIT %s
             """, (limit,))
@@ -1143,7 +1143,7 @@ async def get_argus_gamma_details(
         accuracy = []
         try:
             cur.execute("""
-                SELECT * FROM argus_accuracy
+                SELECT * FROM watchtower_accuracy
                 ORDER BY metric_date DESC
                 LIMIT 30
             """)
@@ -1427,7 +1427,7 @@ async def export_data(
         "patterns": "pattern_learning",
         "vol-surface": "volatility_surface_snapshots",
         "ml-predictions": "ml_predictions",
-        "watchtower-flips": "argus_gamma_flips"
+        "watchtower-flips": "watchtower_gamma_flips"
     }
 
     if category not in table_map:
@@ -1514,7 +1514,7 @@ async def export_all_data(
         "volatility_surface_snapshots",
         "ml_predictions",
         "calibration_history",
-        "argus_gamma_flips"
+        "watchtower_gamma_flips"
     ]
 
     all_data = {

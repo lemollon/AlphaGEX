@@ -47,7 +47,7 @@ def log_test(name: str, passed: bool, details: str = ""):
 
 
 def test_database_table():
-    """Test 1: Verify argus_trade_signals table exists"""
+    """Test 1: Verify watchtower_trade_signals table exists"""
     print("\n" + "=" * 60)
     print("TEST 1: Database Table Exists")
     print("=" * 60)
@@ -62,13 +62,13 @@ def test_database_table():
         cursor = conn.cursor()
         cursor.execute("""
             SELECT COUNT(*) FROM information_schema.tables
-            WHERE table_name = 'argus_trade_signals'
+            WHERE table_name = 'watchtower_trade_signals'
         """)
         exists = cursor.fetchone()[0] == 1
         cursor.close()
         conn.close()
 
-        log_test("Table argus_trade_signals exists", exists)
+        log_test("Table watchtower_trade_signals exists", exists)
 
         if exists:
             # Check columns
@@ -76,7 +76,7 @@ def test_database_table():
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT column_name FROM information_schema.columns
-                WHERE table_name = 'argus_trade_signals'
+                WHERE table_name = 'watchtower_trade_signals'
                 ORDER BY ordinal_position
             """)
             columns = [row[0] for row in cursor.fetchall()]

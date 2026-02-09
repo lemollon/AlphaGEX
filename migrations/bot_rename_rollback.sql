@@ -289,6 +289,21 @@ WHERE key = 'valor_starting_capital';
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
+-- 1l rollback. Additional tables from verification sweep (reverse first)
+-- ---------------------------------------------------------------------------
+ALTER TABLE IF EXISTS glory_gamma_history RENAME TO hyperion_gamma_history;
+ALTER TABLE IF EXISTS prophet_trained_models RENAME TO oracle_trained_models;
+ALTER TABLE IF EXISTS prophet_bot_interactions RENAME TO oracle_bot_interactions;
+ALTER TABLE IF EXISTS chronicles_jobs RENAME TO kronos_jobs;
+ALTER TABLE IF EXISTS watchtower_gamma_flips RENAME TO argus_gamma_flips;
+ALTER TABLE IF EXISTS watchtower_strikes RENAME TO argus_strikes;
+ALTER TABLE IF EXISTS watchtower_trade_signals RENAME TO argus_trade_signals;
+ALTER TABLE IF EXISTS watchtower_order_flow_history RENAME TO argus_order_flow_history;
+ALTER TABLE IF EXISTS watchtower_accuracy RENAME TO argus_accuracy;
+ALTER TABLE IF EXISTS watchtower_pin_predictions RENAME TO argus_pin_predictions;
+ALTER TABLE IF EXISTS watchtower_gamma_history RENAME TO argus_gamma_history;
+
+-- ---------------------------------------------------------------------------
 -- 1k rollback. PROVERBS advisory tables → SOLOMON
 -- ---------------------------------------------------------------------------
 ALTER TABLE IF EXISTS proverbs_validations RENAME TO solomon_validations;

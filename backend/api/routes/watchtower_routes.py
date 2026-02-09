@@ -134,9 +134,9 @@ def ensure_all_argus_tables():
             return False
         cursor = conn.cursor()
 
-        # 1. argus_gamma_history - per-strike gamma tracking
+        # 1. watchtower_gamma_history - per-strike gamma tracking
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS argus_gamma_history (
+            CREATE TABLE IF NOT EXISTS watchtower_gamma_history (
                 id SERIAL PRIMARY KEY,
                 symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
                 strike DECIMAL(10, 2) NOT NULL,
@@ -146,12 +146,12 @@ def ensure_all_argus_tables():
             )
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_strike_time
-            ON argus_gamma_history(symbol, strike, recorded_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_watchtower_gamma_history_strike_time
+            ON watchtower_gamma_history(symbol, strike, recorded_at DESC)
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_recorded_at
-            ON argus_gamma_history(recorded_at)
+            CREATE INDEX IF NOT EXISTS idx_watchtower_gamma_history_recorded_at
+            ON watchtower_gamma_history(recorded_at)
         """)
 
         # 2. watchtower_snapshots - market structure snapshots
@@ -226,9 +226,9 @@ def ensure_all_argus_tables():
             ON watchtower_danger_zone_logs(is_active, strike)
         """)
 
-        # 5. argus_pin_predictions - pin strike predictions for accuracy tracking
+        # 5. watchtower_pin_predictions - pin strike predictions for accuracy tracking
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS argus_pin_predictions (
+            CREATE TABLE IF NOT EXISTS watchtower_pin_predictions (
                 id SERIAL PRIMARY KEY,
                 symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
                 prediction_date DATE NOT NULL,
@@ -241,13 +241,13 @@ def ensure_all_argus_tables():
             )
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_argus_pin_predictions_date
-            ON argus_pin_predictions(symbol, prediction_date DESC)
+            CREATE INDEX IF NOT EXISTS idx_watchtower_pin_predictions_date
+            ON watchtower_pin_predictions(symbol, prediction_date DESC)
         """)
 
-        # 6. argus_accuracy - ML model accuracy metrics
+        # 6. watchtower_accuracy - ML model accuracy metrics
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS argus_accuracy (
+            CREATE TABLE IF NOT EXISTS watchtower_accuracy (
                 id SERIAL PRIMARY KEY,
                 metric_date DATE NOT NULL,
                 direction_accuracy_7d DECIMAL(5, 2),
@@ -259,13 +259,13 @@ def ensure_all_argus_tables():
             )
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_argus_accuracy_date
-            ON argus_accuracy(metric_date DESC)
+            CREATE INDEX IF NOT EXISTS idx_watchtower_accuracy_date
+            ON watchtower_accuracy(metric_date DESC)
         """)
 
-        # 7. argus_order_flow_history - bid/ask pressure tracking
+        # 7. watchtower_order_flow_history - bid/ask pressure tracking
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS argus_order_flow_history (
+            CREATE TABLE IF NOT EXISTS watchtower_order_flow_history (
                 id SERIAL PRIMARY KEY,
                 symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
                 recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -299,16 +299,16 @@ def ensure_all_argus_tables():
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_argus_order_flow_recorded_at
-            ON argus_order_flow_history(symbol, recorded_at DESC)
+            ON watchtower_order_flow_history(symbol, recorded_at DESC)
         """)
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_argus_order_flow_signal
-            ON argus_order_flow_history(combined_signal, signal_confidence)
+            ON watchtower_order_flow_history(combined_signal, signal_confidence)
         """)
 
-        # 8. argus_trade_signals - Track generated trade recommendations and outcomes
+        # 8. watchtower_trade_signals - Track generated trade recommendations and outcomes
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS argus_trade_signals (
+            CREATE TABLE IF NOT EXISTS watchtower_trade_signals (
                 id SERIAL PRIMARY KEY,
                 symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -365,16 +365,16 @@ def ensure_all_argus_tables():
             )
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_argus_trade_signals_created
-            ON argus_trade_signals(symbol, created_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_watchtower_trade_signals_created
+            ON watchtower_trade_signals(symbol, created_at DESC)
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_argus_trade_signals_status
-            ON argus_trade_signals(status, created_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_watchtower_trade_signals_status
+            ON watchtower_trade_signals(status, created_at DESC)
         """)
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_argus_trade_signals_action
-            ON argus_trade_signals(action, status)
+            CREATE INDEX IF NOT EXISTS idx_watchtower_trade_signals_action
+            ON watchtower_trade_signals(action, status)
         """)
 
         conn.commit()
@@ -421,7 +421,7 @@ def persist_gamma_history(engine, symbol: str = "SPY"):
 
         # Get the most recent timestamp we have in DB for this symbol
         cursor.execute("""
-            SELECT MAX(recorded_at) FROM argus_gamma_history WHERE symbol = %s
+            SELECT MAX(recorded_at) FROM watchtower_gamma_history WHERE symbol = %s
         """, (symbol,))
         row = cursor.fetchone()
         last_db_time = row[0] if row and row[0] else None
@@ -442,7 +442,7 @@ def persist_gamma_history(engine, symbol: str = "SPY"):
                         continue
 
                 cursor.execute("""
-                    INSERT INTO argus_gamma_history (symbol, strike, gamma_value, recorded_at)
+                    INSERT INTO watchtower_gamma_history (symbol, strike, gamma_value, recorded_at)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT DO NOTHING
                 """, (symbol, strike, gamma_value, recorded_time))
@@ -495,7 +495,7 @@ def load_gamma_history(engine, symbol: str = "SPY"):
         # Load full trading day of history (7 hours = 420 minutes to support all ROC timeframes)
         cursor.execute("""
             SELECT strike, gamma_value, recorded_at
-            FROM argus_gamma_history
+            FROM watchtower_gamma_history
             WHERE symbol = %s
             AND recorded_at > NOW() - INTERVAL '420 minutes'
             ORDER BY strike, recorded_at ASC
@@ -556,7 +556,7 @@ def cleanup_old_gamma_history():
 
         cursor = conn.cursor()
         cursor.execute("""
-            DELETE FROM argus_gamma_history
+            DELETE FROM watchtower_gamma_history
             WHERE recorded_at < NOW() - INTERVAL '8 hours'
         """)
         deleted = cursor.rowcount
@@ -2685,7 +2685,7 @@ async def persist_order_flow_to_db(
 
         # Check if we already have a reading in the last 30 seconds (prevent duplicates)
         cursor.execute("""
-            SELECT id FROM argus_order_flow_history
+            SELECT id FROM watchtower_order_flow_history
             WHERE symbol = %s
             AND recorded_at > NOW() - INTERVAL '30 seconds'
             LIMIT 1
@@ -2695,7 +2695,7 @@ async def persist_order_flow_to_db(
             return  # Already have a recent reading
 
         cursor.execute("""
-            INSERT INTO argus_order_flow_history (
+            INSERT INTO watchtower_order_flow_history (
                 symbol, recorded_at, spot_price,
                 net_gex_volume, call_gex_flow, put_gex_flow,
                 flow_direction, flow_strength,
@@ -2871,7 +2871,7 @@ async def persist_pin_prediction_to_db(
 
         # Check if we already have a prediction for today
         cursor.execute("""
-            SELECT id FROM argus_pin_predictions
+            SELECT id FROM watchtower_pin_predictions
             WHERE symbol = %s
             AND prediction_date = CURRENT_DATE
             LIMIT 1
@@ -2883,7 +2883,7 @@ async def persist_pin_prediction_to_db(
 
         # Insert new prediction
         cursor.execute("""
-            INSERT INTO argus_pin_predictions (
+            INSERT INTO watchtower_pin_predictions (
                 symbol, prediction_date, predicted_pin, gamma_regime, vix_at_prediction, confidence
             ) VALUES (%s, CURRENT_DATE, %s, %s, %s, %s)
         """, (symbol, predicted_pin, gamma_regime, vix, confidence))
@@ -2942,7 +2942,7 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
 
         # Update today's prediction with actual close
         cursor.execute("""
-            UPDATE argus_pin_predictions
+            UPDATE watchtower_pin_predictions
             SET actual_close = %s
             WHERE symbol = %s
             AND prediction_date = CURRENT_DATE
@@ -2975,7 +2975,7 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
                 pass
 
 
-async def calculate_and_store_argus_accuracy():
+async def calculate_and_store_watchtower_accuracy():
     """
     Calculate and store WATCHTOWER prediction accuracy metrics.
 
@@ -2999,7 +2999,7 @@ async def calculate_and_store_argus_accuracy():
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN ABS(predicted_pin - actual_close) / NULLIF(actual_close, 0) * 100 < 1.0 THEN 1 ELSE 0 END) as accurate_1pct
-            FROM argus_pin_predictions
+            FROM watchtower_pin_predictions
             WHERE prediction_date >= CURRENT_DATE - INTERVAL '7 days'
             AND actual_close IS NOT NULL
         """)
@@ -3013,7 +3013,7 @@ async def calculate_and_store_argus_accuracy():
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN ABS(predicted_pin - actual_close) / NULLIF(actual_close, 0) * 100 < 1.0 THEN 1 ELSE 0 END) as accurate_1pct
-            FROM argus_pin_predictions
+            FROM watchtower_pin_predictions
             WHERE prediction_date >= CURRENT_DATE - INTERVAL '30 days'
             AND actual_close IS NOT NULL
         """)
@@ -3029,12 +3029,12 @@ async def calculate_and_store_argus_accuracy():
 
         # Delete existing accuracy record for today (if any)
         cursor.execute("""
-            DELETE FROM argus_accuracy WHERE metric_date = CURRENT_DATE
+            DELETE FROM watchtower_accuracy WHERE metric_date = CURRENT_DATE
         """)
 
         # Insert new accuracy record
         cursor.execute("""
-            INSERT INTO argus_accuracy (
+            INSERT INTO watchtower_accuracy (
                 metric_date, direction_accuracy_7d, direction_accuracy_30d,
                 magnet_hit_rate_7d, magnet_hit_rate_30d, total_predictions
             ) VALUES (CURRENT_DATE, %s, %s, %s, %s, %s)
@@ -3079,7 +3079,7 @@ async def run_argus_eod_processing(symbol: str = Query(default="SPY")):
         })
 
         # 2. Calculate and store accuracy metrics
-        accuracy_stored = await calculate_and_store_argus_accuracy()
+        accuracy_stored = await calculate_and_store_watchtower_accuracy()
         results["actions"].append({
             "action": "calculate_accuracy",
             "success": accuracy_stored,
@@ -3612,7 +3612,7 @@ async def get_accuracy_metrics():
                 magnet_hit_rate_7d,
                 magnet_hit_rate_30d,
                 total_predictions
-            FROM argus_accuracy
+            FROM watchtower_accuracy
             ORDER BY metric_date DESC
             LIMIT 1
         """)
@@ -4167,7 +4167,7 @@ async def get_replay_data(
                 is_magnet,
                 magnet_rank,
                 is_pin
-            FROM argus_strikes
+            FROM watchtower_strikes
             WHERE snapshot_id = %s
             ORDER BY strike
         """, (snapshot_id,))
@@ -5489,7 +5489,7 @@ def _log_signal_to_db(signal_data: dict, symbol: str = "SPY") -> Optional[int]:
                 stop_loss_price = float(match.group(1))
 
         cursor.execute("""
-            INSERT INTO argus_trade_signals (
+            INSERT INTO watchtower_trade_signals (
                 symbol, action, direction, confidence, trade_description,
                 trade_structure, spot_at_signal, credit_target,
                 short_strike, long_strike, put_short, put_long, call_short, call_long,
@@ -5573,7 +5573,7 @@ def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None, for
                    spot_at_signal, max_profit, max_loss, created_at,
                    put_short, call_short, short_strike, long_strike,
                    put_long, call_long
-            FROM argus_trade_signals
+            FROM watchtower_trade_signals
             WHERE symbol = %s AND status = 'OPEN'
             AND created_at > NOW() - INTERVAL '1 day'
             ORDER BY created_at DESC
@@ -5762,7 +5762,7 @@ def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None, for
                 pnl_pct = (actual_pnl / max_loss * 100) if max_loss and max_loss > 0 else 0
 
                 cursor.execute("""
-                    UPDATE argus_trade_signals
+                    UPDATE watchtower_trade_signals
                     SET status = %s, outcome_reason = %s, closed_at = %s,
                         spot_at_close = %s, actual_pnl = %s, pnl_percent = %s,
                         time_to_resolution = %s, hit_profit_target = %s,
@@ -5847,7 +5847,7 @@ async def get_recent_signals(
                    contracts, max_profit, max_loss,
                    status, outcome_reason, closed_at, spot_at_close, actual_pnl, pnl_percent,
                    time_to_resolution
-            FROM argus_trade_signals
+            FROM watchtower_trade_signals
             WHERE symbol = %s
         """
         params = [symbol]
@@ -5943,7 +5943,7 @@ async def get_signal_performance(
                 COALESCE(MAX(actual_pnl), 0) as best_trade,
                 COALESCE(MIN(actual_pnl), 0) as worst_trade,
                 COALESCE(AVG(time_to_resolution) FILTER (WHERE status IN ('WIN', 'LOSS')), 0) as avg_resolution_time
-            FROM argus_trade_signals
+            FROM watchtower_trade_signals
             WHERE symbol = %s
             AND created_at > NOW() - INTERVAL '%s days'
         """, (symbol, days))
@@ -5961,7 +5961,7 @@ async def get_signal_performance(
                 COUNT(*) FILTER (WHERE status = 'WIN') as wins,
                 COUNT(*) FILTER (WHERE status = 'LOSS') as losses,
                 COALESCE(SUM(actual_pnl), 0) as total_pnl
-            FROM argus_trade_signals
+            FROM watchtower_trade_signals
             WHERE symbol = %s
             AND created_at > NOW() - INTERVAL '%s days'
             AND status IN ('WIN', 'LOSS')
@@ -5990,7 +5990,7 @@ async def get_signal_performance(
                 COUNT(*) as trades,
                 COALESCE(SUM(actual_pnl), 0) as daily_pnl,
                 COUNT(*) FILTER (WHERE status = 'WIN') as wins
-            FROM argus_trade_signals
+            FROM watchtower_trade_signals
             WHERE symbol = %s
             AND closed_at > NOW() - INTERVAL '7 days'
             AND status IN ('WIN', 'LOSS')
@@ -6370,7 +6370,7 @@ async def get_pin_accuracy(symbol: str = Query(default="SPY"), days: int = Query
                 SUM(CASE WHEN ABS(predicted_pin - actual_close) / actual_close * 100 < 1.0 THEN 1 ELSE 0 END) as hits_1pct,
                 AVG(ABS(predicted_pin - actual_close) / actual_close * 100) as avg_distance_pct,
                 gamma_regime
-            FROM argus_pin_predictions
+            FROM watchtower_pin_predictions
             WHERE symbol = %s
             AND prediction_date >= CURRENT_DATE - INTERVAL '%s days'
             GROUP BY gamma_regime
@@ -6382,7 +6382,7 @@ async def get_pin_accuracy(symbol: str = Query(default="SPY"), days: int = Query
             # If no prediction table, return placeholder
             cursor.execute("""
                 SELECT COUNT(*) FROM information_schema.tables
-                WHERE table_name = 'argus_pin_predictions'
+                WHERE table_name = 'watchtower_pin_predictions'
             """)
             table_exists = cursor.fetchone()[0] > 0
 

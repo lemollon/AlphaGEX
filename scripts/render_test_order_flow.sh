@@ -17,9 +17,9 @@ fail() { echo -e "  ${RED}❌ FAIL${NC}: $1"; }
 
 echo "TEST 1: Database Table Exists"
 echo "------------------------------"
-TABLE_EXISTS=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'argus_order_flow_history';" 2>/dev/null | tr -d ' ')
+TABLE_EXISTS=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'watchtower_order_flow_history';" 2>/dev/null | tr -d ' ')
 if [ "$TABLE_EXISTS" = "1" ]; then
-    pass "Table argus_order_flow_history exists"
+    pass "Table watchtower_order_flow_history exists"
 else
     fail "Table does not exist"
 fi
@@ -28,7 +28,7 @@ echo ""
 echo "TEST 2: Table Has Required Columns"
 echo "-----------------------------------"
 # Use sed to strip leading/trailing whitespace from each line
-COLUMNS=$(psql $DATABASE_URL -t -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'argus_order_flow_history' ORDER BY ordinal_position;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+COLUMNS=$(psql $DATABASE_URL -t -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'watchtower_order_flow_history' ORDER BY ordinal_position;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 for col in net_pressure raw_pressure combined_signal signal_confidence total_bid_size total_ask_size; do
     if echo "$COLUMNS" | grep -qw "$col"; then
         pass "Column '$col' exists"
@@ -40,7 +40,7 @@ done
 echo ""
 echo "TEST 3: Database Has Records"
 echo "----------------------------"
-RECORD_COUNT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM argus_order_flow_history;" 2>/dev/null | tr -d ' ')
+RECORD_COUNT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM watchtower_order_flow_history;" 2>/dev/null | tr -d ' ')
 if [ "$RECORD_COUNT" -gt "0" ]; then
     pass "Found $RECORD_COUNT records"
 else
@@ -50,7 +50,7 @@ fi
 echo ""
 echo "TEST 4: Recent Data (last 24 hours)"
 echo "------------------------------------"
-RECENT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM argus_order_flow_history WHERE recorded_at > NOW() - INTERVAL '24 hours';" 2>/dev/null | tr -d ' ')
+RECENT=$(psql $DATABASE_URL -t -c "SELECT COUNT(*) FROM watchtower_order_flow_history WHERE recorded_at > NOW() - INTERVAL '24 hours';" 2>/dev/null | tr -d ' ')
 if [ "$RECENT" -gt "0" ]; then
     pass "Found $RECENT records in last 24 hours"
 else
@@ -65,7 +65,7 @@ SELECT
     combined_signal,
     signal_confidence,
     COUNT(*) as count
-FROM argus_order_flow_history
+FROM watchtower_order_flow_history
 WHERE recorded_at > NOW() - INTERVAL '24 hours'
 GROUP BY combined_signal, signal_confidence
 ORDER BY count DESC
@@ -86,7 +86,7 @@ SELECT
     flow_direction,
     ROUND(net_gex_volume, 2) as net_gex_vol_m,
     is_valid
-FROM argus_order_flow_history
+FROM watchtower_order_flow_history
 ORDER BY recorded_at DESC
 LIMIT 1;
 " 2>/dev/null
@@ -129,7 +129,7 @@ FIELDS_CHECK=$(psql $DATABASE_URL -t -c "
 SELECT
     CASE WHEN raw_pressure IS NOT NULL THEN 1 ELSE 0 END +
     CASE WHEN is_valid IS NOT NULL THEN 1 ELSE 0 END as field_count
-FROM argus_order_flow_history
+FROM watchtower_order_flow_history
 WHERE recorded_at > NOW() - INTERVAL '1 hour'
 LIMIT 1;
 " 2>/dev/null | tr -d ' ')
@@ -144,7 +144,7 @@ IS_VALID_DIST=$(psql $DATABASE_URL -t -c "
 SELECT
     COUNT(CASE WHEN is_valid = true THEN 1 END) as valid_count,
     COUNT(CASE WHEN is_valid = false THEN 1 END) as invalid_count
-FROM argus_order_flow_history
+FROM watchtower_order_flow_history
 WHERE recorded_at > NOW() - INTERVAL '7 days';
 " 2>/dev/null)
 echo "  is_valid distribution: $IS_VALID_DIST"

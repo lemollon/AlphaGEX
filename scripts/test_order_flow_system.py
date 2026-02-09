@@ -36,7 +36,7 @@ def print_result(test: str, passed: bool, details: str = ""):
         print(f"       {details}")
 
 def test_database_schema():
-    """Test 1: Verify argus_order_flow_history table exists"""
+    """Test 1: Verify watchtower_order_flow_history table exists"""
     print_header("TEST 1: Database Schema")
 
     try:
@@ -52,18 +52,18 @@ def test_database_schema():
         cursor.execute("""
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
-                WHERE table_name = 'argus_order_flow_history'
+                WHERE table_name = 'watchtower_order_flow_history'
             )
         """)
         table_exists = cursor.fetchone()[0]
-        print_result("Table argus_order_flow_history exists", table_exists)
+        print_result("Table watchtower_order_flow_history exists", table_exists)
 
         if table_exists:
             # Check columns
             cursor.execute("""
                 SELECT column_name, data_type
                 FROM information_schema.columns
-                WHERE table_name = 'argus_order_flow_history'
+                WHERE table_name = 'watchtower_order_flow_history'
                 ORDER BY ordinal_position
             """)
             columns = cursor.fetchall()
@@ -81,7 +81,7 @@ def test_database_schema():
             # Check indexes
             cursor.execute("""
                 SELECT indexname FROM pg_indexes
-                WHERE tablename = 'argus_order_flow_history'
+                WHERE tablename = 'watchtower_order_flow_history'
             """)
             indexes = [r[0] for r in cursor.fetchall()]
             print_result("Index on recorded_at", 'idx_argus_order_flow_recorded_at' in indexes)
@@ -303,7 +303,7 @@ def test_database_persistence():
 
         # Check for recent records
         cursor.execute("""
-            SELECT COUNT(*) FROM argus_order_flow_history
+            SELECT COUNT(*) FROM watchtower_order_flow_history
             WHERE recorded_at > NOW() - INTERVAL '24 hours'
         """)
         recent_count = cursor.fetchone()[0]
@@ -313,7 +313,7 @@ def test_database_persistence():
         cursor.execute("""
             SELECT symbol, recorded_at, combined_signal, signal_confidence,
                    net_pressure, pressure_direction, is_valid
-            FROM argus_order_flow_history
+            FROM watchtower_order_flow_history
             ORDER BY recorded_at DESC
             LIMIT 1
         """)
@@ -335,7 +335,7 @@ def test_database_persistence():
         # Check signal distribution
         cursor.execute("""
             SELECT combined_signal, COUNT(*)
-            FROM argus_order_flow_history
+            FROM watchtower_order_flow_history
             WHERE recorded_at > NOW() - INTERVAL '7 days'
             GROUP BY combined_signal
             ORDER BY COUNT(*) DESC
@@ -376,7 +376,7 @@ def test_watchtower_routes_integration():
             ("order_flow in gamma endpoint", "order_flow = engine.calculate_net_gex_volume"),
             ("persist call wired up", "await persist_order_flow_to_db"),
             ("order_flow in response", '"order_flow": order_flow'),
-            ("Table creation SQL", "argus_order_flow_history"),
+            ("Table creation SQL", "watchtower_order_flow_history"),
         ]
 
         all_pass = True
@@ -407,7 +407,7 @@ def test_standards_compliance():
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT COUNT(*) FROM information_schema.tables
-                WHERE table_name = 'argus_order_flow_history'
+                WHERE table_name = 'watchtower_order_flow_history'
             """)
             db_ok = cursor.fetchone()[0] > 0
             cursor.close()

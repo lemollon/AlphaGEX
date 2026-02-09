@@ -99,8 +99,8 @@ def test_database_tables():
             'trading_decisions',
             'bot_decision_logs',
             # FORTRESS
-            'ares_iron_condor_positions',
-            'ares_iron_condor_performance',
+            'fortress_iron_condor_positions',
+            'fortress_iron_condor_performance',
             # SOLOMON
             'solomon_spread_positions',
             'solomon_signals',
@@ -110,7 +110,7 @@ def test_database_tables():
             # VIX
             'vix_hedge_signals',
             # Prophet
-            'oracle_analysis_cache',
+            'prophet_analysis_cache',
             # Scheduler
             'scheduler_state',
         ]
