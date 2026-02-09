@@ -350,7 +350,7 @@ def test_backtest_endpoints():
     return all(results)
 
 
-def test_gexis_endpoints():
+def test_counselor_endpoints():
     """Test COUNSELOR chatbot endpoints"""
     print_header("COUNSELOR CHATBOT ENDPOINTS")
     results = []
@@ -441,7 +441,7 @@ def main():
         "wheel": test_wheel_endpoints(),
         "trader": test_trader_endpoints(),
         "chronicles": test_backtest_endpoints(),
-        "counselor": test_gexis_endpoints(),
+        "counselor": test_counselor_endpoints(),
         "decision_logs": test_decision_log_endpoints(),
         "optimizer": test_optimizer_endpoints(),
     }

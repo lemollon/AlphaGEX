@@ -31,20 +31,20 @@ except ImportError:
 
 # Optional imports with clear fallbacks
 try:
-    from quant.prophet_advisor import ProphetAdvisor, OraclePrediction, TradingAdvice, MarketContext as OracleMarketContext, GEXRegime
-    ORACLE_AVAILABLE = True
+    from quant.prophet_advisor import ProphetAdvisor, ProphetPrediction, TradingAdvice, MarketContext as ProphetMarketContext, GEXRegime
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleMarketContext = None
+    ProphetMarketContext = None
     GEXRegime = None
 
 try:
-    from quant.chronicles_gex_calculator import KronosGEXCalculator
-    KRONOS_AVAILABLE = True
+    from quant.chronicles_gex_calculator import ChroniclesGEXCalculator
+    CHRONICLES_AVAILABLE = True
 except ImportError:
-    KRONOS_AVAILABLE = False
-    KronosGEXCalculator = None
+    CHRONICLES_AVAILABLE = False
+    ChroniclesGEXCalculator = None
 
 try:
     from quant.gex_signal_integration import GEXSignalIntegration
@@ -134,7 +134,7 @@ class SignalGenerator:
 
         # Prophet Advisor
         self.prophet = None
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             try:
                 self.prophet = ProphetAdvisor()
                 logger.info("SignalGenerator: Prophet initialized")
@@ -344,7 +344,7 @@ class SignalGenerator:
 
         return None
 
-    def get_oracle_advice(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
+    def get_prophet_advice(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
         """
         Get Prophet ML advice for SOLOMON directional trades.
 
@@ -354,7 +354,7 @@ class SignalGenerator:
         - direction: BULLISH, BEARISH, or FLAT
         - top_factors: WHY Prophet made this decision
         """
-        if not self.prophet or not ORACLE_AVAILABLE:
+        if not self.prophet or not PROPHET_AVAILABLE:
             return None
 
         # Validate required market data before calling Prophet
@@ -385,7 +385,7 @@ class SignalGenerator:
             ct = pytz.timezone('America/Chicago')
             now_ct = datetime.now(ct)
 
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=gex_data['spot_price'],
                 vix=gex_data['vix'],
                 gex_put_wall=gex_data.get('put_wall', 0),
@@ -648,7 +648,7 @@ class SignalGenerator:
             prophet = prophet_data
             logger.info(f"[SOLOMON] Using pre-fetched Prophet data: advice={prophet.get('advice', 'UNKNOWN')}")
         else:
-            prophet = self.get_oracle_advice(gex_data)
+            prophet = self.get_prophet_advice(gex_data)
         oracle_direction = prophet.get('direction', 'FLAT') if prophet else 'FLAT'
         oracle_confidence = prophet.get('confidence', 0) if prophet else 0
         oracle_win_prob = prophet.get('win_probability', 0) if prophet else 0

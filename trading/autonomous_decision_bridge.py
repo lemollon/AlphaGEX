@@ -82,7 +82,7 @@ class DecisionBridge:
         regime: Any = None,
         backtest_stats: Dict = None,
         order_id: str = "",
-        oracle_advice: Any = None  # OraclePrediction with claude_analysis for transparency
+        oracle_advice: Any = None  # ProphetPrediction with claude_analysis for transparency
     ) -> str:
         """
         Log a trade execution with full transparency.
@@ -105,7 +105,7 @@ class DecisionBridge:
             regime: Market regime classification
             backtest_stats: Statistics from backtested strategy
             order_id: Broker order ID if available
-            oracle_advice: OraclePrediction object with claude_analysis for real Claude data
+            oracle_advice: ProphetPrediction object with claude_analysis for real Claude data
 
         Returns:
             decision_id for later outcome update
@@ -390,7 +390,7 @@ class DecisionBridge:
         reason: str,
         gex_data: Dict = None,
         regime: Any = None,
-        oracle_advice: Any = None  # OraclePrediction with claude_analysis for transparency
+        oracle_advice: Any = None  # ProphetPrediction with claude_analysis for transparency
     ) -> str:
         """Log when no trade is taken (equally important for audit)"""
         now = datetime.now(self.tz)

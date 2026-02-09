@@ -334,9 +334,9 @@ class ProverbsTestSuite:
         print(f"\n{BOLD}TEST 7: PROPHET RETURNS PROVERBS INFO{RESET}")
 
         try:
-            from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
+            from quant.prophet_advisor import get_prophet, MarketContext, GEXRegime
 
-            prophet = get_oracle()
+            prophet = get_prophet()
 
             context = MarketContext(
                 spot_price=590.0,
@@ -381,9 +381,9 @@ class ProverbsTestSuite:
         print(f"\n{BOLD}TEST 8: PROPHET SCORES NOT MODIFIED BY PROVERBS{RESET}")
 
         try:
-            from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
+            from quant.prophet_advisor import get_prophet, MarketContext, GEXRegime
 
-            prophet = get_oracle()
+            prophet = get_prophet()
 
             # Same context for both calls
             context = MarketContext(

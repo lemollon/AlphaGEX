@@ -27,7 +27,7 @@ USAGE:
 MIGRATION FROM OLD SYSTEM:
     OLD:
         if self.circuit_breaker.can_trade():
-            advice = prophet.get_ares_advice(context)
+            advice = prophet.get_fortress_advice(context)
             if advice.advice != TradingAdvice.SKIP_TODAY:
                 self.execute_trade(advice)
 
@@ -100,7 +100,7 @@ class OmegaIntegrationMixin:
         This is the main entry point for all trading decisions.
         It replaces direct calls to:
             - circuit_breaker.can_trade()
-            - prophet.get_ares_advice()
+            - prophet.get_fortress_advice()
             - ml_advisor.predict()
 
         Args:
@@ -425,8 +425,8 @@ def create_omega_enabled_bot(base_class, bot_name: str, capital: float = 100000)
         New class with OMEGA integration
 
     Example:
-        OmegaAres = create_omega_enabled_bot(FortressTrader, 'FORTRESS', 100000)
-        bot = OmegaAres()
+        OmegaFortress = create_omega_enabled_bot(FortressTrader, 'FORTRESS', 100000)
+        bot = OmegaFortress()
         decision = bot.omega_get_trading_decision(gex_data, features)
     """
     class OmegaBot(OmegaIntegrationMixin, base_class):

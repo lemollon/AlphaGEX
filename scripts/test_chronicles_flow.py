@@ -371,7 +371,7 @@ def main():
         print("5. Click 'Run Backtest'")
     else:
         print("⚠️  SOME TESTS FAILED - Review issues above")
-        print("\nKRONOS may not work correctly until issues are fixed")
+        print("\nCHRONICLES may not work correctly until issues are fixed")
 
 
 if __name__ == "__main__":

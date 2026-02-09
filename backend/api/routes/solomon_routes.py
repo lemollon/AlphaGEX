@@ -488,7 +488,7 @@ async def get_solomon_status():
                 "scan_interval_minutes": scan_interval,
                 "heartbeat": heartbeat,
                 "oracle_available": False,
-                "kronos_available": False,
+                "chronicles_available": False,
                 "gex_ml_available": False,
                 "config": {
                     "risk_per_trade": 2.0,
@@ -1240,7 +1240,7 @@ async def get_current_oracle_advice():
         raise HTTPException(status_code=503, detail="SOLOMON not available")
 
     try:
-        advice = solomon.get_oracle_advice()
+        advice = solomon.get_prophet_advice()
 
         if not advice:
             return {

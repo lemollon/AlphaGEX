@@ -17,7 +17,7 @@ Usage:
 Models stored:
     - gex_probability: GEXSignalGenerator (5 sub-models)
     - gex_directional: GEXDirectionalPredictor
-    - ares_ml: FORTRESS ML Advisor
+    - fortress_ml: FORTRESS ML Advisor
     - regime_classifier: ML Regime Classifier (per symbol)
 """
 
@@ -346,8 +346,8 @@ def model_exists(model_name: str) -> bool:
 # Model name constants for consistency
 MODEL_GEX_PROBABILITY = 'gex_probability'
 MODEL_GEX_DIRECTIONAL = 'gex_directional'
-MODEL_ARES_ML = 'ares_ml'
-MODEL_HERACLES_ML = 'heracles_ml'  # VALOR/VALOR MES futures scalping
+MODEL_FORTRESS_ML = 'fortress_ml'
+MODEL_VALOR_ML = 'valor_ml'  # VALOR/VALOR MES futures scalping
 MODEL_REGIME_PREFIX = 'regime_'  # + symbol, e.g., 'regime_SPY'
 
 

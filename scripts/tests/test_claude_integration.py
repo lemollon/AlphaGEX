@@ -138,7 +138,7 @@ def test_oracle_claude_status():
     return claude_available
 
 
-def test_gexis_command():
+def test_counselor_command():
     """Test COUNSELOR chatbot command endpoint"""
     print_header("COUNSELOR COMMAND TEST")
 
@@ -223,7 +223,7 @@ def test_oracle_analysis():
     return bool(prediction)
 
 
-def test_gexis_analyze_with_context():
+def test_counselor_analyze_with_context():
     """Test COUNSELOR analysis with conversation context"""
     print_header("COUNSELOR CONTEXTUAL ANALYSIS TEST")
 
@@ -291,7 +291,7 @@ def main():
     results = {
         "api_key": test_api_key_configured(),
         "prophet_status": test_oracle_claude_status(),
-        "counselor_commands": test_gexis_command(),
+        "counselor_commands": test_counselor_command(),
         "alerts": test_alerts_endpoint(),
     }
 
@@ -299,11 +299,11 @@ def main():
     if results["api_key"]:
         print("\n  Running analysis tests (may take 30-60 seconds)...")
         results["oracle_analysis"] = test_oracle_analysis()
-        results["gexis_analysis"] = test_gexis_analyze_with_context()
+        results["counselor_analysis"] = test_counselor_analyze_with_context()
     else:
         print("\n  ⚠️  Skipping analysis tests (no API key)")
         results["oracle_analysis"] = None
-        results["gexis_analysis"] = None
+        results["counselor_analysis"] = None
 
     # Summary
     print_header("TEST SUMMARY")

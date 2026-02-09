@@ -36,12 +36,12 @@ except ImportError:
 
 # Scan activity logging
 try:
-    from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
+    from trading.scan_activity_logger import log_fortress_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
     print("✅ FORTRESS: Scan activity logger loaded")
 except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
-    log_ares_scan = None
+    log_fortress_scan = None
     ScanOutcome = None
     CheckResult = None
     print(f"❌ FORTRESS: Scan activity logger FAILED to load: {e}")
@@ -60,19 +60,19 @@ except ImportError as e:
 # Prophet for outcome recording and strategy recommendations
 try:
     from quant.prophet_advisor import (
-        ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
-        MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
+        ProphetAdvisor, BotName as ProphetBotName, TradeOutcome as ProphetTradeOutcome,
+        MarketContext as ProphetMarketContext, GEXRegime, StrategyType, get_prophet
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleBotName = None
-    OracleTradeOutcome = None
-    OracleMarketContext = None
+    ProphetBotName = None
+    ProphetTradeOutcome = None
+    ProphetMarketContext = None
     GEXRegime = None
     StrategyType = None
-    get_oracle = None
+    get_prophet = None
 
 # Learning Memory for self-improvement tracking
 try:
@@ -231,8 +231,8 @@ class FortressTrader(MathOptimizerMixin):
                     # Fetch Prophet advice using FULL market_data (includes expected_move)
                     # This ensures Prophet gets the same data as generate_signal() uses
                     try:
-                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
-                            oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
+                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_prophet_advice'):
+                            oracle_advice = self.signals.get_prophet_advice(market_data if market_data else gex_data)
                             if oracle_advice:
                                 scan_context['prophet_data'] = oracle_advice
                     except Exception as e:
@@ -361,9 +361,9 @@ class FortressTrader(MathOptimizerMixin):
     ):
         """Log scan activity for visibility"""
         print(f"[FORTRESS DEBUG] _log_scan_activity called at {datetime.now(CENTRAL_TZ).strftime('%I:%M:%S %p CT')}")
-        if not SCAN_LOGGER_AVAILABLE or not log_ares_scan:
-            print(f"[FORTRESS DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_ares_scan={log_ares_scan is not None}")
-            logger.warning(f"[FORTRESS] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_ares_scan={log_ares_scan is not None}")
+        if not SCAN_LOGGER_AVAILABLE or not log_fortress_scan:
+            print(f"[FORTRESS DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_fortress_scan={log_fortress_scan is not None}")
+            logger.warning(f"[FORTRESS] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_fortress_scan={log_fortress_scan is not None}")
             return
         print(f"[FORTRESS DEBUG] Proceeding with scan logging...")
 
@@ -534,7 +534,7 @@ class FortressTrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            scan_id = log_ares_scan(
+            scan_id = log_fortress_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 action_taken=result.get('action', 'none'),
@@ -594,7 +594,7 @@ class FortressTrader(MathOptimizerMixin):
             logger.error(traceback.format_exc())
             # FALLBACK: Try simple logging without ML kwargs
             try:
-                fallback_scan_id = log_ares_scan(
+                fallback_scan_id = log_fortress_scan(
                     outcome=outcome,
                     decision_summary=f"{decision} [FALLBACK - ML data excluded]",
                     action_taken=result.get('action', 'none'),
@@ -648,11 +648,11 @@ class FortressTrader(MathOptimizerMixin):
         Returns:
             StrategyRecommendation or None if Prophet unavailable
         """
-        if not ORACLE_AVAILABLE or not get_oracle:
+        if not PROPHET_AVAILABLE or not get_prophet:
             return None
 
         try:
-            prophet = get_oracle()
+            prophet = get_prophet()
 
             # Get current market data
             try:
@@ -679,7 +679,7 @@ class FortressTrader(MathOptimizerMixin):
                 gex_regime = GEXRegime.NEUTRAL
 
             # Build market context
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=spot_price,
                 vix=vix,
                 gex_regime=gex_regime,
@@ -837,7 +837,7 @@ class FortressTrader(MathOptimizerMixin):
         Migration 023: Enhanced to pass prediction_id and outcome_type for
         accurate feedback loop tracking.
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return
 
         try:
@@ -846,23 +846,23 @@ class FortressTrader(MathOptimizerMixin):
             # Determine outcome type based on close reason and P&L
             if pnl > 0:
                 if 'PROFIT_TARGET' in close_reason or 'MAX_PROFIT' in close_reason:
-                    outcome = OracleTradeOutcome.MAX_PROFIT
+                    outcome = ProphetTradeOutcome.MAX_PROFIT
                     outcome_type = 'MAX_PROFIT'
                 else:
-                    outcome = OracleTradeOutcome.PARTIAL_PROFIT
+                    outcome = ProphetTradeOutcome.PARTIAL_PROFIT
                     outcome_type = 'PARTIAL_PROFIT'
             else:
                 if 'STOP_LOSS' in close_reason:
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
                     outcome_type = 'STOP_LOSS'
                 elif 'CALL' in close_reason.upper() and 'BREACH' in close_reason.upper():
-                    outcome = OracleTradeOutcome.CALL_BREACHED
+                    outcome = ProphetTradeOutcome.CALL_BREACHED
                     outcome_type = 'CALL_BREACHED'
                 elif 'PUT' in close_reason.upper() and 'BREACH' in close_reason.upper():
-                    outcome = OracleTradeOutcome.PUT_BREACHED
+                    outcome = ProphetTradeOutcome.PUT_BREACHED
                     outcome_type = 'PUT_BREACHED'
                 else:
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
                     outcome_type = 'LOSS'
 
             # Get trade date from position
@@ -874,7 +874,7 @@ class FortressTrader(MathOptimizerMixin):
             # Record to Prophet with enhanced feedback loop data
             success = prophet.update_outcome(
                 trade_date=trade_date,
-                bot_name=OracleBotName.FORTRESS,
+                bot_name=ProphetBotName.FORTRESS,
                 outcome=outcome,
                 actual_pnl=pnl,
                 put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
@@ -1054,7 +1054,7 @@ class FortressTrader(MathOptimizerMixin):
         Returns:
             int: The oracle_prediction_id for linking, or None if storage failed
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return None
 
         try:
@@ -1067,7 +1067,7 @@ class FortressTrader(MathOptimizerMixin):
             except (KeyError, AttributeError):
                 gex_regime = GEXRegime.NEUTRAL
 
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=signal.spot_price,
                 vix=signal.vix,
                 gex_regime=gex_regime,
@@ -1079,8 +1079,8 @@ class FortressTrader(MathOptimizerMixin):
                 expected_move_pct=(signal.expected_move / signal.spot_price * 100) if signal.spot_price else 0,
             )
 
-            # Build OraclePrediction from signal's Prophet context
-            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
+            # Build ProphetPrediction from signal's Prophet context
+            from quant.prophet_advisor import ProphetPrediction, TradingAdvice, BotName
 
             # Determine advice from signal
             advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
@@ -1089,7 +1089,7 @@ class FortressTrader(MathOptimizerMixin):
             except (KeyError, ValueError):
                 advice = TradingAdvice.TRADE_FULL
 
-            prediction = OraclePrediction(
+            prediction = ProphetPrediction(
                 bot_name=BotName.FORTRESS,
                 advice=advice,
                 win_probability=getattr(signal, 'oracle_win_probability', 0.7),
@@ -1147,16 +1147,16 @@ class FortressTrader(MathOptimizerMixin):
 
         Args:
             signal: The generated signal (may be invalid)
-            prophet_data: Prophet advice dict from get_oracle_advice()
+            prophet_data: Prophet advice dict from get_prophet_advice()
             market_data: Market conditions at scan time
             decision: The decision made (TRADED, NO_TRADE, SKIP, etc.)
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return
 
         try:
             prophet = ProphetAdvisor()
-            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
+            from quant.prophet_advisor import ProphetPrediction, TradingAdvice, BotName
 
             # Build MarketContext
             gex_regime_str = market_data.get('gex_regime', market_data.get('regime', 'NEUTRAL'))
@@ -1170,7 +1170,7 @@ class FortressTrader(MathOptimizerMixin):
                 gex_regime = GEXRegime.NEUTRAL
 
             spot_price = market_data.get('underlying_price', market_data.get('spot_price', 0))
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=spot_price,
                 vix=market_data.get('vix', 0),
                 gex_regime=gex_regime,
@@ -1223,7 +1223,7 @@ class FortressTrader(MathOptimizerMixin):
             if signal and signal.reasoning:
                 reasoning = signal.reasoning
 
-            prediction = OraclePrediction(
+            prediction = ProphetPrediction(
                 bot_name=BotName.FORTRESS,
                 advice=advice,
                 win_probability=win_prob,

@@ -4,7 +4,7 @@ VALOR Loss Analysis Script
 =============================
 Run this on Render shell to analyze why losses are bigger than wins.
 
-Usage: python scripts/analyze_heracles_losses.py
+Usage: python scripts/analyze_valor_losses.py
 """
 
 import os

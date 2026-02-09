@@ -88,7 +88,7 @@ class TokenBucket:
             return self.tokens
 
 
-class GEXISRateLimiter:
+class CounselorRateLimiter:
     """
     Rate limiter for COUNSELOR API requests.
 
@@ -283,7 +283,7 @@ class GEXISRateLimiter:
 
 
 # Global rate limiter instance
-counselor_rate_limiter = GEXISRateLimiter()
+counselor_rate_limiter = CounselorRateLimiter()
 
 
 # =============================================================================

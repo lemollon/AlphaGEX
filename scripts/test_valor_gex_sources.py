@@ -127,14 +127,14 @@ def main():
         print(f"  ❌ Tradier error: {e}")
 
     print("\n" + "=" * 70)
-    print("TEST 3: get_gex_data_for_heracles() - Full Integration")
+    print("TEST 3: get_gex_data_for_valor() - Full Integration")
     print("=" * 70)
 
     try:
-        from trading.valor.signals import get_gex_data_for_heracles
+        from trading.valor.signals import get_gex_data_for_valor
 
-        print("  Calling get_gex_data_for_heracles('SPX')...")
-        result = get_gex_data_for_heracles("SPX")
+        print("  Calling get_gex_data_for_valor('SPX')...")
+        result = get_gex_data_for_valor("SPX")
 
         print(f"\n  RESULT:")
         for key, value in result.items():

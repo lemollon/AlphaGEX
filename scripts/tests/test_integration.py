@@ -319,7 +319,7 @@ def test_trader_decision_flow():
     return all(results)
 
 
-def test_gexis_conversation_flow():
+def test_counselor_conversation_flow():
     """Test COUNSELOR chatbot conversation flow"""
     print_header("COUNSELOR CONVERSATION FLOW TEST")
     results = []
@@ -479,8 +479,8 @@ def main():
         "prometheus_flow": test_ml_training_flow(),
         "wheel_flow": test_wheel_cycle_flow(),
         "trader_flow": test_trader_decision_flow(),
-        "gexis_flow": test_gexis_conversation_flow(),
-        "kronos_flow": test_backtest_data_flow(),
+        "counselor_flow": test_counselor_conversation_flow(),
+        "chronicles_flow": test_backtest_data_flow(),
     }
 
     # Summary

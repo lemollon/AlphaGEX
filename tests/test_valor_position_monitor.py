@@ -12,7 +12,7 @@ Tests:
 5. Scheduler Integration Tests - Is the job scheduled?
 6. API Endpoint Tests - Can we call it via API?
 
-Run: python tests/test_heracles_position_monitor.py
+Run: python tests/test_valor_position_monitor.py
 """
 
 import os
@@ -112,9 +112,9 @@ def run_scheduler_integration_tests():
     try:
         from scheduler.trader_scheduler import AutonomousTraderScheduler
 
-        # Test 1: scheduled_heracles_position_monitor method exists
-        has_method = hasattr(AutonomousTraderScheduler, 'scheduled_heracles_position_monitor')
-        log_result("AutonomousTraderScheduler.scheduled_heracles_position_monitor() exists", has_method,
+        # Test 1: scheduled_valor_position_monitor method exists
+        has_method = hasattr(AutonomousTraderScheduler, 'scheduled_valor_position_monitor')
+        log_result("AutonomousTraderScheduler.scheduled_valor_position_monitor() exists", has_method,
                   "Method not found" if not has_method else "")
 
         # Test 2: Check scheduler code contains 15-second interval
@@ -129,8 +129,8 @@ def run_scheduler_integration_tests():
         log_result("Scheduler has 15-second interval configured", has_15_sec,
                   "seconds=15 not found in scheduler" if not has_15_sec else "")
 
-        has_monitor_job = "heracles_position_monitor" in content
-        log_result("Scheduler has heracles_position_monitor job ID", has_monitor_job,
+        has_monitor_job = "valor_position_monitor" in content
+        log_result("Scheduler has valor_position_monitor job ID", has_monitor_job,
                   "Job ID not found" if not has_monitor_job else "")
 
     except Exception as e:

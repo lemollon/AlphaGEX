@@ -496,7 +496,7 @@ Post-Event:
 # COUNSELOR COMMANDS REFERENCE
 # =============================================================================
 
-GEXIS_COMMANDS = """
+COUNSELOR_COMMANDS = """
 === COUNSELOR SLASH COMMANDS ===
 
 INFORMATION COMMANDS:
@@ -557,5 +557,5 @@ def get_full_knowledge() -> str:
 
 {ECONOMIC_CALENDAR_KNOWLEDGE}
 
-{GEXIS_COMMANDS}
+{COUNSELOR_COMMANDS}
 """

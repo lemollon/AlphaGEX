@@ -340,8 +340,8 @@ async def comprehensive_system_health():
 
     # 8. PROPHET ML SYSTEM (Model staleness and training status)
     try:
-        from quant.prophet_advisor import get_oracle, get_pending_outcomes_count
-        prophet = get_oracle()
+        from quant.prophet_advisor import get_prophet, get_pending_outcomes_count
+        prophet = get_prophet()
 
         hours_since_training = prophet._get_hours_since_training() if hasattr(prophet, '_get_hours_since_training') else 0.0
         is_model_fresh = prophet._is_model_fresh() if hasattr(prophet, '_is_model_fresh') else True

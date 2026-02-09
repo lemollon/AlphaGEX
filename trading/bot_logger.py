@@ -908,16 +908,16 @@ def get_anchor_logger():
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "ANCHOR" else None
 
 
-def get_icarus_logger():
+def get_gideon_logger():
     """Get a pre-configured logger for GIDEON"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "GIDEON" else None
 
 
-def get_titan_logger():
+def get_samson_logger():
     """Get a pre-configured logger for SAMSON"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "SAMSON" else None
 
 
-def get_prometheus_logger():
+def get_jubilee_logger():
     """Get a pre-configured logger for JUBILEE"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "JUBILEE" else None

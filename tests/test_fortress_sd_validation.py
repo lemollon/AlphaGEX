@@ -30,8 +30,8 @@ class TestARESStrikeValidation:
         """Create a SignalGenerator with mocked components."""
         with patch('trading.fortress_v2.signals.get_gex_calculator', return_value=None):
             with patch('trading.fortress_v2.signals.TRADIER_GEX_AVAILABLE', False):
-                with patch('trading.fortress_v2.signals.ORACLE_AVAILABLE', False):
-                    with patch('trading.fortress_v2.signals.ARES_ML_AVAILABLE', False):
+                with patch('trading.fortress_v2.signals.PROPHET_AVAILABLE', False):
+                    with patch('trading.fortress_v2.signals.FORTRESS_ML_AVAILABLE', False):
                         from trading.fortress_v2.signals import SignalGenerator
                         return SignalGenerator(mock_config)
 

@@ -10,10 +10,10 @@ This script demonstrates the ML feedback loop:
 4. Demo predictions for FORTRESS
 
 Usage:
-    python scripts/train_ares_ml.py
+    python scripts/train_fortress_ml.py
 
     # With custom date range:
-    python scripts/train_ares_ml.py --start 2022-01-01 --end 2024-12-01
+    python scripts/train_fortress_ml.py --start 2022-01-01 --end 2024-12-01
 
 Author: AlphaGEX ML
 """

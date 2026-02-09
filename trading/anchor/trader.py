@@ -57,19 +57,19 @@ except ImportError:
 # Prophet for outcome recording and strategy recommendations
 try:
     from quant.prophet_advisor import (
-        ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
-        MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
+        ProphetAdvisor, BotName as ProphetBotName, TradeOutcome as ProphetTradeOutcome,
+        MarketContext as ProphetMarketContext, GEXRegime, StrategyType, get_prophet
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleBotName = None
-    OracleTradeOutcome = None
-    OracleMarketContext = None
+    ProphetBotName = None
+    ProphetTradeOutcome = None
+    ProphetMarketContext = None
     GEXRegime = None
     StrategyType = None
-    get_oracle = None
+    get_prophet = None
 
 # Learning Memory for self-improvement tracking
 try:
@@ -231,8 +231,8 @@ class AnchorTrader(MathOptimizerMixin):
                     }
                     # Fetch Prophet advice using FULL market_data (includes expected_move)
                     try:
-                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
-                            oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
+                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_prophet_advice'):
+                            oracle_advice = self.signals.get_prophet_advice(market_data if market_data else gex_data)
                             if oracle_advice:
                                 scan_context['prophet_data'] = oracle_advice
                     except Exception as e:
@@ -371,11 +371,11 @@ class AnchorTrader(MathOptimizerMixin):
         Returns:
             StrategyRecommendation or None if Prophet unavailable
         """
-        if not ORACLE_AVAILABLE or not get_oracle:
+        if not PROPHET_AVAILABLE or not get_prophet:
             return None
 
         try:
-            prophet = get_oracle()
+            prophet = get_prophet()
 
             # Get current market data using SignalGenerator's method (proper SPX data)
             market_data = self.signals.get_market_data()
@@ -398,7 +398,7 @@ class AnchorTrader(MathOptimizerMixin):
                 gex_regime = GEXRegime.NEUTRAL
 
             # Build market context
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=spot_price,
                 vix=vix,
                 gex_regime=gex_regime,
@@ -506,7 +506,7 @@ class AnchorTrader(MathOptimizerMixin):
         Migration 023: Enhanced to pass prediction_id and outcome_type for
         accurate feedback loop tracking.
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return
 
         try:
@@ -515,23 +515,23 @@ class AnchorTrader(MathOptimizerMixin):
             # Determine outcome type based on close reason and P&L
             if pnl > 0:
                 if 'PROFIT' in close_reason or 'MAX_PROFIT' in close_reason:
-                    outcome = OracleTradeOutcome.MAX_PROFIT
+                    outcome = ProphetTradeOutcome.MAX_PROFIT
                     outcome_type = 'MAX_PROFIT'
                 else:
-                    outcome = OracleTradeOutcome.PARTIAL_PROFIT
+                    outcome = ProphetTradeOutcome.PARTIAL_PROFIT
                     outcome_type = 'PARTIAL_PROFIT'
             else:
                 if 'STOP_LOSS' in close_reason:
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
                     outcome_type = 'STOP_LOSS'
                 elif 'CALL' in close_reason.upper() and 'BREACH' in close_reason.upper():
-                    outcome = OracleTradeOutcome.CALL_BREACHED
+                    outcome = ProphetTradeOutcome.CALL_BREACHED
                     outcome_type = 'CALL_BREACHED'
                 elif 'PUT' in close_reason.upper() and 'BREACH' in close_reason.upper():
-                    outcome = OracleTradeOutcome.PUT_BREACHED
+                    outcome = ProphetTradeOutcome.PUT_BREACHED
                     outcome_type = 'PUT_BREACHED'
                 else:
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
                     outcome_type = 'LOSS'
 
             # Get trade date from position
@@ -543,7 +543,7 @@ class AnchorTrader(MathOptimizerMixin):
             # Record to Prophet using ANCHOR bot name with enhanced feedback data
             success = prophet.update_outcome(
                 trade_date=trade_date,
-                bot_name=OracleBotName.ANCHOR,
+                bot_name=ProphetBotName.ANCHOR,
                 outcome=outcome,
                 actual_pnl=pnl,
                 put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
@@ -704,14 +704,14 @@ class AnchorTrader(MathOptimizerMixin):
         Returns:
             int: The oracle_prediction_id for linking, or None if storage failed
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return None
 
         try:
             prophet = ProphetAdvisor()
 
             # Build MarketContext from signal
-            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import MarketContext as ProphetMarketContext, GEXRegime
 
             gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
             try:
@@ -719,7 +719,7 @@ class AnchorTrader(MathOptimizerMixin):
             except (KeyError, AttributeError):
                 gex_regime = GEXRegime.NEUTRAL
 
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=signal.spot_price,
                 vix=signal.vix,
                 gex_regime=gex_regime,
@@ -731,8 +731,8 @@ class AnchorTrader(MathOptimizerMixin):
                 expected_move_pct=(signal.expected_move / signal.spot_price * 100) if signal.spot_price else 0,
             )
 
-            # Build OraclePrediction from signal's Prophet context
-            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
+            # Build ProphetPrediction from signal's Prophet context
+            from quant.prophet_advisor import ProphetPrediction, TradingAdvice, BotName
 
             # Determine advice from signal
             advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
@@ -741,7 +741,7 @@ class AnchorTrader(MathOptimizerMixin):
             except (KeyError, ValueError):
                 advice = TradingAdvice.TRADE_FULL
 
-            prediction = OraclePrediction(
+            prediction = ProphetPrediction(
                 bot_name=BotName.ANCHOR,
                 advice=advice,
                 win_probability=getattr(signal, 'oracle_win_probability', 0.7),

@@ -111,13 +111,13 @@ def get_db_connection():
 # Prophet integration
 try:
     from quant.prophet_advisor import (
-        get_oracle, auto_train, get_pending_outcomes_count,
-        ProphetAdvisor, BotName as OracleBotName, TrainingMetrics
+        get_prophet, auto_train, get_pending_outcomes_count,
+        ProphetAdvisor, BotName as ProphetBotName, TrainingMetrics
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
-    get_oracle = None
+    PROPHET_AVAILABLE = False
+    get_prophet = None
 
 # Math Optimizer integration for enhanced trading decisions
 try:
@@ -733,7 +733,7 @@ class ProverbsFeedbackLoop:
 
         logger.info(f"[PROVERBS] Initialized new session: {self.session_id}")
         logger.info(f"[PROVERBS] Database available: {DB_AVAILABLE}")
-        logger.info(f"[PROVERBS] Prophet available: {ORACLE_AVAILABLE}")
+        logger.info(f"[PROVERBS] Prophet available: {PROPHET_AVAILABLE}")
         logger.info(f"[PROVERBS] Math Optimizer available: {MATH_OPTIMIZER_AVAILABLE}")
 
     def _generate_session_id(self) -> str:
@@ -761,8 +761,8 @@ class ProverbsFeedbackLoop:
     @property
     def prophet(self):
         """Lazy-load Prophet advisor"""
-        if self._oracle is None and ORACLE_AVAILABLE:
-            self._oracle = get_oracle()
+        if self._oracle is None and PROPHET_AVAILABLE:
+            self._oracle = get_prophet()
         return self._oracle
 
     # =========================================================================
@@ -1235,7 +1235,7 @@ class ProverbsFeedbackLoop:
     def _apply_model_update(self, bot_name: str, proposed_value: Any, proposal_id: str) -> bool:
         """Apply a model update from a proposal"""
         # Trigger Prophet retraining
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             result = auto_train(force=True)
             if result.get('success'):
                 # Save version for model update tracking
@@ -2463,7 +2463,7 @@ class ProverbsFeedbackLoop:
 
             # Step 6: Check if Prophet retraining is needed
             logger.info(f"[PROVERBS FEEDBACK LOOP] Step 6: Checking Prophet retraining requirements...")
-            if ORACLE_AVAILABLE:
+            if PROPHET_AVAILABLE:
                 pending_outcomes = get_pending_outcomes_count()
                 outcomes_processed = pending_outcomes
                 logger.info(f"[PROVERBS FEEDBACK LOOP]   Prophet pending outcomes: {pending_outcomes} (threshold: {GUARDRAILS['min_sample_size']})")
@@ -2633,7 +2633,7 @@ class ProverbsFeedbackLoop:
         """Get overall system health"""
         health = {
             'database': DB_AVAILABLE,
-            'prophet': ORACLE_AVAILABLE,
+            'prophet': PROPHET_AVAILABLE,
             'last_feedback_run': None,
             'pending_proposals_count': 0,
             'degradation_alerts': 0

@@ -98,7 +98,7 @@ except Exception as e:
 # Check scan logger
 print("\n--- SCAN LOGGER CHECK ---")
 try:
-    from trading.scan_activity_logger import log_ares_scan, ScanOutcome, SCAN_ACTIVITY_LOGGER_AVAILABLE
+    from trading.scan_activity_logger import log_fortress_scan, ScanOutcome, SCAN_ACTIVITY_LOGGER_AVAILABLE
     print(f"  SCAN_ACTIVITY_LOGGER_AVAILABLE: True")
     print(f"  ScanOutcome values: {[e.value for e in ScanOutcome][:5]}...")
 except ImportError as e:

@@ -232,9 +232,9 @@ class TestScanActivityLogger:
         print(f"\n[PASS] log_scan_activity called database correctly")
 
     @patch('database_adapter.get_connection')
-    def test_log_ares_scan_with_full_reasoning_kwarg(self, mock_get_conn):
+    def test_log_fortress_scan_with_full_reasoning_kwarg(self, mock_get_conn):
         """Test that passing full_reasoning as kwarg doesn't cause 'multiple values' error"""
-        from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
+        from trading.scan_activity_logger import log_fortress_scan, ScanOutcome, CheckResult
 
         # Mock database connection
         mock_cursor = Mock()
@@ -244,22 +244,22 @@ class TestScanActivityLogger:
 
         # This used to crash with: "got multiple values for keyword argument 'full_reasoning'"
         try:
-            result = log_ares_scan(
+            result = log_fortress_scan(
                 outcome=ScanOutcome.NO_TRADE,
                 decision_summary="Test summary",
                 full_reasoning="This is the full reasoning passed as kwarg",
                 generate_ai_explanation=False
             )
-            print(f"\n[PASS] log_ares_scan accepts full_reasoning kwarg without error")
+            print(f"\n[PASS] log_fortress_scan accepts full_reasoning kwarg without error")
         except TypeError as e:
             if "multiple values" in str(e):
                 raise AssertionError(f"kwargs bug not fixed: {e}")
             raise
 
     @patch('database_adapter.get_connection')
-    def test_log_ares_scan_with_all_kwargs(self, mock_get_conn):
+    def test_log_fortress_scan_with_all_kwargs(self, mock_get_conn):
         """Test that passing action_taken, error_type as kwargs doesn't cause errors"""
-        from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
+        from trading.scan_activity_logger import log_fortress_scan, ScanOutcome, CheckResult
 
         # Mock database connection
         mock_cursor = Mock()
@@ -269,7 +269,7 @@ class TestScanActivityLogger:
 
         # Test all kwargs that could cause "multiple values" errors
         try:
-            result = log_ares_scan(
+            result = log_fortress_scan(
                 outcome=ScanOutcome.ERROR,
                 decision_summary="Test crash scenario",
                 full_reasoning="Full reasoning for the crash",
@@ -278,7 +278,7 @@ class TestScanActivityLogger:
                 error_message="Test error message",
                 generate_ai_explanation=False
             )
-            print(f"\n[PASS] log_ares_scan accepts all kwargs without error")
+            print(f"\n[PASS] log_fortress_scan accepts all kwargs without error")
         except (TypeError, NameError) as e:
             raise AssertionError(f"kwargs bug not fixed: {e}")
 

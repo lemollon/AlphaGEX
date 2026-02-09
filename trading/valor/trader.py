@@ -25,7 +25,7 @@ from .models import (
     BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ
 )
 from .db import ValorDatabase
-from .signals import HERACLESSignalGenerator, get_gex_data_for_heracles
+from .signals import ValorSignalGenerator, get_gex_data_for_valor
 from .executor import TastytradeExecutor
 
 logger = logging.getLogger(__name__)
@@ -42,19 +42,19 @@ except ImportError:
 # Prophet for outcome recording and strategy recommendations
 try:
     from quant.prophet_advisor import (
-        ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
-        MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
+        ProphetAdvisor, BotName as ProphetBotName, TradeOutcome as ProphetTradeOutcome,
+        MarketContext as ProphetMarketContext, GEXRegime, StrategyType, get_prophet
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleBotName = None
-    OracleTradeOutcome = None
-    OracleMarketContext = None
+    ProphetBotName = None
+    ProphetTradeOutcome = None
+    ProphetMarketContext = None
     GEXRegime = None
     StrategyType = None
-    get_oracle = None
+    get_prophet = None
 
 # Learning Memory for self-improvement tracking
 try:
@@ -110,7 +110,7 @@ class ValorTrader:
 
         # Initialize components
         self.win_tracker = self.db.get_win_tracker()
-        self.signal_generator = HERACLESSignalGenerator(self.config, self.win_tracker)
+        self.signal_generator = ValorSignalGenerator(self.config, self.win_tracker)
         self.executor = TastytradeExecutor(self.config)
 
         # State
@@ -259,7 +259,7 @@ class ValorTrader:
 
             # Get GEX data from SPX (same price level as MES futures)
             # SPX requires Tradier production keys (sandbox doesn't support index options)
-            gex_data = get_gex_data_for_heracles("SPX")
+            gex_data = get_gex_data_for_valor("SPX")
             scan_context["gex_data"] = gex_data
 
             # Get account balance (use paper balance in paper mode)
@@ -1517,7 +1517,7 @@ class ValorTrader:
         This enables Prophet to learn from VALOR futures trades and
         improve future predictions.
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return
 
         try:
@@ -1526,14 +1526,14 @@ class ValorTrader:
             # Determine outcome type based on close reason and P&L
             if pnl > 0:
                 if 'PROFIT' in close_reason.upper() or 'TARGET' in close_reason.upper():
-                    outcome = OracleTradeOutcome.MAX_PROFIT
+                    outcome = ProphetTradeOutcome.MAX_PROFIT
                 else:
-                    outcome = OracleTradeOutcome.PARTIAL_PROFIT
+                    outcome = ProphetTradeOutcome.PARTIAL_PROFIT
             else:
                 if 'STOP' in close_reason.upper():
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
                 else:
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
 
             # Get trade date
             trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")

@@ -1277,7 +1277,7 @@ def get_scan_summary(bot_name: Optional[str] = None, days: int = 7) -> Dict:
 
 
 # Convenience functions for specific bots with AI explanations
-def log_ares_scan(
+def log_fortress_scan(
     outcome: ScanOutcome,
     decision_summary: str,
     market_data: Optional[Dict] = None,
@@ -1767,7 +1767,7 @@ def log_cornerstone_scan(
     )
 
 
-def log_icarus_scan(
+def log_gideon_scan(
     outcome: ScanOutcome,
     decision_summary: str,
     market_data: Optional[Dict] = None,
@@ -1911,7 +1911,7 @@ def log_icarus_scan(
     )
 
 
-def log_titan_scan(
+def log_samson_scan(
     outcome: ScanOutcome,
     decision_summary: str,
     market_data: Optional[Dict] = None,

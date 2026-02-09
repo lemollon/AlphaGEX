@@ -223,7 +223,7 @@ async def get_todays_scans(
 
 
 @router.get("/fortress/today")
-async def get_ares_today():
+async def get_fortress_today():
     """Get all FORTRESS scans from today with summary"""
     return await get_todays_scans(bot="FORTRESS")
 

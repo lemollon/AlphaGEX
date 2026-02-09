@@ -537,7 +537,7 @@ class TradeSyncValidator:
 
         try:
             import asyncio
-            from backend.api.routes.fortress_routes import get_fortress_positions, get_ares_live_pnl
+            from backend.api.routes.fortress_routes import get_fortress_positions, get_fortress_live_pnl
             from backend.api.routes.solomon_routes import get_solomon_positions, get_solomon_live_pnl
             from backend.api.routes.anchor_routes import get_anchor_positions, get_anchor_live_pnl
 
@@ -545,10 +545,10 @@ class TradeSyncValidator:
 
             # Test FORTRESS API
             try:
-                ares_pos = loop.run_until_complete(get_fortress_positions())
-                results["details"]["ares_api_positions"] = ares_pos.get("data", {}).get("open_count", 0) if isinstance(ares_pos.get("data"), dict) else "N/A"
+                fortress_pos = loop.run_until_complete(get_fortress_positions())
+                results["details"]["fortress_api_positions"] = fortress_pos.get("data", {}).get("open_count", 0) if isinstance(fortress_pos.get("data"), dict) else "N/A"
             except Exception as e:
-                results["details"]["ares_api_error"] = str(e)[:100]
+                results["details"]["fortress_api_error"] = str(e)[:100]
 
             # Test SOLOMON API
             try:
@@ -775,11 +775,11 @@ def cleanup_stale_positions(dry_run: bool = True):
             FROM fortress_positions
             WHERE status = 'open' AND expiration::date < %s
         """, (today,))
-        stale_ares = cursor.fetchall()
+        stale_fortress = cursor.fetchall()
 
-        if stale_ares:
-            print(f"\n  FORTRESS: Found {len(stale_ares)} stale position(s)")
-            for pos in stale_ares:
+        if stale_fortress:
+            print(f"\n  FORTRESS: Found {len(stale_fortress)} stale position(s)")
+            for pos in stale_fortress:
                 pos_id, exp, total_credit, contracts = pos
                 # Iron Condor that expired worthless = max profit (credit received)
                 realized_pnl = float(total_credit or 0) * int(contracts or 0) * 100
@@ -797,7 +797,7 @@ def cleanup_stale_positions(dry_run: bool = True):
 
             if not dry_run:
                 conn.commit()
-                print(f"      ✅ Updated {len(stale_ares)} FORTRESS position(s)")
+                print(f"      ✅ Updated {len(stale_fortress)} FORTRESS position(s)")
         else:
             print("\n  FORTRESS: No stale positions")
 

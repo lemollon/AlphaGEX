@@ -39,7 +39,7 @@ router = APIRouter(prefix="/api/events", tags=["Events"])
 # CAPITAL FETCHERS FOR BOTS
 # ============================================================================
 
-def _get_ares_capital() -> float:
+def _get_fortress_capital() -> float:
     """
     Get FORTRESS starting capital from database config.
 
@@ -85,7 +85,7 @@ def _get_bot_capital(bot_name: str) -> float:
     bot_upper = bot_name.upper()
 
     if bot_upper == 'FORTRESS':
-        return _get_ares_capital()
+        return _get_fortress_capital()
     elif bot_upper == 'SOLOMON':
         return 100000  # Paper trading
     elif bot_upper == 'GIDEON':

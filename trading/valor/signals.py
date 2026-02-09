@@ -51,8 +51,8 @@ def _get_ml_advisor():
 
     _ml_load_attempted = True
     try:
-        from .ml import HERACLESMLAdvisor
-        _ml_advisor = HERACLESMLAdvisor()
+        from .ml import ValorMLAdvisor
+        _ml_advisor = ValorMLAdvisor()
         if _ml_advisor.model is not None:
             logger.info("VALOR ML Advisor loaded successfully from database")
         else:
@@ -168,13 +168,13 @@ def reject_ml_model() -> bool:
     Use this when user decides not to use a newly trained model.
     """
     try:
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
         # First revoke approval
         revoke_ml_approval()
 
         # Then clear the model entirely
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
         if advisor:
             return advisor.clear_model()
         return True
@@ -408,7 +408,7 @@ def record_trade_outcome(direction: str, is_win: bool, scan_number: int) -> None
     tracker.record_trade(direction, is_win, scan_number)
 
 
-class HERACLESSignalGenerator:
+class ValorSignalGenerator:
     """
     Generates trading signals based on GEX analysis.
 
@@ -449,7 +449,7 @@ class HERACLESSignalGenerator:
         """
         try:
             # Extract GEX data with fallbacks for invalid/missing values
-            # GEX data is already scaled to MES levels by get_gex_data_for_heracles()
+            # GEX data is already scaled to MES levels by get_gex_data_for_valor()
             # Use 'or' to handle None values (key exists but value is None)
             flip_point = gex_data.get('flip_point') or 0
             call_wall = gex_data.get('call_wall') or 0
@@ -1397,7 +1397,7 @@ def _load_gex_cache_from_db() -> Tuple[Dict[str, Any], Optional[datetime]]:
     return {}, None
 
 
-def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
+def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
     """
     Fetch GEX data for VALOR signal generation.
 
@@ -1659,3 +1659,5 @@ def get_gex_data_for_heracles(symbol: str = "SPX") -> Dict[str, Any]:
         'net_gex': 0,
         'gex_ratio': 1.0,
     }
+
+

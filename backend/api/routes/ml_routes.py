@@ -1281,7 +1281,7 @@ async def sage_predict(request: SagePredictRequest):
         }
 
 
-def train_wisdom_model_internal(min_samples: int = 30, use_kronos: bool = True) -> dict:
+def train_wisdom_model_internal(min_samples: int = 30, use_chronicles: bool = True) -> dict:
     """
     Internal (non-async) WISDOM training function for scheduler use.
 
@@ -1296,7 +1296,7 @@ def train_wisdom_model_internal(min_samples: int = 30, use_kronos: bool = True) 
 
         advisor = get_advisor()
 
-        if use_kronos:
+        if use_chronicles:
             # Train from CHRONICLES backtests
             from backtest.zero_dte_backtest import ZeroDTEBacktester
 
@@ -1311,7 +1311,7 @@ def train_wisdom_model_internal(min_samples: int = 30, use_kronos: bool = True) 
                     "samples_used": len(results) if results else 0
                 }
 
-            metrics = advisor.train_from_kronos(results, min_samples=min_samples)
+            metrics = advisor.train_from_chronicles(results, min_samples=min_samples)
 
             return {
                 "success": True,
@@ -1353,7 +1353,7 @@ def train_wisdom_model_internal(min_samples: int = 30, use_kronos: bool = True) 
 
 
 @router.post("/wisdom/train")
-async def train_sage(min_samples: int = 30, use_kronos: bool = True):
+async def train_sage(min_samples: int = 30, use_chronicles: bool = True):
     """
     Train WISDOM (FORTRESS ML Advisor) model.
 
@@ -1366,7 +1366,7 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
 
         advisor = get_advisor()
 
-        if use_kronos:
+        if use_chronicles:
             # Train from CHRONICLES backtests
             from backtest.zero_dte_backtest import ZeroDTEBacktester
 
@@ -1379,10 +1379,10 @@ async def train_sage(min_samples: int = 30, use_kronos: bool = True):
                     "error": f"Not enough CHRONICLES backtest data. Have {len(results) if results else 0}, need {min_samples}"
                 }
 
-            metrics = advisor.train_from_kronos(results, min_samples=min_samples)
+            metrics = advisor.train_from_chronicles(results, min_samples=min_samples)
 
             log_ml_action(
-                action="SAGE_TRAIN_KRONOS",
+                action="SAGE_TRAIN_CHRONICLES",
                 details={"samples": len(results), "min_samples": min_samples},
                 ml_score=metrics.accuracy if metrics else None,
                 recommendation="TRAINED" if metrics else "FAILED",

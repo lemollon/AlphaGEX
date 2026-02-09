@@ -234,7 +234,7 @@ class FortressMLAdvisor:
             return True
 
         # Fall back to file
-        model_file = os.path.join(self.MODEL_PATH, 'ares_advisor_model.pkl')
+        model_file = os.path.join(self.MODEL_PATH, 'fortress_advisor_model.pkl')
 
         if os.path.exists(model_file):
             try:
@@ -255,7 +255,7 @@ class FortressMLAdvisor:
 
     def _save_model(self):
         """Save trained model to disk"""
-        model_file = os.path.join(self.MODEL_PATH, 'ares_advisor_model.pkl')
+        model_file = os.path.join(self.MODEL_PATH, 'fortress_advisor_model.pkl')
 
         try:
             with open(model_file, 'wb') as f:
@@ -336,7 +336,7 @@ class FortressMLAdvisor:
             logger.error(f"Failed to load model from database: {e}")
             return False
 
-    def extract_features_from_kronos(
+    def extract_features_from_chronicles(
         self,
         backtest_results: Dict[str, Any],
         include_gex: bool = True
@@ -467,7 +467,7 @@ class FortressMLAdvisor:
 
         return df
 
-    def train_from_kronos(
+    def train_from_chronicles(
         self,
         backtest_results: Dict[str, Any],
         test_size: float = 0.2,
@@ -490,7 +490,7 @@ class FortressMLAdvisor:
             raise ImportError("ML libraries required. Install: pip install scikit-learn pandas numpy")
 
         # Extract features
-        df = self.extract_features_from_kronos(backtest_results)
+        df = self.extract_features_from_chronicles(backtest_results)
 
         if len(df) < min_samples:
             raise ValueError(f"Insufficient data: {len(df)} samples < {min_samples} required")
@@ -1143,7 +1143,7 @@ def train_from_backtest(backtest_results: Dict[str, Any]) -> TrainingMetrics:
         print(f"Model trained with {metrics.accuracy:.1%} accuracy")
     """
     advisor = get_advisor()
-    return advisor.train_from_kronos(backtest_results)
+    return advisor.train_from_chronicles(backtest_results)
 
 
 if __name__ == "__main__":

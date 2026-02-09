@@ -93,7 +93,7 @@ class GEXTimeSeries:
             self.pct_negative_gex = sum(1 for d in self.data if d.net_gex < 0) / len(self.data) * 100
 
 
-class KronosGEXCalculator:
+class ChroniclesGEXCalculator:
     """
     Calculate GEX from ORAT options data used by CHRONICLES.
 
@@ -180,7 +180,7 @@ class KronosGEXCalculator:
         # Try today first
         gex = self.calculate_gex_for_date(today, dte_max)
         if gex:
-            return gex, f'kronos_live_{today}'
+            return gex, f'chronicles_live_{today}'
 
         # Fall back to most recent available date
         recent_date = self.get_most_recent_date()
@@ -188,7 +188,7 @@ class KronosGEXCalculator:
             logger.info(f"No ORAT data for today ({today}), using most recent: {recent_date}")
             gex = self.calculate_gex_for_date(recent_date, dte_max)
             if gex:
-                return gex, f'kronos_historical_{recent_date}'
+                return gex, f'chronicles_historical_{recent_date}'
 
         return None, 'no_data'
 
@@ -741,7 +741,7 @@ def get_gex_for_date(trade_date: str, ticker: str = "SPX") -> Optional[GEXData]:
         print(f"Net GEX: {gex.net_gex:,.0f}")
         print(f"Regime: {gex.gex_regime}")
     """
-    calc = KronosGEXCalculator(ticker)
+    calc = ChroniclesGEXCalculator(ticker)
     return calc.calculate_gex_for_date(trade_date)
 
 
@@ -759,7 +759,7 @@ def enrich_trades_with_gex(backtest_results: Dict[str, Any], ticker: str = "SPX"
 
         # Now each trade has gex_net, gex_regime, etc.
     """
-    calc = KronosGEXCalculator(ticker)
+    calc = ChroniclesGEXCalculator(ticker)
     return calc.enrich_backtest_with_gex(backtest_results)
 
 
@@ -776,7 +776,7 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    calc = KronosGEXCalculator(args.ticker)
+    calc = ChroniclesGEXCalculator(args.ticker)
 
     if args.date:
         print(f"\nCalculating GEX for {args.date}...")
