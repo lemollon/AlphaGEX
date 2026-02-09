@@ -746,7 +746,7 @@ class ICPositionStatus(Enum):
 
 
 @dataclass
-class PrometheusICSignal:
+class JubileeICSignal:
     """
     A signal to open an Iron Condor position using borrowed capital.
 
@@ -859,7 +859,7 @@ class PrometheusICSignal:
 
 
 @dataclass
-class PrometheusICPosition:
+class JubileeICPosition:
     """
     An active Iron Condor position traded with borrowed capital.
 
@@ -982,7 +982,7 @@ class PrometheusICPosition:
 
 
 @dataclass
-class PrometheusICConfig:
+class JubileeICConfig:
     """
     Configuration for JUBILEE IC trading.
 
@@ -1104,7 +1104,7 @@ class PrometheusICConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'PrometheusICConfig':
+    def from_dict(cls, data: Dict[str, Any]) -> 'JubileeICConfig':
         """Create config from dictionary"""
         config = cls()
         if 'mode' in data:
@@ -1143,7 +1143,7 @@ class PrometheusICConfig:
 
 
 @dataclass
-class PrometheusPerformanceSummary:
+class JubileePerformanceSummary:
     """
     Combined performance summary for JUBILEE system.
 

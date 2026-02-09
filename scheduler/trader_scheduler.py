@@ -138,24 +138,24 @@ except ImportError:
 
 # Import JUBILEE (Box Spread Synthetic Borrowing)
 try:
-    from trading.jubilee import JubileeTrader, JubileeConfig, TradingMode as PrometheusTradingMode
+    from trading.jubilee import JubileeTrader, JubileeConfig, TradingMode as JubileeTradingMode
     PROMETHEUS_BOX_AVAILABLE = True
 except ImportError:
     PROMETHEUS_BOX_AVAILABLE = False
     JubileeTrader = None
     JubileeConfig = None
-    PrometheusTradingMode = None
+    JubileeTradingMode = None
     print("Warning: JUBILEE Box Spread not available. Synthetic borrowing will be disabled.")
 
 # Import JUBILEE IC Trader (Iron Condor trading with borrowed capital)
 try:
     from trading.jubilee.trader import JubileeICTrader, run_jubilee_ic_cycle
-    from trading.jubilee.models import PrometheusICConfig
+    from trading.jubilee.models import JubileeICConfig
     JUBILEE_IC_AVAILABLE = True
 except ImportError:
     JUBILEE_IC_AVAILABLE = False
     JubileeICTrader = None
-    PrometheusICConfig = None
+    JubileeICConfig = None
     run_jubilee_ic_cycle = None
     print("Warning: JUBILEE IC Trader not available. IC trading will be disabled.")
 
@@ -556,7 +556,7 @@ class AutonomousTraderScheduler:
         self.jubilee_trader = None
         if PROMETHEUS_BOX_AVAILABLE:
             try:
-                config = JubileeConfig(mode=PrometheusTradingMode.PAPER)
+                config = JubileeConfig(mode=JubileeTradingMode.PAPER)
                 self.jubilee_trader = JubileeTrader(config=config)
                 logger.info(f"✅ JUBILEE initialized (Box Spread Synthetic Borrowing, PAPER mode)")
             except Exception as e:
@@ -569,7 +569,7 @@ class AutonomousTraderScheduler:
         self.jubilee_ic_trader = None
         if JUBILEE_IC_AVAILABLE:
             try:
-                ic_config = PrometheusICConfig()
+                ic_config = JubileeICConfig()
                 self.jubilee_ic_trader = JubileeICTrader(config=ic_config)
                 logger.info(f"✅ JUBILEE IC initialized (SPX Iron Condors with borrowed capital, PAPER mode)")
             except Exception as e:

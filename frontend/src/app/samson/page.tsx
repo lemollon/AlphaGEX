@@ -14,11 +14,11 @@ import { apiClient } from '@/lib/api'
 import { useToast } from '@/components/ui/Toast'
 import { RotateCcw, AlertTriangle } from 'lucide-react'
 import {
-  useTITANStatus,
-  useTITANPositions,
+  useSamsonStatus,
+  useSamsonPositions,
   useSamsonConfig,
-  useTITANLivePnL,
-  useScanActivityTitan,
+  useSamsonLivePnL,
+  useScanActivitySamson,
   useUnifiedBotSummary,  // UNIFIED: Single source of truth for stats
 } from '@/lib/hooks/useMarketData'
 import {
@@ -514,12 +514,12 @@ export default function TitanPage() {
   const { addToast } = useToast()
 
   // Data hooks
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useTITANStatus()
-  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useTITANPositions()
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useSamsonStatus()
+  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useSamsonPositions()
   // Equity curve data is now fetched by the shared EquityCurveChart component
   const { data: configData } = useSamsonConfig()
-  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useTITANLivePnL()
-  const { data: scanData, isLoading: scansLoading } = useScanActivityTitan(50)
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useSamsonLivePnL()
+  const { data: scanData, isLoading: scansLoading } = useScanActivitySamson(50)
 
   // UNIFIED METRICS: Single source of truth for all stats
   const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('SAMSON')
@@ -550,7 +550,7 @@ export default function TitanPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetTITANData(true)
+    const response = await apiClient.resetSamsonData(true)
     if (response.data?.success) {
       addToast({ type: 'success', title: 'Reset Complete', message: 'SAMSON data has been reset successfully' })
       refreshStatus()

@@ -20,14 +20,14 @@ from .models import (
     BoxSpreadStatus,
     TradingMode,
     # IC Trading Models
-    PrometheusICSignal,
-    PrometheusICPosition,
-    PrometheusICConfig,
+    JubileeICSignal,
+    JubileeICPosition,
+    JubileeICConfig,
     ICPositionStatus,
 )
 from .db import JubileeDatabase
-from .signals import BoxSpreadSignalGenerator, PrometheusICSignalGenerator
-from .executor import BoxSpreadExecutor, PrometheusICExecutor
+from .signals import BoxSpreadSignalGenerator, JubileeICSignalGenerator
+from .executor import BoxSpreadExecutor, JubileeICExecutor
 from .tracing import get_tracer
 
 logger = logging.getLogger(__name__)
@@ -908,14 +908,14 @@ class JubileeICTrader:
     - Requires Prophet approval before trading
     """
 
-    def __init__(self, config: Optional[PrometheusICConfig] = None):
+    def __init__(self, config: Optional[JubileeICConfig] = None):
         self.db = JubileeDatabase(bot_name="JUBILEE_IC")
 
         # Load and validate config
         self.config = config or self.db.load_ic_config()
         if not self.config:
             logger.warning("IC config is None, using defaults")
-            self.config = PrometheusICConfig()
+            self.config = JubileeICConfig()
 
         # Validate critical config fields
         if not hasattr(self.config, 'enabled'):
@@ -930,8 +930,8 @@ class JubileeICTrader:
 
         # Initialize components with validated config
         try:
-            self.signal_gen = PrometheusICSignalGenerator(self.config)
-            self.executor = PrometheusICExecutor(self.config, self.db)
+            self.signal_gen = JubileeICSignalGenerator(self.config)
+            self.executor = JubileeICExecutor(self.config, self.db)
         except Exception as e:
             logger.error(f"Failed to initialize IC trader components: {e}")
             raise RuntimeError(f"JubileeICTrader initialization failed: {e}")
@@ -1388,7 +1388,7 @@ class JubileeICTrader:
         positions = self.db.get_open_ic_positions()
         return [self._position_to_dict(p) for p in positions]
 
-    def _position_to_dict(self, position: PrometheusICPosition) -> Dict[str, Any]:
+    def _position_to_dict(self, position: JubileeICPosition) -> Dict[str, Any]:
         """Convert IC position to dictionary with full details for reconciliation"""
         return {
             'position_id': position.position_id,
@@ -1457,7 +1457,7 @@ def run_jubilee_ic_mtm_update():
     """Update mark-to-market for all open IC positions and record equity snapshot"""
     db = JubileeDatabase(bot_name="JUBILEE_IC")
     config = db.load_ic_config()
-    executor = PrometheusICExecutor(config, db)
+    executor = JubileeICExecutor(config, db)
 
     positions = db.get_open_ic_positions()
     updated = 0

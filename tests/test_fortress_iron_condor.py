@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-class TestAresIronCondorImport:
+class TestFortressIronCondorImport:
     """Tests for FORTRESS iron condor import"""
 
     def test_import_fortress_iron_condor(self):

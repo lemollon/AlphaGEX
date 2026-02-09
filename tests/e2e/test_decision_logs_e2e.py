@@ -142,7 +142,7 @@ class TestBotLoggerTable:
                 print(f"WARNING: {bot} has no entries in bot_decision_logs")
 
 
-class TestAresLogging:
+class TestFortressLogging:
     """Tests for FORTRESS (Iron Condor) decision logging."""
 
     def test_fortress_logs_entry_decisions(self, db_connection):
@@ -153,7 +153,7 @@ class TestAresLogging:
             WHERE bot_name = 'FORTRESS' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nARES ENTRY decisions: {count}")
+        print(f"\nFORTRESSENTRY decisions: {count}")
         # Just verify the query works - count may be 0 if no trades yet
 
     def test_fortress_logs_skip_decisions(self, db_connection):
@@ -164,7 +164,7 @@ class TestAresLogging:
             WHERE bot_name = 'FORTRESS' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nARES SKIP decisions: {count}")
+        print(f"\nFORTRESSSKIP decisions: {count}")
 
     def test_fortress_entry_has_required_fields(self, db_connection):
         """Verify FORTRESS ENTRY decisions have all required fields populated."""
@@ -184,12 +184,12 @@ class TestAresLogging:
             assert decision_id is not None, "decision_id is NULL"
             assert symbol is not None, "symbol is NULL"
             assert strategy is not None, "strategy is NULL"
-            print(f"\nARES ENTRY sample: {symbol} {strategy} @ ${spot_price}")
+            print(f"\nFORTRESSENTRY sample: {symbol} {strategy} @ ${spot_price}")
         else:
             print("\nNo FORTRESS ENTRY decisions to verify")
 
 
-class TestAtlasLogging:
+class TestCornerstoneLogging:
     """Tests for CORNERSTONE (SPX Wheel) decision logging."""
 
     def test_cornerstone_logs_entry_decisions(self, db_connection):
@@ -200,7 +200,7 @@ class TestAtlasLogging:
             WHERE bot_name = 'CORNERSTONE' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nATLAS ENTRY decisions: {count}")
+        print(f"\nCORNERSTONEENTRY decisions: {count}")
 
     def test_cornerstone_logs_skip_decisions(self, db_connection):
         """Verify CORNERSTONE logs SKIP decisions."""
@@ -210,10 +210,10 @@ class TestAtlasLogging:
             WHERE bot_name = 'CORNERSTONE' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nATLAS SKIP decisions: {count}")
+        print(f"\nCORNERSTONESKIP decisions: {count}")
 
 
-class TestAthenaLogging:
+class TestSolomonLogging:
     """Tests for SOLOMON (Directional Spreads) decision logging."""
 
     def test_solomon_logs_to_bot_decision_logs(self, db_connection):
@@ -227,7 +227,7 @@ class TestAthenaLogging:
             WHERE bot_name = 'SOLOMON'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nATHENA total decisions in bot_decision_logs: {count}")
+        print(f"\nSOLOMONtotal decisions in bot_decision_logs: {count}")
 
         # This should now pass after the fix
         # Note: Count may be 0 if SOLOMON hasn't traded since the fix
@@ -242,7 +242,7 @@ class TestAthenaLogging:
             WHERE bot_name = 'SOLOMON' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nATHENA ENTRY decisions: {count}")
+        print(f"\nSOLOMONENTRY decisions: {count}")
 
     def test_solomon_logs_skip_decisions(self, db_connection):
         """Verify SOLOMON logs SKIP decisions."""
@@ -252,10 +252,10 @@ class TestAthenaLogging:
             WHERE bot_name = 'SOLOMON' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nATHENA SKIP decisions: {count}")
+        print(f"\nSOLOMONSKIP decisions: {count}")
 
 
-class TestPhoenixLogging:
+class TestLazarusLogging:
     """Tests for LAZARUS (Autonomous 0DTE) decision logging."""
 
     def test_lazarus_logs_entry_decisions(self, db_connection):
@@ -266,7 +266,7 @@ class TestPhoenixLogging:
             WHERE bot_name = 'LAZARUS' AND decision_type = 'ENTRY'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nPHOENIX ENTRY decisions: {count}")
+        print(f"\nLAZARUSENTRY decisions: {count}")
 
     def test_lazarus_logs_skip_decisions(self, db_connection):
         """Verify LAZARUS logs SKIP decisions."""
@@ -276,7 +276,7 @@ class TestPhoenixLogging:
             WHERE bot_name = 'LAZARUS' AND decision_type = 'SKIP'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nPHOENIX SKIP decisions: {count}")
+        print(f"\nLAZARUSSKIP decisions: {count}")
 
     def test_lazarus_logs_exit_decisions(self, db_connection):
         """Verify LAZARUS logs EXIT decisions."""
@@ -286,7 +286,7 @@ class TestPhoenixLogging:
             WHERE bot_name = 'LAZARUS' AND decision_type = 'EXIT'
         """)
         count = cursor.fetchone()[0]
-        print(f"\nPHOENIX EXIT decisions: {count}")
+        print(f"\nLAZARUSEXIT decisions: {count}")
 
 
 class TestAnchorLogging:
@@ -762,7 +762,7 @@ class TestDualLogging:
         """)
         trading_count = cursor.fetchone()[0]
 
-        print(f"\nARES dual logging:")
+        print(f"\nFORTRESSdual logging:")
         print(f"  bot_decision_logs: {bot_count}")
         print(f"  trading_decisions: {trading_count}")
 
@@ -786,7 +786,7 @@ class TestDualLogging:
         """)
         trading_count = cursor.fetchone()[0]
 
-        print(f"\nATHENA dual logging:")
+        print(f"\nSOLOMONdual logging:")
         print(f"  bot_decision_logs: {bot_count}")
         print(f"  trading_decisions: {trading_count}")
 

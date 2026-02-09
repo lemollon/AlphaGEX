@@ -145,7 +145,7 @@ class TestGideonConfig:
 # MODEL TESTS
 # =============================================================================
 
-class TestICARUSModels:
+class TestGideonModels:
     """Test GIDEON data models"""
 
     def test_spread_position_creation(self, mock_db_connection):
@@ -449,7 +449,7 @@ class TestGideonDatabase:
 # INTEGRATION TESTS
 # =============================================================================
 
-class TestICARUSIntegration:
+class TestGideonIntegration:
     """Integration tests for GIDEON trading flow"""
 
     def test_full_signal_to_execution_flow(self, mock_db_connection):

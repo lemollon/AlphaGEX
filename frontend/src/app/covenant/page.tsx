@@ -57,8 +57,8 @@ export default function CovenantPage() {
     const fetchBotStatus = async () => {
       try {
         const [aresRes, solomonRes, anchorRes] = await Promise.all([
-          apiClient.getARESStatus().catch(() => null),
-          apiClient.getATHENAStatus().catch(() => null),
+          apiClient.getFortressStatus().catch(() => null),
+          apiClient.getSolomonStatus().catch(() => null),
           apiClient.getANCHORStatus().catch(() => null),
         ])
 

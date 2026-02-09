@@ -407,7 +407,7 @@ def test_lazarus_psychology_rules():
         return False
 
 
-def test_atlas_ml_system():
+def test_cornerstone_ml_system():
     """Test CORNERSTONE wheel ML system"""
     print("\n" + "="*60)
     print("TEST 9: CORNERSTONE WHEEL ML SYSTEM")
@@ -689,7 +689,7 @@ def test_lazarus_full_cycle():
         return True
 
 
-def test_atlas_full_cycle():
+def test_cornerstone_full_cycle():
     """Test CORNERSTONE complete trading cycle (no actual trades)"""
     print("\n" + "="*60)
     print("TEST 15: CORNERSTONE FULL TRADING CYCLE")
@@ -815,7 +815,7 @@ def run_all_tests():
         # Layer 3: Decision Making
         ("3.1", "LAZARUS Market Regime", test_lazarus_market_regime),
         ("3.2", "LAZARUS Psychology Rules", test_lazarus_psychology_rules),
-        ("3.3", "CORNERSTONE ML System", test_atlas_ml_system),
+        ("3.3", "CORNERSTONE ML System", test_cornerstone_ml_system),
         ("3.4", "Quant Modules", test_quant_modules),
 
         # Layer 4: Trade Execution
@@ -825,7 +825,7 @@ def run_all_tests():
 
         # Layer 5: End-to-End
         ("5.1", "LAZARUS Full Cycle", test_lazarus_full_cycle),
-        ("5.2", "CORNERSTONE Full Cycle", test_atlas_full_cycle),
+        ("5.2", "CORNERSTONE Full Cycle", test_cornerstone_full_cycle),
         ("5.3", "Scheduler Integration", test_scheduler_integration),
     ]
 

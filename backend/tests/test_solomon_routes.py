@@ -26,7 +26,7 @@ client = TestClient(app)
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
-class TestAthenaStatusEndpoint:
+class TestSolomonStatusEndpoint:
     """Tests for /api/solomon/status endpoint"""
 
     def test_get_status_success(self):
@@ -70,7 +70,7 @@ class TestAthenaStatusEndpoint:
         assert isinstance(data["data"]["is_active"], bool)
 
 
-class TestAthenaPositionsEndpoint:
+class TestSolomonPositionsEndpoint:
     """Tests for /api/solomon/positions endpoint"""
 
     def test_get_positions_success(self):
@@ -101,7 +101,7 @@ class TestAthenaPositionsEndpoint:
         assert data["success"] is True
 
 
-class TestAthenaSignalsEndpoint:
+class TestSolomonSignalsEndpoint:
     """Tests for /api/solomon/signals endpoint"""
 
     def test_get_signals_success(self):
@@ -127,7 +127,7 @@ class TestAthenaSignalsEndpoint:
             assert "direction" in signal or "bias" in signal or "signal" in signal
 
 
-class TestAthenaPerformanceEndpoint:
+class TestSolomonPerformanceEndpoint:
     """Tests for /api/solomon/performance endpoint"""
 
     def test_get_performance_success(self):
@@ -149,7 +149,7 @@ class TestAthenaPerformanceEndpoint:
         assert data["success"] is True
 
 
-class TestAthenaEquityCurveEndpoint:
+class TestSolomonEquityCurveEndpoint:
     """Tests for /api/solomon/equity endpoint"""
 
     def test_get_equity_curve_success(self):
@@ -163,7 +163,7 @@ class TestAthenaEquityCurveEndpoint:
         assert data["success"] is True
 
 
-class TestAthenaTradesEndpoint:
+class TestSolomonTradesEndpoint:
     """Tests for /api/solomon/trades endpoint"""
 
     def test_get_trades_success(self):
@@ -185,7 +185,7 @@ class TestAthenaTradesEndpoint:
         assert data["success"] is True
 
 
-class TestAthenaAnalysisEndpoint:
+class TestSolomonAnalysisEndpoint:
     """Tests for /api/solomon/analysis endpoint"""
 
     def test_get_analysis_success(self):
@@ -199,7 +199,7 @@ class TestAthenaAnalysisEndpoint:
         assert data["success"] is True
 
 
-class TestAthenaLogsEndpoint:
+class TestSolomonLogsEndpoint:
     """Tests for /api/solomon/logs endpoint"""
 
     def test_get_logs_success(self):
@@ -221,7 +221,7 @@ class TestAthenaLogsEndpoint:
         assert data["success"] is True
 
 
-class TestAthenaConfigEndpoint:
+class TestSolomonConfigEndpoint:
     """Tests for /api/solomon/config endpoint"""
 
     def test_get_config_success(self):
@@ -235,7 +235,7 @@ class TestAthenaConfigEndpoint:
         assert data["success"] is True
 
 
-class TestAthenaDataValidation:
+class TestSolomonDataValidation:
     """Tests for data validation in SOLOMON endpoints"""
 
     def test_capital_is_positive(self):
@@ -269,7 +269,7 @@ class TestAthenaDataValidation:
         assert mode in ["paper", "live"]
 
 
-class TestAthenaSpreadTypes:
+class TestSolomonSpreadTypes:
     """Tests for spread type handling"""
 
     def test_bull_call_spread_support(self):

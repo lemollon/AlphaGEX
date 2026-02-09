@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class TestARESInitialization(unittest.TestCase):
+class TestFortressInitialization(unittest.TestCase):
     """Test FORTRESS initializes with dual Tradier clients."""
 
     @patch('unified_config.APIConfig')
@@ -325,7 +325,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestSPYScaling))
     suite.addTests(loader.loadTestsFromTestCase(TestOCCSymbolFormat))
     suite.addTests(loader.loadTestsFromTestCase(TestCredentialFallback))
-    suite.addTests(loader.loadTestsFromTestCase(TestARESInitialization))
+    suite.addTests(loader.loadTestsFromTestCase(TestFortressInitialization))
     suite.addTests(loader.loadTestsFromTestCase(TestExecuteIronCondor))
 
     # Run with verbosity

@@ -60,7 +60,7 @@ class TestSchedulerInitialization:
     """Tests for scheduler initialization"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', False)
+    @patch('scheduler.trader_scheduler.CORNERSTONE_AVAILABLE', False)
     @patch('scheduler.trader_scheduler.FORTRESS_AVAILABLE', False)
     @patch('scheduler.trader_scheduler.SOLOMON_AVAILABLE', False)
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
@@ -224,7 +224,7 @@ class TestStatePersistence:
         mock_cursor.execute.assert_called()
 
 
-class TestPhoenixScheduling:
+class TestLazarusScheduling:
     """Tests for LAZARUS (0DTE) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
@@ -278,16 +278,16 @@ class TestPhoenixScheduling:
         scheduler.trader.find_and_execute_daily_trade.assert_not_called()
 
 
-class TestAtlasScheduling:
+class TestCornerstoneScheduling:
     """Tests for CORNERSTONE (SPX Wheel) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', True)
+    @patch('scheduler.trader_scheduler.CORNERSTONE_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.SPXWheelTrader')
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_atlas_initialization(self, mock_conn, mock_api, mock_trader, mock_wheel):
+    def test_cornerstone_initialization(self, mock_conn, mock_api, mock_trader, mock_wheel):
         """Test CORNERSTONE trader initialization"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
@@ -301,22 +301,22 @@ class TestAtlasScheduling:
         assert scheduler.cornerstone_trader is not None
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', True)
+    @patch('scheduler.trader_scheduler.CORNERSTONE_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.PROVERBS_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.get_proverbs')
     @patch('scheduler.trader_scheduler.SPXWheelTrader')
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_atlas_respects_kill_switch(self, mock_conn, mock_api, mock_trader, mock_wheel, mock_proverbs):
+    def test_cornerstone_respects_kill_switch(self, mock_conn, mock_api, mock_trader, mock_wheel, mock_proverbs):
         """Test CORNERSTONE respects Proverbs kill switch"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
         mock_trader.return_value = MagicMock()
 
-        mock_atlas = MagicMock()
-        mock_wheel.return_value = mock_atlas
+        mock_cornerstone = MagicMock()
+        mock_wheel.return_value = mock_cornerstone
 
         mock_proverbs_instance = MagicMock()
         mock_proverbs_instance.is_bot_killed.return_value = True  # Kill switch active
@@ -327,13 +327,13 @@ class TestAtlasScheduling:
 
         with patch.object(scheduler, 'is_market_open', return_value=True):
             with patch.object(scheduler, '_save_heartbeat'):
-                scheduler.scheduled_atlas_logic()
+                scheduler.scheduled_cornerstone_logic()
 
         # Should NOT have run daily cycle due to kill switch
-        mock_atlas.run_daily_cycle.assert_not_called()
+        mock_cornerstone.run_daily_cycle.assert_not_called()
 
 
-class TestAresScheduling:
+class TestFortressScheduling:
     """Tests for FORTRESS (Iron Condor) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
@@ -356,7 +356,7 @@ class TestAresScheduling:
         assert scheduler.fortress_trader is not None
 
 
-class TestAthenaScheduling:
+class TestSolomonScheduling:
     """Tests for SOLOMON (Directional Spreads) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)

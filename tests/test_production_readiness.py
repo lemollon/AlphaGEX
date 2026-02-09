@@ -246,8 +246,8 @@ class TestIdempotency:
 
         # Keys should be unique (random suffix)
         assert key1 != key2
-        assert key1.startswith("ARES_")
-        assert key2.startswith("ARES_")
+        assert key1.startswith("FORTRESS_")
+        assert key2.startswith("FORTRESS_")
 
     def test_check_idempotency_new_key(self):
         """New key should not be found"""

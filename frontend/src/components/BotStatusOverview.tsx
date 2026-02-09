@@ -22,17 +22,17 @@ import {
   Boxes
 } from 'lucide-react'
 import {
-  useARESStatus,
-  useATHENAStatus,
+  useFortressStatus,
+  useSolomonStatus,
   useANCHORStatus,
-  useICARUSStatus,
-  useTITANStatus,
+  useGideonStatus,
+  useSamsonStatus,
   useJUBILEEStatus,
-  useARESLivePnL,
-  useATHENALivePnL,
+  useFortressLivePnL,
+  useSolomonLivePnL,
   useANCHORLivePnL,
-  useICARUSLivePnL,
-  useTITANLivePnL,
+  useGideonLivePnL,
+  useSamsonLivePnL,
   useJUBILEELivePnL
 } from '@/lib/hooks/useMarketData'
 
@@ -155,20 +155,20 @@ export default function BotStatusOverview() {
   const [expanded, setExpanded] = useState(true)
 
   // Live trading bots
-  const { data: aresStatus, isLoading: aresLoading, mutate: refreshAres } = useARESStatus()
-  const { data: solomonStatus, isLoading: solomonLoading, mutate: refreshAthena } = useATHENAStatus()
+  const { data: aresStatus, isLoading: aresLoading, mutate: refreshAres } = useFortressStatus()
+  const { data: solomonStatus, isLoading: solomonLoading, mutate: refreshAthena } = useSolomonStatus()
   const { data: anchorStatus, isLoading: anchorLoading, mutate: refreshAnchor } = useANCHORStatus()
 
   // Paper trading bots
-  const { data: icarusStatus, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSStatus()
-  const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useTITANStatus()
+  const { data: icarusStatus, isLoading: icarusLoading, mutate: refreshIcarus } = useGideonStatus()
+  const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useSamsonStatus()
   const { data: jubileeStatus, isLoading: jubileeLoading, mutate: refreshJubilee } = useJUBILEEStatus()
 
-  const { data: aresLivePnL } = useARESLivePnL()
-  const { data: solomonLivePnL } = useATHENALivePnL()
+  const { data: aresLivePnL } = useFortressLivePnL()
+  const { data: solomonLivePnL } = useSolomonLivePnL()
   const { data: anchorLivePnL } = useANCHORLivePnL()
-  const { data: icarusLivePnL } = useICARUSLivePnL()
-  const { data: titanLivePnL } = useTITANLivePnL()
+  const { data: icarusLivePnL } = useGideonLivePnL()
+  const { data: titanLivePnL } = useSamsonLivePnL()
   const { data: jubileeLivePnL } = useJUBILEELivePnL()
 
   // PERFORMANCE FIX: useCallback for refreshAll to prevent child re-renders

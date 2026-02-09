@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-class TestAthenaDirectionalImport:
+class TestSolomonDirectionalImport:
     """Tests for SOLOMON directional import"""
 
     def test_import_solomon_directional(self):

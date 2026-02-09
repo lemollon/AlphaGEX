@@ -22,7 +22,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 # FORTRESS V2 AUDIT TRAIL TESTS
 # =============================================================================
 
-class TestARESV2AuditTrail:
+class TestFortressV2AuditTrail:
     """Test FORTRESS V2 Iron Condor stores full Prophet/Chronicles context"""
 
     def test_signal_captures_oracle_context(self):
@@ -203,7 +203,7 @@ class TestARESV2AuditTrail:
 # SOLOMON V2 AUDIT TRAIL TESTS
 # =============================================================================
 
-class TestATHENAV2AuditTrail:
+class TestSolomonV2AuditTrail:
     """Test SOLOMON V2 Directional Spreads stores full ML/Chronicles context"""
 
     def test_signal_captures_ml_context(self):

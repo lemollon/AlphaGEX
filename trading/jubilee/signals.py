@@ -16,8 +16,8 @@ from .models import (
     BorrowingCostAnalysis,
     JubileeConfig,
     # IC Trading Models
-    PrometheusICSignal,
-    PrometheusICConfig,
+    JubileeICSignal,
+    JubileeICConfig,
 )
 from .tracing import get_tracer, trace_signal, trace_rate
 
@@ -1087,7 +1087,7 @@ except ImportError:
     TradierGEXCalculator = None
 
 
-class PrometheusICSignalGenerator:
+class JubileeICSignalGenerator:
     """
     Generates Iron Condor signals for JUBILEE trading.
 
@@ -1106,8 +1106,8 @@ class PrometheusICSignalGenerator:
     the borrowing cost from box spreads.
     """
 
-    def __init__(self, config: PrometheusICConfig = None):
-        self.config = config or PrometheusICConfig()
+    def __init__(self, config: JubileeICConfig = None):
+        self.config = config or JubileeICConfig()
         self._init_components()
 
     def _init_components(self) -> None:
@@ -1410,7 +1410,7 @@ class PrometheusICSignalGenerator:
         self,
         source_box_position_id: str,
         available_capital: float,
-    ) -> Optional[PrometheusICSignal]:
+    ) -> Optional[JubileeICSignal]:
         """
         Generate an Iron Condor signal for JUBILEE.
 
@@ -1419,7 +1419,7 @@ class PrometheusICSignalGenerator:
             available_capital: Capital available for this trade
 
         Returns:
-            PrometheusICSignal if conditions are favorable, None otherwise
+            JubileeICSignal if conditions are favorable, None otherwise
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -1538,7 +1538,7 @@ class PrometheusICSignalGenerator:
             f"credit=${total_credit:.2f}, contracts={contracts}"
         )
 
-        return PrometheusICSignal(
+        return JubileeICSignal(
             signal_id=f"PROM-IC-{now.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
             signal_time=now,
             source_box_position_id=source_box_position_id,
@@ -1588,9 +1588,9 @@ class PrometheusICSignalGenerator:
         market: Dict[str, Any],
         skip_reason: str,
         prophet: Dict[str, Any] = None,
-    ) -> PrometheusICSignal:
+    ) -> JubileeICSignal:
         """Create a signal that was skipped (for audit trail)"""
-        return PrometheusICSignal(
+        return JubileeICSignal(
             signal_id=f"PROM-IC-SKIP-{signal_time.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
             signal_time=signal_time,
             source_box_position_id=source_box_position_id,

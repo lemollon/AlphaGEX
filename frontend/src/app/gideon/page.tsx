@@ -13,12 +13,12 @@ import { useToast } from '@/components/ui/Toast'
 import { apiClient } from '@/lib/api'
 import { RotateCcw, AlertTriangle } from 'lucide-react'
 import {
-  useICARUSStatus,
-  useICARUSPositions,
-  useICARUSPerformance,
+  useGideonStatus,
+  useGideonPositions,
+  useGideonPerformance,
   useGideonConfig,
-  useICARUSLivePnL,
-  useICARUSScanActivity,
+  useGideonLivePnL,
+  useGideonScanActivity,
   useUnifiedBotSummary,
 } from '@/lib/hooks/useMarketData'
 import {
@@ -49,7 +49,7 @@ interface Heartbeat {
   details: Record<string, any>
 }
 
-interface ICARUSStatus {
+interface GideonStatus {
   mode: string
   ticker: string
   capital: number
@@ -131,7 +131,7 @@ function parseProphetTopFactors(factorsJson: string | undefined): Array<{factor:
 // TABS
 // ==============================================================================
 
-const ICARUS_TABS = [
+const GIDEON_TABS = [
   { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet },
   { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
   { id: 'activity' as const, label: 'Activity', icon: Activity },
@@ -139,7 +139,7 @@ const ICARUS_TABS = [
   { id: 'reports' as const, label: 'Reports', icon: FileText },
   { id: 'config' as const, label: 'Config', icon: Settings },
 ]
-type IcarusTabId = typeof ICARUS_TABS[number]['id']
+type GideonTabId = typeof GIDEON_TABS[number]['id']
 
 // ==============================================================================
 // HELPERS
@@ -395,25 +395,25 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
 // MAIN PAGE COMPONENT
 // ==============================================================================
 
-export default function IcarusPage() {
+export default function GideonPage() {
   const sidebarPadding = useSidebarPadding()
-  const [activeTab, setActiveTab] = useState<IcarusTabId>('portfolio')
+  const [activeTab, setActiveTab] = useState<GideonTabId>('portfolio')
   const { addToast } = useToast()
 
   // Data hooks
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useICARUSStatus()
-  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useICARUSPositions()
-  const { data: performanceData } = useICARUSPerformance(30)
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useGideonStatus()
+  const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useGideonPositions()
+  const { data: performanceData } = useGideonPerformance(30)
   const { data: configData } = useGideonConfig()
-  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useICARUSLivePnL()
-  const { data: scanData, isLoading: scansLoading } = useICARUSScanActivity(50)
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useGideonLivePnL()
+  const { data: scanData, isLoading: scansLoading } = useGideonScanActivity(50)
 
   // UNIFIED METRICS: Single source of truth for all stats
   const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('GIDEON')
   const unifiedMetrics = unifiedData?.data
 
   // Extract data
-  const status: ICARUSStatus | null = statusData?.data || statusData || null
+  const status: GideonStatus | null = statusData?.data || statusData || null
   // Handle positions data - ensure we always have an array
   const rawPositions = positionsData?.data || positionsData
   const allPositions: SpreadPosition[] = Array.isArray(rawPositions)
@@ -477,7 +477,7 @@ export default function IcarusPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetICARUSData(true)
+    const response = await apiClient.resetGideonData(true)
     if (response.data?.success) {
       addToast({ type: 'success', title: 'Reset Complete', message: 'GIDEON data has been reset successfully' })
       refreshStatus()
@@ -582,7 +582,7 @@ export default function IcarusPage() {
 
           {/* Tabs - Branded */}
           <div className="flex gap-2 border-b border-gray-800 pb-2">
-            {ICARUS_TABS.map((tab) => (
+            {GIDEON_TABS.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
