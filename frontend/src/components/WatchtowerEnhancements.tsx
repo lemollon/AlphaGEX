@@ -570,7 +570,7 @@ export function GammaDecayVisualization({ symbol = 'SPY' }: { symbol?: string })
 // Combined Panel for WATCHTOWER Page
 // ============================================================================
 
-export function ArgusEnhancedPanel({ symbol = 'SPY' }: { symbol?: string }) {
+export function WatchtowerEnhancedPanel({ symbol = 'SPY' }: { symbol?: string }) {
   const [expanded, setExpanded] = useState(true)
 
   return (

@@ -215,7 +215,7 @@ AI Layer (/ai/):
 - counselor_personality.py - THIS FILE - COUNSELOR identity
 
 Trading Bots (/trading/):
-- ares_iron_condor.py - FORTRESS bot (0DTE Iron Condors)
+- fortress_iron_condor.py - FORTRESS bot (0DTE Iron Condors)
 - solomon_directional_spreads.py - SOLOMON bot (GEX directional)
 - position_monitor.py - Live position tracking
 - decision_logger.py - Trade decision logging
@@ -292,7 +292,7 @@ Configuration:
 === TRADING BOTS DETAILED ===
 
 1. FORTRESS (Aggressive Iron Condor)
-   - File: /trading/ares_iron_condor.py
+   - File: /trading/fortress_iron_condor.py
    - Strategy: Daily 0DTE SPX Iron Condors
    - Target: 10% monthly returns via 0.5% daily compound
    - Risk per trade: 10% (aggressive Kelly sizing)
@@ -455,7 +455,7 @@ Pipeline Tests (/scripts/):
 Unit Tests (/tests/):
 - test_api_endpoints.py - All API route tests
 - test_tradier.py - Tradier API integration
-- test_ares_tradier_integration.py - FORTRESS + Tradier
+- test_fortress_tradier_integration.py - FORTRESS + Tradier
 - test_solomon_e2e.py - SOLOMON end-to-end
 - test_autonomous_trader.py - Bot autonomy tests
 - test_database_schema.py - Schema validation
@@ -550,7 +550,7 @@ python scripts/full_system_health_check.py
 python tests/test_all_data_sources.py
 
 # Verify bot communication
-python scripts/verify_ares_communication.py
+python scripts/verify_fortress_communication.py
 
 # Check database connection
 python scripts/test_db_connection.py

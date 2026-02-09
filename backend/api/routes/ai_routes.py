@@ -2129,8 +2129,8 @@ def execute_counselor_tool(tool_name: str, tool_input: dict) -> str:
             from ai.counselor_tools import fetch_market_data
             result = fetch_market_data(tool_input.get("symbol", "SPY"))
         elif tool_name == "get_market_data":
-            from ai.counselor_tools import fetch_ares_market_data
-            result = fetch_ares_market_data()
+            from ai.counselor_tools import fetch_fortress_market_data
+            result = fetch_fortress_market_data()
         elif tool_name == "get_vix_data":
             from ai.counselor_tools import fetch_vix_data
             result = fetch_vix_data()

@@ -9,13 +9,13 @@ const nextConfig = {
   async redirects() {
     return [
       {
-        source: '/prometheus',
-        destination: '/prometheus-box',
+        source: '/jubilee',
+        destination: '/jubilee-box',
         permanent: true,
       },
       {
-        source: '/gexis',
-        destination: '/gexis-commands',
+        source: '/counselor',
+        destination: '/counselor-commands',
         permanent: true,
       },
       {

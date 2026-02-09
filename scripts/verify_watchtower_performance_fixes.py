@@ -6,7 +6,7 @@ WATCHTOWER Performance Fixes Verification Script
 Run this after deploying the performance improvements to verify everything works.
 
 Usage:
-    python scripts/verify_argus_performance_fixes.py
+    python scripts/verify_watchtower_performance_fixes.py
 
 Checks:
 1. Database migration applied (performance indexes exist)
@@ -399,7 +399,7 @@ def print_summary():
    - Open FORTRESS/SOLOMON pages, verify expected move shows
 
 5. Run existing test suites:
-   pytest backend/tests/test_argus.py -v
+   pytest backend/tests/test_watchtower.py -v
    python scripts/test_solomon_e2e.py
 """)
     else:

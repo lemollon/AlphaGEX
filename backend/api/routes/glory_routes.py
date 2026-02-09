@@ -494,7 +494,7 @@ except ImportError as e:
 
 
 # Cache Tradier instance
-_hyperion_tradier_instance = None
+_glory_tradier_instance = None
 
 
 def get_tradier():
@@ -504,11 +504,11 @@ def get_tradier():
     Uses same pattern as FORTRESS/WATCHTOWER: explicitly gets credentials from APIConfig
     and tries sandbox mode first (for market data), then production.
     """
-    global _hyperion_tradier_instance
+    global _glory_tradier_instance
 
     # Return cached instance if available
-    if _hyperion_tradier_instance is not None:
-        return _hyperion_tradier_instance
+    if _glory_tradier_instance is not None:
+        return _glory_tradier_instance
 
     if not TRADIER_AVAILABLE or TradierDataFetcher is None:
         logger.warning("GLORY: TradierDataFetcher module not available")
@@ -528,7 +528,7 @@ def get_tradier():
                     account_id=sandbox_account,
                     sandbox=True
                 )
-                _hyperion_tradier_instance = fetcher
+                _glory_tradier_instance = fetcher
                 logger.info("GLORY: Tradier initialized with SANDBOX credentials")
                 return fetcher
             except Exception as e:
@@ -545,7 +545,7 @@ def get_tradier():
                     account_id=prod_account,
                     sandbox=False
                 )
-                _hyperion_tradier_instance = fetcher
+                _glory_tradier_instance = fetcher
                 logger.info("GLORY: Tradier initialized with PRODUCTION credentials")
                 return fetcher
             except Exception as e:
@@ -628,7 +628,7 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
     # Cache check
     market_open = is_market_hours()
     cache_ttl = CACHE_TTL_SECONDS if market_open else 300
-    cache_key = f"hyperion_gamma_{symbol}_{expiration}"
+    cache_key = f"glory_gamma_{symbol}_{expiration}"
     cached = get_cached(cache_key, cache_ttl)
     if cached and not cached.get('is_mock', False):
         return cached
@@ -1029,7 +1029,7 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
 # ==================== API ENDPOINTS ====================
 
 @router.get("/gamma")
-async def get_hyperion_gamma(
+async def get_glory_gamma(
     symbol: str = Query("AAPL", description="Stock/ETF symbol"),
     expiration: Optional[str] = Query(None, description="Expiration date YYYY-MM-DD")
 ):
@@ -1060,7 +1060,7 @@ async def get_hyperion_gamma(
 
 
 @router.get("/expirations")
-async def get_hyperion_expirations(
+async def get_glory_expirations(
     symbol: str = Query("AAPL", description="Stock/ETF symbol"),
     weeks: int = Query(4, description="Number of weeks to return")
 ):
@@ -1077,7 +1077,7 @@ async def get_hyperion_expirations(
 
 
 @router.get("/symbols")
-async def get_hyperion_symbols():
+async def get_glory_symbols():
     """Get list of supported symbols for GLORY."""
     return {
         "success": True,
@@ -1086,7 +1086,7 @@ async def get_hyperion_symbols():
 
 
 @router.get("/alerts")
-async def get_hyperion_alerts(
+async def get_glory_alerts(
     symbol: str = Query("AAPL", description="Stock/ETF symbol"),
     limit: int = Query(20, description="Max alerts to return"),
     acknowledged: Optional[bool] = Query(None, description="Filter by acknowledged status")
@@ -1161,7 +1161,7 @@ async def get_hyperion_alerts(
 
 
 @router.post("/alerts/{alert_id}/acknowledge")
-async def acknowledge_hyperion_alert(alert_id: int):
+async def acknowledge_glory_alert(alert_id: int):
     """Acknowledge an alert by ID."""
     try:
         conn = get_connection()
@@ -1194,7 +1194,7 @@ async def acknowledge_hyperion_alert(alert_id: int):
 
 
 @router.get("/patterns")
-async def get_hyperion_patterns(
+async def get_glory_patterns(
     symbol: str = Query("AAPL", description="Stock/ETF symbol"),
     days: int = Query(30, description="Days of history to analyze"),
     min_similarity: float = Query(0.7, description="Minimum similarity score")
@@ -1268,7 +1268,7 @@ async def get_hyperion_patterns(
 
 
 @router.get("/strike-trends")
-async def get_hyperion_strike_trends(
+async def get_glory_strike_trends(
     symbol: str = Query("AAPL", description="Stock/ETF symbol"),
     date_str: Optional[str] = Query(None, description="Date YYYY-MM-DD (default: today)")
 ):
@@ -1330,7 +1330,7 @@ async def get_hyperion_strike_trends(
 
 
 @router.get("/gamma-flips")
-async def get_hyperion_gamma_flips(
+async def get_glory_gamma_flips(
     symbol: str = Query("AAPL", description="Stock/ETF symbol"),
     minutes: int = Query(30, description="Lookback period in minutes")
 ):
@@ -1433,7 +1433,7 @@ async def get_glory_danger_zone_logs(
 
 
 @router.get("/context")
-async def get_hyperion_context(
+async def get_glory_context(
     symbol: str = Query("AAPL", description="Stock/ETF symbol")
 ):
     """
@@ -1484,7 +1484,7 @@ async def get_hyperion_context(
 
 
 @router.get("/accuracy")
-async def get_hyperion_accuracy(
+async def get_glory_accuracy(
     symbol: str = Query("AAPL", description="Stock/ETF symbol")
 ):
     """
@@ -1545,7 +1545,7 @@ async def get_hyperion_accuracy(
 # ==================== GLORY ENHANCED FEATURES ====================
 
 @router.get("/weekly-setups")
-async def get_hyperion_weekly_setups(
+async def get_glory_weekly_setups(
     symbol: str = Query("AAPL", description="Stock/ETF symbol")
 ):
     """
@@ -1676,7 +1676,7 @@ async def get_hyperion_weekly_setups(
 
 
 @router.get("/gamma-trend")
-async def get_hyperion_gamma_trend(
+async def get_glory_gamma_trend(
     symbol: str = Query("AAPL", description="Stock/ETF symbol"),
     days: int = Query(5, description="Number of days to show (1-30)")
 ):
@@ -1805,7 +1805,7 @@ def get_trend_implication(overall_trend: str, magnet_trend: str, regime_changes:
 
 
 @router.get("/opex-analysis")
-async def get_hyperion_opex_analysis(
+async def get_glory_opex_analysis(
     symbol: str = Query("AAPL", description="Stock/ETF symbol")
 ):
     """

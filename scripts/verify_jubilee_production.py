@@ -12,7 +12,7 @@ This performs comprehensive checks on:
 6. Configuration validation
 
 Usage:
-    python scripts/verify_prometheus_production.py
+    python scripts/verify_jubilee_production.py
 
 Returns exit code 0 if all checks pass, 1 if any fail.
 """

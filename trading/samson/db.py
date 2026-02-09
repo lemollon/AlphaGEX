@@ -3,7 +3,7 @@ SAMSON - Database Layer
 =======================
 
 Database operations for aggressive SPX Iron Condor trading.
-Uses titan_* tables separate from ANCHOR.
+Uses samson_* tables separate from ANCHOR.
 """
 
 import logging

@@ -558,7 +558,7 @@ async def get_equity_curve_intraday(
     When omitted (or ``ALL``), returns a combined view summing all tickers.
 
     Returns data_points[], snapshots_count, current_equity, day_pnl,
-    starting_equity, high_of_day, low_of_day -- same format as ARES/TITAN.
+    starting_equity, high_of_day, low_of_day -- same format as FORTRESS/SAMSON.
 
     AGAPE-SPOT trades 24/7 so "day start" is midnight CT.
     """
@@ -1028,7 +1028,7 @@ async def get_scan_activity(
     """Get AGAPE-SPOT scan history -- every cycle is logged.
 
     Shows what the bot saw, what it decided, and why.
-    Includes crypto microstructure data, Oracle advice, and signal reasoning.
+    Includes crypto microstructure data, Prophet advice, and signal reasoning.
     """
     ticker = _validate_ticker(ticker)
 
@@ -1060,7 +1060,7 @@ async def get_crypto_snapshot(
 ):
     """Get current crypto market microstructure snapshot.
 
-    Returns the crypto equivalent of ARGUS's gamma snapshot:
+    Returns the crypto equivalent of WATCHTOWER's gamma snapshot:
     - Funding rate and regime (-> gamma regime)
     - Liquidation clusters (-> gamma walls)
     - Long/Short ratio (-> directional bias)
@@ -1169,7 +1169,7 @@ async def generate_signal(
 
     Returns the full signal with:
     - Crypto microstructure analysis
-    - Oracle consultation result
+    - Prophet consultation result
     - Recommended action (LONG/WAIT)
     - Position sizing and risk levels
 

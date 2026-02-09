@@ -575,7 +575,7 @@ class GideonTrader(MathOptimizerMixin):
 
             prediction = f"{signal.direction if hasattr(signal, 'direction') else 'directional'} spread profitable (GIDEON)"
             prediction_id = memory.record_prediction(
-                prediction_type="icarus_directional_outcome",
+                prediction_type="gideon_directional_outcome",
                 prediction=prediction,
                 confidence=signal.confidence if hasattr(signal, 'confidence') else 0.7,
                 context=context
@@ -855,8 +855,8 @@ class GideonTrader(MathOptimizerMixin):
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_get_allocation'):
             try:
                 allocation = self.math_get_allocation()
-                icarus_alloc = allocation.get('allocations', {}).get('GIDEON', 0.2)
-                thompson_weight = icarus_alloc / 0.2
+                gideon_alloc = allocation.get('allocations', {}).get('GIDEON', 0.2)
+                thompson_weight = gideon_alloc / 0.2
                 logger.info(f"GIDEON Thompson weight: {thompson_weight:.2f}")
             except Exception as e:
                 logger.debug(f"Thompson allocation skipped: {e}")

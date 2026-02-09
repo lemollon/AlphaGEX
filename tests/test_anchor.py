@@ -313,10 +313,10 @@ class TestAnchorDatabase:
             pytest.skip("AnchorDatabase not available")
 
 
-class TestOracleIntegration:
+class TestProphetIntegration:
     """Tests for ANCHOR Prophet integration"""
 
-    def test_oracle_anchor_advice(self):
+    def test_prophet_anchor_advice(self):
         """Test that Prophet has get_anchor_advice method"""
         try:
             from quant.prophet_advisor import ProphetAdvisor
@@ -327,7 +327,7 @@ class TestOracleIntegration:
         except ImportError:
             pytest.skip("ProphetAdvisor not available")
 
-    def test_oracle_botname_enum(self):
+    def test_prophet_botname_enum(self):
         """Test that ANCHOR is in BotName enum"""
         try:
             from quant.prophet_advisor import BotName
@@ -419,7 +419,7 @@ class TestBotLogger:
 class TestANCHORStrikeDistance:
     """Tests for ANCHOR minimum 1 SD strike distance (January 2025)"""
 
-    def test_oracle_enforces_min_strike_distance(self):
+    def test_prophet_enforces_min_strike_distance(self):
         """Test that Prophet get_anchor_advice enforces minimum 1 SD strike distance"""
         try:
             import inspect

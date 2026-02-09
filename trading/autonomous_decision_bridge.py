@@ -51,7 +51,7 @@ try:
         get_session_tracker  # For scan_cycle and decision_sequence tracking
     )
     BOT_LOGGER_AVAILABLE = True
-    _phoenix_session_tracker = get_session_tracker("LAZARUS") if BOT_LOGGER_AVAILABLE else None
+    _lazarus_session_tracker = get_session_tracker("LAZARUS") if BOT_LOGGER_AVAILABLE else None
 except ImportError:
     BOT_LOGGER_AVAILABLE = False
     log_bot_decision = None
@@ -344,9 +344,9 @@ class DecisionBridge:
                     expiration=expiration,
                     option_type=option_type,
                     contracts=contracts,
-                    session_id=_phoenix_session_tracker.session_id if _phoenix_session_tracker else generate_session_id(),
-                    scan_cycle=_phoenix_session_tracker.current_cycle if _phoenix_session_tracker else 0,
-                    decision_sequence=_phoenix_session_tracker.next_decision() if _phoenix_session_tracker else 0,
+                    session_id=_lazarus_session_tracker.session_id if _lazarus_session_tracker else generate_session_id(),
+                    scan_cycle=_lazarus_session_tracker.current_cycle if _lazarus_session_tracker else 0,
+                    decision_sequence=_lazarus_session_tracker.next_decision() if _lazarus_session_tracker else 0,
                     market_context=BotLogMarketContext(
                         spot_price=gex_data.get('spot_price', 0),
                         vix=vix,
@@ -466,9 +466,9 @@ class DecisionBridge:
                     action="SKIP",
                     symbol=symbol,
                     strategy="N/A",
-                    session_id=_phoenix_session_tracker.session_id if _phoenix_session_tracker else generate_session_id(),
-                    scan_cycle=_phoenix_session_tracker.current_cycle if _phoenix_session_tracker else 0,
-                    decision_sequence=_phoenix_session_tracker.next_decision() if _phoenix_session_tracker else 0,
+                    session_id=_lazarus_session_tracker.session_id if _lazarus_session_tracker else generate_session_id(),
+                    scan_cycle=_lazarus_session_tracker.current_cycle if _lazarus_session_tracker else 0,
+                    decision_sequence=_lazarus_session_tracker.next_decision() if _lazarus_session_tracker else 0,
                     market_context=BotLogMarketContext(
                         spot_price=spot_price,
                         vix=gex_data.get('vix', 0) if gex_data else 0,
@@ -529,9 +529,9 @@ class DecisionBridge:
                     action="SELL",
                     symbol=symbol,
                     strategy="exit",
-                    session_id=_phoenix_session_tracker.session_id if _phoenix_session_tracker else generate_session_id(),
-                    scan_cycle=_phoenix_session_tracker.current_cycle if _phoenix_session_tracker else 0,
-                    decision_sequence=_phoenix_session_tracker.next_decision() if _phoenix_session_tracker else 0,
+                    session_id=_lazarus_session_tracker.session_id if _lazarus_session_tracker else generate_session_id(),
+                    scan_cycle=_lazarus_session_tracker.current_cycle if _lazarus_session_tracker else 0,
+                    decision_sequence=_lazarus_session_tracker.next_decision() if _lazarus_session_tracker else 0,
                     market_context=BotLogMarketContext(
                         spot_price=underlying_price_at_exit,
                     ),

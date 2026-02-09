@@ -4,7 +4,7 @@ JUBILEE Tradier Verification Script
 =======================================
 
 Run this on Render shell to verify JUBILEE is getting LIVE SPX data:
-    python scripts/verify_prometheus_tradier.py
+    python scripts/verify_jubilee_tradier.py
 
 This script tests:
 1. Environment variables are set

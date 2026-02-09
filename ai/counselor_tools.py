@@ -293,7 +293,7 @@ def fetch_market_data(symbol: str = "SPY") -> Dict:
         return {"error": str(e)}
 
 
-def fetch_ares_market_data() -> Dict:
+def fetch_fortress_market_data() -> Dict:
     """Fetch FORTRESS-specific market data (SPX, SPY, VIX, expected moves)"""
     try:
         api_base = os.getenv("API_URL", "https://alphagex-api.onrender.com")
@@ -505,7 +505,7 @@ def get_system_status() -> Dict:
         }
 
         # Get market data
-        market = fetch_ares_market_data()
+        market = fetch_fortress_market_data()
         if market and "error" not in market:
             status["market"] = {
                 "spx": market.get("spx", {}).get("price", 0),
@@ -586,7 +586,7 @@ def get_counselor_briefing() -> str:
 
     # Get market data
     try:
-        market = fetch_ares_market_data()
+        market = fetch_fortress_market_data()
         if market and "error" not in market:
             spx = market.get("spx", {})
             spy = market.get("spy", {})
@@ -659,7 +659,7 @@ def generate_market_briefing() -> str:
     """Generate a morning market briefing"""
     try:
         # Fetch all relevant data
-        market_data = fetch_ares_market_data()
+        market_data = fetch_fortress_market_data()
         vix_data = fetch_vix_data()
         fortress_status = get_bot_status("fortress")
         upcoming_events = get_upcoming_events(7)
@@ -792,7 +792,7 @@ COUNSELOR_TOOLS = {
         "category": "market"
     },
     "get_market": {
-        "function": fetch_ares_market_data,
+        "function": fetch_fortress_market_data,
         "description": "Get SPX/SPY/VIX market data with expected moves",
         "category": "market"
     },

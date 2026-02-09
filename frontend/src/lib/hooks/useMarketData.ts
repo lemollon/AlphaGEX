@@ -864,7 +864,7 @@ const fetchers = {
   },
 
   // JUBILEE Box Spread Synthetic Borrowing + IC Trading Bot
-  prometheusStatus: async () => {
+  jubileeStatus: async () => {
     try {
       const response = await api.get('/api/jubilee/status')
       return response.data
@@ -872,7 +872,7 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
-  prometheusICStatus: async () => {
+  jubileeICStatus: async () => {
     try {
       const response = await api.get('/api/jubilee/ic/status')
       return response.data
@@ -880,7 +880,7 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
-  prometheusPositions: async () => {
+  jubileePositions: async () => {
     try {
       const response = await api.get('/api/jubilee/positions')
       return response.data
@@ -888,7 +888,7 @@ const fetchers = {
       return { success: false, data: { positions: [] } }
     }
   },
-  prometheusICPositions: async () => {
+  jubileeICPositions: async () => {
     try {
       const response = await api.get('/api/jubilee/ic/positions')
       return response.data
@@ -896,7 +896,7 @@ const fetchers = {
       return { success: false, data: { positions: [] } }
     }
   },
-  prometheusLivePnL: async () => {
+  jubileeLivePnL: async () => {
     try {
       const response = await api.get('/api/jubilee/combined/performance')
       return response.data
@@ -904,7 +904,7 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
-  prometheusReconciliation: async () => {
+  jubileeReconciliation: async () => {
     try {
       const response = await api.get('/api/jubilee/reconciliation')
       return response.data
@@ -1710,48 +1710,48 @@ export async function disableValorABTest() {
 // JUBILEE BOX SPREAD + IC TRADING HOOKS
 // =============================================================================
 
-export function usePROMETHEUSStatus(options?: SWRConfiguration) {
-  return useSWR('jubilee-status', fetchers.prometheusStatus, {
+export function useJUBILEEStatus(options?: SWRConfiguration) {
+  return useSWR('jubilee-status', fetchers.jubileeStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function usePROMETHEUSICStatus(options?: SWRConfiguration) {
-  return useSWR('jubilee-ic-status', fetchers.prometheusICStatus, {
+export function useJUBILEEICStatus(options?: SWRConfiguration) {
+  return useSWR('jubilee-ic-status', fetchers.jubileeICStatus, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function usePROMETHEUSPositions(options?: SWRConfiguration) {
-  return useSWR('jubilee-positions', fetchers.prometheusPositions, {
+export function useJUBILEEPositions(options?: SWRConfiguration) {
+  return useSWR('jubilee-positions', fetchers.jubileePositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function usePROMETHEUSICPositions(options?: SWRConfiguration) {
-  return useSWR('jubilee-ic-positions', fetchers.prometheusICPositions, {
+export function useJUBILEEICPositions(options?: SWRConfiguration) {
+  return useSWR('jubilee-ic-positions', fetchers.jubileeICPositions, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function usePROMETHEUSLivePnL(options?: SWRConfiguration) {
-  return useSWR('jubilee-live-pnl', fetchers.prometheusLivePnL, {
+export function useJUBILEELivePnL(options?: SWRConfiguration) {
+  return useSWR('jubilee-live-pnl', fetchers.jubileeLivePnL, {
     ...swrConfig,
     refreshInterval: 30 * 1000,
     ...options,
   })
 }
 
-export function usePROMETHEUSReconciliation(options?: SWRConfiguration) {
-  return useSWR('jubilee-reconciliation', fetchers.prometheusReconciliation, {
+export function useJUBILEEReconciliation(options?: SWRConfiguration) {
+  return useSWR('jubilee-reconciliation', fetchers.jubileeReconciliation, {
     ...swrConfig,
     refreshInterval: 60 * 1000,
     ...options,

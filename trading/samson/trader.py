@@ -580,7 +580,7 @@ class SamsonTrader(MathOptimizerMixin):
             }
 
             prediction_id = memory.record_prediction(
-                prediction_type="titan_spx_iron_condor_outcome",
+                prediction_type="samson_spx_iron_condor_outcome",
                 prediction=f"SAMSON SPX IC profitable: {pos.put_short_strike}/{pos.call_short_strike}",
                 confidence=signal.confidence if hasattr(signal, 'confidence') else 0.65,
                 context=context
@@ -837,9 +837,9 @@ class SamsonTrader(MathOptimizerMixin):
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_get_allocation'):
             try:
                 allocation = self.math_get_allocation()
-                titan_alloc = allocation.get('allocations', {}).get('SAMSON', 0.2)
-                thompson_weight = titan_alloc / 0.2  # Normalize to 20% baseline
-                logger.info(f"SAMSON Thompson weight: {thompson_weight:.2f} (allocation: {titan_alloc:.1%})")
+                samson_alloc = allocation.get('allocations', {}).get('SAMSON', 0.2)
+                thompson_weight = samson_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"SAMSON Thompson weight: {thompson_weight:.2f} (allocation: {samson_alloc:.1%})")
             except Exception as e:
                 logger.debug(f"Thompson allocation not available: {e}")
 

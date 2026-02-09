@@ -281,16 +281,16 @@ def test_filter_by_bot():
         all_decisions = export_decisions_json(limit=100)
 
         # Get LAZARUS decisions
-        phoenix_decisions = export_decisions_json(bot_name='LAZARUS', limit=100)
+        lazarus_decisions = export_decisions_json(bot_name='LAZARUS', limit=100)
 
         log_result("All bots query", True, f"Found {len(all_decisions)} total decisions")
-        log_result("LAZARUS filter", True, f"Found {len(phoenix_decisions)} LAZARUS decisions")
+        log_result("LAZARUS filter", True, f"Found {len(lazarus_decisions)} LAZARUS decisions")
 
         # Verify LAZARUS decisions are actually from LAZARUS
-        if phoenix_decisions:
-            all_phoenix = all(d.get('bot_name') == 'LAZARUS' for d in phoenix_decisions)
-            log_result("Filter accuracy", all_phoenix,
-                      "All filtered records are LAZARUS" if all_phoenix else "Filter returned wrong bot")
+        if lazarus_decisions:
+            all_lazarus = all(d.get('bot_name') == 'LAZARUS' for d in lazarus_decisions)
+            log_result("Filter accuracy", all_lazarus,
+                      "All filtered records are LAZARUS" if all_lazarus else "Filter returned wrong bot")
 
         return True
     except Exception as e:

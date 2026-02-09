@@ -103,7 +103,7 @@ class AgapeSpotTrader:
             f"(live={self.config.live_tickers}, "
             f"paper={[t for t in self.config.tickers if t not in self.config.live_tickers]}, "
             f"max_pos_per_ticker={self.config.max_open_positions_per_ticker}, "
-            f"oracle_required={self.config.require_oracle_approval})"
+            f"prophet_required={self.config.require_prophet_approval})"
         )
 
     # ==================================================================
@@ -174,11 +174,11 @@ class AgapeSpotTrader:
                 scan_context["market_data"] = market_data
                 scan_context["spot_price"] = market_data.get("spot_price")
 
-            # Step 2: Get Oracle advice
-            oracle_data = None
+            # Step 2: Get Prophet advice
+            prophet_data = None
             if market_data:
-                oracle_data = self.signals.get_prophet_advice(market_data)
-                scan_context["oracle_data"] = oracle_data
+                prophet_data = self.signals.get_prophet_advice(market_data)
+                scan_context["prophet_data"] = prophet_data
 
             # Step 3: Manage existing positions for this ticker
             managed, closed = self._manage_positions(ticker, market_data)
@@ -219,7 +219,7 @@ class AgapeSpotTrader:
                 return result
 
             # Step 7: Generate signal for this ticker
-            signal = self._generate_signal(ticker, oracle_data)
+            signal = self._generate_signal(ticker, prophet_data)
             result["signal"] = signal.to_dict() if signal else None
 
             if not signal or not signal.is_valid:
@@ -314,13 +314,13 @@ class AgapeSpotTrader:
             return self.signals.get_market_data()
 
     def _generate_signal(
-        self, ticker: str, oracle_data: Optional[Dict],
+        self, ticker: str, prophet_data: Optional[Dict],
     ) -> Optional[AgapeSpotSignal]:
         """Generate a trading signal for *ticker*."""
         try:
-            return self.signals.generate_signal(ticker=ticker, oracle_data=oracle_data)
+            return self.signals.generate_signal(ticker=ticker, prophet_data=prophet_data)
         except TypeError:
-            return self.signals.generate_signal(oracle_data=oracle_data)
+            return self.signals.generate_signal(prophet_data=prophet_data)
 
     # ==================================================================
     # Position management (LONG-ONLY)
@@ -683,7 +683,7 @@ class AgapeSpotTrader:
     ):
         """Log scan activity with ticker information."""
         market = context.get("market_data", {})
-        oracle = context.get("oracle_data", {})
+        prophet = context.get("prophet_data", {})
         self.db.log_scan({
             "ticker": ticker,
             "outcome": result.get("outcome", "UNKNOWN"),
@@ -699,8 +699,8 @@ class AgapeSpotTrader:
             "crypto_gex_regime": market.get("crypto_gex_regime"),
             "combined_signal": market.get("combined_signal"),
             "combined_confidence": market.get("combined_confidence"),
-            "oracle_advice": oracle.get("advice"),
-            "oracle_win_prob": oracle.get("win_probability"),
+            "oracle_advice": prophet.get("advice"),
+            "oracle_win_prob": prophet.get("win_probability"),
             "signal_action": signal.action.value if signal else None,
             "signal_reasoning": signal.reasoning if signal else None,
             "position_id": context.get("position_id"),
@@ -770,7 +770,7 @@ class AgapeSpotTrader:
             "total_closed_trades": total_closed_count,
             "risk_per_trade_pct": self.config.risk_per_trade_pct,
             "cooldown_minutes": self.config.cooldown_minutes,
-            "require_oracle": self.config.require_oracle_approval,
+            "require_prophet": self.config.require_prophet_approval,
             "paper_account": {
                 "starting_capital": total_starting,
                 "current_balance": round(total_starting + total_pnl, 2),
@@ -861,7 +861,7 @@ class AgapeSpotTrader:
             "starting_capital": starting_capital,
             "risk_per_trade_pct": self.config.risk_per_trade_pct,
             "cooldown_minutes": self.config.cooldown_minutes,
-            "require_oracle": self.config.require_oracle_approval,
+            "require_prophet": self.config.require_prophet_approval,
             "paper_account": {
                 "starting_capital": starting_capital,
                 "current_balance": round(current_balance, 2),

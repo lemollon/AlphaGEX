@@ -129,9 +129,9 @@ class AgapeSpotConfig:
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
 
-    # Oracle
-    require_oracle_approval: bool = False
-    min_oracle_win_probability: float = 0.35
+    # Prophet
+    require_prophet_approval: bool = False
+    min_prophet_win_probability: float = 0.35
 
     # Cooldown
     cooldown_minutes: int = 5
@@ -229,7 +229,7 @@ class AgapeSpotSignal:
     reasoning: str = ""
     source: str = "agape_spot"
 
-    # Oracle
+    # Prophet
     oracle_advice: str = "UNKNOWN"
     oracle_win_probability: float = 0.0
     oracle_confidence: float = 0.0
@@ -308,7 +308,7 @@ class AgapeSpotPosition:
     crypto_gex_at_entry: float
     crypto_gex_regime_at_entry: str
 
-    # Oracle
+    # Prophet
     oracle_advice: str
     oracle_win_probability: float
     oracle_confidence: float

@@ -61,7 +61,7 @@ class TestSchedulerInitialization:
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.ATLAS_AVAILABLE', False)
-    @patch('scheduler.trader_scheduler.ARES_AVAILABLE', False)
+    @patch('scheduler.trader_scheduler.FORTRESS_AVAILABLE', False)
     @patch('scheduler.trader_scheduler.SOLOMON_AVAILABLE', False)
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
@@ -337,18 +337,18 @@ class TestAresScheduling:
     """Tests for FORTRESS (Iron Condor) bot scheduling"""
 
     @patch('scheduler.trader_scheduler.APSCHEDULER_AVAILABLE', True)
-    @patch('scheduler.trader_scheduler.ARES_AVAILABLE', True)
+    @patch('scheduler.trader_scheduler.FORTRESS_AVAILABLE', True)
     @patch('scheduler.trader_scheduler.FortressTrader')
     @patch('scheduler.trader_scheduler.AutonomousPaperTrader')
     @patch('scheduler.trader_scheduler.TradingVolatilityAPI')
     @patch('scheduler.trader_scheduler.get_connection')
-    def test_ares_initialization(self, mock_conn, mock_api, mock_trader, mock_ares):
+    def test_fortress_initialization(self, mock_conn, mock_api, mock_trader, mock_fortress):
         """Test FORTRESS trader initialization"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
         mock_trader.return_value = MagicMock()
-        mock_ares.return_value = MagicMock()
+        mock_fortress.return_value = MagicMock()
 
         from scheduler.trader_scheduler import AutonomousTraderScheduler
         scheduler = AutonomousTraderScheduler()

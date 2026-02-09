@@ -3,7 +3,7 @@
 JUBILEE STANDARDS.md Verification Script
 
 Run this in Render shell to verify COMPLETE implementation:
-    python scripts/verify_prometheus_standards.py
+    python scripts/verify_jubilee_standards.py
 
 This script verifies:
 1. DATABASE - Tables exist and have proper schema
@@ -197,14 +197,14 @@ try:
         ['grep', '-c', 'jubilee', 'scheduler/trader_scheduler.py'],
         capture_output=True, text=True
     )
-    prometheus_refs = int(result.stdout.strip())
+    jubilee_refs = int(result.stdout.strip())
 
-    if prometheus_refs > 5:
-        passes.append(f"JUBILEE referenced {prometheus_refs} times in scheduler")
-        print(f"  ✓ JUBILEE referenced {prometheus_refs} times in scheduler")
+    if jubilee_refs > 5:
+        passes.append(f"JUBILEE referenced {jubilee_refs} times in scheduler")
+        print(f"  ✓ JUBILEE referenced {jubilee_refs} times in scheduler")
     else:
         failures.append("JUBILEE not properly integrated in scheduler")
-        print(f"  ✗ JUBILEE only referenced {prometheus_refs} times")
+        print(f"  ✗ JUBILEE only referenced {jubilee_refs} times")
 
     # Check for specific jobs
     with open('scheduler/trader_scheduler.py', 'r') as f:

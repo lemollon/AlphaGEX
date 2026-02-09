@@ -504,7 +504,7 @@ export function OPEXAnalysisPanel({ symbol = 'AAPL' }: { symbol?: string }) {
 // Combined Panel for GLORY Page
 // ============================================================================
 
-export function HyperionEnhancedPanel({ symbol = 'AAPL' }: { symbol?: string }) {
+export function GloryEnhancedPanel({ symbol = 'AAPL' }: { symbol?: string }) {
   const [expanded, setExpanded] = useState(true)
 
   return (

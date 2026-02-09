@@ -84,7 +84,7 @@ def _resolve_query_param(param, default=None):
     return param
 
 
-def _calculate_titan_unrealized_pnl(positions: list) -> dict:
+def _calculate_samson_unrealized_pnl(positions: list) -> dict:
     """
     Calculate unrealized P&L for SAMSON positions using mark-to-market pricing.
 
@@ -474,7 +474,7 @@ async def get_samson_status():
                 ''')
                 open_positions = cursor.fetchall()
                 if open_positions:
-                    mtm_result = _calculate_titan_unrealized_pnl(open_positions)
+                    mtm_result = _calculate_samson_unrealized_pnl(open_positions)
                     unrealized_pnl = mtm_result['total_unrealized_pnl']
                     logger.debug(f"SAMSON status: MTM unrealized=${unrealized_pnl:.2f} via {mtm_result['method']}")
 
@@ -1317,7 +1317,7 @@ async def get_samson_intraday_equity(date: str = None):
             open_rows = cursor.fetchall()
 
             if open_rows:
-                mtm_result = _calculate_titan_unrealized_pnl(open_rows)
+                mtm_result = _calculate_samson_unrealized_pnl(open_rows)
                 unrealized_pnl = mtm_result['total_unrealized_pnl']
                 open_positions = mtm_result['positions']
                 pricing_method = mtm_result['method']
@@ -1497,7 +1497,7 @@ async def save_samson_equity_snapshot():
         pricing_method = 'estimation'
 
         if open_positions:
-            mtm_result = _calculate_titan_unrealized_pnl(open_positions)
+            mtm_result = _calculate_samson_unrealized_pnl(open_positions)
             unrealized_pnl = mtm_result['total_unrealized_pnl']
             pricing_method = mtm_result['method']
             logger.debug(f"SAMSON snapshot: unrealized=${unrealized_pnl:.2f} via {pricing_method}")
@@ -1555,7 +1555,7 @@ async def save_samson_equity_snapshot():
 
 
 @router.post("/run-cycle")
-async def run_titan_cycle(
+async def run_samson_cycle(
     request: Request,
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
@@ -1830,7 +1830,7 @@ async def get_samson_live_pnl():
             open_rows = cursor.fetchall()
 
             if open_rows:
-                mtm_result = _calculate_titan_unrealized_pnl(open_rows)
+                mtm_result = _calculate_samson_unrealized_pnl(open_rows)
                 if mtm_result.get('total_unrealized_pnl') is not None:
                     unrealized_pnl = mtm_result['total_unrealized_pnl']
                     has_live_pricing = mtm_result.get('method') == 'mark_to_market'

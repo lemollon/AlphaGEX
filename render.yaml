@@ -46,7 +46,7 @@ services:
 
   # SERVICE 2: Autonomous Trader (Background Worker)
   # Runs ALL trading bots:
-  #   - ARES: Aggressive Iron Condor (every 5 min, once daily)
+  #   - FORTRESS: Aggressive Iron Condor (every 5 min, once daily)
   #   - SOLOMON: GEX Directional Spreads (every 5 min, up to 5/day)
   #   - LAZARUS: 0DTE SPY/SPX options (hourly during market hours)
   #   - CORNERSTONE: SPX Wheel strategy (daily at 9:05 AM CT)
@@ -71,7 +71,7 @@ services:
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
         sync: false
-      # Tradier API for trade execution (REQUIRED for ARES/SOLOMON)
+      # Tradier API for trade execution (REQUIRED for FORTRESS/SOLOMON)
       - key: TRADIER_API_KEY
         sync: false
       - key: TRADIER_ACCOUNT_ID

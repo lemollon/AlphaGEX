@@ -2,7 +2,7 @@
 """
 Comprehensive JUBILEE System Test Suite for Render Shell
 
-Run with: python scripts/test_prometheus_comprehensive.py
+Run with: python scripts/test_jubilee_comprehensive.py
 
 Tests:
 1. Database tables exist and are accessible
@@ -66,7 +66,7 @@ def test_database_connection():
         return None
 
 
-def test_prometheus_tables(db):
+def test_jubilee_tables(db):
     """Test all JUBILEE-related tables exist"""
     log_section("JUBILEE DATABASE TABLES")
 
@@ -420,7 +420,7 @@ def test_api_endpoints():
 # SECTION 3: BACKEND MODULE TESTS
 # =============================================================================
 
-def test_prometheus_modules():
+def test_jubilee_modules():
     """Test JUBILEE backend modules can be imported"""
     log_section("BACKEND MODULE IMPORTS")
 
@@ -592,11 +592,11 @@ def test_typescript_build():
         with open('frontend/src/components/trader/BotBranding.tsx', 'r') as f:
             content = f.read()
 
-        has_prometheus_type = "'JUBILEE'" in content or '"JUBILEE"' in content
-        log_test("JUBILEE in BotName type", has_prometheus_type)
+        has_jubilee_type = "'JUBILEE'" in content or '"JUBILEE"' in content
+        log_test("JUBILEE in BotName type", has_jubilee_type)
 
-        has_prometheus_brand = "JUBILEE:" in content and "BOT_BRANDS" in content
-        log_test("JUBILEE in BOT_BRANDS", has_prometheus_brand)
+        has_jubilee_brand = "JUBILEE:" in content and "BOT_BRANDS" in content
+        log_test("JUBILEE in BOT_BRANDS", has_jubilee_brand)
     except Exception as e:
         log_test("BotBranding.tsx check", False, str(e))
 
@@ -665,7 +665,7 @@ def main():
     # Run database tests
     db = test_database_connection()
     if db:
-        test_prometheus_tables(db)
+        test_jubilee_tables(db)
         test_jubilee_config(db)
         test_box_positions(db)
         test_ic_positions(db)
@@ -676,7 +676,7 @@ def main():
     test_api_endpoints()
 
     # Run module tests
-    test_prometheus_modules()
+    test_jubilee_modules()
     test_jubilee_database_class()
     test_box_spread_calculations()
     test_oracle_integration()

@@ -103,7 +103,7 @@ class AgapeSpotSignalGenerator:
     def __init__(self, config: AgapeSpotConfig):
         self.config = config
         self._crypto_provider = None
-        self._oracle = None
+        self._prophet = None
 
         if get_crypto_data_provider:
             try:
@@ -113,9 +113,9 @@ class AgapeSpotSignalGenerator:
 
         if ProphetAdvisor:
             try:
-                self._oracle = ProphetAdvisor()
+                self._prophet = ProphetAdvisor()
             except Exception as e:
-                logger.warning(f"AGAPE-SPOT Signals: Oracle init failed: {e}")
+                logger.warning(f"AGAPE-SPOT Signals: Prophet init failed: {e}")
 
     def get_market_data(self, ticker: str) -> Optional[Dict[str, Any]]:
         """Fetch market data for the given ticker.
@@ -162,7 +162,7 @@ class AgapeSpotSignalGenerator:
             return None
 
     def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
-        if not self._oracle:
+        if not self._prophet:
             return {
                 "advice": "UNAVAILABLE",
                 "win_probability": 0.5,
@@ -190,7 +190,7 @@ class AgapeSpotSignalGenerator:
                 day_of_week=datetime.now(CENTRAL_TZ).weekday(),
             )
 
-            recommendation = self._oracle.get_strategy_recommendation(context)
+            recommendation = self._prophet.get_strategy_recommendation(context)
             if recommendation:
                 advice = "TRADE" if recommendation.dir_suitability >= 0.5 else "SKIP"
                 return {
@@ -206,7 +206,7 @@ class AgapeSpotSignalGenerator:
                     ],
                 }
         except Exception as e:
-            logger.error(f"AGAPE-SPOT Signals: Oracle call failed: {e}")
+            logger.error(f"AGAPE-SPOT Signals: Prophet call failed: {e}")
 
         return {
             "advice": "UNAVAILABLE",
@@ -215,7 +215,7 @@ class AgapeSpotSignalGenerator:
             "top_factors": ["oracle_error"],
         }
 
-    def generate_signal(self, ticker: str, oracle_data: Optional[Dict] = None) -> AgapeSpotSignal:
+    def generate_signal(self, ticker: str, prophet_data: Optional[Dict] = None) -> AgapeSpotSignal:
         """Generate a LONG-ONLY signal for the given ticker."""
         now = datetime.now(CENTRAL_TZ)
 
@@ -229,15 +229,15 @@ class AgapeSpotSignalGenerator:
 
         spot = market_data["spot_price"]
 
-        if oracle_data is None:
-            oracle_data = self.get_prophet_advice(market_data)
+        if prophet_data is None:
+            prophet_data = self.get_prophet_advice(market_data)
 
-        oracle_advice = oracle_data.get("advice", "UNAVAILABLE")
-        oracle_win_prob = oracle_data.get("win_probability", 0.5)
+        oracle_advice = prophet_data.get("advice", "UNAVAILABLE")
+        oracle_win_prob = prophet_data.get("win_probability", 0.5)
 
-        if self.config.require_oracle_approval:
-            oracle_approved = oracle_advice in ("TRADE_FULL", "TRADE_REDUCED", "ENTER", "TRADE")
-            if not oracle_approved and oracle_advice != "UNAVAILABLE":
+        if self.config.require_prophet_approval:
+            prophet_approved = oracle_advice in ("TRADE_FULL", "TRADE_REDUCED", "ENTER", "TRADE")
+            if not prophet_approved and oracle_advice != "UNAVAILABLE":
                 return AgapeSpotSignal(
                     ticker=ticker,
                     spot_price=spot, timestamp=now,
@@ -252,11 +252,11 @@ class AgapeSpotSignalGenerator:
                     crypto_gex_regime=market_data.get("crypto_gex_regime", "NEUTRAL"),
                     action=SignalAction.WAIT,
                     confidence="LOW",
-                    reasoning=f"BLOCKED_ORACLE_{oracle_advice}",
+                    reasoning=f"BLOCKED_PROPHET_{oracle_advice}",
                     oracle_advice=oracle_advice,
                     oracle_win_probability=oracle_win_prob,
-                    oracle_confidence=oracle_data.get("confidence", 0),
-                    oracle_top_factors=oracle_data.get("top_factors", []),
+                    oracle_confidence=prophet_data.get("confidence", 0),
+                    oracle_top_factors=prophet_data.get("top_factors", []),
                 )
 
         combined_signal = market_data.get("combined_signal", "WAIT")
@@ -284,8 +284,8 @@ class AgapeSpotSignalGenerator:
                 reasoning=reasoning,
                 oracle_advice=oracle_advice,
                 oracle_win_probability=oracle_win_prob,
-                oracle_confidence=oracle_data.get("confidence", 0),
-                oracle_top_factors=oracle_data.get("top_factors", []),
+                oracle_confidence=prophet_data.get("confidence", 0),
+                oracle_top_factors=prophet_data.get("top_factors", []),
             )
 
         # Spot-native position sizing (per-ticker)
@@ -311,8 +311,8 @@ class AgapeSpotSignalGenerator:
             reasoning=reasoning,
             oracle_advice=oracle_advice,
             oracle_win_probability=oracle_win_prob,
-            oracle_confidence=oracle_data.get("confidence", 0),
-            oracle_top_factors=oracle_data.get("top_factors", []),
+            oracle_confidence=prophet_data.get("confidence", 0),
+            oracle_top_factors=prophet_data.get("top_factors", []),
             entry_price=spot,
             stop_loss=stop_loss,
             take_profit=take_profit,

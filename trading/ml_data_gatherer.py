@@ -80,7 +80,7 @@ except ImportError as e:
     logger.debug(f"PsychologyTrapDetector not available: {e}")
 
 try:
-    from gamma.argus_pattern_similarity import get_argus_analyzer
+    from gamma.argus_pattern_similarity import get_watchtower_analyzer
     ARGUS_AVAILABLE = True
 except ImportError as e:
     ARGUS_AVAILABLE = False
@@ -239,12 +239,12 @@ class MLDataGatherer:
     """
 
     def __init__(self):
-        self._ares_advisor = None
+        self._fortress_advisor = None
         self._regime_classifier = None
         self._gex_ml = None
         self._kelly_calculator = None
         self._psychology_detector = None
-        self._argus_analyzer = None
+        self._watchtower_analyzer = None
 
     def gather_all(
         self,
@@ -309,8 +309,8 @@ class MLDataGatherer:
             return
 
         try:
-            if self._ares_advisor is None:
-                self._ares_advisor = FortressMLAdvisor(symbol=symbol)
+            if self._fortress_advisor is None:
+                self._fortress_advisor = FortressMLAdvisor(symbol=symbol)
 
             # Build features for prediction
             features = {
@@ -321,7 +321,7 @@ class MLDataGatherer:
                 'put_wall': gex_data.get('put_wall', 0),
             }
 
-            result = self._ares_advisor.predict(features)
+            result = self._fortress_advisor.predict(features)
             if result:
                 bundle.quant_ml_advice = result.advice.value if hasattr(result.advice, 'value') else str(result.advice)
                 bundle.quant_ml_win_probability = getattr(result, 'win_probability', 0)
@@ -556,10 +556,10 @@ class MLDataGatherer:
             return
 
         try:
-            if self._argus_analyzer is None:
-                self._argus_analyzer = get_argus_analyzer()
+            if self._watchtower_analyzer is None:
+                self._watchtower_analyzer = get_watchtower_analyzer()
 
-            result = self._argus_analyzer.find_similar_patterns(
+            result = self._watchtower_analyzer.find_similar_patterns(
                 symbol=symbol,
                 spot_price=spot_price,
                 gex_data=gex_data

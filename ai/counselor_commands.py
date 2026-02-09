@@ -335,14 +335,14 @@ def generate_trade_suggestion() -> Dict[str, Any]:
     Returns:
         Dictionary with trade suggestions
     """
-    from .counselor_tools import fetch_ares_market_data, get_upcoming_events, is_market_open
+    from .counselor_tools import fetch_fortress_market_data, get_upcoming_events, is_market_open
 
     suggestions = []
     warnings = []
 
     # Get market data
     try:
-        market = fetch_ares_market_data()
+        market = fetch_fortress_market_data()
     except Exception:
         market = {}
 

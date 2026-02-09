@@ -476,7 +476,7 @@ def main():
         "database": test_database_operations(),
         "oracle_flow": test_oracle_prediction_flow(),
         "pythia_flow": test_pythia_calibration_flow(),
-        "prometheus_flow": test_ml_training_flow(),
+        "jubilee_flow": test_ml_training_flow(),
         "wheel_flow": test_wheel_cycle_flow(),
         "trader_flow": test_trader_decision_flow(),
         "counselor_flow": test_counselor_conversation_flow(),

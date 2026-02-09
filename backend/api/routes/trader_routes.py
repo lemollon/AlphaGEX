@@ -2523,7 +2523,7 @@ async def get_fortress_status():
 
 
 @router.post("/bots/fortress/run")
-async def run_ares_cycle():
+async def run_fortress_cycle():
     """
     Run FORTRESS daily trading cycle.
 

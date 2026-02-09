@@ -27,13 +27,13 @@ import {
   useANCHORStatus,
   useICARUSStatus,
   useTITANStatus,
-  usePROMETHEUSStatus,
+  useJUBILEEStatus,
   useARESLivePnL,
   useATHENALivePnL,
   useANCHORLivePnL,
   useICARUSLivePnL,
   useTITANLivePnL,
-  usePROMETHEUSLivePnL
+  useJUBILEELivePnL
 } from '@/lib/hooks/useMarketData'
 
 // PERFORMANCE FIX: Move colorClasses outside component (was recreated every render)
@@ -162,14 +162,14 @@ export default function BotStatusOverview() {
   // Paper trading bots
   const { data: icarusStatus, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSStatus()
   const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useTITANStatus()
-  const { data: prometheusStatus, isLoading: prometheusLoading, mutate: refreshPrometheus } = usePROMETHEUSStatus()
+  const { data: jubileeStatus, isLoading: jubileeLoading, mutate: refreshJubilee } = useJUBILEEStatus()
 
   const { data: aresLivePnL } = useARESLivePnL()
   const { data: solomonLivePnL } = useATHENALivePnL()
   const { data: anchorLivePnL } = useANCHORLivePnL()
   const { data: icarusLivePnL } = useICARUSLivePnL()
   const { data: titanLivePnL } = useTITANLivePnL()
-  const { data: prometheusLivePnL } = usePROMETHEUSLivePnL()
+  const { data: jubileeLivePnL } = useJUBILEELivePnL()
 
   // PERFORMANCE FIX: useCallback for refreshAll to prevent child re-renders
   const refreshAll = useCallback(() => {
@@ -178,8 +178,8 @@ export default function BotStatusOverview() {
     refreshAnchor()
     refreshIcarus()
     refreshTitan()
-    refreshPrometheus()
-  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshPrometheus])
+    refreshJubilee()
+  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshJubilee])
 
   // PERFORMANCE FIX: useMemo for calculated P&L values (was recalculating every render)
   const { totalTodayPnL, totalUnrealizedPnL, paperTodayPnL } = useMemo(() => ({
@@ -191,8 +191,8 @@ export default function BotStatusOverview() {
                         (anchorLivePnL?.data?.total_unrealized_pnl || 0),
     paperTodayPnL: (icarusLivePnL?.data?.today_pnl || 0) +
                    (titanLivePnL?.data?.today_pnl || 0) +
-                   (prometheusLivePnL?.net_profit || 0)
-  }), [aresLivePnL, solomonLivePnL, anchorLivePnL, icarusLivePnL, titanLivePnL, prometheusLivePnL])
+                   (jubileeLivePnL?.net_profit || 0)
+  }), [aresLivePnL, solomonLivePnL, anchorLivePnL, icarusLivePnL, titanLivePnL, jubileeLivePnL])
 
   // PERFORMANCE FIX: useMemo for active bot counts (was filtering on every render)
   const { activeLiveBots, activePaperBots, totalActiveBots } = useMemo(() => {
@@ -205,11 +205,11 @@ export default function BotStatusOverview() {
     const paper = [
       icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
       titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE',
-      prometheusStatus?.box_spread?.enabled || prometheusStatus?.ic_trading?.enabled
+      jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled
     ].filter(Boolean).length
 
     return { activeLiveBots: live, activePaperBots: paper, totalActiveBots: live + paper }
-  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, prometheusStatus])
+  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, jubileeStatus])
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">
@@ -336,16 +336,16 @@ export default function BotStatusOverview() {
                 icon={<Boxes className="w-5 h-5 text-orange-500" />}
                 href="/jubilee"
                 status={{
-                  is_active: prometheusStatus?.box_spread?.enabled || prometheusStatus?.ic_trading?.enabled,
-                  open_positions: (prometheusStatus?.box_spread?.open_positions || 0) + (prometheusStatus?.ic_trading?.open_positions || 0),
-                  last_scan_at: prometheusStatus?.last_updated
+                  is_active: jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled,
+                  open_positions: (jubileeStatus?.box_spread?.open_positions || 0) + (jubileeStatus?.ic_trading?.open_positions || 0),
+                  last_scan_at: jubileeStatus?.last_updated
                 }}
                 livePnL={{
-                  today_pnl: prometheusLivePnL?.net_profit || 0,
-                  total_unrealized_pnl: prometheusLivePnL?.ic_unrealized || 0
+                  today_pnl: jubileeLivePnL?.net_profit || 0,
+                  total_unrealized_pnl: jubileeLivePnL?.ic_unrealized || 0
                 }}
                 color="orange"
-                isLoading={prometheusLoading}
+                isLoading={jubileeLoading}
               />
             </div>
           </div>
