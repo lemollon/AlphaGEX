@@ -76,7 +76,7 @@ def test_second_account_order():
         today = datetime.now().strftime('%Y-%m-%d')
 
         # Get expirations
-        expirations = tradier_2.get_options_expirations("SPY")
+        expirations = tradier_2.get_option_expirations("SPY")
         if not expirations:
             print("  [FAIL] Could not get expirations")
             return False
