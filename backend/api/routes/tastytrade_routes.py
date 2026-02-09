@@ -257,7 +257,7 @@ async def test_tastytrade_connection():
 
     # Note: is-futures-enabled API flag is unreliable (shows false even when futures is enabled)
     # We check: auth success + account found + can lookup futures products
-    results["ready_for_heracles"] = (
+    results["ready_for_valor"] = (
         results["checks"].get("authentication", {}).get("success", False) and
         results["checks"].get("accounts", {}).get("target_account_found", False) and
         results["checks"].get("mes_futures", {}).get("success", False)

@@ -253,7 +253,7 @@ except ImportError as e:
     logger.warning(f"SAMSON module not available: {e}")
 
 
-def get_titan_instance():
+def get_samson_instance():
     """Get the SAMSON trader instance from scheduler if available"""
     global samson_trader
     if samson_trader:
@@ -412,7 +412,7 @@ async def get_samson_status():
 
     Returns mode, capital, P&L, positions, configuration, and heartbeat.
     """
-    samson = get_titan_instance()
+    samson = get_samson_instance()
     heartbeat = _get_heartbeat('SAMSON')
 
     if not samson:
@@ -647,7 +647,7 @@ async def get_samson_positions():
 
     Returns Iron Condor positions with full details.
     """
-    samson = get_titan_instance()
+    samson = get_samson_instance()
 
     if not samson:
         # SAMSON not running - read from database directly
@@ -1224,7 +1224,7 @@ async def get_samson_equity_curve(days: int = 30):
 
 
 @router.get("/equity-curve/intraday")
-async def get_titan_intraday_equity(date: str = None):
+async def get_samson_intraday_equity(date: str = None):
     """
     Get SAMSON intraday equity curve with 5-minute interval snapshots.
 
@@ -1564,7 +1564,7 @@ async def run_titan_cycle(
 
     PROTECTED: Requires admin authentication.
     """
-    samson = get_titan_instance()
+    samson = get_samson_instance()
 
     if not samson:
         raise HTTPException(
@@ -1588,7 +1588,7 @@ async def run_titan_cycle(
 @router.get("/config")
 async def get_samson_config():
     """Get SAMSON configuration parameters."""
-    samson = get_titan_instance()
+    samson = get_samson_instance()
 
     default_config = {
         "ticker": "SPX",
@@ -1641,7 +1641,7 @@ async def force_close_samson_positions(
 
     PROTECTED: Requires admin authentication.
     """
-    samson = get_titan_instance()
+    samson = get_samson_instance()
 
     if not samson:
         raise HTTPException(
@@ -1663,9 +1663,9 @@ async def force_close_samson_positions(
 
 
 @router.get("/live-pnl")
-async def get_titan_live_pnl():
+async def get_samson_live_pnl():
     """Get real-time unrealized P&L for all open SAMSON positions."""
-    samson = get_titan_instance()
+    samson = get_samson_instance()
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
     if not samson:

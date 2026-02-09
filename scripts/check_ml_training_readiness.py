@@ -66,11 +66,11 @@ ML_MODELS = {
         'priority': 'MEDIUM',
         'used_by': ['Backtests', 'Directional Signals'],
     },
-    'ares_ml': {
+    'fortress_ml': {
         'name': 'FORTRESS ML Advisor',
         'description': 'Iron Condor optimization from backtest patterns',
-        'train_script': 'scripts/train_ares_ml.py',
-        'model_path': 'quant/.models/ares_advisor_model.pkl',
+        'train_script': 'scripts/train_fortress_ml.py',
+        'model_path': 'quant/.models/fortress_advisor_model.pkl',
         'min_records': 50,
         'data_tables': ['backtest_results', 'backtest_trades'],
         'priority': 'MEDIUM',

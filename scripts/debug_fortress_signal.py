@@ -82,7 +82,7 @@ def main():
     # Step 3: Get Prophet advice
     print_section("STEP 3: Get Prophet Advice")
     try:
-        prophet_data = signals.get_oracle_advice(market_data)
+        prophet_data = signals.get_prophet_advice(market_data)
         if prophet_data:
             print_ok("Prophet advice fetched")
             print_info(f"advice: {prophet_data.get('advice', 'UNKNOWN')}")

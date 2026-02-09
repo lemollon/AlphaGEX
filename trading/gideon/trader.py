@@ -30,12 +30,12 @@ logger = logging.getLogger(__name__)
 
 # Scan activity logging
 try:
-    from trading.scan_activity_logger import log_icarus_scan, ScanOutcome, CheckResult
+    from trading.scan_activity_logger import log_gideon_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
     print("✅ GIDEON: Scan activity logger loaded")
 except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
-    log_icarus_scan = None
+    log_gideon_scan = None
     ScanOutcome = None
     CheckResult = None
     print(f"❌ GIDEON: Scan activity logger FAILED: {e}")
@@ -52,13 +52,13 @@ except ImportError as e:
 
 # Prophet for outcome recording
 try:
-    from quant.prophet_advisor import ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome
-    ORACLE_AVAILABLE = True
+    from quant.prophet_advisor import ProphetAdvisor, BotName as ProphetBotName, TradeOutcome as ProphetTradeOutcome
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleBotName = None
-    OracleTradeOutcome = None
+    ProphetBotName = None
+    ProphetTradeOutcome = None
 
 # Learning Memory for self-improvement tracking
 try:
@@ -238,7 +238,7 @@ class GideonTrader(MathOptimizerMixin):
                     }
                     # Fetch Prophet advice using FULL market_data (includes expected_move)
                     try:
-                        oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
+                        oracle_advice = self.signals.get_prophet_advice(market_data if market_data else gex_data)
                         if oracle_advice:
                             scan_context['prophet_data'] = oracle_advice
                     except Exception as e:
@@ -436,17 +436,17 @@ class GideonTrader(MathOptimizerMixin):
         Migration 023: Enhanced to pass prediction_id and direction_correct for
         accurate feedback loop tracking of directional strategy performance.
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return
 
         try:
             prophet = ProphetAdvisor()
 
             if pnl > 0:
-                outcome = OracleTradeOutcome.MAX_PROFIT if 'PROFIT_TARGET' in close_reason else OracleTradeOutcome.PARTIAL_PROFIT
+                outcome = ProphetTradeOutcome.MAX_PROFIT if 'PROFIT_TARGET' in close_reason else ProphetTradeOutcome.PARTIAL_PROFIT
                 outcome_type = 'WIN'
             else:
-                outcome = OracleTradeOutcome.LOSS
+                outcome = ProphetTradeOutcome.LOSS
                 outcome_type = 'LOSS'
 
             trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
@@ -462,7 +462,7 @@ class GideonTrader(MathOptimizerMixin):
             # Record to Prophet with GIDEON's own bot name and enhanced feedback data
             success = prophet.update_outcome(
                 trade_date=trade_date,
-                bot_name=OracleBotName.GIDEON,
+                bot_name=ProphetBotName.GIDEON,
                 outcome=outcome,
                 actual_pnl=pnl,
                 prediction_id=prediction_id,  # Migration 023: Direct linking
@@ -619,13 +619,13 @@ class GideonTrader(MathOptimizerMixin):
         Returns:
             int: The oracle_prediction_id for linking, or None if storage failed
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return None
 
         try:
             prophet = ProphetAdvisor()
 
-            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import MarketContext as ProphetMarketContext, GEXRegime
 
             gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
             try:
@@ -633,7 +633,7 @@ class GideonTrader(MathOptimizerMixin):
             except (KeyError, AttributeError):
                 gex_regime = GEXRegime.NEUTRAL
 
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=signal.spot_price,
                 vix=signal.vix,
                 gex_regime=gex_regime,
@@ -644,7 +644,7 @@ class GideonTrader(MathOptimizerMixin):
                 day_of_week=datetime.now(CENTRAL_TZ).weekday(),
             )
 
-            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
+            from quant.prophet_advisor import ProphetPrediction, TradingAdvice, BotName
 
             advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
             try:
@@ -655,7 +655,7 @@ class GideonTrader(MathOptimizerMixin):
             # Get direction for directional bot tracking (Migration 023)
             direction_predicted = getattr(signal, 'direction', 'BULLISH')
 
-            prediction = OraclePrediction(
+            prediction = ProphetPrediction(
                 bot_name=BotName.GIDEON,
                 advice=advice,
                 win_probability=getattr(signal, 'oracle_win_probability', 0.6),
@@ -906,7 +906,7 @@ class GideonTrader(MathOptimizerMixin):
         error_msg: str = ""
     ):
         """Log scan activity for visibility and tracking"""
-        if not SCAN_LOGGER_AVAILABLE or not log_icarus_scan:
+        if not SCAN_LOGGER_AVAILABLE or not log_gideon_scan:
             return
 
         try:
@@ -1000,7 +1000,7 @@ class GideonTrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            scan_id = log_icarus_scan(
+            scan_id = log_gideon_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),
@@ -1040,7 +1040,7 @@ class GideonTrader(MathOptimizerMixin):
             logger.error(traceback.format_exc())
             # FALLBACK: Try simple logging without ML kwargs
             try:
-                fallback_scan_id = log_icarus_scan(
+                fallback_scan_id = log_gideon_scan(
                     outcome=outcome,
                     decision_summary=f"{decision} [FALLBACK - ML data excluded]",
                     market_data=context.get('market_data'),
@@ -1221,12 +1221,12 @@ class GideonTrader(MathOptimizerMixin):
         """Delegate to SignalGenerator for ML signal"""
         return self.signals.get_ml_signal(gex_data)
 
-    def get_oracle_advice(self) -> Optional[Dict[str, Any]]:
+    def get_prophet_advice(self) -> Optional[Dict[str, Any]]:
         """Get Prophet advice with current GEX data"""
         gex_data = self.signals.get_gex_data()
         if not gex_data:
             return None
-        return self.signals.get_oracle_advice(gex_data)
+        return self.signals.get_prophet_advice(gex_data)
 
     def get_live_pnl(self) -> Dict[str, Any]:
         """Get live P&L for all open positions"""

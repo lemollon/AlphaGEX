@@ -1328,21 +1328,21 @@ def get_anchor_logger() -> DecisionLogger:
     return _bot_loggers['ANCHOR']
 
 
-def get_icarus_logger() -> DecisionLogger:
+def get_gideon_logger() -> DecisionLogger:
     """Get logger for GIDEON (Aggressive Directional Spreads)"""
     if 'GIDEON' not in _bot_loggers:
         _bot_loggers['GIDEON'] = DecisionLogger()
     return _bot_loggers['GIDEON']
 
 
-def get_titan_logger() -> DecisionLogger:
+def get_samson_logger() -> DecisionLogger:
     """Get logger for SAMSON (Aggressive SPX Iron Condor)"""
     if 'SAMSON' not in _bot_loggers:
         _bot_loggers['SAMSON'] = DecisionLogger()
     return _bot_loggers['SAMSON']
 
 
-def get_prometheus_logger() -> DecisionLogger:
+def get_jubilee_logger() -> DecisionLogger:
     """Get logger for JUBILEE (Box Spread Synthetic Borrowing + IC Trading)"""
     if 'JUBILEE' not in _bot_loggers:
         _bot_loggers['JUBILEE'] = DecisionLogger()

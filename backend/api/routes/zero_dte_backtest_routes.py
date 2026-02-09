@@ -2288,9 +2288,9 @@ async def get_prophet_status():
     - All bot heartbeats (FORTRESS, SOLOMON, etc.)
     """
     try:
-        from quant.prophet_advisor import get_oracle
+        from quant.prophet_advisor import get_prophet
 
-        prophet = get_oracle()
+        prophet = get_prophet()
 
         # Get heartbeats for all bots
         heartbeats = _get_all_heartbeats()
@@ -2338,10 +2338,10 @@ async def oracle_analyze(request: OracleAnalysisRequest):
     """
     try:
         from quant.prophet_advisor import (
-            get_oracle, MarketContext, GEXRegime, BotName
+            get_prophet, MarketContext, GEXRegime, BotName
         )
 
-        prophet = get_oracle()
+        prophet = get_prophet()
 
         # Parse GEX regime
         gex_regime = GEXRegime[request.gex_regime.upper()]
@@ -2365,17 +2365,17 @@ async def oracle_analyze(request: OracleAnalysisRequest):
 
         # Get advice based on bot type
         if bot_name == BotName.FORTRESS:
-            prediction = prophet.get_ares_advice(
+            prediction = prophet.get_fortress_advice(
                 context,
                 use_gex_walls=(request.gex_call_wall > 0 and request.gex_put_wall > 0),
                 use_claude_validation=True
             )
         elif bot_name == BotName.CORNERSTONE:
-            prediction = prophet.get_atlas_advice(context)
+            prediction = prophet.get_cornerstone_advice(context)
         elif bot_name == BotName.LAZARUS:
-            prediction = prophet.get_phoenix_advice(context)
+            prediction = prophet.get_lazarus_advice(context)
         else:
-            prediction = prophet.get_ares_advice(context)
+            prediction = prophet.get_fortress_advice(context)
 
         # Get Claude explanation if available
         explanation = None
@@ -2433,11 +2433,11 @@ async def oracle_explain(request: OracleExplainRequest):
     """
     try:
         from quant.prophet_advisor import (
-            get_oracle, MarketContext, GEXRegime, BotName,
-            TradingAdvice, OraclePrediction
+            get_prophet, MarketContext, GEXRegime, BotName,
+            TradingAdvice, ProphetPrediction
         )
 
-        prophet = get_oracle()
+        prophet = get_prophet()
 
         if not prophet.claude_available:
             return {
@@ -2447,7 +2447,7 @@ async def oracle_explain(request: OracleExplainRequest):
 
         # Reconstruct prediction object
         pred_data = request.prediction
-        prediction = OraclePrediction(
+        prediction = ProphetPrediction(
             bot_name=BotName[pred_data.get('bot_name', 'FORTRESS')],
             advice=TradingAdvice[pred_data.get('advice', 'TRADE_FULL')],
             win_probability=pred_data.get('win_probability', 0.68),
@@ -2576,7 +2576,7 @@ async def get_prophet_data_flows(limit: int = 50, bot_name: str = None):
 
 
 @router.get("/prophet/claude-exchanges")
-async def get_oracle_claude_exchanges(limit: int = 20, bot_name: str = None):
+async def get_prophet_claude_exchanges(limit: int = 20, bot_name: str = None):
     """
     Get COMPLETE Claude AI exchanges with FULL TRANSPARENCY.
 
@@ -2622,7 +2622,7 @@ async def get_oracle_claude_exchanges(limit: int = 20, bot_name: str = None):
 
 
 @router.get("/prophet/full-transparency")
-async def get_oracle_full_transparency(bot_name: str = None):
+async def get_prophet_full_transparency(bot_name: str = None):
     """
     Get COMPLETE Prophet transparency data in one call.
 
@@ -2694,9 +2694,9 @@ async def oracle_analyze_patterns(job_id: Optional[str] = None):
     Returns identified patterns, loss conditions, and recommendations.
     """
     try:
-        from quant.prophet_advisor import get_oracle
+        from quant.prophet_advisor import get_prophet
 
-        prophet = get_oracle()
+        prophet = get_prophet()
 
         if not prophet.claude_available:
             return {
@@ -3334,7 +3334,7 @@ async def export_all_results():
 # ============================================================================
 
 @router.get("/init")
-async def get_kronos_init():
+async def get_chronicles_init():
     """
     Consolidated init endpoint - returns ALL startup data in a single request.
 

@@ -103,7 +103,7 @@ Provide your analysis with:
         start_time = time.time()
 
         # Use Extended Thinking with configurable model
-        model = os.getenv("GEXIS_EXTENDED_THINKING_MODEL", DEFAULT_EXTENDED_THINKING_MODEL)
+        model = os.getenv("COUNSELOR_EXTENDED_THINKING_MODEL", DEFAULT_EXTENDED_THINKING_MODEL)
         response = client.messages.create(
             model=model,
             max_tokens=8000,

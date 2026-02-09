@@ -1071,9 +1071,9 @@ margin for smaller positions.
 # Prophet import for IC trading decisions
 try:
     from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
     MarketContext = None
     GEXRegime = None
@@ -1114,7 +1114,7 @@ class PrometheusICSignalGenerator:
         """Initialize Prophet and GEX components"""
         # Prophet for IC trade approval
         self.prophet = None
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             try:
                 self.prophet = ProphetAdvisor()
                 logger.info("JUBILEE IC: Prophet initialized")
@@ -1193,14 +1193,14 @@ class PrometheusICSignalGenerator:
         daily_vol = (vix / 100) / annual_factor
         return round(spot * daily_vol, 2)
 
-    def get_oracle_advice(self, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def get_prophet_advice(self, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Get Prophet advice for IC trading.
 
         JUBILEE requires Prophet approval before opening IC positions.
         This ensures we only trade when conditions are favorable.
         """
-        if not self.prophet or not ORACLE_AVAILABLE:
+        if not self.prophet or not PROPHET_AVAILABLE:
             logger.warning("JUBILEE IC: Prophet not available")
             return None
 
@@ -1441,7 +1441,7 @@ class PrometheusICSignalGenerator:
             )
 
         # Get Prophet advice
-        prophet = self.get_oracle_advice(market)
+        prophet = self.get_prophet_advice(market)
         if not prophet:
             logger.warning("JUBILEE IC: No Prophet advice available")
             return self._create_skip_signal(

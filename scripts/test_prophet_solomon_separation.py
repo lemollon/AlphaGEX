@@ -28,9 +28,9 @@ def main():
     print("-" * 40)
 
     try:
-        from quant.prophet_advisor import get_oracle, MarketContext, GEXRegime
+        from quant.prophet_advisor import get_prophet, MarketContext, GEXRegime
 
-        prophet = get_oracle()
+        prophet = get_prophet()
 
         # Test with multiple market conditions
         test_cases = [

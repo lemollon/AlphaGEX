@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class HERACLESTrainingMetrics:
+class ValorTrainingMetrics:
     """Metrics from VALOR model training"""
     accuracy: float
     precision: float
@@ -99,7 +99,7 @@ class HERACLESTrainingMetrics:
     model_version: str
 
 
-class HERACLESMLAdvisor:
+class ValorMLAdvisor:
     """
     ML Advisor for VALOR MES Futures Scalping.
 
@@ -132,14 +132,14 @@ class HERACLESMLAdvisor:
     ]
 
     # Model name for persistence (must be unique across all bots)
-    MODEL_NAME = 'heracles_ml'
+    MODEL_NAME = 'valor_ml'
 
     def __init__(self):
         self.model = None
         self.calibrated_model = None
         self.scaler = None
         self.is_trained = False
-        self.training_metrics: Optional[HERACLESTrainingMetrics] = None
+        self.training_metrics: Optional[ValorTrainingMetrics] = None
         self.model_version = "0.0.0"
 
         # Thresholds
@@ -467,7 +467,7 @@ class HERACLESMLAdvisor:
 
         return X, y
 
-    def train(self, min_samples: int = None, use_new_params_only: bool = True) -> Optional[HERACLESTrainingMetrics]:
+    def train(self, min_samples: int = None, use_new_params_only: bool = True) -> Optional[ValorTrainingMetrics]:
         """
         Train the ML model from scan_activity data.
 
@@ -479,7 +479,7 @@ class HERACLESMLAdvisor:
                                  on ALL historical data (not recommended).
 
         Returns:
-            HERACLESTrainingMetrics if successful, None otherwise
+            ValorTrainingMetrics if successful, None otherwise
         """
         if not ML_AVAILABLE:
             raise ImportError("ML libraries required. Install: pip install scikit-learn pandas numpy")
@@ -586,7 +586,7 @@ class HERACLESMLAdvisor:
             neg_accuracy = accuracy_score(y[neg_mask], y_pred_neg)
 
         # Build metrics
-        self.training_metrics = HERACLESTrainingMetrics(
+        self.training_metrics = ValorTrainingMetrics(
             accuracy=np.mean(accuracies),
             precision=np.mean(precisions),
             recall=np.mean(recalls),
@@ -734,30 +734,15 @@ class HERACLESMLAdvisor:
 
 
 # Singleton instance
-_advisor: Optional[HERACLESMLAdvisor] = None
+_advisor: Optional[ValorMLAdvisor] = None
 
 
-def get_heracles_ml_advisor() -> HERACLESMLAdvisor:
+def get_valor_ml_advisor() -> ValorMLAdvisor:
     """Get or create the VALOR ML advisor singleton"""
     global _advisor
     if _advisor is None:
-        _advisor = HERACLESMLAdvisor()
+        _advisor = ValorMLAdvisor()
     return _advisor
-
-
-def train_heracles_ml(min_samples: int = 50, use_new_params_only: bool = True) -> Optional[HERACLESTrainingMetrics]:
-    """
-    Train the VALOR ML model.
-
-    Convenience function for API/scheduler use.
-
-    Args:
-        min_samples: Minimum trades required for training (default 50)
-        use_new_params_only: Only train on trades after PARAMETER_VERSION_DATE (default True)
-                             Set to False to use ALL historical data (not recommended)
-    """
-    advisor = get_heracles_ml_advisor()
-    return advisor.train(min_samples=min_samples, use_new_params_only=use_new_params_only)
 
 
 def get_training_data_stats() -> Dict[str, Any]:
@@ -766,7 +751,7 @@ def get_training_data_stats() -> Dict[str, Any]:
 
     Convenience function for API use.
     """
-    advisor = get_heracles_ml_advisor()
+    advisor = get_valor_ml_advisor()
     return advisor.get_training_data_stats()
 
 
@@ -791,7 +776,7 @@ def get_ml_win_probability(
         Tuple of (win_probability, source)
         source is "ML" or "BAYESIAN"
     """
-    advisor = get_heracles_ml_advisor()
+    advisor = get_valor_ml_advisor()
     return advisor.predict(
         vix=vix,
         atr=atr,

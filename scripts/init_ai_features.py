@@ -42,7 +42,7 @@ def test_learning_memory():
     logger.info("\n--- Testing Learning Memory ---")
 
     try:
-        from ai.counselor_learning_memory import get_learning_memory, GEXISLearningMemory
+        from ai.counselor_learning_memory import get_learning_memory, CounselorLearningMemory
 
         # Get global instance
         memory = get_learning_memory()
@@ -144,22 +144,22 @@ def test_counselor_personality():
 
     try:
         from ai.counselor_personality import (
-            build_gexis_system_prompt,
-            get_gexis_welcome_message,
-            GEXIS_NAME,
+            build_counselor_system_prompt,
+            get_counselor_welcome_message,
+            COUNSELOR_NAME,
             USER_NAME
         )
 
         logger.info(f"{check_mark(True)} COUNSELOR personality module imported")
-        logger.info(f"    COUNSELOR Name: {GEXIS_NAME}")
+        logger.info(f"    COUNSELOR Name: {COUNSELOR_NAME}")
         logger.info(f"    User Name: {USER_NAME}")
 
         # Test system prompt generation
-        system_prompt = build_gexis_system_prompt()
+        system_prompt = build_counselor_system_prompt()
         logger.info(f"{check_mark(len(system_prompt) > 100)} System prompt generated ({len(system_prompt)} chars)")
 
         # Test welcome message
-        welcome = get_gexis_welcome_message()
+        welcome = get_counselor_welcome_message()
         logger.info(f"{check_mark(len(welcome) > 10)} Welcome message generated")
 
         return True
@@ -178,19 +178,19 @@ def test_counselor_tools():
 
     try:
         from ai.counselor_tools import (
-            GEXIS_TOOLS,
+            COUNSELOR_TOOLS,
             get_system_status,
-            get_gexis_briefing
+            get_counselor_briefing
         )
 
         logger.info(f"{check_mark(True)} COUNSELOR tools module imported")
-        logger.info(f"    Available tools: {len(GEXIS_TOOLS)}")
+        logger.info(f"    Available tools: {len(COUNSELOR_TOOLS)}")
 
         # List tool names
-        for tool_name in list(GEXIS_TOOLS.keys())[:5]:
+        for tool_name in list(COUNSELOR_TOOLS.keys())[:5]:
             logger.info(f"      - {tool_name}")
-        if len(GEXIS_TOOLS) > 5:
-            logger.info(f"      ... and {len(GEXIS_TOOLS) - 5} more")
+        if len(COUNSELOR_TOOLS) > 5:
+            logger.info(f"      ... and {len(COUNSELOR_TOOLS) - 5} more")
 
         # Test system status
         status = get_system_status()
@@ -211,11 +211,11 @@ def test_oracle_integration():
     logger.info("\n--- Testing Prophet Integration ---")
 
     try:
-        from quant.prophet_advisor import ProphetAdvisor, get_oracle
+        from quant.prophet_advisor import ProphetAdvisor, get_prophet
 
         logger.info(f"{check_mark(True)} Prophet module imported")
 
-        prophet = get_oracle()
+        prophet = get_prophet()
         logger.info(f"{check_mark(prophet is not None)} Prophet instance created")
 
         return True

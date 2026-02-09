@@ -22,12 +22,12 @@ logger = logging.getLogger(__name__)
 
 # Scan activity logging
 try:
-    from trading.scan_activity_logger import log_titan_scan, ScanOutcome, CheckResult
+    from trading.scan_activity_logger import log_samson_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
     print("✅ SAMSON: Scan activity logger loaded")
 except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
-    log_titan_scan = None
+    log_samson_scan = None
     ScanOutcome = None
     CheckResult = None
     print(f"❌ SAMSON: Scan activity logger FAILED: {e}")
@@ -57,19 +57,19 @@ except ImportError:
 # Prophet for outcome recording
 try:
     from quant.prophet_advisor import (
-        ProphetAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome,
-        MarketContext as OracleMarketContext, GEXRegime, StrategyType, get_oracle
+        ProphetAdvisor, BotName as ProphetBotName, TradeOutcome as ProphetTradeOutcome,
+        MarketContext as ProphetMarketContext, GEXRegime, StrategyType, get_prophet
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleBotName = None
-    OracleTradeOutcome = None
-    OracleMarketContext = None
+    ProphetBotName = None
+    ProphetTradeOutcome = None
+    ProphetMarketContext = None
     GEXRegime = None
     StrategyType = None
-    get_oracle = None
+    get_prophet = None
 
 # Learning Memory for self-improvement tracking
 try:
@@ -233,8 +233,8 @@ class SamsonTrader(MathOptimizerMixin):
                     }
                     # Fetch Prophet advice using FULL market_data (includes expected_move)
                     try:
-                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
-                            oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
+                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_prophet_advice'):
+                            oracle_advice = self.signals.get_prophet_advice(market_data if market_data else gex_data)
                             if oracle_advice:
                                 scan_context['prophet_data'] = oracle_advice
                     except Exception as e:
@@ -427,7 +427,7 @@ class SamsonTrader(MathOptimizerMixin):
         Migration 023: Enhanced to pass prediction_id and outcome_type for
         accurate feedback loop tracking.
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return
 
         try:
@@ -436,23 +436,23 @@ class SamsonTrader(MathOptimizerMixin):
             # Determine outcome type
             if pnl > 0:
                 if 'PROFIT' in close_reason or 'MAX_PROFIT' in close_reason:
-                    outcome = OracleTradeOutcome.MAX_PROFIT
+                    outcome = ProphetTradeOutcome.MAX_PROFIT
                     outcome_type = 'MAX_PROFIT'
                 else:
-                    outcome = OracleTradeOutcome.PARTIAL_PROFIT
+                    outcome = ProphetTradeOutcome.PARTIAL_PROFIT
                     outcome_type = 'PARTIAL_PROFIT'
             else:
                 if 'STOP_LOSS' in close_reason:
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
                     outcome_type = 'STOP_LOSS'
                 elif 'CALL' in close_reason.upper() and 'BREACH' in close_reason.upper():
-                    outcome = OracleTradeOutcome.CALL_BREACHED
+                    outcome = ProphetTradeOutcome.CALL_BREACHED
                     outcome_type = 'CALL_BREACHED'
                 elif 'PUT' in close_reason.upper() and 'BREACH' in close_reason.upper():
-                    outcome = OracleTradeOutcome.PUT_BREACHED
+                    outcome = ProphetTradeOutcome.PUT_BREACHED
                     outcome_type = 'PUT_BREACHED'
                 else:
-                    outcome = OracleTradeOutcome.LOSS
+                    outcome = ProphetTradeOutcome.LOSS
                     outcome_type = 'LOSS'
 
             trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
@@ -463,7 +463,7 @@ class SamsonTrader(MathOptimizerMixin):
             # Record to Prophet using SAMSON bot name with enhanced feedback data
             success = prophet.update_outcome(
                 trade_date=trade_date,
-                bot_name=OracleBotName.SAMSON,
+                bot_name=ProphetBotName.SAMSON,
                 outcome=outcome,
                 actual_pnl=pnl,
                 put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
@@ -624,13 +624,13 @@ class SamsonTrader(MathOptimizerMixin):
         Returns:
             int: The oracle_prediction_id for linking, or None if storage failed
         """
-        if not ORACLE_AVAILABLE:
+        if not PROPHET_AVAILABLE:
             return None
 
         try:
             prophet = ProphetAdvisor()
 
-            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import MarketContext as ProphetMarketContext, GEXRegime
 
             gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
             try:
@@ -638,7 +638,7 @@ class SamsonTrader(MathOptimizerMixin):
             except (KeyError, AttributeError):
                 gex_regime = GEXRegime.NEUTRAL
 
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=signal.spot_price,
                 vix=signal.vix,
                 gex_regime=gex_regime,
@@ -650,7 +650,7 @@ class SamsonTrader(MathOptimizerMixin):
                 expected_move_pct=(signal.expected_move / signal.spot_price * 100) if signal.spot_price else 0,
             )
 
-            from quant.prophet_advisor import OraclePrediction, TradingAdvice, BotName
+            from quant.prophet_advisor import ProphetPrediction, TradingAdvice, BotName
 
             advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
             try:
@@ -658,7 +658,7 @@ class SamsonTrader(MathOptimizerMixin):
             except (KeyError, ValueError):
                 advice = TradingAdvice.TRADE_FULL
 
-            prediction = OraclePrediction(
+            prediction = ProphetPrediction(
                 bot_name=BotName.SAMSON,
                 advice=advice,
                 win_probability=getattr(signal, 'oracle_win_probability', 0.65),
@@ -883,8 +883,8 @@ class SamsonTrader(MathOptimizerMixin):
         from datetime import datetime
         from zoneinfo import ZoneInfo
         print(f"[SAMSON DEBUG] _log_scan_activity called at {datetime.now(ZoneInfo('America/Chicago')).strftime('%I:%M:%S %p CT')}")
-        if not SCAN_LOGGER_AVAILABLE or not log_titan_scan:
-            print(f"[SAMSON DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_titan_scan={log_titan_scan is not None}")
+        if not SCAN_LOGGER_AVAILABLE or not log_samson_scan:
+            print(f"[SAMSON DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_samson_scan={log_samson_scan is not None}")
             return
         print(f"[SAMSON DEBUG] Proceeding with scan logging...")
 
@@ -1029,7 +1029,7 @@ class SamsonTrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            scan_id = log_titan_scan(
+            scan_id = log_samson_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),

@@ -8,7 +8,7 @@ Tests all recent changes to validate they work correctly:
 2. ML Integration (if model trained)
 3. API endpoint changes
 
-Run: python scripts/test_heracles_updates.py
+Run: python scripts/test_valor_updates.py
 """
 
 import os
@@ -31,12 +31,12 @@ print("TEST 1: DYNAMIC STOP LOSS CALCULATION")
 print("=" * 70)
 
 try:
-    from trading.valor.signals import HERACLESSignalGenerator
+    from trading.valor.signals import ValorSignalGenerator
     from trading.valor.models import ValorConfig, GammaRegime, BayesianWinTracker
 
     config = ValorConfig()
     win_tracker = BayesianWinTracker()
-    signal_gen = HERACLESSignalGenerator(config, win_tracker)
+    signal_gen = ValorSignalGenerator(config, win_tracker)
 
     print(f"\nBase stop from config: {config.initial_stop_points} pts")
     print("\nTesting dynamic stop calculations:")
@@ -113,11 +113,11 @@ print("TEST 2: ML MODULE LOADING")
 print("=" * 70)
 
 try:
-    from trading.valor.ml import HERACLESMLAdvisor, get_heracles_ml_advisor
+    from trading.valor.ml import ValorMLAdvisor, get_valor_ml_advisor
 
     print("\n✅ ML module imports successfully")
 
-    advisor = get_heracles_ml_advisor()
+    advisor = get_valor_ml_advisor()
     print(f"✅ ML Advisor singleton created")
 
     status = advisor.get_status()
@@ -196,9 +196,9 @@ print("TEST 4: TRAINING DATA AVAILABILITY")
 print("=" * 70)
 
 try:
-    from trading.valor.ml import get_heracles_ml_advisor
+    from trading.valor.ml import get_valor_ml_advisor
 
-    advisor = get_heracles_ml_advisor()
+    advisor = get_valor_ml_advisor()
     df = advisor.get_training_data()
 
     if df is not None and len(df) > 0:
@@ -228,12 +228,12 @@ print("TEST 5: FIXED vs DYNAMIC STOP COMPARISON")
 print("=" * 70)
 
 try:
-    from trading.valor.signals import HERACLESSignalGenerator
+    from trading.valor.signals import ValorSignalGenerator
     from trading.valor.models import ValorConfig, GammaRegime, BayesianWinTracker
 
     config = ValorConfig()
     win_tracker = BayesianWinTracker()
-    signal_gen = HERACLESSignalGenerator(config, win_tracker)
+    signal_gen = ValorSignalGenerator(config, win_tracker)
 
     # Simulate different market conditions
     scenarios = [

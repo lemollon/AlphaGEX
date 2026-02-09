@@ -86,12 +86,12 @@ class TraceSpan:
         }
 
 
-class GEXISTracer:
+class CounselorTracer:
     """
     Tracer for COUNSELOR operations with correlation ID support.
 
     Usage:
-        tracer = GEXISTracer()
+        tracer = CounselorTracer()
 
         # Context manager for tracing
         with tracer.trace("counselor.command.status") as span:
@@ -407,7 +407,7 @@ class GEXISTracer:
 
 
 # Global tracer instance
-gexis_tracer = GEXISTracer()
+counselor_tracer = CounselorTracer()
 
 
 # =============================================================================
@@ -416,22 +416,22 @@ gexis_tracer = GEXISTracer()
 
 def trace_command(command_name: str):
     """Decorator for tracing COUNSELOR commands."""
-    return gexis_tracer.traced(f"counselor.command.{command_name}")
+    return counselor_tracer.traced(f"counselor.command.{command_name}")
 
 
 def trace_command_async(command_name: str):
     """Async decorator for tracing COUNSELOR commands."""
-    return gexis_tracer.traced_async(f"counselor.command.{command_name}")
+    return counselor_tracer.traced_async(f"counselor.command.{command_name}")
 
 
 def trace_tool(tool_name: str):
     """Decorator for tracing COUNSELOR tools."""
-    return gexis_tracer.traced(f"counselor.tool.{tool_name}")
+    return counselor_tracer.traced(f"counselor.tool.{tool_name}")
 
 
 def trace_api_call(api_name: str):
     """Decorator for tracing external API calls."""
-    return gexis_tracer.traced(f"counselor.api.{api_name}")
+    return counselor_tracer.traced(f"counselor.api.{api_name}")
 
 
 # =============================================================================
@@ -462,7 +462,7 @@ class RequestContext:
 
     def __enter__(self):
         """Enter the request context."""
-        self._span = gexis_tracer.trace(
+        self._span = counselor_tracer.trace(
             "counselor.request",
             attributes={'request_id': self.request_id},
             trace_id=self.trace_id

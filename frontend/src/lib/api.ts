@@ -223,7 +223,7 @@ export const apiClient = {
   }) => api.post('/api/ai/analyze-with-image', data),
 
   // COUNSELOR Chatbot - Session-based conversational AI
-  gexisAnalyzeWithContext: (data: {
+  counselorAnalyzeWithContext: (data: {
     query: string
     symbol?: string
     session_id: string
@@ -231,27 +231,27 @@ export const apiClient = {
   }) => api.post('/api/ai/counselor/analyze-with-context', data),
 
   // COUNSELOR Agentic Chat - AI with tool use capabilities
-  gexisAgenticChat: (data: {
+  counselorAgenticChat: (data: {
     query: string
     session_id: string
     market_data?: any
   }) => api.post('/api/ai/counselor/agentic-chat', data),
 
   // COUNSELOR Bot Action Confirmation
-  gexisConfirmAction: (data: {
+  counselorConfirmAction: (data: {
     session_id: string
     confirm: boolean
   }) => api.post('/api/ai/counselor/confirm-action', data),
 
   // COUNSELOR Streaming Agentic Chat - Returns EventSource URL (or null if API_URL not set)
-  getGexisStreamUrl: () => API_URL ? `${API_URL}/api/ai/counselor/agentic-chat/stream` : null,
+  getCounselorStreamUrl: () => API_URL ? `${API_URL}/api/ai/counselor/agentic-chat/stream` : null,
 
-  gexisCommand: (command: string) =>
+  counselorCommand: (command: string) =>
     api.post('/api/ai/counselor/command', { command }),
 
-  gexisAlerts: () => api.get('/api/ai/counselor/alerts'),
+  counselorAlerts: () => api.get('/api/ai/counselor/alerts'),
 
-  gexisExportConversation: (sessionId: string, format: string = 'markdown') =>
+  counselorExportConversation: (sessionId: string, format: string = 'markdown') =>
     api.get(`/api/ai/counselor/export/${sessionId}`, { params: { format } }),
 
   // Autonomous Trader
@@ -364,7 +364,7 @@ export const apiClient = {
   getSolomonConfig: () => api.get('/api/solomon/config'),
   updateSolomonConfig: (name: string, value: string) => api.post(`/api/solomon/config/${name}`, null, { params: { value } }),
   runATHENACycle: () => api.post('/api/solomon/run'),
-  getATHENAOracleAdvice: () => api.get('/api/solomon/prophet-advice'),
+  getATHENAProphetAdvice: () => api.get('/api/solomon/prophet-advice'),
   getATHENAMLSignal: () => api.get('/api/solomon/ml-signal'),
   getATHENALivePnL: () => api.get('/api/solomon/live-pnl'),
   processATHENAExpired: () => api.post('/api/solomon/process-expired'),
@@ -381,7 +381,7 @@ export const apiClient = {
   getICARUSIntradayEquity: (date?: string) => api.get('/api/gideon/equity-curve/intraday', { params: date ? { date } : {} }),
   getGideonConfig: () => api.get('/api/gideon/config'),
   runICARUSCycle: () => api.post('/api/gideon/run'),
-  getICARUSOracleAdvice: () => api.get('/api/gideon/prophet-advice'),
+  getICARUSProphetAdvice: () => api.get('/api/gideon/prophet-advice'),
   getICARUSLivePnL: () => api.get('/api/gideon/live-pnl'),
   getICARUSScanActivity: (limit: number = 50) => api.get('/api/gideon/scan-activity', { params: { limit } }),
   skipICARUSToday: () => api.post('/api/gideon/skip-today'),
@@ -722,11 +722,11 @@ export const apiClient = {
 
   // Prophet AI - Claude-powered prediction validation and analysis
   getProphetStatus: () => api.get('/api/zero-dte/prophet/status'),
-  getOracleLogs: () => api.get('/api/zero-dte/prophet/logs'),
-  clearOracleLogs: () => api.delete('/api/zero-dte/prophet/logs'),
-  getOraclePredictions: (params?: { limit?: number, bot_name?: string, days?: number }) =>
+  getProphetLogs: () => api.get('/api/zero-dte/prophet/logs'),
+  clearProphetLogs: () => api.delete('/api/zero-dte/prophet/logs'),
+  getProphetPredictions: (params?: { limit?: number, bot_name?: string, days?: number }) =>
     api.get('/api/logs/prophet', { params }),
-  oracleAnalyze: (data: {
+  prophetAnalyze: (data: {
     spot_price: number
     vix: number
     gex_regime: string
@@ -740,29 +740,29 @@ export const apiClient = {
     distance_to_put_wall?: number
     bot_name?: string
   }) => api.post('/api/zero-dte/prophet/analyze', data),
-  oracleExplain: (data: {
+  prophetExplain: (data: {
     prediction: any
     market_context?: any
   }) => api.post('/api/zero-dte/prophet/explain', data),
-  oracleAnalyzePatterns: (data: {
+  prophetAnalyzePatterns: (data: {
     backtest_trades: any[]
     focus_area?: string
   }) => api.post('/api/zero-dte/prophet/analyze-patterns', data),
 
   // Prophet Training & Bot Interactions
-  getOracleTrainingStatus: () => api.get('/api/zero-dte/prophet/training-status'),
-  triggerOracleTraining: (force: boolean = false) =>
+  getProphetTrainingStatus: () => api.get('/api/zero-dte/prophet/training-status'),
+  triggerProphetTraining: (force: boolean = false) =>
     api.post(`/api/zero-dte/prophet/trigger-training?force=${force}`),
-  getOracleBotInteractions: (params?: { days?: number, limit?: number, bot_name?: string }) => {
+  getProphetBotInteractions: (params?: { days?: number, limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.days) queryParams.append('days', String(params.days))
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
     return api.get(`/api/zero-dte/prophet/bot-interactions?${queryParams.toString()}`)
   },
-  getOraclePerformance: (days: number = 90) =>
+  getProphetPerformance: (days: number = 90) =>
     api.get(`/api/zero-dte/prophet/performance?days=${days}`),
-  getOraclePredictionsFull: (params?: { days?: number, limit?: number, bot_name?: string, include_claude?: boolean }) => {
+  getProphetPredictionsFull: (params?: { days?: number, limit?: number, bot_name?: string, include_claude?: boolean }) => {
     const queryParams = new URLSearchParams()
     if (params?.days) queryParams.append('days', String(params.days))
     if (params?.limit) queryParams.append('limit', String(params.limit))
@@ -772,19 +772,19 @@ export const apiClient = {
   },
 
   // Prophet Full Transparency - NEW: Complete visibility into Prophet data flow
-  getOracleDataFlows: (params?: { limit?: number, bot_name?: string }) => {
+  getProphetDataFlows: (params?: { limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
     return api.get(`/api/zero-dte/prophet/data-flows?${queryParams.toString()}`)
   },
-  getOracleClaudeExchanges: (params?: { limit?: number, bot_name?: string }) => {
+  getProphetClaudeExchanges: (params?: { limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
     return api.get(`/api/zero-dte/prophet/claude-exchanges?${queryParams.toString()}`)
   },
-  getOracleFullTransparency: (bot_name?: string) => {
+  getProphetFullTransparency: (bot_name?: string) => {
     const queryParams = new URLSearchParams()
     if (bot_name) queryParams.append('bot_name', bot_name)
     return api.get(`/api/zero-dte/prophet/full-transparency?${queryParams.toString()}`)
@@ -1112,7 +1112,7 @@ export const apiClient = {
 
   // Strategy & Prophet Analysis
   getProverbsStrategyAnalysis: (days: number = 30) => api.get('/api/proverbs/strategy-analysis', { params: { days } }),
-  getProverbsOracleAccuracy: (days: number = 30) => api.get('/api/proverbs/prophet-accuracy', { params: { days } }),
+  getProverbsProphetAccuracy: (days: number = 30) => api.get('/api/proverbs/prophet-accuracy', { params: { days } }),
 
   // Enhanced Analytics
   getProverbsEnhancedAnalysis: (botName: string, days: number = 30) =>

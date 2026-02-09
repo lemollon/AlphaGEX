@@ -6,7 +6,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from trading.valor.signals import HERACLESSignalGenerator, is_ab_test_enabled
+from trading.valor.signals import ValorSignalGenerator, is_ab_test_enabled
 from trading.valor.models import ValorConfig, TradingMode
 
 print("=" * 60)
@@ -36,16 +36,16 @@ print("\n" + "-" * 60)
 print("Testing stop level calculation...")
 print("-" * 60)
 
-gen = HERACLESSignalGenerator(config=config)
+gen = ValorSignalGenerator(config=config)
 
 # Mock a signal to test
-from trading.valor.models import HERACLESSignal, TradeDirection, GammaRegime, SignalSource
+from trading.valor.models import ValorSignal, TradeDirection, GammaRegime, SignalSource
 from datetime import datetime
 import pytz
 
 CENTRAL_TZ = pytz.timezone('America/Chicago')
 
-test_signal = HERACLESSignal(
+test_signal = ValorSignal(
     timestamp=datetime.now(CENTRAL_TZ),
     symbol="/MESH6",
     direction=TradeDirection.LONG,

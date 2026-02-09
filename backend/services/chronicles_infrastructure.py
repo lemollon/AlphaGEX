@@ -42,7 +42,7 @@ class JobStatus(str, Enum):
 
 
 @dataclass
-class KronosJob:
+class ChroniclesJob:
     """Job data structure for CHRONICLES backtests"""
     job_id: str
     status: str = "pending"
@@ -83,7 +83,7 @@ class JobStore:
         self._redis = None
         self._redis_available = False
         self._pg_available = False
-        self._memory_fallback: Dict[str, KronosJob] = {}
+        self._memory_fallback: Dict[str, ChroniclesJob] = {}
         self._lock = threading.Lock()
         self._job_ttl = 86400 * 7  # 7 days
 
@@ -148,7 +148,7 @@ class JobStore:
     def _redis_key(self, job_id: str) -> str:
         return f"chronicles:job:{job_id}"
 
-    def create(self, job: KronosJob) -> bool:
+    def create(self, job: ChroniclesJob) -> bool:
         """Create a new job"""
         job.created_at = job.created_at or datetime.now().isoformat()
 
@@ -191,14 +191,14 @@ class JobStore:
             self._memory_fallback[job.job_id] = job
         return True
 
-    def get(self, job_id: str) -> Optional[KronosJob]:
+    def get(self, job_id: str) -> Optional[ChroniclesJob]:
         """Get a job by ID"""
         if self._redis_available:
             try:
                 data = self._redis.get(self._redis_key(job_id))
                 if data:
                     d = json.loads(data)
-                    return KronosJob(**d)
+                    return ChroniclesJob(**d)
             except Exception as e:
                 logger.error(f"Redis get failed: {e}")
 
@@ -212,7 +212,7 @@ class JobStore:
                 row = cursor.fetchone()
                 conn.close()
                 if row:
-                    return KronosJob(
+                    return ChroniclesJob(
                         job_id=row['job_id'],
                         status=row['status'],
                         progress=row['progress'] or 0,
@@ -635,7 +635,7 @@ class ORATCache:
 # 4. WEBSOCKET MANAGER FOR LIVE CHRONICLES UPDATES
 # =============================================================================
 
-class KronosWebSocketManager:
+class ChroniclesWebSocketManager:
     """
     WebSocket manager for real-time CHRONICLES updates.
 
@@ -738,7 +738,7 @@ class KronosWebSocketManager:
 job_store = JobStore()
 connection_pool = ConnectionPool()
 orat_cache = ORATCache()
-ws_manager = KronosWebSocketManager()
+ws_manager = ChroniclesWebSocketManager()
 
 
 def get_infrastructure_status() -> Dict[str, Any]:
@@ -771,7 +771,7 @@ def migrate_to_persistent_storage(legacy_jobs: Dict[str, Dict]):
     migrated = 0
     for job_id, job_data in legacy_jobs.items():
         if not job_store.contains(job_id):
-            job = KronosJob(
+            job = ChroniclesJob(
                 job_id=job_id,
                 status=job_data.get('status', 'pending'),
                 progress=job_data.get('progress', 0),

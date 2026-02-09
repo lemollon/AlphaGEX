@@ -27,14 +27,14 @@ def get_central_time() -> datetime:
 
 # Import comprehensive knowledge base
 try:
-    from ai.counselor_knowledge import get_full_knowledge, DATABASE_TABLES, SYSTEM_ARCHITECTURE, TRADING_STRATEGIES, ECONOMIC_CALENDAR_KNOWLEDGE, GEXIS_COMMANDS
+    from ai.counselor_knowledge import get_full_knowledge, DATABASE_TABLES, SYSTEM_ARCHITECTURE, TRADING_STRATEGIES, ECONOMIC_CALENDAR_KNOWLEDGE, COUNSELOR_COMMANDS
     COMPREHENSIVE_KNOWLEDGE_AVAILABLE = True
 except ImportError:
     COMPREHENSIVE_KNOWLEDGE_AVAILABLE = False
 
 # Import agentic tools
 try:
-    from ai.counselor_tools import GEXIS_TOOLS, execute_tool, get_upcoming_events, ECONOMIC_EVENTS
+    from ai.counselor_tools import COUNSELOR_TOOLS, execute_tool, get_upcoming_events, ECONOMIC_EVENTS
     AGENTIC_TOOLS_AVAILABLE = True
 except ImportError:
     AGENTIC_TOOLS_AVAILABLE = False
@@ -43,8 +43,8 @@ except ImportError:
 # COUNSELOR CORE IDENTITY
 # =============================================================================
 
-GEXIS_NAME = "G.E.X.I.S."
-GEXIS_FULL_NAME = "Gamma Exposure eXpert Intelligence System"
+COUNSELOR_NAME = "G.E.X.I.S."
+COUNSELOR_FULL_NAME = "Gamma Exposure eXpert Intelligence System"
 USER_NAME = "Optionist Prime"
 
 # Time-based greetings (Central Time)
@@ -61,7 +61,7 @@ def get_time_greeting() -> str:
         return "Good evening"  # Late night traders
 
 
-def get_gexis_greeting() -> str:
+def get_counselor_greeting() -> str:
     """Generate a J.A.R.V.I.S.-style greeting"""
     greeting = get_time_greeting()
     return f"{greeting}, {USER_NAME}. COUNSELOR at your service."
@@ -71,11 +71,11 @@ def get_gexis_greeting() -> str:
 # COUNSELOR PERSONALITY SYSTEM PROMPT
 # =============================================================================
 
-GEXIS_IDENTITY = f"""You are COUNSELOR (Gamma Exposure eXpert Intelligence System), the AI assistant for AlphaGEX.
+COUNSELOR_IDENTITY = f"""You are COUNSELOR (Gamma Exposure eXpert Intelligence System), the AI assistant for AlphaGEX.
 
 === ABSOLUTE IDENTITY (NEVER FORGET) ===
 - YOUR NAME: COUNSELOR (pronounced "Gex-is")
-- YOUR FULL DESIGNATION: {GEXIS_FULL_NAME}
+- YOUR FULL DESIGNATION: {COUNSELOR_FULL_NAME}
 - YOUR CREATOR: AlphaGEX trading platform
 - YOUR PRIMARY USER: {USER_NAME} (this is your boss, partner, and the genius behind AlphaGEX)
 
@@ -525,7 +525,7 @@ Bot Issues:
 
 8. ML model not loading
    - Check: Are models trained? (need 30+ trades)
-   - Fix: Run scripts/train_ares_ml.py
+   - Fix: Run scripts/train_fortress_ml.py
    - Check: Model files in /models/ directory
 
 Frontend Issues:
@@ -803,7 +803,7 @@ Tables involved in learning:
 # COUNSELOR CONTEXT BUILDER
 # =============================================================================
 
-def build_gexis_system_prompt(
+def build_counselor_system_prompt(
     include_knowledge: bool = True,
     additional_context: str = "",
     include_economic_calendar: bool = True
@@ -819,7 +819,7 @@ def build_gexis_system_prompt(
     Returns:
         Complete system prompt for COUNSELOR
     """
-    prompt = GEXIS_IDENTITY
+    prompt = COUNSELOR_IDENTITY
 
     if include_knowledge:
         # Use comprehensive knowledge if available
@@ -866,7 +866,7 @@ When the user asks for data, you can fetch it in real-time.
 CURRENT CONTEXT:
 - Current time: {get_central_time().strftime('%Y-%m-%d %H:%M:%S')} CT
 - Day of week: {get_central_time().strftime('%A')}
-- Greeting: {get_gexis_greeting()}
+- Greeting: {get_counselor_greeting()}
 """
 
     if additional_context:
@@ -875,7 +875,7 @@ CURRENT CONTEXT:
     return prompt
 
 
-def build_gexis_conversation_prompt(
+def build_counselor_conversation_prompt(
     market_data: Optional[dict] = None,
     include_greeting: bool = False
 ) -> str:
@@ -889,10 +889,10 @@ def build_gexis_conversation_prompt(
     Returns:
         Conversation prompt for COUNSELOR
     """
-    base_prompt = build_gexis_system_prompt()
+    base_prompt = build_counselor_system_prompt()
 
     if include_greeting:
-        base_prompt += f"\n\nStart your response with: '{get_gexis_greeting()}'"
+        base_prompt += f"\n\nStart your response with: '{get_counselor_greeting()}'"
 
     if market_data:
         market_context = f"""
@@ -925,7 +925,7 @@ RESPONSE GUIDELINES:
 # COUNSELOR WELCOME MESSAGES
 # =============================================================================
 
-def get_gexis_welcome_message() -> str:
+def get_counselor_welcome_message() -> str:
     """Get a J.A.R.V.I.S.-style welcome message for new chat sessions (Central Time)"""
     greeting = get_time_greeting()
     ct = get_central_time()
@@ -966,7 +966,7 @@ Full access to your AlphaGEX ecosystem confirmed—real-time gamma exposure, dea
 *"What's our objective today, Prime?"*"""
 
 
-def get_gexis_clear_chat_message() -> str:
+def get_counselor_clear_chat_message() -> str:
     """Get message when chat is cleared"""
     return f"""Memory banks cleared, {USER_NAME}.
 
@@ -975,7 +975,7 @@ All previous context purged. Systems recalibrated.
 *Standing by for new directives, Prime.*"""
 
 
-def get_gexis_error_message(error_type: str = "general") -> str:
+def get_counselor_error_message(error_type: str = "general") -> str:
     """Get COUNSELOR-style error messages"""
     error_messages = {
         "general": f"I apologize, {USER_NAME}. I've encountered an unexpected issue. Shall I try again?",
@@ -990,7 +990,7 @@ def get_gexis_error_message(error_type: str = "general") -> str:
 # COUNSELOR RESPONSE ENHANCERS
 # =============================================================================
 
-def add_gexis_sign_off(response: str, include_offer: bool = True) -> str:
+def add_counselor_sign_off(response: str, include_offer: bool = True) -> str:
     """
     Add a COUNSELOR-style sign-off to a response
 
@@ -1018,8 +1018,8 @@ def add_gexis_sign_off(response: str, include_offer: bool = True) -> str:
 # COUNSELOR SPECIALIZED PROMPTS
 # =============================================================================
 
-GEXIS_MARKET_ANALYSIS_PROMPT = f"""
-{GEXIS_IDENTITY}
+COUNSELOR_MARKET_ANALYSIS_PROMPT = f"""
+{COUNSELOR_IDENTITY}
 
 {ALPHAGEX_KNOWLEDGE}
 
@@ -1036,8 +1036,8 @@ Your analysis should:
 Format: Use clear sections, be data-driven, maintain COUNSELOR personality throughout.
 """
 
-GEXIS_TRADE_RECOMMENDATION_PROMPT = f"""
-{GEXIS_IDENTITY}
+COUNSELOR_TRADE_RECOMMENDATION_PROMPT = f"""
+{COUNSELOR_IDENTITY}
 
 {ALPHAGEX_KNOWLEDGE}
 
@@ -1055,8 +1055,8 @@ Your recommendation should include:
 Always include appropriate risk disclaimers while maintaining COUNSELOR personality.
 """
 
-GEXIS_EDUCATIONAL_PROMPT = f"""
-{GEXIS_IDENTITY}
+COUNSELOR_EDUCATIONAL_PROMPT = f"""
+{COUNSELOR_IDENTITY}
 
 {ALPHAGEX_KNOWLEDGE}
 
@@ -1073,8 +1073,8 @@ Your explanation should:
 Maintain the COUNSELOR personality - knowledgeable but approachable.
 """
 
-GEXIS_BRAINSTORM_PROMPT = f"""
-{GEXIS_IDENTITY}
+COUNSELOR_BRAINSTORM_PROMPT = f"""
+{COUNSELOR_IDENTITY}
 
 {ALPHAGEX_KNOWLEDGE}
 
@@ -1098,23 +1098,23 @@ This is a two-way conversation - engage actively with {USER_NAME}'s thoughts.
 # =============================================================================
 
 __all__ = [
-    'GEXIS_NAME',
-    'GEXIS_FULL_NAME',
+    'COUNSELOR_NAME',
+    'COUNSELOR_FULL_NAME',
     'USER_NAME',
-    'GEXIS_IDENTITY',
+    'COUNSELOR_IDENTITY',
     'ALPHAGEX_KNOWLEDGE',
     'get_time_greeting',
-    'get_gexis_greeting',
-    'get_gexis_welcome_message',
-    'get_gexis_clear_chat_message',
-    'get_gexis_error_message',
-    'build_gexis_system_prompt',
-    'build_gexis_conversation_prompt',
-    'add_gexis_sign_off',
-    'GEXIS_MARKET_ANALYSIS_PROMPT',
-    'GEXIS_TRADE_RECOMMENDATION_PROMPT',
-    'GEXIS_EDUCATIONAL_PROMPT',
-    'GEXIS_BRAINSTORM_PROMPT',
+    'get_counselor_greeting',
+    'get_counselor_welcome_message',
+    'get_counselor_clear_chat_message',
+    'get_counselor_error_message',
+    'build_counselor_system_prompt',
+    'build_counselor_conversation_prompt',
+    'add_counselor_sign_off',
+    'COUNSELOR_MARKET_ANALYSIS_PROMPT',
+    'COUNSELOR_TRADE_RECOMMENDATION_PROMPT',
+    'COUNSELOR_EDUCATIONAL_PROMPT',
+    'COUNSELOR_BRAINSTORM_PROMPT',
     # Agentic capabilities
     'COMPREHENSIVE_KNOWLEDGE_AVAILABLE',
     'AGENTIC_TOOLS_AVAILABLE',

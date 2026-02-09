@@ -26,7 +26,7 @@ interface GammaAlert {
   timestamp: string
 }
 
-interface ARGUSData {
+interface WatchtowerData {
   alerts: GammaAlert[]
   danger_zones: {
     strike: number
@@ -67,7 +67,7 @@ function normalizeAlert(apiAlert: any): GammaAlert {
 export default function WATCHTOWERAlertsWidget() {
   const [expanded, setExpanded] = useState(true)
   const [loading, setLoading] = useState(true)
-  const [data, setData] = useState<ARGUSData | null>(null)
+  const [data, setData] = useState<WatchtowerData | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const fetchData = async () => {

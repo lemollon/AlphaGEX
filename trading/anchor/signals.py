@@ -20,24 +20,24 @@ logger = logging.getLogger(__name__)
 # Optional imports
 try:
     from quant.prophet_advisor import ProphetAdvisor
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
 
 try:
     from quant.fortress_ml_advisor import FortressMLAdvisor
-    ARES_ML_AVAILABLE = True
+    FORTRESS_ML_AVAILABLE = True
 except ImportError:
-    ARES_ML_AVAILABLE = False
+    FORTRESS_ML_AVAILABLE = False
     FortressMLAdvisor = None
 
 try:
-    from quant.chronicles_gex_calculator import KronosGEXCalculator
-    KRONOS_AVAILABLE = True
+    from quant.chronicles_gex_calculator import ChroniclesGEXCalculator
+    CHRONICLES_AVAILABLE = True
 except ImportError:
-    KRONOS_AVAILABLE = False
-    KronosGEXCalculator = None
+    CHRONICLES_AVAILABLE = False
+    ChroniclesGEXCalculator = None
 
 try:
     from data.gex_calculator import get_gex_calculator
@@ -105,12 +105,12 @@ class SignalGenerator:
             logger.error("ANCHOR: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # FORTRESS ML Advisor (PRIMARY - Iron Condor ML model with ~70% win rate)
-        self.ares_ml = None
-        if ARES_ML_AVAILABLE:
+        self.fortress_ml = None
+        if FORTRESS_ML_AVAILABLE:
             try:
-                self.ares_ml = FortressMLAdvisor()
-                if self.ares_ml.is_trained:
-                    logger.info(f"ANCHOR: ML Advisor v{self.ares_ml.model_version} loaded (PRIMARY)")
+                self.fortress_ml = FortressMLAdvisor()
+                if self.fortress_ml.is_trained:
+                    logger.info(f"ANCHOR: ML Advisor v{self.fortress_ml.model_version} loaded (PRIMARY)")
                 else:
                     logger.info("ANCHOR: ML Advisor initialized (not yet trained)")
             except Exception as e:
@@ -118,7 +118,7 @@ class SignalGenerator:
 
         # Prophet (BACKUP - used when ML not available)
         self.prophet = None
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             try:
                 self.prophet = ProphetAdvisor()
                 logger.info("ANCHOR: Prophet initialized (BACKUP)")
@@ -216,11 +216,11 @@ class SignalGenerator:
             gex = None
             from_spy = False
 
-            # KronosGEXCalculator uses get_gex_for_today_or_recent() - returns SPX data
-            if KRONOS_AVAILABLE and hasattr(self.gex_calculator, 'get_gex_for_today_or_recent'):
+            # ChroniclesGEXCalculator uses get_gex_for_today_or_recent() - returns SPX data
+            if CHRONICLES_AVAILABLE and hasattr(self.gex_calculator, 'get_gex_for_today_or_recent'):
                 gex_data, source = self.gex_calculator.get_gex_for_today_or_recent()
                 if gex_data:
-                    # KronosGEXCalculator returns GEXData dataclass, convert to dict
+                    # ChroniclesGEXCalculator returns GEXData dataclass, convert to dict
                     gex = {
                         'call_wall': getattr(gex_data, 'major_call_wall', 0) or 0,
                         'put_wall': getattr(gex_data, 'major_put_wall', 0) or 0,
@@ -318,7 +318,7 @@ class SignalGenerator:
         This model was trained on CHRONICLES backtests with ~70% win rate.
         It takes precedence over Prophet for trading decisions.
         """
-        if not self.ares_ml:
+        if not self.fortress_ml:
             return None
 
         try:
@@ -336,7 +336,7 @@ class SignalGenerator:
             call_wall = market_data.get('call_wall', spot * 1.02)
             gex_between_walls = 1 if put_wall <= spot <= call_wall else 0
 
-            prediction = self.ares_ml.predict(
+            prediction = self.fortress_ml.predict(
                 vix=market_data['vix'],
                 day_of_week=day_of_week,
                 price=spot,
@@ -373,7 +373,7 @@ class SignalGenerator:
 
         return None
 
-    def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
+    def get_prophet_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
         Get Prophet prediction with FULL context for audit trail (BACKUP SOURCE).
 
@@ -746,7 +746,7 @@ class SignalGenerator:
             prophet = prophet_data
             logger.info(f"[ANCHOR] Using pre-fetched Prophet data: advice={prophet.get('advice', 'UNKNOWN')}")
         else:
-            prophet = self.get_oracle_advice(market)
+            prophet = self.get_prophet_advice(market)
         oracle_win_prob = prophet.get('win_probability', 0) if prophet else 0
         oracle_confidence = prophet.get('confidence', 0.7) if prophet else 0.7
 

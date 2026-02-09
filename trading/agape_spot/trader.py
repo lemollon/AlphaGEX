@@ -177,7 +177,7 @@ class AgapeSpotTrader:
             # Step 2: Get Oracle advice
             oracle_data = None
             if market_data:
-                oracle_data = self.signals.get_oracle_advice(market_data)
+                oracle_data = self.signals.get_prophet_advice(market_data)
                 scan_context["oracle_data"] = oracle_data
 
             # Step 3: Manage existing positions for this ticker

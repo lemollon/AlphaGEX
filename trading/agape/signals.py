@@ -276,7 +276,7 @@ class AgapeSignalGenerator:
             logger.error(f"AGAPE Signals: Market data fetch failed: {e}")
             return None
 
-    def get_oracle_advice(self, market_data: Dict) -> Dict[str, Any]:
+    def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
         """Consult Prophet for trade approval.
 
         Adapts the Prophet call for crypto context - passes crypto microstructure
@@ -369,7 +369,7 @@ class AgapeSignalGenerator:
 
         # Step 2: Get Prophet advice
         if prophet_data is None:
-            prophet_data = self.get_oracle_advice(market_data)
+            prophet_data = self.get_prophet_advice(market_data)
 
         # Step 3: Check Prophet advice (ADVISORY ONLY - does not block trades)
         oracle_advice = prophet_data.get("advice", "UNAVAILABLE")

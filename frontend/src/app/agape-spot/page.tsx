@@ -671,7 +671,7 @@ function OverviewTab({ ticker }: { ticker: TickerId }) {
             <p className="text-white font-mono">{status?.cooldown_minutes ?? 5} min</p>
           </div>
           <div>
-            <span className="text-gray-500">Oracle</span>
+            <span className="text-gray-500">Prophet</span>
             <p className="text-white font-mono">{status?.require_oracle ? 'Required' : 'Advisory'}</p>
           </div>
           <div>
@@ -743,7 +743,7 @@ function PositionsTab({ ticker }: { ticker: TickerId }) {
               <p className="text-green-400 font-mono">{pos.take_profit ? fmtPrice(pos.take_profit) : 'No-Loss Trail'}</p>
             </div>
             <div>
-              <span className="text-gray-500">Oracle</span>
+              <span className="text-gray-500">Prophet</span>
               <p className="text-gray-300">
                 {pos.oracle_advice || 'Advisory'}
                 {pos.oracle_win_probability ? ` (${(pos.oracle_win_probability * 100).toFixed(0)}%)` : ''}
@@ -1068,7 +1068,7 @@ function LogsTab({ ticker }: { ticker: TickerId }) {
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Price</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Signal</th>
-              <th className="text-left px-3 py-2 text-gray-500 font-medium">Oracle</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Prophet</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Outcome</th>
             </tr>
           </thead>

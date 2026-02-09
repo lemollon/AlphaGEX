@@ -13,7 +13,7 @@ Tests all COUNSELOR agentic features to ensure they work before merge:
 7. API endpoints
 
 Run from Render shell:
-    python scripts/tests/test_gexis_e2e.py
+    python scripts/tests/test_counselor_e2e.py
 """
 
 import os
@@ -69,7 +69,7 @@ def test_knowledge_base():
             SYSTEM_ARCHITECTURE,
             TRADING_STRATEGIES,
             ECONOMIC_CALENDAR_KNOWLEDGE,
-            GEXIS_COMMANDS,
+            COUNSELOR_COMMANDS,
             get_full_knowledge
         )
 
@@ -97,12 +97,12 @@ def test_knowledge_base():
             log_fail("TRADING_STRATEGIES missing or incomplete")
             results["failed"] += 1
 
-        # Test GEXIS_COMMANDS
-        if GEXIS_COMMANDS and "/status" in GEXIS_COMMANDS:
-            log_pass("GEXIS_COMMANDS loaded (contains /status)")
+        # Test COUNSELOR_COMMANDS
+        if COUNSELOR_COMMANDS and "/status" in COUNSELOR_COMMANDS:
+            log_pass("COUNSELOR_COMMANDS loaded (contains /status)")
             results["passed"] += 1
         else:
-            log_fail("GEXIS_COMMANDS missing or incomplete")
+            log_fail("COUNSELOR_COMMANDS missing or incomplete")
             results["failed"] += 1
 
         # Test get_full_knowledge
@@ -135,17 +135,17 @@ def test_agentic_tools():
 
     try:
         from ai.counselor_tools import (
-            GEXIS_TOOLS,
+            COUNSELOR_TOOLS,
             execute_tool,
             get_upcoming_events,
-            get_gexis_briefing,
+            get_counselor_briefing,
             get_system_status,
             request_bot_action,
             confirm_bot_action,
             ECONOMIC_EVENTS
         )
 
-        # Test GEXIS_TOOLS registry
+        # Test COUNSELOR_TOOLS registry
         expected_tools = [
             "get_positions", "get_weights", "get_stats",
             "get_gex", "get_market", "get_vix",
@@ -155,7 +155,7 @@ def test_agentic_tools():
         ]
 
         for tool in expected_tools:
-            if tool in GEXIS_TOOLS:
+            if tool in COUNSELOR_TOOLS:
                 log_pass(f"Tool '{tool}' registered")
                 results["passed"] += 1
             else:
@@ -185,17 +185,17 @@ def test_agentic_tools():
             log_fail(f"get_upcoming_events() error: {e}")
             results["failed"] += 1
 
-        # Test get_gexis_briefing function
+        # Test get_counselor_briefing function
         try:
-            briefing = get_gexis_briefing()
+            briefing = get_counselor_briefing()
             if briefing and "Optionist Prime" in briefing:
-                log_pass("get_gexis_briefing() includes 'Optionist Prime'")
+                log_pass("get_counselor_briefing() includes 'Optionist Prime'")
                 results["passed"] += 1
             else:
-                log_warn("get_gexis_briefing() missing 'Optionist Prime'")
+                log_warn("get_counselor_briefing() missing 'Optionist Prime'")
                 results["passed"] += 1  # Still pass, might be API issue
         except Exception as e:
-            log_warn(f"get_gexis_briefing() warning: {e}")
+            log_warn(f"get_counselor_briefing() warning: {e}")
             results["passed"] += 1  # Allow to pass, API might not be up
 
         # Test request_bot_action
@@ -232,20 +232,20 @@ def test_personality_integration():
 
     try:
         from ai.counselor_personality import (
-            GEXIS_NAME,
+            COUNSELOR_NAME,
             USER_NAME,
-            GEXIS_IDENTITY,
-            build_gexis_system_prompt,
+            COUNSELOR_IDENTITY,
+            build_counselor_system_prompt,
             COMPREHENSIVE_KNOWLEDGE_AVAILABLE,
             AGENTIC_TOOLS_AVAILABLE
         )
 
         # Test constants
-        if GEXIS_NAME == "G.E.X.I.S.":
-            log_pass("GEXIS_NAME is correct")
+        if COUNSELOR_NAME == "G.E.X.I.S.":
+            log_pass("COUNSELOR_NAME is correct")
             results["passed"] += 1
         else:
-            log_fail(f"GEXIS_NAME is '{GEXIS_NAME}', expected 'G.E.X.I.S.'")
+            log_fail(f"COUNSELOR_NAME is '{COUNSELOR_NAME}', expected 'G.E.X.I.S.'")
             results["failed"] += 1
 
         if USER_NAME == "Optionist Prime":
@@ -270,28 +270,28 @@ def test_personality_integration():
             log_fail("AGENTIC_TOOLS_AVAILABLE = False")
             results["failed"] += 1
 
-        # Test GEXIS_IDENTITY content
-        if "Optionist Prime" in GEXIS_IDENTITY:
-            log_pass("GEXIS_IDENTITY mentions 'Optionist Prime'")
+        # Test COUNSELOR_IDENTITY content
+        if "Optionist Prime" in COUNSELOR_IDENTITY:
+            log_pass("COUNSELOR_IDENTITY mentions 'Optionist Prime'")
             results["passed"] += 1
         else:
-            log_fail("GEXIS_IDENTITY missing 'Optionist Prime'")
+            log_fail("COUNSELOR_IDENTITY missing 'Optionist Prime'")
             results["failed"] += 1
 
-        if "J.A.R.V.I.S." in GEXIS_IDENTITY:
-            log_pass("GEXIS_IDENTITY mentions 'J.A.R.V.I.S.'")
+        if "J.A.R.V.I.S." in COUNSELOR_IDENTITY:
+            log_pass("COUNSELOR_IDENTITY mentions 'J.A.R.V.I.S.'")
             results["passed"] += 1
         else:
-            log_fail("GEXIS_IDENTITY missing 'J.A.R.V.I.S.'")
+            log_fail("COUNSELOR_IDENTITY missing 'J.A.R.V.I.S.'")
             results["failed"] += 1
 
-        # Test build_gexis_system_prompt
+        # Test build_counselor_system_prompt
         try:
-            prompt = build_gexis_system_prompt()
+            prompt = build_counselor_system_prompt()
 
             # Should include comprehensive knowledge
             if len(prompt) > 5000:
-                log_pass(f"build_gexis_system_prompt() returned {len(prompt)} chars")
+                log_pass(f"build_counselor_system_prompt() returned {len(prompt)} chars")
                 results["passed"] += 1
             else:
                 log_warn(f"Prompt shorter than expected ({len(prompt)} chars)")
@@ -306,7 +306,7 @@ def test_personality_integration():
                 results["failed"] += 1
 
         except Exception as e:
-            log_fail(f"build_gexis_system_prompt() error: {e}")
+            log_fail(f"build_counselor_system_prompt() error: {e}")
             results["failed"] += 2
 
     except ImportError as e:

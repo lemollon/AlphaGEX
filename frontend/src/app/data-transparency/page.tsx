@@ -45,7 +45,7 @@ export default function DataTransparencyPage() {
   const [psychologyData, setPsychologyData] = useState<any>(null)
   const [volatilityData, setVolatilityData] = useState<any>(null)
   const [mlData, setMlData] = useState<any>(null)
-  const [argusData, setArgusData] = useState<any>(null)
+  const [watchtowerData, setWatchtowerData] = useState<any>(null)
   const [backtestData, setBacktestData] = useState<any>(null)
   const [walkforwardData, setWalkforwardData] = useState<any>(null)
   const [spreadwidthData, setSpreadwidthData] = useState<any>(null)
@@ -135,7 +135,7 @@ export default function DataTransparencyPage() {
           break
         case 'watchtower':
           endpoint = '/api/data-transparency/watchtower-gamma-details'
-          setter = setArgusData
+          setter = setWatchtowerData
           break
         case 'backtest':
           endpoint = '/api/data-transparency/backtest-trades-full'
@@ -967,11 +967,11 @@ export default function DataTransparencyPage() {
               renderDataTable(dteData, 'DTE Performance')
             ) : activeTab === 'watchtower' ? (
               <div className="space-y-6">
-                {argusData?.gamma_flips?.length > 0 && (
+                {watchtowerData?.gamma_flips?.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold text-white mb-4">Gamma Flips</h3>
                     <div className="space-y-2">
-                      {argusData.gamma_flips.slice(0, 20).map((flip: any, index: number) => (
+                      {watchtowerData.gamma_flips.slice(0, 20).map((flip: any, index: number) => (
                         <div key={index} className="bg-gray-900 rounded p-3 border border-gray-700">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
@@ -996,11 +996,11 @@ export default function DataTransparencyPage() {
                     </div>
                   </div>
                 )}
-                {argusData?.predictions_with_outcomes?.length > 0 && (
+                {watchtowerData?.predictions_with_outcomes?.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold text-white mb-4">Predictions with Outcomes</h3>
                     <div className="space-y-2">
-                      {argusData.predictions_with_outcomes.slice(0, 20).map((pred: any, index: number) => (
+                      {watchtowerData.predictions_with_outcomes.slice(0, 20).map((pred: any, index: number) => (
                         <div key={index} className="bg-gray-900 rounded p-3 border border-gray-700">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">

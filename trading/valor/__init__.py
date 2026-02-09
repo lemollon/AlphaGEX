@@ -43,7 +43,7 @@ from .models import (
 
 from .db import ValorDatabase
 
-from .signals import HERACLESSignalGenerator, get_gex_data_for_heracles
+from .signals import ValorSignalGenerator, get_gex_data_for_valor
 
 from .executor import TastytradeExecutor
 
@@ -66,8 +66,8 @@ __all__ = [
     # Database
     'ValorDatabase',
     # Signals
-    'HERACLESSignalGenerator',
-    'get_gex_data_for_heracles',
+    'ValorSignalGenerator',
+    'get_gex_data_for_valor',
     # Executor
     'TastytradeExecutor',
     # Trader

@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 # Import ML systems with fallbacks
 try:
     from quant.fortress_ml_advisor import FortressMLAdvisor, TradingAdvice
-    ARES_ML_AVAILABLE = True
+    FORTRESS_ML_AVAILABLE = True
 except ImportError as e:
-    ARES_ML_AVAILABLE = False
+    FORTRESS_ML_AVAILABLE = False
     logger.debug(f"FortressMLAdvisor not available: {e}")
 
 try:
@@ -305,7 +305,7 @@ class MLDataGatherer:
         gex_data: Dict
     ):
         """Gather Quant ML Advisor data"""
-        if not ARES_ML_AVAILABLE:
+        if not FORTRESS_ML_AVAILABLE:
             return
 
         try:
@@ -919,7 +919,7 @@ def gather_ml_data(
             gex_data={'net_gex': 1.5e9, ...},
             bot_name="FORTRESS"
         )
-        log_ares_scan(..., **ml_kwargs)
+        log_fortress_scan(..., **ml_kwargs)
     """
     gatherer = get_ml_data_gatherer()
     bundle = gatherer.gather_all(

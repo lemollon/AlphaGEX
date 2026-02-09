@@ -187,9 +187,9 @@ export default function ZeroDTEBacktestPage() {
   const [selectedForCompare, setSelectedForCompare] = useState<string[]>([])
 
   // Prophet AI state
-  const [oracleStatus, setProphetStatus] = useState<any>(null)
-  const [oracleLogs, setOracleLogs] = useState<any[]>([])
-  const [showOracleLogs, setShowOracleLogs] = useState(false)
+  const [prophetStatus, setProphetStatus] = useState<any>(null)
+  const [prophetLogs, setProphetLogs] = useState<any[]>([])
+  const [showProphetLogs, setShowProphetLogs] = useState(false)
 
   // Natural Language Backtest state
   const [nlQuery, setNlQuery] = useState('')
@@ -236,13 +236,13 @@ export default function ZeroDTEBacktestPage() {
   }
 
   // Load Prophet logs
-  const loadOracleLogs = async () => {
+  const loadProphetLogs = async () => {
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/prophet/logs?limit=20`)
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
-          setOracleLogs(data.logs || [])
+          setProphetLogs(data.logs || [])
         }
       }
     } catch (err) {
@@ -251,7 +251,7 @@ export default function ZeroDTEBacktestPage() {
   }
 
   // PERFORMANCE FIX: Single consolidated init call instead of 8+ separate calls
-  const loadKronosInit = async () => {
+  const loadChroniclesInit = async () => {
     try {
       const response = await fetch(`${API_URL}/api/zero-dte/init`)
       if (response.ok) {
@@ -299,17 +299,17 @@ export default function ZeroDTEBacktestPage() {
 
   // Load all data on mount using consolidated endpoint
   useEffect(() => {
-    loadKronosInit()
+    loadChroniclesInit()
   }, [])
 
   // Auto-refresh Prophet logs when panel is open
   useEffect(() => {
-    if (showOracleLogs) {
-      loadOracleLogs()
-      const interval = setInterval(loadOracleLogs, 3000) // Refresh every 3s
+    if (showProphetLogs) {
+      loadProphetLogs()
+      const interval = setInterval(loadProphetLogs, 3000) // Refresh every 3s
       return () => clearInterval(interval)
     }
-  }, [showOracleLogs])
+  }, [showProphetLogs])
 
   const loadPresets = async () => {
     try {
@@ -913,23 +913,23 @@ export default function ZeroDTEBacktestPage() {
                  'Checking...'}
               </div>
               {/* Prophet AI Status Indicator */}
-              {oracleStatus && (
+              {prophetStatus && (
                 <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs ${
-                  oracleStatus.claude_available ? 'bg-purple-900/50 text-purple-400' : 'bg-gray-800 text-gray-400'
+                  prophetStatus.claude_available ? 'bg-purple-900/50 text-purple-400' : 'bg-gray-800 text-gray-400'
                 }`}>
                   <div className={`w-2 h-2 rounded-full ${
-                    oracleStatus.claude_available ? 'bg-purple-400' : 'bg-gray-500'
+                    prophetStatus.claude_available ? 'bg-purple-400' : 'bg-gray-500'
                   }`} />
-                  Claude AI: {oracleStatus.claude_available ? 'Active' : 'Offline'}
+                  Claude AI: {prophetStatus.claude_available ? 'Active' : 'Offline'}
                 </div>
               )}
               <button
-                onClick={() => setShowOracleLogs(!showOracleLogs)}
+                onClick={() => setShowProphetLogs(!showProphetLogs)}
                 className="flex items-center gap-2 px-4 py-2 bg-purple-900/30 hover:bg-purple-900/50 rounded-lg text-sm text-purple-300"
               >
                 <Activity className="w-4 h-4" />
                 Prophet Logs
-                {showOracleLogs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                {showProphetLogs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
               <button
                 onClick={() => setShowDataInfo(!showDataInfo)}
@@ -943,7 +943,7 @@ export default function ZeroDTEBacktestPage() {
           </div>
 
           {/* Prophet Live Logs Panel */}
-          {showOracleLogs && (
+          {showProphetLogs && (
             <div className="bg-purple-900/20 border border-purple-800 rounded-lg p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-purple-300 flex items-center gap-2">
@@ -951,13 +951,13 @@ export default function ZeroDTEBacktestPage() {
                   Prophet AI Live Logs
                 </h3>
                 <div className="flex items-center gap-2">
-                  {oracleStatus && (
+                  {prophetStatus && (
                     <span className="text-xs text-gray-400">
-                      Model: {oracleStatus.claude_model || 'N/A'} | Version: {oracleStatus.model_version}
+                      Model: {prophetStatus.claude_model || 'N/A'} | Version: {prophetStatus.model_version}
                     </span>
                   )}
                   <button
-                    onClick={loadOracleLogs}
+                    onClick={loadProphetLogs}
                     className="p-1 hover:bg-purple-800/50 rounded"
                   >
                     <RefreshCw className="w-4 h-4 text-purple-400" />
@@ -965,12 +965,12 @@ export default function ZeroDTEBacktestPage() {
                 </div>
               </div>
               <div className="bg-black/30 rounded-lg p-3 max-h-48 overflow-y-auto font-mono text-xs">
-                {oracleLogs.length === 0 ? (
+                {prophetLogs.length === 0 ? (
                   <div className="text-gray-500 text-center py-4">
                     No Prophet logs yet. Run a backtest or make a prediction to see Claude AI activity.
                   </div>
                 ) : (
-                  oracleLogs.slice().reverse().map((log, idx) => (
+                  prophetLogs.slice().reverse().map((log, idx) => (
                     <div key={idx} className={`py-1 border-b border-gray-800 last:border-0 ${
                       log.type === 'ERROR' ? 'text-red-400' :
                       log.type === 'WARN' ? 'text-yellow-400' :

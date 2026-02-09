@@ -373,31 +373,31 @@ class TestStrategyRecommendationLogic:
             pytest.skip("Prophet advisor not available")
 
 
-class TestGetOracleSingleton:
-    """Tests for the get_oracle() singleton function"""
+class TestGetProphetSingleton:
+    """Tests for the get_prophet() singleton function"""
 
-    def test_get_oracle_returns_instance(self):
-        """Test that get_oracle() returns an ProphetAdvisor instance"""
+    def test_get_prophet_returns_instance(self):
+        """Test that get_prophet() returns an ProphetAdvisor instance"""
         try:
-            from quant.prophet_advisor import get_oracle, ProphetAdvisor
+            from quant.prophet_advisor import get_prophet, ProphetAdvisor
 
             with patch('quant.prophet_advisor.get_connection'):
-                prophet = get_oracle()
+                prophet = get_prophet()
                 assert isinstance(prophet, ProphetAdvisor)
         except ImportError:
-            pytest.skip("get_oracle not available")
+            pytest.skip("get_prophet not available")
 
-    def test_get_oracle_returns_same_instance(self):
-        """Test that get_oracle() returns the same instance (singleton)"""
+    def test_get_prophet_returns_same_instance(self):
+        """Test that get_prophet() returns the same instance (singleton)"""
         try:
-            from quant.prophet_advisor import get_oracle
+            from quant.prophet_advisor import get_prophet
 
             with patch('quant.prophet_advisor.get_connection'):
-                oracle1 = get_oracle()
-                oracle2 = get_oracle()
+                oracle1 = get_prophet()
+                oracle2 = get_prophet()
                 assert oracle1 is oracle2
         except ImportError:
-            pytest.skip("get_oracle not available")
+            pytest.skip("get_prophet not available")
 
 
 class TestOracleTrainingIntegration:
@@ -554,13 +554,13 @@ class TestBotOracleIntegration:
         try:
             from quant.prophet_advisor import (
                 ProphetAdvisor, MarketContext, GEXRegime,
-                StrategyType, get_oracle
+                StrategyType, get_prophet
             )
             assert ProphetAdvisor is not None
             assert MarketContext is not None
             assert GEXRegime is not None
             assert StrategyType is not None
-            assert get_oracle is not None
+            assert get_prophet is not None
         except ImportError:
             pytest.skip("Prophet components not available")
 

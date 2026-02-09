@@ -296,7 +296,7 @@ except ImportError as e:
     logger.warning(f"GIDEON module not available: {e}")
 
 
-def get_icarus_instance():
+def get_gideon_instance():
     """Get the GIDEON trader instance"""
     global gideon_trader
     if gideon_trader:
@@ -424,7 +424,7 @@ async def get_gideon_status():
     # Ensure database schema exists before querying
     _ensure_icarus_schema()
 
-    gideon = get_icarus_instance()
+    gideon = get_gideon_instance()
     heartbeat = _get_heartbeat('GIDEON')
 
     now = datetime.now(CENTRAL_TZ)
@@ -789,7 +789,7 @@ async def get_gideon_positions(
 
 
 @router.get("/positions/closed")
-async def get_icarus_closed_positions(
+async def get_gideon_closed_positions(
     limit: int = Query(100, description="Max positions to return")
 ):
     """Get closed GIDEON positions."""
@@ -1018,7 +1018,7 @@ async def run_icarus_cycle(
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
     """Manually trigger an GIDEON trading cycle."""
-    gideon = get_icarus_instance()
+    gideon = get_gideon_instance()
 
     if not gideon:
         raise HTTPException(status_code=503, detail="GIDEON not available")
@@ -1040,7 +1040,7 @@ async def skip_icarus_today(
     auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
 ):
     """Skip trading for the rest of today."""
-    gideon = get_icarus_instance()
+    gideon = get_gideon_instance()
 
     if not gideon:
         raise HTTPException(status_code=503, detail="GIDEON not initialized")
@@ -1062,13 +1062,13 @@ async def skip_icarus_today(
 @router.get("/prophet-advice")
 async def get_current_oracle_advice():
     """Get current Prophet advice for GIDEON."""
-    gideon = get_icarus_instance()
+    gideon = get_gideon_instance()
 
     if not gideon:
         raise HTTPException(status_code=503, detail="GIDEON not available")
 
     try:
-        advice = gideon.get_oracle_advice()
+        advice = gideon.get_prophet_advice()
 
         if not advice:
             return {
@@ -1087,9 +1087,9 @@ async def get_current_oracle_advice():
 
 
 @router.get("/live-pnl")
-async def get_icarus_live_pnl():
+async def get_gideon_live_pnl():
     """Get live P&L for open positions with mark-to-market valuation."""
-    gideon = get_icarus_instance()
+    gideon = get_gideon_instance()
     today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
     today_date = datetime.now(CENTRAL_TZ).date()
 
@@ -1612,7 +1612,7 @@ async def get_gideon_equity_curve(days: int = 30):
 
 
 @router.get("/equity-curve/intraday")
-async def get_icarus_intraday_equity(date: str = None):
+async def get_gideon_intraday_equity(date: str = None):
     """
     Get GIDEON intraday equity curve with 5-minute interval snapshots.
 

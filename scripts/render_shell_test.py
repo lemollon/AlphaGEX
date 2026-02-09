@@ -76,7 +76,7 @@ print("\n3. Day of Week in GIDEON:")
 try:
     import inspect
     from trading.gideon.signals import SignalGenerator
-    src = inspect.getsource(SignalGenerator.get_oracle_advice)
+    src = inspect.getsource(SignalGenerator.get_prophet_advice)
     if 'day_of_week=now_ct.weekday()' in src:
         print("   ✅ PASS: day_of_week passed to Prophet")
     else:

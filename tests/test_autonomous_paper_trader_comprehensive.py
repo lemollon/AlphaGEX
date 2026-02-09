@@ -324,20 +324,20 @@ class TestMarketRegimeIntegration:
         assert trader.regime_classifier is not None
 
 
-class TestOracleIntegration:
+class TestProphetIntegration:
     """Tests for Prophet AI integration"""
 
     @patch('core.autonomous_paper_trader.get_connection')
     @patch('core.autonomous_paper_trader.get_costs_calculator')
-    @patch('core.autonomous_paper_trader.ORACLE_AVAILABLE', True)
+    @patch('core.autonomous_paper_trader.PROPHET_AVAILABLE', True)
     @patch('core.autonomous_paper_trader.ProphetAdvisor')
-    def test_oracle_initialized(self, mock_oracle, mock_costs, mock_conn):
+    def test_prophet_initialized(self, mock_prophet, mock_costs, mock_conn):
         """Test that Prophet is initialized when available"""
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = None
         mock_conn.return_value.cursor.return_value = mock_cursor
         mock_costs.return_value = MagicMock()
-        mock_oracle.return_value = MagicMock()
+        mock_prophet.return_value = MagicMock()
 
         from core.autonomous_paper_trader import AutonomousPaperTrader
         trader = AutonomousPaperTrader()

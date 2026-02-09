@@ -772,7 +772,7 @@ async def export_logs(
     - ai_recommendations
     - wheel_activity
     - gex_changes
-    - ares_ml
+    - fortress_ml
     """
     # Get data based on log type
     if log_type == "trading_decisions":

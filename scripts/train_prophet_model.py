@@ -34,7 +34,7 @@ def main():
 
     try:
         from quant.prophet_advisor import (
-            get_oracle, auto_train, get_training_status,
+            get_prophet, auto_train, get_training_status,
             get_pending_outcomes_count
         )
 

@@ -184,9 +184,9 @@ def check_and_train_oracle(force: bool = False):
     ct_now = get_central_time()
 
     try:
-        from quant.prophet_advisor import auto_train, get_pending_outcomes_count, get_oracle
+        from quant.prophet_advisor import auto_train, get_pending_outcomes_count, get_prophet
 
-        prophet = get_oracle()
+        prophet = get_prophet()
         pending_count = get_pending_outcomes_count()
 
         print(f"\n🔮 Prophet Training Check ({ct_now.strftime('%Y-%m-%d %I:%M %p CT')})")

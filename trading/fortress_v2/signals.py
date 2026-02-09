@@ -29,26 +29,26 @@ logger = logging.getLogger(__name__)
 
 # Optional imports with fallbacks
 try:
-    from quant.prophet_advisor import ProphetAdvisor, OraclePrediction
-    ORACLE_AVAILABLE = True
+    from quant.prophet_advisor import ProphetAdvisor, ProphetPrediction
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
 
 try:
     from quant.fortress_ml_advisor import FortressMLAdvisor, MLPrediction
-    ARES_ML_AVAILABLE = True
+    FORTRESS_ML_AVAILABLE = True
 except ImportError:
-    ARES_ML_AVAILABLE = False
+    FORTRESS_ML_AVAILABLE = False
     FortressMLAdvisor = None
     MLPrediction = None
 
 try:
-    from quant.chronicles_gex_calculator import KronosGEXCalculator
-    KRONOS_AVAILABLE = True
+    from quant.chronicles_gex_calculator import ChroniclesGEXCalculator
+    CHRONICLES_AVAILABLE = True
 except ImportError:
-    KRONOS_AVAILABLE = False
-    KronosGEXCalculator = None
+    CHRONICLES_AVAILABLE = False
+    ChroniclesGEXCalculator = None
 
 try:
     from data.gex_calculator import get_gex_calculator
@@ -120,12 +120,12 @@ class SignalGenerator:
             logger.error("FORTRESS: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # FORTRESS ML Advisor (PRIMARY - trained on CHRONICLES backtests with ~70% win rate)
-        self.ares_ml = None
-        if ARES_ML_AVAILABLE:
+        self.fortress_ml = None
+        if FORTRESS_ML_AVAILABLE:
             try:
-                self.ares_ml = FortressMLAdvisor()
-                if self.ares_ml.is_trained:
-                    logger.info(f"FORTRESS SignalGenerator: ML Advisor v{self.ares_ml.model_version} loaded (PRIMARY)")
+                self.fortress_ml = FortressMLAdvisor()
+                if self.fortress_ml.is_trained:
+                    logger.info(f"FORTRESS SignalGenerator: ML Advisor v{self.fortress_ml.model_version} loaded (PRIMARY)")
                 else:
                     logger.info("FORTRESS SignalGenerator: ML Advisor initialized (not yet trained)")
             except Exception as e:
@@ -133,7 +133,7 @@ class SignalGenerator:
 
         # Prophet Advisor (BACKUP - used when ML not available)
         self.prophet = None
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             try:
                 self.prophet = ProphetAdvisor()
                 logger.info("FORTRESS SignalGenerator: Prophet initialized (BACKUP)")
@@ -594,7 +594,7 @@ class SignalGenerator:
         - suggested_sd_multiplier: Strike width recommendation
         - top_factors: Feature importances explaining the decision
         """
-        if not self.ares_ml:
+        if not self.fortress_ml:
             return None
 
         try:
@@ -614,7 +614,7 @@ class SignalGenerator:
             gex_between_walls = 1 if put_wall <= spot <= call_wall else 0
 
             # Get ML prediction
-            prediction = self.ares_ml.predict(
+            prediction = self.fortress_ml.predict(
                 vix=market_data['vix'],
                 day_of_week=day_of_week,
                 price=spot,
@@ -654,7 +654,7 @@ class SignalGenerator:
 
         return None
 
-    def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
+    def get_prophet_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
         Get Prophet ML advice if available.
 
@@ -689,7 +689,7 @@ class SignalGenerator:
 
         try:
             # Build context for Prophet using correct field names
-            from quant.prophet_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.prophet_advisor import MarketContext as ProphetMarketContext, GEXRegime
 
             # Convert gex_regime string to GEXRegime enum
             gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
@@ -698,7 +698,7 @@ class SignalGenerator:
             except (KeyError, AttributeError):
                 gex_regime = GEXRegime.NEUTRAL
 
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=market_data['spot_price'],
                 vix=market_data['vix'],
                 gex_put_wall=market_data['put_wall'],
@@ -709,10 +709,10 @@ class SignalGenerator:
                 expected_move_pct=(market_data.get('expected_move', 0) / market_data.get('spot_price', 1) * 100) if market_data.get('spot_price') else 0,
             )
 
-            # Call correct method: get_ares_advice instead of get_prediction
+            # Call correct method: get_fortress_advice instead of get_prediction
             # Pass all VIX filtering parameters for proper skip logic
             # NOTE: VIX skips are disabled to allow daily trading (only extreme VIX > 50 blocked in check_vix_filter)
-            prediction = self.prophet.get_ares_advice(
+            prediction = self.prophet.get_fortress_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=True,  # Enable Claude for transparency logging
@@ -863,7 +863,7 @@ class SignalGenerator:
             prophet = prophet_data
             logger.info(f"[FORTRESS] Using pre-fetched Prophet data: advice={prophet.get('advice', 'UNKNOWN')}")
         else:
-            prophet = self.get_oracle_advice(market_data)
+            prophet = self.get_prophet_advice(market_data)
         oracle_win_prob = prophet.get('win_probability', 0) if prophet else 0
         oracle_confidence = prophet.get('confidence', 0.7) if prophet else 0.7
         oracle_advice = prophet.get('advice', 'SKIP_TODAY') if prophet else 'SKIP_TODAY'

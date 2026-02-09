@@ -208,13 +208,13 @@ def main():
         print(f"  Backtest results: {backtest_count}")
 
         # Check CHRONICLES memory
-        kronos_count = 0
+        chronicles_count = 0
         try:
-            cursor.execute("SELECT COUNT(*) FROM kronos_memory")
-            kronos_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM chronicles_memory")
+            chronicles_count = cursor.fetchone()[0]
         except Exception:
             pass
-        print(f"  CHRONICLES memory: {kronos_count}")
+        print(f"  CHRONICLES memory: {chronicles_count}")
 
         # Check zero_dte_backtest_results (main source)
         zero_dte_count = 0
@@ -225,7 +225,7 @@ def main():
             pass
         print(f"  Zero-DTE backtest results: {zero_dte_count}")
 
-        total = live_count + backtest_count + kronos_count + zero_dte_count
+        total = live_count + backtest_count + chronicles_count + zero_dte_count
         print_result("Training data available", total > 0, f"Total potential samples: {total}")
 
     except Exception as e:

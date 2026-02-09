@@ -2,8 +2,8 @@
 COUNSELOR Enhancements Test Suite
 
 Comprehensive tests for:
-- Caching layer (GEXISCache)
-- Tracing system (GEXISTracer)
+- Caching layer (CounselorCache)
+- Tracing system (CounselorTracer)
 - New commands (/market-hours, /strategy-performance, /suggestion, /risk)
 - Integration tests
 """
@@ -25,14 +25,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # CACHE TESTS
 # =============================================================================
 
-class TestGEXISCache:
+class TestCounselorCache:
     """Test the COUNSELOR caching layer."""
 
     @pytest.fixture
     def cache(self):
         """Create a fresh cache instance for each test."""
-        from ai.counselor_cache import GEXISCache
-        return GEXISCache(max_entries=100)
+        from ai.counselor_cache import CounselorCache
+        return CounselorCache(max_entries=100)
 
     def test_cache_set_and_get(self, cache):
         """Test basic set and get operations."""
@@ -191,8 +191,8 @@ class TestGEXISCache:
 
     def test_cache_max_entries_cleanup(self):
         """Test that cache cleans up when max entries reached."""
-        from ai.counselor_cache import GEXISCache
-        cache = GEXISCache(max_entries=10)
+        from ai.counselor_cache import CounselorCache
+        cache = CounselorCache(max_entries=10)
 
         # Add 15 entries
         for i in range(15):
@@ -274,14 +274,14 @@ class TestCacheConvenienceFunctions:
 # TRACING TESTS
 # =============================================================================
 
-class TestGEXISTracer:
+class TestCounselorTracer:
     """Test the COUNSELOR tracing system."""
 
     @pytest.fixture
     def tracer(self):
         """Create a fresh tracer instance for each test."""
-        from ai.counselor_tracing import GEXISTracer
-        return GEXISTracer(service_name="test")
+        from ai.counselor_tracing import CounselorTracer
+        return CounselorTracer(service_name="test")
 
     def test_trace_context_manager(self, tracer):
         """Test basic trace context manager."""
@@ -676,17 +676,17 @@ class TestExtendedCommandRegistry:
 # INTEGRATION TESTS
 # =============================================================================
 
-class TestGEXISEnhancementsIntegration:
+class TestCounselorEnhancementsIntegration:
     """Integration tests for COUNSELOR enhancements."""
 
     def test_cache_with_tracing(self):
         """Test that caching works with tracing enabled."""
-        from ai.counselor_cache import counselor_cache, GEXISCache
-        from ai.counselor_tracing import gexis_tracer
+        from ai.counselor_cache import counselor_cache, CounselorCache
+        from ai.counselor_tracing import counselor_tracer
 
         counselor_cache.clear()
 
-        with gexis_tracer.trace("integration.cache_test") as span:
+        with counselor_tracer.trace("integration.cache_test") as span:
             # First call - cache miss
             result1 = counselor_cache.get("integration_key")
             span.add_event("cache_miss", {"key": "integration_key"})
@@ -729,13 +729,13 @@ class TestGEXISEnhancementsIntegration:
     def test_tracing_captures_command_execution(self):
         """Test that tracing captures command execution."""
         from ai.counselor_commands import execute_market_hours_command
-        from ai.counselor_tracing import gexis_tracer
+        from ai.counselor_tracing import counselor_tracer
 
-        initial_count = gexis_tracer.get_metrics()['total_spans']
+        initial_count = counselor_tracer.get_metrics()['total_spans']
 
         execute_market_hours_command()
 
-        final_count = gexis_tracer.get_metrics()['total_spans']
+        final_count = counselor_tracer.get_metrics()['total_spans']
 
         # Should have created at least one span
         assert final_count > initial_count
@@ -744,7 +744,7 @@ class TestGEXISEnhancementsIntegration:
         """Test complete command flow with cache and tracing."""
         from ai.counselor_commands import execute_extended_command
         from ai.counselor_cache import counselor_cache
-        from ai.counselor_tracing import gexis_tracer, RequestContext
+        from ai.counselor_tracing import counselor_tracer, RequestContext
 
         counselor_cache.clear()
 
@@ -764,7 +764,7 @@ class TestGEXISEnhancementsIntegration:
         assert cache_stats['sets'] > 0
 
         # Verify trace metrics
-        trace_metrics = gexis_tracer.get_metrics()
+        trace_metrics = counselor_tracer.get_metrics()
         assert trace_metrics['total_spans'] > 0
 
 
@@ -777,8 +777,8 @@ class TestEdgeCases:
 
     def test_cache_handles_none_values(self):
         """Test that cache handles None values correctly."""
-        from ai.counselor_cache import GEXISCache
-        cache = GEXISCache()
+        from ai.counselor_cache import CounselorCache
+        cache = CounselorCache()
 
         # Setting None should work
         cache.set("none_key", None, ttl=60)
@@ -790,8 +790,8 @@ class TestEdgeCases:
 
     def test_cache_handles_large_values(self):
         """Test cache with large values."""
-        from ai.counselor_cache import GEXISCache
-        cache = GEXISCache()
+        from ai.counselor_cache import CounselorCache
+        cache = CounselorCache()
 
         large_value = {"data": "x" * 100000}  # 100KB string
         cache.set("large_key", large_value, ttl=60)
@@ -802,8 +802,8 @@ class TestEdgeCases:
 
     def test_trace_with_exception_recovery(self):
         """Test that tracing recovers from exceptions properly."""
-        from ai.counselor_tracing import GEXISTracer
-        tracer = GEXISTracer()
+        from ai.counselor_tracing import CounselorTracer
+        tracer = CounselorTracer()
 
         # Outer span should complete successfully
         with tracer.trace("outer") as outer_span:
@@ -838,8 +838,8 @@ class TestEdgeCases:
 
     def test_concurrent_cache_access(self):
         """Test concurrent cache access doesn't cause issues."""
-        from ai.counselor_cache import GEXISCache
-        cache = GEXISCache()
+        from ai.counselor_cache import CounselorCache
+        cache = CounselorCache()
         errors = []
         results = []
 
@@ -881,8 +881,8 @@ class TestPerformance:
 
     def test_cache_set_performance(self):
         """Test cache set operation performance."""
-        from ai.counselor_cache import GEXISCache
-        cache = GEXISCache()
+        from ai.counselor_cache import CounselorCache
+        cache = CounselorCache()
 
         start = time.time()
         for i in range(1000):
@@ -894,8 +894,8 @@ class TestPerformance:
 
     def test_cache_get_performance(self):
         """Test cache get operation performance."""
-        from ai.counselor_cache import GEXISCache
-        cache = GEXISCache()
+        from ai.counselor_cache import CounselorCache
+        cache = CounselorCache()
 
         # Pre-populate
         for i in range(1000):
@@ -911,8 +911,8 @@ class TestPerformance:
 
     def test_trace_overhead(self):
         """Test that tracing overhead is acceptable for real-world use."""
-        from ai.counselor_tracing import GEXISTracer
-        tracer = GEXISTracer()
+        from ai.counselor_tracing import CounselorTracer
+        tracer = CounselorTracer()
 
         def work():
             """Simulate realistic work (I/O-like delay)."""
@@ -1004,14 +1004,14 @@ class TestTokenBucket:
         assert bucket.available_tokens >= 4
 
 
-class TestGEXISRateLimiter:
+class TestCounselorRateLimiter:
     """Test the COUNSELOR rate limiter."""
 
     @pytest.fixture
     def limiter(self):
         """Create a fresh rate limiter for each test."""
-        from ai.counselor_rate_limiter import GEXISRateLimiter
-        return GEXISRateLimiter()
+        from ai.counselor_rate_limiter import CounselorRateLimiter
+        return CounselorRateLimiter()
 
     def test_rate_limiter_allows_initial_requests(self, limiter):
         """Test that initial requests are allowed."""

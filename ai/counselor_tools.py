@@ -548,7 +548,7 @@ def is_market_open() -> bool:
     return True
 
 
-def get_gexis_briefing() -> str:
+def get_counselor_briefing() -> str:
     """
     Generate a comprehensive proactive briefing for Optionist Prime.
     Called when chat opens or /briefing command is used.
@@ -642,11 +642,11 @@ def get_gexis_briefing() -> str:
 
     # Trading recommendation
     if high_impact_today:
-        briefing_parts.append(f"\nGEXIS RECOMMENDATION: Consider reducing position size or waiting until after the event settles.")
+        briefing_parts.append(f"\nCOUNSELOR RECOMMENDATION: Consider reducing position size or waiting until after the event settles.")
     elif market_open:
-        briefing_parts.append(f"\nGEXIS RECOMMENDATION: Systems nominal. Ready for your trading decisions, Prime.")
+        briefing_parts.append(f"\nCOUNSELOR RECOMMENDATION: Systems nominal. Ready for your trading decisions, Prime.")
     else:
-        briefing_parts.append(f"\nGEXIS RECOMMENDATION: Market closed. Good time to review strategies and prepare for next session.")
+        briefing_parts.append(f"\nCOUNSELOR RECOMMENDATION: Market closed. Good time to review strategies and prepare for next session.")
 
     return "\n".join(briefing_parts)
 
@@ -767,7 +767,7 @@ def analyze_trade_opportunity(symbol: str = "SPY") -> Dict:
 # TOOL REGISTRY - All tools COUNSELOR can use
 # =============================================================================
 
-GEXIS_TOOLS = {
+COUNSELOR_TOOLS = {
     # Query tools
     "get_positions": {
         "function": get_fortress_positions,
@@ -857,7 +857,7 @@ GEXIS_TOOLS = {
 
 def execute_tool(tool_name: str, **kwargs) -> Any:
     """Execute a COUNSELOR tool by name"""
-    tool = GEXIS_TOOLS.get(tool_name)
+    tool = COUNSELOR_TOOLS.get(tool_name)
     if not tool:
         return {"error": f"Unknown tool: {tool_name}"}
 
@@ -875,5 +875,5 @@ def list_available_tools() -> List[Dict]:
             "description": info["description"],
             "category": info["category"]
         }
-        for name, info in GEXIS_TOOLS.items()
+        for name, info in COUNSELOR_TOOLS.items()
     ]

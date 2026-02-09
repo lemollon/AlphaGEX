@@ -9,7 +9,7 @@ Comprehensive test suite to verify:
 3. Feature completeness
 4. New max loss rule implementation
 
-Run: python tests/test_heracles_audit.py --api-url https://your-app.render.com
+Run: python tests/test_valor_audit.py --api-url https://your-app.render.com
 """
 
 import argparse
@@ -25,7 +25,7 @@ except ImportError:
     sys.exit(1)
 
 
-class HERACLESAuditTester:
+class ValorAuditTester:
     """Comprehensive VALOR implementation tester"""
 
     def __init__(self, api_url: str):
@@ -513,6 +513,6 @@ if __name__ == "__main__":
                         help="API base URL (e.g., https://your-app.render.com)")
     args = parser.parse_args()
 
-    tester = HERACLESAuditTester(api_url=args.api_url)
+    tester = ValorAuditTester(api_url=args.api_url)
     exit_code = tester.run_all()
     sys.exit(exit_code)

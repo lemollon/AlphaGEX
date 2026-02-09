@@ -181,7 +181,7 @@ function formatCurrency(value: number): string {
   }).format(value)
 }
 
-function parseOracleTopFactors(topFactors: string): Array<{ factor: string; impact: number }> {
+function parseProphetTopFactors(topFactors: string): Array<{ factor: string; impact: number }> {
   if (!topFactors) return []
   try {
     const parsed = JSON.parse(topFactors)
@@ -268,7 +268,7 @@ function exportTradesToCSV(positions: IronCondorPosition[], filename: string) {
 
 function PositionCard({ position, isOpen }: { position: IronCondorPosition; isOpen: boolean }) {
   const [expanded, setExpanded] = useState(false)
-  const topFactors = parseOracleTopFactors(position.oracle_top_factors)
+  const topFactors = parseProphetTopFactors(position.oracle_top_factors)
 
   const pnl = isOpen ? 0 : (position.realized_pnl || 0)
   const isPositive = pnl >= 0

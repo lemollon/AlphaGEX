@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-class TestGEXISEndpoints:
+class TestCounselorEndpoints:
     """Test COUNSELOR API endpoints"""
 
     @pytest.fixture
@@ -38,20 +38,20 @@ class TestGEXISEndpoints:
         }
         return mock_client
 
-    def test_gexis_info_returns_correct_structure(self):
+    def test_counselor_info_returns_correct_structure(self):
         """Test that /counselor/info returns correct data structure"""
         # Import here to avoid circular imports
-        from ai.counselor_personality import GEXIS_NAME, GEXIS_FULL_NAME, USER_NAME
+        from ai.counselor_personality import COUNSELOR_NAME, COUNSELOR_FULL_NAME, USER_NAME
 
-        assert GEXIS_NAME == "G.E.X.I.S."
-        assert GEXIS_FULL_NAME == "Gamma Exposure eXpert Intelligence System"
+        assert COUNSELOR_NAME == "G.E.X.I.S."
+        assert COUNSELOR_FULL_NAME == "Gamma Exposure eXpert Intelligence System"
         assert USER_NAME == "Optionist Prime"
 
-    def test_gexis_welcome_message_has_greeting(self):
+    def test_counselor_welcome_message_has_greeting(self):
         """Test welcome message includes time-based greeting"""
-        from ai.counselor_personality import get_gexis_welcome_message, USER_NAME
+        from ai.counselor_personality import get_counselor_welcome_message, USER_NAME
 
-        message = get_gexis_welcome_message()
+        message = get_counselor_welcome_message()
 
         assert USER_NAME in message
         assert any(greeting in message for greeting in ["Good morning", "Good afternoon", "Good evening"])
@@ -65,14 +65,14 @@ class TestGEXISEndpoints:
         greeting = get_time_greeting()
         assert greeting in ["Good morning", "Good afternoon", "Good evening"]
 
-    def test_gexis_error_messages(self):
+    def test_counselor_error_messages(self):
         """Test error message generation"""
-        from ai.counselor_personality import get_gexis_error_message, USER_NAME
+        from ai.counselor_personality import get_counselor_error_message, USER_NAME
 
-        general_error = get_gexis_error_message("general")
+        general_error = get_counselor_error_message("general")
         assert USER_NAME in general_error
 
-        api_error = get_gexis_error_message("api")
+        api_error = get_counselor_error_message("api")
         assert USER_NAME in api_error
         assert "data" in api_error.lower() or "connect" in api_error.lower()
 

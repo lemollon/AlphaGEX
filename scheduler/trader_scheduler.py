@@ -74,22 +74,22 @@ import json
 # Import CORNERSTONE (SPX Wheel Trader)
 try:
     from trading.spx_wheel_system import SPXWheelTrader, TradingMode
-    ATLAS_AVAILABLE = True
+    CORNERSTONE_AVAILABLE = True
 except ImportError:
-    ATLAS_AVAILABLE = False
+    CORNERSTONE_AVAILABLE = False
     SPXWheelTrader = None
     TradingMode = None
     print("Warning: SPXWheelTrader not available. CORNERSTONE bot will be disabled.")
 
 # Import FORTRESS V2 (SPY Iron Condors)
 try:
-    from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode as ARESTradingMode
-    ARES_AVAILABLE = True
+    from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode as FortressTradingMode
+    FORTRESS_AVAILABLE = True
 except ImportError:
-    ARES_AVAILABLE = False
+    FORTRESS_AVAILABLE = False
     FortressTrader = None
     FortressConfig = None
-    ARESTradingMode = None
+    FortressTradingMode = None
     print("Warning: FORTRESS V2 not available. FORTRESS bot will be disabled.")
 
 # Import SOLOMON V2 (SPY Directional Spreads)
@@ -116,24 +116,24 @@ except ImportError:
 
 # Import GIDEON (Aggressive Directional Spreads - relaxed GEX filters)
 try:
-    from trading.gideon import GideonTrader, GideonConfig, TradingMode as ICARUSTradingMode
-    ICARUS_AVAILABLE = True
+    from trading.gideon import GideonTrader, GideonConfig, TradingMode as GideonTradingMode
+    GIDEON_AVAILABLE = True
 except ImportError:
-    ICARUS_AVAILABLE = False
+    GIDEON_AVAILABLE = False
     GideonTrader = None
     GideonConfig = None
-    ICARUSTradingMode = None
+    GideonTradingMode = None
     print("Warning: GIDEON not available. Aggressive directional trading will be disabled.")
 
 # Import SAMSON (Aggressive SPX Iron Condors - daily trading)
 try:
-    from trading.samson import SamsonTrader, SamsonConfig, TradingMode as TITANTradingMode
-    TITAN_AVAILABLE = True
+    from trading.samson import SamsonTrader, SamsonConfig, TradingMode as SamsonTradingMode
+    SAMSON_AVAILABLE = True
 except ImportError:
-    TITAN_AVAILABLE = False
+    SAMSON_AVAILABLE = False
     SamsonTrader = None
     SamsonConfig = None
-    TITANTradingMode = None
+    SamsonTradingMode = None
     print("Warning: SAMSON not available. Aggressive SPX Iron Condor trading will be disabled.")
 
 # Import JUBILEE (Box Spread Synthetic Borrowing)
@@ -161,13 +161,13 @@ except ImportError:
 
 # Import VALOR (MES Futures Scalping with GEX)
 try:
-    from trading.valor import ValorTrader, ValorConfig, TradingMode as HERACLESTradingMode
-    HERACLES_AVAILABLE = True
+    from trading.valor import ValorTrader, ValorConfig, TradingMode as ValorTradingMode
+    VALOR_AVAILABLE = True
 except ImportError:
-    HERACLES_AVAILABLE = False
+    VALOR_AVAILABLE = False
     ValorTrader = None
     ValorConfig = None
-    HERACLESTradingMode = None
+    ValorTradingMode = None
     print("Warning: VALOR not available. MES futures trading will be disabled.")
 
 # Import AGAPE (ETH Micro Futures with Crypto GEX)
@@ -353,18 +353,18 @@ except ImportError:
 # Import ProphetAdvisor for LAZARUS signal generation and feedback loop
 try:
     from quant.prophet_advisor import (
-        ProphetAdvisor, MarketContext as OracleMarketContext, GEXRegime, TradingAdvice,
-        BotName as OracleBotName, TradeOutcome,  # Issue #2: LAZARUS feedback loop
-        auto_train as oracle_auto_train  # Migration 023: Feedback loop integration
+        ProphetAdvisor, MarketContext as ProphetMarketContext, GEXRegime, TradingAdvice,
+        BotName as ProphetBotName, TradeOutcome,  # Issue #2: LAZARUS feedback loop
+        auto_train as prophet_auto_train  # Migration 023: Feedback loop integration
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleMarketContext = None
+    ProphetMarketContext = None
     GEXRegime = None
     TradingAdvice = None
-    oracle_auto_train = None
+    prophet_auto_train = None
 
 # Import Proverbs Enhanced for strategy-level feedback
 try:
@@ -374,7 +374,7 @@ except ImportError:
     PROVERBS_ENHANCED_AVAILABLE = False
     get_proverbs_enhanced = None
     ProverbsEnhanced = None
-    OracleBotName = None
+    ProphetBotName = None
     TradeOutcome = None
     print("Warning: ProphetAdvisor not available for LAZARUS.")
     run_validation = None
@@ -384,18 +384,18 @@ except ImportError:
 # Import scan activity logger for comprehensive scan visibility
 try:
     from trading.scan_activity_logger import (
-        log_ares_scan, log_solomon_scan, log_anchor_scan, log_icarus_scan, log_titan_scan,
+        log_fortress_scan, log_solomon_scan, log_anchor_scan, log_gideon_scan, log_samson_scan,
         ScanOutcome
     )
     SCAN_ACTIVITY_LOGGER_AVAILABLE = True
     print("✅ Scan activity logger loaded - scans will be logged to database")
 except ImportError as e:
     SCAN_ACTIVITY_LOGGER_AVAILABLE = False
-    log_ares_scan = None
+    log_fortress_scan = None
     log_solomon_scan = None
     log_anchor_scan = None
-    log_icarus_scan = None
-    log_titan_scan = None
+    log_gideon_scan = None
+    log_samson_scan = None
     ScanOutcome = None
     print(f"❌ WARNING: Scan activity logger NOT available: {e}")
     print("   Scans will NOT be logged to the database!")
@@ -453,7 +453,7 @@ class AutonomousTraderScheduler:
         # CRITICAL: Wrap in try-except to prevent scheduler crash if LAZARUS init fails
         self.trader = None
         self.api_client = None
-        self.phoenix_oracle = None  # Prophet for LAZARUS signal validation
+        self.lazarus_prophet = None  # Prophet for LAZARUS signal validation
         try:
             self.trader = AutonomousPaperTrader(
                 symbol='SPY',
@@ -461,8 +461,8 @@ class AutonomousTraderScheduler:
             )
             self.api_client = TradingVolatilityAPI()
             # Initialize Prophet for LAZARUS signal validation
-            if ORACLE_AVAILABLE:
-                self.phoenix_oracle = ProphetAdvisor()
+            if PROPHET_AVAILABLE:
+                self.lazarus_prophet = ProphetAdvisor()
                 logger.info(f"✅ LAZARUS initialized with ${CAPITAL_ALLOCATION['LAZARUS']:,} capital + Prophet")
             else:
                 logger.info(f"✅ LAZARUS initialized with ${CAPITAL_ALLOCATION['LAZARUS']:,} capital (no Prophet)")
@@ -474,7 +474,7 @@ class AutonomousTraderScheduler:
         # Capital: $400,000 (40% of total)
         # LIVE mode: Executes real trades on Tradier (production API for SPX)
         self.cornerstone_trader = None
-        if ATLAS_AVAILABLE:
+        if CORNERSTONE_AVAILABLE:
             try:
                 self.cornerstone_trader = SPXWheelTrader(
                     mode=TradingMode.LIVE,
@@ -489,9 +489,9 @@ class AutonomousTraderScheduler:
         # Capital: Uses AlphaGEX internal capital allocation
         # LIVE mode: Sends orders to Tradier SANDBOX account for testing
         self.fortress_trader = None
-        if ARES_AVAILABLE:
+        if FORTRESS_AVAILABLE:
             try:
-                config = FortressConfig(mode=ARESTradingMode.LIVE)
+                config = FortressConfig(mode=FortressTradingMode.LIVE)
                 self.fortress_trader = FortressTrader(config=config)
                 logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
             except Exception as e:
@@ -528,9 +528,9 @@ class AutonomousTraderScheduler:
         # Uses relaxed parameters vs SOLOMON: 10% wall filter, 40% min win prob, 4% risk
         # PAPER mode: Simulated trades with AlphaGEX internal capital, production Tradier for quotes
         self.gideon_trader = None
-        if ICARUS_AVAILABLE:
+        if GIDEON_AVAILABLE:
             try:
-                config = GideonConfig(mode=ICARUSTradingMode.PAPER)
+                config = GideonConfig(mode=GideonTradingMode.PAPER)
                 self.gideon_trader = GideonTrader(config=config)
                 logger.info(f"✅ GIDEON initialized (Aggressive Directional Spreads, PAPER mode - AlphaGEX internal)")
             except Exception as e:
@@ -541,9 +541,9 @@ class AutonomousTraderScheduler:
         # Multiple trades per day with relaxed filters vs ANCHOR
         # PAPER mode: Simulated trades with AlphaGEX internal capital, production Tradier for SPX quotes
         self.samson_trader = None
-        if TITAN_AVAILABLE:
+        if SAMSON_AVAILABLE:
             try:
-                config = SamsonConfig(mode=TITANTradingMode.PAPER)
+                config = SamsonConfig(mode=SamsonTradingMode.PAPER)
                 self.samson_trader = SamsonTrader(config=config)
                 logger.info(f"✅ SAMSON initialized (Aggressive SPX Iron Condors, PAPER mode - AlphaGEX internal)")
             except Exception as e:
@@ -580,9 +580,9 @@ class AutonomousTraderScheduler:
         # 24/5 trading with 1-minute scan interval
         # PAPER mode: Simulated trades with $100k starting capital
         self.valor_trader = None
-        if HERACLES_AVAILABLE:
+        if VALOR_AVAILABLE:
             try:
-                config = ValorConfig(mode=HERACLESTradingMode.PAPER)
+                config = ValorConfig(mode=ValorTradingMode.PAPER)
                 self.valor_trader = ValorTrader(config=config)
                 logger.info(f"✅ VALOR initialized (MES Futures Scalping, PAPER mode - $100k starting capital)")
             except Exception as e:
@@ -624,22 +624,22 @@ class AutonomousTraderScheduler:
         self.is_running = False
         self.last_trade_check = None
         self.last_position_check = None
-        self.last_atlas_check = None
-        self.last_ares_check = None
+        self.last_cornerstone_check = None
+        self.last_fortress_check = None
         self.last_solomon_check = None
         self.last_anchor_check = None
-        self.last_icarus_check = None
-        self.last_titan_check = None
+        self.last_gideon_check = None
+        self.last_samson_check = None
         self.last_argus_check = None
-        self.last_heracles_check = None
+        self.last_valor_check = None
         self.last_error = None
         self.execution_count = 0
-        self.atlas_execution_count = 0
-        self.ares_execution_count = 0
+        self.cornerstone_execution_count = 0
+        self.fortress_execution_count = 0
         self.solomon_execution_count = 0
         self.anchor_execution_count = 0
         self.gideon_execution_count = 0
-        self.titan_execution_count = 0
+        self.samson_execution_count = 0
         self.argus_execution_count = 0
         self.valor_execution_count = 0
 
@@ -872,7 +872,7 @@ class AutonomousTraderScheduler:
             # Step 0: Consult Prophet for trade signal (if available)
             oracle_approved = True  # Default to True if Prophet unavailable
             oracle_prediction = None
-            if self.phoenix_oracle and ORACLE_AVAILABLE:
+            if self.lazarus_prophet and PROPHET_AVAILABLE:
                 try:
                     # Get GEX data for Prophet context
                     gex_data = self.api_client.get_gex_data() if self.api_client else {}
@@ -887,7 +887,7 @@ class AutonomousTraderScheduler:
                         except (KeyError, AttributeError):
                             gex_regime = GEXRegime.NEUTRAL
 
-                        context = OracleMarketContext(
+                        context = ProphetMarketContext(
                             spot_price=spot_price,
                             vix=vix,
                             gex_put_wall=gex_data.get('put_wall', 0),
@@ -899,7 +899,7 @@ class AutonomousTraderScheduler:
                         )
 
                         # Get LAZARUS advice from Prophet
-                        oracle_prediction = self.phoenix_oracle.get_phoenix_advice(
+                        oracle_prediction = self.lazarus_prophet.get_lazarus_advice(
                             context=context,
                             use_claude_validation=True  # Enable Claude for transparency logging
                         )
@@ -914,7 +914,7 @@ class AutonomousTraderScheduler:
                             # =========================================================
                             try:
                                 trade_date = now.strftime('%Y-%m-%d')
-                                self.phoenix_oracle.store_prediction(
+                                self.lazarus_prophet.store_prediction(
                                     prediction=oracle_prediction,
                                     context=context,
                                     trade_date=trade_date
@@ -983,7 +983,7 @@ class AutonomousTraderScheduler:
                     # Issue #2 fix: Record LAZARUS outcomes in Prophet feedback loop
                     # When positions are closed, record the outcome for ML training
                     # =========================================================
-                    if self.phoenix_oracle and ORACLE_AVAILABLE and OracleBotName and TradeOutcome:
+                    if self.lazarus_prophet and PROPHET_AVAILABLE and ProphetBotName and TradeOutcome:
                         action = result.get('action', '').upper()
                         pnl = result.get('pnl', 0) or result.get('realized_pnl', 0) or 0
 
@@ -999,9 +999,9 @@ class AutonomousTraderScheduler:
                         if outcome:
                             try:
                                 trade_date = now.strftime('%Y-%m-%d')
-                                self.phoenix_oracle.update_outcome(
+                                self.lazarus_prophet.update_outcome(
                                     trade_date=trade_date,
-                                    bot_name=OracleBotName.LAZARUS,
+                                    bot_name=ProphetBotName.LAZARUS,
                                     outcome=outcome,
                                     actual_pnl=float(pnl),
                                     spot_at_exit=gex_data.get('spot_price', 0) if 'gex_data' in dir() else 0
@@ -1044,7 +1044,7 @@ class AutonomousTraderScheduler:
             logger.info("Scheduler will continue despite error")
             logger.info(f"=" * 80)
 
-    def scheduled_atlas_logic(self):
+    def scheduled_cornerstone_logic(self):
         """
         CORNERSTONE (SPX Wheel) trading logic - runs daily at 9:05 AM CT
 
@@ -1072,7 +1072,7 @@ class AutonomousTraderScheduler:
         logger.info("Market is OPEN. Running CORNERSTONE wheel strategy...")
 
         try:
-            self.last_atlas_check = now
+            self.last_cornerstone_check = now
             traded = False
             scan_context = {'symbol': 'SPX'}
 
@@ -1112,14 +1112,14 @@ class AutonomousTraderScheduler:
                 logger.info("CORNERSTONE: No actions taken today")
                 self._log_no_trade_decision('CORNERSTONE', 'No result from trading cycle', scan_context)
 
-            self.atlas_execution_count += 1
+            self.cornerstone_execution_count += 1
             self._save_heartbeat('CORNERSTONE', 'TRADED' if traded else 'SCAN_COMPLETE', {
-                'scan_number': self.atlas_execution_count,
+                'scan_number': self.cornerstone_execution_count,
                 'traded': traded,
                 'open_positions': result.get('open_positions', 0) if result else 0,
                 'spx_price': result.get('spx_price', 0) if result else 0
             })
-            logger.info(f"CORNERSTONE cycle #{self.atlas_execution_count} completed successfully")
+            logger.info(f"CORNERSTONE cycle #{self.cornerstone_execution_count} completed successfully")
             logger.info(f"=" * 80)
 
         except Exception as e:
@@ -1130,7 +1130,7 @@ class AutonomousTraderScheduler:
             logger.info("CORNERSTONE will continue despite error")
             logger.info(f"=" * 80)
 
-    def scheduled_ares_logic(self):
+    def scheduled_fortress_logic(self):
         """
         FORTRESS V2 (SPY Iron Condor) trading logic - runs every 5 minutes during market hours
 
@@ -1143,7 +1143,7 @@ class AutonomousTraderScheduler:
 
         # Update last check time IMMEDIATELY for health monitoring
         # (even if we return early due to market closed, the job IS running)
-        self.last_ares_check = now
+        self.last_fortress_check = now
 
         logger.info(f"=" * 80)
         logger.info(f"FORTRESS V2 (SPY IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -1152,8 +1152,8 @@ class AutonomousTraderScheduler:
             logger.warning("FORTRESS V2 trader not available - skipping")
             self._save_heartbeat('FORTRESS', 'UNAVAILABLE')
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
-                log_ares_scan(
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_fortress_scan:
+                log_fortress_scan(
                     outcome=ScanOutcome.UNAVAILABLE,
                     decision_summary="FORTRESS trader not initialized",
                     generate_ai_explanation=False
@@ -1187,7 +1187,7 @@ class AutonomousTraderScheduler:
             logger.info(f"Market not open ({market_status}). Skipping FORTRESS logic.")
             self._save_heartbeat('FORTRESS', market_status)
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan and ScanOutcome:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_fortress_scan and ScanOutcome:
                 # Map market status to scan outcome
                 outcome_mapping = {
                     'BEFORE_WINDOW': ScanOutcome.BEFORE_WINDOW,
@@ -1196,7 +1196,7 @@ class AutonomousTraderScheduler:
                     'HOLIDAY': ScanOutcome.MARKET_CLOSED,
                 }
                 outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
-                scan_id = log_ares_scan(
+                scan_id = log_fortress_scan(
                     outcome=outcome,
                     decision_summary=message,
                     generate_ai_explanation=False
@@ -1226,9 +1226,9 @@ class AutonomousTraderScheduler:
                 for err in result['errors']:
                     logger.warning(f"  Skip reason: {err}")
 
-            self.ares_execution_count += 1
+            self.fortress_execution_count += 1
             self._save_heartbeat('FORTRESS', 'TRADED' if traded else 'SCAN_COMPLETE', {
-                'scan_number': self.ares_execution_count,
+                'scan_number': self.fortress_execution_count,
                 'traded': traded,
                 'action': action
             })
@@ -1239,7 +1239,7 @@ class AutonomousTraderScheduler:
             # The old backup created duplicate entries with incomplete data
             # (Prophet:0%, ML:0%, Thresh:0%) which caused diagnostic confusion.
 
-            logger.info(f"FORTRESS V2 scan #{self.ares_execution_count} completed")
+            logger.info(f"FORTRESS V2 scan #{self.fortress_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
@@ -1248,9 +1248,9 @@ class AutonomousTraderScheduler:
             self._save_heartbeat('FORTRESS', 'ERROR', {'error': str(e)})
             # BACKUP: Log to scan_activity in case bot's internal logging failed
             # This ensures we always have visibility into what happened
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_fortress_scan:
                 try:
-                    log_ares_scan(
+                    log_fortress_scan(
                         outcome=ScanOutcome.ERROR,
                         decision_summary=f"Scheduler-level error: {str(e)[:200]}",
                         error_message=str(e),
@@ -1260,7 +1260,7 @@ class AutonomousTraderScheduler:
                     logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
-    def scheduled_ares_eod_logic(self):
+    def scheduled_fortress_eod_logic(self):
         """
         FORTRESS End-of-Day processing - runs daily at 3:05 PM CT
 
@@ -1745,7 +1745,7 @@ class AutonomousTraderScheduler:
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
-    def scheduled_icarus_logic(self):
+    def scheduled_gideon_logic(self):
         """
         GIDEON (Aggressive Directional Spreads) trading logic - runs every 5 minutes during market hours
 
@@ -1758,7 +1758,7 @@ class AutonomousTraderScheduler:
         now = datetime.now(CENTRAL_TZ)
 
         # Update last check time IMMEDIATELY for health monitoring
-        self.last_icarus_check = now
+        self.last_gideon_check = now
 
         logger.info(f"=" * 80)
         logger.info(f"GIDEON (Aggressive Spreads) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -1767,8 +1767,8 @@ class AutonomousTraderScheduler:
             logger.warning("GIDEON trader not available - skipping")
             self._save_heartbeat('GIDEON', 'UNAVAILABLE')
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
-                log_icarus_scan(
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_gideon_scan:
+                log_gideon_scan(
                     outcome=ScanOutcome.UNAVAILABLE,
                     decision_summary="GIDEON trader not initialized",
                     generate_ai_explanation=False
@@ -1802,7 +1802,7 @@ class AutonomousTraderScheduler:
             logger.info(f"Market not open ({market_status}). Skipping GIDEON logic.")
             self._save_heartbeat('GIDEON', market_status)
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan and ScanOutcome:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_gideon_scan and ScanOutcome:
                 # Map market status to scan outcome
                 outcome_mapping = {
                     'BEFORE_WINDOW': ScanOutcome.MARKET_CLOSED,
@@ -1811,7 +1811,7 @@ class AutonomousTraderScheduler:
                     'HOLIDAY': ScanOutcome.MARKET_CLOSED,
                 }
                 outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
-                log_icarus_scan(
+                log_gideon_scan(
                     outcome=outcome,
                     decision_summary=message,
                     generate_ai_explanation=False
@@ -1855,9 +1855,9 @@ class AutonomousTraderScheduler:
             logger.error(traceback.format_exc())
             self._save_heartbeat('GIDEON', 'ERROR', {'error': str(e)})
             # BACKUP: Log to scan_activity in case bot's internal logging failed
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_gideon_scan:
                 try:
-                    log_icarus_scan(
+                    log_gideon_scan(
                         outcome=ScanOutcome.ERROR,
                         decision_summary=f"Scheduler-level error: {str(e)[:200]}",
                         error_message=str(e),
@@ -1867,7 +1867,7 @@ class AutonomousTraderScheduler:
                     logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
-    def scheduled_icarus_eod_logic(self):
+    def scheduled_gideon_eod_logic(self):
         """
         GIDEON End-of-Day processing - runs daily at 3:12 PM CT
 
@@ -1914,7 +1914,7 @@ class AutonomousTraderScheduler:
             logger.info("GIDEON EOD will retry next trading day")
             logger.info(f"=" * 80)
 
-    def scheduled_titan_logic(self):
+    def scheduled_samson_logic(self):
         """
         SAMSON (Aggressive SPX Iron Condor) trading logic - runs every 5 minutes during market hours
 
@@ -1930,7 +1930,7 @@ class AutonomousTraderScheduler:
         now = datetime.now(CENTRAL_TZ)
 
         # Update last check time IMMEDIATELY for health monitoring
-        self.last_titan_check = now
+        self.last_samson_check = now
 
         logger.info(f"=" * 80)
         logger.info(f"SAMSON (Aggressive SPX IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -1939,8 +1939,8 @@ class AutonomousTraderScheduler:
             logger.warning("SAMSON trader not available - skipping")
             self._save_heartbeat('SAMSON', 'UNAVAILABLE')
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
-                log_titan_scan(
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_samson_scan:
+                log_samson_scan(
                     outcome=ScanOutcome.UNAVAILABLE,
                     decision_summary="SAMSON trader not initialized",
                     generate_ai_explanation=False
@@ -1974,7 +1974,7 @@ class AutonomousTraderScheduler:
             logger.info(f"Market not open ({market_status}). Skipping SAMSON logic.")
             self._save_heartbeat('SAMSON', market_status)
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan and ScanOutcome:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_samson_scan and ScanOutcome:
                 # Map market status to scan outcome
                 outcome_mapping = {
                     'BEFORE_WINDOW': ScanOutcome.MARKET_CLOSED,
@@ -1983,7 +1983,7 @@ class AutonomousTraderScheduler:
                     'HOLIDAY': ScanOutcome.MARKET_CLOSED,
                 }
                 outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
-                log_titan_scan(
+                log_samson_scan(
                     outcome=outcome,
                     decision_summary=message,
                     generate_ai_explanation=False
@@ -2007,9 +2007,9 @@ class AutonomousTraderScheduler:
                 for err in result['errors']:
                     logger.warning(f"  Skip reason: {err}")
 
-            self.titan_execution_count += 1
+            self.samson_execution_count += 1
             self._save_heartbeat('SAMSON', 'TRADED' if traded else 'SCAN_COMPLETE', {
-                'scan_number': self.titan_execution_count,
+                'scan_number': self.samson_execution_count,
                 'traded': traded,
                 'action': action
             })
@@ -2018,7 +2018,7 @@ class AutonomousTraderScheduler:
             # SAMSON trader already logs comprehensive scan activity
             # with full Prophet/ML data via its internal logger.
 
-            logger.info(f"SAMSON scan #{self.titan_execution_count} completed")
+            logger.info(f"SAMSON scan #{self.samson_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
@@ -2026,9 +2026,9 @@ class AutonomousTraderScheduler:
             logger.error(traceback.format_exc())
             self._save_heartbeat('SAMSON', 'ERROR', {'error': str(e)})
             # BACKUP: Log to scan_activity in case bot's internal logging failed
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_samson_scan:
                 try:
-                    log_titan_scan(
+                    log_samson_scan(
                         outcome=ScanOutcome.ERROR,
                         decision_summary=f"Scheduler-level error: {str(e)[:200]}",
                         error_message=str(e),
@@ -2038,7 +2038,7 @@ class AutonomousTraderScheduler:
                     logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
-    def scheduled_titan_eod_logic(self):
+    def scheduled_samson_eod_logic(self):
         """
         SAMSON End-of-Day processing - runs daily at 3:17 PM CT
 
@@ -2081,7 +2081,7 @@ class AutonomousTraderScheduler:
     # VALOR - MES Futures Scalping (24/5 Operation)
     # ========================================================================
 
-    def scheduled_heracles_logic(self):
+    def scheduled_valor_logic(self):
         """
         VALOR MES Futures Scalping - runs every 1 minute during futures hours
 
@@ -2096,7 +2096,7 @@ class AutonomousTraderScheduler:
         """
         now = datetime.now(CENTRAL_TZ)
         self.valor_execution_count += 1
-        self.last_heracles_check = now
+        self.last_valor_check = now
 
         # Check if VALOR is available
         if not self.valor_trader:
@@ -2133,7 +2133,7 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in VALOR scan: {str(e)}")
             logger.error(traceback.format_exc())
 
-    def scheduled_heracles_position_monitor(self):
+    def scheduled_valor_position_monitor(self):
         """
         VALOR Position Monitor - runs every 15 seconds during futures hours
 
@@ -2167,7 +2167,7 @@ class AutonomousTraderScheduler:
             if self._monitor_error_count % 4 == 1:
                 logger.error(f"VALOR MONITOR ERROR: {e}")
 
-    def scheduled_heracles_eod_logic(self):
+    def scheduled_valor_eod_logic(self):
         """
         VALOR End-of-Day processing - runs at 4:00 PM CT (futures close)
 
@@ -2815,10 +2815,10 @@ class AutonomousTraderScheduler:
             # STEP 1: Train Prophet from new trade outcomes
             # Migration 023: Prophet learns from outcomes before Proverbs analyzes
             # ================================================================
-            if ORACLE_AVAILABLE and oracle_auto_train:
+            if PROPHET_AVAILABLE and prophet_auto_train:
                 logger.info("PROVERBS: Step 1 - Training Prophet from new outcomes...")
                 try:
-                    train_result = oracle_auto_train(threshold_outcomes=10)  # Lower threshold for daily runs
+                    train_result = prophet_auto_train(threshold_outcomes=10)  # Lower threshold for daily runs
                     if train_result.get('triggered'):
                         logger.info(f"  Prophet training triggered: {train_result.get('reason')}")
                         if train_result.get('success'):
@@ -3039,7 +3039,7 @@ class AutonomousTraderScheduler:
             # Train WISDOM with CHRONICLES data as fallback
             result = train_wisdom_model_internal(
                 min_samples=30,
-                use_kronos=True
+                use_chronicles=True
             )
 
             if result.get('success'):
@@ -3095,7 +3095,7 @@ class AutonomousTraderScheduler:
         logger.info(f"=" * 80)
         logger.info(f"PROPHET Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not ORACLE_AVAILABLE or not oracle_auto_train:
+        if not PROPHET_AVAILABLE or not prophet_auto_train:
             logger.warning("PROPHET: Training module not available - skipping")
             return
 
@@ -3103,7 +3103,7 @@ class AutonomousTraderScheduler:
             logger.info("PROPHET: Starting daily model training...")
 
             # Use lower threshold for daily training (10 outcomes)
-            result = oracle_auto_train(threshold_outcomes=10, force=False)
+            result = prophet_auto_train(threshold_outcomes=10, force=False)
 
             if result.get('triggered'):
                 if result.get('success'):
@@ -4130,14 +4130,14 @@ class AutonomousTraderScheduler:
         # =================================================================
         if self.cornerstone_trader:
             self.scheduler.add_job(
-                self.scheduled_atlas_logic,
+                self.scheduled_cornerstone_logic,
                 trigger=CronTrigger(
                     hour=9,        # 9:00 AM CT - after market settles
                     minute=5,      # 9:05 AM CT to avoid conflict with LAZARUS
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='atlas_trading',
+                id='cornerstone_trading',
                 name='CORNERSTONE - SPX Wheel Trading',
                 replace_existing=True
             )
@@ -4153,12 +4153,12 @@ class AutonomousTraderScheduler:
         # =================================================================
         if self.fortress_trader:
             self.scheduler.add_job(
-                self.scheduled_ares_logic,
+                self.scheduled_fortress_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
                     timezone='America/Chicago'
                 ),
-                id='ares_trading',
+                id='fortress_trading',
                 name='FORTRESS - Aggressive Iron Condor (5-min intervals)',
                 replace_existing=True
             )
@@ -4169,14 +4169,14 @@ class AutonomousTraderScheduler:
             # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
-                self.scheduled_ares_eod_logic,
+                self.scheduled_fortress_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
                     minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='ares_eod',
+                id='fortress_eod',
                 name='FORTRESS - EOD Position Expiration',
                 replace_existing=True
             )
@@ -4270,12 +4270,12 @@ class AutonomousTraderScheduler:
         # =================================================================
         if self.gideon_trader:
             self.scheduler.add_job(
-                self.scheduled_icarus_logic,
+                self.scheduled_gideon_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
                     timezone='America/Chicago'
                 ),
-                id='icarus_trading',
+                id='gideon_trading',
                 name='GIDEON - Aggressive Directional Spreads (5-min intervals)',
                 replace_existing=True
             )
@@ -4286,14 +4286,14 @@ class AutonomousTraderScheduler:
             # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
-                self.scheduled_icarus_eod_logic,
+                self.scheduled_gideon_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
                     minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='icarus_eod',
+                id='gideon_eod',
                 name='GIDEON - EOD Position Expiration',
                 replace_existing=True
             )
@@ -4309,12 +4309,12 @@ class AutonomousTraderScheduler:
         # =================================================================
         if self.samson_trader:
             self.scheduler.add_job(
-                self.scheduled_titan_logic,
+                self.scheduled_samson_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
                     timezone='America/Chicago'
                 ),
-                id='titan_trading',
+                id='samson_trading',
                 name='SAMSON - Aggressive SPX Iron Condor (5-min intervals)',
                 replace_existing=True
             )
@@ -4325,14 +4325,14 @@ class AutonomousTraderScheduler:
             # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
-                self.scheduled_titan_eod_logic,
+                self.scheduled_samson_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
                     minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='titan_eod',
+                id='samson_eod',
                 name='SAMSON - EOD Position Expiration',
                 replace_existing=True
             )
@@ -4349,12 +4349,12 @@ class AutonomousTraderScheduler:
         # =================================================================
         if self.valor_trader:
             self.scheduler.add_job(
-                self.scheduled_heracles_logic,
+                self.scheduled_valor_logic,
                 trigger=IntervalTrigger(
                     minutes=1,
                     timezone='America/Chicago'
                 ),
-                id='heracles_trading',
+                id='valor_trading',
                 name='VALOR - MES Futures Scalping (1-min intervals)',
                 replace_existing=True
             )
@@ -4366,12 +4366,12 @@ class AutonomousTraderScheduler:
             # Does NOT generate new signals - only monitors existing positions
             # =================================================================
             self.scheduler.add_job(
-                self.scheduled_heracles_position_monitor,
+                self.scheduled_valor_position_monitor,
                 trigger=IntervalTrigger(
                     seconds=15,
                     timezone='America/Chicago'
                 ),
-                id='heracles_position_monitor',
+                id='valor_position_monitor',
                 name='VALOR - Position Monitor (15-sec intervals)',
                 replace_existing=True
             )
@@ -4382,14 +4382,14 @@ class AutonomousTraderScheduler:
             # Futures have a daily maintenance break from 4-5pm CT
             # =================================================================
             self.scheduler.add_job(
-                self.scheduled_heracles_eod_logic,
+                self.scheduled_valor_eod_logic,
                 trigger=CronTrigger(
                     hour=16,       # 4:00 PM CT - futures daily maintenance break
                     minute=0,
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='heracles_eod',
+                id='valor_eod',
                 name='VALOR - Daily Maintenance Break Summary',
                 replace_existing=True
             )
@@ -4510,7 +4510,7 @@ class AutonomousTraderScheduler:
                     minutes=5,
                     timezone='America/Chicago'
                 ),
-                id='prometheus_ic_trading',
+                id='jubilee_ic_trading',
                 name='JUBILEE IC - Iron Condor Trading (5-min intervals, MATCHES ANCHOR)',
                 replace_existing=True
             )
@@ -4523,7 +4523,7 @@ class AutonomousTraderScheduler:
                     minutes=30,
                     timezone='America/Chicago'
                 ),
-                id='prometheus_ic_mtm',
+                id='jubilee_ic_mtm',
                 name='JUBILEE IC - MTM Update (30-min intervals)',
                 replace_existing=True
             )
@@ -4621,7 +4621,7 @@ class AutonomousTraderScheduler:
         # PROPHET JOB: ML Training - runs DAILY at midnight CT
         # FIX (Jan 2026): Standalone Prophet training, not dependent on PROVERBS
         # =================================================================
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             self.scheduler.add_job(
                 self.scheduled_prophet_training_logic,
                 trigger=CronTrigger(
@@ -4958,10 +4958,10 @@ class AutonomousTraderScheduler:
             # and have had at least one check
             stale_jobs = []
 
-            if self.fortress_trader and self.last_ares_check:
-                ares_age = (now - self.last_ares_check).total_seconds() / 60
-                if ares_age > max_stale_minutes:
-                    stale_jobs.append(f"FORTRESS ({ares_age:.1f} min stale)")
+            if self.fortress_trader and self.last_fortress_check:
+                fortress_age = (now - self.last_fortress_check).total_seconds() / 60
+                if fortress_age > max_stale_minutes:
+                    stale_jobs.append(f"FORTRESS ({fortress_age:.1f} min stale)")
 
             if self.solomon_trader and self.last_solomon_check:
                 solomon_age = (now - self.last_solomon_check).total_seconds() / 60
@@ -4973,15 +4973,15 @@ class AutonomousTraderScheduler:
                 if anchor_age > max_stale_minutes:
                     stale_jobs.append(f"ANCHOR ({anchor_age:.1f} min stale)")
 
-            if self.gideon_trader and self.last_icarus_check:
-                icarus_age = (now - self.last_icarus_check).total_seconds() / 60
-                if icarus_age > max_stale_minutes:
-                    stale_jobs.append(f"GIDEON ({icarus_age:.1f} min stale)")
+            if self.gideon_trader and self.last_gideon_check:
+                gideon_age = (now - self.last_gideon_check).total_seconds() / 60
+                if gideon_age > max_stale_minutes:
+                    stale_jobs.append(f"GIDEON ({gideon_age:.1f} min stale)")
 
-            if self.samson_trader and self.last_titan_check:
-                titan_age = (now - self.last_titan_check).total_seconds() / 60
-                if titan_age > max_stale_minutes:
-                    stale_jobs.append(f"SAMSON ({titan_age:.1f} min stale)")
+            if self.samson_trader and self.last_samson_check:
+                samson_age = (now - self.last_samson_check).total_seconds() / 60
+                if samson_age > max_stale_minutes:
+                    stale_jobs.append(f"SAMSON ({samson_age:.1f} min stale)")
 
             if stale_jobs:
                 logger.warning(f"Health check: STALE JOBS detected - {', '.join(stale_jobs)}")
@@ -5205,7 +5205,7 @@ def run_standalone():
 
                         # Log scan counts and last check times for visibility
                         logger.info(f"[HEALTH OK @ {now_ct.strftime('%H:%M:%S')}] "
-                                   f"FORTRESS={scheduler.ares_execution_count} (last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler.last_ares_check else 'never'}), "
+                                   f"FORTRESS={scheduler.fortress_execution_count} (last: {scheduler.last_fortress_check.strftime('%H:%M:%S') if scheduler.last_fortress_check else 'never'}), "
                                    f"SOLOMON={scheduler.solomon_execution_count} (last: {scheduler.last_solomon_check.strftime('%H:%M:%S') if scheduler.last_solomon_check else 'never'}), "
                                    f"restarts={restart_count}")
 
@@ -5215,7 +5215,7 @@ def run_standalone():
                     now_ct = datetime.now(CENTRAL_TZ)
                     logger.warning(f"[HEALTH FAIL @ {now_ct.strftime('%H:%M:%S')}] "
                                   f"Health check FAILED ({health_check_failures}/{max_health_failures}) - "
-                                  f"FORTRESS last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler and scheduler.last_ares_check else 'never'}, "
+                                  f"FORTRESS last: {scheduler.last_fortress_check.strftime('%H:%M:%S') if scheduler and scheduler.last_fortress_check else 'never'}, "
                                   f"SOLOMON last: {scheduler.last_solomon_check.strftime('%H:%M:%S') if scheduler and scheduler.last_solomon_check else 'never'}")
 
                     if health_check_failures >= max_health_failures:

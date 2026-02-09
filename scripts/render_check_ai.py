@@ -34,7 +34,7 @@ else:
 # Learning Memory
 print("\n-- Learning Memory --")
 try:
-    from ai.counselor_learning_memory import get_learning_memory, GEXISLearningMemory
+    from ai.counselor_learning_memory import get_learning_memory, CounselorLearningMemory
 
     memory = get_learning_memory()
     ok("Learning Memory instance created")
@@ -102,16 +102,16 @@ except Exception as e:
 print("\n-- COUNSELOR Personality --")
 try:
     from ai.counselor_personality import (
-        build_gexis_system_prompt,
-        get_gexis_welcome_message,
-        GEXIS_NAME,
+        build_counselor_system_prompt,
+        get_counselor_welcome_message,
+        COUNSELOR_NAME,
         USER_NAME
     )
     ok(f"COUNSELOR Personality loaded")
-    info(f"COUNSELOR Name: {GEXIS_NAME}")
+    info(f"COUNSELOR Name: {COUNSELOR_NAME}")
     info(f"User Name: {USER_NAME}")
 
-    prompt = build_gexis_system_prompt()
+    prompt = build_counselor_system_prompt()
     ok(f"System prompt: {len(prompt)} chars")
 
 except Exception as e:
@@ -121,14 +121,14 @@ except Exception as e:
 # COUNSELOR Tools
 print("\n-- COUNSELOR Tools --")
 try:
-    from ai.counselor_tools import GEXIS_TOOLS, get_system_status
-    ok(f"COUNSELOR Tools loaded: {len(GEXIS_TOOLS)} tools")
+    from ai.counselor_tools import COUNSELOR_TOOLS, get_system_status
+    ok(f"COUNSELOR Tools loaded: {len(COUNSELOR_TOOLS)} tools")
 
     # List tools
-    for name in list(GEXIS_TOOLS.keys())[:5]:
+    for name in list(COUNSELOR_TOOLS.keys())[:5]:
         info(f"  - {name}")
-    if len(GEXIS_TOOLS) > 5:
-        info(f"  ... and {len(GEXIS_TOOLS) - 5} more")
+    if len(COUNSELOR_TOOLS) > 5:
+        info(f"  ... and {len(COUNSELOR_TOOLS) - 5} more")
 
 except Exception as e:
     fail(f"COUNSELOR Tools error: {e}")

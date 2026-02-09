@@ -52,10 +52,10 @@ class TestTradierCredentials:
         assert tradier.sandbox is True
 
 
-class TestArgusGetTradier:
+class TestWatchtowerGetTradier:
     """Test the fixed get_tradier() function in WATCHTOWER routes"""
 
-    def test_argus_get_tradier_returns_instance(self):
+    def test_watchtower_get_tradier_returns_instance(self):
         """Verify WATCHTOWER get_tradier() returns a valid Tradier instance"""
         from backend.api.routes.watchtower_routes import get_tradier, TRADIER_AVAILABLE
 
@@ -70,7 +70,7 @@ class TestArgusGetTradier:
             assert hasattr(tradier, 'get_quote')
             assert hasattr(tradier, 'get_option_chain')
 
-    def test_argus_get_tradier_status(self):
+    def test_watchtower_get_tradier_status(self):
         """Verify get_tradier_status() returns diagnostic info"""
         from backend.api.routes.watchtower_routes import get_tradier_status
 
@@ -94,7 +94,7 @@ class TestArgusGetTradier:
             assert hasattr(tradier, 'get_quote')
 
 
-class TestArgusEndpoints:
+class TestWatchtowerEndpoints:
     """Test WATCHTOWER API endpoints return valid responses"""
 
     @pytest.fixture
@@ -115,7 +115,7 @@ class TestArgusEndpoints:
         assert 'data_sources' in data
         assert 'tradier' in data['data_sources']
 
-    def test_argus_test_tradier_connection(self, client):
+    def test_watchtower_test_tradier_connection(self, client):
         """Test /api/watchtower/test-tradier-connection endpoint"""
         response = client.get("/api/watchtower/test-tradier-connection")
 
@@ -131,7 +131,7 @@ class TestArgusEndpoints:
         else:
             assert 'error' in data
 
-    def test_argus_gamma_endpoint_structure(self, client):
+    def test_watchtower_gamma_endpoint_structure(self, client):
         """Test /api/watchtower/gamma returns proper structure"""
         response = client.get("/api/watchtower/gamma?symbol=SPY")
 

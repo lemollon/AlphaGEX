@@ -54,12 +54,12 @@ class CacheEntry:
         return self.ttl_seconds - self.age_seconds
 
 
-class GEXISCache:
+class CounselorCache:
     """
     Thread-safe TTL cache for COUNSELOR operations.
 
     Usage:
-        cache = GEXISCache()
+        cache = CounselorCache()
 
         # Store with TTL
         cache.set("market_data_SPY", data, ttl=60)
@@ -344,7 +344,7 @@ class GEXISCache:
 
 
 # Global cache instance
-counselor_cache = GEXISCache()
+counselor_cache = CounselorCache()
 
 
 # =============================================================================
@@ -353,7 +353,7 @@ counselor_cache = GEXISCache()
 
 def cache_market_data(symbol: str, data: Dict) -> None:
     """Cache market data for a symbol."""
-    counselor_cache.set(f"market:{symbol}", data, ttl=GEXISCache.TTL_MARKET_DATA)
+    counselor_cache.set(f"market:{symbol}", data, ttl=CounselorCache.TTL_MARKET_DATA)
 
 
 def get_cached_market_data(symbol: str) -> Optional[Dict]:
@@ -363,7 +363,7 @@ def get_cached_market_data(symbol: str) -> Optional[Dict]:
 
 def cache_gex_data(symbol: str, data: Dict) -> None:
     """Cache GEX data for a symbol."""
-    counselor_cache.set(f"gex:{symbol}", data, ttl=GEXISCache.TTL_GEX_DATA)
+    counselor_cache.set(f"gex:{symbol}", data, ttl=CounselorCache.TTL_GEX_DATA)
 
 
 def get_cached_gex_data(symbol: str) -> Optional[Dict]:
@@ -373,7 +373,7 @@ def get_cached_gex_data(symbol: str) -> Optional[Dict]:
 
 def cache_bot_status(bot_name: str, status: Dict) -> None:
     """Cache bot status."""
-    counselor_cache.set(f"bot:{bot_name}", status, ttl=GEXISCache.TTL_BOT_STATUS)
+    counselor_cache.set(f"bot:{bot_name}", status, ttl=CounselorCache.TTL_BOT_STATUS)
 
 
 def get_cached_bot_status(bot_name: str) -> Optional[Dict]:
@@ -383,7 +383,7 @@ def get_cached_bot_status(bot_name: str) -> Optional[Dict]:
 
 def cache_positions(positions: list) -> None:
     """Cache positions list."""
-    counselor_cache.set("positions:all", positions, ttl=GEXISCache.TTL_POSITIONS)
+    counselor_cache.set("positions:all", positions, ttl=CounselorCache.TTL_POSITIONS)
 
 
 def get_cached_positions() -> Optional[list]:

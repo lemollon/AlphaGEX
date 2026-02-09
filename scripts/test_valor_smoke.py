@@ -3,7 +3,7 @@
 VALOR Smoke Test Script for Render Shell
 
 Quick smoke test to verify VALOR is operational:
-    python scripts/test_heracles_smoke.py
+    python scripts/test_valor_smoke.py
 
 This runs minimal checks to verify:
 1. Database connection works
@@ -28,7 +28,7 @@ from datetime import datetime
 BASE_URL = os.environ.get('API_BASE_URL') or os.environ.get('RENDER_EXTERNAL_URL') or 'http://localhost:8000'
 # Remove trailing slash if present
 BASE_URL = BASE_URL.rstrip('/')
-HERACLES_PREFIX = '/api/valor'
+VALOR_PREFIX = '/api/valor'
 
 # ANSI colors
 GREEN = '\033[92m'
@@ -42,7 +42,7 @@ BOLD = '\033[1m'
 def test_api(path: str, name: str, method: str = 'GET') -> bool:
     """Test a single API endpoint."""
     try:
-        url = f"{BASE_URL}{HERACLES_PREFIX}{path}"
+        url = f"{BASE_URL}{VALOR_PREFIX}{path}"
         if method == 'GET':
             response = requests.get(url, timeout=30)
         else:
@@ -287,7 +287,7 @@ def main():
         print(f"     export API_BASE_URL='https://alphagex-api.onrender.com'")
         print(f"  3. Verify DATABASE_URL is set for database tests")
         print(f"  4. If scheduler imports failed, check trading/valor/__init__.py")
-        print(f"  5. Run again: python scripts/test_heracles_smoke.py")
+        print(f"  5. Run again: python scripts/test_valor_smoke.py")
         sys.exit(1)
     else:
         print(f"\n{GREEN}SMOKE TEST PASSED{RESET}")

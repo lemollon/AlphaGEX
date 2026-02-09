@@ -35,20 +35,20 @@ except ImportError:
 
 # Optional imports with clear fallbacks
 try:
-    from quant.prophet_advisor import ProphetAdvisor, OraclePrediction, TradingAdvice, MarketContext as OracleMarketContext, GEXRegime
-    ORACLE_AVAILABLE = True
+    from quant.prophet_advisor import ProphetAdvisor, ProphetPrediction, TradingAdvice, MarketContext as ProphetMarketContext, GEXRegime
+    PROPHET_AVAILABLE = True
 except ImportError:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleMarketContext = None
+    ProphetMarketContext = None
     GEXRegime = None
 
 try:
-    from quant.chronicles_gex_calculator import KronosGEXCalculator
-    KRONOS_AVAILABLE = True
+    from quant.chronicles_gex_calculator import ChroniclesGEXCalculator
+    CHRONICLES_AVAILABLE = True
 except ImportError:
-    KRONOS_AVAILABLE = False
-    KronosGEXCalculator = None
+    CHRONICLES_AVAILABLE = False
+    ChroniclesGEXCalculator = None
 
 try:
     from quant.gex_signal_integration import GEXSignalIntegration
@@ -145,7 +145,7 @@ class SignalGenerator:
 
         # Prophet Advisor
         self.prophet = None
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             try:
                 self.prophet = ProphetAdvisor()
                 logger.info("GIDEON SignalGenerator: Prophet initialized")
@@ -316,7 +316,7 @@ class SignalGenerator:
                 'price_change_1d': ml_features['price_change_1d'],
                 'win_rate_30d': ml_features['win_rate_30d'],
                 # Raw Chronicles data for audit
-                'kronos_raw': gex,
+                'chronicles_raw': gex,
             }
         except Exception as e:
             logger.error(f"GEX fetch error: {e}")
@@ -352,13 +352,13 @@ class SignalGenerator:
 
         return None
 
-    def get_oracle_advice(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
+    def get_prophet_advice(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
         """
         Get Prophet ML advice for GIDEON directional trades.
 
         Returns FULL prediction context for audit trail.
         """
-        if not self.prophet or not ORACLE_AVAILABLE:
+        if not self.prophet or not PROPHET_AVAILABLE:
             return None
 
         # Validate required market data before calling Prophet
@@ -389,7 +389,7 @@ class SignalGenerator:
             ct = pytz.timezone('America/Chicago')
             now_ct = datetime.now(ct)
 
-            context = OracleMarketContext(
+            context = ProphetMarketContext(
                 spot_price=gex_data['spot_price'],
                 vix=gex_data['vix'],
                 gex_put_wall=gex_data.get('put_wall', 0),
@@ -647,7 +647,7 @@ class SignalGenerator:
             prophet = prophet_data
             logger.info(f"[GIDEON] Using pre-fetched Prophet data: advice={prophet.get('advice', 'UNKNOWN')}")
         else:
-            prophet = self.get_oracle_advice(gex_data)
+            prophet = self.get_prophet_advice(gex_data)
         oracle_direction = prophet.get('direction', 'FLAT') if prophet else 'FLAT'
         oracle_confidence = prophet.get('confidence', 0) if prophet else 0
         oracle_win_prob = prophet.get('win_probability', 0) if prophet else 0
@@ -728,8 +728,8 @@ class SignalGenerator:
             if not near_wall:
                 filters_bypassed.append(f"Wall={wall_reason}")
 
-            total_put_gex = gex_data.get('put_gex', gex_data.get('kronos_raw', {}).get('total_put_gex', 0))
-            total_call_gex = gex_data.get('call_gex', gex_data.get('kronos_raw', {}).get('total_call_gex', 0))
+            total_put_gex = gex_data.get('put_gex', gex_data.get('chronicles_raw', {}).get('total_put_gex', 0))
+            total_call_gex = gex_data.get('call_gex', gex_data.get('chronicles_raw', {}).get('total_call_gex', 0))
             gex_ratio = total_put_gex / total_call_gex if total_call_gex > 0 else 10.0
             has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
                                  gex_ratio <= self.config.max_gex_ratio_bullish)

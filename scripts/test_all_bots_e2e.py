@@ -203,8 +203,8 @@ def test_api_endpoints():
         log_test("FORTRESS /logs", False, str(e)[:100])
 
     try:
-        from backend.api.routes.fortress_routes import get_ares_live_pnl
-        result = asyncio.get_event_loop().run_until_complete(get_ares_live_pnl())
+        from backend.api.routes.fortress_routes import get_fortress_live_pnl
+        result = asyncio.get_event_loop().run_until_complete(get_fortress_live_pnl())
         has_data = result.get('success') or 'data' in result
         log_test("FORTRESS /live-pnl", has_data)
     except Exception as e:

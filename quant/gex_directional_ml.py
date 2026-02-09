@@ -273,9 +273,9 @@ class GEXDirectionalPredictor:
         """
         Calculate GEX directly from ORAT options data if gex_daily doesn't exist.
         """
-        from quant.chronicles_gex_calculator import KronosGEXCalculator
+        from quant.chronicles_gex_calculator import ChroniclesGEXCalculator
 
-        calc = KronosGEXCalculator(self.ticker)
+        calc = ChroniclesGEXCalculator(self.ticker)
 
         # Get list of trading dates
         dates_query = """
@@ -628,7 +628,7 @@ class GEXDirectionalPredictor:
         Predict market direction from current GEX structure.
 
         Args:
-            gex_data: Dict with GEX features (from KronosGEXCalculator)
+            gex_data: Dict with GEX features (from ChroniclesGEXCalculator)
                 - spot_price, net_gex, gex_normalized, gex_regime
                 - call_wall, put_wall, flip_point
                 - distance_to_flip_pct, between_walls, etc.

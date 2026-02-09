@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from zoneinfo import ZoneInfo
 
-from .counselor_cache import counselor_cache, GEXISCache
-from .counselor_tracing import gexis_tracer, trace_command
+from .counselor_cache import counselor_cache, CounselorCache
+from .counselor_tracing import counselor_tracer, trace_command
 
 logger = logging.getLogger(__name__)
 

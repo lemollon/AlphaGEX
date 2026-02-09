@@ -80,7 +80,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     # VALOR endpoints (MES Futures)
-    heracles_endpoints = [
+    valor_endpoints = [
         ("/api/valor/status", "GET", 200),
         ("/api/valor/positions", "GET", 200),
         ("/api/valor/closed-trades", "GET", 200),
@@ -175,7 +175,7 @@ def run_endpoint_existence_tests(base_url: str):
     ]
 
     all_endpoints = (
-        core_endpoints + heracles_endpoints + prometheus_endpoints +
+        core_endpoints + valor_endpoints + prometheus_endpoints +
         ares_endpoints + titan_endpoints + anchor_endpoints +
         solomon_endpoints + icarus_endpoints + oracle_endpoints + metrics_endpoints
     )

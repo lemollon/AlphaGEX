@@ -275,7 +275,7 @@ class MarketContext:
 
 
 @dataclass
-class OraclePrediction:
+class ProphetPrediction:
     """Prediction from Prophet for a specific bot"""
     bot_name: BotName
     advice: TradingAdvice
@@ -472,7 +472,7 @@ class ProverbsAdvisory:
 # PROPHET LIVE LOG - For Frontend Transparency
 # =============================================================================
 
-class OracleLiveLog:
+class ProphetLiveLog:
     """
     Live logging system for Prophet - FULL TRANSPARENCY.
     Captures every piece of data flowing through Prophet for frontend visibility.
@@ -660,10 +660,10 @@ class OracleLiveLog:
 
 
 # Global live log instance
-oracle_live_log = OracleLiveLog()
+prophet_live_log = ProphetLiveLog()
 
 
-class OracleClaudeEnhancer:
+class ProphetClaudeEnhancer:
     """
     Claude AI integration for Prophet predictions.
     Uses direct Anthropic SDK (no LangChain needed!).
@@ -682,7 +682,7 @@ class OracleClaudeEnhancer:
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
         self._client = None
         self._enabled = False
-        self.live_log = oracle_live_log
+        self.live_log = prophet_live_log
 
         if CLAUDE_AVAILABLE and self.api_key:
             try:
@@ -1079,7 +1079,7 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
 
     def explain_prediction(
         self,
-        prediction: 'OraclePrediction',
+        prediction: 'ProphetPrediction',
         context: 'MarketContext'
     ) -> str:
         """
@@ -1459,17 +1459,17 @@ class ProphetAdvisor:
         self._dynamic_weight_updater = None
 
         # Live log for frontend transparency
-        self.live_log = oracle_live_log
+        self.live_log = prophet_live_log
 
         # Thresholds
         self.high_confidence_threshold = 0.65
         self.low_confidence_threshold = 0.45
 
         # Claude AI Enhancer
-        self.claude: Optional[OracleClaudeEnhancer] = None
+        self.claude: Optional[ProphetClaudeEnhancer] = None
         self._claude_enabled = enable_claude
         if enable_claude:
-            self.claude = OracleClaudeEnhancer()
+            self.claude = ProphetClaudeEnhancer()
 
         # Create models directory
         os.makedirs(self.MODEL_PATH, exist_ok=True)
@@ -1780,7 +1780,7 @@ class ProphetAdvisor:
 
         return False
 
-    def _add_staleness_to_prediction(self, prediction: OraclePrediction) -> OraclePrediction:
+    def _add_staleness_to_prediction(self, prediction: ProphetPrediction) -> ProphetPrediction:
         """
         Add staleness tracking fields to a prediction.
 
@@ -1811,7 +1811,7 @@ class ProphetAdvisor:
 
         # Try new name first, then fall back to old name
         if not os.path.exists(model_file):
-            model_file = os.path.join(self.MODEL_PATH, 'ares_advisor_model.pkl')
+            model_file = os.path.join(self.MODEL_PATH, 'fortress_advisor_model.pkl')
 
         if os.path.exists(model_file):
             try:
@@ -2406,7 +2406,7 @@ class ProphetAdvisor:
     # BOT-SPECIFIC ADVICE
     # =========================================================================
 
-    def get_ares_advice(
+    def get_fortress_advice(
         self,
         context: MarketContext,
         use_gex_walls: bool = False,
@@ -2415,7 +2415,7 @@ class ProphetAdvisor:
         vix_monday_friday_skip: float = 0.0,
         vix_streak_skip: float = 0.0,
         recent_losses: int = 0
-    ) -> OraclePrediction:
+    ) -> ProphetPrediction:
         """
         Get Iron Condor advice for FORTRESS.
 
@@ -2429,7 +2429,7 @@ class ProphetAdvisor:
             recent_losses: Number of recent consecutive losses
 
         Returns:
-            OraclePrediction with IC-specific advice
+            ProphetPrediction with IC-specific advice
         """
         # Check for newer model version in DB and reload if available (Issue #1 fix)
         self._check_and_reload_model_if_stale()
@@ -2513,7 +2513,7 @@ class ProphetAdvisor:
                 "suggest_solomon": suggest_solomon,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
-            skip_prediction = OraclePrediction(
+            skip_prediction = ProphetPrediction(
                 bot_name=BotName.FORTRESS,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
@@ -2772,7 +2772,7 @@ class ProphetAdvisor:
         else:
             sd_mult = 1.4  # FIX: Was 1.2 - low confidence = much wider for safety
 
-        prediction = OraclePrediction(
+        prediction = ProphetPrediction(
             bot_name=BotName.FORTRESS,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -2830,7 +2830,7 @@ class ProphetAdvisor:
 
         return self._add_staleness_to_prediction(prediction)
 
-    def get_atlas_advice(self, context: MarketContext) -> OraclePrediction:
+    def get_cornerstone_advice(self, context: MarketContext) -> ProphetPrediction:
         """
         Get Wheel strategy advice for CORNERSTONE.
 
@@ -2889,7 +2889,7 @@ class ProphetAdvisor:
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
-        prediction = OraclePrediction(
+        prediction = ProphetPrediction(
             bot_name=BotName.CORNERSTONE,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -2922,11 +2922,11 @@ class ProphetAdvisor:
 
         return self._add_staleness_to_prediction(prediction)
 
-    def get_phoenix_advice(
+    def get_lazarus_advice(
         self,
         context: MarketContext,
         use_claude_validation: bool = True
-    ) -> OraclePrediction:
+    ) -> ProphetPrediction:
         """
         Get directional call advice for LAZARUS.
 
@@ -3014,7 +3014,7 @@ class ProphetAdvisor:
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
-        prediction = OraclePrediction(
+        prediction = ProphetPrediction(
             bot_name=BotName.LAZARUS,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -3060,7 +3060,7 @@ class ProphetAdvisor:
         use_claude_validation: bool = True,
         wall_filter_pct: float = 1.0,  # Default 1.0%, backtest showed 0.5% = 98% WR
         bot_name: str = "SOLOMON"  # Allow GIDEON to pass its own name for proper logging
-    ) -> OraclePrediction:
+    ) -> ProphetPrediction:
         """
         Get directional spread advice for SOLOMON (or GIDEON).
 
@@ -3430,7 +3430,7 @@ class ProphetAdvisor:
         except (KeyError, AttributeError):
             prediction_bot_name = BotName.SOLOMON
 
-        prediction = OraclePrediction(
+        prediction = ProphetPrediction(
             bot_name=prediction_bot_name,
             advice=advice,
             win_probability=base_pred['win_probability'],
@@ -3510,7 +3510,7 @@ class ProphetAdvisor:
         vix_streak_skip: float = 0.0,
         recent_losses: int = 0,
         spread_width: float = 10.0  # Default $10 spread width
-    ) -> OraclePrediction:
+    ) -> ProphetPrediction:
         """
         Get Iron Condor advice for ANCHOR (SPX Weekly Iron Condors).
 
@@ -3532,7 +3532,7 @@ class ProphetAdvisor:
             spread_width: Width of IC spreads (default $10)
 
         Returns:
-            OraclePrediction with SPX IC-specific advice
+            ProphetPrediction with SPX IC-specific advice
         """
         # Check for newer model version in DB and reload if available (Issue #1 fix)
         self._check_and_reload_model_if_stale()
@@ -3601,7 +3601,7 @@ class ProphetAdvisor:
                 "suggest_solomon": suggest_solomon,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
-            skip_prediction = OraclePrediction(
+            skip_prediction = ProphetPrediction(
                 bot_name=BotName.ANCHOR,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
@@ -3840,7 +3840,7 @@ class ProphetAdvisor:
         # Fixed: confidence should be derived from win_prob, not base_pred (which doesn't have 'confidence' key)
         # Confidence represents certainty in the prediction itself, scaled from win_probability
         model_confidence = min(0.95, 0.5 + abs(win_prob - 0.5) * 2)  # Higher when win_prob is far from 50%
-        prediction = OraclePrediction(
+        prediction = ProphetPrediction(
             bot_name=BotName.ANCHOR,
             advice=advice,
             win_probability=win_prob,
@@ -3891,93 +3891,6 @@ class ProphetAdvisor:
         self.live_log.log_data_flow("ANCHOR", "DECISION", decision_data)
 
         return self._add_staleness_to_prediction(prediction)
-
-    # =========================================================================
-    # SAMSON ADVICE (AGGRESSIVE SPX IRON CONDOR - DAILY)
-    # =========================================================================
-
-    def get_titan_advice(
-        self,
-        context: MarketContext,
-        use_gex_walls: bool = True,
-        use_claude_validation: bool = True,
-        vix_hard_skip: float = 0.0,
-        vix_monday_friday_skip: float = 0.0,
-        vix_streak_skip: float = 0.0,
-        recent_losses: int = 0,
-        spread_width: float = 12.0  # SAMSON uses $12 spread width (more aggressive)
-    ) -> OraclePrediction:
-        """
-        Get Iron Condor advice for SAMSON (Aggressive SPX Daily Iron Condors).
-
-        SAMSON is similar to ANCHOR but more aggressive:
-        - Trades daily vs weekly
-        - Uses $12 spreads vs $10 spreads
-        - Lower win probability threshold (more trades)
-        - Higher risk tolerance
-
-        Args:
-            context: Current market conditions
-            use_gex_walls: Whether to suggest strikes based on GEX walls
-            use_claude_validation: Whether to use Claude AI to validate prediction
-            vix_hard_skip: Skip if VIX > this threshold (0 = disabled)
-            vix_monday_friday_skip: Skip on Mon/Fri if VIX > this (0 = disabled)
-            vix_streak_skip: Skip after recent losses if VIX > this (0 = disabled)
-            recent_losses: Number of recent consecutive losses
-            spread_width: Width of IC spreads (default $12 for SAMSON)
-
-        Returns:
-            OraclePrediction with SAMSON-specific advice
-        """
-        # Check for newer model version in DB and reload if available (Issue #1 fix)
-        self._check_and_reload_model_if_stale()
-
-        # Log prediction request
-        self.live_log.log("PREDICT", "SAMSON advice requested", {
-            "vix": context.vix,
-            "gex_regime": context.gex_regime.value,
-            "spot_price": context.spot_price,
-            "use_gex_walls": use_gex_walls,
-            "use_claude": use_claude_validation,
-            "vix_hard_skip": vix_hard_skip,
-            "spread_width": spread_width,
-            "model_version": self.model_version,
-            "hours_since_training": self._get_hours_since_training()
-        })
-
-        # SAMSON uses the same logic as ANCHOR but with more aggressive parameters
-        # Delegate to ANCHOR with SAMSON-specific adjustments
-        prediction = self.get_anchor_advice(
-            context=context,
-            use_gex_walls=use_gex_walls,
-            use_claude_validation=use_claude_validation,
-            vix_hard_skip=vix_hard_skip,
-            vix_monday_friday_skip=vix_monday_friday_skip,
-            vix_streak_skip=vix_streak_skip,
-            recent_losses=recent_losses,
-            spread_width=spread_width
-        )
-
-        # Override bot name to SAMSON for proper tracking
-        prediction.bot_name = BotName.SAMSON
-
-        # SAMSON is more aggressive - boost win probability slightly for valid signals
-        if prediction.advice != TradingAdvice.SKIP_TODAY:
-            # SAMSON accepts lower win probability (42% vs 45% for ANCHOR)
-            if prediction.win_probability >= 0.42:
-                prediction.reasoning = f"[SAMSON Aggressive] {prediction.reasoning}"
-
-        # Log SAMSON-specific decision
-        self.live_log.log_data_flow("SAMSON", "DECISION", {
-            "advice": prediction.advice.value,
-            "win_probability": prediction.win_probability,
-            "confidence": prediction.confidence,
-            "spread_width": spread_width,
-            "model_version": self.model_version,
-            "hours_since_training": self._get_hours_since_training()
-        })
-
-        return prediction
 
     # =========================================================================
     # BASE PREDICTION
@@ -4189,7 +4102,7 @@ class ProphetAdvisor:
 
     def explain_prediction(
         self,
-        prediction: OraclePrediction,
+        prediction: ProphetPrediction,
         context: MarketContext
     ) -> str:
         """
@@ -4254,7 +4167,7 @@ class ProphetAdvisor:
         df = None
         if backtest_results:
             try:
-                df = self.extract_features_from_kronos(backtest_results)
+                df = self.extract_features_from_chronicles(backtest_results)
             except Exception as e:
                 logger.error(f"Failed to extract features: {e}")
 
@@ -4271,7 +4184,7 @@ class ProphetAdvisor:
     # TRAINING
     # =========================================================================
 
-    def extract_features_from_kronos(
+    def extract_features_from_chronicles(
         self,
         backtest_results: Dict[str, Any],
         include_gex: bool = True
@@ -4476,7 +4389,7 @@ class ProphetAdvisor:
         self._has_gex_features = has_gex
         return df
 
-    def train_from_kronos(
+    def train_from_chronicles(
         self,
         backtest_results: Dict[str, Any],
         test_size: float = 0.2,
@@ -4493,7 +4406,7 @@ class ProphetAdvisor:
             self.live_log.log("TRAIN_ERROR", "ML libraries not available", {})
             raise ImportError("ML libraries required")
 
-        df = self.extract_features_from_kronos(backtest_results)
+        df = self.extract_features_from_chronicles(backtest_results)
 
         if len(df) < min_samples:
             raise ValueError(f"Insufficient data: {len(df)} < {min_samples}")
@@ -4610,7 +4523,7 @@ class ProphetAdvisor:
 
     def store_prediction(
         self,
-        prediction: OraclePrediction,
+        prediction: ProphetPrediction,
         context: MarketContext,
         trade_date: str,
         position_id: str = None,
@@ -4620,7 +4533,7 @@ class ProphetAdvisor:
         Store prediction to database for feedback loop - FULL data persistence.
 
         Args:
-            prediction: The OraclePrediction object
+            prediction: The ProphetPrediction object
             context: Market context at prediction time
             trade_date: Date of the trade
             position_id: Unique position ID (required for 1:1 prediction-to-position linking)
@@ -5070,22 +4983,22 @@ class ProphetAdvisor:
 # CONVENIENCE FUNCTIONS
 # =============================================================================
 
-_oracle: Optional[ProphetAdvisor] = None
-_oracle_lock = threading.Lock()
+_prophet: Optional[ProphetAdvisor] = None
+_prophet_lock = threading.Lock()
 
 
-def get_oracle() -> ProphetAdvisor:
+def get_prophet() -> ProphetAdvisor:
     """Get or create Prophet singleton (thread-safe)"""
-    global _oracle
-    if _oracle is None:
-        with _oracle_lock:
+    global _prophet
+    if _prophet is None:
+        with _prophet_lock:
             # Double-check locking pattern
-            if _oracle is None:
-                _oracle = ProphetAdvisor()
-    return _oracle
+            if _prophet is None:
+                _prophet = ProphetAdvisor()
+    return _prophet
 
 
-def get_ares_advice(
+def get_fortress_advice(
     vix: float,
     day_of_week: int = None,
     gex_regime: str = "NEUTRAL",
@@ -5093,7 +5006,7 @@ def get_ares_advice(
     gex_put_wall: float = 0,
     use_gex_walls: bool = False,
     **kwargs
-) -> OraclePrediction:
+) -> ProphetPrediction:
     """Quick helper to get FORTRESS advice"""
     if day_of_week is None:
         day_of_week = datetime.now().weekday()
@@ -5117,34 +5030,34 @@ def get_ares_advice(
         **{k: v for k, v in kwargs.items() if k != 'price'}
     )
 
-    prophet = get_oracle()
-    return prophet.get_ares_advice(context, use_gex_walls=use_gex_walls)
+    prophet = get_prophet()
+    return prophet.get_fortress_advice(context, use_gex_walls=use_gex_walls)
 
 
 # Backward compatibility aliases
 FortressMLAdvisor = ProphetAdvisor
-get_advisor = get_oracle
-get_trading_advice = get_ares_advice
+get_advisor = get_prophet
+get_trading_advice = get_fortress_advice
 
 
 def train_from_backtest(backtest_results: Dict[str, Any]) -> TrainingMetrics:
     """Train Prophet from backtest results"""
-    prophet = get_oracle()
-    return prophet.train_from_kronos(backtest_results)
+    prophet = get_prophet()
+    return prophet.train_from_chronicles(backtest_results)
 
 
-def explain_oracle_advice(
-    prediction: OraclePrediction,
+def explain_prophet_advice(
+    prediction: ProphetPrediction,
     context: MarketContext
 ) -> str:
     """Get Claude AI explanation of Prophet prediction"""
-    prophet = get_oracle()
+    prophet = get_prophet()
     return prophet.explain_prediction(prediction, context)
 
 
-def analyze_kronos_patterns(backtest_results: Dict[str, Any]) -> Dict[str, Any]:
+def analyze_chronicles_patterns(backtest_results: Dict[str, Any]) -> Dict[str, Any]:
     """Use Claude to analyze patterns in CHRONICLES backtest results"""
-    prophet = get_oracle()
+    prophet = get_prophet()
     return prophet.analyze_patterns(backtest_results)
 
 
@@ -5179,7 +5092,7 @@ def get_pending_outcomes_count() -> int:
 
 def get_training_status() -> Dict[str, Any]:
     """Get comprehensive training status for API"""
-    prophet = get_oracle()
+    prophet = get_prophet()
     pending_count = get_pending_outcomes_count()
 
     # Get last training date from database
@@ -5281,7 +5194,7 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
         logger.error("Database not available for training")
         return None
 
-    prophet = get_oracle()
+    prophet = get_prophet()
     prophet.live_log.log("TRAIN_START", "Auto-training from live outcomes", {"min_samples": min_samples})
 
     try:
@@ -5474,7 +5387,7 @@ def auto_train(
     Returns:
         Dict with training status and results
     """
-    prophet = get_oracle()
+    prophet = get_prophet()
     prophet.live_log.log("AUTO_TRAIN_CHECK", "Checking if training needed", {
         "threshold": threshold_outcomes,
         "force": force
@@ -5544,7 +5457,7 @@ def auto_train(
         backtest_results = backtester.get_latest_results()
 
         if backtest_results and backtest_results.get('trades'):
-            metrics = prophet.train_from_kronos(backtest_results)
+            metrics = prophet.train_from_chronicles(backtest_results)
             result["training_metrics"] = metrics.__dict__
             result["success"] = True
             result["method"] = "chronicles_backtest"
@@ -5569,7 +5482,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
         logger.warning("Database not available for training")
         return None
 
-    prophet = get_oracle()
+    prophet = get_prophet()
     prophet.live_log.log("TRAIN_DB_START", "Training from database backtest results", {})
 
     try:
@@ -5611,7 +5524,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
             logger.info(f"Insufficient trades from database: {len(rows) if rows else 0} < {min_samples}")
             return None
 
-        # Convert to trade dictionaries for train_from_kronos
+        # Convert to trade dictionaries for train_from_chronicles
         all_trades = []
         for row in rows:
             trade_date, spy_price, vix, iv, outcome, pnl, ret_pct, gex_net, gex_regime, put_strike, call_strike = row
@@ -5619,7 +5532,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
             # Map outcome to win/loss
             is_win = outcome in ('MAX_PROFIT', 'PARTIAL_PROFIT')
 
-            # Format trade to match extract_features_from_kronos expectations
+            # Format trade to match extract_features_from_chronicles expectations
             trade = {
                 'trade_date': str(trade_date) if trade_date else '',
                 'open_price': float(spy_price) if spy_price else 590.0,
@@ -5640,7 +5553,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
 
         # Format as CHRONICLES backtest results
         backtest_results = {'all_trades': all_trades}
-        metrics = prophet.train_from_kronos(backtest_results, min_samples=min_samples)
+        metrics = prophet.train_from_chronicles(backtest_results, min_samples=min_samples)
 
         prophet.live_log.log("TRAIN_DB_DONE", f"Trained from {len(all_trades)} database trades", {
             "accuracy": metrics.accuracy,
@@ -5662,7 +5575,7 @@ if __name__ == "__main__":
     print("PROPHET - Multi-Strategy ML Advisor with Claude AI")
     print("=" * 60)
 
-    prophet = get_oracle()
+    prophet = get_prophet()
     print(f"Model loaded: {prophet.is_trained}")
     print(f"Version: {prophet.model_version}")
     print(f"Claude AI: {'ENABLED' if prophet.claude_available else 'DISABLED'}")
@@ -5680,7 +5593,7 @@ if __name__ == "__main__":
     )
 
     # Get advice with Claude validation
-    advice = prophet.get_ares_advice(context, use_gex_walls=True, use_claude_validation=True)
+    advice = prophet.get_fortress_advice(context, use_gex_walls=True, use_claude_validation=True)
     print(f"Advice: {advice.advice.value}")
     print(f"Win Prob: {advice.win_probability:.1%}")
     print(f"Risk %: {advice.suggested_risk_pct:.1f}%")

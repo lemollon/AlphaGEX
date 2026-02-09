@@ -71,7 +71,7 @@ def main():
     print_header("2. PROPHET MODULE IMPORT")
     try:
         from quant.prophet_advisor import (
-            ProphetAdvisor, get_oracle, auto_train,
+            ProphetAdvisor, get_prophet, auto_train,
             get_pending_outcomes_count, get_training_status,
             BotName, TradingAdvice
         )
@@ -88,8 +88,8 @@ def main():
     # ========================================
     print_header("3. PROPHET INSTANTIATION")
     try:
-        prophet = get_oracle()
-        print_result("get_oracle()", True)
+        prophet = get_prophet()
+        print_result("get_prophet()", True)
 
         print(f"\n  Prophet Status:")
         print(f"    - Model Trained: {prophet.is_trained}")
@@ -99,7 +99,7 @@ def main():
 
         results['instantiation'] = True
     except Exception as e:
-        print_result("get_oracle()", False, str(e))
+        print_result("get_prophet()", False, str(e))
         results['instantiation'] = False
 
     # ========================================
@@ -177,11 +177,11 @@ def main():
 
         # CHRONICLES memory
         try:
-            cursor.execute("SELECT COUNT(*) FROM kronos_memory")
+            cursor.execute("SELECT COUNT(*) FROM chronicles_memory")
             chronicles = cursor.fetchone()[0]
-            sources.append(('kronos_memory', chronicles))
+            sources.append(('chronicles_memory', chronicles))
         except Exception:
-            sources.append(('kronos_memory', 'TABLE NOT FOUND'))
+            sources.append(('chronicles_memory', 'TABLE NOT FOUND'))
 
         print("\n  Data Sources:")
         total_samples = 0

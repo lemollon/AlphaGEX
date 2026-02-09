@@ -23,17 +23,17 @@ router = APIRouter(prefix="/api/prophet", tags=["Prophet"])
 logger = logging.getLogger(__name__)
 
 # Try to import Prophet
-ORACLE_AVAILABLE = False
+PROPHET_AVAILABLE = False
 oracle_instance = None
 
 try:
     from quant.prophet_advisor import (
-        ProphetAdvisor, get_oracle, auto_train,
+        ProphetAdvisor, get_prophet, auto_train,
         get_pending_outcomes_count, train_from_live_outcomes,
         MarketContext, GEXRegime, VIXRegime, StrategyType,
         StrategyRecommendation, BotName, TradingAdvice
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
     logger.info("Prophet advisor system loaded")
 except ImportError as e:
     logger.warning(f"Prophet not available: {e}")
@@ -74,14 +74,14 @@ async def prophet_health():
 
     Returns availability status, model info, and training metrics.
     """
-    if not ORACLE_AVAILABLE:
+    if not PROPHET_AVAILABLE:
         return {
             "status": "unavailable",
             "message": "Prophet system not loaded"
         }
 
     try:
-        prophet = get_oracle()
+        prophet = get_prophet()
         pending = get_pending_outcomes_count()
 
         # Calculate model freshness metrics
@@ -116,11 +116,11 @@ async def prophet_status():
     """
     Get detailed Prophet status including training metrics.
     """
-    if not ORACLE_AVAILABLE:
+    if not PROPHET_AVAILABLE:
         raise HTTPException(status_code=503, detail="Prophet not available")
 
     try:
-        prophet = get_oracle()
+        prophet = get_prophet()
         pending = get_pending_outcomes_count()
 
         # Calculate model freshness metrics
@@ -174,11 +174,11 @@ async def get_strategy_recommendation(request: StrategyRecommendationRequest):
     - NORMAL VIX + POSITIVE GEX = Favor IRON_CONDOR (FORTRESS/ANCHOR)
     - EXTREME VIX = SKIP or reduced exposure
     """
-    if not ORACLE_AVAILABLE:
+    if not PROPHET_AVAILABLE:
         raise HTTPException(status_code=503, detail="Prophet not available")
 
     try:
-        prophet = get_oracle()
+        prophet = get_prophet()
 
         # Convert gex_regime string to enum
         gex_regime_str = request.gex_regime.upper()
@@ -229,11 +229,11 @@ async def get_strategy_recommendation_current():
 
     Fetches live VIX and GEX data to make recommendation.
     """
-    if not ORACLE_AVAILABLE:
+    if not PROPHET_AVAILABLE:
         raise HTTPException(status_code=503, detail="Prophet not available")
 
     try:
-        prophet = get_oracle()
+        prophet = get_prophet()
 
         # Try to get live market data
         try:
@@ -315,11 +315,11 @@ async def get_strategy_performance(
     - VIX regime (LOW, NORMAL, ELEVATED, HIGH, EXTREME)
     - GEX regime (POSITIVE, NEUTRAL, NEGATIVE)
     """
-    if not ORACLE_AVAILABLE:
+    if not PROPHET_AVAILABLE:
         raise HTTPException(status_code=503, detail="Prophet not available")
 
     try:
-        prophet = get_oracle()
+        prophet = get_prophet()
         results = prophet.analyze_strategy_performance(days=days)
 
         if "error" in results:
@@ -364,7 +364,7 @@ async def trigger_training(request: TrainRequest):
     2. Database backtests (fallback)
     3. CHRONICLES backtest data (final fallback)
     """
-    if not ORACLE_AVAILABLE:
+    if not PROPHET_AVAILABLE:
         raise HTTPException(status_code=503, detail="Prophet not available")
 
     try:
@@ -392,7 +392,7 @@ async def get_pending_outcomes():
     """
     Get count of pending outcomes for training.
     """
-    if not ORACLE_AVAILABLE:
+    if not PROPHET_AVAILABLE:
         raise HTTPException(status_code=503, detail="Prophet not available")
 
     try:

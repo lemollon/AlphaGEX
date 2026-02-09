@@ -162,19 +162,19 @@ except ImportError as e:
 # CRITICAL: Import Prophet AI advisor for intelligent trading decisions
 try:
     from quant.prophet_advisor import (
-        ProphetAdvisor, MarketContext as OracleMarketContext,
-        TradingAdvice, GEXRegime, OraclePrediction, TradeOutcome,
-        BotName as OracleBotName
+        ProphetAdvisor, MarketContext as ProphetMarketContext,
+        TradingAdvice, GEXRegime, ProphetPrediction, TradeOutcome,
+        BotName as ProphetBotName
     )
-    ORACLE_AVAILABLE = True
+    PROPHET_AVAILABLE = True
     logger.info("Prophet AI Advisor integrated - ML-based trade decisions")
 except ImportError as e:
-    ORACLE_AVAILABLE = False
+    PROPHET_AVAILABLE = False
     ProphetAdvisor = None
-    OracleMarketContext = None
+    ProphetMarketContext = None
     TradingAdvice = None
     TradeOutcome = None
-    OracleBotName = None
+    ProphetBotName = None
     logger.warning(f"Prophet AI not available: {e}")
 
 
@@ -450,7 +450,7 @@ class AutonomousPaperTrader(
         # Initialize Prophet AI advisor for ML-based decisions
         self.prophet = None
         self._last_oracle_advice = None
-        if ORACLE_AVAILABLE:
+        if PROPHET_AVAILABLE:
             try:
                 self.prophet = ProphetAdvisor()
                 print("✅ Prophet AI advisor initialized - ML-based trade decisions")
@@ -1040,12 +1040,12 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             # ============================================================
             # STEP 1c: CONSULT PROPHET AI FOR TRADING ADVICE
             # ============================================================
-            oracle_advice = self._consult_oracle(spot_price, vix, net_gex, gex_data)
+            oracle_advice = self._consult_prophet(spot_price, vix, net_gex, gex_data)
             if oracle_advice:
                 self._last_oracle_advice = oracle_advice
 
                 # Honor Prophet's SKIP advice
-                if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
+                if PROPHET_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
                     self.update_live_status(
                         status='ORACLE_SKIP',
                         action=f'Prophet AI advises SKIP today',
@@ -1569,7 +1569,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             print(f"❌ Failed to fetch VIX: {e}")
             return 17.0
 
-    def _build_oracle_context(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OracleMarketContext']:
+    def _build_prophet_context(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['ProphetMarketContext']:
         """
         Build Prophet MarketContext from LAZARUS market data.
 
@@ -1580,9 +1580,9 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             gex_data: Full GEX data dict
 
         Returns:
-            OracleMarketContext for Prophet consultation
+            ProphetMarketContext for Prophet consultation
         """
-        if not ORACLE_AVAILABLE or OracleMarketContext is None:
+        if not PROPHET_AVAILABLE or ProphetMarketContext is None:
             return None
 
         try:
@@ -1608,7 +1608,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             # Calculate expected move
             expected_move_pct = vix / 100.0 * (1/252) ** 0.5 * 100 if vix > 0 else 1.0
 
-            return OracleMarketContext(
+            return ProphetMarketContext(
                 spot_price=spot,
                 price_change_1d=0,
                 vix=vix,
@@ -1632,7 +1632,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             logger.error(f"LAZARUS: Error building Prophet context: {e}")
             return None
 
-    def _consult_oracle(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['OraclePrediction']:
+    def _consult_prophet(self, spot: float, vix: float, net_gex: float, gex_data: Dict) -> Optional['ProphetPrediction']:
         """
         Consult Prophet AI for trading advice.
 
@@ -1643,20 +1643,20 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
             gex_data: Full GEX data dict
 
         Returns:
-            OraclePrediction with advice, or None if Prophet unavailable
+            ProphetPrediction with advice, or None if Prophet unavailable
         """
         if not self.prophet:
             logger.debug("LAZARUS: Prophet not available, proceeding without advice")
             return None
 
-        context = self._build_oracle_context(spot, vix, net_gex, gex_data)
+        context = self._build_prophet_context(spot, vix, net_gex, gex_data)
         if not context:
             logger.debug("LAZARUS: Could not build Prophet context")
             return None
 
         try:
             # Get advice from Prophet for directional trades
-            advice = self.prophet.get_phoenix_advice(context)
+            advice = self.prophet.get_lazarus_advice(context)
 
             logger.info(f"LAZARUS Prophet: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
                        f"Risk: {advice.suggested_risk_pct:.1%}")
@@ -1689,14 +1689,14 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
         Returns:
             True if recorded successfully
         """
-        if not self.prophet or not ORACLE_AVAILABLE:
+        if not self.prophet or not PROPHET_AVAILABLE:
             return False
 
         try:
             outcome = TradeOutcome[outcome_type]
             self.prophet.update_outcome(
                 trade_date,
-                OracleBotName.LAZARUS,
+                ProphetBotName.LAZARUS,
                 outcome,
                 actual_pnl
             )

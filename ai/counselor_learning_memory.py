@@ -66,7 +66,7 @@ class RegimeAccuracy:
         self.last_updated = datetime.now(CENTRAL_TZ).isoformat()
 
 
-class GEXISLearningMemory:
+class CounselorLearningMemory:
     """
     Learning memory system for COUNSELOR predictions.
 
@@ -389,14 +389,14 @@ class GEXISLearningMemory:
 
 
 # Global instance (can be overridden with custom storage path)
-_learning_memory: Optional[GEXISLearningMemory] = None
+_learning_memory: Optional[CounselorLearningMemory] = None
 
 
-def get_learning_memory(storage_path: Optional[str] = None) -> GEXISLearningMemory:
+def get_learning_memory(storage_path: Optional[str] = None) -> CounselorLearningMemory:
     """Get the global learning memory instance."""
     global _learning_memory
     if _learning_memory is None:
-        _learning_memory = GEXISLearningMemory(storage_path=storage_path)
+        _learning_memory = CounselorLearningMemory(storage_path=storage_path)
     return _learning_memory
 
 

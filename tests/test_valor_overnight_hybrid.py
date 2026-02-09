@@ -7,7 +7,7 @@ Tests for the new features:
 1. Overnight Hybrid Strategy - Different parameters for overnight vs RTH
 2. Gamma Regime Filter - Option to restrict trading to specific gamma regime
 
-Run: pytest tests/test_heracles_overnight_hybrid.py -v
+Run: pytest tests/test_valor_overnight_hybrid.py -v
 """
 
 import pytest
@@ -20,7 +20,7 @@ from trading.valor.models import (
     ValorConfig, GammaRegime, TradeDirection, FuturesSignal, SignalSource,
     BayesianWinTracker, MES_POINT_VALUE
 )
-from trading.valor.signals import HERACLESSignalGenerator
+from trading.valor.signals import ValorSignalGenerator
 
 
 class TestOvernightHybridConfig:
@@ -130,7 +130,7 @@ class TestSignalGeneratorOvernightHybrid:
 
     def test_set_stop_levels_rth_no_loss_trailing(self, config_no_loss_trailing, win_tracker, base_signal):
         """RTH session with no-loss trailing should use 15pt emergency stop."""
-        generator = HERACLESSignalGenerator(config_no_loss_trailing, win_tracker)
+        generator = ValorSignalGenerator(config_no_loss_trailing, win_tracker)
 
         signal, stop_type, stop_points = generator._set_stop_levels(
             base_signal, atr=5.0, is_overnight=False
@@ -142,7 +142,7 @@ class TestSignalGeneratorOvernightHybrid:
 
     def test_set_stop_levels_overnight_no_loss_trailing(self, config_no_loss_trailing, win_tracker, base_signal):
         """Overnight session with no-loss trailing should use 10pt emergency stop."""
-        generator = HERACLESSignalGenerator(config_no_loss_trailing, win_tracker)
+        generator = ValorSignalGenerator(config_no_loss_trailing, win_tracker)
 
         signal, stop_type, stop_points = generator._set_stop_levels(
             base_signal, atr=5.0, is_overnight=True
@@ -154,7 +154,7 @@ class TestSignalGeneratorOvernightHybrid:
 
     def test_set_stop_levels_rth_fixed(self, config, win_tracker, base_signal):
         """RTH session with fixed stops should use 2.5pt stop and 6pt target."""
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         signal, stop_type, stop_points = generator._set_stop_levels(
             base_signal, atr=5.0, is_overnight=False
@@ -167,7 +167,7 @@ class TestSignalGeneratorOvernightHybrid:
 
     def test_set_stop_levels_overnight_fixed(self, config, win_tracker, base_signal):
         """Overnight session with fixed stops should use 1.5pt stop and 3pt target."""
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         signal, stop_type, stop_points = generator._set_stop_levels(
             base_signal, atr=5.0, is_overnight=True
@@ -195,7 +195,7 @@ class TestSignalGeneratorOvernightHybrid:
             entry_price=5900.0,
         )
 
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         signal, stop_type, stop_points = generator._set_stop_levels(
             short_signal, atr=5.0, is_overnight=True
@@ -211,7 +211,7 @@ class TestSignalGeneratorOvernightHybrid:
         config.use_no_loss_trailing = False
         config.use_overnight_hybrid = False
 
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         signal, stop_type, stop_points = generator._set_stop_levels(
             base_signal, atr=5.0, is_overnight=True
@@ -239,7 +239,7 @@ class TestSignalGeneratorGammaRegimeFilter:
     def test_no_filter_allows_positive_gamma(self, config, win_tracker):
         """Empty filter should allow positive gamma signals."""
         config.allowed_gamma_regime = ""
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         # Positive gamma setup (price above flip = SHORT signal expected)
         # Need price to be > 0.5% (flip_point_proximity_pct) from flip point
@@ -267,7 +267,7 @@ class TestSignalGeneratorGammaRegimeFilter:
     def test_no_filter_allows_negative_gamma(self, config, win_tracker):
         """Empty filter should allow negative gamma signals."""
         config.allowed_gamma_regime = ""
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         # Negative gamma setup with momentum breakout
         gex_data = {
@@ -293,7 +293,7 @@ class TestSignalGeneratorGammaRegimeFilter:
     def test_positive_filter_blocks_negative_gamma(self, config, win_tracker):
         """POSITIVE filter should block negative gamma signals."""
         config.allowed_gamma_regime = "POSITIVE"
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         # Negative gamma setup
         gex_data = {
@@ -318,7 +318,7 @@ class TestSignalGeneratorGammaRegimeFilter:
     def test_positive_filter_allows_positive_gamma(self, config, win_tracker):
         """POSITIVE filter should allow positive gamma signals."""
         config.allowed_gamma_regime = "POSITIVE"
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         # Positive gamma setup
         # Need price to be > 0.5% from flip point to generate signal
@@ -345,7 +345,7 @@ class TestSignalGeneratorGammaRegimeFilter:
     def test_negative_filter_blocks_positive_gamma(self, config, win_tracker):
         """NEGATIVE filter should block positive gamma signals."""
         config.allowed_gamma_regime = "NEGATIVE"
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         # Positive gamma setup
         gex_data = {
@@ -370,7 +370,7 @@ class TestSignalGeneratorGammaRegimeFilter:
     def test_filter_case_insensitive(self, config, win_tracker):
         """Filter should be case-insensitive."""
         config.allowed_gamma_regime = "positive"  # lowercase
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
 
         # Negative gamma setup
         gex_data = {
@@ -425,7 +425,7 @@ class TestOvernightHybridWithNoLossTrailing:
             entry_price=5900.0,
         )
 
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
         signal, stop_type, stop_pts = generator._set_stop_levels(signal, atr=5.0, is_overnight=False)
 
         assert stop_type == 'NO_LOSS_TRAIL'
@@ -450,7 +450,7 @@ class TestOvernightHybridWithNoLossTrailing:
             entry_price=5900.0,
         )
 
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
         signal, stop_type, stop_pts = generator._set_stop_levels(signal, atr=5.0, is_overnight=True)
 
         assert stop_type == 'NO_LOSS_TRAIL_OVERNIGHT'
@@ -475,7 +475,7 @@ class TestOvernightHybridWithNoLossTrailing:
             entry_price=5900.0,
         )
 
-        generator = HERACLESSignalGenerator(config, win_tracker)
+        generator = ValorSignalGenerator(config, win_tracker)
         signal, stop_type, stop_pts = generator._set_stop_levels(signal, atr=5.0, is_overnight=True)
 
         assert stop_type == 'NO_LOSS_TRAIL_OVERNIGHT'

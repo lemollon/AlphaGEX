@@ -477,10 +477,10 @@ test.describe('Prophet Knowledge Base - Navigation Integration', () => {
     await page.waitForTimeout(2000)
 
     // Find and click Prophet in navigation
-    const oracleLink = page.locator('a[href="/prophet"]').or(page.locator('text=Prophet'))
+    const prophetLink = page.locator('a[href="/prophet"]').or(page.locator('text=Prophet'))
 
-    if (await oracleLink.first().isVisible()) {
-      await oracleLink.first().click()
+    if (await prophetLink.first().isVisible()) {
+      await prophetLink.first().click()
       await page.waitForURL('**/prophet')
 
       // Should be on Prophet page

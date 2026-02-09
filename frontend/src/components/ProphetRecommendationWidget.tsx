@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
-interface OracleAPIResponse {
+interface ProphetAPIResponse {
   recommended_strategy: 'IC' | 'DIRECTIONAL' | 'HOLD'
   confidence: number
   reasoning: string
@@ -52,7 +52,7 @@ function formatCentralTime(timestamp?: string): string {
 export default function ProphetRecommendationWidget() {
   const [expanded, setExpanded] = useState(false) // Default collapsed
   const [loading, setLoading] = useState(true)
-  const [recommendation, setRecommendation] = useState<OracleAPIResponse | null>(null)
+  const [recommendation, setRecommendation] = useState<ProphetAPIResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<string>('')
 
@@ -63,7 +63,7 @@ export default function ProphetRecommendationWidget() {
       const response = await api.get('/api/prophet/strategy-recommendation')
       const data = response.data
       if (data && (data.recommended_strategy || data.strategy)) {
-        const normalized: OracleAPIResponse = {
+        const normalized: ProphetAPIResponse = {
           recommended_strategy: data.recommended_strategy || data.strategy || 'HOLD',
           confidence: data.confidence || 0,
           reasoning: data.reasoning || '',

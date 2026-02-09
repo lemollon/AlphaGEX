@@ -127,7 +127,7 @@ except ImportError:
     logger.warning("FORTRESS V2 module not available")
 
 
-def get_ares_instance():
+def get_fortress_instance():
     """Get the FORTRESS trader instance from scheduler if available"""
     global fortress_trader
     if fortress_trader:
@@ -145,7 +145,7 @@ def get_ares_instance():
         return None
 
 
-def _calculate_ares_unrealized_pnl(positions: list) -> dict:
+def _calculate_fortress_unrealized_pnl(positions: list) -> dict:
     """
     Calculate unrealized P&L for FORTRESS Iron Condor positions using mark-to-market pricing.
 
@@ -1100,7 +1100,7 @@ async def get_fortress_status():
 
     Returns mode, capital, P&L, positions, configuration, and heartbeat.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     # Get heartbeat info
     heartbeat = _get_heartbeat('FORTRESS')
@@ -1176,7 +1176,7 @@ async def get_fortress_status():
                 ''')
                 open_positions = cursor.fetchall()
                 if open_positions:
-                    mtm_result = _calculate_ares_unrealized_pnl(open_positions)
+                    mtm_result = _calculate_fortress_unrealized_pnl(open_positions)
                     unrealized_pnl = mtm_result['total_unrealized_pnl']
                     logger.debug(f"FORTRESS status: MTM unrealized=${unrealized_pnl:.2f} via {mtm_result['method']}")
 
@@ -1193,11 +1193,11 @@ async def get_fortress_status():
             from database_adapter import get_connection
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_mode'")
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_mode'")
             row = cursor.fetchone()
             if row:
                 stored_mode = row[0]
-            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_ticker'")
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_ticker'")
             row = cursor.fetchone()
             if row:
                 stored_ticker = row[0]
@@ -1695,7 +1695,7 @@ async def get_fortress_equity_curve(days: int = 30):
     Args:
         days: Number of days of history (default 30)
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     # CRITICAL FIX: Use fixed starting capital for equity curve calculations
     # Previously used Tradier balance which already includes realized P&L, causing double-counting
@@ -2090,7 +2090,7 @@ async def get_fortress_equity_curve(days: int = 30):
 
 
 @router.get("/equity-curve/intraday")
-async def get_ares_intraday_equity(date: str = None):
+async def get_fortress_intraday_equity(date: str = None):
     """
     Get FORTRESS intraday equity curve with 5-minute interval snapshots.
 
@@ -2299,7 +2299,7 @@ async def get_ares_intraday_equity(date: str = None):
 
 
 @router.get("/equity-curve/live")
-async def get_ares_live_equity_curve():
+async def get_fortress_live_equity_curve():
     """
     Get FORTRESS equity curve with LIVE intraday tracking.
 
@@ -2861,7 +2861,7 @@ async def get_fortress_logs(
 
 
 @router.get("/decisions")
-async def get_ares_decisions(limit: int = 50):
+async def get_fortress_decisions(limit: int = 50):
     """
     Get FORTRESS decision log entries.
 
@@ -2900,7 +2900,7 @@ async def get_ares_decisions(limit: int = 50):
 
 
 @router.get("/market-data")
-async def get_ares_market_data():
+async def get_fortress_market_data():
     """
     Get current market data for FORTRESS (SPX, SPY, VIX, expected moves).
 
@@ -3057,7 +3057,7 @@ async def run_ares_cycle(
 
     PROTECTED: Requires admin authentication. Only runs in paper mode for safety.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     if not fortress:
         raise HTTPException(
@@ -3086,7 +3086,7 @@ async def get_fortress_config():
 
     Returns the current trading configuration for both SPX and SPY.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     default_config = {
         "ticker": "SPX",
@@ -3147,7 +3147,7 @@ async def sync_tradier_positions(
 
     PROTECTED: Requires API key authentication.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     if not fortress:
         return {
@@ -3176,7 +3176,7 @@ async def get_tradier_account_status():
     Returns account balances, positions, and recent orders
     from the connected Tradier account.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     if not fortress:
         return {
@@ -3311,7 +3311,7 @@ async def check_tradier_connection():
 
 
 @router.get("/live-pnl")
-async def get_ares_live_pnl():
+async def get_fortress_live_pnl():
     """
     Get real-time unrealized P&L for all open FORTRESS Iron Condor positions.
 
@@ -3323,7 +3323,7 @@ async def get_ares_live_pnl():
     - positions: List of position details with current P&L, strike distances, risk status
     - underlying_price: Current SPY/SPX price
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
@@ -3620,7 +3620,7 @@ async def process_expired_positions(
     PROTECTED: Requires API key authentication.
     Processes positions where expiration <= today and status = 'open'.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     if not fortress:
         raise HTTPException(
@@ -3654,7 +3654,7 @@ async def skip_ares_today(
 
     PROTECTED: Requires API key authentication.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     if not fortress:
         raise HTTPException(
@@ -3700,7 +3700,7 @@ async def update_fortress_config(
 
     PROTECTED: Requires admin authentication.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     if not fortress:
         raise HTTPException(
@@ -3763,7 +3763,7 @@ async def get_strategy_presets():
             }
         }
 
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
     active_preset = fortress.config.strategy_preset if fortress else "moderate"
 
     presets = []
@@ -3805,7 +3805,7 @@ async def set_strategy_preset(
 
     PROTECTED: Requires admin authentication.
     """
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     if not fortress:
         raise HTTPException(
@@ -4139,7 +4139,7 @@ async def reset_fortress_data(confirm: bool = False):
 
 
 @router.get("/diagnostics")
-async def get_ares_diagnostics():
+async def get_fortress_diagnostics():
     """
     Get FORTRESS diagnostic information including execution capability.
 
@@ -4148,7 +4148,7 @@ async def get_ares_diagnostics():
     """
     from unified_config import APIConfig
 
-    fortress = get_ares_instance()
+    fortress = get_fortress_instance()
 
     # Check environment variables
     sandbox_key_set = bool(APIConfig.TRADIER_SANDBOX_API_KEY)
@@ -4210,7 +4210,7 @@ async def get_ares_diagnostics():
 
 
 @router.get("/diagnostics/intraday")
-async def get_ares_intraday_diagnostics():
+async def get_fortress_intraday_diagnostics():
     """
     Diagnose why FORTRESS intraday equity chart might not be working.
 

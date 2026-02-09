@@ -3,7 +3,7 @@
 VALOR End-to-End Test Script
 
 Comprehensive test to verify VALOR futures bot is production-ready:
-    python scripts/test_heracles_e2e.py
+    python scripts/test_valor_e2e.py
 
 Tests:
 1. Module imports and initialization
@@ -60,7 +60,7 @@ def info(msg: str):
     print(f"  {BLUE}→{RESET} {msg}")
 
 
-class HERACLESTestSuite:
+class ValorTestSuite:
     """End-to-end tests for VALOR."""
 
     def __init__(self):
@@ -83,7 +83,7 @@ class HERACLESTestSuite:
             from trading.valor.db import ValorDatabase
             success("db.py imports OK")
 
-            from trading.valor.signals import HERACLESSignalGenerator
+            from trading.valor.signals import ValorSignalGenerator
             success("signals.py imports OK")
 
             from trading.valor.executor import TastytradeExecutor
@@ -259,12 +259,12 @@ class HERACLESTestSuite:
         section("5. Signal Generator")
 
         try:
-            from trading.valor.signals import HERACLESSignalGenerator
+            from trading.valor.signals import ValorSignalGenerator
             from trading.valor.models import ValorConfig, BayesianWinTracker
 
             config = ValorConfig()
             win_tracker = BayesianWinTracker()
-            generator = HERACLESSignalGenerator(config, win_tracker)
+            generator = ValorSignalGenerator(config, win_tracker)
 
             success("Signal generator initialized")
             info(f"  Symbol: {config.symbol}")
@@ -390,7 +390,7 @@ class HERACLESTestSuite:
 
 
 def main():
-    suite = HERACLESTestSuite()
+    suite = ValorTestSuite()
     exit_code = suite.run_all()
     sys.exit(exit_code)
 

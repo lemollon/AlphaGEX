@@ -184,7 +184,7 @@ async def get_valor_equity_curve(
 
 
 @router.get("/api/valor/equity-curve/intraday")
-async def get_heracles_intraday_equity():
+async def get_valor_intraday_equity():
     """
     Get VALOR today's equity snapshots.
     """
@@ -262,7 +262,7 @@ async def get_valor_logs(
 # ============================================================================
 
 @router.get("/api/valor/signals/recent")
-async def get_heracles_recent_signals(
+async def get_valor_recent_signals(
     limit: int = Query(50, ge=1, le=500, description="Number of signals")
 ):
     """
@@ -288,7 +288,7 @@ async def get_heracles_recent_signals(
 # ============================================================================
 
 @router.post("/api/valor/scan")
-async def trigger_heracles_scan():
+async def trigger_valor_scan():
     """
     Manually trigger a VALOR trading scan.
 
@@ -369,7 +369,7 @@ async def get_valor_win_tracker():
 # ============================================================================
 
 @router.get("/api/valor/market-status")
-async def get_heracles_market_status():
+async def get_valor_market_status():
     """
     Check if MES futures market is open.
     """
@@ -540,7 +540,7 @@ async def check_valor_data_integrity():
 
 
 @router.get("/api/valor/diagnostics")
-async def get_heracles_diagnostics():
+async def get_valor_diagnostics_raw():
     """
     DIAGNOSTIC ENDPOINT: Get raw counts and data from all VALOR tables.
 
@@ -564,7 +564,7 @@ async def get_heracles_diagnostics():
 
 
 @router.post("/api/valor/force-reset")
-async def force_reset_heracles():
+async def force_reset_valor():
     """
     EMERGENCY: Force a complete reset of all VALOR data.
 
@@ -718,7 +718,7 @@ async def get_valor_scan_activity(
 
 
 @router.get("/api/valor/ml-training-data")
-async def get_heracles_ml_training_data():
+async def get_valor_ml_training_data():
     """
     Get VALOR ML training data.
 
@@ -755,7 +755,7 @@ async def get_heracles_ml_training_data():
 
 
 @router.get("/api/valor/ml/training-data-stats")
-async def get_heracles_ml_training_data_stats():
+async def get_valor_ml_training_data_stats():
     """
     Get statistics about ML training data quality.
 
@@ -795,7 +795,7 @@ async def get_heracles_ml_training_data_stats():
 # ============================================================================
 
 @router.post("/api/valor/ml/train")
-async def train_heracles_ml_model(
+async def train_valor_ml_model(
     min_samples: int = 50,
     use_new_params_only: bool = Query(
         True,
@@ -818,9 +818,9 @@ async def train_heracles_ml_model(
     Returns comparison with previous model if one exists.
     """
     try:
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
 
         # Capture previous model metrics for comparison
         previous_metrics = None
@@ -982,16 +982,16 @@ async def train_heracles_ml_model(
 
 
 @router.get("/api/valor/ml/status")
-async def get_heracles_ml_status():
+async def get_valor_ml_status():
     """
     Get VALOR ML model status.
 
     Shows whether model is trained, accuracy metrics, and training info.
     """
     try:
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
         status = advisor.get_status()
 
         # Also get training data availability
@@ -1028,16 +1028,16 @@ async def get_heracles_ml_status():
 
 
 @router.get("/api/valor/ml/feature-importance")
-async def get_heracles_ml_feature_importance():
+async def get_valor_ml_feature_importance():
     """
     Get VALOR ML feature importance rankings.
 
     Shows which features have the most impact on win probability prediction.
     """
     try:
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
 
         if not advisor.is_trained:
             return {
@@ -1073,7 +1073,7 @@ async def get_heracles_ml_feature_importance():
 
 
 @router.post("/api/valor/ml/approve")
-async def approve_heracles_ml_model():
+async def approve_valor_ml_model():
     """
     Approve the ML model for use in signal generation.
 
@@ -1083,10 +1083,10 @@ async def approve_heracles_ml_model():
     """
     try:
         from trading.valor.signals import approve_ml_model, is_ml_approved
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
         # Check if model is trained first
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
         if not advisor.is_trained:
             return {
                 "success": False,
@@ -1117,7 +1117,7 @@ async def approve_heracles_ml_model():
 
 
 @router.post("/api/valor/ml/revoke")
-async def revoke_heracles_ml_approval():
+async def revoke_valor_ml_approval():
     """
     Revoke ML model approval.
 
@@ -1146,7 +1146,7 @@ async def revoke_heracles_ml_approval():
 
 
 @router.post("/api/valor/ml/reject")
-async def reject_heracles_ml_model():
+async def reject_valor_ml_model():
     """
     Reject the newly trained ML model.
 
@@ -1159,10 +1159,10 @@ async def reject_heracles_ml_model():
     """
     try:
         from trading.valor.signals import reject_ml_model, is_ml_approved
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
         success = reject_ml_model()
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
 
         return {
             "success": success,
@@ -1183,7 +1183,7 @@ async def reject_heracles_ml_model():
 
 
 @router.get("/api/valor/ml/approval-status")
-async def get_heracles_ml_approval_status():
+async def get_valor_ml_approval_status():
     """
     Get ML model approval status.
 
@@ -1192,9 +1192,9 @@ async def get_heracles_ml_approval_status():
     """
     try:
         from trading.valor.signals import is_ml_approved
-        from trading.valor.ml import get_heracles_ml_advisor
+        from trading.valor.ml import get_valor_ml_advisor
 
-        advisor = get_heracles_ml_advisor()
+        advisor = get_valor_ml_advisor()
         ml_approved = is_ml_approved()
 
         return {
@@ -1227,7 +1227,7 @@ async def get_heracles_ml_approval_status():
 # ============================================================================
 
 @router.post("/api/valor/ab-test/enable")
-async def enable_heracles_ab_test():
+async def enable_valor_ab_test():
     """
     Enable A/B test for stop loss comparison.
 
@@ -1260,7 +1260,7 @@ async def enable_heracles_ab_test():
 
 
 @router.post("/api/valor/ab-test/disable")
-async def disable_heracles_ab_test():
+async def disable_valor_ab_test():
     """
     Disable A/B test.
 
@@ -1288,7 +1288,7 @@ async def disable_heracles_ab_test():
 
 
 @router.get("/api/valor/ab-test/status")
-async def get_heracles_ab_test_status():
+async def get_valor_ab_test_status():
     """
     Get A/B test status and settings.
     """
@@ -1311,7 +1311,7 @@ async def get_heracles_ab_test_status():
 
 
 @router.get("/api/valor/ab-test/results")
-async def get_heracles_ab_test_results():
+async def get_valor_ab_test_results():
     """
     Get A/B test results comparing FIXED vs DYNAMIC stops.
 
@@ -1347,7 +1347,7 @@ async def get_heracles_ab_test_results():
 
 
 @router.get("/api/valor/paper-equity-curve")
-async def get_heracles_paper_equity_curve(
+async def get_valor_paper_equity_curve(
     days: int = Query(30, ge=1, le=365, description="Number of days of history")
 ):
     """
@@ -1391,7 +1391,7 @@ async def get_heracles_paper_equity_curve(
 # ============================================================================
 
 @router.post("/api/valor/run-cycle")
-async def run_heracles_cycle():
+async def run_valor_cycle():
     """
     Manually trigger a VALOR trading cycle.
 
@@ -1474,7 +1474,7 @@ async def process_expired_valor_positions():
 # ============================================================================
 
 @router.get("/api/valor/diagnostics")
-async def get_heracles_diagnostics():
+async def get_valor_diagnostics():
     """
     Get comprehensive VALOR system diagnostics.
 
@@ -1534,8 +1534,8 @@ async def get_heracles_diagnostics():
         # Check GEX data availability (CRITICAL for signal generation)
         gex_status = {}
         try:
-            from trading.valor.signals import get_gex_data_for_heracles
-            gex_data = get_gex_data_for_heracles("SPX")
+            from trading.valor.signals import get_gex_data_for_valor
+            gex_data = get_gex_data_for_valor("SPX")
             flip_point = gex_data.get("flip_point", 0)
             net_gex = gex_data.get("net_gex", 0)
             current_price = quote_status.get("last", 0) if quote_status.get("available") else 0
@@ -1574,7 +1574,7 @@ async def get_heracles_diagnostics():
         # Calculate dynamic stop for current conditions
         dynamic_stop_info = {}
         try:
-            from trading.valor.signals import HERACLESSignalGenerator
+            from trading.valor.signals import ValorSignalGenerator
             from trading.valor.models import GammaRegime
 
             # Get current market data

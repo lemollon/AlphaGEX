@@ -39,25 +39,25 @@ import {
   BOT_BRANDS,
 } from '@/components/trader'
 import {
-  useHERACLESStatus,
-  useHERACLESClosedTrades,
-  useHERACLESEquityCurve,
-  useHERACLESIntradayEquity,
-  useHERACLESScanActivity,
-  useHERACLESMLTrainingData,
-  useHERACLESMLTrainingDataStats,
-  useHERACLESMLStatus,
-  useHERACLESMLFeatureImportance,
-  useHERACLESMLApprovalStatus,
-  useHERACLESABTestStatus,
-  useHERACLESABTestResults,
-  trainHERACLESML,
-  approveHERACLESML,
-  revokeHERACLESML,
-  rejectHERACLESML,
-  enableHERACLESABTest,
-  disableHERACLESABTest,
-  useHERACLESSignals,
+  useValorStatus,
+  useValorClosedTrades,
+  useValorEquityCurve,
+  useValorIntradayEquity,
+  useValorScanActivity,
+  useValorMLTrainingData,
+  useValorMLTrainingDataStats,
+  useValorMLStatus,
+  useValorMLFeatureImportance,
+  useValorMLApprovalStatus,
+  useValorABTestStatus,
+  useValorABTestResults,
+  trainValorML,
+  approveValorML,
+  revokeValorML,
+  rejectValorML,
+  enableValorABTest,
+  disableValorABTest,
+  useValorSignals,
   useUnifiedBotSummary,
 } from '@/lib/hooks/useMarketData'
 
@@ -77,22 +77,22 @@ const EQUITY_TIMEFRAMES = [
 // TABS
 // ==============================================================================
 
-const HERACLES_TABS = [
+const VALOR_TABS = [
   { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
   { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
   { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and signals' },
   { id: 'history' as const, label: 'History', icon: History, description: 'Closed trades' },
   { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings' },
 ]
-type HERACLESTabId = typeof HERACLES_TABS[number]['id']
+type ValorTabId = typeof VALOR_TABS[number]['id']
 
 // ==============================================================================
 // MAIN COMPONENT
 // ==============================================================================
 
-export default function HERACLESPage() {
+export default function ValorPage() {
   const sidebarPadding = useSidebarPadding()
-  const [activeTab, setActiveTab] = useState<HERACLESTabId>('portfolio')
+  const [activeTab, setActiveTab] = useState<ValorTabId>('portfolio')
   const [equityTimeframe, setEquityTimeframe] = useState('intraday')
   const [isTraining, setIsTraining] = useState(false)
   const [trainingResult, setTrainingResult] = useState<any>(null)
@@ -106,26 +106,26 @@ export default function HERACLESPage() {
   const isIntraday = equityTimeframe === 'intraday'
 
   // Data hooks
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useHERACLESStatus()
-  const { data: closedTradesData } = useHERACLESClosedTrades(1000)
-  const { data: equityCurveData } = useHERACLESEquityCurve(selectedTimeframe.days || 30)
-  const { data: intradayEquityData } = useHERACLESIntradayEquity()
-  const { data: scanActivityData, mutate: mutateScanActivity } = useHERACLESScanActivity(1000)
-  const { data: mlTrainingData } = useHERACLESMLTrainingData()
-  const { data: mlTrainingDataStats, mutate: refreshTrainingStats } = useHERACLESMLTrainingDataStats()
-  const { data: mlStatus, mutate: refreshMLStatus } = useHERACLESMLStatus()
-  const { data: featureImportance, mutate: refreshFeatureImportance } = useHERACLESMLFeatureImportance()
-  const { data: mlApprovalStatus, mutate: refreshApprovalStatus } = useHERACLESMLApprovalStatus()
-  const { data: abTestStatus, mutate: refreshABTestStatus } = useHERACLESABTestStatus()
-  const { data: abTestResults, mutate: refreshABTestResults } = useHERACLESABTestResults()
-  const { data: signalsData } = useHERACLESSignals(50)
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus()
+  const { data: closedTradesData } = useValorClosedTrades(1000)
+  const { data: equityCurveData } = useValorEquityCurve(selectedTimeframe.days || 30)
+  const { data: intradayEquityData } = useValorIntradayEquity()
+  const { data: scanActivityData, mutate: mutateScanActivity } = useValorScanActivity(1000)
+  const { data: mlTrainingData } = useValorMLTrainingData()
+  const { data: mlTrainingDataStats, mutate: refreshTrainingStats } = useValorMLTrainingDataStats()
+  const { data: mlStatus, mutate: refreshMLStatus } = useValorMLStatus()
+  const { data: featureImportance, mutate: refreshFeatureImportance } = useValorMLFeatureImportance()
+  const { data: mlApprovalStatus, mutate: refreshApprovalStatus } = useValorMLApprovalStatus()
+  const { data: abTestStatus, mutate: refreshABTestStatus } = useValorABTestStatus()
+  const { data: abTestResults, mutate: refreshABTestResults } = useValorABTestResults()
+  const { data: signalsData } = useValorSignals(50)
 
   // ML Training handler
   const handleTrainML = async () => {
     setIsTraining(true)
     setTrainingResult(null)
     try {
-      const result = await trainHERACLESML(50)
+      const result = await trainValorML(50)
       setTrainingResult(result)
       if (result.success) {
         // Refresh ML status, feature importance, training stats, and approval status
@@ -145,7 +145,7 @@ export default function HERACLESPage() {
   const handleApproveML = async () => {
     setIsApproving(true)
     try {
-      const result = await approveHERACLESML()
+      const result = await approveValorML()
       if (result.success) {
         refreshApprovalStatus()
         refreshMLStatus()
@@ -161,7 +161,7 @@ export default function HERACLESPage() {
   const handleRevokeML = async () => {
     setIsRevoking(true)
     try {
-      const result = await revokeHERACLESML()
+      const result = await revokeValorML()
       if (result.success) {
         refreshApprovalStatus()
         refreshMLStatus()
@@ -177,7 +177,7 @@ export default function HERACLESPage() {
   const handleRejectML = async () => {
     setIsRejecting(true)
     try {
-      const result = await rejectHERACLESML()
+      const result = await rejectValorML()
       if (result.success) {
         setTrainingResult(null)  // Clear training result UI
         refreshApprovalStatus()
@@ -195,13 +195,13 @@ export default function HERACLESPage() {
     setIsTogglingABTest(true)
     try {
       if (abTestStatus?.ab_test_enabled) {
-        const result = await disableHERACLESABTest()
+        const result = await disableValorABTest()
         if (result.success) {
           refreshABTestStatus()
           refreshABTestResults()
         }
       } else {
-        const result = await enableHERACLESABTest()
+        const result = await enableValorABTest()
         if (result.success) {
           refreshABTestStatus()
           refreshABTestResults()
@@ -416,7 +416,7 @@ export default function HERACLESPage() {
 
           {/* Tab Navigation */}
           <div className="flex gap-2 border-b border-gray-800 overflow-x-auto pb-px">
-            {HERACLES_TABS.map((tab) => {
+            {VALOR_TABS.map((tab) => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
               return (

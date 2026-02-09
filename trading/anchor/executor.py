@@ -117,28 +117,28 @@ except ImportError:
     AutonomousAIReasoning = None
 
 # COUNSELOR Extended Thinking - deeper reasoning for complex decisions
-GEXIS_THINKING_AVAILABLE = False
+COUNSELOR_THINKING_AVAILABLE = False
 try:
     from ai.counselor_extended_thinking import ExtendedThinking
-    GEXIS_THINKING_AVAILABLE = True
+    COUNSELOR_THINKING_AVAILABLE = True
 except ImportError:
     ExtendedThinking = None
 
 # COUNSELOR Knowledge - context management for decisions
-GEXIS_KNOWLEDGE_AVAILABLE = False
+COUNSELOR_KNOWLEDGE_AVAILABLE = False
 try:
-    from ai.counselor_knowledge import GEXISKnowledge
-    GEXIS_KNOWLEDGE_AVAILABLE = True
+    from ai.counselor_knowledge import CounselorKnowledge
+    COUNSELOR_KNOWLEDGE_AVAILABLE = True
 except ImportError:
-    GEXISKnowledge = None
+    CounselorKnowledge = None
 
 # COUNSELOR Learning Memory - persistent learning
-GEXIS_MEMORY_AVAILABLE = False
+COUNSELOR_MEMORY_AVAILABLE = False
 try:
-    from ai.counselor_learning_memory import GEXISLearningMemory
-    GEXIS_MEMORY_AVAILABLE = True
+    from ai.counselor_learning_memory import CounselorLearningMemory
+    COUNSELOR_MEMORY_AVAILABLE = True
 except ImportError:
-    GEXISLearningMemory = None
+    CounselorLearningMemory = None
 
 logger = logging.getLogger(__name__)
 
