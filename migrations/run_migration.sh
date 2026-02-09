@@ -11,14 +11,19 @@ export R="https://raw.githubusercontent.com/lemollon/AlphaGEX/claude/bot-name-ma
 
 echo "=== Downloading migration files ==="
 curl -sL "$R/migrations/bot_rename_migration_v4_idempotent.sql" -o /tmp/migrate.sql
+curl -sL "$R/migrations/bot_rename_cleanup_v5.sql" -o /tmp/cleanup.sql
 curl -sL "$R/migrations/post_migration_check.sql" -o /tmp/check.sql
 
 echo "=== Files downloaded ==="
-wc -l /tmp/migrate.sql /tmp/check.sql
+wc -l /tmp/migrate.sql /tmp/cleanup.sql /tmp/check.sql
 
 echo ""
 echo "=== Running idempotent migration v4 ==="
 psql "$DB" -f /tmp/migrate.sql
+
+echo ""
+echo "=== Running cleanup v5 (drop stale old-name tables) ==="
+psql "$DB" -f /tmp/cleanup.sql
 
 echo ""
 echo "=== Running post-migration check ==="
