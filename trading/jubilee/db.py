@@ -220,7 +220,7 @@ class JubileeDatabase:
 
             # Capital deployments table
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prometheus_capital_deployments (
+                CREATE TABLE IF NOT EXISTS jubilee_capital_deployments (
                     id SERIAL PRIMARY KEY,
                     deployment_id VARCHAR(50) UNIQUE NOT NULL,
                     deployment_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -266,7 +266,7 @@ class JubileeDatabase:
 
             # Borrowing cost analysis history
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prometheus_rate_analysis (
+                CREATE TABLE IF NOT EXISTS jubilee_rate_analysis (
                     id SERIAL PRIMARY KEY,
                     analysis_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
@@ -333,7 +333,7 @@ class JubileeDatabase:
 
             # Roll decisions
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prometheus_roll_decisions (
+                CREATE TABLE IF NOT EXISTS jubilee_roll_decisions (
                     id SERIAL PRIMARY KEY,
                     decision_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     current_position_id VARCHAR(50),
@@ -484,7 +484,7 @@ class JubileeDatabase:
 
             # IC Closed Trades table - Historical IC trades
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prometheus_ic_closed_trades (
+                CREATE TABLE IF NOT EXISTS jubilee_ic_closed_trades (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(50) UNIQUE NOT NULL,
                     source_box_position_id VARCHAR(50),
@@ -630,14 +630,14 @@ class JubileeDatabase:
 
             # Capital Deployments - query by time
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_prometheus_capital_deployments_time
-                ON prometheus_capital_deployments (deployment_time DESC)
+                CREATE INDEX IF NOT EXISTS idx_jubilee_capital_deployments_time
+                ON jubilee_capital_deployments (deployment_time DESC)
             """)
 
             # Rate Analysis - query by time
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_prometheus_rate_analysis_time
-                ON prometheus_rate_analysis (analysis_time DESC)
+                CREATE INDEX IF NOT EXISTS idx_jubilee_rate_analysis_time
+                ON jubilee_rate_analysis (analysis_time DESC)
             """)
 
             # ==================================================================
@@ -657,8 +657,8 @@ class JubileeDatabase:
 
             # IC Closed Trades - query by close_time for equity curve
             cursor.execute("""
-                CREATE INDEX IF NOT EXISTS idx_prometheus_ic_closed_trades_close_time
-                ON prometheus_ic_closed_trades (close_time DESC)
+                CREATE INDEX IF NOT EXISTS idx_jubilee_ic_closed_trades_close_time
+                ON jubilee_ic_closed_trades (close_time DESC)
             """)
 
             # IC Signals - query by time and execution status
@@ -728,7 +728,7 @@ class JubileeDatabase:
                 ),
                 # IC Closed Trades → Box Spread Positions (capital source history)
                 (
-                    "prometheus_ic_closed_trades",
+                    "jubilee_ic_closed_trades",
                     "fk_ic_closed_trades_box_source",
                     "source_box_position_id",
                     "jubilee_positions(position_id)",
@@ -744,7 +744,7 @@ class JubileeDatabase:
                 ),
                 # Capital Deployments → Box Spread Positions
                 (
-                    "prometheus_capital_deployments",
+                    "jubilee_capital_deployments",
                     "fk_deployments_box_source",
                     "source_box_position_id",
                     "jubilee_positions(position_id)",
@@ -821,10 +821,10 @@ class JubileeDatabase:
                 ("jubilee_ic_positions", "profit_target_pct", "50"),
                 ("jubilee_ic_positions", "stop_loss_pct", "200"),
                 ("jubilee_ic_positions", "oracle_confidence_at_entry", "0"),
-                # prometheus_ic_closed_trades
-                ("prometheus_ic_closed_trades", "realized_pnl", "0"),
-                ("prometheus_ic_closed_trades", "exit_price", "0"),
-                ("prometheus_ic_closed_trades", "hold_duration_minutes", "0"),
+                # jubilee_ic_closed_trades
+                ("jubilee_ic_closed_trades", "realized_pnl", "0"),
+                ("jubilee_ic_closed_trades", "exit_price", "0"),
+                ("jubilee_ic_closed_trades", "hold_duration_minutes", "0"),
             ]
 
             for table, column, default_val in default_value_columns:
@@ -1242,7 +1242,7 @@ class JubileeDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO prometheus_capital_deployments (
+                INSERT INTO jubilee_capital_deployments (
                     deployment_id, deployment_time, source_box_position_id,
                     total_capital_available,
                     ares_allocation, ares_allocation_pct, ares_allocation_reasoning,
@@ -1283,7 +1283,7 @@ class JubileeDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM prometheus_capital_deployments
+                SELECT * FROM jubilee_capital_deployments
                 WHERE is_active = TRUE
                 ORDER BY deployment_time DESC
             """)
@@ -1310,7 +1310,7 @@ class JubileeDatabase:
             cursor = conn.cursor()
             total_returns = ares_returns + titan_returns + anchor_returns
             cursor.execute("""
-                UPDATE prometheus_capital_deployments
+                UPDATE jubilee_capital_deployments
                 SET ares_returns_to_date = %s,
                     titan_returns_to_date = %s,
                     anchor_returns_to_date = %s,
@@ -1335,7 +1335,7 @@ class JubileeDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO prometheus_rate_analysis (
+                INSERT INTO jubilee_rate_analysis (
                     analysis_time, box_implied_rate, fed_funds_rate, sofr_rate,
                     broker_margin_rate, spread_to_fed_funds, spread_to_margin,
                     cost_per_100k_monthly, cost_per_100k_annual,
@@ -1370,7 +1370,7 @@ class JubileeDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM prometheus_rate_analysis
+                SELECT * FROM jubilee_rate_analysis
                 WHERE analysis_time > NOW() - INTERVAL '%s days'
                 ORDER BY analysis_time DESC
             """, (days,))
@@ -1741,7 +1741,7 @@ class JubileeDatabase:
             cursor = conn.cursor()
 
             cursor.execute("""
-                INSERT INTO prometheus_roll_decisions (
+                INSERT INTO jubilee_roll_decisions (
                     decision_time, current_position_id,
                     current_expiration, current_dte, current_implied_rate,
                     target_expiration, target_dte, target_implied_rate,
@@ -1782,7 +1782,7 @@ class JubileeDatabase:
             cursor = conn.cursor()
 
             cursor.execute("""
-                UPDATE prometheus_roll_decisions
+                UPDATE jubilee_roll_decisions
                 SET was_executed = TRUE, new_position_id = %s
                 WHERE current_position_id = %s
                   AND was_executed = FALSE
@@ -1806,14 +1806,14 @@ class JubileeDatabase:
 
             if position_id:
                 cursor.execute("""
-                    SELECT * FROM prometheus_roll_decisions
+                    SELECT * FROM jubilee_roll_decisions
                     WHERE current_position_id = %s
                     ORDER BY decision_time DESC
                     LIMIT %s
                 """, (position_id, limit))
             else:
                 cursor.execute("""
-                    SELECT * FROM prometheus_roll_decisions
+                    SELECT * FROM jubilee_roll_decisions
                     ORDER BY decision_time DESC
                     LIMIT %s
                 """, (limit,))
@@ -2163,7 +2163,7 @@ class JubileeDatabase:
 
             # Insert into closed trades table
             cursor.execute("""
-                INSERT INTO prometheus_ic_closed_trades (
+                INSERT INTO jubilee_ic_closed_trades (
                     position_id, source_box_position_id, ticker,
                     put_short_strike, put_long_strike, call_short_strike, call_long_strike,
                     spread_width, expiration, dte_at_entry,
@@ -2372,7 +2372,7 @@ class JubileeDatabase:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT * FROM prometheus_ic_closed_trades
+                SELECT * FROM jubilee_ic_closed_trades
                 ORDER BY close_time DESC
                 LIMIT %s
             """, (limit,))
@@ -2407,7 +2407,7 @@ class JubileeDatabase:
                     AVG(hold_duration_minutes) as avg_hold_minutes,
                     MAX(realized_pnl) as best_trade,
                     MIN(realized_pnl) as worst_trade
-                FROM prometheus_ic_closed_trades
+                FROM jubilee_ic_closed_trades
             """)
             closed_stats = cursor.fetchone()
 
@@ -2427,7 +2427,7 @@ class JubileeDatabase:
                 SELECT
                     COUNT(*) as trades_today,
                     SUM(realized_pnl) as pnl_today
-                FROM prometheus_ic_closed_trades
+                FROM jubilee_ic_closed_trades
                 WHERE DATE(close_time AT TIME ZONE 'America/Chicago') =
                       DATE(NOW() AT TIME ZONE 'America/Chicago')
             """)
@@ -2436,7 +2436,7 @@ class JubileeDatabase:
             # Get streak data
             cursor.execute("""
                 SELECT realized_pnl > 0 as is_win
-                FROM prometheus_ic_closed_trades
+                FROM jubilee_ic_closed_trades
                 ORDER BY close_time DESC
                 LIMIT 20
             """)
@@ -2544,7 +2544,7 @@ class JubileeDatabase:
                     COALESCE(close_time, open_time, created_at) as effective_close_time,
                     realized_pnl,
                     position_id
-                FROM prometheus_ic_closed_trades
+                FROM jubilee_ic_closed_trades
                 ORDER BY COALESCE(close_time, open_time, created_at) ASC
             """)
 
@@ -2638,7 +2638,7 @@ class JubileeDatabase:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT position_id, realized_pnl, close_time, close_reason
-                FROM prometheus_ic_closed_trades
+                FROM jubilee_ic_closed_trades
                 ORDER BY close_time DESC
                 LIMIT 1
             """)
@@ -2772,7 +2772,7 @@ class JubileeDatabase:
             # Get total realized P&L from closed trades
             cursor.execute("""
                 SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM prometheus_ic_closed_trades
+                FROM jubilee_ic_closed_trades
             """)
             total_realized = float(cursor.fetchone()[0] or 0)
 

@@ -344,7 +344,7 @@ async def get_valor_config():
 # ============================================================================
 
 @router.get("/api/valor/win-tracker")
-async def get_heracles_win_tracker():
+async def get_valor_win_tracker():
     """
     Get VALOR Bayesian win probability tracker stats.
 
@@ -397,7 +397,7 @@ async def get_heracles_market_status():
 # ============================================================================
 
 @router.get("/api/valor/paper-account")
-async def get_heracles_paper_account():
+async def get_valor_paper_account():
     """
     Get VALOR paper trading account status.
 
@@ -428,7 +428,7 @@ async def get_heracles_paper_account():
 
 
 @router.post("/api/valor/paper-account/initialize")
-async def initialize_heracles_paper_account(
+async def initialize_valor_paper_account(
     starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for paper trading")
 ):
     """
@@ -463,7 +463,7 @@ async def initialize_heracles_paper_account(
 
 
 @router.post("/api/valor/paper-account/reset")
-async def reset_heracles_paper_account(
+async def reset_valor_paper_account(
     starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for new account"),
     full_reset: bool = Query(True, description="If true, also clears closed_trades, positions, equity snapshots for clean slate")
 ):

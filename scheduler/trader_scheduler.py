@@ -4490,7 +4490,7 @@ class AutonomousTraderScheduler:
                     hours=1,
                     timezone='America/Chicago'
                 ),
-                id='prometheus_rate_analysis',
+                id='jubilee_rate_analysis',
                 name='JUBILEE - Rate Analysis (hourly)',
                 replace_existing=True
             )

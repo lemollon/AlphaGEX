@@ -50,16 +50,16 @@ REQUIRED_TABLES = [
     # Box Spread tables
     'jubilee_positions',
     'jubilee_signals',
-    'prometheus_capital_deployments',
-    'prometheus_rate_analysis',
+    'jubilee_capital_deployments',
+    'jubilee_rate_analysis',
     'jubilee_daily_briefings',
-    'prometheus_roll_decisions',
+    'jubilee_roll_decisions',
     'jubilee_config',
     'jubilee_logs',
     'jubilee_equity_snapshots',
     # IC Trading tables
     'jubilee_ic_positions',
-    'prometheus_ic_closed_trades',
+    'jubilee_ic_closed_trades',
     'jubilee_ic_signals',
     'jubilee_ic_config',
     'jubilee_ic_equity_snapshots',
@@ -69,7 +69,7 @@ REQUIRED_TABLES = [
 REQUIRED_INDEXES = [
     'idx_jubilee_ic_positions_status',
     'idx_jubilee_ic_positions_open_time',
-    'idx_prometheus_ic_closed_trades_close_time',
+    'idx_jubilee_ic_closed_trades_close_time',
     'idx_jubilee_ic_signals_time',
     'idx_jubilee_ic_signals_executed',
     'idx_jubilee_ic_equity_snapshots_time',
@@ -86,7 +86,7 @@ TABLE_COLUMNS = {
         'position_id', 'ticker', 'put_short_strike', 'call_short_strike',
         'expiration', 'total_credit_received', 'unrealized_pnl', 'status', 'open_time'
     ],
-    'prometheus_ic_closed_trades': [
+    'jubilee_ic_closed_trades': [
         'position_id', 'ticker', 'realized_pnl', 'open_time', 'close_time', 'close_reason'
     ],
     'jubilee_ic_equity_snapshots': [
@@ -239,14 +239,14 @@ def check_data_queries(conn) -> Tuple[int, int, List[str]]:
             SELECT COUNT(*) FROM jubilee_ic_positions WHERE status IN ('open', 'pending')
         """),
         ("Get IC closed trades", """
-            SELECT COUNT(*) FROM prometheus_ic_closed_trades
+            SELECT COUNT(*) FROM jubilee_ic_closed_trades
         """),
         ("Get IC performance stats", """
             SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winners,
                 SUM(realized_pnl) as total_pnl
-            FROM prometheus_ic_closed_trades
+            FROM jubilee_ic_closed_trades
         """),
         ("Get today's IC equity snapshots", """
             SELECT COUNT(*) FROM jubilee_ic_equity_snapshots
@@ -304,7 +304,7 @@ def check_foreign_keys(conn) -> Tuple[int, int, List[str]]:
             )
         """, 0),  # Should be 0 orphaned records
         ("IC closed trades have valid times", """
-            SELECT COUNT(*) FROM prometheus_ic_closed_trades
+            SELECT COUNT(*) FROM jubilee_ic_closed_trades
             WHERE close_time < open_time
         """, 0),  # Should be 0 invalid times
         ("IC signals reference valid positions", """
@@ -316,7 +316,7 @@ def check_foreign_keys(conn) -> Tuple[int, int, List[str]]:
                 WHERE p.position_id = s.executed_position_id
             )
             AND NOT EXISTS (
-                SELECT 1 FROM prometheus_ic_closed_trades t
+                SELECT 1 FROM jubilee_ic_closed_trades t
                 WHERE t.position_id = s.executed_position_id
             )
         """, 0),  # Should be 0 orphaned references

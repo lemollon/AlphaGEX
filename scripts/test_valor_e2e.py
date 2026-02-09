@@ -118,7 +118,7 @@ class HERACLESTestSuite:
                 'valor_closed_trades': 'Trade history',
                 'valor_equity_snapshots': 'Intraday equity curve',
                 'valor_signals': 'Signal log',
-                'heracles_paper_account': 'Paper trading balance',
+                'valor_paper_account': 'Paper trading balance',
                 'valor_scan_activity': 'ML training data collection',
             }
 

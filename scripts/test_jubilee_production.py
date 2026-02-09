@@ -101,7 +101,7 @@ def test_database_tables():
         # Check IC tables
         ic_tables = [
             'jubilee_ic_positions',
-            'prometheus_ic_closed_trades',
+            'jubilee_ic_closed_trades',
             'jubilee_ic_signals',
             'jubilee_ic_config',
             'jubilee_ic_equity_snapshots',
