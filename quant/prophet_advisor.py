@@ -120,6 +120,7 @@ except ImportError:
 # GEX Signal Integration - ML direction for SOLOMON/GIDEON
 GEX_ML_AVAILABLE = False
 _gex_signal_integration = None
+_gex_signal_lock = threading.Lock()  # V3 FIX: Thread-safe singleton initialization
 try:
     from quant.gex_signal_integration import GEXSignalIntegration
     GEX_ML_AVAILABLE = True
@@ -2295,6 +2296,7 @@ class ProphetAdvisor:
         if not DB_AVAILABLE:
             return {"error": "Database not available"}
 
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -2314,7 +2316,6 @@ class ProphetAdvisor:
             """, (days,))
 
             rows = cursor.fetchall()
-            conn.close()
 
             if not rows:
                 return {"error": "No outcome data available", "days": days}
@@ -2429,6 +2430,13 @@ class ProphetAdvisor:
         except Exception as e:
             logger.error(f"Failed to analyze strategy performance: {e}")
             return {"error": str(e)}
+        finally:
+            # V3 FIX: Ensure connection is always closed (was leaking on exception paths)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     # =========================================================================
     # BOT-SPECIFIC ADVICE
@@ -3186,9 +3194,12 @@ class ProphetAdvisor:
         ml_direction_used = False
         if GEX_ML_AVAILABLE and GEXSignalIntegration is not None:
             try:
+                # V3 FIX: Thread-safe singleton initialization (multiple bots call concurrently)
                 global _gex_signal_integration
                 if _gex_signal_integration is None:
-                    _gex_signal_integration = GEXSignalIntegration()
+                    with _gex_signal_lock:
+                        if _gex_signal_integration is None:  # Double-check after acquiring lock
+                            _gex_signal_integration = GEXSignalIntegration()
 
                 ml_signal = _gex_signal_integration.get_combined_signal(
                     ticker="SPY",
@@ -3331,11 +3342,22 @@ class ProphetAdvisor:
                     reasoning_parts.append(f"Wall filter: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
 
         # =====================================================================
-        # Win probability calculation (NO MORE HARDCODED 0.45!)
+        # Win probability: BLEND GBC model + direction confidence (V3 FIX)
         # =====================================================================
+        # V3 FIX: Previously REPLACED base_pred['win_probability'] with direction_confidence,
+        # which completely discarded the calibrated GBC model output. The GBC model trained
+        # on historical IC/directional data was made irrelevant for directional bots.
+        #
+        # New approach: 40% GBC model (quality-of-setup) + 60% direction confidence.
+        # Direction confidence gets higher weight because SOLOMON is directional trading
+        # and the GBC model was primarily trained on IC outcomes.
+        gbc_prob = base_pred['win_probability']
+
         if direction != "FLAT":
-            # Base probability from direction confidence
-            base_pred['win_probability'] = max(0.50, min(0.85, direction_confidence))
+            dir_conf_clamped = max(0.40, min(0.85, direction_confidence))
+            blended_prob = (gbc_prob * 0.4) + (dir_conf_clamped * 0.6)
+            base_pred['win_probability'] = max(0.35, min(0.90, blended_prob))
+            reasoning_parts.append(f"Blended prob: GBC {gbc_prob:.1%} × 0.4 + direction {dir_conf_clamped:.1%} × 0.6 = {base_pred['win_probability']:.1%}")
 
             # Boost if wall filter passed
             if wall_filter_passed:
@@ -3345,8 +3367,10 @@ class ProphetAdvisor:
             if trend_strength > 0.6:
                 base_pred['win_probability'] = min(0.90, base_pred['win_probability'] + 0.05)
         else:
-            # FLAT direction - still give reasonable probability, not 0.45!
-            base_pred['win_probability'] = 0.50  # Neutral, not negative expectancy
+            # FLAT direction - keep GBC probability (it still reflects market quality)
+            # Clamp to neutral range since no directional edge
+            base_pred['win_probability'] = max(0.40, min(0.60, gbc_prob))
+            reasoning_parts.append(f"FLAT direction: using GBC prob {gbc_prob:.1%} clamped to 0.40-0.60")
 
         # VIX impact
         if context.vix > 25:
@@ -3778,24 +3802,22 @@ class ProphetAdvisor:
         # Determine trading advice based on probability
         win_prob = base_pred['win_probability']
 
-        # SPX IC thresholds (slightly more conservative than SPY 0DTE)
-        # Note: TradingAdvice only has TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
-        if win_prob >= 0.58:
-            advice = TradingAdvice.TRADE_FULL
-            risk_pct = 0.03  # 3% risk for full position
-            reasoning_parts.append(f"Strong setup: {win_prob:.1%} win probability")
-        elif win_prob >= 0.52:
-            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_HALF (undefined)
-            risk_pct = 0.015  # 1.5% risk for reduced position
+        # V3 FIX: Use adaptive thresholds (same as FORTRESS/CORNERSTONE/LAZARUS)
+        # Previously hardcoded 0.58/0.52/0.48 which bypassed the V2 adaptive system.
+        # Adaptive thresholds key off base_rate learned from training data.
+        advice, risk_pct = self._get_advice_from_probability(win_prob)
+
+        # ANCHOR-specific risk scaling: SPX weekly IC uses lower risk % than SPY 0DTE
+        # _get_advice_from_probability returns 10.0/3.0-8.0/0.0 for FORTRESS-scale trades.
+        # ANCHOR needs ~30% of those values because SPX contracts are ~10x SPY notional.
+        risk_pct = risk_pct * 0.30  # e.g. FULL 10% → 3%, REDUCED ~5% → 1.5%
+
+        if advice == TradingAdvice.TRADE_FULL:
+            reasoning_parts.append(f"Strong setup: {win_prob:.1%} win probability (adaptive threshold: {self.high_confidence_threshold:.2f})")
+        elif advice == TradingAdvice.TRADE_REDUCED:
             reasoning_parts.append(f"Moderate setup: {win_prob:.1%} win probability")
-        elif win_prob >= 0.48:
-            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_CAUTIOUS (undefined)
-            risk_pct = 0.01  # 1% risk for cautious position
-            reasoning_parts.append(f"Marginal setup: {win_prob:.1%} win probability")
         else:
-            advice = TradingAdvice.SKIP_TODAY
-            risk_pct = 0.0
-            reasoning_parts.append(f"Poor setup: {win_prob:.1%} win probability - skip")
+            reasoning_parts.append(f"Below threshold: {win_prob:.1%} < {self.low_confidence_threshold:.2f} - skip")
 
         # GEX wall-based strike suggestions for SPX
         # ANCHOR RULE: Strikes must ALWAYS be at least 1 SD from spot
@@ -3846,14 +3868,15 @@ class ProphetAdvisor:
                         win_prob = min(0.95, max(0.05, win_prob + claude_analysis.confidence_adjustment))
 
                     # VALIDATE hallucination_risk and reduce confidence if HIGH
+                    # V3 FIX: Standardized to 5%/2% (was 10%/5%, 2x higher than other bots)
                     hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
                     if hallucination_risk == 'HIGH':
-                        penalty = 0.10
+                        penalty = 0.05  # V3: Standardized from 0.10 to match FORTRESS/LAZARUS/SOLOMON
                         win_prob = max(0.05, win_prob - penalty)
                         reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
                         logger.warning(f"[ANCHOR] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
                     elif hallucination_risk == 'MEDIUM':
-                        penalty = 0.05
+                        penalty = 0.02  # V3: Standardized from 0.05 to match FORTRESS/LAZARUS/SOLOMON
                         win_prob = max(0.05, win_prob - penalty)
                         reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
                         logger.info(f"[ANCHOR] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
@@ -3939,9 +3962,14 @@ class ProphetAdvisor:
             day_sin = math.sin(2 * math.pi * context.day_of_week / 5)
             day_cos = math.cos(2 * math.pi * context.day_of_week / 5)
 
-            # Calculate VRP: expected move (IV proxy) - approximate realized vol
-            # In live inference, use expected_move_pct * 0.2 as typical VRP
-            volatility_risk_premium = context.expected_move_pct * 0.2
+            # V3 FIX: VRP proxy that scales with VIX level
+            # Training computes VRP = expected_move_pct - realized_vol_5d (rolling 5-trade)
+            # At inference we don't have historical price changes, so approximate:
+            # - Low VIX (<15): VRP ~10% of EM (tight spread between implied and realized)
+            # - Normal VIX (15-25): VRP ~20% of EM (typical risk premium)
+            # - High VIX (>25): VRP ~30% of EM (VIX overestimates realized vol more)
+            vrp_ratio = 0.10 + 0.004 * min(context.vix, 50)  # Scales: VIX10→0.14, VIX20→0.18, VIX30→0.22, VIX40→0.26
+            volatility_risk_premium = context.expected_move_pct * vrp_ratio
 
             features = np.array([[
                 context.vix,
@@ -5560,6 +5588,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
     prophet = get_prophet()
     prophet.live_log.log("TRAIN_DB_START", "Training from database backtest results", {})
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -5592,7 +5621,9 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
             # Rollback the failed transaction
             conn.rollback()
 
+        # V3 FIX: Close connection in finally block (was leaking on exception in train_from_chronicles)
         conn.close()
+        conn = None  # Mark as closed so finally doesn't double-close
 
         if not rows or len(rows) < min_samples:
             prophet.live_log.log("TRAIN_DB_SKIP", f"Insufficient trades: {len(rows) if rows else 0} < {min_samples}", {})
@@ -5643,6 +5674,13 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
         import traceback
         traceback.print_exc()
         return None
+    finally:
+        # V3 FIX: Ensure connection is always closed
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
