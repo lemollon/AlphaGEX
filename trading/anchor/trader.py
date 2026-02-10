@@ -273,10 +273,7 @@ class AnchorTrader(MathOptimizerMixin):
                         try:
                             proverbs = get_proverbs_enhanced()
                             if proverbs:
-                                tracker = proverbs.consecutive_loss_monitor.get_tracker('ANCHOR')
-                                if tracker:
-                                    tracker.consecutive_losses = 0
-                                    tracker.triggered_kill = False
+                                proverbs.consecutive_loss_monitor.reset('ANCHOR')
                         except Exception:
                             pass
 
@@ -284,10 +281,10 @@ class AnchorTrader(MathOptimizerMixin):
                 try:
                     proverbs = get_proverbs_enhanced()
                     if proverbs:
-                        consec_status = proverbs.consecutive_loss_monitor.get_tracker('ANCHOR')
-                        if consec_status and consec_status.triggered_kill and self._loss_streak_pause_until is None:
+                        consec_status = proverbs.consecutive_loss_monitor.get_status('ANCHOR')
+                        if consec_status and consec_status.get('triggered_kill') and self._loss_streak_pause_until is None:
                             self._loss_streak_pause_until = now + timedelta(minutes=5)
-                            reason = f'Proverbs: 3 consecutive losses — pausing 5 min (until {self._loss_streak_pause_until.strftime("%H:%M:%S")})'
+                            reason = f'Proverbs: {consec_status.get("consecutive_losses", 3)} consecutive losses — pausing 5 min (until {self._loss_streak_pause_until.strftime("%H:%M:%S")})'
                             result['action'] = 'skip'
                             result['details']['skip_reason'] = reason
                             self.db.log("WARNING", f"ANCHOR: {reason}")
