@@ -1362,15 +1362,18 @@ class ProphetAdvisor:
     - Real-time outcome updates
     """
 
-    # Feature columns for ML prediction
+    # V3 feature columns: cyclical day encoding, VRP, longer win rate horizon
+    # Matches WISDOM V3 patterns for consistency across ML advisory layer
     FEATURE_COLS = [
         'vix',
         'vix_percentile_30d',
         'vix_change_1d',
-        'day_of_week',
+        'day_of_week_sin',          # Cyclical encoding: sin(2*pi*dow/5)
+        'day_of_week_cos',          # Cyclical encoding: cos(2*pi*dow/5)
         'price_change_1d',
         'expected_move_pct',
-        'win_rate_30d',
+        'volatility_risk_premium',  # IV - realized vol (profit engine signal)
+        'win_rate_60d',             # 60-trade rolling win rate (reduced leakage)
         # GEX features
         'gex_normalized',
         'gex_regime_positive',
@@ -1378,7 +1381,7 @@ class ProphetAdvisor:
         'gex_between_walls',
     ]
 
-    # V2 features with VIX regime for strategy selection
+    # V2 features with VIX regime for strategy selection (backward compat)
     FEATURE_COLS_V2 = [
         'vix',
         'vix_percentile_30d',
@@ -1387,30 +1390,14 @@ class ProphetAdvisor:
         'price_change_1d',
         'expected_move_pct',
         'win_rate_30d',
-        'win_rate_7d',          # Recent momentum (faster adaptation)
         # GEX features
         'gex_normalized',
         'gex_regime_positive',
         'gex_distance_to_flip_pct',
         'gex_between_walls',
-        # VIX regime features for IC vs Directional
-        'vix_regime_low',       # 1 if VIX < 15
-        'vix_regime_normal',    # 1 if VIX 15-22
-        'vix_regime_elevated',  # 1 if VIX 22-28
-        'vix_regime_high',      # 1 if VIX 28-35
-        'vix_regime_extreme',   # 1 if VIX > 35
-        # Strategy suitability (computed from VIX + GEX)
-        'ic_suitability',       # 0-1 how suitable for Iron Condor
-        'dir_suitability',      # 0-1 how suitable for Directional
-        # Regime features (from regime_classifications table)
-        'regime_trend_score',   # -1 to 1 (bearish to bullish)
-        'regime_vol_percentile', # 0-100 volatility percentile
-        # Psychology features (fear/greed indicators)
-        'psychology_fear_score', # 0-1 market fear level
-        'psychology_momentum',   # Price momentum indicator
     ]
 
-    # V1 features (backward compatibility)
+    # V1 features (backward compatibility, no GEX)
     FEATURE_COLS_V1 = [
         'vix',
         'vix_percentile_30d',
@@ -1441,6 +1428,8 @@ class ProphetAdvisor:
         self.training_metrics: Optional[TrainingMetrics] = None
         self.model_version = "0.0.0"
         self._has_gex_features = False
+        self._feature_version = 3  # V3 features (cyclical day, VRP, 60d win rate)
+        self._trained_feature_cols = self.FEATURE_COLS  # Track which features model uses
 
         # =========================================================================
         # MODEL STALENESS TRACKING (Issue #1 fix)
@@ -1461,9 +1450,10 @@ class ProphetAdvisor:
         # Live log for frontend transparency
         self.live_log = prophet_live_log
 
-        # Thresholds
-        self.high_confidence_threshold = 0.65
-        self.low_confidence_threshold = 0.45
+        # Adaptive thresholds (set relative to base rate after training)
+        self.high_confidence_threshold = 0.65  # Default, recalculated after training
+        self.low_confidence_threshold = 0.45   # Default, recalculated after training
+        self._base_rate = None  # Learned from training data
 
         # Claude AI Enhancer
         self.claude: Optional[ProphetClaudeEnhancer] = None
@@ -1484,6 +1474,28 @@ class ProphetAdvisor:
             "has_gex_features": self._has_gex_features,
             "omega_mode": omega_mode
         })
+
+    def _update_thresholds_from_base_rate(self):
+        """Set adaptive thresholds relative to the training base rate.
+
+        With 89% win rate, hardcoded 0.45/0.65 thresholds meant:
+        - Model outputs ~0.89 on average
+        - SKIP (<0.45) would essentially never fire
+        - TRADE_FULL (>=0.65) fires on almost everything
+
+        Adaptive thresholds key off the learned base rate:
+        - SKIP when model predicts significantly BELOW base rate
+        - TRADE_FULL when at or near base rate
+        """
+        if self._base_rate is not None and self._base_rate > 0.5:
+            # SKIP when model predicts significantly below base rate
+            self.low_confidence_threshold = self._base_rate - 0.15
+            # TRADE_FULL when at or above base rate
+            self.high_confidence_threshold = self._base_rate - 0.05
+            logger.info(
+                f"Adaptive thresholds: SKIP < {self.low_confidence_threshold:.2f}, "
+                f"FULL >= {self.high_confidence_threshold:.2f} (base rate: {self._base_rate:.2f})"
+            )
 
     # =========================================================================
     # ENSEMBLE INTEGRATION - REMOVED
@@ -1823,8 +1835,13 @@ class ProphetAdvisor:
                     self.training_metrics = saved.get('metrics')
                     self.model_version = saved.get('version', '1.0.0')
                     self._has_gex_features = saved.get('has_gex_features', False)
+                    # V3 metadata
+                    self._feature_version = saved.get('feature_version', 2)
+                    self._trained_feature_cols = saved.get('feature_cols', self.FEATURE_COLS_V2)
+                    self._base_rate = saved.get('base_rate')
+                    self._update_thresholds_from_base_rate()
                     self.is_trained = True
-                    logger.info(f"Loaded Prophet model v{self.model_version} from local file")
+                    logger.info(f"Loaded Prophet model v{self.model_version} (features V{self._feature_version}) from local file")
                     return True
             except Exception as e:
                 logger.warning(f"Failed to load model from file: {e}")
@@ -1872,6 +1889,11 @@ class ProphetAdvisor:
                     self.scaler = saved.get('scaler')
                     self.model_version = model_version
                     self._has_gex_features = has_gex or False
+                    # V3 metadata
+                    self._feature_version = saved.get('feature_version', 2)
+                    self._trained_feature_cols = saved.get('feature_cols', self.FEATURE_COLS_V2)
+                    self._base_rate = saved.get('base_rate')
+                    self._update_thresholds_from_base_rate()
                     self.is_trained = True
 
                     # Track when model was trained and loaded (Issue #1 fix)
@@ -1920,6 +1942,9 @@ class ProphetAdvisor:
                     'metrics': self.training_metrics,
                     'version': self.model_version,
                     'has_gex_features': self._has_gex_features,
+                    'feature_version': self._feature_version,
+                    'feature_cols': self._trained_feature_cols,
+                    'base_rate': self._base_rate,
                     'saved_at': datetime.now().isoformat()
                 }, f)
             logger.info(f"Saved Prophet model to {model_file}")
@@ -1960,11 +1985,14 @@ class ProphetAdvisor:
                 # Deactivate previous active models (only update those that are currently active)
                 cursor.execute("UPDATE prophet_trained_models SET is_active = FALSE WHERE is_active = TRUE")
 
-                # Serialize model data
+                # Serialize model data (includes V3 metadata)
                 model_data = pickle.dumps({
                     'model': self.model,
                     'calibrated_model': self.calibrated_model,
                     'scaler': self.scaler,
+                    'feature_version': self._feature_version,
+                    'feature_cols': self._trained_feature_cols,
+                    'base_rate': self._base_rate,
                 })
 
                 # Serialize training metrics
@@ -2634,14 +2662,16 @@ class ProphetAdvisor:
         if wall_range > 0 and context.spot_price > 0:
             position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
 
+        # V2: GEX regime adjusts ic_suitability (strategy scoring) but NOT win_probability
+        # The ML model already has gex_regime_positive, gex_between_walls as features.
+        # Adding post-ML probability adjustments double-counts the signal and
+        # destroys the isotonic calibration we apply during training.
         if context.gex_regime == GEXRegime.POSITIVE:
             reasoning_parts.append("Positive GEX favors mean reversion (good for IC)")
-            base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.03)
             ic_suitability += 0.20
 
         elif context.gex_regime == GEXRegime.NEGATIVE:
             reasoning_parts.append("Negative GEX indicates trending market (slightly risky for IC)")
-            base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.02)
             ic_suitability -= 0.15
 
         elif context.gex_regime == GEXRegime.NEUTRAL:
@@ -2653,7 +2683,6 @@ class ProphetAdvisor:
 
             # NEUTRAL with contained price = ideal IC environment
             if context.gex_between_walls:
-                base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.05)
                 ic_suitability += 0.15
                 reasoning_parts.append("Price contained within walls (IC sweet spot)")
 
@@ -2716,7 +2745,6 @@ class ProphetAdvisor:
             ic_suitability += 0.10
         else:
             reasoning_parts.append("Price outside GEX walls (minor breakout risk)")
-            base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.01)
             ic_suitability -= 0.10
 
         # Normalize IC suitability
@@ -2776,7 +2804,7 @@ class ProphetAdvisor:
             bot_name=BotName.FORTRESS,
             advice=advice,
             win_probability=base_pred['win_probability'],
-            confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
+            confidence=base_pred['win_probability'],  # V2: removed 1.2x inflation that destroyed calibration
             suggested_risk_pct=risk_pct,
             suggested_sd_multiplier=sd_mult,
             use_gex_walls=use_gex_walls,
@@ -2875,13 +2903,12 @@ class ProphetAdvisor:
 
         reasoning_parts = []
 
-        # Wheel benefits from high IV (more premium)
+        # V2: VIX and GEX inform reasoning but do NOT manipulate calibrated probability.
+        # The ML model already has VIX and GEX as input features.
         if context.vix > 25:
             reasoning_parts.append("High VIX = rich premiums for CSP")
-            base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.05)
         elif context.vix < 15:
             reasoning_parts.append("Low VIX = thin premiums, consider waiting")
-            base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.05)
 
         # Positive GEX = less likely to get assigned
         if context.gex_regime == GEXRegime.POSITIVE:
@@ -2893,7 +2920,7 @@ class ProphetAdvisor:
             bot_name=BotName.CORNERSTONE,
             advice=advice,
             win_probability=base_pred['win_probability'],
-            confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
+            confidence=base_pred['win_probability'],  # V2: removed 1.2x inflation that destroyed calibration
             suggested_risk_pct=risk_pct,
             suggested_sd_multiplier=1.0,
             top_factors=base_pred['top_factors'],
@@ -2977,13 +3004,12 @@ class ProphetAdvisor:
 
         reasoning_parts = []
 
-        # Negative GEX + below flip = potential rally
+        # V2: GEX regime informs reasoning but does NOT manipulate calibrated probability.
+        # The ML model already has gex_regime_positive, gex_distance_to_flip_pct as features.
         if context.gex_regime == GEXRegime.NEGATIVE and context.gex_distance_to_flip_pct < 0:
             reasoning_parts.append("Negative GEX below flip = gamma squeeze potential")
-            base_pred['win_probability'] = min(0.75, base_pred['win_probability'] + 0.05)  # REDUCED from +10%
         elif context.gex_regime == GEXRegime.POSITIVE:
             reasoning_parts.append("Positive GEX = mean reversion, less directional opportunity")
-            base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - 0.05)  # REDUCED from -10%
 
         # =========================================================================
         # CLAUDE AI VALIDATION (if enabled)
@@ -3018,7 +3044,7 @@ class ProphetAdvisor:
             bot_name=BotName.LAZARUS,
             advice=advice,
             win_probability=base_pred['win_probability'],
-            confidence=min(1.0, base_pred['win_probability'] * 1.2),  # FIX: Scale 0-1, not 0-100
+            confidence=base_pred['win_probability'],  # V2: removed 1.2x inflation that destroyed calibration
             suggested_risk_pct=risk_pct * 0.5,  # Lower risk for directional
             suggested_sd_multiplier=1.0,
             top_factors=base_pred['top_factors'],
@@ -3675,14 +3701,13 @@ class ProphetAdvisor:
         # =====================================================================
         # GEX REGIME HANDLING - NEUTRAL is GOOD for SPX IC
         # =====================================================================
+        # V2: GEX regime adjusts ic_suitability but NOT win_probability (already in features)
         if context.gex_regime == GEXRegime.POSITIVE:
             reasoning_parts.append("Positive GEX favors pinning (ideal for SPX IC)")
-            base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.03)
             ic_suitability += 0.20
 
         elif context.gex_regime == GEXRegime.NEGATIVE:
             reasoning_parts.append("Negative GEX = trending (risky for SPX IC)")
-            base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - 0.03)
             ic_suitability -= 0.15
 
         elif context.gex_regime == GEXRegime.NEUTRAL:
@@ -3897,15 +3922,45 @@ class ProphetAdvisor:
     # =========================================================================
 
     def _get_base_prediction(self, context: MarketContext) -> Dict[str, Any]:
-        """Get base ML prediction from context"""
+        """Get base ML prediction from context.
+
+        V2: Supports V3 features (cyclical day, VRP) with backward compat for V2/V1 models.
+        """
         if not self.is_trained:
             return self._fallback_prediction(context)
 
-        # Prepare features
+        # Prepare features based on which version the model was trained with
         gex_regime_positive = 1 if context.gex_regime == GEXRegime.POSITIVE else 0
         gex_between_walls = 1 if context.gex_between_walls else 0
+        feature_version = getattr(self, '_feature_version', 2)
 
-        if self._has_gex_features:
+        if feature_version >= 3 and self._has_gex_features:
+            # V3: cyclical day encoding, VRP, 60d win rate
+            day_sin = math.sin(2 * math.pi * context.day_of_week / 5)
+            day_cos = math.cos(2 * math.pi * context.day_of_week / 5)
+
+            # Calculate VRP: expected move (IV proxy) - approximate realized vol
+            # In live inference, use expected_move_pct * 0.2 as typical VRP
+            volatility_risk_premium = context.expected_move_pct * 0.2
+
+            features = np.array([[
+                context.vix,
+                context.vix_percentile_30d,
+                context.vix_change_1d,
+                day_sin,
+                day_cos,
+                context.price_change_1d,
+                context.expected_move_pct,
+                volatility_risk_premium,
+                context.win_rate_30d,  # MarketContext still uses win_rate_30d field for 60d value
+                context.gex_normalized,
+                gex_regime_positive,
+                context.gex_distance_to_flip_pct,
+                gex_between_walls,
+            ]])
+            trained_cols = self.FEATURE_COLS
+        elif self._has_gex_features:
+            # V2: integer day, win_rate_30d, no VRP
             features = np.array([[
                 context.vix,
                 context.vix_percentile_30d,
@@ -3919,7 +3974,9 @@ class ProphetAdvisor:
                 context.gex_distance_to_flip_pct,
                 gex_between_walls,
             ]])
+            trained_cols = self.FEATURE_COLS_V2
         else:
+            # V1: no GEX
             features = np.array([[
                 context.vix,
                 context.vix_percentile_30d,
@@ -3929,6 +3986,7 @@ class ProphetAdvisor:
                 context.expected_move_pct,
                 context.win_rate_30d,
             ]])
+            trained_cols = self.FEATURE_COLS_V1
 
         # Scale and predict
         features_scaled = self.scaler.transform(features)
@@ -3945,17 +4003,16 @@ class ProphetAdvisor:
         if len(proba) < 2:
             return self._fallback_prediction(context)
 
-        win_probability = proba[1]
+        win_probability = float(proba[1])
 
         # Feature importance
-        feature_cols = self.FEATURE_COLS if self._has_gex_features else self.FEATURE_COLS_V1
-        feature_importance = dict(zip(feature_cols, self.model.feature_importances_))
+        feature_importance = dict(zip(trained_cols, self.model.feature_importances_))
         top_factors = sorted(feature_importance.items(), key=lambda x: -x[1])[:3]
 
         return {
             'win_probability': win_probability,
             'top_factors': top_factors,
-            'probabilities': {'win': proba[1], 'loss': proba[0]}
+            'probabilities': {'win': float(proba[1]), 'loss': float(proba[0])}
         }
 
     def _fallback_prediction(self, context: MarketContext) -> Dict[str, Any]:
@@ -4189,7 +4246,13 @@ class ProphetAdvisor:
         backtest_results: Dict[str, Any],
         include_gex: bool = True
     ) -> pd.DataFrame:
-        """Extract ML features from CHRONICLES backtest results"""
+        """
+        Extract ML features from CHRONICLES backtest results.
+
+        V3: Adds cyclical day encoding, VRP, 60-trade win rate horizon.
+        Fixes training/inference mismatch for price_change_1d (uses previous-day
+        change instead of same-day close which is look-ahead bias).
+        """
         if not ML_AVAILABLE:
             raise ImportError("ML libraries required")
 
@@ -4217,20 +4280,14 @@ class ProphetAdvisor:
         records = []
         outcomes = []
         pnls = []
+        price_changes = []  # Track for VRP calculation
 
         for i, trade in enumerate(trades):
-            # Rolling stats - 30 day lookback
-            lookback_start_30 = max(0, i - 30)
-            recent_outcomes_30 = outcomes[lookback_start_30:i] if i > 0 else []
-            recent_pnls = pnls[lookback_start_30:i] if i > 0 else []
+            # Rolling stats - 60 trade lookback (reduced leakage vs 30-day)
+            lookback_start_60 = max(0, i - 60)
+            recent_outcomes_60 = outcomes[lookback_start_60:i] if i > 0 else []
 
-            # Rolling stats - 7 day lookback (for faster momentum)
-            lookback_start_7 = max(0, i - 7)
-            recent_outcomes_7 = outcomes[lookback_start_7:i] if i > 0 else []
-
-            win_rate_30d = sum(1 for o in recent_outcomes_30 if o == 'MAX_PROFIT') / len(recent_outcomes_30) if recent_outcomes_30 else 0.68
-            win_rate_7d = sum(1 for o in recent_outcomes_7 if o == 'MAX_PROFIT') / len(recent_outcomes_7) if recent_outcomes_7 else 0.68
-            avg_pnl_30d = sum(recent_pnls) / len(recent_pnls) if recent_pnls else 0
+            win_rate_60d = sum(1 for o in recent_outcomes_60 if o == 'MAX_PROFIT') / len(recent_outcomes_60) if recent_outcomes_60 else 0.68
 
             trade_date = trade.get('trade_date', '')
             try:
@@ -4240,10 +4297,24 @@ class ProphetAdvisor:
                 logger.debug(f"Date parsing failed for {trade_date}: {e}, defaulting to Wednesday")
                 day_of_week = 2  # Default to Wednesday
 
+            # Cyclical day encoding (Mon=0..Fri=4 → sin/cos over 5-day cycle)
+            day_sin = math.sin(2 * math.pi * day_of_week / 5)
+            day_cos = math.cos(2 * math.pi * day_of_week / 5)
+
             vix = trade.get('vix', 20.0)
             open_price = trade.get('open_price', 5000)
             close_price = trade.get('close_price', open_price)
-            price_change_1d = (close_price - open_price) / open_price * 100 if open_price > 0 else 0
+
+            # V3 FIX: price_change_1d = PREVIOUS day's move, not same-day close.
+            # In live inference, we don't know today's close at trade entry time.
+            # Use the previous trade's price change to avoid look-ahead bias.
+            if i > 0:
+                prev_open = trades[i - 1].get('open_price', open_price)
+                prev_close = trades[i - 1].get('close_price', prev_open)
+                price_change_1d = (prev_close - prev_open) / prev_open * 100 if prev_open > 0 else 0
+            else:
+                price_change_1d = 0
+
             expected_move = trade.get('expected_move_sd', trade.get('expected_move_1d', 50))
             expected_move_pct = expected_move / open_price * 100 if open_price > 0 else 1.0
 
@@ -4254,66 +4325,34 @@ class ProphetAdvisor:
             outcomes.append(outcome)
             pnls.append(net_pnl)
 
-            # =========================================================================
-            # REGIME FEATURES (from trade context or defaults)
-            # =========================================================================
-            # Trend score: -1 (bearish) to 1 (bullish)
-            regime_trend_score = trade.get('regime_trend_score', 0)
-            if regime_trend_score == 0:
-                # Infer from price change if not provided
-                if price_change_1d > 0.5:
-                    regime_trend_score = min(1.0, price_change_1d / 2)
-                elif price_change_1d < -0.5:
-                    regime_trend_score = max(-1.0, price_change_1d / 2)
+            # Track actual intraday move for VRP calculation
+            actual_change = abs(close_price - open_price) / open_price * 100 if open_price > 0 else 0
+            price_changes.append(actual_change)
 
-            # Vol percentile: use VIX as proxy
-            regime_vol_percentile = trade.get('regime_vol_percentile', 50)
-            if regime_vol_percentile == 50:
-                # Approximate from VIX (12=low, 20=mid, 30=high)
-                if vix < 12:
-                    regime_vol_percentile = 10
-                elif vix < 15:
-                    regime_vol_percentile = 25
-                elif vix < 20:
-                    regime_vol_percentile = 50
-                elif vix < 25:
-                    regime_vol_percentile = 75
-                else:
-                    regime_vol_percentile = 90
+            # VRP: expected move (IV proxy) - realized vol (5-trade rolling std of price changes)
+            if len(price_changes) >= 5:
+                recent_changes = price_changes[-5:]
+                realized_vol_5d = (sum(c**2 for c in recent_changes) / len(recent_changes)) ** 0.5
+            else:
+                realized_vol_5d = expected_move_pct * 0.8  # Approximate
 
-            # =========================================================================
-            # PSYCHOLOGY FEATURES (fear/greed indicators)
-            # =========================================================================
-            # Fear score: 0 (greed) to 1 (extreme fear)
-            psychology_fear_score = trade.get('psychology_fear_score', 0.5)
-            if psychology_fear_score == 0.5:
-                # Approximate from VIX (higher VIX = more fear)
-                psychology_fear_score = min(1.0, max(0.0, (vix - 12) / 28))
-
-            # Momentum: price momentum indicator
-            psychology_momentum = trade.get('psychology_momentum', 0)
-            if psychology_momentum == 0:
-                psychology_momentum = price_change_1d / 5  # Scale to roughly -1 to 1
+            volatility_risk_premium = expected_move_pct - realized_vol_5d
 
             record = {
                 'trade_date': trade_date,
                 'vix': vix,
-                'vix_percentile_30d': 50,
-                'vix_change_1d': 0,
-                'day_of_week': day_of_week,
+                'vix_percentile_30d': 50,  # Computed after DataFrame creation
+                'vix_change_1d': 0,        # Computed after DataFrame creation
+                'day_of_week': day_of_week,  # Keep for V2 backward compat
+                'day_of_week_sin': day_sin,
+                'day_of_week_cos': day_cos,
                 'price_change_1d': price_change_1d,
                 'expected_move_pct': expected_move_pct,
-                'win_rate_30d': win_rate_30d,
-                'win_rate_7d': win_rate_7d,
+                'volatility_risk_premium': volatility_risk_premium,
+                'win_rate_60d': win_rate_60d,
                 'outcome': outcome,
                 'is_win': is_win,
                 'net_pnl': net_pnl,
-                # Regime features
-                'regime_trend_score': regime_trend_score,
-                'regime_vol_percentile': regime_vol_percentile,
-                # Psychology features
-                'psychology_fear_score': psychology_fear_score,
-                'psychology_momentum': psychology_momentum,
             }
 
             if has_gex:
@@ -4323,58 +4362,10 @@ class ProphetAdvisor:
                 record['gex_distance_to_flip_pct'] = trade.get('gex_distance_to_flip_pct', 0)
                 record['gex_between_walls'] = 1 if trade.get('gex_between_walls', True) else 0
             else:
-                gex_regime = 'NEUTRAL'
                 record['gex_normalized'] = 0
                 record['gex_regime_positive'] = 0
                 record['gex_distance_to_flip_pct'] = 0
                 record['gex_between_walls'] = 1
-
-            # =========================================================================
-            # VIX REGIME FEATURES (for IC vs Directional learning)
-            # =========================================================================
-            record['vix_regime_low'] = 1 if vix < 15 else 0
-            record['vix_regime_normal'] = 1 if 15 <= vix < 22 else 0
-            record['vix_regime_elevated'] = 1 if 22 <= vix < 28 else 0
-            record['vix_regime_high'] = 1 if 28 <= vix < 35 else 0
-            record['vix_regime_extreme'] = 1 if vix >= 35 else 0
-
-            # Calculate IC vs Directional suitability
-            # IC good when: Normal VIX + Positive GEX
-            # Directional good when: High VIX + Negative GEX
-            ic_score = 0.5
-            dir_score = 0.5
-
-            # VIX impact
-            if vix < 15:
-                ic_score -= 0.15
-                dir_score += 0.10
-            elif vix < 22:
-                ic_score += 0.20
-            elif vix < 28:
-                ic_score -= 0.05
-                dir_score += 0.15
-            elif vix < 35:
-                ic_score -= 0.25
-                dir_score += 0.25
-            else:
-                ic_score -= 0.40
-                dir_score += 0.10
-
-            # GEX impact
-            if gex_regime == 'POSITIVE':
-                ic_score += 0.25
-                dir_score -= 0.10
-            elif gex_regime == 'NEGATIVE':
-                ic_score -= 0.30
-                dir_score += 0.30
-
-            record['ic_suitability'] = max(0.0, min(1.0, ic_score))
-            record['dir_suitability'] = max(0.0, min(1.0, dir_score))
-
-            # Track strategy type from bot name if available
-            bot_name = trade.get('bot_name', 'FORTRESS')
-            record['is_ic_strategy'] = 1 if bot_name in ['FORTRESS', 'ANCHOR'] else 0
-            record['is_dir_strategy'] = 1 if bot_name in ['SOLOMON'] else 0
 
             records.append(record)
 
@@ -4395,9 +4386,17 @@ class ProphetAdvisor:
         test_size: float = 0.2,
         min_samples: int = 100
     ) -> TrainingMetrics:
-        """Train Prophet from CHRONICLES backtest results"""
+        """
+        Train Prophet from CHRONICLES backtest results.
+
+        V2 improvements (matching WISDOM V3 patterns):
+        - sample_weight to handle class imbalance (IC ~70-90% win rate)
+        - Brier score on held-out CV folds (not training data)
+        - Adaptive thresholds based on learned base rate
+        - V3 features: cyclical day encoding, VRP, 60-trade win rate
+        """
         # Log training start
-        self.live_log.log("TRAIN_START", "Prophet training initiated from CHRONICLES data", {
+        self.live_log.log("TRAIN_START", "Prophet V2 training initiated from CHRONICLES data", {
             "test_size": test_size,
             "min_samples": min_samples
         })
@@ -4411,11 +4410,28 @@ class ProphetAdvisor:
         if len(df) < min_samples:
             raise ValueError(f"Insufficient data: {len(df)} < {min_samples}")
 
-        logger.info(f"Training Prophet on {len(df)} trades")
+        logger.info(f"Training Prophet V2 on {len(df)} trades")
 
+        # Use V3 features if GEX available, else V1
         feature_cols = self.FEATURE_COLS if self._has_gex_features else self.FEATURE_COLS_V1
         X = df[feature_cols].values
         y = df['is_win'].values.astype(int)
+
+        # Class imbalance: compute sample_weight
+        # For IC trading with ~89% win rate, losses are underrepresented
+        n_wins = int(y.sum())
+        n_losses = int(len(y) - n_wins)
+        if n_wins > 0 and n_losses > 0:
+            # Weight losses higher so model learns to distinguish them
+            weight_win = n_losses / len(y)
+            weight_loss = n_wins / len(y)
+            sample_weight_array = np.where(y == 1, weight_win, weight_loss)
+        else:
+            sample_weight_array = np.ones(len(y))
+        logger.info(f"Class balance: {n_wins} wins, {n_losses} losses, ratio={n_wins/max(1,n_losses):.1f}:1")
+
+        # Store base rate for adaptive thresholds
+        self._base_rate = float(y.mean())
 
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
@@ -4432,13 +4448,14 @@ class ProphetAdvisor:
             random_state=42
         )
 
-        accuracies, precisions, recalls, f1s, aucs = [], [], [], [], []
+        accuracies, precisions, recalls, f1s, aucs, briers = [], [], [], [], [], []
 
         for train_idx, test_idx in tscv.split(X_scaled):
             X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
+            sw_train = sample_weight_array[train_idx]
 
-            self.model.fit(X_train, y_train)
+            self.model.fit(X_train, y_train, sample_weight=sw_train)
             y_pred = self.model.predict(X_test)
             y_proba = self.model.predict_proba(X_test)[:, 1]
 
@@ -4446,20 +4463,23 @@ class ProphetAdvisor:
             precisions.append(precision_score(y_test, y_pred, zero_division=0))
             recalls.append(recall_score(y_test, y_pred, zero_division=0))
             f1s.append(f1_score(y_test, y_pred, zero_division=0))
+            briers.append(brier_score_loss(y_test, y_proba))
             try:
                 aucs.append(roc_auc_score(y_test, y_proba))
             except ValueError:
                 aucs.append(0.5)
 
-        self.model.fit(X_scaled, y)
+        # Final model fit on all data with sample weights
+        self.model.fit(X_scaled, y, sample_weight=sample_weight_array)
 
+        # Calibrate probabilities (isotonic calibration on full dataset)
         self.calibrated_model = CalibratedClassifierCV(self.model, method='isotonic', cv=3)
         self.calibrated_model.fit(X_scaled, y)
 
-        y_proba_full = self.calibrated_model.predict_proba(X_scaled)[:, 1]
-        brier = brier_score_loss(y, y_proba_full)
-
         feature_importances = dict(zip(feature_cols, self.model.feature_importances_))
+
+        # Brier score from CV folds (NOT in-sample)
+        brier_cv = np.mean(briers) if briers else 0.25
 
         self.training_metrics = TrainingMetrics(
             accuracy=np.mean(accuracies),
@@ -4467,36 +4487,47 @@ class ProphetAdvisor:
             recall=np.mean(recalls),
             f1_score=np.mean(f1s),
             auc_roc=np.mean(aucs),
-            brier_score=brier,
-            win_rate_predicted=y_proba_full.mean(),
+            brier_score=brier_cv,
+            win_rate_predicted=float(self.calibrated_model.predict_proba(X_scaled)[:, 1].mean()),
             win_rate_actual=y.mean(),
             total_samples=len(df),
             train_samples=int(len(df) * (1 - test_size)),
             test_samples=int(len(df) * test_size),
-            positive_samples=int(y.sum()),
-            negative_samples=int(len(y) - y.sum()),
+            positive_samples=n_wins,
+            negative_samples=n_losses,
             feature_importances=feature_importances,
             training_date=datetime.now().isoformat(),
-            model_version="1.0.0"
+            model_version="2.0.0"
         )
 
         self.is_trained = True
-        self.model_version = "1.0.0"
+        self.model_version = "2.0.0"
+        self._feature_version = 3
+        self._trained_feature_cols = feature_cols
         self._save_model()
 
+        # Set adaptive thresholds based on base rate
+        self._update_thresholds_from_base_rate()
+
         # Log training complete
-        self.live_log.log("TRAIN_DONE", f"Prophet trained - Accuracy: {self.training_metrics.accuracy:.1%}", {
+        self.live_log.log("TRAIN_DONE", f"Prophet V2 trained - Accuracy: {self.training_metrics.accuracy:.1%}", {
             "accuracy": self.training_metrics.accuracy,
             "auc_roc": self.training_metrics.auc_roc,
+            "brier_cv": brier_cv,
             "total_samples": self.training_metrics.total_samples,
             "win_rate_actual": self.training_metrics.win_rate_actual,
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "base_rate": self._base_rate,
+            "class_balance": f"{n_wins}W/{n_losses}L"
         })
 
-        logger.info(f"Prophet trained successfully:")
+        logger.info(f"Prophet V2 trained successfully (features V3):")
         logger.info(f"  Accuracy: {self.training_metrics.accuracy:.2%}")
         logger.info(f"  AUC-ROC: {self.training_metrics.auc_roc:.3f}")
-        logger.info(f"  Win Rate: {self.training_metrics.win_rate_actual:.2%}")
+        logger.info(f"  Brier Score (CV): {brier_cv:.4f}")
+        logger.info(f"  Win Rate (actual): {self.training_metrics.win_rate_actual:.2%}")
+        logger.info(f"  Class balance: {n_wins}W / {n_losses}L")
+        logger.info(f"  Adaptive thresholds: SKIP < {self.low_confidence_threshold:.2f}, FULL >= {self.high_confidence_threshold:.2f}")
 
         # =========================================================================
         # CLAUDE PATTERN ANALYSIS (if enabled)
@@ -5188,14 +5219,15 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
     """
     Train Prophet model from live trading outcomes stored in database.
 
-    This enables continuous learning from actual trading results.
+    V2: Uses sample_weight for class imbalance, Brier on CV folds,
+    V3 features (cyclical day, VRP), adaptive thresholds.
     """
     if not DB_AVAILABLE:
         logger.error("Database not available for training")
         return None
 
     prophet = get_prophet()
-    prophet.live_log.log("TRAIN_START", "Auto-training from live outcomes", {"min_samples": min_samples})
+    prophet.live_log.log("TRAIN_START", "V2 auto-training from live outcomes", {"min_samples": min_samples})
 
     try:
         conn = get_connection()
@@ -5215,8 +5247,9 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
             logger.info(f"Insufficient live outcomes for training: {len(rows)} < {min_samples}")
             return None
 
-        # Convert to training format
+        # Convert to training format with V3 features
         records = []
+        price_changes = []
         for row in rows:
             trade_date, bot_name, features_json, outcome, is_win, net_pnl = row
 
@@ -5225,12 +5258,37 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
             else:
                 features = features_json or {}
 
+            day_of_week = features.get('day_of_week', 2)
+            day_sin = math.sin(2 * math.pi * day_of_week / 5)
+            day_cos = math.cos(2 * math.pi * day_of_week / 5)
+
+            price_change_1d = features.get('price_change_1d', 0)
+            expected_move_pct = features.get('expected_move_pct', 1.0)
+            price_changes.append(abs(price_change_1d))
+
+            # VRP calculation
+            if len(price_changes) >= 5:
+                recent = price_changes[-5:]
+                realized_vol = (sum(c**2 for c in recent) / len(recent)) ** 0.5
+            else:
+                realized_vol = expected_move_pct * 0.8
+            vrp = expected_move_pct - realized_vol
+
+            # Rolling win rate (60-trade horizon)
+            recent_wins = [r.get('is_win', 0) for r in records[-60:]] if records else []
+            win_rate_60d = sum(recent_wins) / len(recent_wins) if recent_wins else 0.68
+
             record = {
                 'trade_date': trade_date,
                 'is_win': 1 if is_win else 0,
                 'vix': features.get('vix', 20),
-                'day_of_week': features.get('day_of_week', 2),
-                'price_change_1d': features.get('price_change_1d', 0),
+                'day_of_week': day_of_week,
+                'day_of_week_sin': day_sin,
+                'day_of_week_cos': day_cos,
+                'price_change_1d': price_change_1d,
+                'expected_move_pct': expected_move_pct,
+                'volatility_risk_premium': vrp,
+                'win_rate_60d': win_rate_60d,
                 'vix_change_1d': features.get('vix_change_1d', 0),
                 'gex_normalized': features.get('gex_normalized', 0),
                 'gex_regime_positive': 1 if features.get('gex_regime') == 'POSITIVE' else 0,
@@ -5263,6 +5321,19 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
         X = df[feature_cols].values
         y = df['is_win'].values.astype(int)
 
+        # Class imbalance: compute sample_weight
+        n_wins = int(y.sum())
+        n_losses = int(len(y) - n_wins)
+        if n_wins > 0 and n_losses > 0:
+            weight_win = n_losses / len(y)
+            weight_loss = n_wins / len(y)
+            sample_weight_array = np.where(y == 1, weight_win, weight_loss)
+        else:
+            sample_weight_array = np.ones(len(y))
+
+        # Store base rate for adaptive thresholds
+        prophet._base_rate = float(y.mean())
+
         # Train model
         prophet.scaler = StandardScaler()
         X_scaled = prophet.scaler.fit_transform(X)
@@ -5279,13 +5350,14 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
             random_state=42
         )
 
-        accuracies, precisions, recalls, f1s, aucs = [], [], [], [], []
+        accuracies, precisions, recalls, f1s, aucs, briers = [], [], [], [], [], []
 
         for train_idx, test_idx in tscv.split(X_scaled):
             X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
+            sw_train = sample_weight_array[train_idx]
 
-            prophet.model.fit(X_train, y_train)
+            prophet.model.fit(X_train, y_train, sample_weight=sw_train)
             y_pred = prophet.model.predict(X_test)
             y_proba = prophet.model.predict_proba(X_test)[:, 1]
 
@@ -5293,25 +5365,24 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
             precisions.append(precision_score(y_test, y_pred, zero_division=0))
             recalls.append(recall_score(y_test, y_pred, zero_division=0))
             f1s.append(f1_score(y_test, y_pred, zero_division=0))
+            briers.append(brier_score_loss(y_test, y_proba))
             try:
                 aucs.append(roc_auc_score(y_test, y_proba))
             except ValueError:
                 aucs.append(0.5)
 
-        # Final fit on all data
-        prophet.model.fit(X_scaled, y)
+        # Final fit on all data with sample weights
+        prophet.model.fit(X_scaled, y, sample_weight=sample_weight_array)
 
         # Calibrate probabilities
         prophet.calibrated_model = CalibratedClassifierCV(prophet.model, method='isotonic', cv=3)
         prophet.calibrated_model.fit(X_scaled, y)
 
-        y_proba_full = prophet.calibrated_model.predict_proba(X_scaled)[:, 1]
-        brier = brier_score_loss(y, y_proba_full)
-
         feature_importances = dict(zip(feature_cols, prophet.model.feature_importances_))
+        brier_cv = np.mean(briers) if briers else 0.25
 
         # Increment version for live training
-        version_parts = prophet.model_version.split('.') if prophet.model_version else ['1', '0', '0']
+        version_parts = prophet.model_version.split('.') if prophet.model_version else ['2', '0', '0']
         new_minor = int(version_parts[1]) + 1 if len(version_parts) > 1 else 1
         new_version = f"{version_parts[0]}.{new_minor}.0"
 
@@ -5321,14 +5392,14 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
             recall=np.mean(recalls),
             f1_score=np.mean(f1s),
             auc_roc=np.mean(aucs),
-            brier_score=brier,
-            win_rate_predicted=y_proba_full.mean(),
+            brier_score=brier_cv,
+            win_rate_predicted=float(prophet.calibrated_model.predict_proba(X_scaled)[:, 1].mean()),
             win_rate_actual=y.mean(),
             total_samples=len(df),
             train_samples=int(len(df) * 0.8),
             test_samples=int(len(df) * 0.2),
-            positive_samples=int(y.sum()),
-            negative_samples=int(len(y) - y.sum()),
+            positive_samples=n_wins,
+            negative_samples=n_losses,
             feature_importances=feature_importances,
             training_date=datetime.now().isoformat(),
             model_version=new_version
@@ -5336,19 +5407,23 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
 
         prophet.is_trained = True
         prophet.model_version = new_version
+        prophet._feature_version = 3
+        prophet._trained_feature_cols = feature_cols
         prophet._save_model()
 
-        # Note: used_in_model_version column tracking removed for simplicity
-        # Training outcomes are tracked by the prophet_trained_models table
+        # Set adaptive thresholds
+        prophet._update_thresholds_from_base_rate()
 
-        prophet.live_log.log("TRAIN_DONE", f"Auto-trained v{new_version} - Accuracy: {prophet.training_metrics.accuracy:.1%}", {
+        prophet.live_log.log("TRAIN_DONE", f"V2 auto-trained v{new_version} - Accuracy: {prophet.training_metrics.accuracy:.1%}", {
             "accuracy": prophet.training_metrics.accuracy,
             "auc_roc": prophet.training_metrics.auc_roc,
+            "brier_cv": brier_cv,
             "total_samples": prophet.training_metrics.total_samples,
-            "model_version": new_version
+            "model_version": new_version,
+            "class_balance": f"{n_wins}W/{n_losses}L"
         })
 
-        logger.info(f"Prophet auto-trained successfully from {len(df)} live outcomes - v{new_version}")
+        logger.info(f"Prophet V2 auto-trained from {len(df)} live outcomes - v{new_version}")
         return prophet.training_metrics
 
     except Exception as e:
