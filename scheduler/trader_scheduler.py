@@ -563,6 +563,21 @@ class AutonomousTraderScheduler:
                 logger.warning(f"JUBILEE initialization failed: {e}")
                 self.jubilee_trader = None
 
+        # JUBILEE: Ensure a box spread position exists at startup.
+        # Without a box spread, IC trading has no capital and is completely blocked.
+        # This runs once on boot so Jubilee can trade immediately after deploy.
+        if self.jubilee_trader:
+            try:
+                open_positions = self.jubilee_trader.get_positions()
+                if not open_positions:
+                    logger.warning("JUBILEE STARTUP: No open box spread found - creating one now")
+                    self.jubilee_trader._create_emergency_paper_position()
+                    logger.info("JUBILEE STARTUP: Box spread position created - IC trading is funded")
+                else:
+                    logger.info(f"JUBILEE STARTUP: {len(open_positions)} open box spread(s) found - IC trading is funded")
+            except Exception as e:
+                logger.error(f"JUBILEE STARTUP: Failed to verify box spread: {e}")
+
         # JUBILEE IC - Iron Condor trading with borrowed capital
         # Uses capital from box spreads to trade SPX Iron Condors
         # This is the "returns engine" of the JUBILEE system
