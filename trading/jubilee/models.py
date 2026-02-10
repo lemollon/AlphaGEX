@@ -1001,10 +1001,10 @@ class JubileeICConfig:
     # Underlying
     ticker: str = "SPX"           # Trade SPX (matches box spreads)
 
-    # Expiration preferences
-    target_dte_min: int = 0       # 0DTE trading
+    # Expiration preferences - WEEKLY (match SAMSON)
+    target_dte_min: int = 0       # Minimum DTE
     target_dte_max: int = 7       # Up to weekly
-    prefer_0dte: bool = True      # Focus on 0DTE
+    prefer_0dte: bool = False     # Trade weekly SPXW (next Friday), same as SAMSON
 
     # Strike selection - AGGRESSIVE (match SAMSON)
     short_put_delta: float = 0.10   # ~10 delta for short put
@@ -1036,11 +1036,10 @@ class JubileeICConfig:
     entry_end: str = "14:45"      # 2:45 PM CT (same as ANCHOR - stop 15 min before close)
     exit_by: str = "14:50"        # 2:50 PM CT (same as ANCHOR force_exit)
 
-    # Cooldown - MATCH ANCHOR exactly (NO COOLDOWNS)
-    # ANCHOR has no cooldown logic - it trades as often as Prophet approves (every 5 min)
-    cooldown_after_loss_minutes: int = 0   # No pause after loss (like ANCHOR)
-    cooldown_after_win_minutes: int = 0    # No pause after win (like ANCHOR)
-    cooldown_minutes_after_trade: int = 0  # No cooldown between trades (like ANCHOR)
+    # Cooldown - MATCH SAMSON (30-min between trades)
+    cooldown_after_loss_minutes: int = 30  # 30 min pause after loss (match SAMSON)
+    cooldown_after_win_minutes: int = 0    # No pause after win
+    cooldown_minutes_after_trade: int = 30 # 30 min cooldown between trades (match SAMSON)
 
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)
