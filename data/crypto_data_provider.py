@@ -591,9 +591,9 @@ class CryptoDataProvider:
         except Exception as e:
             logger.warning(f"CryptoDataProvider: Deribit init failed: {e}")
 
-        # Cache
-        self._snapshot_cache: Optional[CryptoMarketSnapshot] = None
-        self._snapshot_cache_time: float = 0
+        # Per-symbol cache (supports multi-coin without eviction)
+        self._snapshot_cache: Dict[str, CryptoMarketSnapshot] = {}
+        self._snapshot_cache_time: Dict[str, float] = {}
         self._cache_ttl: int = 30  # seconds
 
     def get_snapshot(self, symbol: str = "ETH") -> CryptoMarketSnapshot:
@@ -603,12 +603,10 @@ class CryptoDataProvider:
         Returns a CryptoMarketSnapshot with all signals derived.
         """
         now = time.time()
-        if (
-            self._snapshot_cache
-            and self._snapshot_cache.symbol == symbol
-            and (now - self._snapshot_cache_time) < self._cache_ttl
-        ):
-            return self._snapshot_cache
+        cached = self._snapshot_cache.get(symbol)
+        cached_time = self._snapshot_cache_time.get(symbol, 0)
+        if cached and (now - cached_time) < self._cache_ttl:
+            return cached
 
         spot = self._get_spot_price(symbol)
         if not spot or spot <= 0:
@@ -656,8 +654,8 @@ class CryptoDataProvider:
         # Derive combined signals
         self._derive_signals(snapshot)
 
-        self._snapshot_cache = snapshot
-        self._snapshot_cache_time = now
+        self._snapshot_cache[symbol] = snapshot
+        self._snapshot_cache_time[symbol] = now
         return snapshot
 
     def get_funding_rate(self, symbol: str = "ETH") -> Optional[FundingRate]:
@@ -689,13 +687,35 @@ class CryptoDataProvider:
             return self._deribit.get_options_chain_data(symbol)
         return []
 
+    # Coins supported by Deribit index prices
+    _DERIBIT_SUPPORTED = {"BTC", "ETH", "SOL", "MATIC", "USDC"}
+
     def _get_spot_price(self, symbol: str) -> Optional[float]:
-        """Get current spot price, trying Deribit first then CoinGlass."""
-        if self._deribit:
+        """Get current spot price.
+
+        Tries Deribit first (only for supported coins like ETH/BTC), then
+        falls back to Coinbase public API (supports all coins including
+        XRP, SHIB, DOGE).
+        """
+        # Deribit only supports a handful of coins
+        if self._deribit and symbol.upper() in self._DERIBIT_SUPPORTED:
             price = self._deribit.get_index_price(symbol)
             if price:
                 return price
-        # Fallback: could use CoinGlass or other source
+
+        # Fallback: Coinbase public spot price (no auth required, all coins)
+        try:
+            ticker = f"{symbol.upper()}-USD"
+            url = f"https://api.coinbase.com/v2/prices/{ticker}/spot"
+            resp = requests.get(url, headers={"User-Agent": "AlphaGEX/1.0"}, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                price = float(data["data"]["amount"])
+                if price > 0:
+                    return price
+        except Exception as e:
+            logger.debug(f"CryptoDataProvider: Coinbase spot price failed for {symbol}: {e}")
+
         return None
 
     def _build_crypto_gex(
