@@ -243,9 +243,55 @@ class AgapeSpotTrader:
                     f"[{trade_mode}] LONG {ticker} {signal.quantity} "
                     f"@ ${position.entry_price:.2f} (${notional:.2f})",
                     details=signal.to_dict(),
+                    ticker=ticker,
                 )
             else:
-                result["outcome"] = "EXECUTION_FAILED"
+                # Live execution failed — fall back to paper so the bot
+                # still tracks hypothetical performance instead of going
+                # silent for days (254 DOGE failures, 201 SHIB, 191 XRP
+                # in a single week with zero trades).
+                if self.config.is_live(ticker):
+                    logger.warning(
+                        f"AGAPE-SPOT: LIVE execution failed for {ticker}, "
+                        f"falling back to PAPER"
+                    )
+                    self.db.log(
+                        "WARNING", "LIVE_EXEC_FAILED",
+                        f"Live execution failed for {ticker} "
+                        f"(qty={signal.quantity}, price=${signal.spot_price:.2f}). "
+                        f"Falling back to paper.",
+                        ticker=ticker,
+                    )
+                    position = self.executor._execute_paper(signal)
+                    if position:
+                        self.db.save_position(position)
+                        result["new_trade"] = True
+                        result["outcome"] = f"TRADED_LONG_{ticker}_PAPER_FALLBACK"
+                        result["position_id"] = position.position_id
+                        scan_context["position_id"] = position.position_id
+                        notional = signal.quantity * position.entry_price
+                        self.db.log(
+                            "INFO", "NEW_TRADE",
+                            f"[PAPER_FALLBACK] LONG {ticker} {signal.quantity} "
+                            f"@ ${position.entry_price:.2f} (${notional:.2f})",
+                            details=signal.to_dict(),
+                            ticker=ticker,
+                        )
+                    else:
+                        result["outcome"] = "EXECUTION_FAILED"
+                        self.db.log(
+                            "ERROR", "EXEC_FAILED",
+                            f"Both live AND paper execution failed for {ticker}",
+                            ticker=ticker,
+                        )
+                else:
+                    result["outcome"] = "EXECUTION_FAILED"
+                    self.db.log(
+                        "ERROR", "EXEC_FAILED",
+                        f"Paper execution failed for {ticker} "
+                        f"(qty={signal.quantity}, price=${signal.spot_price:.2f})",
+                        ticker=ticker,
+                    )
 
             self._log_scan(ticker, result, scan_context, signal=signal)
             return result
@@ -381,6 +427,9 @@ class AgapeSpotTrader:
     ) -> bool:
         """No-loss trailing stop management. LONG-ONLY.
 
+        Uses PER-TICKER exit parameters so altcoins (XRP, SHIB, DOGE) can
+        use tight quick-scalp settings while ETH keeps wider parameters.
+
         profit_pct   = (current - entry) / entry * 100
         hwm          = highest price seen (only updates when price goes up)
         Trail stop   = hwm - trail_distance, ratchets UP only.
@@ -388,6 +437,15 @@ class AgapeSpotTrader:
         """
         entry_price = pos["entry_price"]
         position_id = pos["position_id"]
+
+        # Per-ticker exit params (altcoins: tight/fast, ETH: wide/patient)
+        exit_params = self.config.get_exit_params(ticker)
+        max_loss_pct = exit_params["max_unrealized_loss_pct"]
+        emergency_pct = self.config.no_loss_emergency_stop_pct
+        activation_pct = exit_params["no_loss_activation_pct"]
+        trail_distance_pct = exit_params["no_loss_trail_distance_pct"]
+        profit_target_pct = exit_params["no_loss_profit_target_pct"]
+        max_hold = exit_params["max_hold_hours"]
 
         # Long-only profit
         profit_pct = ((current_price - entry_price) / entry_price) * 100
@@ -404,7 +462,6 @@ class AgapeSpotTrader:
         )
 
         # ---- Max unrealized loss ----
-        max_loss_pct = self.config.max_unrealized_loss_pct
         if -profit_pct >= max_loss_pct:
             stop_price = entry_price * (1 - max_loss_pct / 100)
             return self._close_position(
@@ -412,7 +469,6 @@ class AgapeSpotTrader:
             )
 
         # ---- Emergency stop ----
-        emergency_pct = self.config.no_loss_emergency_stop_pct
         if -profit_pct >= emergency_pct:
             stop_price = entry_price * (1 - emergency_pct / 100)
             return self._close_position(ticker, pos, stop_price, "EMERGENCY_STOP")
@@ -429,8 +485,7 @@ class AgapeSpotTrader:
                     f"TRAIL_STOP_+{exit_pnl_pct:.1f}pct",
                 )
 
-        # ---- Profit target ----
-        profit_target_pct = self.config.no_loss_profit_target_pct
+        # ---- Profit target (altcoins: 1.0%, ETH: disabled) ----
         if profit_target_pct > 0 and profit_pct >= profit_target_pct:
             return self._close_position(
                 ticker, pos, current_price,
@@ -438,9 +493,7 @@ class AgapeSpotTrader:
             )
 
         # ---- Activate trailing ----
-        activation_pct = self.config.no_loss_activation_pct
         if not trailing_active and max_profit_pct >= activation_pct:
-            trail_distance_pct = self.config.no_loss_trail_distance_pct
             trail_distance = entry_price * (trail_distance_pct / 100)
 
             # Long-only: stop below HWM, never below entry
@@ -462,7 +515,6 @@ class AgapeSpotTrader:
 
         # ---- Ratchet trailing stop UP (long-only: only moves up) ----
         if trailing_active:
-            trail_distance_pct = self.config.no_loss_trail_distance_pct
             trail_distance = entry_price * (trail_distance_pct / 100)
 
             new_stop = round(hwm - trail_distance, 2)
@@ -476,7 +528,7 @@ class AgapeSpotTrader:
                 except Exception:
                     pass
 
-        # ---- Max hold time ----
+        # ---- Max hold time (altcoins: 2h, ETH: 6h) ----
         open_time_str = pos.get("open_time")
         if open_time_str:
             try:
@@ -489,7 +541,7 @@ class AgapeSpotTrader:
                 hold_hours = (
                     datetime.now(CENTRAL_TZ) - open_time
                 ).total_seconds() / 3600
-                if hold_hours >= self.config.max_hold_hours:
+                if hold_hours >= max_hold:
                     return self._close_position(
                         ticker, pos, current_price, "MAX_HOLD_TIME",
                     )
