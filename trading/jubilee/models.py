@@ -543,8 +543,8 @@ class JubileeConfig:
             'max_margin_pct': self.max_margin_pct,
             'margin_buffer_pct': self.margin_buffer_pct,
             'allocations': {
-                'ares_pct': self.fortress_allocation_pct,
-                'titan_pct': self.samson_allocation_pct,
+                'fortress_pct': self.fortress_allocation_pct,
+                'samson_pct': self.samson_allocation_pct,
                 'anchor_pct': self.anchor_allocation_pct,
                 'reserve_pct': self.reserve_pct,
             },
@@ -567,8 +567,8 @@ class JubileeConfig:
             if key == 'mode':
                 continue
             if key == 'allocations':
-                config.fortress_allocation_pct = value.get('ares_pct', 35.0)
-                config.samson_allocation_pct = value.get('titan_pct', 35.0)
+                config.fortress_allocation_pct = value.get('fortress_pct', 35.0)
+                config.samson_allocation_pct = value.get('samson_pct', 35.0)
                 config.anchor_allocation_pct = value.get('anchor_pct', 20.0)
                 config.reserve_pct = value.get('reserve_pct', 10.0)
             elif hasattr(config, key):

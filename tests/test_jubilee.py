@@ -70,7 +70,7 @@ class TestJubileeConfig:
         assert data['ticker'] == "SPX"
         assert data['mode'] == "paper"
         assert 'allocations' in data
-        assert data['allocations']['ares_pct'] == 35.0
+        assert data['allocations']['fortress_pct'] == 35.0
         assert data['allocations']['samson_pct'] == 35.0
         assert data['allocations']['anchor_pct'] == 20.0
         assert data['allocations']['reserve_pct'] == 10.0
