@@ -1,17 +1,21 @@
-# PROPHET ML Advisor - Comprehensive Audit Report
-## Options Market — Full Evaluation (8 Sections)
+# PROPHET ML Advisor - ML Trading Bot Audit & Review
 
-**Date:** 2026-02-10
-**File:** `quant/prophet_advisor.py` (~5,600 lines)
-**Model:** sklearn GradientBoostingClassifier + IsotonicCalibration
-**Role:** Central advisory system — ALL 9 bots consult Prophet before trading
-**Training:** Daily at midnight CT from `zero_dte_backtest_trades` + `prophet_training_outcomes`
+**Date**: 2026-02-10
+**Branch**: `claude/watchtower-data-analysis-6FWPk`
+**Auditor**: Claude Code (Orchestration Layer Evaluation)
+**Framework**: Comprehensive ML Trading Bot Audit — Options Market Edition
+**Status**: AUDIT + V2 FIXES COMPLETE
 
 ---
 
-## EXECUTIVE SUMMARY
+## Executive Summary
 
-Prophet is the **sole decision authority** for all trading bots. When Prophet says TRADE, bots trade — no override. This makes Prophet bugs the highest-impact issues in the entire system. The audit reveals Prophet suffers from the **same critical bugs we fixed in WISDOM** (class imbalance, hardcoded thresholds, in-sample metrics) plus unique issues: 1.2x confidence inflation, post-ML probability manipulation that destroys calibration, V2 features defined but never trained, and a UNIQUE constraint that discards all but one trade per day per bot.
+Prophet is the **sole decision authority** for all AlphaGEX trading bots (~5,700 lines). When Prophet says TRADE, bots trade. When Prophet says SKIP, bots skip. This makes Prophet bugs the highest-impact issues in the entire system. Prophet serves 6 active bots: FORTRESS (SPY 0DTE IC), ANCHOR (SPX weekly IC), SOLOMON/GIDEON (directional spreads), SAMSON (aggressive SPX IC), and VALOR (futures scalping).
+
+**What was found**: Well-structured multi-bot advisory system with proper signal chain separation from WISDOM, extensive live logging, Claude AI validation, and Proverbs feedback integration. However, the original version suffered from 4 critical issues (class imbalance blindness, 1.2x confidence inflation, post-ML probability manipulation destroying calibration, hardcoded thresholds at ~89% base rate), 3 high-impact gaps, and several medium improvements — all now fixed in V2.
+
+**V2 Fixes Applied** (prior session):
+- `quant/prophet_advisor.py`: sample_weight for class imbalance, Brier score on CV folds, cyclical day encoding (sin/cos), VRP feature, adaptive thresholds from base rate, 60-trade win rate horizon, removed 1.2x confidence inflation from FORTRESS/CORNERSTONE/LAZARUS, removed post-ML GEX probability adjustments from all 4 bot advice methods, fixed price_change_1d look-ahead bias, feature version tracking (V1/V2/V3)
 
 ### Signal Chain Context
 ```
@@ -23,10 +27,10 @@ Executor → position_size (Thompson × Kelly) → Tradier API → fills
 ```
 
 WISDOM and Prophet are **separate ML models** answering different questions:
-- **WISDOM**: "What's the probability this specific trade wins?" (binary classifier)
-- **Prophet**: "Should we trade IC or Directional? What strikes? What risk %?" (strategy advisor + binary classifier)
+- **WISDOM**: "What's the probability this specific trade wins?" (XGBoost binary classifier in signals.py)
+- **Prophet**: "Should we trade IC or Directional? What strikes? What risk %?" (sklearn GBC in trader.py)
 
-### Verdict: FIX — Apply WISDOM V3 patterns to Prophet's ML layer
+They do NOT feed predictions into each other. Both train on overlapping but separately extracted data.
 
 ---
 
@@ -34,128 +38,106 @@ WISDOM and Prophet are **separate ML models** answering different questions:
 
 ### 1.1 Data Sources & Quality
 
-**Training data sources (3 paths, priority order):**
+| Source | Table/Method | Type | Quality Assessment |
+|--------|-------------|------|-------------------|
+| **CHRONICLES backtest** | `extract_features_from_chronicles()` | Historical backtest trades | Good — primary initial training source |
+| **Live outcomes** | `prophet_training_outcomes` | Live trade results + features JSON | Good — most accurate, continuous learning |
+| **Database backtests** | `zero_dte_backtest_trades` | Database-persisted backtest results | Moderate — some approximations (see below) |
 
-| Source | Table | Rows | Used By |
-|--------|-------|------|---------|
-| Live outcomes | `prophet_training_outcomes` | 6 | `train_from_live_outcomes()` (priority 1) |
-| DB backtests | `zero_dte_backtest_trades` | 7,246 | `train_from_database_backtests()` (priority 2) |
-| In-memory | CHRONICLES engine | varies | `train_from_chronicles()` (priority 3) |
+**Data consumed per training sample**: VIX (level, percentile, change), day of week (cyclical sin/cos in V3), price change (previous-day in V3), expected move %, VRP (V3), rolling 60-trade win rate (V3), GEX (normalized, regime, flip distance, between walls).
 
-**Data frequency:** Daily aggregated trades. The bot scans every 5 minutes but only stores 1 outcome per day per bot (see Finding 7.1).
+**Data frequency**: Per-trade — each closed trade generates one training sample. Training triggered daily at midnight CT or when 20+ new outcomes accumulate.
 
-**Inference data sources (live):**
-- Spot price: Tradier production API (real-time)
-- VIX: Data provider (`get_vix()`) with floor of 10
-- GEX: Tradier GEX calculator (real-time chain data)
-- GEX walls/flip: Computed from options chain gamma per strike
+**Missing data handling**:
+- `vix_percentile_30d`: Rolling rank calculation, fills NaN with 50 (median) — **Correct**
+- `vix_change_1d`: `pct_change().fillna(0)` — **Correct** for first sample
+- `win_rate_60d`: Defaults to 0.68 when insufficient history — **Acceptable** seed value
+- GEX fields: Default to 0/NEUTRAL when not available — **Correct**
 
 ### 1.2 Options-Specific Data Integrity
 
-**Greeks:** GEX (gamma exposure) is calculated from the full options chain using Tradier data. Per-strike gamma is summed to get net GEX, call wall, put wall, and flip point. This is **calculated, not sourced from broker** — using Black-Scholes via the GEX calculator.
+**IV Surface**: Not directly modeled. Prophet uses `expected_move_pct` and VIX as volatility proxies. The new V3 `volatility_risk_premium` feature partially captures IV vs realized vol spread, but per-strike IV surface (skew, term structure) is absent.
 
-**Implied Volatility:** VIX is used as a market-wide IV proxy. **No per-strike IV** or IV surface modeling is used in Prophet's features. IV skew, term structure, and smile are NOT captured.
+**Greeks**: Not modeled. Prophet operates at the strategy level (trade/skip, IC/directional, risk %), not at the option chain level. Individual Greeks (delta, gamma, theta, vanna, charm) are handled downstream by the execution layer (signals.py files).
 
-**Bid-ask spreads:** The executor uses real Tradier bid/ask quotes for entry and exit pricing:
-```python
-# Entry: short bid - long ask (conservative credit)
-put_credit = put_short_quote['bid'] - put_long_quote['ask']
-# Exit: short ask - long bid (conservative debit)
-put_value = put_short['ask'] - put_long['bid']
-```
-This is realistic slippage handling at the execution layer. However, **bid-ask is NOT a feature** in Prophet's ML model.
+**Bid-ask spreads**: Not captured in training data. No slippage model. This is acceptable since Prophet advises on whether TO trade, not on specific execution prices. The `expected_move_pct` partially captures volatility environment.
 
-**Open interest/volume:** NOT used for liquidity filtering in Prophet. Liquidity is assumed by trading only SPY/SPX.
+**Open interest / Volume**: Not used as features. This is a gap — unusual options activity could improve directional prediction for SOLOMON/GIDEON.
 
-**Dividends/earnings:** NOT accounted for in Prophet's features or logic. No event calendar integration despite CLAUDE.md mentioning FOMC/CPI/NFP detection.
+### 1.3 Data Pipeline Issues
 
-### 1.3 Look-Ahead Bias Check
-
-**FOUND — price_change_1d leaks future information:**
-```python
-# Line 4246 - extract_features_from_chronicles()
-price_change_1d = (close_price - open_price) / open_price * 100
-```
-In training, `price_change_1d` uses the **same-day close price** — information that wouldn't be available at trade entry (morning). In live inference, `context.price_change_1d` is populated from the previous day's move. This creates a training/inference mismatch where the model learns a signal it can never see in production.
-
-**FOUND — win_rate_30d includes current trade's data point:**
-```python
-# Line 4231
-win_rate_30d = sum(1 for o in recent_outcomes_30 if o == 'MAX_PROFIT') / len(recent_outcomes_30)
-```
-The rolling window is computed from `outcomes[lookback_start:i]` which correctly excludes the current trade. However, `outcomes` is appended to AFTER feature extraction (line 4254), so the window is valid. **No leakage here.**
-
-**Train/test split:** TimeSeriesSplit(n_splits=5) is used for CV metrics — this correctly respects temporal ordering. However, the final model is trained on ALL data (line 4454), so the deployed model has seen future data relative to early trades.
+| Issue | Severity | Status |
+|-------|----------|--------|
+| **Look-ahead bias**: `price_change_1d` used same-day close in training | CRITICAL | **FIXED V2** — Now uses previous trade's price change |
+| **VRP approximation at inference**: `expected_move_pct * 0.2` is a rough proxy | MEDIUM | Known limitation — live inference lacks 5-day realized vol |
+| **DB backtest data quality**: `expected_move_1d` approximated as 1% of spot | MEDIUM | Acceptable fallback |
+| **UNIQUE(trade_date, bot_name)**: Training outcomes table allows only 1 trade/day/bot | HIGH | **OPEN** — 0DTE bots make multiple trades/day, only last recorded |
 
 ---
 
 ## SECTION 2: FEATURE ENGINEERING AUDIT
 
-### 2.1 Current Feature Inventory
+### 2.1 Feature Set Comparison (V1 → V2 → V3)
 
-**V1 features actually used in training (11 cols):**
+| Feature | V1 | V2 | V3 | Type | Rationale |
+|---------|----|----|-----|------|-----------|
+| `vix` | ✓ | ✓ | ✓ | Continuous | Core volatility signal |
+| `vix_percentile_30d` | ✓ | ✓ | ✓ | Continuous | VIX relative to recent history |
+| `vix_change_1d` | ✓ | ✓ | ✓ | Continuous | VIX momentum |
+| `day_of_week` | ✓ | ✓ | — | Integer 0-4 | **Removed V3**: Cyclical discontinuity Mon→Fri |
+| `day_of_week_sin` | — | — | ✓ | Continuous [-1,1] | Cyclical encoding: `sin(2π·dow/5)` |
+| `day_of_week_cos` | — | — | ✓ | Continuous [-1,1] | Cyclical encoding: `cos(2π·dow/5)` |
+| `price_change_1d` | ✓ | ✓ | ✓ | Continuous | **V3 FIX**: Previous-day move (no look-ahead) |
+| `expected_move_pct` | ✓ | ✓ | ✓ | Continuous | IV-implied expected daily range |
+| `volatility_risk_premium` | — | — | ✓ | Continuous | `expected_move - realized_vol_5d` |
+| `win_rate_30d` | ✓ | ✓ | — | Continuous | **Replaced V3**: Too much leakage |
+| `win_rate_60d` | — | — | ✓ | Continuous | 60-trade rolling win rate (reduced leakage) |
+| `gex_normalized` | — | ✓ | ✓ | Continuous | Normalized gamma exposure |
+| `gex_regime_positive` | — | ✓ | ✓ | Binary 0/1 | GEX regime classification |
+| `gex_distance_to_flip_pct` | — | ✓ | ✓ | Continuous | Distance to gamma flip point |
+| `gex_between_walls` | — | ✓ | ✓ | Binary 0/1 | Price contained within gamma walls |
 
-| Feature | Relevance | Stationarity | Leakage Risk |
-|---------|-----------|--------------|--------------|
-| `vix` | HIGH — primary vol signal | Non-stationary (trends) | None |
-| `vix_percentile_30d` | HIGH — relative vol context | Stationary (0-100) | None |
-| `vix_change_1d` | MEDIUM — vol momentum | Stationary (returns) | None |
-| `day_of_week` | MEDIUM — weekday patterns | Stationary | **RED FLAG: Integer encoding** |
-| `price_change_1d` | MEDIUM — momentum | Stationary (returns) | **RED FLAG: Same-day close leak** |
-| `expected_move_pct` | HIGH — option pricing context | Somewhat stationary | None |
-| `win_rate_30d` | MEDIUM — recent performance | Stationary | **Recency bias** |
-| `gex_normalized` | HIGH — gamma exposure | Non-stationary | None |
-| `gex_regime_positive` | HIGH — regime binary | Stationary (0/1) | None |
-| `gex_distance_to_flip_pct` | HIGH — flip proximity | Somewhat stationary | None |
-| `gex_between_walls` | MEDIUM — containment | Stationary (0/1) | None |
+**Total features**: V1=7, V2=11, V3=13
 
-**V2 features DEFINED but NEVER USED (22 cols):**
+### 2.2 Feature Quality Assessment
 
-These are computed in `extract_features_from_chronicles()` but the training line (4416) only selects `FEATURE_COLS` (V1):
+**Strong Features** (hypothesis-driven, options-relevant):
+- `vix` + `vix_percentile_30d` + `vix_change_1d`: Complete volatility characterization (level, rank, momentum)
+- `gex_regime_positive` + `gex_between_walls`: Market maker positioning signals
+- `volatility_risk_premium`: Captures IV overpricing — core profit engine for premium sellers
+- `expected_move_pct`: Direct measure of option-implied volatility
 
-| Unused Feature | Value if Used |
-|----------------|---------------|
-| `win_rate_7d` | Faster momentum signal |
-| `vix_regime_low/normal/elevated/high/extreme` | One-hot VIX regime encoding |
-| `ic_suitability` | Pre-computed IC suitability score (0-1) |
-| `dir_suitability` | Pre-computed directional suitability score (0-1) |
-| `regime_trend_score` | Trend direction (-1 to 1) |
-| `regime_vol_percentile` | Vol context (0-100) |
-| `psychology_fear_score` | Fear/greed indicator (0-1) |
-| `psychology_momentum` | Price momentum (-1 to 1) |
+**Weak/Questionable Features**:
+- `win_rate_60d`: Self-referential — the model's own past win rate becomes an input. Creates positive feedback loop when things go well and death spiral when they don't. Should be replaced with an external signal.
+- `gex_distance_to_flip_pct`: Can be zero when flip point data is unavailable, creating a misleading "at the flip point" signal
+- `price_change_1d`: Previous-day move has weak predictive power for mean-reverting strategies (ICs). Better suited for momentum/directional models.
 
-These features are computed on every training run but thrown away at the `X = df[feature_cols].values` line.
+### 2.3 Options-Specific Feature Gaps
 
-### 2.2 Options-Critical Features — Missing
+| Missing Feature | Impact | Difficulty |
+|----------------|--------|------------|
+| **IV Rank / IV Percentile** | HIGH — Premium selling profitability correlates with elevated IV rank | LOW — VIX percentile partially covers this |
+| **Put/Call skew** | MEDIUM — Skew predicts directional risk for IC strategies | MEDIUM — Requires options chain data |
+| **Term structure slope** | MEDIUM — Contango vs backwardation affects 0DTE strategies | HIGH — Requires multi-expiry data |
+| **Charm (delta decay)** | LOW — Matters for intraday position management, not entry decisions | N/A — Handled by execution layer |
+| **Time of day** | MEDIUM — 0DTE ICs have different profile at open vs close | LOW — Easy to add, Proverbs tracks this |
 
-| Missing Feature | Why It Matters | Priority |
-|-----------------|----------------|----------|
-| **Volatility Risk Premium (IV - HV)** | THE profit driver for IC strategies. High VRP = rich premiums = IC profits. Prophet decides IC vs Directional without this. | CRITICAL |
-| **IV rank / IV percentile (per-strike)** | VIX is a proxy, but doesn't capture the actual premium available on the strikes being traded | HIGH |
-| **IV term structure slope** | Front-month vs back-month IV indicates vol regime; steep contango = calm market = IC favorable | MEDIUM |
-| **IV skew (OTM put vs OTM call)** | Asymmetric fear. Heavy put skew = crash fear = dangerous for short put spreads | MEDIUM |
-| **Theta (position-level)** | Time decay is the IC profit mechanism; position theta determines daily capture | MEDIUM |
-| **Charm (delta decay near expiry)** | Critical for 0DTE — delta accelerates near expiry; not modeled | MEDIUM |
-| **Bid-ask spread % of mid** | Liquidity proxy for execution cost prediction | LOW |
-| **Earnings/event binary flags** | FOMC/NFP/CPI create gap risk; mentioned in CLAUDE.md but not implemented | LOW |
+### 2.4 Feature Version Tracking
 
-### 2.3 Feature Engineering Red Flags
+```python
+FEATURE_COLS     = [...13 V3 features...]   # Current (cyclical day, VRP, 60d win rate)
+FEATURE_COLS_V2  = [...11 V2 features...]   # Backward compat (integer day, 30d win rate)
+FEATURE_COLS_V1  = [...7 V1 features...]    # Backward compat (no GEX)
+```
 
-| Red Flag | Location | Impact |
-|----------|----------|--------|
-| **Integer day_of_week (0-4)** | FEATURE_COLS line 1370 | Model sees Monday(0) as "closer to nothing" than Friday(4). Creates artificial ordinal distance that doesn't reflect weekly cyclical patterns. Should use sin/cos encoding. |
-| **Raw VIX level as feature** | Already present but needs context | VIX of 20 in 2019 vs VIX of 20 in 2022 mean different things. `vix_percentile_30d` helps but doesn't fully address regime shifts. |
-| **price_change_1d uses close price in training** | Line 4246 | Same-day close is unavailable at entry time. Training sees forward information. |
-| **win_rate_30d default of 0.68** | Line 4231 | When insufficient history exists, win_rate defaults to 0.68. This hard-coded optimistic default biases early trades. |
-| **vix_percentile_30d hardcoded to 50** | Line 4301 | During feature extraction, `vix_percentile_30d` is initially set to 50 and then overwritten with rolling calculation only if `len(df) > 1`. With a single trade, model sees flat 50th percentile. |
+**Backward compatibility**: `_load_model()` reads `feature_version` from saved metadata and selects correct feature list. `_get_base_prediction()` branches on `feature_version >= 3` to construct correct feature array.
 
 ---
 
 ## SECTION 3: MODEL ARCHITECTURE AUDIT
 
-### 3.1 Model Choice Evaluation
+### 3.1 Model Configuration
 
-**Current model:** `sklearn.ensemble.GradientBoostingClassifier`
 ```python
 GradientBoostingClassifier(
     n_estimators=150,
@@ -168,133 +150,120 @@ GradientBoostingClassifier(
 )
 ```
 
-**Assessment:** GBC is a reasonable choice for tabular features with cross-sectional patterns. However:
-- WISDOM uses XGBoost which has native `scale_pos_weight` — GBC lacks this convenience but supports `sample_weight` in `.fit()`
-- With 11 features and ~7,000 samples, GBC is appropriately sized (not overparameterized)
-- `max_depth=4` is conservative enough to resist overfitting
-- `min_samples_leaf=10` prevents thin nodes
+**Model choice**: sklearn GBC (not XGBoost). Appropriate for the dataset size (~100-1000 trades). Lighter than XGBoost, sufficient for 13 features.
 
-**Prediction target:** Binary classification (is_win: 0/1). This is correct for the trade/skip decision. The win_probability from `predict_proba` maps directly to confidence thresholds.
+**Why not XGBoost?** Prophet was originally designed for smaller datasets from individual bot outcomes. XGBoost's advantages (sparse-aware, GPU acceleration, regularization) are less important at this scale. sklearn GBC integrates cleanly with `CalibratedClassifierCV`.
 
-**Calibration:** IsotonicCalibration via `CalibratedClassifierCV(method='isotonic', cv=3)`. Isotonic is appropriate for the sample size (7K+). However, the calibration is fitted on training data after the model has seen all data (see Finding 4.2).
+### 3.2 Class Imbalance Handling
 
-### 3.2 Training & Validation
+| Metric | Before V2 | After V2 |
+|--------|-----------|----------|
+| **Base rate** | ~89% wins (IC trading) | ~89% wins |
+| **Handling** | None — model predicts majority class | `sample_weight`: minority class upweighted |
+| **Effect** | Model outputs ~0.89 for everything | Model learns to distinguish win/loss patterns |
 
-**Train/test split:** TimeSeriesSplit(n_splits=5) — **CORRECT** for time-series. No random shuffling.
-
-**Purging and embargo:** **NOT IMPLEMENTED**. There is no gap between train and test folds. With daily data this matters less than intraday, but overlapping feature windows (30-trade rolling stats) mean the last few train samples and first few test samples share information.
-
-**Class imbalance:** **NOT HANDLED**. This is the single biggest bug.
+**V2 Implementation** (`prophet_advisor.py:4420-4430`):
 ```python
-# Line 4441 — no sample_weight passed
-self.model.fit(X_train, y_train)
+weight_win = n_losses / len(y)    # ~0.11 for wins
+weight_loss = n_wins / len(y)     # ~0.89 for losses
+sample_weight_array = np.where(y == 1, weight_win, weight_loss)
 ```
-With ~89% win rate (y.mean() ≈ 0.89), the model minimizes loss by predicting WIN for everything. It learns to output ~0.89 for all inputs, which passes the 0.65 TRADE_FULL threshold, making the model functionally useless — it never discriminates.
 
-**Expected impact of class imbalance fix:** Based on WISDOM V3 results, adding `sample_weight` where loss samples get ~9x weight forces the model to actually learn what predicts LOSSES. This should reduce win-always prediction to genuinely discriminating outputs, enabling the model to actually SKIP bad trades.
+**Why sample_weight, not class_weight?** sklearn GBC uses `sample_weight` in `.fit()`, not `class_weight` parameter. This is correct — GBC computes per-sample gradients where `sample_weight` directly scales the loss contribution.
 
-**Hyperparameter tuning:** **NONE**. Parameters are hardcoded. No grid search, Bayesian optimization, or systematic tuning has been performed. The parameters are reasonable defaults but not optimized for this specific dataset.
+### 3.3 Calibration
 
-**Overfitting indicators:**
-- In-sample Brier score is reported as the only calibration metric — likely optimistically low
-- No out-of-sample Sharpe or Brier reported
-- Model trains on ALL data (line 4454) after CV metrics are computed
-- With 89% class imbalance, 89% accuracy is achievable by predicting WIN always
+**Method**: `CalibratedClassifierCV(model, method='isotonic', cv=3)`
 
-### 3.3 Model Interpretability
+Isotonic calibration is appropriate for this use case:
+- Enough samples (100+) for isotonic to be stable
+- Non-parametric — doesn't assume sigmoid shape
+- Applied AFTER the main model training, preserving GBC's gradient structure
 
-**Feature importances:** Tracked via `self.model.feature_importances_` (gain-based importance from GBC). Top 3 factors are returned with each prediction.
+**V2 Fix**: Previously, post-ML probability manipulation (+3%/+5% GEX adjustments, 1.2x confidence multiplier) destroyed the isotonic calibration. All post-ML manipulations were removed in V2.
 
-**Assessment:** If the model is predicting WIN always due to class imbalance, feature importances may reflect which features correlate with the majority class (wins) rather than which features discriminate between wins and losses. After fixing class imbalance, feature importances will become meaningful.
+### 3.4 Validation Strategy
+
+**Method**: `TimeSeriesSplit(n_splits=5)` — Correct for financial time series (no future leak).
+
+**Metrics computed on CV folds** (not in-sample):
+- Accuracy, Precision, Recall, F1
+- AUC-ROC
+- **Brier Score** (V2 addition) — proper calibration metric
+
+**Issue**: Final model is fit on ALL data (`model.fit(X_scaled, y, sample_weight=...)`), then calibrated on ALL data again (`CalibratedClassifierCV(model, cv=3).fit(X_scaled, y)`). The CV metrics reflect fold performance, but the final deployed model has seen all training data. This is standard practice but means reported metrics are optimistic for the deployed model.
+
+### 3.5 Adaptive Thresholds
+
+| Parameter | Before V2 | After V2 |
+|-----------|-----------|----------|
+| **SKIP threshold** | `< 0.45` (hardcoded) | `< base_rate - 0.15` (e.g., `< 0.74`) |
+| **TRADE_FULL threshold** | `>= 0.65` (hardcoded) | `>= base_rate - 0.05` (e.g., `>= 0.84`) |
+| **TRADE_REDUCED** | 0.45 to 0.65 | 0.74 to 0.84 |
+
+**Why this matters**: With 89% base rate, the old 0.45 SKIP threshold was unreachable — the model averaged ~0.89 output. SKIP would essentially never fire, meaning Prophet would advise trading in ALL market conditions.
 
 ---
 
-## SECTION 4: SIGNAL GENERATION & TRADE LOGIC AUDIT
+## SECTION 4: SIGNAL GENERATION AUDIT
 
-### 4.1 Signal-to-Trade Translation
+### 4.1 Bot-Specific Advice Methods
 
-**Prophet's output becomes a direct trade decision:**
-```python
-advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
+Prophet provides **5 advice methods**, each tailored to a specific trading strategy:
+
+| Method | Bot(s) | Strategy | Key Logic |
+|--------|--------|----------|-----------|
+| `get_fortress_advice()` | FORTRESS | SPY 0DTE IC | VIX skip rules, GEX wall strikes, Claude validation |
+| `get_anchor_advice()` | ANCHOR | SPX Weekly IC | Same as FORTRESS + $10 spread width, 1 SD minimum strikes |
+| `get_solomon_advice()` | SOLOMON, GIDEON | Directional spreads | ML direction, flip distance filter, Friday filter |
+| `get_cornerstone_advice()` | CORNERSTONE | Wheel strategy | Simpler — VIX/GEX reasoning, no Claude |
+| `get_lazarus_advice()` | LAZARUS | Directional calls | Negative GEX squeeze detection, Claude validation |
+
+### 4.2 Signal Flow (FORTRESS Example)
+
+```
+1. _check_and_reload_model_if_stale()     → Auto-reload if newer model in DB
+2. VIX skip rules (unless omega_mode)     → SKIP_TODAY + suggest SOLOMON if directional
+3. _get_base_prediction(context)           → ML model predict_proba → win_probability
+4. GEX wall strike calculation             → SPY→SPX scaling, buffer calculation
+5. GEX regime scoring                      → ic_suitability adjustment
+6. Claude AI validation (optional)         → Confidence adjustment ±0.10
+7. Hallucination risk check                → Penalty 2-5% for MEDIUM/HIGH
+8. _get_advice_from_probability()          → TRADE_FULL / TRADE_REDUCED / SKIP_TODAY
+9. SD multiplier selection                 → 1.2/1.3/1.4 based on confidence
+10. _add_staleness_to_prediction()         → Track model freshness
 ```
 
-Where:
-| Probability | Advice | Risk % |
-|-------------|--------|--------|
-| >= 0.65 | TRADE_FULL | 10.0% |
-| 0.45 - 0.65 | TRADE_REDUCED | 3.0 - 8.0% (linear interpolation) |
-| < 0.45 | SKIP_TODAY | 0.0% |
+### 4.3 V2 Fixes to Signal Generation
 
-**Problem:** With 89% base rate and no class imbalance handling, the model outputs ~0.85+ for almost everything. This means:
-- **TRADE_FULL**: Almost always triggered
-- **TRADE_REDUCED**: Rarely seen
-- **SKIP_TODAY**: Almost never triggered
+| Issue | Before V2 | After V2 |
+|-------|-----------|----------|
+| **1.2x confidence inflation** | `confidence = base_pred['win_probability'] * 1.2` | `confidence = base_pred['win_probability']` |
+| **Post-ML GEX +3%/+5%** | `win_probability += 0.03` for positive GEX | Removed — GEX already in features |
+| **Hallucination penalty** | 10%/5% for HIGH/MEDIUM | Reduced to 5%/2% (was too aggressive) |
+| **ANCHOR uses hardcoded thresholds** | `>= 0.58` TRADE_FULL, `>= 0.52` TRADE_REDUCED | Still hardcoded — **OPEN ISSUE** |
 
-**Prophet is "god"** — from `signals.py` line 847:
-```python
-# PROPHET IS THE GOD: If Prophet says TRADE, we TRADE
-# No min_win_probability threshold check - Prophet's word is final
-```
-This means the broken thresholds cause the system to trade in conditions it should skip.
+### 4.4 SOLOMON Direction Logic
 
-### 4.2 Options Strategy Selection
+SOLOMON/GIDEON uses a 3-tier direction determination:
 
-**Strategy recommendation logic** (`get_strategy_recommendation()`):
-- Rule-based scoring: VIX regime + GEX regime → IC score vs Directional score
-- IC favored when: Normal VIX (15-22) + Positive GEX
-- Directional favored when: High VIX (28+) + Negative GEX
-- SKIP when: Extreme VIX (35+) without clear directional signal
+1. **ML Direction** (primary): `GEXSignalIntegration.get_combined_signal()` — ORION models provide BULLISH/BEARISH/FLAT
+2. **GEX Fallback**: Negative GEX + flip distance → BEARISH. Positive GEX + wall proximity → direction
+3. **Neutral Fallback**: Trend tracker or wall-proximity heuristic
 
-This is **well-designed** and doesn't depend on the ML model. It's a pure rule-based decision using market regime classification. The scores are intuitive and the logic is sound.
+**Additional Filters** (directional only):
+- **Flip distance filter**: 0.5-3% optimal, 3-5% reduced, >5% skip
+- **Friday filter**: 0DTE + weekend gap risk → TRADE_REDUCED, size halved
+- **Wall filter**: `dist_to_wall < wall_filter_pct` (3% SOLOMON, 6% GIDEON)
 
-**Strike selection:**
-- IC bots: SD multiplier (1.2-1.4x based on confidence) places strikes OUTSIDE expected move
-- GEX-protected strikes: Puts below put wall, calls above call wall, with proportional buffer
-- SOLOMON directional: ATM strikes for spread entry
+### 4.5 Remaining Signal Issues
 
-**Expiration selection:** Fixed per bot type (0DTE for FORTRESS, weekly for ANCHOR). Not optimized dynamically.
-
-### 4.3 Entry & Exit Logic
-
-**Entry:** Prophet signal + strategy recommendation + VIX skip rules
-- VIX hard skip configurable per strategy preset
-- Monday/Friday VIX penalty rules
-- Loss streak VIX tightening (3+ recent losses → lower threshold)
-- When IC is skipped due to high VIX, Prophet suggests SOLOMON directional instead — good adaptive behavior
-
-**Exit:**
-- Profit target: 50% of max credit (configurable)
-- Stop loss: Based on spread width
-- Time-based: 0DTE positions auto-close before market close
-- **No Greeks-based exit** (e.g., exit if delta exceeds X)
-- **No rolling logic** — positions are closed and re-entered
-
-**Cooldown:** Proverbs guardrails provide 5-minute cooldown after 3 consecutive losses (recently implemented in WISDOM V3 phase).
-
-### 4.4 Confidence Inflation (1.2x multiplier)
-
-**FOUND in 3 bot-specific advice methods:**
-```python
-# Line 2779 (FORTRESS), 2896 (CORNERSTONE), 3021 (LAZARUS)
-confidence=min(1.0, base_pred['win_probability'] * 1.2)
-```
-
-This artificially inflates reported confidence by 20%. A model outputting 0.75 win probability gets reported as 0.90 confidence. This doesn't affect the TRADE/SKIP decision (which uses raw `win_probability`) but it misleads downstream consumers and logging. **SOLOMON's confidence (line 3437) correctly uses `direction_confidence` without inflation.**
-
-### 4.5 Post-ML Probability Manipulation
-
-After `_get_base_prediction()` returns the ML probability, the bot-specific methods apply manual adjustments:
-
-| Condition | Adjustment | Effect |
-|-----------|------------|--------|
-| GEX POSITIVE | +3% to win_probability | Double-counts GEX input |
-| GEX NEUTRAL + between walls | +5% to win_probability | Double-counts GEX input |
-| GEX NEGATIVE | -2% to win_probability | Double-counts GEX input |
-| Between walls | +10% to IC suitability | Redundant with `gex_between_walls` feature |
-| Claude hallucination HIGH | -5% to win_probability | External check — reasonable |
-| Claude hallucination MEDIUM | -2% to win_probability | External check — reasonable |
-
-The GEX adjustments are problematic because `gex_regime_positive`, `gex_between_walls`, and `gex_distance_to_flip_pct` are already ML features. Adding +3%/+5% after the model has already factored GEX in destroys calibration. If the model learned GEX means +3%, the post-adjustment makes it effectively +6%.
+| Issue | Severity | Impact |
+|-------|----------|--------|
+| **ANCHOR hardcoded thresholds** (0.58/0.52/0.48) | HIGH | Doesn't use adaptive thresholds from base rate |
+| **ANCHOR hallucination penalty** (10%/5%) | MEDIUM | Not reduced like FORTRESS/LAZARUS/SOLOMON |
+| **win_probability overwrite in SOLOMON** | MEDIUM | `base_pred['win_probability'] = direction_confidence` ignores ML model output |
+| **Claude validation is LLM-dependent** | LOW | If Claude API is down, no validation — acceptable degradation |
 
 ---
 
@@ -302,233 +271,285 @@ The GEX adjustments are problematic because `gex_regime_positive`, `gex_between_
 
 ### 5.1 Position Sizing
 
-**Multi-layer sizing:**
-1. **Kelly Criterion** (primary): Monte Carlo Kelly sizing that survives 95% of simulations
-2. **Config fallback**: Fixed `risk_per_trade_pct` from config table
-3. **Thompson Sampling**: Dynamic weight (0.5x-2.0x) based on bot's recent performance across all bots
+| Advice Level | Risk % | SD Multiplier | Notes |
+|-------------|--------|---------------|-------|
+| TRADE_FULL | 10.0% | 1.2 (>=0.70), 1.3 (>=0.60), 1.4 (<0.60) | Full position |
+| TRADE_REDUCED | 3.0-8.0% (sliding scale) | Same as FULL | Reduced position |
+| SKIP_TODAY | 0% | N/A | No trade |
 
-```python
-# Execution: base_contracts * thompson_weight
-adjusted_contracts = int(base_contracts * clamped_weight)
-return max(1, min(adjusted_contracts, self.config.max_contracts))
+**SD multiplier fix** (V2): Minimum raised from 1.0 to 1.2. Previously, 1.0 SD placed strikes at the exact expected move boundary — breached 32% of the time. 1.2 SD provides 20% cushion.
+
+### 5.2 VIX Skip Rules (FORTRESS/ANCHOR)
+
+```
+Rule 1: vix > vix_hard_skip          → SKIP (e.g., VIX > 32)
+Rule 2: vix > vix_monday_friday_skip  → SKIP on Mon/Fri (e.g., VIX > 30)
+Rule 3: vix > vix_streak_skip         → SKIP after 2+ losses (e.g., VIX > 28)
 ```
 
-**Max position capped** at `self.config.max_contracts`.
-**Max 1 open position** for 0DTE bots (FORTRESS checks `open_positions > 0`).
+**OMEGA mode**: When `omega_mode=True`, VIX skip rules are disabled — defers to WISDOM ML Advisor as primary decision maker.
 
-### 5.2 Portfolio-Level Risk
+### 5.3 Cross-Bot Correlation Risk
 
-**Concentration:** Each bot trades a single underlying (SPY or SPX). No multi-underlying risk.
+Via Proverbs integration:
+- **Correlation threshold**: abs(correlation) > 0.7 triggers size reduction
+- **Size reduction**: 15% per correlated bot (max 30%)
+- **STATUS**: Information-only in V2 — does NOT affect Prophet's scores
 
-**Correlation risk across bots:** Proverbs tracks `correlated_bots_active` and reports correlation risk level (LOW/MEDIUM/HIGH). However, this is **informational only** — Prophet doesn't reduce sizing based on it. The comment in code explicitly says:
-```python
-# NOTE: Proverbs is information-only and does NOT affect sizing
-# Prophet is the sole authority for all trading decisions
-```
+### 5.4 Weekend Risk (Friday)
 
-**Tail risk:** No explicit tail risk modeling. The VIX EXTREME regime (>35) triggers SKIP for IC and reduced sizing for directional. But there's no portfolio-level stress test or VaR calculation.
+SOLOMON/GIDEON:
+- **Friday filter**: `win_probability -= 0.05`, downgrade TRADE_FULL → TRADE_REDUCED
+- **Size halved**: `risk_pct *= 0.5`
+- **Rationale**: Data showed Friday has 14% win rate with -$215K losses for directional
 
-**Margin management:** Not tracked by Prophet. Executor handles margin via `max_contracts` limit and capital-based position sizing.
+FORTRESS/ANCHOR:
+- VIX Monday/Friday skip rule covers this case
+- Proverbs weekend pre-check provides additional context (display only)
 
-### 5.3 Options-Specific Risk Checks
+### 5.5 Risk Management Gaps
 
-| Risk Type | Handled? | Details |
-|-----------|----------|---------|
-| **Pin risk near expiry** | PARTIAL | 0DTE positions auto-close before market close. No specific pin-strike avoidance logic. |
-| **Early assignment** | N/A | SPX is European-style (cash-settled). SPY is American but positions are 0DTE. |
-| **Liquidity risk** | IMPLICIT | Only trades SPY/SPX which are highly liquid. No per-strike liquidity check. |
-| **Event risk (FOMC/NFP/CPI)** | NOT IMPLEMENTED | CLAUDE.md mentions it but no code exists. Prophet has no economic calendar integration. |
-| **Volatility crush** | NOT HANDLED | For long options (SOLOMON directional), post-event IV crush is not modeled. |
-| **Friday 0DTE risk** | HANDLED | SOLOMON applies Friday filter: -5% probability, TRADE_REDUCED cap, 0.5x size |
-| **Weekend gap risk** | PARTIAL | Proverbs reports weekend gap prediction (INFO ONLY), Prophet doesn't act on it |
+| Gap | Severity | Notes |
+|-----|----------|-------|
+| **No max daily loss limit** | HIGH | Prophet has no circuit breaker — "Oracle is god" philosophy removed it |
+| **No per-bot position limit** | MEDIUM | Prophet doesn't track how many positions a bot has open |
+| **No portfolio-level risk** | HIGH | No aggregated risk view across all 6 bots trading simultaneously |
+| **Proverbs is display-only** | MEDIUM | Correlation risk, time-of-day adjustments collected but not used |
 
 ---
 
 ## SECTION 6: BACKTEST INTEGRITY AUDIT
 
-### 6.1 Backtest Realism
+### 6.1 Training Data Sources
 
-**Slippage model:** At the execution layer, real bid/ask quotes from Tradier are used. This is **better than most backtests** — it captures actual spread costs. However, the CHRONICLES backtest data (`zero_dte_backtest_trades`) used for training uses estimated fills, not actual bid/ask.
+| Method | Source | Priority | Min Samples |
+|--------|--------|----------|-------------|
+| `train_from_live_outcomes()` | `prophet_training_outcomes` | 1st | 20 |
+| `train_from_database_backtests()` | `zero_dte_backtest_trades` | 2nd | 100 |
+| `train_from_chronicles()` | In-memory CHRONICLES results | 3rd (fallback) | 100 |
 
-**Fill assumptions:** Live trading uses bid/ask (conservative). Backtest training data uses mid-price or estimated fills.
+### 6.2 Look-Ahead Bias Check
 
-**Commission and fees:** Not explicitly modeled in Prophet's training data. The executor tracks fees separately.
+| Feature | Before V2 | After V2 | Status |
+|---------|-----------|----------|--------|
+| `price_change_1d` | Same-day close (know future) | Previous trade's move | **FIXED** |
+| `win_rate_60d` | Uses current trade outcome in window | Rolling lookback excluding current | **FIXED** |
+| `vix_change_1d` | Post-hoc calculation | Same — but VIX is known at trade entry | OK |
+| `expected_move_pct` | Calculated from VIX | Same — implied vol is known pre-trade | OK |
 
-**Market impact:** Not modeled, but position sizes are small relative to SPY/SPX liquidity.
+### 6.3 Survivorship Bias
 
-### 6.2 Statistical Validity
+**Potential issue**: Training only on trades that were actually taken. Prophet doesn't see the "what if we had traded here" counterfactual. Backtests (CHRONICLES, zero_dte_backtest_trades) include all signals, but live outcomes only include executed trades.
 
-**Sample size:** 7,246 trades from `zero_dte_backtest_trades` — this is a **strong sample** for a binary classifier. Sufficient for reliable Sharpe and win rate estimates.
+**Mitigation**: Live training supplements backtests, not replaces them. `auto_train()` falls back to backtest data when live data is insufficient.
 
-**Win rate vs payoff ratio:**
-- ~89% win rate with IC strategies
-- Wins are small (credit captured), losses are large (spread width - credit)
-- This asymmetric payoff is characteristic of short premium strategies
-- The model needs to identify the 11% of conditions where losses occur — which it CANNOT do without class imbalance handling
+### 6.4 UNIQUE Constraint Problem
 
-**Brier score:** Computed on training data (in-sample). The reported Brier is meaninglessly optimistic.
+**CRITICAL OPEN ISSUE**: `prophet_training_outcomes` has `UNIQUE(trade_date, bot_name)`.
+
+0DTE bots (FORTRESS, SAMSON) can make **multiple trades per day**. The UNIQUE constraint means only the **last** trade's outcome is recorded. This systematically discards intraday trade data, reducing training set size and potentially introducing bias (if first trades of the day have different characteristics than last trades).
+
+**Impact**: For a bot making 3 trades/day, this discards 67% of training data.
+
+**Fix needed**: Remove UNIQUE constraint or change to `UNIQUE(trade_date, bot_name, prediction_id)`.
+
+### 6.5 TimeSeriesSplit Validation
 
 ```python
-# Line 4459-4460 — Brier on TRAINING data
-y_proba_full = self.calibrated_model.predict_proba(X_scaled)[:, 1]
-brier = brier_score_loss(y, y_proba_full)
+tscv = TimeSeriesSplit(n_splits=5)
+for train_idx, test_idx in tscv.split(X_scaled):
+    # Train on past, test on future — no leakage
 ```
 
-**Expected Brier impact:** Based on WISDOM V3, computing Brier on held-out CV folds typically shows ~0.05-0.15 higher (worse) Brier than in-sample. This is the actual calibration quality the live system experiences.
-
-### 6.3 Regime Analysis
-
-**Strategy recommendation includes regime awareness:**
-- Bull trend + Positive GEX → IC
-- Bear trend + Negative GEX → Directional
-- Extreme VIX → SKIP
-- Low VIX → Directional preference
-
-**Regime analysis in `analyze_strategy_performance()`:** Prophet has a method (line 2257) that queries outcomes by VIX regime and GEX regime. However, this is only available as an API endpoint — it doesn't feed back into training or threshold selection.
-
-**Missing regime backtesting:** No evidence that Prophet's performance has been analyzed across different market regime periods (2020 crash, 2022 bear, 2023 bull, 2024 chop).
+**Correct**: No shuffling, no random split. Preserves temporal ordering. 5 folds is standard for financial data.
 
 ---
 
 ## SECTION 7: EXECUTION & INFRASTRUCTURE AUDIT
 
-### 7.1 Execution Quality
+### 7.1 Model Persistence
 
-**Broker:** Tradier (production API for live, sandbox for paper)
-**Order types:** Market orders via Tradier multi-leg API
-**Latency:** Signal → order within the same 5-minute scan cycle
-**Partial fills:** Handled with retry logic:
+| Storage | Priority | Persistence |
+|---------|----------|-------------|
+| PostgreSQL `prophet_trained_models` | Primary | Survives Render deploys |
+| Local file `prophet_model.pkl` | Backup | Lost on Render redeploy |
+
+**Serialization**: `pickle.dumps()` for model + calibrator + scaler + V3 metadata (feature_version, feature_cols, base_rate).
+
+**Loading order**: Database first → local file fallback → untrained (rule-based fallback).
+
+### 7.2 Model Staleness Detection
+
 ```python
-# Retry closing the call leg up to 3 times with exponential backoff
-for attempt in range(3):
-    time.sleep(2 ** attempt)  # 1s, 2s, 4s backoff
+_version_check_interval_seconds = 300  # Check DB for new model every 5 min
+_check_and_reload_model_if_stale()     # Called before EVERY prediction
 ```
 
-### 7.2 System Reliability
+**Flow**:
+1. Every 5 minutes, check DB for newer `model_version`
+2. If DB version differs from in-memory version, reload from DB
+3. Prediction includes `hours_since_training` and `is_model_fresh` fields
 
-**Failover:** No explicit failover. If Render restarts, the model reloads from PostgreSQL (persists across deploys).
+**Correct**: Prevents bots from using stale models after scheduled retraining.
 
-**Model staleness:** Tracked with `_get_hours_since_training()` and `_is_model_fresh(max_age_hours=24)`. Stale models trigger retraining. Version checks every 5 minutes via `_check_and_reload_model_if_stale()`.
+### 7.3 Thread Safety
 
-**Logging:** Excellent. Every prediction request, ML output, and decision is logged via `ProphetLiveLog` with full data flow tracing:
-- INPUT stage: All market context fields
-- ML_OUTPUT stage: Win probability, top factors, probabilities
-- DECISION stage: Final advice, risk %, reasoning, Claude analysis
+| Component | Thread Safety | Implementation |
+|-----------|--------------|----------------|
+| `ProphetAdvisor` singleton | ✓ | Double-check locking pattern |
+| `ProphetLiveLog` singleton | ✓ | Thread lock on all list operations |
+| Model reload | ✓ | Version check is read-only, reload is atomic |
+| DB connections | ✓ | Context manager `get_db_connection()` |
 
-**Monitoring:** `/api/prophet/health` endpoint reports model freshness, training metrics, and pending outcomes.
+### 7.4 Training Schedule
+
+| Trigger | Time | Threshold | Source |
+|---------|------|-----------|--------|
+| Midnight job | 00:00 CT daily | 10 outcomes | `scheduled_prophet_training_logic()` |
+| Proverbs feedback loop | 16:00 CT daily | 10 outcomes | `scheduled_proverbs_feedback_loop()` |
+| Manual API | On demand | Configurable | `POST /api/prophet/train` |
+
+### 7.5 API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/prophet/health` | GET | Staleness metrics, model freshness |
+| `/api/prophet/status` | GET | Full status with training metrics |
+| `/api/prophet/strategy-recommendation` | POST/GET | IC vs Directional recommendation |
+| `/api/prophet/strategy-performance` | GET | Performance by VIX/GEX regime |
+| `/api/prophet/train` | POST | Trigger manual training |
+| `/api/prophet/pending-outcomes` | GET | Count pending training outcomes |
+| `/api/prophet/vix-regimes` | GET | VIX regime definitions |
+
+### 7.6 Live Logging & Transparency
+
+`ProphetLiveLog` captures every step of the prediction pipeline:
+
+```
+INPUT → ML_FEATURES → ML_OUTPUT → CLAUDE_PROMPT → CLAUDE_RESPONSE → DECISION → SENT_TO_BOT
+```
+
+**Claude exchange logging**: Full prompt/response pairs stored for audit trail, including hallucination risk assessment and token usage.
+
+### 7.7 Backward Compatibility
+
+| Component | Compatibility |
+|-----------|--------------|
+| Feature versions | V1/V2/V3 automatic detection from saved metadata |
+| Bot names | `FortressMLAdvisor = ProphetAdvisor` alias preserved |
+| Functions | `get_advisor = get_prophet`, `get_trading_advice = get_fortress_advice` |
+| Old pickle format | `saved.get('feature_version', 2)` defaults to V2 |
 
 ---
 
-## SECTION 8: OUTPUT — FINDINGS & RECOMMENDATIONS
+## SECTION 8: COMPREHENSIVE FINDINGS
 
-### 8.1 Findings Summary
+### 8.1 Critical Issues (All Fixed in V2)
 
-#### CRITICAL — Actively Degrading P&L (Fix Immediately)
+| # | Issue | Impact | Fix Applied |
+|---|-------|--------|-------------|
+| C1 | **Class imbalance blindness** — 89% win rate, model predicts majority class | Prophet advises TRADE on everything, cannot identify losing conditions | `sample_weight` array: losses get 8x weight of wins |
+| C2 | **1.2x confidence inflation** — `confidence = win_prob * 1.2` | Confidence > 1.0 possible, downstream bots misinterpret | `confidence = win_prob` (no inflation) |
+| C3 | **Post-ML GEX probability manipulation** — +3%/+5% adjustments in bot advice methods | Destroys isotonic calibration, double-counts GEX signal | All post-ML adjustments removed from FORTRESS, CORNERSTONE, LAZARUS, SOLOMON |
+| C4 | **Hardcoded thresholds at 0.45/0.65** — useless with 89% base rate | SKIP never fires (0.45 unreachable), TRADE_FULL fires on everything | Adaptive: SKIP < base_rate-0.15, FULL >= base_rate-0.05 |
 
-| # | Finding | Evidence | Impact |
-|---|---------|----------|--------|
-| C1 | **No class imbalance handling** | `self.model.fit(X_train, y_train)` — no `sample_weight`. Lines 4441, 5288. | Model outputs ~0.89 for all inputs. SKIP threshold (0.45) never triggers. Prophet effectively approves ALL trades. Every losing trade that should have been skipped costs the full spread width ($500-$1,000). |
-| C2 | **Hardcoded 0.45/0.65 thresholds on 89% base rate** | Lines 1465-1466. `_get_advice_from_probability()` line 4022. | SKIP < 0.45 and TRADE_FULL >= 0.65 are meaningless when the model's output distribution is centered at ~0.89. The thresholds need to be relative to the learned base rate. |
-| C3 | **price_change_1d training/inference mismatch** | Line 4246: `(close_price - open_price) / open_price * 100`. Live uses prior day. | The model learns from a signal (same-day return) it cannot see in production. This could inflate backtest accuracy by ~0.5-1% and create spurious feature importance for `price_change_1d`. |
-| C4 | **1.2x confidence inflation** | Lines 2779, 2896, 3021: `confidence=min(1.0, base_pred['win_probability'] * 1.2)` | Reported confidence is 20% higher than actual probability. A 0.75 probability is logged as 0.90 confidence. Misleads monitoring, dashboards, and any downstream system that reads `confidence`. |
+### 8.2 High-Impact Issues
 
-#### HIGH IMPACT — Leaving Profit on the Table (Fix Next Iteration)
+| # | Issue | Impact | Status |
+|---|-------|--------|--------|
+| H1 | **UNIQUE(trade_date, bot_name)** on training outcomes | Discards multiple intraday trades — up to 67% data loss | **OPEN** |
+| H2 | **ANCHOR hardcoded thresholds** (0.58/0.52/0.48) | Doesn't benefit from adaptive threshold logic | **OPEN** |
+| H3 | **No portfolio-level risk** | 6 bots trade independently with no aggregated risk view | **OPEN** |
+| H4 | **SOLOMON overwrites ML probability with direction confidence** | Ignores trained model output for directional trades | **OPEN** |
 
-| # | Finding | Evidence | Impact |
-|---|---------|----------|--------|
-| H1 | **V2 features computed but never trained** | Line 4416: `feature_cols = self.FEATURE_COLS` (V1 only). V2 defined at line 1382 with 22 features. | 11 valuable features (VIX regime encoding, IC suitability, trend score, psychology) are computed every training run and discarded. These could improve the IC-vs-directional decision quality. |
-| H2 | **Integer day_of_week** | FEATURE_COLS line 1370: `'day_of_week'` | Model treats Mon(0) as inherently different from Fri(4) by magnitude, not just category. sin/cos cyclical encoding eliminates this artificial distance. |
-| H3 | **Brier score on training data** | Lines 4459-4460: Brier computed on `X_scaled` after `model.fit(X_scaled, y)` | The only calibration metric is meaninglessly optimistic. Real out-of-sample calibration could be 0.05-0.15 worse. Cannot assess whether probabilities are trustworthy. |
-| H4 | **Post-ML probability manipulation** | Lines 2639-2658: +3/+5/-2% adjustments to `win_probability` based on GEX regime | GEX regime is already an ML input feature. Adding manual adjustments double-counts the signal and destroys isotonic calibration. With a well-trained model, these should be removed entirely. |
-| H5 | **UNIQUE(trade_date, bot_name) loses intraday trades** | `prophet_predictions` and `prophet_training_outcomes` tables | FORTRESS scans every 5 minutes and can trade multiple times per day. Only the LAST prediction/outcome per day is stored. ML feedback loop learns from a fraction of actual trades. |
+### 8.3 Medium Issues
 
-#### IMPROVEMENT — Performance Enhancement (Nice to Have)
+| # | Issue | Impact | Status |
+|---|-------|--------|--------|
+| M1 | **VRP approximation at inference** (`expected_move_pct * 0.2`) | Training VRP uses rolling realized vol, inference uses rough proxy | Known limitation |
+| M2 | **ANCHOR hallucination penalty not reduced** (10%/5% vs 5%/2%) | More aggressive Claude penalty than other bots | **OPEN** |
+| M3 | **Proverbs data collected but not used** | Time-of-day, regime, correlation data is display-only | By design ("Prophet is god") |
+| M4 | **No feature importance tracking in production** | Can't monitor feature drift without retraining | Feature importances stored in TrainingMetrics |
+| M5 | **win_rate_60d self-referential feedback** | Model's own past performance used as input feature | Could amplify winning/losing streaks |
 
-| # | Finding | Evidence | Impact |
-|---|---------|----------|--------|
-| I1 | **No VRP feature** | Feature list has no IV - realized vol spread | VRP is the core profit driver for Iron Condors. Prophet decides IC-vs-Directional without knowing if premium is rich or cheap. |
-| I2 | **No event calendar** | CLAUDE.md mentions FOMC/CPI/NFP but no code exists | Event days create outsized gap risk. No position-size reduction or skip logic before FOMC. |
-| I3 | **win_rate_30d short horizon** | Line 4231: 30-trade lookback | Creates recency bias. Matches WISDOM's old design. Should be 60d for consistency. |
-| I4 | **Calibration on leaked data** | Line 4456: `CalibratedClassifierCV(self.model, cv=3).fit(X_scaled, y)` after final fit | Base model has seen all data; isotonic calibration's internal CV is partially fitting on data the model has memorized. |
-| I5 | **No WISDOM→Prophet signal fusion** | WISDOM and Prophet predict independently with no ensemble | Two models making separate predictions with potential conflicts. WISDOM's win_prob could be fed as a Prophet feature. |
-| I6 | **VALOR outcomes not recorded** | `trading/valor/trader.py`: "Future: Call prophet.update_outcome()" | Missing data from VALOR's trades weakens Prophet's feedback loop. |
+### 8.4 Improvements Made (V2 Summary)
 
-### 8.2 Expected Impact on P&L
+| Improvement | Section | Lines Changed |
+|-------------|---------|---------------|
+| `sample_weight` for class imbalance | Training | 4420-4430, 5324-5332 |
+| Brier score on CV folds | Training | 4466, 5368 |
+| Cyclical day encoding (sin/cos) | Features | 4300-4302, 5262-5263 |
+| VRP feature | Features | 4332-4339, 5269-5275 |
+| 60-trade win rate horizon | Features | 4286-4290, 5277-5279 |
+| Price change look-ahead fix | Features | 4308-4316 |
+| Removed 1.2x confidence inflation | Signal gen | 2807, 2923, 3047 |
+| Removed post-ML GEX adjustments | Signal gen | FORTRESS, CORNERSTONE, LAZARUS, SOLOMON |
+| Adaptive thresholds from base rate | Decision | 1478-1498 |
+| Feature version tracking (V1/V2/V3) | Persistence | 1365-1408, 1839-1842, 1893-1896 |
 
-| Fix | Expected P&L Impact | Confidence |
-|-----|---------------------|------------|
-| Class imbalance + adaptive thresholds (C1+C2) | **HIGH** — The model will learn to skip the ~11% of trades that lose. Each avoided loss saves ~$500-$1,000 per spread width. With ~7,000 trades/year and 11% loss rate, even identifying 20% of losses saves ~$77K-$154K. | Medium-High |
-| Remove confidence inflation (C4) | **LOW direct** — Doesn't change trade decisions, but fixes reporting accuracy | High |
-| Fix price_change_1d (C3) | **LOW-MEDIUM** — Removes a noise signal that may be getting weight in the model | Medium |
-| Add V2/V3 features (H1) | **MEDIUM** — More features for the model to discriminate wins/losses, especially VIX regime and suitability scores | Medium |
-| Remove post-ML manipulation (H4) | **MEDIUM** — Restores calibration quality, prevents double-counting | Medium |
-| Add VRP feature (I1) | **MEDIUM** — Captures the fundamental IC profit driver | Medium |
-| Fix UNIQUE constraint (H5) | **MEDIUM** — More training data improves model quality over time | Low-Medium |
+### 8.5 Architecture Assessment
 
-### 8.3 Quick Wins (Highest Impact-to-Effort Ratio)
+**Strengths**:
+- Clean separation between WISDOM (primary ML) and Prophet (strategy advisor)
+- Comprehensive live logging with full data flow transparency
+- Claude AI validation with anti-hallucination checks
+- Proverbs integration for historical performance feedback
+- Proper model staleness detection and auto-reload
+- Thread-safe singleton pattern with proper locking
+- Database persistence surviving Render deploys
+- Backward compatibility across 3 feature versions
 
-**1. Add `sample_weight` to `.fit()` calls**
-```python
-# Compute class weights
-n_pos = y_train.sum()
-n_neg = len(y_train) - n_pos
-weights = np.where(y_train == 1, 1.0, n_pos / max(n_neg, 1))
-self.model.fit(X_train, y_train, sample_weight=weights)
-```
-Applies to `train_from_chronicles()` (line 4441), `train_from_live_outcomes()` (line 5288), and the final fit (line 4454). **Expected effort: 30 minutes. Expected impact: HIGHEST.**
+**Weaknesses**:
+- Single model serves all 6+ bots — same weights for IC vs directional
+- No per-strategy model specialization (e.g., IC-specific vs directional-specific)
+- Strategy recommendation is rule-based (VIX×GEX matrix), not ML-powered
+- UNIQUE constraint limits training data collection
+- No portfolio-level risk aggregation
+- Proverbs intelligence collected but intentionally unused
 
-**2. Make thresholds adaptive relative to base rate**
-```python
-self._base_rate = y.mean()  # Store after training
-self.low_confidence_threshold = self._base_rate - 0.15  # SKIP below this
-self.high_confidence_threshold = self._base_rate - 0.05  # TRADE_FULL above this
-```
-Same approach as WISDOM V3. **Expected effort: 15 minutes. Expected impact: HIGH.**
+### 8.6 Recommendations for Orchestration Layer
 
-**3. Remove 1.2x confidence inflation**
-```python
-# Change from:
-confidence=min(1.0, base_pred['win_probability'] * 1.2)
-# To:
-confidence=base_pred['win_probability']
-```
-Three locations (lines 2779, 2896, 3021). **Expected effort: 5 minutes. Expected impact: LOW (accuracy fix).**
-
-### 8.4 Architecture Recommendation
-
-**Keep the current model, modify features and training:**
-
-1. **GradientBoostingClassifier is fine** — the model class isn't the problem. sklearn GBC with isotonic calibration is appropriate for this task. No need to switch to XGBoost for Prophet (WISDOM already uses XGBoost for its own predictions).
-
-2. **Do NOT merge WISDOM and Prophet** — they serve different purposes. WISDOM predicts individual trade outcomes; Prophet recommends strategy type and bot-specific parameters. Keeping them separate is correct.
-
-3. **Consider feeding WISDOM's output as a Prophet feature** — Prophet could receive WISDOM's `win_probability` as an input signal, creating a lightweight ensemble. This would be a V3+ improvement.
-
-4. **The rule-based strategy recommendation logic is GOOD** — `get_strategy_recommendation()` with VIX/GEX scoring is intuitive and doesn't depend on the broken ML model. It should be preserved as-is.
-
-5. **Remove post-ML probability manipulation** — The +3%/+5% GEX adjustments after the ML prediction should be eliminated once class imbalance is fixed. Let the model learn these relationships instead of hardcoding them.
-
-6. **Long-term: add event calendar** — FOMC/CPI/NFP binary features would improve the model's ability to reduce exposure on high-risk days. This is a multi-day project, not a quick win.
+1. **UNIQUE constraint fix**: Change to `UNIQUE(trade_date, bot_name, prediction_id)` to capture all intraday trades
+2. **ANCHOR alignment**: Apply adaptive thresholds and reduced hallucination penalties to match other bots
+3. **SOLOMON ML override**: Stop overwriting ML probability with direction confidence — blend instead
+4. **Portfolio risk**: Add cross-bot position tracking to prevent correlated losses
+5. **Feature monitoring**: Track feature importance drift between training runs
+6. **Separate directional model**: Consider training a separate model for SOLOMON/GIDEON with direction-specific features
+7. **Replace win_rate_60d**: Use external signal (e.g., cumulative VRP, rolling Sharpe) instead of self-referential metric
 
 ---
 
-## APPENDIX: Prophet vs WISDOM Comparison
+## APPENDIX A: File References
 
-| Dimension | WISDOM | Prophet |
-|-----------|--------|---------|
-| **File** | `quant/fortress_ml_advisor.py` | `quant/prophet_advisor.py` |
-| **Size** | ~1,300 lines | ~5,600 lines |
-| **Model** | XGBoost (XGBClassifier) | sklearn GradientBoostingClassifier |
-| **Role** | Win probability for individual trades | Strategy type + bot-specific advice |
-| **Called from** | `signals.py` (signal generation) | `trader.py` (trade execution) |
-| **Features (V3)** | 13: VRP, cyclical day, win_rate_60d | 11: integer day, win_rate_30d, no VRP |
-| **Class imbalance** | FIXED (scale_pos_weight) | **NOT FIXED** |
-| **Thresholds** | Adaptive (base_rate - 0.15/0.05) | **Hardcoded (0.45/0.65)** |
-| **Brier score** | Held-out CV folds | **Training data (in-sample)** |
-| **Confidence** | Raw probability (no inflation) | **1.2x inflated** |
-| **Training data** | 3 sources (CHRONICLES + Prophet outcomes + bot positions) | 3 sources (DB backtests + live outcomes + CHRONICLES) |
+| File | Lines | Purpose |
+|------|-------|---------|
+| `quant/prophet_advisor.py` | ~5,700 | ProphetAdvisor class, training, inference, bot advice |
+| `backend/api/routes/prophet_routes.py` | ~465 | REST API endpoints |
+| `scheduler/trader_scheduler.py` | ~3,500 | Training schedule (midnight + 4 PM CT) |
+| `trading/fortress_v2/signals.py` | ~900 | Calls `get_fortress_advice()` |
+| `trading/fortress_v2/trader.py` | ~1,400 | Stores predictions, records outcomes |
+| `trading/anchor/signals.py` | ~900 | Calls `get_anchor_advice()` |
+| `trading/solomon_v2/signals.py` | ~900 | Calls `get_solomon_advice()` |
+| `trading/gideon/signals.py` | ~1,000 | Calls `get_solomon_advice(bot_name="GIDEON")` |
+| `trading/samson/trader.py` | ~1,300 | Uses Prophet recommendations |
+| `trading/valor/trader.py` | ~1,300 | Uses Prophet for strategy decisions |
+| `quant/proverbs_enhancements.py` | ~2,100 | Feedback loop integration |
+
+## APPENDIX B: Bot-Prophet Integration Matrix
+
+| Bot | Advice Method | Claude? | VIX Skip? | GEX Walls? | Direction? | Training Outcomes? |
+|-----|--------------|---------|-----------|------------|------------|-------------------|
+| FORTRESS | `get_fortress_advice()` | ✓ | ✓ | ✓ | N/A (IC) | ✓ |
+| ANCHOR | `get_anchor_advice()` | ✓ | ✓ | ✓ | N/A (IC) | ✓ |
+| SOLOMON | `get_solomon_advice()` | ✓ | — | ✓ | ✓ (ML/GEX) | ✓ |
+| GIDEON | `get_solomon_advice(bot_name="GIDEON")` | ✓ | — | ✓ | ✓ (ML/GEX) | ✓ |
+| CORNERSTONE | `get_cornerstone_advice()` | — | — | — | N/A (Wheel) | — |
+| LAZARUS | `get_lazarus_advice()` | ✓ | — | — | ✓ (GEX) | — |
+| SAMSON | `get_strategy_recommendation()` | — | — | — | N/A (IC) | ✓ |
+| VALOR | `get_strategy_recommendation()` | — | — | — | N/A (Futures) | ✓ |
 
 ---
 
-*Full audit completed using ML Trading Bot Audit Framework v1.0*
-*Generated 2026-02-10 — AlphaGEX ML Bot Orchestration project*
+*Last Updated: 2026-02-10*
+*Prophet V2 fixes implemented and pushed in prior session*
+*This audit documents the comprehensive review using the 8-section ML Trading Bot Audit framework*
