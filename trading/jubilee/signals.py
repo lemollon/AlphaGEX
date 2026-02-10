@@ -1327,6 +1327,90 @@ class JubileeICSignalGenerator:
             'source': 'PROPHET' if use_oracle else ('GEX' if use_gex else 'DELTA'),
         }
 
+    def get_real_credits(
+        self,
+        expiration: str,
+        put_short: float,
+        put_long: float,
+        call_short: float,
+        call_long: float,
+    ) -> Optional[Dict[str, float]]:
+        """
+        Get REAL option credits from Tradier production API (same as SAMSON).
+
+        Fetches actual bid/ask quotes for SPX options to get accurate
+        credit values instead of using formula estimation.
+        """
+        tradier = _get_tradier()
+        if not tradier:
+            logger.debug("JUBILEE IC: Tradier not available, cannot get real credits")
+            return None
+
+        try:
+            from datetime import datetime as dt
+            exp_date = dt.strptime(expiration, '%Y-%m-%d')
+            exp_str = exp_date.strftime('%y%m%d')
+
+            def build_symbol(strike: float, opt_type: str) -> str:
+                strike_str = f"{int(strike * 1000):08d}"
+                return f"SPXW{exp_str}{opt_type}{strike_str}"
+
+            put_short_sym = build_symbol(put_short, 'P')
+            put_long_sym = build_symbol(put_long, 'P')
+            call_short_sym = build_symbol(call_short, 'C')
+            call_long_sym = build_symbol(call_long, 'C')
+
+            # Get quotes for all four legs
+            put_short_quote = _tradier_call_with_retry(tradier.get_option_quote, put_short_sym, max_retries=2)
+            put_long_quote = _tradier_call_with_retry(tradier.get_option_quote, put_long_sym, max_retries=2)
+            call_short_quote = _tradier_call_with_retry(tradier.get_option_quote, call_short_sym, max_retries=2)
+            call_long_quote = _tradier_call_with_retry(tradier.get_option_quote, call_long_sym, max_retries=2)
+
+            if not all([put_short_quote, put_long_quote, call_short_quote, call_long_quote]):
+                logger.warning(f"JUBILEE IC: Missing option quotes for {expiration}")
+                return None
+
+            # Put spread: sell short put, buy long put → bid of short - ask of long
+            put_short_bid = float(put_short_quote.get('bid', 0) or 0)
+            put_long_ask = float(put_long_quote.get('ask', 0) or 0)
+            put_credit = put_short_bid - put_long_ask
+
+            # Call spread: sell short call, buy long call → bid of short - ask of long
+            call_short_bid = float(call_short_quote.get('bid', 0) or 0)
+            call_long_ask = float(call_long_quote.get('ask', 0) or 0)
+            call_credit = call_short_bid - call_long_ask
+
+            # Validate credits - try mid prices as fallback
+            if put_credit <= 0 or call_credit <= 0:
+                logger.warning(f"JUBILEE IC: Invalid credits - put=${put_credit:.2f}, call=${call_credit:.2f}, trying mid prices")
+                put_short_mid = (put_short_bid + float(put_short_quote.get('ask', 0) or 0)) / 2
+                put_long_mid = (float(put_long_quote.get('bid', 0) or 0) + put_long_ask) / 2
+                call_short_mid = (call_short_bid + float(call_short_quote.get('ask', 0) or 0)) / 2
+                call_long_mid = (float(call_long_quote.get('bid', 0) or 0) + call_long_ask) / 2
+
+                put_credit = max(0, put_short_mid - put_long_mid)
+                call_credit = max(0, call_short_mid - call_long_mid)
+
+            total = put_credit + call_credit
+            width = self.config.spread_width
+            max_profit = total * 100
+            max_loss = (width - total) * 100
+
+            logger.info(f"JUBILEE IC: REAL QUOTES - Put spread ${put_credit:.2f}, Call spread ${call_credit:.2f}, Total ${total:.2f}")
+
+            return {
+                'put_credit': round(put_credit, 2),
+                'call_credit': round(call_credit, 2),
+                'total_credit': round(total, 2),
+                'max_profit': round(max_profit, 2),
+                'max_loss': round(max_loss, 2),
+                'source': 'TRADIER_LIVE',
+            }
+
+        except Exception as e:
+            logger.warning(f"JUBILEE IC: Failed to get real credits: {e}")
+            return None
+
     def estimate_credits(
         self,
         spot: float,
@@ -1335,19 +1419,19 @@ class JubileeICSignalGenerator:
         call_short: float,
         vix: float
     ) -> Dict[str, float]:
-        """Estimate IC credits for SPX"""
+        """Estimate IC credits for SPX (FALLBACK when Tradier quotes unavailable)"""
         width = self.config.spread_width
 
         put_dist = (spot - put_short) / expected_move if expected_move > 0 else 1
         call_dist = (call_short - spot) / expected_move if expected_move > 0 else 1
         vol_factor = vix / 20.0
 
-        # SPX typically has good premiums
-        put_credit = width * 0.025 * vol_factor / max(put_dist, 0.5)
-        call_credit = width * 0.025 * vol_factor / max(call_dist, 0.5)
+        # SPX closer strikes = higher credit (match SAMSON aggressive formula)
+        put_credit = width * 0.028 * vol_factor / max(put_dist, 0.4)
+        call_credit = width * 0.028 * vol_factor / max(call_dist, 0.4)
 
-        put_credit = max(0.30, min(put_credit, width * 0.35))
-        call_credit = max(0.30, min(call_credit, width * 0.35))
+        put_credit = max(0.40, min(put_credit, width * 0.40))
+        call_credit = max(0.40, min(call_credit, width * 0.40))
 
         total = put_credit + call_credit
         max_profit = total * 100
@@ -1359,6 +1443,7 @@ class JubileeICSignalGenerator:
             'total_credit': round(total, 2),
             'max_profit': round(max_profit, 2),
             'max_loss': round(max_loss, 2),
+            'source': 'ESTIMATED',
         }
 
     def calculate_position_size(
@@ -1432,15 +1517,15 @@ class JubileeICSignalGenerator:
         spot = market['spot_price']
         vix = market['vix']
 
-        # VIX filter
-        can_trade, vix_reason = self.check_vix_filter(vix)
-        if not can_trade:
-            logger.info(f"JUBILEE IC: {vix_reason}")
-            return self._create_skip_signal(
-                now, source_box_position_id, market, vix_reason
-            )
+        # ============================================================
+        # PROPHET IS THE GOD OF ALL DECISIONS (same as SAMSON)
+        #
+        # CRITICAL: When Prophet says TRADE, we TRADE. Period.
+        # Prophet already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Prophet.
+        # ============================================================
 
-        # Get Prophet advice
+        # Get Prophet advice FIRST (before VIX filter)
         prophet = self.get_prophet_advice(market)
         if not prophet:
             logger.warning("JUBILEE IC: No Prophet advice available")
@@ -1448,27 +1533,24 @@ class JubileeICSignalGenerator:
                 now, source_box_position_id, market, "Prophet not available"
             )
 
-        oracle_advice = prophet.get('advice', 'HOLD')
+        oracle_advice = prophet.get('advice', 'SKIP_TODAY')
         oracle_confidence = prophet.get('confidence', 0)
         oracle_win_prob = prophet.get('win_probability', 0)
 
-        # Log Prophet advice (informational - ANCHOR style)
-        logger.info(f"JUBILEE IC Prophet: advice={oracle_advice}, confidence={oracle_confidence:.0%}, win_prob={oracle_win_prob:.0%}")
+        # PROPHET IS GOD: If Prophet says TRADE, we TRADE - no threshold checks
+        oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
 
-        # Check Prophet thresholds if required
-        # NOTE: Like ANCHOR, we only check win_probability threshold, NOT the advice string
-        # Prophet advice string (TRADE_FULL/SKIP_TODAY) is informational only
-        oracle_approved = True  # Will be set to False only if we fail the threshold check
-        if self.config.require_oracle_approval:
-            # Only check win probability - this is how ANCHOR works
-            if oracle_win_prob < self.config.min_win_probability:
-                skip_reason = f"Win probability {oracle_win_prob:.0%} below min {self.config.min_win_probability:.0%}"
-                logger.info(f"JUBILEE IC: {skip_reason}")
-                return self._create_skip_signal(
-                    now, source_box_position_id, market, skip_reason, prophet
-                )
-            # If we pass the threshold, Prophet approved
-            logger.info(f"JUBILEE IC: Prophet APPROVED (win_prob {oracle_win_prob:.0%} >= {self.config.min_win_probability:.0%})")
+        if oracle_says_trade:
+            logger.info(f"JUBILEE IC: PROPHET SAYS TRADE: {oracle_advice} - win_prob={oracle_win_prob:.0%}")
+            # Check what VIX would have done (for logging only)
+            can_trade, vix_reason = self.check_vix_filter(vix)
+            if not can_trade:
+                logger.info(f"JUBILEE IC: VIX would have blocked ({vix_reason}) but PROPHET SAYS TRADE - proceeding")
+        else:
+            logger.info(f"JUBILEE IC SKIP: Prophet says {oracle_advice} - respecting Prophet's decision")
+            return self._create_skip_signal(
+                now, source_box_position_id, market, f"Prophet says {oracle_advice}", prophet
+            )
 
         # Calculate strikes
         strikes = self.calculate_strikes(
@@ -1480,14 +1562,41 @@ class JubileeICSignalGenerator:
             prophet.get('suggested_call_strike'),
         )
 
-        # Estimate credits
-        pricing = self.estimate_credits(
-            spot,
-            market['expected_move'],
-            strikes['put_short'],
-            strikes['call_short'],
-            vix,
+        # Calculate expiration FIRST (needed for real quote fetching)
+        if self.config.prefer_0dte:
+            expiration = now.strftime('%Y-%m-%d')
+            dte = 0
+        else:
+            days_until_friday = (4 - now.weekday()) % 7
+            if days_until_friday == 0 and now.hour >= 15:
+                days_until_friday = 7
+            exp_date = now + timedelta(days=days_until_friday)
+            expiration = exp_date.strftime('%Y-%m-%d')
+            dte = days_until_friday
+
+        # Try REAL quotes from Tradier first (same as SAMSON)
+        pricing = self.get_real_credits(
+            expiration=expiration,
+            put_short=strikes['put_short'],
+            put_long=strikes['put_long'],
+            call_short=strikes['call_short'],
+            call_long=strikes['call_long'],
         )
+
+        # Fall back to estimation if real quotes unavailable
+        if not pricing:
+            logger.info("JUBILEE IC: Using estimated credits (Tradier quotes unavailable)")
+            pricing = self.estimate_credits(
+                spot,
+                market['expected_move'],
+                strikes['put_short'],
+                strikes['call_short'],
+                vix,
+            )
+
+        # Credit check - warning only, does not block trades (same as SAMSON)
+        if pricing['total_credit'] < 0.50:
+            logger.warning(f"JUBILEE IC: Credit ${pricing['total_credit']:.2f} < $0.50 ({pricing.get('source', 'UNKNOWN')})")
 
         # Calculate position size
         contracts = self.calculate_position_size(
@@ -1498,20 +1607,6 @@ class JubileeICSignalGenerator:
         total_credit = pricing['total_credit']
         max_loss = pricing['max_loss'] * contracts
         margin_required = self.config.spread_width * 100 * contracts
-
-        # Calculate expiration (0DTE or next available)
-        if self.config.prefer_0dte:
-            # Today's expiration for 0DTE
-            expiration = now.strftime('%Y-%m-%d')
-            dte = 0
-        else:
-            # Next Friday
-            days_until_friday = (4 - now.weekday()) % 7
-            if days_until_friday == 0 and now.hour >= 15:
-                days_until_friday = 7
-            exp_date = now + timedelta(days=days_until_friday)
-            expiration = exp_date.strftime('%Y-%m-%d')
-            dte = days_until_friday
 
         # Calculate probability of profit (approximate from delta)
         # ~10 delta short strikes = ~80% PoP for IC
