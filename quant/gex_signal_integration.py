@@ -241,11 +241,18 @@ class GEXSignalIntegration:
 
         # === Calendar Features ===
         today = datetime.now()
-        features['day_of_week'] = today.weekday()
-        features['is_monday'] = 1 if today.weekday() == 0 else 0
-        features['is_friday'] = 1 if today.weekday() == 4 else 0
+        dow = today.weekday()
+        features['day_of_week'] = dow  # V1 compat
+        features['day_of_week_sin'] = np.sin(2 * np.pi * dow / 5)  # V2 cyclical
+        features['day_of_week_cos'] = np.cos(2 * np.pi * dow / 5)  # V2 cyclical
+        features['is_monday'] = 1 if dow == 0 else 0
+        features['is_friday'] = 1 if dow == 4 else 0
         features['is_opex_week'] = 1 if 15 <= today.day <= 21 else 0
         features['is_month_end'] = 1 if today.day >= 25 else 0
+
+        # === VRP Feature (V2) ===
+        # Approximate VRP from VIX (annualized → daily) - realized vol proxy
+        features['volatility_risk_premium'] = (vix / np.sqrt(252)) - 1.0
 
         # === Pin Zone Features ===
         # Between walls = in pin zone
@@ -349,17 +356,26 @@ class GEXSignalIntegration:
         )
 
     def _get_direction_probs(self, signal) -> Dict[str, float]:
-        """Extract direction probabilities from signal"""
-        # Get from direction model predictions
-        try:
-            from quant.gex_probability_models import Direction
-            return {
-                'UP': 0.33,
-                'DOWN': 0.33,
-                'FLAT': 0.34
-            }
-        except:
-            return {'UP': 0.33, 'DOWN': 0.33, 'FLAT': 0.34}
+        """Extract direction probabilities from CombinedSignal.
+
+        V2 fix: Actually uses model's direction confidence instead of
+        always returning uniform {0.33, 0.33, 0.34}.
+        """
+        # The CombinedSignal has direction_prediction and direction_confidence
+        # We can reconstruct approximate probabilities from these
+        direction = getattr(signal, 'direction_prediction', 'FLAT')
+        confidence = getattr(signal, 'direction_confidence', 0.34)
+
+        # Distribute probability: primary direction gets confidence,
+        # remainder split between other two directions
+        remainder = (1.0 - confidence) / 2.0
+        probs = {
+            'UP': remainder,
+            'DOWN': remainder,
+            'FLAT': remainder,
+        }
+        probs[direction] = confidence
+        return probs
 
     def _create_fallback_signal(self, gex_data: Dict) -> EnhancedTradingSignal:
         """Create neutral/fallback signal when models unavailable"""
@@ -475,12 +491,9 @@ class GEXSignalIntegration:
 
         direction = direction_map.get(signal.direction, 'NEUTRAL')
 
-        # Calculate win probability from model ensemble
-        # Use overall_conviction as the base, boosted by directional confidence
+        # Win probability = model's calibrated overall conviction (no boost)
+        # V2: Removed +10% artificial boost that destroyed calibration
         win_probability = signal.overall_conviction
-        if signal.direction_confidence > 0.6:
-            # Boost win prob when direction is clear
-            win_probability = min(0.85, win_probability + 0.10)
 
         logger.info(f"[GEX ML SIGNAL] Direction: {direction}, "
                    f"Confidence: {signal.direction_confidence:.1%}, "
