@@ -306,32 +306,49 @@ class JubileeTrader:
         position_id: str,
         target_expiration: str = None
     ) -> Dict[str, Any]:
-        """Roll a position to a new expiration"""
+        """
+        Roll a position to a new expiration.
+
+        IMPORTANT: Validates the replacement signal BEFORE closing the old
+        position to avoid leaving the system with no box spread capital.
+        """
         position = self.db.get_position(position_id)
         if not position:
             return {'success': False, 'error': 'Position not found'}
 
-        # Close current position
+        # Step 1: Generate and validate the replacement signal FIRST
+        signal = self.signals.generate_signal()
+        if not signal or not signal.is_valid:
+            logger.warning(
+                f"Roll aborted for {position_id}: could not generate valid replacement signal. "
+                f"Keeping existing position open to preserve IC trading capital."
+            )
+            return {
+                'success': False,
+                'error': 'Could not generate valid signal for roll - keeping existing position',
+                'original_closed': False,
+            }
+
+        # Step 2: Now safe to close the old position
         close_result = self.executor.close_position(position, "rolled")
         if not close_result:
             return {'success': False, 'error': 'Failed to close current position'}
 
-        # Generate new signal for the roll
-        signal = self.signals.generate_signal()
-        if not signal or not signal.is_valid:
-            return {
-                'success': False,
-                'error': 'Could not generate valid signal for roll',
-                'original_closed': True,
-            }
-
-        # Execute new position
+        # Step 3: Execute the new position
         new_position = self.executor.execute_signal(signal)
         if not new_position:
+            # Old position is closed but new one failed to open.
+            # Create an emergency paper box spread to keep IC trading alive.
+            logger.error(
+                f"Roll partially failed for {position_id}: old closed but new failed to execute. "
+                f"Creating emergency paper box spread."
+            )
+            self._create_emergency_paper_position()
             return {
                 'success': False,
-                'error': 'Failed to open new position',
+                'error': 'Failed to open new position - emergency paper position created',
                 'original_closed': True,
+                'emergency_position_created': True,
             }
 
         return {
@@ -340,6 +357,82 @@ class JubileeTrader:
             'new_position_id': new_position.position_id,
             'new_expiration': signal.expiration,
         }
+
+    def _create_emergency_paper_position(self) -> None:
+        """
+        Create an emergency paper box spread when a roll fails mid-operation.
+        Reuses _ensure_paper_box_spread logic but forces creation regardless of mode.
+        """
+        try:
+            from .models import BoxSpreadPosition, PositionStatus
+
+            now = datetime.now(CENTRAL_TZ)
+            paper_dte = 180
+            expiration_date = now + timedelta(days=paper_dte)
+            expiration_str = expiration_date.strftime('%Y-%m-%d')
+
+            contracts = 100
+            strike_width = 50.0
+            lower_strike = 5800.0
+            upper_strike = lower_strike + strike_width
+            entry_credit = 49.50
+            theoretical_value = strike_width
+            total_credit = entry_credit * contracts * 100
+            total_owed = theoretical_value * contracts * 100
+            borrowing_cost = total_owed - total_credit
+            implied_rate = (borrowing_cost / total_owed) * (365.0 / paper_dte) * 100
+
+            emergency_box = BoxSpreadPosition(
+                position_id=f"EMERGENCY_BOX_{now.strftime('%Y%m%d_%H%M%S')}",
+                ticker="SPX",
+                lower_strike=lower_strike,
+                upper_strike=upper_strike,
+                strike_width=strike_width,
+                expiration=expiration_str,
+                dte_at_entry=paper_dte,
+                current_dte=paper_dte,
+                call_long_symbol=f"SPX{expiration_str.replace('-', '')}C{int(lower_strike)}",
+                call_short_symbol=f"SPX{expiration_str.replace('-', '')}C{int(upper_strike)}",
+                put_long_symbol=f"SPX{expiration_str.replace('-', '')}P{int(upper_strike)}",
+                put_short_symbol=f"SPX{expiration_str.replace('-', '')}P{int(lower_strike)}",
+                call_spread_order_id="EMERGENCY_CALL_ORDER",
+                put_spread_order_id="EMERGENCY_PUT_ORDER",
+                contracts=contracts,
+                entry_credit=entry_credit,
+                total_credit_received=total_credit,
+                theoretical_value=theoretical_value,
+                total_owed_at_expiration=total_owed,
+                borrowing_cost=borrowing_cost,
+                implied_annual_rate=implied_rate,
+                daily_cost=borrowing_cost / paper_dte,
+                cost_accrued_to_date=0.0,
+                fed_funds_at_entry=4.38,
+                margin_rate_at_entry=8.50,
+                savings_vs_margin=(8.50 - implied_rate) * total_owed / 100,
+                cash_deployed_to_ares=0.0,
+                cash_deployed_to_titan=0.0,
+                cash_deployed_to_anchor=0.0,
+                cash_held_in_reserve=50000.0,
+                total_cash_deployed=total_credit,
+                returns_from_ares=0.0,
+                returns_from_titan=0.0,
+                returns_from_anchor=0.0,
+                total_ic_returns=0.0,
+                net_profit=0.0,
+                spot_at_entry=5825.0,
+                vix_at_entry=15.0,
+                early_assignment_risk="LOW",
+                current_margin_used=100000.0,
+                margin_cushion=150000.0,
+                status=PositionStatus.OPEN,
+                open_time=now,
+                position_explanation="EMERGENCY: Created after roll failure to maintain IC trading capital",
+                daily_briefing="Emergency position - roll failed, this ensures IC trading continues"
+            )
+            self.db.save_position(emergency_box)
+            logger.info(f"Created emergency box spread: {emergency_box.position_id}")
+        except Exception as e:
+            logger.error(f"CRITICAL: Failed to create emergency box spread: {e}", exc_info=True)
 
     # ========== Analytics & Reporting ==========
 
@@ -1109,6 +1202,7 @@ class JubileeICTrader:
 
         IC trading uses borrowed capital from box spreads.
         In PAPER mode, auto-creates a paper box spread if none exists.
+        Only counts capital from positions with DTE > 0.
         """
         # Ensure we have a box spread position (creates paper one if needed)
         self._ensure_paper_box_spread()
@@ -1118,10 +1212,15 @@ class JubileeICTrader:
         if not box_positions:
             return 0.0
 
-        # Calculate total capital available for IC trading
+        # Calculate total capital available for IC trading (only from viable positions)
         total_available = 0.0
         for box in box_positions:
-            # Use the total cash deployed minus any already allocated to open IC positions
+            try:
+                exp_date = datetime.strptime(box.expiration, '%Y-%m-%d').date()
+                if (exp_date - date.today()).days <= 0:
+                    continue  # Skip expired positions
+            except (ValueError, TypeError):
+                continue
             total_available += box.total_cash_deployed
 
         # Subtract capital currently in use by open IC positions
@@ -1133,15 +1232,29 @@ class JubileeICTrader:
 
     def _ensure_paper_box_spread(self) -> None:
         """
-        In PAPER mode, create a synthetic box spread position if none exists.
+        In PAPER mode, create a synthetic box spread position if none exists
+        or if all existing positions have expired (DTE <= 0).
         This provides the borrowed capital for IC trading.
         """
         if self.config.mode != TradingMode.PAPER:
             return
 
         box_positions = self.db.get_open_positions()
+
+        # Check if any position is still viable (DTE > 0)
         if box_positions:
-            return  # Already have positions
+            viable = False
+            for pos in box_positions:
+                try:
+                    exp_date = datetime.strptime(pos.expiration, '%Y-%m-%d').date()
+                    dte = (exp_date - date.today()).days
+                    if dte > 0:
+                        viable = True
+                        break
+                except (ValueError, TypeError):
+                    continue
+            if viable:
+                return  # Have at least one viable position
 
         # Create a synthetic paper box spread with $500K borrowed
         logger.info("PAPER MODE: Creating synthetic box spread position for IC trading capital")
@@ -1149,7 +1262,10 @@ class JubileeICTrader:
             from .models import BoxSpreadPosition, PositionStatus
 
             now = datetime.now(CENTRAL_TZ)
-            expiration_date = now + timedelta(days=90)
+            # Use 180-day DTE to match intended long-term strategy and avoid
+            # premature roll triggers (min_dte_to_hold=30 gives 150 days of runway)
+            paper_dte = 180
+            expiration_date = now + timedelta(days=paper_dte)
             expiration_str = expiration_date.strftime('%Y-%m-%d')
 
             # $500K notional: 100 contracts * $50 strike width * 100 multiplier
@@ -1162,7 +1278,7 @@ class JubileeICTrader:
             total_credit = entry_credit * contracts * 100  # $495,000
             total_owed = theoretical_value * contracts * 100  # $500,000
             borrowing_cost = total_owed - total_credit  # $5,000
-            implied_rate = (borrowing_cost / total_owed) * (365.0 / 90) * 100  # ~4%
+            implied_rate = (borrowing_cost / total_owed) * (365.0 / paper_dte) * 100  # ~2% annualized
 
             synthetic_box = BoxSpreadPosition(
                 # Position identification
@@ -1174,8 +1290,8 @@ class JubileeICTrader:
                 upper_strike=upper_strike,
                 strike_width=strike_width,
                 expiration=expiration_str,
-                dte_at_entry=90,
-                current_dte=90,
+                dte_at_entry=paper_dte,
+                current_dte=paper_dte,
 
                 # Leg symbols (synthetic for paper)
                 call_long_symbol=f"SPX{expiration_str.replace('-', '')}C{int(lower_strike)}",
@@ -1197,7 +1313,7 @@ class JubileeICTrader:
                 # Borrowing cost tracking
                 borrowing_cost=borrowing_cost,
                 implied_annual_rate=implied_rate,
-                daily_cost=borrowing_cost / 90,
+                daily_cost=borrowing_cost / paper_dte,
                 cost_accrued_to_date=0.0,
 
                 # Comparison benchmarks
