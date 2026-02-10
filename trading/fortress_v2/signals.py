@@ -428,9 +428,10 @@ class SignalGenerator:
 
         Strikes = spot +/- (SD_multiplier * expected_move), rounded away from spot.
         """
-        # FIX (Feb 2026): Minimum 1.5 SD from spot.
-        # 1.2 SD was too tight - FORTRESS lost $5,850 on Feb 6 with wings at 1.21 SD.
-        MIN_SD_FLOOR = 1.5
+        # FIX (Feb 2026): Lowered from 1.5 to 1.2 SD.
+        # 1.5 SD with $2-wide spreads had no premium. With $5-wide spreads and 3DTE,
+        # 1.2 SD provides enough cushion while collecting real credit.
+        MIN_SD_FLOOR = 1.2
         sd = max(self.config.sd_multiplier, MIN_SD_FLOOR)
         width = self.config.spread_width
 
