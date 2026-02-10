@@ -1,409 +1,314 @@
 #!/usr/bin/env python3
 """
 AGAPE-SPOT Diagnostic Script
-Run in Render shell to verify all 4 coins are working after the fix.
-
-Usage:
-  python scripts/diagnose_agape_spot.py
+Run in Render shell: python scripts/diagnose_agape_spot.py
 """
 
 import os
 import sys
-import json
-from datetime import datetime, timedelta
+import traceback
 
-# Ensure project root is on path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-PASS = "\033[92m PASS \033[0m"
-FAIL = "\033[91m FAIL \033[0m"
-WARN = "\033[93m WARN \033[0m"
-INFO = "\033[94m INFO \033[0m"
+G = "\033[92m"  # green
+R = "\033[91m"  # red
+Y = "\033[93m"  # yellow
+B = "\033[94m"  # blue
+W = "\033[0m"   # reset
 
 TICKERS = ["ETH-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"]
 SYMBOLS = ["ETH", "XRP", "SHIB", "DOGE"]
-
-errors = []
-warnings = []
+fails = 0
 
 
-def section(title):
-    print(f"\n{'='*60}")
-    print(f"  {title}")
-    print(f"{'='*60}")
+def ok(msg):
+    print(f"  {G}OK{W}  {msg}")
 
 
-def check(label, passed, detail=""):
-    tag = PASS if passed else FAIL
-    print(f"  {tag} {label}")
-    if detail:
-        print(f"         {detail}")
-    if not passed:
-        errors.append(label)
-    return passed
+def fail(msg):
+    global fails
+    fails += 1
+    print(f"  {R}FAIL{W} {msg}")
 
 
-def warn(label, detail=""):
-    print(f"  {WARN} {label}")
-    if detail:
-        print(f"         {detail}")
-    warnings.append(label)
+def note(msg):
+    print(f"  {B}--{W}  {msg}")
 
 
-def info(label, detail=""):
-    print(f"  {INFO} {label}")
-    if detail:
-        print(f"         {detail}")
+def header(title):
+    print(f"\n{Y}=== {title} ==={W}")
 
 
-# =========================================================================
-# 1. Environment Variables
-# =========================================================================
-section("1. ENVIRONMENT VARIABLES")
+# ── 1. ENV VARS ──────────────────────────────────────────────────────────
+header("1. Environment Variables")
 
-cb_key = os.getenv("COINBASE_API_KEY")
-cb_secret = os.getenv("COINBASE_API_SECRET")
-check("COINBASE_API_KEY (default)", bool(cb_key),
-      f"{'Set' if cb_key else 'MISSING - no default Coinbase account'}")
-check("COINBASE_API_SECRET (default)", bool(cb_secret),
-      f"{'Set' if cb_secret else 'MISSING - no default Coinbase account'}")
-
-coinglass_key = os.getenv("COINGLASS_API_KEY")
-check("COINGLASS_API_KEY", bool(coinglass_key),
-      f"{'Set' if coinglass_key else 'MISSING - funding rates/L/S ratio will be unavailable'}")
-
-# Per-ticker overrides
-for symbol in SYMBOLS:
-    env_key = f"COINBASE_{symbol}_API_KEY"
-    env_secret = f"COINBASE_{symbol}_API_SECRET"
-    has_key = bool(os.getenv(env_key))
-    has_secret = bool(os.getenv(env_secret))
-    if has_key and has_secret:
-        info(f"{env_key} / {env_secret}", "Dedicated account configured")
-    elif has_key or has_secret:
-        warn(f"{env_key} / {env_secret}", "Only one of key/secret set - need BOTH")
+for name in ["COINBASE_API_KEY", "COINBASE_API_SECRET", "COINGLASS_API_KEY"]:
+    if os.getenv(name):
+        ok(f"{name} is set")
     else:
-        info(f"{env_key}", f"Not set - {symbol} will use default account")
+        fail(f"{name} is NOT set")
+
+for sym in SYMBOLS:
+    k = os.getenv(f"COINBASE_{sym}_API_KEY")
+    s = os.getenv(f"COINBASE_{sym}_API_SECRET")
+    if k and s:
+        ok(f"COINBASE_{sym}_API_KEY/SECRET  -> dedicated account")
+    elif k or s:
+        fail(f"COINBASE_{sym}_API_KEY/SECRET  -> only ONE of key/secret set (need both)")
+    else:
+        note(f"COINBASE_{sym}_API_KEY/SECRET  -> not set, will use default account")
 
 
-# =========================================================================
-# 2. Spot Price Fetch (CryptoDataProvider - the main fix)
-# =========================================================================
-section("2. SPOT PRICE FETCH (CryptoDataProvider)")
-
-try:
-    from data.crypto_data_provider import get_crypto_data_provider
-    provider = get_crypto_data_provider()
-    info("CryptoDataProvider", "Loaded successfully")
-
-    for symbol in SYMBOLS:
-        try:
-            price = provider._get_spot_price(symbol)
-            check(f"{symbol} spot price", price is not None and price > 0,
-                  f"${price:,.8f}" if price else "FAILED - no price returned")
-        except Exception as e:
-            check(f"{symbol} spot price", False, f"Exception: {e}")
-
-except ImportError as e:
-    check("CryptoDataProvider import", False, str(e))
-except Exception as e:
-    check("CryptoDataProvider init", False, str(e))
-
-
-# =========================================================================
-# 3. Market Data Snapshots
-# =========================================================================
-section("3. MARKET DATA SNAPSHOTS")
+# ── 2. SPOT PRICES (the main fix) ────────────────────────────────────────
+header("2. Spot Prices (CryptoDataProvider)")
 
 try:
     from data.crypto_data_provider import get_crypto_data_provider
     provider = get_crypto_data_provider()
 
-    for symbol in SYMBOLS:
+    for sym in SYMBOLS:
         try:
-            snapshot = provider.get_snapshot(symbol)
-            has_snapshot = snapshot is not None
-            check(f"{symbol} snapshot", has_snapshot,
-                  f"price=${snapshot.spot_price:,.4f} signal={snapshot.combined_signal} "
-                  f"confidence={snapshot.combined_confidence}"
-                  if has_snapshot else "FAILED - None returned")
-
-            if has_snapshot:
-                has_funding = snapshot.funding_rate is not None
-                has_gex = snapshot.crypto_gex is not None
-                details = []
-                if has_funding:
-                    details.append(f"funding={snapshot.funding_rate.rate:.6f}")
-                else:
-                    details.append("funding=N/A")
-                if has_gex:
-                    details.append(f"gex_regime={snapshot.crypto_gex.gamma_regime}")
-                else:
-                    details.append("gex=N/A (no Deribit for this coin)")
-                if snapshot.ls_ratio:
-                    details.append(f"ls_ratio={snapshot.ls_ratio.ratio:.2f}")
-                else:
-                    details.append("ls_ratio=N/A")
-                info(f"  {symbol} details", " | ".join(details))
-
+            price = provider._get_spot_price(sym)
+            if price and price > 0:
+                ok(f"{sym:5s} = ${price:,.8f}")
+            else:
+                fail(f"{sym:5s} = no price returned")
         except Exception as e:
-            check(f"{symbol} snapshot", False, f"Exception: {e}")
-
+            fail(f"{sym:5s} error: {e}")
 except Exception as e:
-    check("Snapshot fetch", False, str(e))
+    fail(f"CryptoDataProvider init: {e}")
 
 
-# =========================================================================
-# 4. Coinbase Executor Clients
-# =========================================================================
-section("4. COINBASE EXECUTOR CLIENTS")
+# ── 3. MARKET SNAPSHOTS ──────────────────────────────────────────────────
+header("3. Market Data Snapshots")
 
 try:
-    from trading.agape_spot.models import AgapeSpotConfig, SPOT_TICKERS
+    from data.crypto_data_provider import get_crypto_data_provider
+    provider = get_crypto_data_provider()
+
+    for sym in SYMBOLS:
+        try:
+            snap = provider.get_snapshot(sym)
+            if snap:
+                funding = f"funding={snap.funding_rate.rate:.6f}" if snap.funding_rate else "funding=N/A"
+                gex = f"gex={snap.crypto_gex.gamma_regime}" if snap.crypto_gex else "gex=N/A"
+                ok(f"{sym:5s} signal={snap.combined_signal:12s} conf={snap.combined_confidence:6s} {funding}  {gex}")
+            else:
+                fail(f"{sym:5s} snapshot returned None")
+        except Exception as e:
+            fail(f"{sym:5s} error: {e}")
+except Exception as e:
+    fail(f"Snapshot fetch: {e}")
+
+
+# ── 4. COINBASE CLIENTS ──────────────────────────────────────────────────
+header("4. Coinbase Executor Clients")
+
+try:
+    from trading.agape_spot.models import AgapeSpotConfig
     from trading.agape_spot.executor import AgapeSpotExecutor, coinbase_available
 
-    check("coinbase-advanced-py installed", coinbase_available)
-
-    if coinbase_available:
+    if not coinbase_available:
+        fail("coinbase-advanced-py NOT installed")
+    else:
+        ok("coinbase-advanced-py installed")
         config = AgapeSpotConfig()
         executor = AgapeSpotExecutor(config)
 
-        check("Default Coinbase client", executor._client is not None)
-        info("Per-ticker clients", str(list(executor._ticker_clients.keys())) or "None")
+        if executor._client:
+            ok("Default client connected")
+        else:
+            fail("Default client NOT connected")
 
         for ticker in TICKERS:
             client = executor._get_client(ticker)
-            is_dedicated = ticker in executor._ticker_clients
-            label = "DEDICATED" if is_dedicated else ("DEFAULT" if client else "NONE")
-            check(f"{ticker} client", client is not None,
-                  f"account={label}")
+            dedicated = ticker in executor._ticker_clients
+            label = "DEDICATED" if dedicated else ("default" if client else "NONE")
+            if client:
+                ok(f"{ticker:10s} client={label}")
+            else:
+                fail(f"{ticker:10s} NO CLIENT")
 
-        # Test price fetch from executor
+        # Price from executor
+        print()
+        note("Executor price check:")
         for ticker in TICKERS:
             try:
                 price = executor.get_current_price(ticker)
-                check(f"{ticker} executor price", price is not None and price > 0,
-                      f"${price:,.8f}" if price else "FAILED")
+                if price and price > 0:
+                    ok(f"{ticker:10s} ${price:,.8f}")
+                else:
+                    fail(f"{ticker:10s} no price")
             except Exception as e:
-                check(f"{ticker} executor price", False, str(e))
+                fail(f"{ticker:10s} error: {e}")
 
-except ImportError as e:
-    check("Executor import", False, str(e))
 except Exception as e:
-    check("Executor init", False, str(e))
+    fail(f"Executor init: {e}")
+    traceback.print_exc()
 
 
-# =========================================================================
-# 5. Signal Generation
-# =========================================================================
-section("5. SIGNAL GENERATION")
+# ── 5. SIGNAL GENERATION ─────────────────────────────────────────────────
+header("5. Signal Generation")
 
 try:
     from trading.agape_spot.models import AgapeSpotConfig
     from trading.agape_spot.signals import AgapeSpotSignalGenerator
 
     config = AgapeSpotConfig()
-    signals = AgapeSpotSignalGenerator(config)
+    gen = AgapeSpotSignalGenerator(config)
 
     for ticker in TICKERS:
         try:
-            signal = signals.generate_signal(ticker=ticker)
-            has_signal = signal is not None
-            if has_signal:
-                check(f"{ticker} signal", True,
-                      f"action={signal.action.value} confidence={signal.confidence} "
-                      f"reasoning={signal.reasoning[:60]}")
-                if signal.action.value == "LONG":
-                    info(f"  {ticker} trade params",
-                         f"qty={signal.quantity} entry=${signal.entry_price} "
-                         f"stop=${signal.stop_loss} target=${signal.take_profit}")
+            sig = gen.generate_signal(ticker=ticker)
+            if sig:
+                reason = sig.reasoning[:50]
+                if sig.action.value == "LONG":
+                    ok(f"{ticker:10s} {G}LONG{W}  qty={sig.quantity} entry=${sig.entry_price}  {reason}")
+                elif "NO_MARKET_DATA" in sig.reasoning:
+                    fail(f"{ticker:10s} {sig.action.value:5s} {reason}  <-- THIS IS THE BUG")
+                else:
+                    ok(f"{ticker:10s} {sig.action.value:5s} {reason}")
             else:
-                check(f"{ticker} signal", False, "None returned")
+                fail(f"{ticker:10s} None returned")
         except Exception as e:
-            check(f"{ticker} signal", False, f"Exception: {e}")
+            fail(f"{ticker:10s} error: {e}")
 
-except ImportError as e:
-    check("Signal generator import", False, str(e))
 except Exception as e:
-    check("Signal generator init", False, str(e))
+    fail(f"Signal generator: {e}")
+    traceback.print_exc()
 
 
-# =========================================================================
-# 6. Database Tables
-# =========================================================================
-section("6. DATABASE TABLES")
+# ── 6. DATABASE ───────────────────────────────────────────────────────────
+header("6. Database")
 
 try:
     from database_adapter import get_db_connection
     conn = get_db_connection()
     cur = conn.cursor()
 
-    tables = [
-        "agape_spot_positions",
-        "agape_spot_equity_snapshots",
-        "agape_spot_scan_activity",
-        "agape_spot_activity_log",
-    ]
-    for table in tables:
+    # Tables exist?
+    for table in ["agape_spot_positions", "agape_spot_scan_activity",
+                   "agape_spot_equity_snapshots", "agape_spot_activity_log"]:
         try:
             cur.execute(f"SELECT COUNT(*) FROM {table}")
-            count = cur.fetchone()[0]
-            check(f"{table}", True, f"{count:,} rows")
-        except Exception as e:
-            check(f"{table}", False, f"Table missing or error: {e}")
+            cnt = cur.fetchone()[0]
+            ok(f"{table:35s} {cnt:>6,} rows")
+        except Exception:
+            fail(f"{table:35s} MISSING")
             conn.rollback()
 
-    # Check last scan per ticker
+    # Last scan per ticker
     print()
-    info("Last scan activity per ticker:")
+    note("Most recent scan per ticker:")
     try:
         cur.execute("""
-            SELECT ticker, outcome, timestamp
+            SELECT DISTINCT ON (ticker) ticker, outcome, timestamp
             FROM agape_spot_scan_activity
-            WHERE timestamp > NOW() - INTERVAL '24 hours'
-            ORDER BY timestamp DESC
-            LIMIT 20
+            ORDER BY ticker, timestamp DESC
         """)
         rows = cur.fetchall()
-        if rows:
-            seen_tickers = set()
-            for row in rows:
-                ticker, outcome, ts = row
-                if ticker not in seen_tickers:
-                    seen_tickers.add(ticker)
-                    age_min = (datetime.now(ts.tzinfo) - ts).total_seconds() / 60 if ts.tzinfo else 0
-                    info(f"  {ticker}", f"outcome={outcome} at {ts} ({age_min:.0f}min ago)")
-            missing = set(TICKERS) - seen_tickers
-            for t in missing:
-                warn(f"  {t}", "No scan activity in last 24h")
-        else:
-            warn("No scan activity in last 24 hours")
+        seen = set()
+        for ticker, outcome, ts in rows:
+            seen.add(ticker)
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            now = datetime.now(ZoneInfo("America/Chicago"))
+            if ts.tzinfo:
+                age = (now - ts.astimezone(ZoneInfo("America/Chicago"))).total_seconds() / 60
+            else:
+                age = 0
+            marker = f"{R}(stale){W}" if age > 30 else ""
+            if "NO_MARKET_DATA" in (outcome or ""):
+                note(f"  {ticker:10s} {R}{outcome}{W}  {age:.0f}min ago  <-- BUG WAS HERE")
+            else:
+                note(f"  {ticker:10s} {outcome:30s} {age:.0f}min ago {marker}")
+        for t in set(TICKERS) - seen:
+            fail(f"  {t:10s} NO SCANS EVER")
     except Exception as e:
-        warn(f"Scan activity query failed: {e}")
+        note(f"  Query failed: {e}")
         conn.rollback()
 
-    # Check open positions per ticker
+    # Open positions
     print()
-    info("Open positions per ticker:")
+    note("Open positions:")
     try:
         cur.execute("""
-            SELECT ticker, COUNT(*) as cnt
-            FROM agape_spot_positions
-            WHERE status = 'open'
-            GROUP BY ticker
+            SELECT ticker, COUNT(*) FROM agape_spot_positions
+            WHERE status = 'open' GROUP BY ticker ORDER BY ticker
         """)
         rows = cur.fetchall()
         if rows:
             for ticker, cnt in rows:
-                info(f"  {ticker}", f"{cnt} open positions")
+                note(f"  {ticker:10s} {cnt} open")
         else:
-            info("  No open positions across any ticker")
+            note("  None across all tickers")
     except Exception as e:
-        warn(f"Position query failed: {e}")
+        note(f"  Query failed: {e}")
         conn.rollback()
 
-    # Check closed trades per ticker
+    # Recent trades
     print()
-    info("Closed trades per ticker (last 7 days):")
+    note("Trades last 7 days:")
     try:
         cur.execute("""
-            SELECT ticker,
-                   COUNT(*) as trades,
-                   SUM(realized_pnl) as total_pnl,
+            SELECT ticker, COUNT(*) as n,
+                   COALESCE(SUM(realized_pnl), 0) as pnl,
                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins
             FROM agape_spot_positions
-            WHERE status IN ('closed', 'expired', 'stopped')
+            WHERE status IN ('closed','expired','stopped')
               AND close_time > NOW() - INTERVAL '7 days'
-            GROUP BY ticker
-            ORDER BY ticker
+            GROUP BY ticker ORDER BY ticker
         """)
         rows = cur.fetchall()
         if rows:
-            for ticker, trades, pnl, wins in rows:
-                wr = f"{wins/trades*100:.0f}%" if trades > 0 else "N/A"
-                info(f"  {ticker}",
-                     f"{trades} trades, P&L=${pnl:+.2f}, win_rate={wr}")
+            for ticker, n, pnl, wins in rows:
+                wr = f"{wins/n*100:.0f}%" if n > 0 else "N/A"
+                note(f"  {ticker:10s} {n} trades  P&L=${pnl:+.2f}  WR={wr}")
         else:
-            info("  No closed trades in last 7 days")
-
-        # Highlight missing tickers
-        traded_tickers = {r[0] for r in rows} if rows else set()
-        missing = set(TICKERS) - traded_tickers
-        for t in missing:
-            warn(f"  {t}", "No trades in last 7 days")
+            note("  No closed trades in last 7 days")
+        traded = {r[0] for r in rows} if rows else set()
+        for t in set(TICKERS) - traded:
+            note(f"  {Y}{t:10s} no trades last 7d{W}")
     except Exception as e:
-        warn(f"Closed trades query failed: {e}")
+        note(f"  Query failed: {e}")
         conn.rollback()
 
     cur.close()
     conn.close()
 
 except ImportError:
-    warn("database_adapter not available - skipping DB checks")
+    note("database_adapter not available - skipping DB checks")
 except Exception as e:
-    warn(f"Database connection failed: {e}")
+    fail(f"Database: {e}")
 
 
-# =========================================================================
-# 7. Trader Singleton
-# =========================================================================
-section("7. TRADER SINGLETON")
+# ── 7. LIVE TRADER (only if running in worker) ───────────────────────────
+header("7. Live Trader Singleton")
 
 try:
     from trading.agape_spot.trader import get_agape_spot_trader
     trader = get_agape_spot_trader()
     if trader:
-        info("Trader singleton", "Already initialized (running in worker)")
-        status = trader.get_status()
-        info("Status", f"enabled={status.get('status')} cycles={status.get('cycle_count')}")
-        info("Tickers", str(status.get("tickers")))
-        info("Live tickers", str(status.get("live_tickers")))
-        info("Connected", str(status.get("coinbase_connected")))
-
-        per_ticker = status.get("per_ticker", {})
-        for t, ts in per_ticker.items():
-            acct = ts.get("coinbase_account", "unknown")
+        st = trader.get_status()
+        ok(f"Trader running: cycles={st.get('cycle_count')} status={st.get('status')}")
+        for t, ts in st.get("per_ticker", {}).items():
+            acct = ts.get("coinbase_account", "?")
+            mode = ts.get("mode", "?")
             ready = ts.get("live_ready", False)
-            mode = ts.get("mode", "unknown")
-            open_pos = ts.get("open_positions", 0)
-            info(f"  {t}", f"mode={mode} account={acct} live_ready={ready} open={open_pos}")
+            note(f"  {t:10s} mode={mode:5s} account={acct:10s} live_ready={ready}")
     else:
-        info("Trader singleton", "Not initialized (run from Render shell, not worker)")
-        info("  This is expected", "The trader is created by the scheduler in the worker process")
-
-except ImportError as e:
-    warn(f"Trader import failed: {e}")
+        note("Trader not initialized (normal in shell - it runs in the worker process)")
 except Exception as e:
-    warn(f"Trader check failed: {e}")
+    note(f"Trader check: {e}")
 
 
-# =========================================================================
-# Summary
-# =========================================================================
-section("SUMMARY")
+# ── SUMMARY ───────────────────────────────────────────────────────────────
+header("SUMMARY")
 
-if errors:
-    print(f"\n  {FAIL} {len(errors)} FAILURES:")
-    for e in errors:
-        print(f"       - {e}")
+if fails == 0:
+    print(f"\n  {G}ALL CHECKS PASSED{W}")
+    print(f"\n  Wait 5-10 min after deploy, then re-run to confirm scans")
+    print(f"  show real signals for all 4 coins (not NO_MARKET_DATA).\n")
 else:
-    print(f"\n  {PASS} All checks passed!")
-
-if warnings:
-    print(f"\n  {WARN} {len(warnings)} WARNINGS:")
-    for w in warnings:
-        print(f"       - {w}")
-
-print()
-print("  Next steps:")
-if any("COINBASE" in e for e in errors):
-    print("  1. Verify COINBASE_API_KEY/SECRET env vars are set in Render")
-if any("COINGLASS" in e for e in errors):
-    print("  2. Verify COINGLASS_API_KEY env var is set in Render")
-if not errors:
-    print("  1. Deploy this branch to Render")
-    print("  2. After deploy, run this script again in Render shell")
-    print("  3. Check scan activity after 5-10 minutes for all 4 tickers")
-    print("  4. Verify scans show LONG or market data signals (not NO_MARKET_DATA)")
-
-print()
+    print(f"\n  {R}{fails} FAILURE(S){W}")
+    print(f"\n  Fix the issues above and re-run.\n")
