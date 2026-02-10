@@ -587,6 +587,7 @@ class AgapeSpotTrader:
                     )
 
             record_spot_trade_outcome(
+                ticker=ticker,
                 direction="LONG",
                 is_win=won,
                 scan_number=self._cycle_count,
