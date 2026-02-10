@@ -494,8 +494,9 @@ class AgapeSpotSignalGenerator:
 
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
 
-        # Risk per unit based on 2% stop distance
-        stop_distance_pct = 0.02
+        # Risk per unit based on per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
+        exit_params = self.config.get_exit_params(ticker)
+        stop_distance_pct = exit_params["max_unrealized_loss_pct"] / 100
         risk_per_unit = spot_price * stop_distance_pct
 
         if risk_per_unit <= 0:
@@ -519,17 +520,25 @@ class AgapeSpotSignalGenerator:
         return (quantity, round(actual_risk, 2))
 
     def _calculate_levels(self, spot: float, market_data: Dict, ticker: str = "ETH-USD") -> Tuple[float, float]:
-        """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above."""
-        stop_pct = 0.02
-        target_pct = 0.03
+        """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above.
+
+        Uses per-ticker exit params: altcoins get tighter stops and targets
+        for the quick-scalp strategy (small range, frequent trades).
+        """
+        exit_params = self.config.get_exit_params(ticker)
+        max_loss_pct = exit_params["max_unrealized_loss_pct"]
+
+        # Base stop/target from per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
+        stop_pct = max_loss_pct / 100
+        target_pct = stop_pct * 2  # 2:1 reward:risk
 
         squeeze = market_data.get("squeeze_risk", "LOW")
         if squeeze == "HIGH":
-            stop_pct = 0.025
-            target_pct = 0.04
+            stop_pct *= 1.25
+            target_pct *= 1.33
         elif squeeze == "ELEVATED":
-            stop_pct = 0.022
-            target_pct = 0.035
+            stop_pct *= 1.1
+            target_pct *= 1.17
 
         near_long_liq = market_data.get("nearest_long_liq")
         near_short_liq = market_data.get("nearest_short_liq")

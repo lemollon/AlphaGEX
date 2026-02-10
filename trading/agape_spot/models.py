@@ -26,6 +26,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_per_trade": 1.0,
         "quantity_decimals": 4,
         "price_decimals": 2,
+        # ETH exit params: wider trail for bigger moves
+        "no_loss_activation_pct": 1.5,
+        "no_loss_trail_distance_pct": 1.25,
+        "max_unrealized_loss_pct": 1.5,
+        "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
+        "max_hold_hours": 6,
     },
     "XRP-USD": {
         "symbol": "XRP",
@@ -37,6 +43,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_per_trade": 5000.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
+        # XRP exit params: quick scalp — small range, take sub-dollar profits
+        "no_loss_activation_pct": 0.3,
+        "no_loss_trail_distance_pct": 0.25,
+        "max_unrealized_loss_pct": 0.75,
+        "no_loss_profit_target_pct": 1.0,
+        "max_hold_hours": 2,
     },
     "SHIB-USD": {
         "symbol": "SHIB",
@@ -48,6 +60,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_per_trade": 100000000.0,
         "quantity_decimals": 0,
         "price_decimals": 8,
+        # SHIB exit params: quick scalp — meme coin, take profits fast
+        "no_loss_activation_pct": 0.3,
+        "no_loss_trail_distance_pct": 0.25,
+        "max_unrealized_loss_pct": 0.75,
+        "no_loss_profit_target_pct": 1.0,
+        "max_hold_hours": 2,
     },
     "DOGE-USD": {
         "symbol": "DOGE",
@@ -59,6 +77,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_per_trade": 50000.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
+        # DOGE exit params: quick scalp — already profitable at 64% WR
+        "no_loss_activation_pct": 0.3,
+        "no_loss_trail_distance_pct": 0.25,
+        "max_unrealized_loss_pct": 0.75,
+        "no_loss_profit_target_pct": 1.0,
+        "max_hold_hours": 2,
     },
 }
 
@@ -156,6 +180,22 @@ class AgapeSpotConfig:
     def get_starting_capital(self, ticker: str) -> float:
         """Get starting capital for a specific ticker (paper tracking)."""
         return self.get_ticker_config(ticker).get("starting_capital", 1000.0)
+
+    def get_exit_params(self, ticker: str) -> Dict[str, Any]:
+        """Get per-ticker exit parameters (trail, loss, hold).
+
+        Each ticker in SPOT_TICKERS can override the shared config defaults.
+        This enables quick-scalp settings for altcoins (tight trail, fast exits)
+        while ETH keeps wider parameters for bigger moves.
+        """
+        cfg = self.get_ticker_config(ticker)
+        return {
+            "no_loss_activation_pct": cfg.get("no_loss_activation_pct", self.no_loss_activation_pct),
+            "no_loss_trail_distance_pct": cfg.get("no_loss_trail_distance_pct", self.no_loss_trail_distance_pct),
+            "max_unrealized_loss_pct": cfg.get("max_unrealized_loss_pct", self.max_unrealized_loss_pct),
+            "no_loss_profit_target_pct": cfg.get("no_loss_profit_target_pct", self.no_loss_profit_target_pct),
+            "max_hold_hours": cfg.get("max_hold_hours", self.max_hold_hours),
+        }
 
     def get_trading_capital(self, ticker: str) -> float:
         """Get capital used for position sizing.
