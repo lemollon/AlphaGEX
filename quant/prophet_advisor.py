@@ -333,6 +333,9 @@ class ProphetPrediction:
     model_loaded_at: Optional[str] = None  # ISO timestamp when model was loaded
     is_model_fresh: bool = True  # True if model < 24 hours old
 
+    # Phase 3: Which sub-model made this prediction
+    _model_type: str = 'combined_v3'  # 'ic_model', 'directional_model', or 'combined_v3'
+
 
 @dataclass
 class StrategyRecommendation:
@@ -1363,8 +1366,67 @@ class ProphetAdvisor:
     - Real-time outcome updates
     """
 
-    # V3 feature columns: cyclical day encoding, VRP, longer win rate horizon
-    # Matches WISDOM V3 patterns for consistency across ML advisory layer
+    # =========================================================================
+    # STRATEGY MODEL MAP (Phase 3: Strategy-Aware Sub-Models)
+    # Maps each bot to its sub-model type. Only this map needs updating
+    # when a new bot is added or a bot changes strategy.
+    # =========================================================================
+    STRATEGY_MODEL_MAP = {
+        'FORTRESS': 'ic_model',       # SPY 2DTE Iron Condor
+        'ANCHOR': 'ic_model',         # SPX weekly Iron Condor
+        'TITAN': 'ic_model',          # SPX aggressive Iron Condor
+        'PEGASUS': 'ic_model',        # SPX weekly Iron Condor (conservative)
+        'SOLOMON': 'directional_model',  # SPY directional spreads
+        'GIDEON': 'directional_model',   # SPY directional (SOLOMON variant)
+        'LAZARUS': 'directional_model',  # SPY directional calls
+        'CORNERSTONE': 'directional_model',  # SPY Cash-Secured Puts
+        'SAMSON': 'ic_model',         # SPX IC (ANCHOR variant)
+        'JUBILEE': 'ic_model',        # SPX IC (ANCHOR variant)
+    }
+
+    # IC sub-model: base features + wall position, Friday flag
+    IC_FEATURE_COLS = [
+        'vix',
+        'vix_percentile_30d',
+        'vix_change_1d',
+        'day_of_week_sin',
+        'day_of_week_cos',
+        'price_change_1d',
+        'expected_move_pct',
+        'volatility_risk_premium',
+        'win_rate_60d',
+        'gex_normalized',
+        'gex_regime_positive',
+        'gex_distance_to_flip_pct',
+        'gex_between_walls',
+        # IC-specific features (Phase 2: absorb post-ML rules)
+        'position_in_wall_range_pct',  # Where price sits between GEX walls (0-100)
+        'dist_to_nearest_wall_pct',    # Distance to closest wall as % of price
+        'is_friday',                   # Binary: expiration day risk
+    ]
+
+    # Directional sub-model: base features + flip distance, momentum
+    DIRECTIONAL_FEATURE_COLS = [
+        'vix',
+        'vix_percentile_30d',
+        'vix_change_1d',
+        'day_of_week_sin',
+        'day_of_week_cos',
+        'price_change_1d',
+        'expected_move_pct',
+        'volatility_risk_premium',
+        'win_rate_60d',
+        'gex_normalized',
+        'gex_regime_positive',
+        'gex_distance_to_flip_pct',
+        'gex_between_walls',
+        # Directional-specific features (Phase 2: absorb post-ML rules)
+        'flip_distance_pct',           # Abs distance to flip as % of price
+        'is_friday',                   # Binary: 0DTE + weekend gap risk
+        'direction_confidence',        # ORION direction confidence (0-1)
+    ]
+
+    # V3 feature columns (combined model — backward compat fallback)
     FEATURE_COLS = [
         'vix',
         'vix_percentile_30d',
@@ -1381,6 +1443,19 @@ class ProphetAdvisor:
         'gex_distance_to_flip_pct',
         'gex_between_walls',
     ]
+
+    # =========================================================================
+    # RULE RETIREMENT TRACKER (Phase 4)
+    # When a new feature proves the model can learn a pattern, retire the rule.
+    # Set to True ONLY after A/B validation shows model-with-feature matches
+    # or beats model-with-feature-and-rule.
+    # =========================================================================
+    RETIRED_RULES = {
+        'friday_penalty': False,        # SOLOMON -0.05 Friday penalty → is_friday feature
+        'wall_proximity_boost': False,   # SOLOMON +0.10 wall boost → position_in_wall_range_pct
+        'flip_filter': False,            # SOLOMON flip distance filter → flip_distance_pct feature
+        'anchor_friday_skip': False,     # ANCHOR Mon/Fri VIX skip → is_friday feature
+    }
 
     # V2 features with VIX regime for strategy selection (backward compat)
     FEATURE_COLS_V2 = [
@@ -1422,6 +1497,7 @@ class ProphetAdvisor:
                 - Integrates Ensemble signals for context
                 - Acts as bot-specific adapter rather than decision maker
         """
+        # Combined model (backward compat / fallback)
         self.model = None
         self.calibrated_model = None
         self.scaler = None
@@ -1431,6 +1507,38 @@ class ProphetAdvisor:
         self._has_gex_features = False
         self._feature_version = 3  # V3 features (cyclical day, VRP, 60d win rate)
         self._trained_feature_cols = self.FEATURE_COLS  # Track which features model uses
+
+        # =========================================================================
+        # SUB-MODELS (Phase 3: Strategy-Aware)
+        # Each sub-model has its own GBC, calibration, scaler, and thresholds.
+        # Falls back to combined model if sub-model not available.
+        # =========================================================================
+        self._sub_models: Dict[str, Dict[str, Any]] = {
+            'ic_model': {
+                'model': None,
+                'calibrated_model': None,
+                'scaler': None,
+                'is_trained': False,
+                'feature_cols': self.IC_FEATURE_COLS,
+                'base_rate': None,
+                'high_threshold': 0.65,
+                'low_threshold': 0.45,
+                'training_metrics': None,
+                'model_version': '0.0.0',
+            },
+            'directional_model': {
+                'model': None,
+                'calibrated_model': None,
+                'scaler': None,
+                'is_trained': False,
+                'feature_cols': self.DIRECTIONAL_FEATURE_COLS,
+                'base_rate': None,
+                'high_threshold': 0.65,
+                'low_threshold': 0.45,
+                'training_metrics': None,
+                'model_version': '0.0.0',
+            },
+        }
 
         # =========================================================================
         # MODEL STALENESS TRACKING (Issue #1 fix)
@@ -2592,8 +2700,8 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("FORTRESS", "INPUT", input_data)
 
-        # Get base prediction
-        base_pred = self._get_base_prediction(context)
+        # Get base prediction (Phase 3: tries IC sub-model first)
+        base_pred = self._get_base_prediction(context, bot_name='FORTRESS')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("FORTRESS", "ML_OUTPUT", {
@@ -2899,7 +3007,7 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("CORNERSTONE", "INPUT", input_data)
 
-        base_pred = self._get_base_prediction(context)
+        base_pred = self._get_base_prediction(context, bot_name='CORNERSTONE')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("CORNERSTONE", "ML_OUTPUT", {
@@ -3000,7 +3108,7 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("LAZARUS", "INPUT", input_data)
 
-        base_pred = self._get_base_prediction(context)
+        base_pred = self._get_base_prediction(context, bot_name='LAZARUS')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("LAZARUS", "ML_OUTPUT", {
@@ -3146,7 +3254,7 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow(bot_name, "INPUT", input_data)
 
-        base_pred = self._get_base_prediction(context)
+        base_pred = self._get_base_prediction(context, bot_name=bot_name)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow(bot_name, "ML_OUTPUT", {
@@ -3693,8 +3801,8 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("ANCHOR", "INPUT", input_data)
 
-        # Get base prediction
-        base_pred = self._get_base_prediction(context)
+        # Get base prediction (Phase 3: tries IC sub-model first)
+        base_pred = self._get_base_prediction(context, bot_name='ANCHOR')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("ANCHOR", "ML_OUTPUT", {
@@ -3944,11 +4052,21 @@ class ProphetAdvisor:
     # BASE PREDICTION
     # =========================================================================
 
-    def _get_base_prediction(self, context: MarketContext) -> Dict[str, Any]:
+    def _get_base_prediction(self, context: MarketContext, bot_name: str = None) -> Dict[str, Any]:
         """Get base ML prediction from context.
+
+        Phase 3: Tries strategy-specific sub-model first (if bot_name provided and
+        sub-model trained), then falls back to combined V3 model.
 
         V2: Supports V3 features (cyclical day, VRP) with backward compat for V2/V1 models.
         """
+        # Phase 3: Try sub-model first
+        if bot_name and hasattr(self, '_sub_models'):
+            sub_pred = self._get_sub_model_prediction(context, bot_name)
+            if sub_pred is not None:
+                logger.debug(f"[{bot_name}] Using {sub_pred.get('model_used', 'sub')} model")
+                return sub_pred
+
         if not self.is_trained:
             return self._fallback_prediction(context)
 
@@ -4040,7 +4158,8 @@ class ProphetAdvisor:
         return {
             'win_probability': win_probability,
             'top_factors': top_factors,
-            'probabilities': {'win': float(proba[1]), 'loss': float(proba[0])}
+            'probabilities': {'win': float(proba[1]), 'loss': float(proba[0])},
+            'model_used': 'combined_v3',
         }
 
     def _fallback_prediction(self, context: MarketContext) -> Dict[str, Any]:
@@ -4575,6 +4694,394 @@ class ProphetAdvisor:
                 logger.warning(f"Claude pattern analysis failed: {e}")
 
         return self.training_metrics
+
+    # =========================================================================
+    # PHASE 3: STRATEGY-SPECIFIC SUB-MODEL TRAINING
+    # =========================================================================
+
+    def train_sub_models(
+        self,
+        backtest_results: Dict[str, Any],
+        min_samples: int = 30
+    ) -> Dict[str, Optional[TrainingMetrics]]:
+        """
+        Train IC and Directional sub-models from chronicles data.
+
+        Filters training data by bot name using STRATEGY_MODEL_MAP, then trains
+        each sub-model on its strategy-specific feature set. Falls back to
+        combined model if a sub-model has insufficient data.
+
+        Args:
+            backtest_results: Chronicles backtest results with 'all_trades'
+            min_samples: Minimum trades required per sub-model (default 30)
+
+        Returns:
+            Dict mapping model_type to TrainingMetrics (or None if skipped)
+        """
+        if not ML_AVAILABLE:
+            raise ImportError("ML libraries required")
+
+        # First extract all features (V3 base features)
+        df = self.extract_features_from_chronicles(backtest_results)
+        if df.empty:
+            raise ValueError("No data to train on")
+
+        results = {}
+
+        # Determine which bot each trade came from (if available in data)
+        # Chronicles data may not have bot_name, in which case train combined model
+        has_bot_names = 'bot_name' in df.columns
+        if not has_bot_names:
+            logger.info("No bot_name in training data — training combined model only")
+            # Train combined model (existing path)
+            metrics = self.train_from_chronicles(backtest_results, min_samples=min_samples)
+            results['combined_v3'] = metrics
+            return results
+
+        # Split data by strategy type
+        ic_bots = [bot for bot, model in self.STRATEGY_MODEL_MAP.items() if model == 'ic_model']
+        dir_bots = [bot for bot, model in self.STRATEGY_MODEL_MAP.items() if model == 'directional_model']
+
+        ic_df = df[df['bot_name'].isin(ic_bots)]
+        dir_df = df[df['bot_name'].isin(dir_bots)]
+
+        logger.info(f"Sub-model data split: IC={len(ic_df)} trades ({ic_bots}), "
+                     f"Directional={len(dir_df)} trades ({dir_bots})")
+
+        # Train IC sub-model
+        if len(ic_df) >= min_samples:
+            try:
+                ic_metrics = self._train_single_sub_model(
+                    ic_df, 'ic_model', self.IC_FEATURE_COLS
+                )
+                results['ic_model'] = ic_metrics
+                logger.info(f"IC sub-model trained: {ic_metrics.accuracy:.1%} accuracy, "
+                           f"{ic_metrics.total_samples} samples")
+            except Exception as e:
+                logger.warning(f"IC sub-model training failed: {e}")
+                results['ic_model'] = None
+        else:
+            logger.warning(f"IC sub-model: insufficient data ({len(ic_df)} < {min_samples})")
+            results['ic_model'] = None
+
+        # Train Directional sub-model
+        if len(dir_df) >= min_samples:
+            try:
+                dir_metrics = self._train_single_sub_model(
+                    dir_df, 'directional_model', self.DIRECTIONAL_FEATURE_COLS
+                )
+                results['directional_model'] = dir_metrics
+                logger.info(f"Directional sub-model trained: {dir_metrics.accuracy:.1%} accuracy, "
+                           f"{dir_metrics.total_samples} samples")
+            except Exception as e:
+                logger.warning(f"Directional sub-model training failed: {e}")
+                results['directional_model'] = None
+        else:
+            logger.warning(f"Directional sub-model: insufficient data ({len(dir_df)} < {min_samples})")
+            results['directional_model'] = None
+
+        # Always train combined model as fallback
+        metrics = self.train_from_chronicles(backtest_results, min_samples=min_samples)
+        results['combined_v3'] = metrics
+
+        self.live_log.log("SUBTRAIN_DONE", "Sub-model training complete", {
+            "ic_trained": results.get('ic_model') is not None,
+            "dir_trained": results.get('directional_model') is not None,
+            "ic_samples": len(ic_df),
+            "dir_samples": len(dir_df),
+        })
+
+        return results
+
+    def _train_single_sub_model(
+        self,
+        df: 'pd.DataFrame',
+        model_type: str,
+        feature_cols: List[str]
+    ) -> TrainingMetrics:
+        """
+        Train a single sub-model (IC or Directional) on filtered data.
+
+        Uses same GBC hyperparameters, sample weighting, and calibration as
+        the combined model but with strategy-specific feature set.
+
+        Args:
+            df: Filtered DataFrame (only trades for this strategy)
+            model_type: 'ic_model' or 'directional_model'
+            feature_cols: Which features this sub-model uses
+        """
+        sub = self._sub_models[model_type]
+
+        # Compute strategy-specific features that may not be in base extraction
+        df = self._compute_strategy_features(df, model_type)
+
+        # Use only columns that exist in the DataFrame
+        available_cols = [c for c in feature_cols if c in df.columns]
+        missing_cols = [c for c in feature_cols if c not in df.columns]
+
+        if missing_cols:
+            logger.info(f"[{model_type}] Missing features (imputed as 0): {missing_cols}")
+            for col in missing_cols:
+                df[col] = 0  # Neutral imputation for missing features
+
+            available_cols = feature_cols  # Now all exist
+
+        X = df[available_cols].values
+        y = df['is_win'].values.astype(int)
+
+        # Class imbalance: compute sample_weight
+        n_wins = int(y.sum())
+        n_losses = int(len(y) - n_wins)
+        if n_wins > 0 and n_losses > 0:
+            weight_win = n_losses / len(y)
+            weight_loss = n_wins / len(y)
+            sample_weight_array = np.where(y == 1, weight_win, weight_loss)
+        else:
+            sample_weight_array = np.ones(len(y))
+
+        base_rate = float(y.mean())
+        sub['base_rate'] = base_rate
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        tscv = TimeSeriesSplit(n_splits=min(5, max(2, len(y) // 30)))
+
+        model = GradientBoostingClassifier(
+            n_estimators=150,
+            max_depth=4,
+            learning_rate=0.1,
+            min_samples_split=20,
+            min_samples_leaf=10,
+            subsample=0.8,
+            random_state=42
+        )
+
+        accuracies, precisions, recalls, f1s, aucs, briers = [], [], [], [], [], []
+
+        for train_idx, test_idx in tscv.split(X_scaled):
+            X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+            sw_train = sample_weight_array[train_idx]
+
+            model.fit(X_train, y_train, sample_weight=sw_train)
+            y_pred = model.predict(X_test)
+            y_proba = model.predict_proba(X_test)[:, 1]
+
+            accuracies.append(accuracy_score(y_test, y_pred))
+            precisions.append(precision_score(y_test, y_pred, zero_division=0))
+            recalls.append(recall_score(y_test, y_pred, zero_division=0))
+            f1s.append(f1_score(y_test, y_pred, zero_division=0))
+            briers.append(brier_score_loss(y_test, y_proba))
+            try:
+                aucs.append(roc_auc_score(y_test, y_proba))
+            except ValueError:
+                aucs.append(0.5)
+
+        # Final fit on all data
+        model.fit(X_scaled, y, sample_weight=sample_weight_array)
+
+        # Calibrate
+        calibrated = CalibratedClassifierCV(model, method='isotonic', cv=min(3, max(2, n_losses)))
+        calibrated.fit(X_scaled, y)
+
+        # Store in sub-model registry
+        sub['model'] = model
+        sub['calibrated_model'] = calibrated
+        sub['scaler'] = scaler
+        sub['is_trained'] = True
+        sub['feature_cols'] = available_cols
+        sub['model_version'] = f"3.1.0-{model_type}"
+
+        # Set adaptive thresholds for this sub-model
+        if base_rate > 0.5:
+            sub['low_threshold'] = base_rate - 0.15
+            sub['high_threshold'] = base_rate - 0.05
+        logger.info(f"[{model_type}] Adaptive thresholds: SKIP < {sub['low_threshold']:.2f}, "
+                     f"FULL >= {sub['high_threshold']:.2f} (base_rate={base_rate:.2f})")
+
+        brier_cv = np.mean(briers) if briers else 0.25
+        feature_importances = dict(zip(available_cols, model.feature_importances_))
+
+        metrics = TrainingMetrics(
+            accuracy=np.mean(accuracies),
+            precision=np.mean(precisions),
+            recall=np.mean(recalls),
+            f1_score=np.mean(f1s),
+            auc_roc=np.mean(aucs),
+            brier_score=brier_cv,
+            win_rate_predicted=float(calibrated.predict_proba(X_scaled)[:, 1].mean()),
+            win_rate_actual=y.mean(),
+            total_samples=len(df),
+            train_samples=int(len(df) * 0.8),
+            test_samples=int(len(df) * 0.2),
+            positive_samples=n_wins,
+            negative_samples=n_losses,
+            feature_importances=feature_importances,
+            training_date=datetime.now().isoformat(),
+            model_version=sub['model_version']
+        )
+        sub['training_metrics'] = metrics
+
+        # Log feature importances (Phase 2 validation)
+        sorted_features = sorted(feature_importances.items(), key=lambda x: -x[1])
+        logger.info(f"[{model_type}] Top features: {sorted_features[:5]}")
+
+        return metrics
+
+    def _compute_strategy_features(self, df: 'pd.DataFrame', model_type: str) -> 'pd.DataFrame':
+        """
+        Compute strategy-specific features that aren't in the base feature extraction.
+
+        IC features: position_in_wall_range_pct, dist_to_nearest_wall_pct, is_friday
+        Directional features: flip_distance_pct, is_friday, direction_confidence
+        """
+        df = df.copy()
+
+        # is_friday — common to both strategies
+        if 'is_friday' not in df.columns:
+            if 'day_of_week' in df.columns:
+                df['is_friday'] = (df['day_of_week'] == 4).astype(int)
+            else:
+                df['is_friday'] = 0
+
+        if model_type == 'ic_model':
+            # position_in_wall_range_pct: where price sits between GEX walls
+            if 'position_in_wall_range_pct' not in df.columns:
+                gex_call = df.get('gex_call_wall', pd.Series([0] * len(df)))
+                gex_put = df.get('gex_put_wall', pd.Series([0] * len(df)))
+                spot = df.get('spot_at_entry', df.get('open_price', pd.Series([0] * len(df))))
+                wall_range = gex_call - gex_put
+                df['position_in_wall_range_pct'] = np.where(
+                    wall_range > 0,
+                    (spot - gex_put) / wall_range * 100,
+                    50.0  # Neutral if walls missing
+                )
+                df['position_in_wall_range_pct'] = df['position_in_wall_range_pct'].clip(0, 100)
+
+            # dist_to_nearest_wall_pct
+            if 'dist_to_nearest_wall_pct' not in df.columns:
+                gex_call = df.get('gex_call_wall', pd.Series([0] * len(df)))
+                gex_put = df.get('gex_put_wall', pd.Series([0] * len(df)))
+                spot = df.get('spot_at_entry', df.get('open_price', pd.Series([0] * len(df))))
+                dist_call = np.where(spot > 0, abs(gex_call - spot) / spot * 100, 5.0)
+                dist_put = np.where(spot > 0, abs(spot - gex_put) / spot * 100, 5.0)
+                df['dist_to_nearest_wall_pct'] = np.minimum(dist_call, dist_put)
+                df['dist_to_nearest_wall_pct'] = df['dist_to_nearest_wall_pct'].clip(0, 20)
+
+        elif model_type == 'directional_model':
+            # flip_distance_pct
+            if 'flip_distance_pct' not in df.columns:
+                df['flip_distance_pct'] = df.get('gex_distance_to_flip_pct',
+                                                  pd.Series([0.0] * len(df))).abs()
+                df['flip_distance_pct'] = df['flip_distance_pct'].clip(0, 20)
+
+            # direction_confidence — not available in historical data, impute as 0.5
+            if 'direction_confidence' not in df.columns:
+                df['direction_confidence'] = 0.5
+
+        return df
+
+    def _get_sub_model_prediction(self, context: MarketContext, bot_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get prediction from the appropriate strategy sub-model.
+
+        Routes to IC or Directional sub-model based on STRATEGY_MODEL_MAP.
+        Returns None if sub-model not available (caller should fall back to combined).
+        """
+        model_type = self.STRATEGY_MODEL_MAP.get(bot_name, None)
+        if model_type is None:
+            logger.debug(f"Bot {bot_name} not in STRATEGY_MODEL_MAP — using combined model")
+            return None
+
+        sub = self._sub_models.get(model_type)
+        if sub is None or not sub['is_trained']:
+            return None
+
+        # Build feature vector for this sub-model
+        gex_regime_positive = 1 if context.gex_regime == GEXRegime.POSITIVE else 0
+        gex_between_walls = 1 if context.gex_between_walls else 0
+        day_sin = math.sin(2 * math.pi * context.day_of_week / 5)
+        day_cos = math.cos(2 * math.pi * context.day_of_week / 5)
+
+        # VRP proxy (same as combined model, V3 fix)
+        vrp_ratio = 0.10 + 0.004 * min(context.vix, 50)
+        volatility_risk_premium = context.expected_move_pct * vrp_ratio
+
+        # Base features (common to both sub-models)
+        base_features = {
+            'vix': context.vix,
+            'vix_percentile_30d': context.vix_percentile_30d,
+            'vix_change_1d': context.vix_change_1d,
+            'day_of_week_sin': day_sin,
+            'day_of_week_cos': day_cos,
+            'price_change_1d': context.price_change_1d,
+            'expected_move_pct': context.expected_move_pct,
+            'volatility_risk_premium': volatility_risk_premium,
+            'win_rate_60d': context.win_rate_30d,  # Field name maps to 60d value
+            'gex_normalized': context.gex_normalized,
+            'gex_regime_positive': gex_regime_positive,
+            'gex_distance_to_flip_pct': context.gex_distance_to_flip_pct,
+            'gex_between_walls': gex_between_walls,
+        }
+
+        # Strategy-specific features
+        if model_type == 'ic_model':
+            # Compute wall position from context
+            wall_range = context.gex_call_wall - context.gex_put_wall
+            if wall_range > 0 and context.spot_price > 0:
+                position_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
+            else:
+                position_pct = 50.0
+            position_pct = max(0.0, min(100.0, position_pct))
+
+            dist_call = abs(context.gex_call_wall - context.spot_price) / context.spot_price * 100 if context.spot_price > 0 else 5.0
+            dist_put = abs(context.spot_price - context.gex_put_wall) / context.spot_price * 100 if context.spot_price > 0 else 5.0
+
+            base_features['position_in_wall_range_pct'] = position_pct
+            base_features['dist_to_nearest_wall_pct'] = min(dist_call, dist_put)
+            base_features['is_friday'] = 1 if context.day_of_week == 4 else 0
+
+        elif model_type == 'directional_model':
+            flip_dist = abs(context.gex_distance_to_flip_pct) if context.gex_distance_to_flip_pct else 0.0
+            base_features['flip_distance_pct'] = min(flip_dist, 20.0)
+            base_features['is_friday'] = 1 if context.day_of_week == 4 else 0
+            # Direction confidence from ORION — set to 0.5 (neutral) at base prediction level.
+            # SOLOMON's advice method will override with actual ORION confidence in the blend.
+            base_features['direction_confidence'] = 0.5
+
+        # Build feature vector in correct column order
+        feature_vector = []
+        for col in sub['feature_cols']:
+            feature_vector.append(base_features.get(col, 0.0))
+
+        features = np.array([feature_vector])
+        features_scaled = sub['scaler'].transform(features)
+
+        if sub['calibrated_model']:
+            proba_result = sub['calibrated_model'].predict_proba(features_scaled)
+        else:
+            proba_result = sub['model'].predict_proba(features_scaled)
+
+        if proba_result is None or len(proba_result) == 0:
+            return None
+        proba = proba_result[0]
+        if len(proba) < 2:
+            return None
+
+        win_probability = float(proba[1])
+
+        feature_importance = dict(zip(sub['feature_cols'], sub['model'].feature_importances_))
+        top_factors = sorted(feature_importance.items(), key=lambda x: -x[1])[:3]
+
+        return {
+            'win_probability': win_probability,
+            'top_factors': top_factors,
+            'probabilities': {'win': float(proba[1]), 'loss': float(proba[0])},
+            'model_used': model_type,
+            'model_version': sub['model_version'],
+            'feature_count': len(sub['feature_cols']),
+        }
 
     # =========================================================================
     # DATABASE PERSISTENCE
