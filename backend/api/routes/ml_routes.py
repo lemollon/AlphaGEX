@@ -581,45 +581,93 @@ async def get_strategy_explanation():
 @router.get("/data-quality")
 async def check_data_quality():
     """
-    Check quality of your training data.
+    Check quality of WISDOM training data.
 
-    More data = better ML. Better data = better ML.
+    Checks both CHRONICLES backtest trades and live trade outcomes
+    to give a unified view of available training data.
     """
     try:
-        from trading.spx_wheel_ml import get_outcome_tracker
+        from database_adapter import get_connection
 
-        tracker = get_outcome_tracker()
-        outcomes = tracker.get_all_outcomes()
+        conn = get_connection()
+        cursor = conn.cursor()
 
-        if not outcomes:
+        total_trades = 0
+        wins = 0
+        losses = 0
+        total_pnl = 0.0
+
+        # Source 1: CHRONICLES backtest trades (primary training source)
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE outcome = 'MAX_PROFIT') as wins,
+                    COUNT(*) FILTER (WHERE outcome != 'MAX_PROFIT') as losses,
+                    COALESCE(SUM(COALESCE(total_pnl, pnl_per_spread, 0)), 0) as total_pnl
+                FROM zero_dte_backtest_trades
+                WHERE outcome IS NOT NULL
+            """)
+            row = cursor.fetchone()
+            if row:
+                total_trades += row[0] or 0
+                wins += row[1] or 0
+                losses += row[2] or 0
+                total_pnl += float(row[3] or 0)
+        except Exception as e:
+            logger.debug(f"Could not query zero_dte_backtest_trades: {e}")
+            conn.rollback()
+
+        # Source 2: Live trade outcomes (feedback loop)
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE is_win = true) as wins,
+                    COUNT(*) FILTER (WHERE is_win = false) as losses,
+                    COALESCE(SUM(COALESCE(net_pnl, 0)), 0) as total_pnl
+                FROM fortress_ml_outcomes
+                WHERE actual_outcome IS NOT NULL
+            """)
+            row = cursor.fetchone()
+            if row:
+                total_trades += row[0] or 0
+                wins += row[1] or 0
+                losses += row[2] or 0
+                total_pnl += float(row[3] or 0)
+        except Exception as e:
+            logger.debug(f"Could not query fortress_ml_outcomes: {e}")
+            conn.rollback()
+
+        conn.close()
+
+        if total_trades == 0:
             return {
                 "success": True,
                 "data": {
                     "total_trades": 0,
-                    "message": "No trade outcomes recorded yet. Record trades using /record-entry and /record-outcome",
+                    "message": "No training data available. Run CHRONICLES backtests to generate training data.",
                     "quality": "NO_DATA"
                 }
             }
 
-        wins = sum(1 for o in outcomes if o.is_win())
-        losses = len(outcomes) - wins
-        total_pnl = sum(o.pnl for o in outcomes)
-        avg_pnl = total_pnl / len(outcomes)
+        avg_pnl = total_pnl / total_trades if total_trades > 0 else 0
+        win_rate = round(wins / total_trades * 100, 1) if total_trades > 0 else 0
 
         return {
             "success": True,
             "data": {
-                "total_trades": len(outcomes),
+                "total_trades": total_trades,
                 "wins": wins,
                 "losses": losses,
-                "win_rate": round(wins / len(outcomes) * 100, 1),
+                "win_rate": win_rate,
                 "total_pnl": round(total_pnl, 2),
                 "avg_pnl": round(avg_pnl, 2),
 
-                "quality": _assess_data_quality(len(outcomes)),
-                "can_train": len(outcomes) >= 30,
+                "quality": _assess_data_quality(total_trades),
+                "can_train": total_trades >= 30,
 
-                "recommendation": _get_data_recommendation(len(outcomes), wins / len(outcomes) if outcomes else 0)
+                "recommendation": _get_data_recommendation(total_trades, wins / total_trades if total_trades > 0 else 0)
             }
         }
 
@@ -1132,18 +1180,34 @@ async def get_wisdom_status():
                 "brier_score": safe_float(tm.brier_score if hasattr(tm, 'brier_score') else None)
             }
 
-        # Count training data from outcomes table
-        training_data_count = 0
+        # Count training data from multiple sources
+        live_outcome_count = 0
+        chronicles_count = 0
         try:
             from database_adapter import get_connection
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM fortress_ml_outcomes WHERE actual_outcome IS NOT NULL")
-            training_data_count = cursor.fetchone()[0]
+
+            # Source 1: Live outcomes (fortress_ml_outcomes with actual results)
+            try:
+                cursor.execute("SELECT COUNT(*) FROM fortress_ml_outcomes WHERE actual_outcome IS NOT NULL")
+                live_outcome_count = cursor.fetchone()[0]
+            except:
+                conn.rollback()
+
+            # Source 2: CHRONICLES backtest trades (zero_dte_backtest_trades)
+            try:
+                cursor.execute("SELECT COUNT(*) FROM zero_dte_backtest_trades WHERE outcome IS NOT NULL")
+                chronicles_count = cursor.fetchone()[0]
+            except:
+                conn.rollback()
+
             conn.close()
         except:
             pass
 
+        # Total available = live outcomes + CHRONICLES backtests
+        training_data_count = live_outcome_count + chronicles_count
         can_train = training_data_count >= 30
         should_trust = model_trained and training_data_count >= 50
 
@@ -1153,6 +1217,10 @@ async def get_wisdom_status():
             "model_trained": model_trained,
             "model_version": model_version,
             "training_data_available": training_data_count,
+            "training_data_sources": {
+                "live_outcomes": live_outcome_count,
+                "chronicles_backtests": chronicles_count
+            },
             "can_train": can_train,
             "should_trust_predictions": should_trust,
             "honest_assessment": _get_sage_assessment(model_trained, training_data_count),
@@ -1358,7 +1426,7 @@ async def train_sage(min_samples: int = 30, use_chronicles: bool = True):
     Train WISDOM (FORTRESS ML Advisor) model.
 
     Can train from:
-    1. CHRONICLES backtest results (default)
+    1. CHRONICLES backtest results from database (default)
     2. Live trade outcomes
     """
     try:
@@ -1367,18 +1435,66 @@ async def train_sage(min_samples: int = 30, use_chronicles: bool = True):
         advisor = get_advisor()
 
         if use_chronicles:
-            # Train from CHRONICLES backtests
-            from backtest.zero_dte_backtest import ZeroDTEBacktester
+            # Train from CHRONICLES backtests stored in database
+            from database_adapter import get_connection
 
-            backtester = ZeroDTEBacktester()
-            results = backtester.get_recent_results(limit=500)
+            conn = get_connection()
+            cursor = conn.cursor()
 
-            if not results or len(results) < min_samples:
+            # Query backtest trades directly from zero_dte_backtest_trades table
+            # This is the same approach Prophet uses for its training
+            trades = []
+            try:
+                cursor.execute("""
+                    SELECT
+                        trade_date,
+                        underlying_price_entry,
+                        underlying_price_exit,
+                        vix_entry,
+                        outcome,
+                        COALESCE(total_pnl, pnl_per_spread) as net_pnl,
+                        pnl_percent as return_pct,
+                        day_of_week,
+                        gex_regime,
+                        spread_width,
+                        short_iv_entry
+                    FROM zero_dte_backtest_trades
+                    WHERE outcome IS NOT NULL
+                    ORDER BY trade_date
+                    LIMIT 2000
+                """)
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    trade_date, price_entry, price_exit, vix, outcome, pnl, ret_pct, dow, gex_regime, spread_width, iv = row
+                    trades.append({
+                        'trade_date': str(trade_date) if trade_date else '',
+                        'open_price': float(price_entry) if price_entry else 590.0,
+                        'close_price': float(price_exit) if price_exit else float(price_entry or 590.0),
+                        'vix': float(vix) if vix else 15.0,
+                        'expected_move_1d': float(price_entry or 590.0) * 0.01,
+                        'outcome': outcome or 'MAX_PROFIT',
+                        'net_pnl': float(pnl) if pnl else 0,
+                        'return_pct': float(ret_pct) if ret_pct else 0,
+                        'gex_regime': gex_regime or 'NEUTRAL',
+                        'gex_normalized': 0,
+                        'gex_distance_to_flip_pct': 0,
+                        'gex_between_walls': True,
+                    })
+            except Exception as e:
+                logger.warning(f"Could not query zero_dte_backtest_trades: {e}")
+                conn.rollback()
+            finally:
+                conn.close()
+
+            if not trades or len(trades) < min_samples:
                 return {
                     "success": False,
-                    "error": f"Not enough CHRONICLES backtest data. Have {len(results) if results else 0}, need {min_samples}"
+                    "error": f"Not enough CHRONICLES backtest data in database. Have {len(trades)}, need {min_samples}. Run a backtest first."
                 }
 
+            # Package as backtest_results dict for extract_features_from_chronicles
+            results = {'all_trades': trades}
             metrics = advisor.train_from_chronicles(results, min_samples=min_samples)
 
             log_ml_action(
