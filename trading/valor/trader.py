@@ -312,6 +312,29 @@ class ValorTrader:
                     self.loss_streak_pause_until = None
                     # Keep consecutive_losses count - only reset on a win
 
+            # Check Proverbs guardrails (consecutive loss kill, daily loss limit)
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    proverbs = get_proverbs_enhanced()
+                    if proverbs:
+                        consec_status = proverbs.consecutive_loss_monitor.get_tracker('VALOR')
+                        if consec_status and consec_status.triggered_kill:
+                            reason = f'Proverbs: Kill switch active ({consec_status.consecutive_losses} consecutive losses)'
+                            self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
+                                                    skip_reason=reason)
+                            self.last_scan_time = datetime.now(CENTRAL_TZ)
+                            return scan_result
+
+                        daily_status = proverbs.daily_loss_monitor.get_daily_stats('VALOR')
+                        if daily_status and daily_status.get('kill_triggered', False):
+                            reason = f'Proverbs: Daily loss limit reached (${daily_status.get("total_loss", 0):.0f})'
+                            self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
+                                                    skip_reason=reason)
+                            self.last_scan_time = datetime.now(CENTRAL_TZ)
+                            return scan_result
+                except Exception as e:
+                    logger.warning(f"Proverbs guardrail check failed (non-blocking): {e}")
+
             if open_count < self.config.max_open_positions:
                 # Generate signal
                 signal = self.signal_generator.generate_signal(

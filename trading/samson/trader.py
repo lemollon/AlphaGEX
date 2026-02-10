@@ -259,6 +259,33 @@ class SamsonTrader(MathOptimizerMixin):
             result['positions_closed'] = closed
             result['realized_pnl'] = pnl
 
+            # Check Proverbs guardrails (consecutive loss kill, daily loss limit)
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    proverbs = get_proverbs_enhanced()
+                    if proverbs:
+                        consec_status = proverbs.consecutive_loss_monitor.get_tracker('SAMSON')
+                        if consec_status and consec_status.triggered_kill:
+                            reason = f'Proverbs: Kill switch active ({consec_status.consecutive_losses} consecutive losses)'
+                            result['action'] = 'skip'
+                            result['details']['skip_reason'] = reason
+                            self.db.log("WARNING", f"SAMSON: {reason}")
+                            self._log_scan_activity(result, scan_context, skip_reason=reason)
+                            self._log_bot_decision(result, scan_context, skip_reason=reason)
+                            return result
+
+                        daily_status = proverbs.daily_loss_monitor.get_daily_stats('SAMSON')
+                        if daily_status and daily_status.get('kill_triggered', False):
+                            reason = f'Proverbs: Daily loss limit reached (${daily_status.get("total_loss", 0):.0f})'
+                            result['action'] = 'skip'
+                            result['details']['skip_reason'] = reason
+                            self.db.log("WARNING", f"SAMSON: {reason}")
+                            self._log_scan_activity(result, scan_context, skip_reason=reason)
+                            self._log_bot_decision(result, scan_context, skip_reason=reason)
+                            return result
+                except Exception as e:
+                    logger.warning(f"Proverbs guardrail check failed (non-blocking): {e}")
+
             # Try new entry (SAMSON allows multiple per day)
             # Pass early-fetched prophet_data to avoid double Prophet call (bug fix)
             position, signal = self._try_entry_with_context(prophet_data=scan_context.get('prophet_data'))

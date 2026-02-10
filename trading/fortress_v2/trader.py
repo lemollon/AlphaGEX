@@ -276,6 +276,39 @@ class FortressTrader(MathOptimizerMixin):
                 self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
                 return result
 
+            # Step 3.5: Check Proverbs guardrails (consecutive loss kill, daily loss limit)
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    proverbs = get_proverbs_enhanced()
+                    if proverbs:
+                        # Check consecutive loss kill switch
+                        consec_status = proverbs.consecutive_loss_monitor.get_tracker('FORTRESS')
+                        if consec_status and consec_status.triggered_kill:
+                            reason = f'Proverbs: Kill switch active ({consec_status.consecutive_losses} consecutive losses)'
+                            if result['action'] == 'none':
+                                result['action'] = 'skip'
+                            result['details']['skip_reason'] = reason
+                            self.db.log("WARNING", f"FORTRESS: {reason}")
+                            self._log_scan_activity(result, scan_context, reason)
+                            self._update_daily_summary(today, result)
+                            self.db.update_heartbeat("GUARDED", reason)
+                            return result
+
+                        # Check daily loss limit
+                        daily_status = proverbs.daily_loss_monitor.get_daily_stats('FORTRESS')
+                        if daily_status and daily_status.get('kill_triggered', False):
+                            reason = f'Proverbs: Daily loss limit reached (${daily_status.get("total_loss", 0):.0f})'
+                            if result['action'] == 'none':
+                                result['action'] = 'skip'
+                            result['details']['skip_reason'] = reason
+                            self.db.log("WARNING", f"FORTRESS: {reason}")
+                            self._log_scan_activity(result, scan_context, reason)
+                            self._update_daily_summary(today, result)
+                            self.db.update_heartbeat("GUARDED", reason)
+                            return result
+                except Exception as e:
+                    logger.warning(f"Proverbs guardrail check failed (non-blocking): {e}")
+
             # Step 4: Check Prophet strategy recommendation
             strategy_rec = self._check_strategy_recommendation()
             if strategy_rec:
