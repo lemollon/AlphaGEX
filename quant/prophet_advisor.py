@@ -4698,11 +4698,16 @@ class ProphetAdvisor:
                     ("actual_pnl", "REAL"),
                     ("outcome_date", "DATE"),
                     ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
-                    # New columns for feedback loop enhancements
+                    # Feedback loop enhancements (Migration 023)
                     ("position_id", "VARCHAR(100)"),
                     ("strategy_recommendation", "VARCHAR(20)"),
                     ("direction_predicted", "VARCHAR(10)"),
                     ("direction_correct", "BOOLEAN"),
+                    # Multi-prediction support (Migration 027)
+                    ("scan_timestamp", "TIMESTAMPTZ DEFAULT NOW()"),
+                    ("model_type", "VARCHAR(50) DEFAULT 'combined_v3'"),
+                    ("strategy_type", "VARCHAR(20)"),
+                    ("feature_snapshot", "JSONB"),
                 ]
                 for col_name, col_type in migration_columns:
                     try:
@@ -4743,8 +4748,14 @@ class ProphetAdvisor:
                         "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
                     }))
 
-                # Issue #3 fix: Use RETURNING to get prediction_id for outcome linking
-                # Option C: Include position_id for 1:1 prediction-to-position linking
+                # Migration 027: Plain INSERT — store every prediction, no overwrites.
+                # Old behavior: ON CONFLICT DO UPDATE → only 1 prediction per bot per day.
+                # New behavior: Multiple predictions per day, linked by position_id when available.
+                # Determine strategy_type from bot name
+                strategy_type = 'DIRECTIONAL' if prediction.bot_name.value in (
+                    'SOLOMON', 'GIDEON', 'LAZARUS'
+                ) else 'IRON_CONDOR'
+
                 cursor.execute("""
                     INSERT INTO prophet_predictions (
                         trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
@@ -4753,19 +4764,14 @@ class ProphetAdvisor:
                         suggested_sd_multiplier, model_version,
                         use_gex_walls, suggested_put_strike, suggested_call_strike,
                         reasoning, top_factors, probabilities, claude_analysis,
-                        position_id, strategy_recommendation
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (trade_date, bot_name)
-                    WHERE position_id IS NULL
-                    DO UPDATE SET
-                        advice = EXCLUDED.advice,
-                        win_probability = EXCLUDED.win_probability,
-                        confidence = EXCLUDED.confidence,
-                        reasoning = EXCLUDED.reasoning,
-                        top_factors = EXCLUDED.top_factors,
-                        probabilities = EXCLUDED.probabilities,
-                        claude_analysis = EXCLUDED.claude_analysis,
-                        timestamp = NOW()
+                        position_id, strategy_recommendation,
+                        scan_timestamp, model_type, strategy_type
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s,
+                        NOW(), %s, %s
+                    )
                     RETURNING id
                 """, (
                     trade_date,
@@ -4793,7 +4799,9 @@ class ProphetAdvisor:
                     probabilities_json,
                     claude_json,
                     position_id,
-                    strategy_recommendation
+                    strategy_recommendation,
+                    getattr(prediction, '_model_type', 'combined_v3'),
+                    strategy_type,
                 ))
 
                 # Issue #3 fix: Fetch the returned prediction_id for linking
@@ -4879,163 +4887,184 @@ class ProphetAdvisor:
         if not DB_AVAILABLE:
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        # V3 FIX: Use context manager to prevent connection leaks (was raw get_connection)
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            # Issue #3: Support both linking methods
-            # If prediction_id is provided, use it for direct linking (more robust)
-            # Otherwise, fall back to (trade_date, bot_name) composite key
-            if prediction_id:
-                # Direct linking by prediction_id - includes direction tracking (Migration 023)
-                cursor.execute("""
-                    UPDATE prophet_predictions
-                    SET prediction_used = TRUE,
-                        actual_outcome = %s,
-                        actual_pnl = %s,
-                        outcome_date = CURRENT_DATE,
-                        direction_predicted = COALESCE(%s, direction_predicted),
-                        direction_correct = %s
-                    WHERE id = %s
-                """, (outcome.value, actual_pnl, direction_predicted, direction_correct, prediction_id))
-                logger.info(f"Updated outcome for prediction_id={prediction_id}, direction_correct={direction_correct}")
-            else:
-                # Fall back to composite key linking - includes direction tracking (Migration 023)
-                cursor.execute("""
-                    UPDATE prophet_predictions
-                    SET prediction_used = TRUE,
-                        actual_outcome = %s,
-                        actual_pnl = %s,
-                        outcome_date = CURRENT_DATE,
-                        direction_predicted = COALESCE(%s, direction_predicted),
-                        direction_correct = %s
-                    WHERE trade_date = %s AND bot_name = %s
-                """, (outcome.value, actual_pnl, direction_predicted, direction_correct, trade_date, bot_name.value))
+                # Issue #3: Support both linking methods
+                # If prediction_id is provided, use it for direct linking (more robust)
+                # Otherwise, fall back to (trade_date, bot_name) composite key
+                if prediction_id:
+                    cursor.execute("""
+                        UPDATE prophet_predictions
+                        SET prediction_used = TRUE,
+                            actual_outcome = %s,
+                            actual_pnl = %s,
+                            outcome_date = CURRENT_DATE,
+                            direction_predicted = COALESCE(%s, direction_predicted),
+                            direction_correct = %s
+                        WHERE id = %s
+                    """, (outcome.value, actual_pnl, direction_predicted, direction_correct, prediction_id))
+                    logger.info(f"Updated outcome for prediction_id={prediction_id}, direction_correct={direction_correct}")
+                else:
+                    # Fall back to composite key — update the LATEST prediction for this bot+date
+                    cursor.execute("""
+                        UPDATE prophet_predictions
+                        SET prediction_used = TRUE,
+                            actual_outcome = %s,
+                            actual_pnl = %s,
+                            outcome_date = CURRENT_DATE,
+                            direction_predicted = COALESCE(%s, direction_predicted),
+                            direction_correct = %s
+                        WHERE id = (
+                            SELECT id FROM prophet_predictions
+                            WHERE trade_date = %s AND bot_name = %s
+                            ORDER BY scan_timestamp DESC NULLS LAST
+                            LIMIT 1
+                        )
+                    """, (outcome.value, actual_pnl, direction_predicted, direction_correct, trade_date, bot_name.value))
 
-            # Also store in prophet_training_outcomes for ML feedback loop
-            # First, get the original prediction features
-            if prediction_id:
-                cursor.execute("""
-                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
-                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                           win_probability, suggested_put_strike, suggested_call_strike,
-                           model_version
-                    FROM prophet_predictions
-                    WHERE id = %s
-                """, (prediction_id,))
-            else:
-                cursor.execute("""
-                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
-                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                           win_probability, suggested_put_strike, suggested_call_strike,
-                           model_version
-                    FROM prophet_predictions
-                    WHERE trade_date = %s AND bot_name = %s
-                """, (trade_date, bot_name.value))
+                # Also store in prophet_training_outcomes for ML feedback loop
+                # First, get the original prediction features
+                if prediction_id:
+                    cursor.execute("""
+                        SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                               gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                               win_probability, suggested_put_strike, suggested_call_strike,
+                               model_version, model_type
+                        FROM prophet_predictions
+                        WHERE id = %s
+                    """, (prediction_id,))
+                else:
+                    cursor.execute("""
+                        SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                               gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                               win_probability, suggested_put_strike, suggested_call_strike,
+                               model_version, COALESCE(model_type, 'combined_v3')
+                        FROM prophet_predictions
+                        WHERE trade_date = %s AND bot_name = %s
+                        ORDER BY scan_timestamp DESC NULLS LAST
+                        LIMIT 1
+                    """, (trade_date, bot_name.value))
 
-            row = cursor.fetchone()
-            if row:
-                spot_at_entry, vix, gex_net, gex_norm, gex_regime, flip, call_wall, put_wall, dow, \
-                    win_prob, pred_put, pred_call, model_ver = row
+                row = cursor.fetchone()
+                if row:
+                    spot_at_entry, vix, gex_net, gex_norm, gex_regime, flip, call_wall, put_wall, dow, \
+                        win_prob, pred_put, pred_call, model_ver, model_type = row
 
-                is_win = outcome.value in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN']
+                    is_win = outcome.value in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN']
 
-                # Build features JSON for training
-                features_json = json.dumps({
-                    'vix': vix,
-                    'gex_net': gex_net,
-                    'gex_normalized': gex_norm,
-                    'gex_regime': gex_regime,
-                    'gex_flip_point': flip,
-                    'gex_call_wall': call_wall,
-                    'gex_put_wall': put_wall,
-                    'day_of_week': dow,
-                    'predicted_win_probability': win_prob,
-                })
+                    # Build features JSON for training
+                    features_json = json.dumps({
+                        'vix': vix,
+                        'gex_net': gex_net,
+                        'gex_normalized': gex_norm,
+                        'gex_regime': gex_regime,
+                        'gex_flip_point': flip,
+                        'gex_call_wall': call_wall,
+                        'gex_put_wall': put_wall,
+                        'day_of_week': dow,
+                        'predicted_win_probability': win_prob,
+                    })
 
-                # Create training outcomes table if needed (Migration 023: added direction tracking)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS prophet_training_outcomes (
-                        id SERIAL PRIMARY KEY,
-                        trade_date DATE NOT NULL,
-                        bot_name TEXT NOT NULL,
-                        features JSONB NOT NULL,
-                        outcome TEXT NOT NULL,
-                        is_win BOOLEAN NOT NULL,
-                        net_pnl REAL,
-                        put_strike REAL,
-                        call_strike REAL,
-                        spot_at_entry REAL,
-                        spot_at_exit REAL,
-                        created_at TIMESTAMPTZ DEFAULT NOW(),
-                        -- Migration 023: Feedback loop enhancements
-                        strategy_type VARCHAR(20),       -- IRON_CONDOR or DIRECTIONAL
-                        outcome_type VARCHAR(30),        -- MAX_PROFIT, PUT_BREACHED, etc.
-                        direction_predicted VARCHAR(10), -- BULLISH or BEARISH
-                        direction_correct BOOLEAN,       -- Was direction prediction correct?
-                        prediction_id INTEGER,           -- Link to prophet_predictions
-                        UNIQUE(trade_date, bot_name)
-                    )
-                """)
+                    # Migration 027: Create table WITHOUT the old UNIQUE(trade_date, bot_name) constraint
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS prophet_training_outcomes (
+                            id SERIAL PRIMARY KEY,
+                            trade_date DATE NOT NULL,
+                            bot_name TEXT NOT NULL,
+                            features JSONB NOT NULL,
+                            outcome TEXT NOT NULL,
+                            is_win BOOLEAN NOT NULL,
+                            net_pnl REAL,
+                            put_strike REAL,
+                            call_strike REAL,
+                            spot_at_entry REAL,
+                            spot_at_exit REAL,
+                            created_at TIMESTAMPTZ DEFAULT NOW(),
+                            strategy_type VARCHAR(20),
+                            outcome_type VARCHAR(30),
+                            direction_predicted VARCHAR(10),
+                            direction_correct BOOLEAN,
+                            prediction_id INTEGER,
+                            model_type VARCHAR(50),
+                            scan_timestamp TIMESTAMPTZ
+                        )
+                    """)
 
-                # Determine strategy type from bot name
-                strategy_type = 'DIRECTIONAL' if bot_name.value in ['SOLOMON', 'GIDEON'] else 'IRON_CONDOR'
+                    # Determine strategy type from bot name
+                    strategy_type = 'DIRECTIONAL' if bot_name.value in ['SOLOMON', 'GIDEON', 'LAZARUS'] else 'IRON_CONDOR'
 
-                # Store training outcome for ML retraining (Migration 023: added direction tracking)
-                cursor.execute("""
-                    INSERT INTO prophet_training_outcomes (
-                        trade_date, bot_name, features, outcome, is_win, net_pnl,
-                        put_strike, call_strike, spot_at_entry, spot_at_exit,
-                        strategy_type, outcome_type, direction_predicted, direction_correct, prediction_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (trade_date, bot_name) DO UPDATE SET
-                        outcome = EXCLUDED.outcome,
-                        is_win = EXCLUDED.is_win,
-                        net_pnl = EXCLUDED.net_pnl,
-                        spot_at_exit = EXCLUDED.spot_at_exit,
-                        outcome_type = EXCLUDED.outcome_type,
-                        direction_predicted = EXCLUDED.direction_predicted,
-                        direction_correct = EXCLUDED.direction_correct,
-                        prediction_id = EXCLUDED.prediction_id
-                """, (
-                    trade_date,
-                    bot_name.value,
-                    features_json,
-                    outcome.value,
-                    is_win,
-                    actual_pnl,
-                    put_strike or pred_put,
-                    call_strike or pred_call,
-                    spot_at_entry,
-                    spot_at_exit,
-                    strategy_type,
-                    outcome_type or outcome.value,  # Use outcome_type if provided, else use outcome
-                    direction_predicted,
-                    direction_correct,
-                    prediction_id
-                ))
+                    # Migration 027: Use plain INSERT — allow multiple outcomes per bot per day
+                    # If prediction_id provided, use unique index to prevent exact duplicates
+                    if prediction_id:
+                        cursor.execute("""
+                            INSERT INTO prophet_training_outcomes (
+                                trade_date, bot_name, features, outcome, is_win, net_pnl,
+                                put_strike, call_strike, spot_at_entry, spot_at_exit,
+                                strategy_type, outcome_type, direction_predicted, direction_correct,
+                                prediction_id, model_type
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (prediction_id) WHERE prediction_id IS NOT NULL
+                            DO UPDATE SET
+                                outcome = EXCLUDED.outcome,
+                                is_win = EXCLUDED.is_win,
+                                net_pnl = EXCLUDED.net_pnl,
+                                spot_at_exit = EXCLUDED.spot_at_exit,
+                                outcome_type = EXCLUDED.outcome_type,
+                                direction_correct = EXCLUDED.direction_correct
+                        """, (
+                            trade_date, bot_name.value, features_json, outcome.value,
+                            is_win, actual_pnl,
+                            put_strike or pred_put, call_strike or pred_call,
+                            spot_at_entry, spot_at_exit,
+                            strategy_type, outcome_type or outcome.value,
+                            direction_predicted, direction_correct,
+                            prediction_id, model_type
+                        ))
+                    else:
+                        # Legacy path: no prediction_id, just INSERT
+                        cursor.execute("""
+                            INSERT INTO prophet_training_outcomes (
+                                trade_date, bot_name, features, outcome, is_win, net_pnl,
+                                put_strike, call_strike, spot_at_entry, spot_at_exit,
+                                strategy_type, outcome_type, direction_predicted, direction_correct,
+                                model_type
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            trade_date, bot_name.value, features_json, outcome.value,
+                            is_win, actual_pnl,
+                            put_strike or pred_put, call_strike or pred_call,
+                            spot_at_entry, spot_at_exit,
+                            strategy_type, outcome_type or outcome.value,
+                            direction_predicted, direction_correct,
+                            model_type
+                        ))
 
-                # Log to live log (Migration 023: includes direction tracking)
-                log_data = {
-                    "bot": bot_name.value,
-                    "outcome": outcome.value,
-                    "pnl": actual_pnl,
-                    "is_win": is_win,
-                    "strategy_type": strategy_type
-                }
-                if direction_predicted:
-                    log_data["direction_predicted"] = direction_predicted
-                    log_data["direction_correct"] = direction_correct
-                self.live_log.log("OUTCOME", f"{bot_name.value}: {outcome.value} (${actual_pnl:+.2f})", log_data)
+                    # Log to live log
+                    log_data = {
+                        "bot": bot_name.value,
+                        "outcome": outcome.value,
+                        "pnl": actual_pnl,
+                        "is_win": is_win,
+                        "strategy_type": strategy_type,
+                        "model_type": model_type,
+                    }
+                    if direction_predicted:
+                        log_data["direction_predicted"] = direction_predicted
+                        log_data["direction_correct"] = direction_correct
+                    self.live_log.log("OUTCOME", f"{bot_name.value}: {outcome.value} (${actual_pnl:+.2f})", log_data)
 
-            conn.commit()
-            conn.close()
-            logger.info(f"Updated outcome for {bot_name.value}: {outcome.value} - training data stored")
-            return True
+                conn.commit()
+                logger.info(f"Updated outcome for {bot_name.value}: {outcome.value} - training data stored")
+                return True
 
-        except Exception as e:
-            logger.error(f"Failed to update outcome: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"Failed to update outcome: {e}")
+                return False
 
 
 # =============================================================================
