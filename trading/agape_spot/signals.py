@@ -350,16 +350,29 @@ class AgapeSpotSignalGenerator:
 
         return (SignalAction.WAIT, f"NO_SIGNAL_{combined_signal}")
 
+    def _is_altcoin(self, ticker: str) -> bool:
+        """Return True for non-ETH tickers (XRP, SHIB, DOGE)."""
+        return ticker != "ETH-USD"
+
     def _derive_range_bound_direction(
         self, ticker: str, market_data: Dict, tracker
     ) -> Tuple[SignalAction, str]:
-        """Derive direction from range-bound market. LONG or WAIT only."""
+        """Derive direction from range-bound market. LONG or WAIT only.
+
+        For altcoins (XRP, SHIB, DOGE): a small long bias (+0.3) is added
+        because RANGE_BOUND HIGH is the dominant signal and the old neutral
+        threshold caused 0 trades for days.  Crypto is long-only so a mild
+        bullish lean in ranging markets is appropriate.
+        """
         funding_rate = market_data.get("funding_rate", 0)
         ls_ratio = market_data.get("ls_ratio", 1.0)
         max_pain = market_data.get("max_pain")
         spot = market_data.get("spot_price", 0)
 
-        score = 0.0
+        # Altcoins get a small long bias — RANGE_BOUND with no extreme signals
+        # was producing RANGE_BOUND_NO_BIAS 100% of the time, blocking all trades.
+        score = 0.3 if self._is_altcoin(ticker) else 0.0
+
         if funding_rate < -self.config.min_funding_rate_signal:
             score += 1.0
         elif funding_rate > self.config.min_funding_rate_signal:
@@ -391,10 +404,17 @@ class AgapeSpotSignalGenerator:
     def _derive_fallback_direction(
         self, ticker: str, market_data: Dict, tracker
     ) -> Tuple[SignalAction, str]:
-        """Derive direction from squeeze/funding fallback. LONG or WAIT only."""
+        """Derive direction from squeeze/funding fallback. LONG or WAIT only.
+
+        For altcoins: relaxed conditions.  The old logic required extreme
+        funding or high squeeze which almost never fires for XRP/SHIB/DOGE
+        (408 NO_FALLBACK_SIGNAL for XRP in 7 days).  For altcoins, also
+        accept ELEVATED squeeze and moderate negative funding.
+        """
         squeeze_risk = market_data.get("squeeze_risk", "LOW")
         ls_bias = market_data.get("ls_bias", "NEUTRAL")
         funding_regime = market_data.get("funding_regime", "NEUTRAL")
+        is_alt = self._is_altcoin(ticker)
 
         if squeeze_risk == "HIGH":
             if ls_bias == "SHORT_HEAVY":
@@ -406,13 +426,35 @@ class AgapeSpotSignalGenerator:
                 # Long squeeze -> bearish, WAIT (long-only)
                 return (SignalAction.WAIT, "SQUEEZE_BEARISH_LONG_ONLY")
 
+        # Altcoins: also accept ELEVATED squeeze with non-bearish bias
+        if is_alt and squeeze_risk == "ELEVATED" and ls_bias != "LONG_HEAVY":
+            should_skip, _ = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                return (SignalAction.LONG, self._build_reasoning("ELEVATED_SQUEEZE_LONG", market_data))
+
         if funding_regime in ("HEAVILY_NEGATIVE", "EXTREME_NEGATIVE"):
             should_skip, _ = tracker.should_skip_direction("LONG")
             if not should_skip:
                 return (SignalAction.LONG, self._build_reasoning("FUNDING_LONG", market_data))
-        elif funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
+
+        # Altcoins: also accept moderate negative funding (contrarian long)
+        if is_alt and funding_regime in ("NEGATIVE", "SLIGHTLY_NEGATIVE"):
+            should_skip, _ = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                return (SignalAction.LONG, self._build_reasoning("MILD_FUNDING_LONG", market_data))
+
+        if funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
             # Bearish funding -> WAIT (long-only)
             return (SignalAction.WAIT, "FUNDING_BEARISH_LONG_ONLY")
+
+        # Altcoins: if nothing else triggers, allow a LONG when funding is balanced
+        # and bias is not bearish.  This prevents days of zero trades.
+        if is_alt and ls_bias != "LONG_HEAVY" and funding_regime not in (
+            "HEAVILY_POSITIVE", "EXTREME_POSITIVE", "POSITIVE",
+        ):
+            should_skip, _ = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
 
         return (SignalAction.WAIT, "NO_FALLBACK_SIGNAL")
 

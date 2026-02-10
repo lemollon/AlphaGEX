@@ -110,14 +110,14 @@ class AgapeSpotConfig:
     profit_target_pct: float = 50.0
     stop_loss_pct: float = 100.0
     trailing_stop_pct: float = 0.0
-    max_hold_hours: int = 24
+    max_hold_hours: int = 6  # Was 24h — data shows 4-12h trades lose money (56% WR, -$9.95 avg)
 
     # No-Loss Trailing
     use_no_loss_trailing: bool = True
-    no_loss_activation_pct: float = 1.0
-    no_loss_trail_distance_pct: float = 0.75
+    no_loss_activation_pct: float = 1.5  # Was 1.0% — don't activate trail too early
+    no_loss_trail_distance_pct: float = 1.25  # Was 0.75% — was giving back exactly 0.75% every trade
     no_loss_emergency_stop_pct: float = 5.0
-    max_unrealized_loss_pct: float = 3.0
+    max_unrealized_loss_pct: float = 1.5  # Was 3.0% — losses were $30 vs $9 avg win, need 77% WR to break even
     no_loss_profit_target_pct: float = 0.0
 
     # SAR disabled for long-only (can't reverse to short)

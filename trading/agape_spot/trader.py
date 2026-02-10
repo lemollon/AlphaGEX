@@ -243,9 +243,55 @@ class AgapeSpotTrader:
                     f"[{trade_mode}] LONG {ticker} {signal.quantity} "
                     f"@ ${position.entry_price:.2f} (${notional:.2f})",
                     details=signal.to_dict(),
+                    ticker=ticker,
                 )
             else:
-                result["outcome"] = "EXECUTION_FAILED"
+                # Live execution failed — fall back to paper so the bot
+                # still tracks hypothetical performance instead of going
+                # silent for days (254 DOGE failures, 201 SHIB, 191 XRP
+                # in a single week with zero trades).
+                if self.config.is_live(ticker):
+                    logger.warning(
+                        f"AGAPE-SPOT: LIVE execution failed for {ticker}, "
+                        f"falling back to PAPER"
+                    )
+                    self.db.log(
+                        "WARNING", "LIVE_EXEC_FAILED",
+                        f"Live execution failed for {ticker} "
+                        f"(qty={signal.quantity}, price=${signal.spot_price:.2f}). "
+                        f"Falling back to paper.",
+                        ticker=ticker,
+                    )
+                    position = self.executor._execute_paper(signal)
+                    if position:
+                        self.db.save_position(position)
+                        result["new_trade"] = True
+                        result["outcome"] = f"TRADED_LONG_{ticker}_PAPER_FALLBACK"
+                        result["position_id"] = position.position_id
+                        scan_context["position_id"] = position.position_id
+                        notional = signal.quantity * position.entry_price
+                        self.db.log(
+                            "INFO", "NEW_TRADE",
+                            f"[PAPER_FALLBACK] LONG {ticker} {signal.quantity} "
+                            f"@ ${position.entry_price:.2f} (${notional:.2f})",
+                            details=signal.to_dict(),
+                            ticker=ticker,
+                        )
+                    else:
+                        result["outcome"] = "EXECUTION_FAILED"
+                        self.db.log(
+                            "ERROR", "EXEC_FAILED",
+                            f"Both live AND paper execution failed for {ticker}",
+                            ticker=ticker,
+                        )
+                else:
+                    result["outcome"] = "EXECUTION_FAILED"
+                    self.db.log(
+                        "ERROR", "EXEC_FAILED",
+                        f"Paper execution failed for {ticker} "
+                        f"(qty={signal.quantity}, price=${signal.spot_price:.2f})",
+                        ticker=ticker,
+                    )
 
             self._log_scan(ticker, result, scan_context, signal=signal)
             return result
