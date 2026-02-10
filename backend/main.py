@@ -81,6 +81,7 @@ from backend.api.routes import (
     valor_routes,  # VALOR - MES Futures Scalping Bot using GEX signals
     agape_routes,  # AGAPE - ETH Micro Futures (/MET) bot using crypto microstructure signals
     agape_spot_routes,  # AGAPE-SPOT - 24/7 Coinbase Spot ETH-USD trading
+    omega_routes,  # OMEGA - Central Trading Decision Orchestrator (4-layer pipeline + gap implementations)
 )
 
 # ============================================================================
@@ -334,7 +335,8 @@ app.include_router(tastytrade_routes.router)
 app.include_router(valor_routes.router)
 app.include_router(agape_routes.router)
 app.include_router(agape_spot_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape")
+app.include_router(omega_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, omega")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded

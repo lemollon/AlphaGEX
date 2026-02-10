@@ -38,7 +38,8 @@ import {
   Flame,
   Shield,
   Zap,
-  Globe
+  Globe,
+  Layers
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -61,6 +62,7 @@ const navItems = [
   { href: '/prophet', label: `${ADVISOR_DISPLAY_NAMES.PROPHET} (AI Advisor)`, icon: Eye, category: 'AI & Testing' },
   { href: '/quant', label: 'QUANT (ML Models)', icon: Calculator, category: 'AI & Testing' },
   { href: '/proverbs', label: `${ADVISOR_DISPLAY_NAMES.PROVERBS} (Feedback Loop)`, icon: BookOpen, category: 'AI & Testing' },
+  { href: '/omega', label: 'OMEGA (Orchestrator)', icon: Layers, category: 'AI & Testing' },
   { href: '/math-optimizer', label: 'Math Optimizer', icon: Brain, category: 'AI & Testing' },
   { href: '/live-trading', label: 'Live Trading', icon: LayoutDashboard, category: 'Live Trading' },
   { href: '/jubilee', label: `${BOT_DISPLAY_NAMES.JUBILEE} (Box Spread + IC)`, icon: Flame, category: 'Live Trading' },

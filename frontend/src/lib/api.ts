@@ -1246,6 +1246,33 @@ export const apiClient = {
   // Report cost tracking
   getReportsCosts: () =>
     api.get('/api/trader/reports/costs'),
+
+  // OMEGA Orchestrator - Central Trading Decision Hub
+  getOmegaStatus: () => api.get('/api/omega/status'),
+  getOmegaHealth: () => api.get('/api/omega/health'),
+  getOmegaLiveDecisions: () => api.get('/api/omega/decisions/live'),
+  getOmegaDecisionHistory: (params?: { bot_name?: string; limit?: number; offset?: number }) =>
+    api.get('/api/omega/decisions/history', { params }),
+  simulateOmegaDecision: (data: { bot_name: string; vix?: number; spot_price?: number; net_gamma?: number; gex_regime?: string; price_trend?: string; day_of_week?: number; expected_move_pct?: number; flip_point?: number; put_wall?: number; call_wall?: number }) =>
+    api.post('/api/omega/decisions/simulate', data),
+  getOmegaLayers: () => api.get('/api/omega/layers'),
+  getOmegaLayerDetail: (layerNumber: number) => api.get(`/api/omega/layers/${layerNumber}`),
+  getOmegaBots: () => api.get('/api/omega/bots'),
+  getOmegaBotDetail: (botName: string) => api.get(`/api/omega/bots/${botName}`),
+  killOmegaBot: (botName: string, data: { reason: string }) =>
+    api.post(`/api/omega/bots/${botName}/kill`, data),
+  reviveOmegaBot: (botName: string, data: { reason: string }) =>
+    api.post(`/api/omega/bots/${botName}/revive`, data),
+  killAllOmegaBots: (data: { reason: string }) =>
+    api.post('/api/omega/bots/kill-all', data),
+  getOmegaCapitalAllocation: () => api.get('/api/omega/capital-allocation'),
+  getOmegaRegime: () => api.get('/api/omega/regime'),
+  getOmegaCorrelations: () => api.get('/api/omega/correlations'),
+  getOmegaEquityScaling: () => api.get('/api/omega/equity-scaling'),
+  getOmegaRetrainStatus: () => api.get('/api/omega/retrain-status'),
+  getOmegaAuditLog: (params?: { bot_name?: string; action?: string; limit?: number }) =>
+    api.get('/api/omega/audit-log', { params }),
+  getOmegaMLSystems: () => api.get('/api/omega/ml-systems'),
 }
 
 // WebSocket connection

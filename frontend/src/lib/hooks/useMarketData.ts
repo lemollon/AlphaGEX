@@ -950,6 +950,66 @@ const fetchers = {
     const response = await api.get('/api/agape/gex-mapping')
     return response.data
   },
+
+  // OMEGA Orchestrator
+  omegaStatus: async () => {
+    const response = await api.get('/api/omega/status')
+    return response.data
+  },
+  omegaHealth: async () => {
+    const response = await api.get('/api/omega/health')
+    return response.data
+  },
+  omegaLiveDecisions: async () => {
+    const response = await api.get('/api/omega/decisions/live')
+    return response.data
+  },
+  omegaDecisionHistory: async (botName?: string, limit: number = 50) => {
+    const params: Record<string, string | number> = { limit }
+    if (botName) params.bot_name = botName
+    const response = await api.get('/api/omega/decisions/history', { params })
+    return response.data
+  },
+  omegaLayers: async () => {
+    const response = await api.get('/api/omega/layers')
+    return response.data
+  },
+  omegaBots: async () => {
+    const response = await api.get('/api/omega/bots')
+    return response.data
+  },
+  omegaBotDetail: async (botName: string) => {
+    const response = await api.get(`/api/omega/bots/${botName}`)
+    return response.data
+  },
+  omegaCapitalAllocation: async () => {
+    const response = await api.get('/api/omega/capital-allocation')
+    return response.data
+  },
+  omegaRegime: async () => {
+    const response = await api.get('/api/omega/regime')
+    return response.data
+  },
+  omegaCorrelations: async () => {
+    const response = await api.get('/api/omega/correlations')
+    return response.data
+  },
+  omegaEquityScaling: async () => {
+    const response = await api.get('/api/omega/equity-scaling')
+    return response.data
+  },
+  omegaRetrainStatus: async () => {
+    const response = await api.get('/api/omega/retrain-status')
+    return response.data
+  },
+  omegaAuditLog: async (limit: number = 50) => {
+    const response = await api.get('/api/omega/audit-log', { params: { limit } })
+    return response.data
+  },
+  omegaMLSystems: async () => {
+    const response = await api.get('/api/omega/ml-systems')
+    return response.data
+  },
 }
 
 // =============================================================================
@@ -2438,6 +2498,122 @@ export function useAllBotsReconcile(options?: SWRConfiguration) {
       ...options,
     }
   )
+}
+
+// =============================================================================
+// OMEGA ORCHESTRATOR HOOKS
+// =============================================================================
+
+export function useOmegaStatus(options?: SWRConfiguration) {
+  return useSWR('omega-status', fetchers.omegaStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaHealth(options?: SWRConfiguration) {
+  return useSWR('omega-health', fetchers.omegaHealth, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaLiveDecisions(options?: SWRConfiguration) {
+  return useSWR('omega-live-decisions', fetchers.omegaLiveDecisions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaDecisionHistory(botName?: string, limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `omega-decisions-${botName || 'all'}-${limit}`,
+    () => fetchers.omegaDecisionHistory(botName, limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useOmegaLayers(options?: SWRConfiguration) {
+  return useSWR('omega-layers', fetchers.omegaLayers, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaBots(options?: SWRConfiguration) {
+  return useSWR('omega-bots', fetchers.omegaBots, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaBotDetail(botName: string, options?: SWRConfiguration) {
+  return useSWR(
+    `omega-bot-${botName}`,
+    () => fetchers.omegaBotDetail(botName),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useOmegaCapitalAllocation(options?: SWRConfiguration) {
+  return useSWR('omega-capital', fetchers.omegaCapitalAllocation, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaRegime(options?: SWRConfiguration) {
+  return useSWR('omega-regime', fetchers.omegaRegime, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaCorrelations(options?: SWRConfiguration) {
+  return useSWR('omega-correlations', fetchers.omegaCorrelations, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaEquityScaling(options?: SWRConfiguration) {
+  return useSWR('omega-equity', fetchers.omegaEquityScaling, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaRetrainStatus(options?: SWRConfiguration) {
+  return useSWR('omega-retrain', fetchers.omegaRetrainStatus, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useOmegaAuditLog(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `omega-audit-${limit}`,
+    () => fetchers.omegaAuditLog(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useOmegaMLSystems(options?: SWRConfiguration) {
+  return useSWR('omega-ml-systems', fetchers.omegaMLSystems, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
 }
 
 // =============================================================================
