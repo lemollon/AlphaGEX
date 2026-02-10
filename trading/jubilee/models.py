@@ -1001,47 +1001,45 @@ class JubileeICConfig:
     # Underlying
     ticker: str = "SPX"           # Trade SPX (matches box spreads)
 
-    # Expiration preferences
-    target_dte_min: int = 0       # 0DTE trading
+    # Expiration preferences - WEEKLY (match SAMSON)
+    target_dte_min: int = 0       # Minimum DTE
     target_dte_max: int = 7       # Up to weekly
-    prefer_0dte: bool = True      # Focus on 0DTE
+    prefer_0dte: bool = False     # Trade weekly SPXW (next Friday), same as SAMSON
 
-    # Strike selection (delta-based)
+    # Strike selection - AGGRESSIVE (match SAMSON)
     short_put_delta: float = 0.10   # ~10 delta for short put
     short_call_delta: float = 0.10  # ~10 delta for short call
-    spread_width: float = 10.0      # $10 wide spreads on SPX (matches ANCHOR)
+    spread_width: float = 12.0      # $12 wide spreads on SPX (match SAMSON)
 
-    # Position sizing - MATCH ANCHOR exactly
-    max_positions: int = 5          # Max simultaneous IC positions (same as ANCHOR)
-    max_capital_per_trade_pct: float = 10.0  # Max 10% of borrowed capital per trade
-    max_daily_trades: int = 0       # NO LIMIT - ANCHOR has no daily limit (0 = unlimited)
-    max_contracts: int = 100        # Max contracts per IC trade (match ANCHOR)
+    # Position sizing - AGGRESSIVE (match SAMSON)
+    max_positions: int = 10         # Max simultaneous IC positions (match SAMSON)
+    max_capital_per_trade_pct: float = 15.0  # 15% risk per trade (match SAMSON)
+    max_daily_trades: int = 0       # NO LIMIT (0 = unlimited)
+    max_contracts: int = 100        # Max contracts per IC trade
 
-    # Risk management
+    # Risk management - AGGRESSIVE (match SAMSON)
     stop_loss_pct: float = 200.0    # Close if loss = 200% of credit
-    profit_target_pct: float = 50.0 # Close if profit = 50% of credit
+    profit_target_pct: float = 30.0 # Earlier exit at 30% (match SAMSON)
     time_stop_dte: int = 0          # Close at expiration
 
-    # Prophet integration - EXACT SAME thresholds as ANCHOR
-    # Uses get_anchor_advice() - same Prophet endpoint as ANCHOR
+    # Prophet integration - AGGRESSIVE (match SAMSON)
     require_oracle_approval: bool = True
-    min_oracle_confidence: float = 0.3   # Same as ANCHOR min_ic_suitability
-    min_win_probability: float = 0.42    # Same as ANCHOR (42%)
+    min_oracle_confidence: float = 0.2   # Lower bar (match SAMSON min_ic_suitability)
+    min_win_probability: float = 0.40    # Lower threshold (match SAMSON 40%)
 
-    # VIX filters
+    # VIX filters - RELAXED (match SAMSON)
     min_vix: float = 12.0         # Don't trade if VIX too low (thin premiums)
-    max_vix: float = 35.0         # Don't trade if VIX too high (too risky)
+    max_vix: float = 40.0         # Higher tolerance (match SAMSON)
 
     # Trading window - MATCH ANCHOR exactly
     entry_start: str = "08:30"    # 8:30 AM CT (same as ANCHOR)
     entry_end: str = "14:45"      # 2:45 PM CT (same as ANCHOR - stop 15 min before close)
     exit_by: str = "14:50"        # 2:50 PM CT (same as ANCHOR force_exit)
 
-    # Cooldown - MATCH ANCHOR exactly (NO COOLDOWNS)
-    # ANCHOR has no cooldown logic - it trades as often as Prophet approves (every 5 min)
-    cooldown_after_loss_minutes: int = 0   # No pause after loss (like ANCHOR)
-    cooldown_after_win_minutes: int = 0    # No pause after win (like ANCHOR)
-    cooldown_minutes_after_trade: int = 0  # No cooldown between trades (like ANCHOR)
+    # Cooldown - MATCH SAMSON (30-min between trades)
+    cooldown_after_loss_minutes: int = 30  # 30 min pause after loss (match SAMSON)
+    cooldown_after_win_minutes: int = 0    # No pause after win
+    cooldown_minutes_after_trade: int = 30 # 30 min cooldown between trades (match SAMSON)
 
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)
