@@ -1278,6 +1278,15 @@ class OrderExecutor:
             if not all([put_long_quote, put_short_quote, call_short_quote, call_long_quote]):
                 return None
 
+            # Reject quotes where short leg bids are zero - means no real market
+            if put_short_quote['bid'] <= 0 or call_short_quote['bid'] <= 0:
+                logger.warning(
+                    f"IC quote rejected: short leg bids are zero "
+                    f"(put_short bid={put_short_quote['bid']}, call_short bid={call_short_quote['bid']}). "
+                    f"No valid market for this IC."
+                )
+                return None
+
             # Bull Put Spread credit = short bid - long ask
             put_credit = put_short_quote['bid'] - put_long_quote['ask']
 
@@ -1285,13 +1294,25 @@ class OrderExecutor:
             call_credit = call_short_quote['bid'] - call_long_quote['ask']
 
             total_credit = put_credit + call_credit
+
+            # Reject if total credit is below minimum viable threshold
+            # $0.05 is the absolute minimum for a real IC trade to be worth executing
+            min_viable_credit = 0.05
+            if total_credit < min_viable_credit:
+                logger.warning(
+                    f"IC quote rejected: total credit ${total_credit:.2f} below minimum "
+                    f"${min_viable_credit:.2f} (put=${put_credit:.2f}, call=${call_credit:.2f}). "
+                    f"Skipping trade."
+                )
+                return None
+
             spread_width = signal.put_short - signal.put_long
             max_loss = spread_width - total_credit
 
             return {
-                'put_credit': max(0.01, put_credit),
-                'call_credit': max(0.01, call_credit),
-                'total_credit': max(0.02, total_credit),
+                'put_credit': put_credit,
+                'call_credit': call_credit,
+                'total_credit': total_credit,
                 'max_loss_per_contract': max_loss,
             }
         except Exception as e:

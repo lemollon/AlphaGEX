@@ -667,54 +667,26 @@ class BoxSpreadExecutor:
 
         EDUCATIONAL NOTE:
         =================
-        The call spread is a BEAR CALL SPREAD (we want credit):
-        - Sell the lower strike call (receive premium)
-        - Buy the higher strike call (pay premium, but less)
-        - Net: Receive credit
-
-        Wait, actually for a box spread where we're SELLING the box:
-        - We SELL the bull call spread
-        - Which means: Buy low call, Sell high call
-        - This gives us a DEBIT on the call spread
-
-        Hmm, let me reconsider. When SELLING a box spread:
-        - Bull call spread (long lower, short upper) = we pay
-        - Bear put spread (long upper, short lower) = we pay
-        - But the combination = we receive credit!
-
-        Actually, to SELL a box spread for credit:
-        - Sell the box = receive present value
-        - You're selling synthetic shares at upper strike
-        - And buying them at lower strike
-
-        For simplicity, we execute as:
-        - Sell vertical call spread (sell upper, buy lower)
-        - Sell vertical put spread (sell lower, buy upper)
-
-        This way we collect credit on both spreads.
+        For SELLING the box, we sell the call vertical spread:
+        - Sell upper strike call (receive premium)
+        - Buy lower strike call (pay premium, but less)
+        - Net: Receive credit on the call side
         """
         if not self.tradier:
             return {'id': 'PAPER-CALL', 'status': 'filled'}
 
         try:
-            # For SELLING the box, we sell the call vertical spread
-            # Sell upper strike call, buy lower strike call
-            order = {
-                'class': 'multileg',
-                'symbol': signal.ticker,
-                'type': 'credit',
-                'duration': 'day',
-                'price': signal.mid_price / 2,  # Half the total credit
-                'option_symbol': [
-                    symbols['call_short'],  # Sell upper call
-                    symbols['call_long'],   # Buy lower call
-                ],
-                'side': ['sell_to_open', 'buy_to_open'],
-                'quantity': [signal.recommended_contracts, signal.recommended_contracts],
-            }
-
-            # Place order via Tradier
-            result = self.tradier.place_multileg_order(order)
+            # Use Tradier's place_vertical_spread with correct indexed-key format
+            # For the call spread: sell the short (upper) call, buy the long (lower) call
+            result = self.tradier.place_vertical_spread(
+                symbol=signal.ticker,
+                expiration=signal.expiration,
+                long_strike=signal.lower_strike,   # Buy lower call
+                short_strike=signal.upper_strike,   # Sell upper call
+                option_type="call",
+                quantity=signal.recommended_contracts,
+                limit_price=round(signal.mid_price / 2, 2),  # Half the total credit
+            )
             return result
 
         except Exception as e:
@@ -734,27 +706,23 @@ class BoxSpreadExecutor:
         For SELLING the box, we sell the put vertical spread:
         - Sell lower strike put (receive premium)
         - Buy upper strike put (pay premium, but less)
-        - Net: Receive credit
+        - Net: Receive credit on the put side
         """
         if not self.tradier:
             return {'id': 'PAPER-PUT', 'status': 'filled'}
 
         try:
-            order = {
-                'class': 'multileg',
-                'symbol': signal.ticker,
-                'type': 'credit',
-                'duration': 'day',
-                'price': signal.mid_price / 2,  # Half the total credit
-                'option_symbol': [
-                    symbols['put_short'],   # Sell lower put
-                    symbols['put_long'],    # Buy upper put
-                ],
-                'side': ['sell_to_open', 'buy_to_open'],
-                'quantity': [signal.recommended_contracts, signal.recommended_contracts],
-            }
-
-            result = self.tradier.place_multileg_order(order)
+            # Use Tradier's place_vertical_spread with correct indexed-key format
+            # For the put spread: sell the short (lower) put, buy the long (upper) put
+            result = self.tradier.place_vertical_spread(
+                symbol=signal.ticker,
+                expiration=signal.expiration,
+                long_strike=signal.upper_strike,    # Buy upper put
+                short_strike=signal.lower_strike,    # Sell lower put
+                option_type="put",
+                quantity=signal.recommended_contracts,
+                limit_price=round(signal.mid_price / 2, 2),  # Half the total credit
+            )
             return result
 
         except Exception as e:
@@ -1679,17 +1647,17 @@ class JubileeICExecutor:
             return {'id': 'PAPER-PUT', 'status': 'filled'}
 
         try:
-            order = {
-                'class': 'multileg',
-                'symbol': signal.ticker,
-                'type': 'credit',
-                'duration': 'day',
-                'price': signal.put_spread_credit,
-                'option_symbol': [symbols['put_short'], symbols['put_long']],
-                'side': ['sell_to_open', 'buy_to_open'],
-                'quantity': [signal.contracts, signal.contracts],
-            }
-            return self.tradier.place_multileg_order(order)
+            # Use Tradier's place_vertical_spread with correct indexed-key format
+            result = self.tradier.place_vertical_spread(
+                symbol=signal.ticker,
+                expiration=signal.expiration,
+                long_strike=signal.put_long_strike,    # Buy protection put
+                short_strike=signal.put_short_strike,   # Sell short put
+                option_type="put",
+                quantity=signal.contracts,
+                limit_price=round(signal.put_spread_credit, 2),
+            )
+            return result
         except Exception as e:
             logger.error(f"Error executing put spread: {e}")
             return None
@@ -1704,17 +1672,17 @@ class JubileeICExecutor:
             return {'id': 'PAPER-CALL', 'status': 'filled'}
 
         try:
-            order = {
-                'class': 'multileg',
-                'symbol': signal.ticker,
-                'type': 'credit',
-                'duration': 'day',
-                'price': signal.call_spread_credit,
-                'option_symbol': [symbols['call_short'], symbols['call_long']],
-                'side': ['sell_to_open', 'buy_to_open'],
-                'quantity': [signal.contracts, signal.contracts],
-            }
-            return self.tradier.place_multileg_order(order)
+            # Use Tradier's place_vertical_spread with correct indexed-key format
+            result = self.tradier.place_vertical_spread(
+                symbol=signal.ticker,
+                expiration=signal.expiration,
+                long_strike=signal.call_long_strike,    # Buy protection call
+                short_strike=signal.call_short_strike,   # Sell short call
+                option_type="call",
+                quantity=signal.contracts,
+                limit_price=round(signal.call_spread_credit, 2),
+            )
+            return result
         except Exception as e:
             logger.error(f"Error executing call spread: {e}")
             return None

@@ -1653,10 +1653,10 @@ class FortressTrader(MathOptimizerMixin):
 
     def process_expired_positions(self) -> Dict[str, Any]:
         """
-        Process expired 0DTE positions at end of day.
+        Process expired positions at end of day.
 
         Called by scheduler at 3:05 PM CT to handle positions that expired
-        during the trading day. For 0DTE options:
+        today or earlier. For expired options:
         - If price stayed within IC wings → max profit (credit received)
         - If price breached a wing → calculate loss based on final price
 
