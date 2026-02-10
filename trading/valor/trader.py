@@ -312,6 +312,9 @@ class ValorTrader:
                     self.loss_streak_pause_until = None
                     # Keep consecutive_losses count - only reset on a win
 
+            # VALOR has its own built-in loss streak pause (self.loss_streak_pause_until)
+            # with configurable max_consecutive_losses and pause_minutes — no Proverbs needed
+
             if open_count < self.config.max_open_positions:
                 # Generate signal
                 signal = self.signal_generator.generate_signal(

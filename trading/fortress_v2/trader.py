@@ -138,6 +138,9 @@ class FortressTrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
+        # Proverbs consecutive loss cooldown (5-minute pause, then resume)
+        self._loss_streak_pause_until: Optional[datetime] = None
+
         # Math Optimizers DISABLED - Prophet is the sole decision maker
         # The regime gate was blocking trades even when Prophet said TRADE_FULL
         if MATH_OPTIMIZER_AVAILABLE:
@@ -275,6 +278,56 @@ class FortressTrader(MathOptimizerMixin):
                 self._update_daily_summary(today, result)
                 self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
                 return result
+
+            # Step 3.5: Check Proverbs consecutive loss cooldown (5-min pause after 3 losses)
+            # Check if we're in a cooldown pause
+            if self._loss_streak_pause_until:
+                if now < self._loss_streak_pause_until:
+                    remaining = (self._loss_streak_pause_until - now).total_seconds()
+                    reason = f'Proverbs: Loss streak cooldown ({remaining:.0f}s remaining)'
+                    if result['action'] == 'none':
+                        result['action'] = 'skip'
+                    result['details']['skip_reason'] = reason
+                    self.db.log("INFO", f"FORTRESS: {reason}")
+                    self._log_scan_activity(result, scan_context, reason)
+                    self._update_daily_summary(today, result)
+                    self.db.update_heartbeat("COOLDOWN", reason)
+                    return result
+                else:
+                    # Cooldown expired — reset and resume trading
+                    self.db.log("INFO", "FORTRESS: Loss streak cooldown expired, resuming trading")
+                    self._loss_streak_pause_until = None
+                    # Reset the Proverbs tracker so it needs 3 more losses to trigger again
+                    if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                        try:
+                            proverbs = get_proverbs_enhanced()
+                            if proverbs:
+                                tracker = proverbs.consecutive_loss_monitor.get_tracker('FORTRESS')
+                                if tracker:
+                                    tracker.consecutive_losses = 0
+                                    tracker.triggered_kill = False
+                        except Exception:
+                            pass
+
+            # Check if Proverbs detected 3 consecutive losses (triggers new 5-min cooldown)
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    proverbs = get_proverbs_enhanced()
+                    if proverbs:
+                        consec_status = proverbs.consecutive_loss_monitor.get_tracker('FORTRESS')
+                        if consec_status and consec_status.triggered_kill and self._loss_streak_pause_until is None:
+                            self._loss_streak_pause_until = now + timedelta(minutes=5)
+                            reason = f'Proverbs: 3 consecutive losses — pausing 5 min (until {self._loss_streak_pause_until.strftime("%H:%M:%S")})'
+                            if result['action'] == 'none':
+                                result['action'] = 'skip'
+                            result['details']['skip_reason'] = reason
+                            self.db.log("WARNING", f"FORTRESS: {reason}")
+                            self._log_scan_activity(result, scan_context, reason)
+                            self._update_daily_summary(today, result)
+                            self.db.update_heartbeat("COOLDOWN", reason)
+                            return result
+                except Exception as e:
+                    logger.warning(f"Proverbs guardrail check failed (non-blocking): {e}")
 
             # Step 4: Check Prophet strategy recommendation
             strategy_rec = self._check_strategy_recommendation()

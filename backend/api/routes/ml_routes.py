@@ -581,45 +581,116 @@ async def get_strategy_explanation():
 @router.get("/data-quality")
 async def check_data_quality():
     """
-    Check quality of your training data.
+    Check quality of WISDOM training data.
 
-    More data = better ML. Better data = better ML.
+    Checks both CHRONICLES backtest trades and live trade outcomes
+    to give a unified view of available training data.
     """
     try:
-        from trading.spx_wheel_ml import get_outcome_tracker
+        from database_adapter import get_connection
 
-        tracker = get_outcome_tracker()
-        outcomes = tracker.get_all_outcomes()
+        conn = get_connection()
+        cursor = conn.cursor()
 
-        if not outcomes:
+        total_trades = 0
+        wins = 0
+        losses = 0
+        total_pnl = 0.0
+
+        # Source 1: CHRONICLES backtest trades (primary training source)
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE outcome = 'MAX_PROFIT') as wins,
+                    COUNT(*) FILTER (WHERE outcome != 'MAX_PROFIT') as losses,
+                    COALESCE(SUM(COALESCE(total_pnl, pnl_per_spread, 0)), 0) as total_pnl
+                FROM zero_dte_backtest_trades
+                WHERE outcome IS NOT NULL
+            """)
+            row = cursor.fetchone()
+            if row:
+                total_trades += row[0] or 0
+                wins += row[1] or 0
+                losses += row[2] or 0
+                total_pnl += float(row[3] or 0)
+        except Exception as e:
+            logger.debug(f"Could not query zero_dte_backtest_trades: {e}")
+            conn.rollback()
+
+        # Source 2: Prophet training outcomes (live trades with features)
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE is_win = true) as wins,
+                    COUNT(*) FILTER (WHERE is_win = false) as losses,
+                    COALESCE(SUM(COALESCE(net_pnl, 0)), 0) as total_pnl
+                FROM prophet_training_outcomes
+                WHERE outcome IS NOT NULL
+            """)
+            row = cursor.fetchone()
+            if row:
+                total_trades += row[0] or 0
+                wins += row[1] or 0
+                losses += row[2] or 0
+                total_pnl += float(row[3] or 0)
+        except Exception as e:
+            logger.debug(f"Could not query prophet_training_outcomes: {e}")
+            conn.rollback()
+
+        # Source 3: Live bot closed positions (FORTRESS, ANCHOR, SAMSON)
+        for table in ['fortress_positions', 'anchor_positions', 'samson_positions']:
+            try:
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE realized_pnl > 0) as wins,
+                        COUNT(*) FILTER (WHERE realized_pnl <= 0) as losses,
+                        COALESCE(SUM(realized_pnl), 0) as total_pnl
+                    FROM {table}
+                    WHERE status IN ('closed', 'expired')
+                      AND realized_pnl IS NOT NULL
+                """)
+                row = cursor.fetchone()
+                if row:
+                    total_trades += row[0] or 0
+                    wins += row[1] or 0
+                    losses += row[2] or 0
+                    total_pnl += float(row[3] or 0)
+            except Exception as e:
+                logger.debug(f"Could not query {table}: {e}")
+                conn.rollback()
+
+        conn.close()
+
+        if total_trades == 0:
             return {
                 "success": True,
                 "data": {
                     "total_trades": 0,
-                    "message": "No trade outcomes recorded yet. Record trades using /record-entry and /record-outcome",
+                    "message": "No training data available. Run CHRONICLES backtests to generate training data.",
                     "quality": "NO_DATA"
                 }
             }
 
-        wins = sum(1 for o in outcomes if o.is_win())
-        losses = len(outcomes) - wins
-        total_pnl = sum(o.pnl for o in outcomes)
-        avg_pnl = total_pnl / len(outcomes)
+        avg_pnl = total_pnl / total_trades if total_trades > 0 else 0
+        win_rate = round(wins / total_trades * 100, 1) if total_trades > 0 else 0
 
         return {
             "success": True,
             "data": {
-                "total_trades": len(outcomes),
+                "total_trades": total_trades,
                 "wins": wins,
                 "losses": losses,
-                "win_rate": round(wins / len(outcomes) * 100, 1),
+                "win_rate": win_rate,
                 "total_pnl": round(total_pnl, 2),
                 "avg_pnl": round(avg_pnl, 2),
 
-                "quality": _assess_data_quality(len(outcomes)),
-                "can_train": len(outcomes) >= 30,
+                "quality": _assess_data_quality(total_trades),
+                "can_train": total_trades >= 30,
 
-                "recommendation": _get_data_recommendation(len(outcomes), wins / len(outcomes) if outcomes else 0)
+                "recommendation": _get_data_recommendation(total_trades, wins / total_trades if total_trades > 0 else 0)
             }
         }
 
@@ -1132,18 +1203,43 @@ async def get_wisdom_status():
                 "brier_score": safe_float(tm.brier_score if hasattr(tm, 'brier_score') else None)
             }
 
-        # Count training data from outcomes table
-        training_data_count = 0
+        # Count training data from all available sources
+        chronicles_count = 0
+        prophet_outcome_count = 0
+        bot_position_count = 0
         try:
             from database_adapter import get_connection
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM fortress_ml_outcomes WHERE actual_outcome IS NOT NULL")
-            training_data_count = cursor.fetchone()[0]
+
+            # Source 1: CHRONICLES backtest trades
+            try:
+                cursor.execute("SELECT COUNT(*) FROM zero_dte_backtest_trades WHERE outcome IS NOT NULL")
+                chronicles_count = cursor.fetchone()[0]
+            except:
+                conn.rollback()
+
+            # Source 2: Prophet training outcomes (live trades with features)
+            try:
+                cursor.execute("SELECT COUNT(*) FROM prophet_training_outcomes WHERE outcome IS NOT NULL")
+                prophet_outcome_count = cursor.fetchone()[0]
+            except:
+                conn.rollback()
+
+            # Source 3: Live bot closed positions (FORTRESS, ANCHOR, SAMSON)
+            for table in ['fortress_positions', 'anchor_positions', 'samson_positions']:
+                try:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table} WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL")
+                    bot_position_count += cursor.fetchone()[0]
+                except:
+                    conn.rollback()
+
             conn.close()
         except:
             pass
 
+        # Total available across all sources
+        training_data_count = chronicles_count + prophet_outcome_count + bot_position_count
         can_train = training_data_count >= 30
         should_trust = model_trained and training_data_count >= 50
 
@@ -1153,6 +1249,11 @@ async def get_wisdom_status():
             "model_trained": model_trained,
             "model_version": model_version,
             "training_data_available": training_data_count,
+            "training_data_sources": {
+                "chronicles_backtests": chronicles_count,
+                "prophet_outcomes": prophet_outcome_count,
+                "bot_positions": bot_position_count
+            },
             "can_train": can_train,
             "should_trust_predictions": should_trust,
             "honest_assessment": _get_sage_assessment(model_trained, training_data_count),
@@ -1357,9 +1458,10 @@ async def train_sage(min_samples: int = 30, use_chronicles: bool = True):
     """
     Train WISDOM (FORTRESS ML Advisor) model.
 
-    Can train from:
-    1. CHRONICLES backtest results (default)
-    2. Live trade outcomes
+    Combines all available training data sources:
+    1. CHRONICLES backtest results (zero_dte_backtest_trades) - historical backtests
+    2. Prophet training outcomes (prophet_training_outcomes) - live trades with pre-computed features
+    3. Live bot closed positions (fortress/anchor/samson) - recent IC trades with full context
     """
     try:
         from quant.fortress_ml_advisor import get_advisor
@@ -1367,36 +1469,188 @@ async def train_sage(min_samples: int = 30, use_chronicles: bool = True):
         advisor = get_advisor()
 
         if use_chronicles:
-            # Train from CHRONICLES backtests
-            from backtest.zero_dte_backtest import ZeroDTEBacktester
+            # Gather training data from ALL available sources
+            from database_adapter import get_connection
+            import json as _json
 
-            backtester = ZeroDTEBacktester()
-            results = backtester.get_recent_results(limit=500)
+            conn = get_connection()
+            cursor = conn.cursor()
 
-            if not results or len(results) < min_samples:
+            trades = []
+            source_counts = {"chronicles": 0, "prophet_outcomes": 0, "bot_positions": 0}
+
+            # ── Source 1: CHRONICLES backtest trades (historical) ──
+            try:
+                cursor.execute("""
+                    SELECT
+                        trade_date,
+                        underlying_price_entry,
+                        underlying_price_exit,
+                        vix_entry,
+                        outcome,
+                        COALESCE(total_pnl, pnl_per_spread) as net_pnl,
+                        pnl_percent as return_pct,
+                        day_of_week,
+                        gex_regime,
+                        spread_width,
+                        short_iv_entry
+                    FROM zero_dte_backtest_trades
+                    WHERE outcome IS NOT NULL
+                    ORDER BY trade_date
+                    LIMIT 2000
+                """)
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    trade_date, price_entry, price_exit, vix, outcome, pnl, ret_pct, dow, gex_regime, spread_width, iv = row
+                    trades.append({
+                        'trade_date': str(trade_date) if trade_date else '',
+                        'open_price': float(price_entry) if price_entry else 590.0,
+                        'close_price': float(price_exit) if price_exit else float(price_entry or 590.0),
+                        'vix': float(vix) if vix else 15.0,
+                        'expected_move_1d': float(price_entry or 590.0) * 0.01,
+                        'outcome': outcome or 'MAX_PROFIT',
+                        'net_pnl': float(pnl) if pnl else 0,
+                        'return_pct': float(ret_pct) if ret_pct else 0,
+                        'gex_regime': gex_regime or 'NEUTRAL',
+                        'gex_normalized': 0,
+                        'gex_distance_to_flip_pct': 0,
+                        'gex_between_walls': True,
+                    })
+                source_counts["chronicles"] = len(rows)
+                logger.info(f"WISDOM training: Loaded {len(rows)} CHRONICLES backtest trades")
+            except Exception as e:
+                logger.warning(f"Could not query zero_dte_backtest_trades: {e}")
+                conn.rollback()
+
+            # ── Source 2: Prophet training outcomes (live trades with features) ──
+            try:
+                cursor.execute("""
+                    SELECT
+                        trade_date,
+                        features,
+                        outcome,
+                        is_win,
+                        net_pnl,
+                        spot_at_entry,
+                        spot_at_exit
+                    FROM prophet_training_outcomes
+                    WHERE outcome IS NOT NULL
+                    ORDER BY trade_date
+                    LIMIT 2000
+                """)
+                rows = cursor.fetchall()
+
+                for row in rows:
+                    trade_date, features_json, outcome, is_win, pnl, spot_entry, spot_exit = row
+                    # features_json is JSONB with pre-computed WISDOM features
+                    feat = features_json if isinstance(features_json, dict) else {}
+                    spot = float(spot_entry) if spot_entry else float(feat.get('spot_price', 590.0))
+                    trades.append({
+                        'trade_date': str(trade_date) if trade_date else '',
+                        'open_price': spot,
+                        'close_price': float(spot_exit) if spot_exit else spot,
+                        'vix': float(feat.get('vix', 15.0)),
+                        'expected_move_1d': spot * float(feat.get('expected_move_pct', 1.0)) / 100.0 if feat.get('expected_move_pct') else spot * 0.01,
+                        'outcome': outcome or 'MAX_PROFIT',
+                        'net_pnl': float(pnl) if pnl else 0,
+                        'gex_regime': feat.get('gex_regime', 'NEUTRAL'),
+                        'gex_normalized': float(feat.get('gex_normalized', 0)),
+                        'gex_distance_to_flip_pct': float(feat.get('gex_distance_to_flip_pct', 0)),
+                        'gex_between_walls': bool(feat.get('gex_between_walls', True)),
+                    })
+                source_counts["prophet_outcomes"] = len(rows)
+                logger.info(f"WISDOM training: Loaded {len(rows)} Prophet training outcomes")
+            except Exception as e:
+                logger.warning(f"Could not query prophet_training_outcomes: {e}")
+                conn.rollback()
+
+            # ── Source 3: Live bot closed positions (FORTRESS, ANCHOR, SAMSON) ──
+            bot_tables = ['fortress_positions', 'anchor_positions', 'samson_positions']
+            bot_trade_count = 0
+            for table in bot_tables:
+                try:
+                    cursor.execute(f"""
+                        SELECT
+                            DATE(open_time AT TIME ZONE 'America/Chicago') as trade_date,
+                            underlying_at_entry,
+                            vix_at_entry,
+                            realized_pnl,
+                            gex_regime,
+                            flip_point,
+                            net_gex,
+                            EXTRACT(dow FROM open_time) as day_of_week
+                        FROM {table}
+                        WHERE status IN ('closed', 'expired')
+                          AND realized_pnl IS NOT NULL
+                        ORDER BY open_time
+                        LIMIT 1000
+                    """)
+                    rows = cursor.fetchall()
+
+                    for row in rows:
+                        trade_date, price, vix, pnl, gex_regime, flip, gex_net, dow = row
+                        outcome = 'MAX_PROFIT' if (pnl and float(pnl) > 0) else 'PUT_BREACHED'
+                        spot = float(price) if price else 590.0
+                        flip_val = float(flip) if flip else spot
+                        flip_dist = abs(spot - flip_val) / spot * 100 if spot > 0 else 0
+
+                        trades.append({
+                            'trade_date': str(trade_date) if trade_date else '',
+                            'open_price': spot,
+                            'close_price': spot,
+                            'vix': float(vix) if vix else 15.0,
+                            'expected_move_1d': spot * 0.01,
+                            'outcome': outcome,
+                            'net_pnl': float(pnl) if pnl else 0,
+                            'gex_regime': gex_regime or 'NEUTRAL',
+                            'gex_normalized': float(gex_net) / 1e9 if gex_net else 0,
+                            'gex_distance_to_flip_pct': flip_dist,
+                            'gex_between_walls': True,
+                        })
+                    bot_trade_count += len(rows)
+                    if rows:
+                        logger.info(f"WISDOM training: Loaded {len(rows)} trades from {table}")
+                except Exception as e:
+                    logger.debug(f"Could not query {table}: {e}")
+                    conn.rollback()
+
+            source_counts["bot_positions"] = bot_trade_count
+            conn.close()
+
+            # Sort all trades by date for proper time-series training
+            trades.sort(key=lambda t: t.get('trade_date', ''))
+
+            total = len(trades)
+            if total < min_samples:
                 return {
                     "success": False,
-                    "error": f"Not enough CHRONICLES backtest data. Have {len(results) if results else 0}, need {min_samples}"
+                    "error": f"Not enough training data across all sources. Have {total}, need {min_samples}.",
+                    "data_sources": source_counts
                 }
 
+            # Package as backtest_results dict for extract_features_from_chronicles
+            results = {'all_trades': trades}
             metrics = advisor.train_from_chronicles(results, min_samples=min_samples)
 
             log_ml_action(
                 action="SAGE_TRAIN_CHRONICLES",
-                details={"samples": len(results), "min_samples": min_samples},
+                details={"samples": total, "min_samples": min_samples, "sources": source_counts},
                 ml_score=metrics.accuracy if metrics else None,
                 recommendation="TRAINED" if metrics else "FAILED",
-                reasoning="Trained WISDOM from CHRONICLES backtest results"
+                reasoning=f"Trained WISDOM on {total} trades: {source_counts['chronicles']} CHRONICLES + {source_counts['prophet_outcomes']} Prophet + {source_counts['bot_positions']} live bot"
             )
 
             return {
                 "success": True,
-                "message": f"WISDOM trained on {len(results)} CHRONICLES backtest results",
+                "message": f"WISDOM trained on {total} trades from all available sources",
                 "data": {
                     "accuracy": metrics.accuracy if metrics else None,
                     "precision": metrics.precision if metrics else None,
                     "recall": metrics.recall if metrics else None,
-                    "model_version": advisor.model_version
+                    "model_version": advisor.model_version,
+                    "total_samples": total,
+                    "data_sources": source_counts
                 }
             }
         else:

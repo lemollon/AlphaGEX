@@ -404,7 +404,7 @@ export default function SagePage() {
                         {dataQuality?.quality || 'N/A'}
                       </p>
                       <p className="text-sm text-gray-400">
-                        {dataQuality?.win_rate ? `${(dataQuality.win_rate * 100).toFixed(1)}% win rate` : 'No data'}
+                        {dataQuality?.win_rate ? `${dataQuality.win_rate.toFixed(1)}% win rate` : 'No data'}
                       </p>
                     </div>
                   </div>
@@ -884,7 +884,7 @@ export default function SagePage() {
                       </div>
                       <p className="text-3xl font-bold text-green-400">
                         {dataQuality?.win_rate
-                          ? `${(dataQuality.win_rate * 100).toFixed(1)}%`
+                          ? `${dataQuality.win_rate.toFixed(1)}%`
                           : 'N/A'}
                       </p>
                     </div>
@@ -1123,23 +1123,41 @@ export default function SagePage() {
                       <Database className="w-5 h-5 text-emerald-400" />
                       Training Data Sources
                     </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
                         <div className="flex items-center gap-2 mb-2">
-                          <CheckCircle className="w-5 h-5 text-green-400" />
+                          <CheckCircle className={`w-5 h-5 ${(status as any)?.training_data_sources?.chronicles_backtests > 0 ? 'text-green-400' : 'text-gray-500'}`} />
                           <h4 className="text-white font-medium">CHRONICLES Backtests</h4>
                         </div>
+                        <p className="text-2xl font-bold text-white mb-1">
+                          {(status as any)?.training_data_sources?.chronicles_backtests?.toLocaleString() || 0} trades
+                        </p>
                         <p className="text-gray-400 text-sm">
-                          Primary training source. Historical Iron Condor backtests with complete outcome data.
+                          Historical Iron Condor backtests with complete outcome data.
                         </p>
                       </div>
                       <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
                         <div className="flex items-center gap-2 mb-2">
-                          <CheckCircle className="w-5 h-5 text-green-400" />
-                          <h4 className="text-white font-medium">Live Trade Outcomes</h4>
+                          <CheckCircle className={`w-5 h-5 ${(status as any)?.training_data_sources?.prophet_outcomes > 0 ? 'text-green-400' : 'text-gray-500'}`} />
+                          <h4 className="text-white font-medium">Prophet Outcomes</h4>
                         </div>
+                        <p className="text-2xl font-bold text-white mb-1">
+                          {(status as any)?.training_data_sources?.prophet_outcomes?.toLocaleString() || 0} trades
+                        </p>
                         <p className="text-gray-400 text-sm">
-                          Feedback loop from FORTRESS, ANCHOR, and SAMSON live trades for continuous improvement.
+                          Live trades with pre-computed ML features from Prophet predictions.
+                        </p>
+                      </div>
+                      <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
+                        <div className="flex items-center gap-2 mb-2">
+                          <CheckCircle className={`w-5 h-5 ${(status as any)?.training_data_sources?.bot_positions > 0 ? 'text-green-400' : 'text-gray-500'}`} />
+                          <h4 className="text-white font-medium">Bot Closed Trades</h4>
+                        </div>
+                        <p className="text-2xl font-bold text-white mb-1">
+                          {(status as any)?.training_data_sources?.bot_positions?.toLocaleString() || 0} trades
+                        </p>
+                        <p className="text-gray-400 text-sm">
+                          FORTRESS, ANCHOR, SAMSON closed positions with VIX and GEX context.
                         </p>
                       </div>
                     </div>

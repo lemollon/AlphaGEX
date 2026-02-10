@@ -147,6 +147,9 @@ class SamsonTrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
+        # Proverbs consecutive loss cooldown (5-minute pause, then resume)
+        self._loss_streak_pause_until: Optional[datetime] = None
+
         # Math Optimizers DISABLED - Prophet is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
@@ -258,6 +261,48 @@ class SamsonTrader(MathOptimizerMixin):
             closed, pnl = self._manage_positions()
             result['positions_closed'] = closed
             result['realized_pnl'] = pnl
+
+            # Check Proverbs consecutive loss cooldown (5-min pause after 3 losses)
+            if self._loss_streak_pause_until:
+                if now < self._loss_streak_pause_until:
+                    remaining = (self._loss_streak_pause_until - now).total_seconds()
+                    reason = f'Proverbs: Loss streak cooldown ({remaining:.0f}s remaining)'
+                    result['action'] = 'skip'
+                    result['details']['skip_reason'] = reason
+                    self.db.log("INFO", f"SAMSON: {reason}")
+                    self._log_scan_activity(result, scan_context, skip_reason=reason)
+                    self._log_bot_decision(result, scan_context, skip_reason=reason)
+                    return result
+                else:
+                    self.db.log("INFO", "SAMSON: Loss streak cooldown expired, resuming trading")
+                    self._loss_streak_pause_until = None
+                    if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                        try:
+                            proverbs = get_proverbs_enhanced()
+                            if proverbs:
+                                tracker = proverbs.consecutive_loss_monitor.get_tracker('SAMSON')
+                                if tracker:
+                                    tracker.consecutive_losses = 0
+                                    tracker.triggered_kill = False
+                        except Exception:
+                            pass
+
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    proverbs = get_proverbs_enhanced()
+                    if proverbs:
+                        consec_status = proverbs.consecutive_loss_monitor.get_tracker('SAMSON')
+                        if consec_status and consec_status.triggered_kill and self._loss_streak_pause_until is None:
+                            self._loss_streak_pause_until = now + timedelta(minutes=5)
+                            reason = f'Proverbs: 3 consecutive losses — pausing 5 min (until {self._loss_streak_pause_until.strftime("%H:%M:%S")})'
+                            result['action'] = 'skip'
+                            result['details']['skip_reason'] = reason
+                            self.db.log("WARNING", f"SAMSON: {reason}")
+                            self._log_scan_activity(result, scan_context, skip_reason=reason)
+                            self._log_bot_decision(result, scan_context, skip_reason=reason)
+                            return result
+                except Exception as e:
+                    logger.warning(f"Proverbs guardrail check failed (non-blocking): {e}")
 
             # Try new entry (SAMSON allows multiple per day)
             # Pass early-fetched prophet_data to avoid double Prophet call (bug fix)

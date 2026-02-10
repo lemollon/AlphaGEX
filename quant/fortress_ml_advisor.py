@@ -100,20 +100,29 @@ class MLFeatures:
     vix_percentile_30d: float      # Where VIX sits in 30-day range
     vix_change_1d: float           # 1-day VIX change %
 
-    # Day features
-    day_of_week: int               # 0=Mon, 4=Fri
+    # Day features (cyclical encoding)
+    day_of_week_sin: float         # sin(2*pi*dow/5) for cyclical encoding
+    day_of_week_cos: float         # cos(2*pi*dow/5) for cyclical encoding
 
     # Price features
     price: float
-    price_change_1d: float         # 1-day price change %
+    price_change_1d: float         # Previous day's price change %
 
     # IV features
     iv: float                      # Implied volatility used
     expected_move_pct: float       # Expected move as % of price
 
+    # Volatility Risk Premium (IV - realized vol)
+    volatility_risk_premium: float  # VRP: expected_move_pct - realized_vol_5d
+
     # Historical performance (rolling)
-    win_rate_30d: float           # Recent 30-day win rate
-    avg_pnl_30d: float            # Recent 30-day avg P&L
+    win_rate_60d: float            # 60-trade rolling win rate (longer horizon)
+
+    # GEX features
+    gex_normalized: float = 0.0
+    gex_regime_positive: int = 0
+    gex_distance_to_flip_pct: float = 0.0
+    gex_between_walls: int = 1
 
     # Optional: tier info
     tier_name: str = "TIER_1_0DTE"
@@ -179,9 +188,26 @@ class FortressMLAdvisor:
     - Market conditions that precede breaches
     """
 
-    # Feature columns for prediction
-    # V2: Now includes GEX features for better Iron Condor prediction
+    # V3 feature columns: cyclical day encoding, VRP, longer win rate horizon
     FEATURE_COLS = [
+        'vix',
+        'vix_percentile_30d',
+        'vix_change_1d',
+        'day_of_week_sin',          # Cyclical encoding: sin(2*pi*dow/5)
+        'day_of_week_cos',          # Cyclical encoding: cos(2*pi*dow/5)
+        'price_change_1d',
+        'expected_move_pct',
+        'volatility_risk_premium',  # IV - realized vol (profit engine signal)
+        'win_rate_60d',             # 60-trade rolling win rate (reduced leakage)
+        # GEX features
+        'gex_normalized',           # Scale-independent GEX
+        'gex_regime_positive',      # 1 if positive GEX regime, 0 otherwise
+        'gex_distance_to_flip_pct', # Distance to flip point as %
+        'gex_between_walls',        # 1 if price between call/put walls
+    ]
+
+    # V2 feature columns (for backward compatibility with existing models)
+    FEATURE_COLS_V2 = [
         'vix',
         'vix_percentile_30d',
         'vix_change_1d',
@@ -189,14 +215,13 @@ class FortressMLAdvisor:
         'price_change_1d',
         'expected_move_pct',
         'win_rate_30d',
-        # GEX features (V2)
-        'gex_normalized',           # Scale-independent GEX
-        'gex_regime_positive',      # 1 if positive GEX regime, 0 otherwise
-        'gex_distance_to_flip_pct', # Distance to flip point as %
-        'gex_between_walls',        # 1 if price between call/put walls
+        'gex_normalized',
+        'gex_regime_positive',
+        'gex_distance_to_flip_pct',
+        'gex_between_walls',
     ]
 
-    # Feature columns without GEX (for backward compatibility)
+    # V1 feature columns without GEX (for backward compatibility)
     FEATURE_COLS_V1 = [
         'vix',
         'vix_percentile_30d',
@@ -216,10 +241,13 @@ class FortressMLAdvisor:
         self.is_trained = False
         self.training_metrics: Optional[TrainingMetrics] = None
         self.model_version = "0.0.0"
+        self._feature_version = 3  # V3 features (cyclical day, VRP, 60d win rate)
+        self._trained_feature_cols = self.FEATURE_COLS  # Track which features model uses
 
-        # Thresholds for advice
-        self.high_confidence_threshold = 0.65  # Above this = TRADE_FULL
-        self.low_confidence_threshold = 0.45   # Below this = SKIP_TODAY
+        # Adaptive thresholds (set relative to base rate after training)
+        self.high_confidence_threshold = 0.65  # Default, recalculated after training
+        self.low_confidence_threshold = 0.45   # Default, recalculated after training
+        self._base_rate = None  # Learned from training data
 
         # Create models directory
         os.makedirs(self.MODEL_PATH, exist_ok=True)
@@ -245,8 +273,12 @@ class FortressMLAdvisor:
                     self.scaler = saved.get('scaler')
                     self.training_metrics = saved.get('metrics')
                     self.model_version = saved.get('version', '1.0.0')
+                    self._feature_version = saved.get('feature_version', 2)
+                    self._trained_feature_cols = saved.get('feature_cols', self.FEATURE_COLS_V2)
+                    self._base_rate = saved.get('base_rate')
+                    self._update_thresholds_from_base_rate()
                     self.is_trained = True
-                    logger.info(f"Loaded FORTRESS ML Advisor v{self.model_version} from file")
+                    logger.info(f"Loaded FORTRESS ML Advisor v{self.model_version} (features V{self._feature_version}) from file")
                     return True
             except Exception as e:
                 logger.warning(f"Failed to load model from file: {e}")
@@ -265,11 +297,26 @@ class FortressMLAdvisor:
                     'scaler': self.scaler,
                     'metrics': self.training_metrics,
                     'version': self.model_version,
+                    'feature_version': self._feature_version,
+                    'feature_cols': self._trained_feature_cols,
+                    'base_rate': self._base_rate,
                     'saved_at': datetime.now().isoformat()
                 }, f)
-            logger.info(f"Saved FORTRESS ML Advisor to {model_file}")
+            logger.info(f"Saved FORTRESS ML Advisor v{self.model_version} (features V{self._feature_version}) to {model_file}")
         except Exception as e:
             logger.error(f"Failed to save model: {e}")
+
+    def _update_thresholds_from_base_rate(self):
+        """Set adaptive thresholds relative to the training base rate"""
+        if self._base_rate is not None and self._base_rate > 0.5:
+            # SKIP when model predicts significantly below base rate
+            self.low_confidence_threshold = self._base_rate - 0.15
+            # TRADE_FULL when at or above base rate
+            self.high_confidence_threshold = self._base_rate - 0.05
+            logger.info(
+                f"Adaptive thresholds: SKIP < {self.low_confidence_threshold:.2f}, "
+                f"FULL >= {self.high_confidence_threshold:.2f} (base rate: {self._base_rate:.2f})"
+            )
 
     def save_to_db(self, training_records: int = None) -> bool:
         """Save model to database for persistence across Render deploys"""
@@ -286,6 +333,9 @@ class FortressMLAdvisor:
                 'scaler': self.scaler,
                 'metrics': self.training_metrics,
                 'version': self.model_version,
+                'feature_version': self._feature_version,
+                'feature_cols': self._trained_feature_cols,
+                'base_rate': self._base_rate,
             }
 
             metrics = None
@@ -327,9 +377,13 @@ class FortressMLAdvisor:
             self.scaler = model_data.get('scaler')
             self.training_metrics = model_data.get('metrics')
             self.model_version = model_data.get('version', '1.0.0')
+            self._feature_version = model_data.get('feature_version', 2)
+            self._trained_feature_cols = model_data.get('feature_cols', self.FEATURE_COLS_V2)
+            self._base_rate = model_data.get('base_rate')
+            self._update_thresholds_from_base_rate()
             self.is_trained = True
 
-            logger.info(f"Loaded FORTRESS ML Advisor v{self.model_version} from database")
+            logger.info(f"Loaded FORTRESS ML Advisor v{self.model_version} (features V{self._feature_version}) from database")
             return True
 
         except Exception as e:
@@ -343,6 +397,9 @@ class FortressMLAdvisor:
     ) -> pd.DataFrame:
         """
         Extract ML features from CHRONICLES backtest results.
+
+        V3: Adds cyclical day encoding, VRP, longer win rate horizon.
+        Fixes training/inference mismatch for price_change_1d.
 
         Args:
             backtest_results: Results dict from HybridFixedBacktester.run()
@@ -380,33 +437,48 @@ class FortressMLAdvisor:
         # Build rolling stats as we process
         outcomes = []
         pnls = []
+        price_changes = []  # Track price changes for realized vol calculation
 
         for i, trade in enumerate(trades):
-            # Calculate rolling stats (30-day lookback)
-            lookback_start = max(0, i - 30)
-            recent_outcomes = outcomes[lookback_start:i] if i > 0 else []
-            recent_pnls = pnls[lookback_start:i] if i > 0 else []
+            # Rolling stats with 60-trade lookback (longer horizon, less leakage)
+            lookback_60 = max(0, i - 60)
+            recent_outcomes_60 = outcomes[lookback_60:i] if i > 0 else []
 
-            win_rate_30d = sum(1 for o in recent_outcomes if o == 'MAX_PROFIT') / len(recent_outcomes) if recent_outcomes else 0.68
-            avg_pnl_30d = sum(recent_pnls) / len(recent_pnls) if recent_pnls else 0
+            win_rate_60d = sum(1 for o in recent_outcomes_60 if o == 'MAX_PROFIT') / len(recent_outcomes_60) if recent_outcomes_60 else 0.70
 
-            # Parse date for day of week
+            # Parse date for cyclical day encoding
             trade_date = trade.get('trade_date', '')
             try:
                 dt = datetime.strptime(trade_date, '%Y-%m-%d')
                 day_of_week = dt.weekday()
-            except:
+            except Exception:
                 day_of_week = 2  # Default to Wednesday
+
+            # Cyclical encoding: sin/cos for day of week
+            day_of_week_sin = math.sin(2 * math.pi * day_of_week / 5)
+            day_of_week_cos = math.cos(2 * math.pi * day_of_week / 5)
 
             # Extract features
             vix = trade.get('vix', 20.0)
-            open_price = trade.get('open_price', 5000)
-            close_price = trade.get('close_price', open_price)
+            open_price = trade.get('open_price', trade.get('underlying_price_entry', 5000))
+            close_price = trade.get('close_price', trade.get('underlying_price_exit', open_price))
 
-            # Calculate derived features
-            price_change_1d = (close_price - open_price) / open_price * 100 if open_price > 0 else 0
+            # FIX: price_change_1d = previous trade's price change (not same-day)
+            # This aligns with live prediction where we pass yesterday's change
+            current_price_change = (close_price - open_price) / open_price * 100 if open_price > 0 else 0
+            price_change_1d = price_changes[-1] if price_changes else 0  # Use PREVIOUS trade's change
+            price_changes.append(current_price_change)
+
             expected_move = trade.get('expected_move_sd', trade.get('expected_move_1d', 50))
             expected_move_pct = expected_move / open_price * 100 if open_price > 0 else 1.0
+
+            # VRP: expected move (IV proxy) - realized vol (5-trade rolling std of price changes)
+            if len(price_changes) >= 5:
+                recent_changes = price_changes[-5:]
+                realized_vol_5d = (sum(c**2 for c in recent_changes) / len(recent_changes)) ** 0.5
+            else:
+                realized_vol_5d = expected_move_pct * 0.8  # Conservative fallback
+            volatility_risk_premium = expected_move_pct - realized_vol_5d
 
             # Outcome
             outcome = trade.get('outcome', 'MAX_PROFIT')
@@ -420,14 +492,15 @@ class FortressMLAdvisor:
             record = {
                 'trade_date': trade_date,
                 'vix': vix,
-                'vix_percentile_30d': 50,  # Will calculate later
-                'vix_change_1d': 0,         # Will calculate later
-                'day_of_week': day_of_week,
+                'vix_percentile_30d': 50,  # Recalculated below
+                'vix_change_1d': 0,         # Recalculated below
+                'day_of_week_sin': day_of_week_sin,
+                'day_of_week_cos': day_of_week_cos,
                 'price': open_price,
                 'price_change_1d': price_change_1d,
                 'expected_move_pct': expected_move_pct,
-                'win_rate_30d': win_rate_30d,
-                'avg_pnl_30d': avg_pnl_30d,
+                'volatility_risk_premium': volatility_risk_premium,
+                'win_rate_60d': win_rate_60d,
                 'tier_name': trade.get('tier_name', 'TIER_1_0DTE'),
 
                 # Target variables
@@ -476,7 +549,11 @@ class FortressMLAdvisor:
         """
         Train ML model from CHRONICLES backtest results.
 
-        Uses walk-forward validation to avoid look-ahead bias.
+        V3 improvements:
+        - scale_pos_weight to handle class imbalance (IC ~70-90% win rate)
+        - Brier score on held-out fold (not training data)
+        - Adaptive thresholds based on learned base rate
+        - V3 features: cyclical day encoding, VRP, 60-trade win rate
 
         Args:
             backtest_results: Results from HybridFixedBacktester
@@ -501,6 +578,19 @@ class FortressMLAdvisor:
         X = df[self.FEATURE_COLS].values
         y = df['is_win'].values.astype(int)
 
+        # Class imbalance: calculate scale_pos_weight
+        # For IC trading with ~89% win rate, losses are underrepresented
+        n_wins = int(y.sum())
+        n_losses = int(len(y) - n_wins)
+        if n_wins > 0 and n_losses > 0:
+            scale_pos_weight = n_losses / n_wins  # ~0.11 for 89% win rate
+        else:
+            scale_pos_weight = 1.0
+        logger.info(f"Class balance: {n_wins} wins, {n_losses} losses, scale_pos_weight={scale_pos_weight:.3f}")
+
+        # Store base rate for adaptive thresholds
+        self._base_rate = float(y.mean())
+
         # Scale features
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
@@ -509,7 +599,7 @@ class FortressMLAdvisor:
         n_splits = 5
         tscv = TimeSeriesSplit(n_splits=n_splits)
 
-        # Train XGBoost (best performance on tabular data)
+        # Train XGBoost with scale_pos_weight for class imbalance
         if not HAS_XGBOOST:
             raise ImportError("XGBoost required. Install with: pip install xgboost")
 
@@ -522,14 +612,15 @@ class FortressMLAdvisor:
             colsample_bytree=0.8,
             reg_alpha=0.1,  # L1 regularization
             reg_lambda=1.0,  # L2 regularization
+            scale_pos_weight=scale_pos_weight,  # Handle class imbalance
             random_state=42,
             use_label_encoder=False,
             eval_metric='logloss',
             verbosity=0
         )
 
-        # Cross-validation metrics
-        accuracies, precisions, recalls, f1s, aucs = [], [], [], [], []
+        # Cross-validation metrics (including held-out Brier scores)
+        accuracies, precisions, recalls, f1s, aucs, briers = [], [], [], [], [], []
 
         for train_idx, test_idx in tscv.split(X_scaled):
             X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
@@ -543,6 +634,7 @@ class FortressMLAdvisor:
             precisions.append(precision_score(y_test, y_pred, zero_division=0))
             recalls.append(recall_score(y_test, y_pred, zero_division=0))
             f1s.append(f1_score(y_test, y_pred, zero_division=0))
+            briers.append(brier_score_loss(y_test, y_proba))  # Brier on held-out fold
 
             try:
                 aucs.append(roc_auc_score(y_test, y_proba))
@@ -558,43 +650,47 @@ class FortressMLAdvisor:
         )
         self.calibrated_model.fit(X_scaled, y)
 
-        # Calculate Brier score (calibration quality)
-        y_proba_full = self.calibrated_model.predict_proba(X_scaled)[:, 1]
-        brier = brier_score_loss(y, y_proba_full)
-
         # Feature importances
         feature_importances = dict(zip(self.FEATURE_COLS, self.model.feature_importances_))
 
-        # Build metrics
+        # Build metrics (Brier from CV, not in-sample)
         self.training_metrics = TrainingMetrics(
             accuracy=np.mean(accuracies),
             precision=np.mean(precisions),
             recall=np.mean(recalls),
             f1_score=np.mean(f1s),
             auc_roc=np.mean(aucs),
-            brier_score=brier,
-            win_rate_predicted=y_proba_full.mean(),
+            brier_score=np.mean(briers),  # FIX: CV Brier, not in-sample
+            win_rate_predicted=self.calibrated_model.predict_proba(X_scaled)[:, 1].mean(),
             win_rate_actual=y.mean(),
             total_samples=len(df),
             train_samples=int(len(df) * (1 - test_size)),
             test_samples=int(len(df) * test_size),
-            positive_samples=int(y.sum()),
-            negative_samples=int(len(y) - y.sum()),
+            positive_samples=n_wins,
+            negative_samples=n_losses,
             feature_importances=feature_importances,
             training_date=datetime.now().isoformat(),
-            model_version="1.0.0"
+            model_version="2.0.0"
         )
 
         self.is_trained = True
-        self.model_version = "1.0.0"
+        self.model_version = "2.0.0"
+        self._feature_version = 3
+        self._trained_feature_cols = self.FEATURE_COLS
+
+        # Set adaptive thresholds based on base rate
+        self._update_thresholds_from_base_rate()
 
         # Save model
         self._save_model()
 
-        logger.info(f"Model trained successfully:")
+        logger.info(f"Model V2.0.0 trained successfully (features V3):")
         logger.info(f"  Accuracy: {self.training_metrics.accuracy:.2%}")
         logger.info(f"  AUC-ROC: {self.training_metrics.auc_roc:.3f}")
+        logger.info(f"  Brier Score (CV): {self.training_metrics.brier_score:.4f}")
         logger.info(f"  Win Rate (actual): {self.training_metrics.win_rate_actual:.2%}")
+        logger.info(f"  Class balance: {n_wins}W / {n_losses}L (scale_pos_weight={scale_pos_weight:.3f})")
+        logger.info(f"  Adaptive thresholds: SKIP < {self.low_confidence_threshold:.2f}, FULL >= {self.high_confidence_threshold:.2f}")
         logger.info(f"  Top features: {sorted(feature_importances.items(), key=lambda x: -x[1])[:3]}")
 
         return self.training_metrics
@@ -609,14 +705,20 @@ class FortressMLAdvisor:
         win_rate_30d: float = 0.68,
         vix_percentile_30d: float = 50,
         vix_change_1d: float = 0,
-        # GEX features (V2)
+        # GEX features (V2+)
         gex_normalized: float = 0,
         gex_regime_positive: int = 0,
         gex_distance_to_flip_pct: float = 0,
-        gex_between_walls: int = 1
+        gex_between_walls: int = 1,
+        # V3 features
+        volatility_risk_premium: float = None,
+        realized_vol_5d: float = None,
     ) -> MLPrediction:
         """
         Get ML prediction for today's trading decision.
+
+        Backward compatible: accepts V1/V2/V3 parameters.
+        Automatically uses the feature version the model was trained with.
 
         Args:
             vix: Current VIX level
@@ -624,25 +726,55 @@ class FortressMLAdvisor:
             price: Current SPX price
             price_change_1d: Yesterday's price change %
             expected_move_pct: Expected move as % of price
-            win_rate_30d: Recent 30-day win rate
+            win_rate_30d: Recent 30-day win rate (used as win_rate_60d for V3)
             vix_percentile_30d: VIX percentile in 30-day range
             vix_change_1d: VIX change from yesterday %
             gex_normalized: Scale-independent GEX (GEX / spot^2)
             gex_regime_positive: 1 if positive GEX regime, 0 otherwise
             gex_distance_to_flip_pct: Distance to flip point as %
             gex_between_walls: 1 if price between call/put walls
+            volatility_risk_premium: IV - realized vol (V3 feature, auto-calculated if None)
+            realized_vol_5d: 5-day realized vol (used to calculate VRP if provided)
 
         Returns:
             MLPrediction with advice and probability
         """
         if not self.is_trained:
-            # Return conservative fallback
             return self._fallback_prediction(vix, day_of_week, gex_regime_positive)
 
-        # Prepare features - use the feature columns the model was trained on
-        has_gex = getattr(self, '_has_gex_features', len(self.FEATURE_COLS) > 7)
+        # Calculate VRP if not provided
+        if volatility_risk_premium is None:
+            if realized_vol_5d is not None:
+                volatility_risk_premium = expected_move_pct - realized_vol_5d
+            else:
+                # Approximate: VRP ~ VIX premium over typical realized vol
+                volatility_risk_premium = expected_move_pct * 0.2  # ~20% VRP is typical
 
-        if has_gex:
+        # Build feature vector based on which version the model was trained with
+        feature_version = getattr(self, '_feature_version', 2)
+
+        if feature_version >= 3:
+            # V3: cyclical day encoding, VRP, 60d win rate
+            day_sin = math.sin(2 * math.pi * day_of_week / 5)
+            day_cos = math.cos(2 * math.pi * day_of_week / 5)
+            features = np.array([[
+                vix,
+                vix_percentile_30d,
+                vix_change_1d,
+                day_sin,
+                day_cos,
+                price_change_1d,
+                expected_move_pct,
+                volatility_risk_premium,
+                win_rate_30d,  # Caller can pass 60d rate via this param
+                gex_normalized,
+                gex_regime_positive,
+                gex_distance_to_flip_pct,
+                gex_between_walls,
+            ]])
+            trained_cols = self.FEATURE_COLS
+        elif feature_version == 2 or getattr(self, '_has_gex_features', True):
+            # V2: integer day, win_rate_30d, no VRP
             features = np.array([[
                 vix,
                 vix_percentile_30d,
@@ -656,8 +788,9 @@ class FortressMLAdvisor:
                 gex_distance_to_flip_pct,
                 gex_between_walls,
             ]])
+            trained_cols = self.FEATURE_COLS_V2
         else:
-            # V1 model without GEX
+            # V1: no GEX
             features = np.array([[
                 vix,
                 vix_percentile_30d,
@@ -667,6 +800,7 @@ class FortressMLAdvisor:
                 expected_move_pct,
                 win_rate_30d,
             ]])
+            trained_cols = self.FEATURE_COLS_V1
 
         # Scale
         features_scaled = self.scaler.transform(features)
@@ -679,33 +813,37 @@ class FortressMLAdvisor:
 
         win_probability = proba[1]  # Probability of class 1 (win)
 
-        # Determine advice based on thresholds
+        # Determine advice based on adaptive thresholds
         if win_probability >= self.high_confidence_threshold:
             advice = TradingAdvice.TRADE_FULL
-            suggested_risk = 10.0  # Full 10%
+            suggested_risk = 10.0
         elif win_probability >= self.low_confidence_threshold:
             advice = TradingAdvice.TRADE_REDUCED
             # Scale risk between 3% and 8%
-            suggested_risk = 3.0 + (win_probability - self.low_confidence_threshold) / \
-                (self.high_confidence_threshold - self.low_confidence_threshold) * 5.0
+            threshold_range = self.high_confidence_threshold - self.low_confidence_threshold
+            if threshold_range > 0:
+                suggested_risk = 3.0 + (win_probability - self.low_confidence_threshold) / threshold_range * 5.0
+            else:
+                suggested_risk = 5.0
         else:
             advice = TradingAdvice.SKIP_TODAY
             suggested_risk = 0.0
 
-        # Suggested SD multiplier (more conservative when less confident)
-        if win_probability >= 0.75:
+        # Suggested SD multiplier based on probability relative to base rate
+        base_rate = self._base_rate or 0.70
+        if win_probability >= base_rate + 0.05:
             suggested_sd = 0.9  # Tighter strikes, more premium
-        elif win_probability >= 0.65:
+        elif win_probability >= base_rate - 0.05:
             suggested_sd = 1.0  # Standard
         else:
             suggested_sd = 1.2  # Wider strikes, safer
 
         # Top factors
-        feature_importance = dict(zip(self.FEATURE_COLS, self.model.feature_importances_))
+        feature_importance = dict(zip(trained_cols, self.model.feature_importances_))
         top_factors = sorted(feature_importance.items(), key=lambda x: -x[1])[:3]
 
-        # Confidence (scaled win probability)
-        confidence = min(100, win_probability * 100 * 1.2)  # Slight boost for display
+        # Confidence: calibrated, no artificial inflation
+        confidence = min(100, win_probability * 100)
 
         return MLPrediction(
             advice=advice,
@@ -900,8 +1038,11 @@ class FortressMLAdvisor:
         """
         Retrain model incorporating new FORTRESS outcomes.
 
-        This is the key to the feedback loop - as FORTRESS trades,
-        the outcomes improve the model over time.
+        V3 fixes:
+        - Uses TimeSeriesSplit for proper walk-forward validation
+        - Adds scale_pos_weight for class imbalance
+        - Computes metrics on held-out folds (not training data)
+        - Updates adaptive thresholds
 
         Args:
             min_new_samples: Minimum new samples required before retraining
@@ -935,16 +1076,45 @@ class FortressMLAdvisor:
 
             logger.info(f"Retraining with {len(df)} FORTRESS outcomes")
 
-            # Prepare features
-            X = df[['vix', 'vix_percentile_30d', 'vix_change_1d', 'day_of_week',
-                    'price_change_1d', 'expected_move_pct', 'win_rate_30d']].values
+            # Compute V3 features from stored outcomes
+            # Cyclical day encoding
+            df['day_of_week_sin'] = df['day_of_week'].apply(lambda d: math.sin(2 * math.pi * d / 5))
+            df['day_of_week_cos'] = df['day_of_week'].apply(lambda d: math.cos(2 * math.pi * d / 5))
+
+            # VRP approximation from available data
+            realized_vol_5d = df['price_change_1d'].rolling(5, min_periods=1).apply(
+                lambda x: (sum(v**2 for v in x) / len(x)) ** 0.5
+            ).fillna(0)
+            df['volatility_risk_premium'] = df['expected_move_pct'] - realized_vol_5d
+
+            # 60-trade win rate (longer horizon than 30)
+            df['win_rate_60d'] = df['is_win'].rolling(60, min_periods=1).mean().shift(1).fillna(0.70)
+
+            # Prepare features (V3)
+            feature_cols = self.FEATURE_COLS
+            X = df[feature_cols].values
             y = df['is_win'].values.astype(int)
+
+            # Class imbalance
+            n_wins = int(y.sum())
+            n_losses = int(len(y) - n_wins)
+            scale_pos_weight = n_losses / n_wins if n_wins > 0 and n_losses > 0 else 1.0
+
+            # Store base rate
+            self._base_rate = float(y.mean())
 
             # Scale
             self.scaler = StandardScaler()
             X_scaled = self.scaler.fit_transform(X)
 
-            # Retrain with XGBoost (same architecture)
+            # Walk-forward validation (proper held-out metrics)
+            n_splits = min(5, len(df) // 20)  # Ensure enough samples per fold
+            if n_splits < 2:
+                n_splits = 2
+
+            tscv = TimeSeriesSplit(n_splits=n_splits)
+            accuracies, precisions, recalls, f1s, aucs, briers = [], [], [], [], [], []
+
             self.model = xgb.XGBClassifier(
                 n_estimators=150,
                 max_depth=4,
@@ -954,12 +1124,33 @@ class FortressMLAdvisor:
                 colsample_bytree=0.8,
                 reg_alpha=0.1,
                 reg_lambda=1.0,
+                scale_pos_weight=scale_pos_weight,
                 random_state=42,
                 use_label_encoder=False,
                 eval_metric='logloss',
                 verbosity=0
             )
 
+            for train_idx, test_idx in tscv.split(X_scaled):
+                X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+                y_train, y_test = y[train_idx], y[test_idx]
+
+                self.model.fit(X_train, y_train)
+                y_pred = self.model.predict(X_test)
+                y_proba = self.model.predict_proba(X_test)[:, 1]
+
+                accuracies.append(accuracy_score(y_test, y_pred))
+                precisions.append(precision_score(y_test, y_pred, zero_division=0))
+                recalls.append(recall_score(y_test, y_pred, zero_division=0))
+                f1s.append(f1_score(y_test, y_pred, zero_division=0))
+                briers.append(brier_score_loss(y_test, y_proba))
+
+                try:
+                    aucs.append(roc_auc_score(y_test, y_proba))
+                except ValueError:
+                    aucs.append(0.5)
+
+            # Final training on all data
             self.model.fit(X_scaled, y)
 
             # Calibrate
@@ -973,36 +1164,37 @@ class FortressMLAdvisor:
             new_minor = int(old_version[1]) + 1 if len(old_version) > 1 else 1
             self.model_version = f"{old_version[0]}.{new_minor}.0"
 
-            # Calculate metrics
-            y_pred = self.model.predict(X_scaled)
-            y_proba = self.calibrated_model.predict_proba(X_scaled)[:, 1]
-
-            feature_importances = dict(zip(self.FEATURE_COLS, self.model.feature_importances_))
+            feature_importances = dict(zip(feature_cols, self.model.feature_importances_))
 
             self.training_metrics = TrainingMetrics(
-                accuracy=accuracy_score(y, y_pred),
-                precision=precision_score(y, y_pred, zero_division=0),
-                recall=recall_score(y, y_pred, zero_division=0),
-                f1_score=f1_score(y, y_pred, zero_division=0),
-                auc_roc=roc_auc_score(y, y_proba) if len(np.unique(y)) > 1 else 0.5,
-                brier_score=brier_score_loss(y, y_proba),
-                win_rate_predicted=y_proba.mean(),
+                accuracy=np.mean(accuracies),
+                precision=np.mean(precisions),
+                recall=np.mean(recalls),
+                f1_score=np.mean(f1s),
+                auc_roc=np.mean(aucs),
+                brier_score=np.mean(briers),  # CV Brier, not in-sample
+                win_rate_predicted=self.calibrated_model.predict_proba(X_scaled)[:, 1].mean(),
                 win_rate_actual=y.mean(),
                 total_samples=len(df),
-                train_samples=len(df),
-                test_samples=0,
-                positive_samples=int(y.sum()),
-                negative_samples=int(len(y) - y.sum()),
+                train_samples=int(len(df) * 0.8),
+                test_samples=int(len(df) * 0.2),
+                positive_samples=n_wins,
+                negative_samples=n_losses,
                 feature_importances=feature_importances,
                 training_date=datetime.now().isoformat(),
                 model_version=self.model_version
             )
 
+            self._feature_version = 3
+            self._trained_feature_cols = feature_cols
+            self._update_thresholds_from_base_rate()
             self._save_model()
 
-            logger.info(f"Retrained model v{self.model_version}")
-            logger.info(f"  Accuracy: {self.training_metrics.accuracy:.2%}")
+            logger.info(f"Retrained model v{self.model_version} (features V3)")
+            logger.info(f"  Accuracy (CV): {self.training_metrics.accuracy:.2%}")
+            logger.info(f"  AUC-ROC (CV): {self.training_metrics.auc_roc:.3f}")
             logger.info(f"  Win Rate: {self.training_metrics.win_rate_actual:.2%}")
+            logger.info(f"  Class balance: {n_wins}W / {n_losses}L")
 
             return self.training_metrics
 
@@ -1018,17 +1210,25 @@ class FortressMLAdvisor:
         - Which VIX ranges work best
         - Which days of week are most profitable
         - Feature importance ranking
+        - V3: adaptive threshold info, VRP sensitivity
         """
         if not self.is_trained:
             return {'error': 'Model not trained'}
 
         insights = {
             'model_version': self.model_version,
+            'feature_version': getattr(self, '_feature_version', 2),
             'training_date': self.training_metrics.training_date if self.training_metrics else None,
             'overall_performance': {
                 'accuracy': self.training_metrics.accuracy if self.training_metrics else None,
                 'auc_roc': self.training_metrics.auc_roc if self.training_metrics else None,
+                'brier_score': self.training_metrics.brier_score if self.training_metrics else None,
                 'actual_win_rate': self.training_metrics.win_rate_actual if self.training_metrics else None,
+            },
+            'adaptive_thresholds': {
+                'base_rate': self._base_rate,
+                'skip_below': self.low_confidence_threshold,
+                'trade_full_above': self.high_confidence_threshold,
             },
             'feature_importance': {},
             'pattern_recommendations': []
@@ -1042,27 +1242,35 @@ class FortressMLAdvisor:
             )
             insights['feature_importance'] = {k: round(v, 4) for k, v in sorted_features}
 
-            # Generate recommendations
+            # Generate recommendations based on top feature
             top_feature = sorted_features[0][0]
 
             if top_feature == 'vix':
                 insights['pattern_recommendations'].append(
                     "VIX level is the strongest predictor. Consider VIX-based position sizing."
                 )
-            elif top_feature == 'day_of_week':
+            elif 'day_of_week' in top_feature:
                 insights['pattern_recommendations'].append(
                     "Day of week matters significantly. Review performance by day."
                 )
-            elif top_feature == 'win_rate_30d':
+            elif 'win_rate' in top_feature:
                 insights['pattern_recommendations'].append(
                     "Recent performance predicts future results. Momentum effect detected."
+                )
+            elif top_feature == 'volatility_risk_premium':
+                insights['pattern_recommendations'].append(
+                    "VRP is the strongest predictor — premium selling edge is data-driven."
+                )
+            elif 'gex' in top_feature:
+                insights['pattern_recommendations'].append(
+                    "GEX features dominate — gamma exposure regime drives IC outcomes."
                 )
 
         # VIX sensitivity analysis
         if self.is_trained:
             vix_sensitivity = []
             for vix in [12, 15, 18, 20, 25, 30, 35]:
-                pred = self.predict(vix=vix, day_of_week=2)  # Wednesday
+                pred = self.predict(vix=vix, day_of_week=2)
                 vix_sensitivity.append({
                     'vix': vix,
                     'win_probability': round(pred.win_probability, 3),
