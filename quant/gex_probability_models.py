@@ -33,7 +33,8 @@ import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import (
     classification_report, confusion_matrix, accuracy_score,
-    mean_squared_error, mean_absolute_error, r2_score
+    mean_squared_error, mean_absolute_error, r2_score,
+    brier_score_loss
 )
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 import joblib
@@ -458,11 +459,28 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # === Calendar Features ===
     df['trade_date'] = pd.to_datetime(df['trade_date'])
     df['day_of_week'] = df['trade_date'].dt.dayofweek
+    # Cyclical encoding (V2) — eliminates Fri→Mon discontinuity
+    df['day_of_week_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 5)
+    df['day_of_week_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 5)
     df['is_monday'] = (df['day_of_week'] == 0).astype(int)
     df['is_friday'] = (df['day_of_week'] == 4).astype(int)
     df['day_of_month'] = df['trade_date'].dt.day
     df['is_opex_week'] = ((df['day_of_month'] >= 15) & (df['day_of_month'] <= 21)).astype(int)
     df['is_month_end'] = (df['day_of_month'] >= 25).astype(int)
+
+    # === Volatility Risk Premium (V2) ===
+    # VRP = implied vol (expected move) - realized vol
+    # Positive VRP = IV > RV = premium selling favorable
+    df['realized_vol_5d'] = df.groupby('symbol')['price_range_pct'].transform(
+        lambda x: x.rolling(5, min_periods=2).std()
+    ).fillna(0)
+    # expected_move_pct comes from options straddle pricing
+    if 'expected_move_pct' in df.columns:
+        df['volatility_risk_premium'] = df['expected_move_pct'] - df['realized_vol_5d']
+    else:
+        # Approximate from VIX: annualized VIX / sqrt(252) ≈ daily expected move
+        df['volatility_risk_premium'] = (df['vix_level'] / np.sqrt(252)) - df['realized_vol_5d']
+    df['volatility_risk_premium'] = df['volatility_risk_premium'].fillna(0)
 
     # === Pin Zone Features ===
     df['pin_zone_width_pct'] = df.apply(
@@ -478,6 +496,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ==============================================================================
+# FEATURE VERSION TRACKING
+# ==============================================================================
+
+# V1: Original features with integer day_of_week (pre-audit)
+# V2: Cyclical day encoding, VRP, Brier score, class imbalance handling
+CURRENT_FEATURE_VERSION = 2
+
+
+# ==============================================================================
 # MODEL 1: DIRECTION PROBABILITY
 # ==============================================================================
 
@@ -490,7 +517,22 @@ class DirectionModel:
     - Negative gamma = trending (larger moves)
     """
 
+    # V2 features: cyclical day, VRP, removed integer day_of_week
     FEATURE_COLUMNS = [
+        'gamma_regime_positive', 'gamma_regime_negative',
+        'net_gamma_normalized', 'gamma_ratio_log',
+        'gamma_imbalance_pct', 'top_magnet_concentration',
+        'flip_distance_normalized', 'near_flip',
+        'num_magnets_above', 'num_magnets_below',
+        'vix_level', 'vix_regime_low', 'vix_regime_mid', 'vix_regime_high',
+        'volatility_risk_premium',
+        'gamma_change_1d', 'gamma_regime_changed',
+        'prev_price_change_pct',
+        'day_of_week_sin', 'day_of_week_cos', 'is_monday', 'is_friday', 'is_opex_week'
+    ]
+
+    # V1 features for backward compat with old models
+    FEATURE_COLUMNS_V1 = [
         'gamma_regime_positive', 'gamma_regime_negative',
         'net_gamma_normalized', 'gamma_ratio_log',
         'gamma_imbalance_pct', 'top_magnet_concentration',
@@ -512,6 +554,8 @@ class DirectionModel:
         self.label_encoder = LabelEncoder()
         self.is_trained = False
         self.feature_names = []
+        self.feature_version = CURRENT_FEATURE_VERSION
+        self.feature_importances = {}
 
     def _classify_direction(self, price_change_pct: float) -> str:
         if price_change_pct >= self.UP_THRESHOLD:
@@ -521,17 +565,20 @@ class DirectionModel:
         return Direction.FLAT.value
 
     def train(self, df: pd.DataFrame, n_splits: int = 5) -> Dict:
-        """Train direction prediction model"""
+        """Train direction prediction model with sample_weight for class imbalance"""
         print("\n" + "=" * 70)
-        print("MODEL 1: DIRECTION PROBABILITY")
+        print("MODEL 1: DIRECTION PROBABILITY (V2)")
         print("=" * 70)
 
         # Create target
         df = df.copy()
         df['direction'] = df['price_change_pct'].apply(self._classify_direction)
 
-        # Select features
+        # Select features — V2 first, fall back to V1
         available = [c for c in self.FEATURE_COLUMNS if c in df.columns]
+        if len(available) < len(self.FEATURE_COLUMNS) * 0.7:
+            available = [c for c in self.FEATURE_COLUMNS_V1 if c in df.columns]
+            self.feature_version = 1
         self.feature_names = available
 
         X = df[available].values
@@ -543,14 +590,25 @@ class DirectionModel:
         # Encode labels
         y_encoded = self.label_encoder.fit_transform(y)
 
+        # Compute sample weights for class imbalance (multi-class)
+        classes, class_counts = np.unique(y_encoded, return_counts=True)
+        total = len(y_encoded)
+        class_weight_map = {c: total / (len(classes) * count) for c, count in zip(classes, class_counts)}
+        sample_weight_array = np.array([class_weight_map[yi] for yi in y_encoded])
+
+        print(f"  Class distribution: {dict(zip(self.label_encoder.classes_, class_counts))}")
+        print(f"  Sample weights: {dict(zip(self.label_encoder.classes_, [class_weight_map[c] for c in classes]))}")
+
         # Walk-forward validation
         tscv = TimeSeriesSplit(n_splits=n_splits)
         fold_accuracies = []
+        fold_briers = []
         all_y_true, all_y_pred = [], []
 
         for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+            sw_train = sample_weight_array[train_idx]
 
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
@@ -561,20 +619,31 @@ class DirectionModel:
                     min_child_weight=10, subsample=0.8, random_state=42, verbosity=0
                 )
             else:
+                from sklearn.ensemble import GradientBoostingClassifier
                 model = GradientBoostingClassifier(
                     n_estimators=100, max_depth=4, learning_rate=0.1,
                     min_samples_leaf=10, random_state=42
                 )
 
-            model.fit(X_train_scaled, y_train)
+            model.fit(X_train_scaled, y_train, sample_weight=sw_train)
             y_pred = model.predict(X_test_scaled)
+            y_proba = model.predict_proba(X_test_scaled)
 
             fold_acc = accuracy_score(y_test, y_pred)
             fold_accuracies.append(fold_acc)
             all_y_true.extend(y_test)
             all_y_pred.extend(y_pred)
 
-            print(f"  Fold {fold + 1}: {fold_acc:.1%}")
+            # Brier score per class (one-vs-rest), averaged
+            fold_brier = 0.0
+            for ci in range(len(classes)):
+                y_bin = (y_test == ci).astype(int)
+                if y_proba.shape[1] > ci:
+                    fold_brier += brier_score_loss(y_bin, y_proba[:, ci])
+            fold_brier /= len(classes)
+            fold_briers.append(fold_brier)
+
+            print(f"  Fold {fold + 1}: Acc={fold_acc:.1%}, Brier={fold_brier:.4f}")
 
         # Final model on all data
         X_scaled = self.scaler.fit_transform(X)
@@ -584,23 +653,34 @@ class DirectionModel:
                 min_child_weight=10, subsample=0.8, random_state=42, verbosity=0
             )
         else:
+            from sklearn.ensemble import GradientBoostingClassifier
             self.model = GradientBoostingClassifier(
                 n_estimators=150, max_depth=4, learning_rate=0.1,
                 min_samples_leaf=10, random_state=42
             )
-        self.model.fit(X_scaled, y_encoded)
+        self.model.fit(X_scaled, y_encoded, sample_weight=sample_weight_array)
         self.is_trained = True
 
+        # Store feature importances
+        if hasattr(self.model, 'feature_importances_'):
+            self.feature_importances = dict(zip(self.feature_names, self.model.feature_importances_))
+
         overall_acc = accuracy_score(all_y_true, all_y_pred)
+        brier_cv = np.mean(fold_briers)
 
         print(f"\n  Overall Accuracy: {overall_acc:.1%}")
         print(f"  Mean CV: {np.mean(fold_accuracies):.1%} (+/- {np.std(fold_accuracies):.1%})")
+        print(f"  Mean Brier (CV): {brier_cv:.4f}")
         print(f"  Classes: {list(self.label_encoder.classes_)}")
+        print(f"  Feature version: V{self.feature_version}")
 
         return {
             'accuracy': overall_acc,
             'cv_mean': np.mean(fold_accuracies),
             'cv_std': np.std(fold_accuracies),
+            'brier_cv': float(brier_cv),
+            'feature_version': self.feature_version,
+            'feature_importances': self.feature_importances,
             'samples': len(df)
         }
 
@@ -634,9 +714,20 @@ class FlipGravityModel:
     Note: Hypothesis H4 was NOT confirmed (44.4%), so this model
     may have limited predictive power. We train it anyway to
     let the model find any conditional patterns.
+
+    V2: Added scale_pos_weight, Brier score, cyclical day features.
     """
 
     FEATURE_COLUMNS = [
+        'gamma_regime_positive', 'gamma_regime_negative',
+        'flip_distance_normalized', 'near_flip',
+        'gamma_imbalance_pct', 'net_gamma_normalized',
+        'vix_level', 'vix_regime_high',
+        'volatility_risk_premium',
+        'gamma_change_1d', 'day_of_week_sin', 'day_of_week_cos', 'is_opex_week'
+    ]
+
+    FEATURE_COLUMNS_V1 = [
         'gamma_regime_positive', 'gamma_regime_negative',
         'flip_distance_normalized', 'near_flip',
         'gamma_imbalance_pct', 'net_gamma_normalized',
@@ -649,17 +740,18 @@ class FlipGravityModel:
         self.scaler = StandardScaler()
         self.is_trained = False
         self.feature_names = []
+        self.feature_version = CURRENT_FEATURE_VERSION
+        self.feature_importances = {}
 
     def train(self, df: pd.DataFrame, n_splits: int = 5) -> Dict:
-        """Train flip gravity model"""
+        """Train flip gravity model with scale_pos_weight and Brier score"""
         print("\n" + "=" * 70)
-        print("MODEL 2: FLIP GRAVITY PROBABILITY")
+        print("MODEL 2: FLIP GRAVITY PROBABILITY (V2)")
         print("=" * 70)
 
         df = df.copy()
 
         # Target: Did price move toward flip?
-        # Distance to flip decreased from open to close
         def moved_toward_flip(row):
             if row['flip_point'] is None or row['flip_point'] == 0:
                 return 0
@@ -670,18 +762,35 @@ class FlipGravityModel:
         df['moved_toward_flip'] = df.apply(moved_toward_flip, axis=1)
 
         available = [c for c in self.FEATURE_COLUMNS if c in df.columns]
+        if len(available) < len(self.FEATURE_COLUMNS) * 0.7:
+            available = [c for c in self.FEATURE_COLUMNS_V1 if c in df.columns]
+            self.feature_version = 1
         self.feature_names = available
 
         X = np.nan_to_num(df[available].values, nan=0.0)
         y = df['moved_toward_flip'].values
 
+        # Compute scale_pos_weight for class imbalance
+        n_pos = y.sum()
+        n_neg = len(y) - n_pos
+        spw = n_neg / n_pos if n_pos > 0 else 1.0
+
+        print(f"  Positive: {n_pos} ({n_pos/len(y):.1%}), Negative: {n_neg} ({n_neg/len(y):.1%})")
+        print(f"  scale_pos_weight: {spw:.2f}")
+
         # Walk-forward validation
         tscv = TimeSeriesSplit(n_splits=n_splits)
         fold_accuracies = []
+        fold_briers = []
 
         for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
+
+            # Per-fold scale_pos_weight
+            n_pos_fold = y_train.sum()
+            n_neg_fold = len(y_train) - n_pos_fold
+            spw_fold = n_neg_fold / n_pos_fold if n_pos_fold > 0 else 1.0
 
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
@@ -689,43 +798,73 @@ class FlipGravityModel:
             if HAS_XGBOOST:
                 model = xgb.XGBClassifier(
                     n_estimators=100, max_depth=3, learning_rate=0.1,
-                    min_child_weight=20, random_state=42, verbosity=0
+                    min_child_weight=20, scale_pos_weight=spw_fold,
+                    random_state=42, verbosity=0
                 )
             else:
+                from sklearn.ensemble import GradientBoostingClassifier
+                # GBC uses sample_weight instead of scale_pos_weight
+                sw_train = np.where(y_train == 1, n_neg_fold / len(y_train), n_pos_fold / len(y_train))
                 model = GradientBoostingClassifier(
                     n_estimators=100, max_depth=3, learning_rate=0.1,
                     min_samples_leaf=20, random_state=42
                 )
 
-            model.fit(X_train_scaled, y_train)
+            if HAS_XGBOOST:
+                model.fit(X_train_scaled, y_train)
+            else:
+                model.fit(X_train_scaled, y_train, sample_weight=sw_train)
+
             y_pred = model.predict(X_test_scaled)
+            y_proba = model.predict_proba(X_test_scaled)
 
             fold_acc = accuracy_score(y_test, y_pred)
             fold_accuracies.append(fold_acc)
-            print(f"  Fold {fold + 1}: {fold_acc:.1%}")
+
+            # Brier score on held-out fold
+            prob_pos = y_proba[:, 1] if y_proba.shape[1] > 1 else y_proba[:, 0]
+            fold_brier = brier_score_loss(y_test, prob_pos)
+            fold_briers.append(fold_brier)
+
+            print(f"  Fold {fold + 1}: Acc={fold_acc:.1%}, Brier={fold_brier:.4f}")
 
         # Final model
         X_scaled = self.scaler.fit_transform(X)
         if HAS_XGBOOST:
             self.model = xgb.XGBClassifier(
                 n_estimators=100, max_depth=3, learning_rate=0.1,
-                min_child_weight=20, random_state=42, verbosity=0
+                min_child_weight=20, scale_pos_weight=spw,
+                random_state=42, verbosity=0
             )
+            self.model.fit(X_scaled, y)
         else:
+            from sklearn.ensemble import GradientBoostingClassifier
+            sw_all = np.where(y == 1, n_neg / len(y), n_pos / len(y))
             self.model = GradientBoostingClassifier(
                 n_estimators=100, max_depth=3, learning_rate=0.1,
                 min_samples_leaf=20, random_state=42
             )
-        self.model.fit(X_scaled, y)
+            self.model.fit(X_scaled, y, sample_weight=sw_all)
         self.is_trained = True
 
+        # Store feature importances
+        if hasattr(self.model, 'feature_importances_'):
+            self.feature_importances = dict(zip(self.feature_names, self.model.feature_importances_))
+
         base_rate = y.mean()
+        brier_cv = np.mean(fold_briers)
+
         print(f"\n  Base Rate (moved toward flip): {base_rate:.1%}")
         print(f"  Mean CV Accuracy: {np.mean(fold_accuracies):.1%}")
+        print(f"  Mean Brier (CV): {brier_cv:.4f}")
+        print(f"  Feature version: V{self.feature_version}")
 
         return {
             'base_rate': float(base_rate),
             'cv_mean': np.mean(fold_accuracies),
+            'brier_cv': float(brier_cv),
+            'feature_version': self.feature_version,
+            'feature_importances': self.feature_importances,
             'samples': len(df)
         }
 
@@ -757,9 +896,22 @@ class MagnetAttractionModel:
     Predicts probability that price reaches/touches the nearest magnet.
 
     Based on H5 (89% interact with magnets in pin zones).
+
+    V2: Added scale_pos_weight (CRITICAL — ~89% base rate),
+    Brier score, VRP feature.
     """
 
     FEATURE_COLUMNS = [
+        'open_in_pin_zone', 'pin_zone_width_pct',
+        'near_magnet', 'magnet_distance_normalized',
+        'top_magnet_concentration',
+        'gamma_regime_positive', 'gamma_regime_negative',
+        'vix_level', 'vix_regime_high',
+        'volatility_risk_premium',
+        'day_of_week_sin', 'day_of_week_cos', 'is_opex_week'
+    ]
+
+    FEATURE_COLUMNS_V1 = [
         'open_in_pin_zone', 'pin_zone_width_pct',
         'near_magnet', 'magnet_distance_normalized',
         'top_magnet_concentration',
@@ -773,17 +925,18 @@ class MagnetAttractionModel:
         self.scaler = StandardScaler()
         self.is_trained = False
         self.feature_names = []
+        self.feature_version = CURRENT_FEATURE_VERSION
+        self.feature_importances = {}
 
     def train(self, df: pd.DataFrame, n_splits: int = 5) -> Dict:
-        """Train magnet attraction model"""
+        """Train magnet attraction model with scale_pos_weight and Brier score"""
         print("\n" + "=" * 70)
-        print("MODEL 3: MAGNET ATTRACTION PROBABILITY")
+        print("MODEL 3: MAGNET ATTRACTION PROBABILITY (V2)")
         print("=" * 70)
 
         df = df.copy()
 
         # Target: Did price touch nearest magnet?
-        # High or Low was within 0.1% of nearest magnet
         def touched_magnet(row):
             if row['nearest_magnet_strike'] is None or row['nearest_magnet_strike'] == 0:
                 return 0
@@ -795,18 +948,34 @@ class MagnetAttractionModel:
         df['touched_magnet'] = df.apply(touched_magnet, axis=1)
 
         available = [c for c in self.FEATURE_COLUMNS if c in df.columns]
+        if len(available) < len(self.FEATURE_COLUMNS) * 0.7:
+            available = [c for c in self.FEATURE_COLUMNS_V1 if c in df.columns]
+            self.feature_version = 1
         self.feature_names = available
 
         X = np.nan_to_num(df[available].values, nan=0.0)
         y = df['touched_magnet'].values
 
+        # Compute scale_pos_weight (CRITICAL: ~89% base rate!)
+        n_pos = y.sum()
+        n_neg = len(y) - n_pos
+        spw = n_neg / n_pos if n_pos > 0 else 1.0
+
+        print(f"  Positive: {n_pos} ({n_pos/len(y):.1%}), Negative: {n_neg} ({n_neg/len(y):.1%})")
+        print(f"  scale_pos_weight: {spw:.2f}")
+
         # Walk-forward validation
         tscv = TimeSeriesSplit(n_splits=n_splits)
         fold_accuracies = []
+        fold_briers = []
 
         for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
+
+            n_pos_fold = y_train.sum()
+            n_neg_fold = len(y_train) - n_pos_fold
+            spw_fold = n_neg_fold / n_pos_fold if n_pos_fold > 0 else 1.0
 
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
@@ -814,43 +983,67 @@ class MagnetAttractionModel:
             if HAS_XGBOOST:
                 model = xgb.XGBClassifier(
                     n_estimators=100, max_depth=3, learning_rate=0.1,
-                    min_child_weight=15, random_state=42, verbosity=0
+                    min_child_weight=15, scale_pos_weight=spw_fold,
+                    random_state=42, verbosity=0
                 )
+                model.fit(X_train_scaled, y_train)
             else:
+                from sklearn.ensemble import GradientBoostingClassifier
+                sw_train = np.where(y_train == 1, n_neg_fold / len(y_train), n_pos_fold / len(y_train))
                 model = GradientBoostingClassifier(
                     n_estimators=100, max_depth=3, learning_rate=0.1,
                     min_samples_leaf=15, random_state=42
                 )
+                model.fit(X_train_scaled, y_train, sample_weight=sw_train)
 
-            model.fit(X_train_scaled, y_train)
             y_pred = model.predict(X_test_scaled)
+            y_proba = model.predict_proba(X_test_scaled)
 
             fold_acc = accuracy_score(y_test, y_pred)
             fold_accuracies.append(fold_acc)
-            print(f"  Fold {fold + 1}: {fold_acc:.1%}")
+
+            prob_pos = y_proba[:, 1] if y_proba.shape[1] > 1 else y_proba[:, 0]
+            fold_brier = brier_score_loss(y_test, prob_pos)
+            fold_briers.append(fold_brier)
+
+            print(f"  Fold {fold + 1}: Acc={fold_acc:.1%}, Brier={fold_brier:.4f}")
 
         # Final model
         X_scaled = self.scaler.fit_transform(X)
         if HAS_XGBOOST:
             self.model = xgb.XGBClassifier(
                 n_estimators=100, max_depth=3, learning_rate=0.1,
-                min_child_weight=15, random_state=42, verbosity=0
+                min_child_weight=15, scale_pos_weight=spw,
+                random_state=42, verbosity=0
             )
+            self.model.fit(X_scaled, y)
         else:
+            from sklearn.ensemble import GradientBoostingClassifier
+            sw_all = np.where(y == 1, n_neg / len(y), n_pos / len(y))
             self.model = GradientBoostingClassifier(
                 n_estimators=100, max_depth=3, learning_rate=0.1,
                 min_samples_leaf=15, random_state=42
             )
-        self.model.fit(X_scaled, y)
+            self.model.fit(X_scaled, y, sample_weight=sw_all)
         self.is_trained = True
 
+        if hasattr(self.model, 'feature_importances_'):
+            self.feature_importances = dict(zip(self.feature_names, self.model.feature_importances_))
+
         base_rate = y.mean()
+        brier_cv = np.mean(fold_briers)
+
         print(f"\n  Base Rate (touched magnet): {base_rate:.1%}")
         print(f"  Mean CV Accuracy: {np.mean(fold_accuracies):.1%}")
+        print(f"  Mean Brier (CV): {brier_cv:.4f}")
+        print(f"  Feature version: V{self.feature_version}")
 
         return {
             'base_rate': float(base_rate),
             'cv_mean': np.mean(fold_accuracies),
+            'brier_cv': float(brier_cv),
+            'feature_version': self.feature_version,
+            'feature_importances': self.feature_importances,
             'samples': len(df)
         }
 
@@ -882,9 +1075,21 @@ class VolatilityModel:
 
     Based on H1 (positive gamma = smaller range) and H2 (negative gamma = larger moves).
     This is a regression model, not classification.
+
+    V2: Added VRP feature, cyclical day encoding, feature versioning.
     """
 
     FEATURE_COLUMNS = [
+        'gamma_regime_positive', 'gamma_regime_negative',
+        'net_gamma_normalized', 'gamma_imbalance_pct',
+        'vix_level', 'vix_percentile', 'vix_regime_high',
+        'volatility_risk_premium',
+        'prev_price_range_pct',
+        'wall_spread_pct', 'pin_zone_width_pct',
+        'day_of_week_sin', 'day_of_week_cos', 'is_opex_week', 'is_month_end'
+    ]
+
+    FEATURE_COLUMNS_V1 = [
         'gamma_regime_positive', 'gamma_regime_negative',
         'net_gamma_normalized', 'gamma_imbalance_pct',
         'vix_level', 'vix_percentile', 'vix_regime_high',
@@ -898,19 +1103,22 @@ class VolatilityModel:
         self.scaler = StandardScaler()
         self.is_trained = False
         self.feature_names = []
+        self.feature_version = CURRENT_FEATURE_VERSION
+        self.feature_importances = {}
 
     def train(self, df: pd.DataFrame, n_splits: int = 5) -> Dict:
-        """Train volatility prediction model"""
+        """Train volatility prediction model (V2)"""
         print("\n" + "=" * 70)
-        print("MODEL 4: VOLATILITY ESTIMATE (Expected Range %)")
+        print("MODEL 4: VOLATILITY ESTIMATE (V2 — Expected Range %)")
         print("=" * 70)
 
         df = df.copy()
-
-        # Filter out bad data
         df = df[df['price_range_pct'] > 0].copy()
 
         available = [c for c in self.FEATURE_COLUMNS if c in df.columns]
+        if len(available) < len(self.FEATURE_COLUMNS) * 0.7:
+            available = [c for c in self.FEATURE_COLUMNS_V1 if c in df.columns]
+            self.feature_version = 1
         self.feature_names = available
 
         X = np.nan_to_num(df[available].values, nan=0.0)
@@ -933,6 +1141,7 @@ class VolatilityModel:
                     min_child_weight=10, random_state=42, verbosity=0
                 )
             else:
+                from sklearn.ensemble import GradientBoostingRegressor
                 model = GradientBoostingRegressor(
                     n_estimators=100, max_depth=4, learning_rate=0.1,
                     min_samples_leaf=10, random_state=42
@@ -953,6 +1162,7 @@ class VolatilityModel:
                 min_child_weight=10, random_state=42, verbosity=0
             )
         else:
+            from sklearn.ensemble import GradientBoostingRegressor
             self.model = GradientBoostingRegressor(
                 n_estimators=150, max_depth=4, learning_rate=0.1,
                 min_samples_leaf=10, random_state=42
@@ -960,13 +1170,20 @@ class VolatilityModel:
         self.model.fit(X_scaled, y)
         self.is_trained = True
 
+        if hasattr(self.model, 'feature_importances_'):
+            self.feature_importances = dict(zip(self.feature_names, self.model.feature_importances_))
+
         avg_range = y.mean()
+
         print(f"\n  Average Historical Range: {avg_range:.2f}%")
         print(f"  Mean CV MAE: {np.mean(fold_maes):.3f}%")
+        print(f"  Feature version: V{self.feature_version}")
 
         return {
             'avg_range': float(avg_range),
             'cv_mae': np.mean(fold_maes),
+            'feature_version': self.feature_version,
+            'feature_importances': self.feature_importances,
             'samples': len(df)
         }
 
@@ -997,9 +1214,20 @@ class PinZoneModel:
     Predicts probability that price closes between magnets (pin zone behavior).
 
     Based on H3 (55.2% close between magnets) and H5 (89% interact with magnets).
+
+    V2: Added scale_pos_weight, Brier score, VRP feature.
     """
 
     FEATURE_COLUMNS = [
+        'open_in_pin_zone', 'pin_zone_width_pct',
+        'gamma_regime_positive', 'gamma_regime_negative',
+        'top_magnet_concentration',
+        'vix_level', 'vix_regime_low', 'vix_regime_mid',
+        'volatility_risk_premium',
+        'gamma_change_1d', 'day_of_week_sin', 'day_of_week_cos', 'is_opex_week'
+    ]
+
+    FEATURE_COLUMNS_V1 = [
         'open_in_pin_zone', 'pin_zone_width_pct',
         'gamma_regime_positive', 'gamma_regime_negative',
         'top_magnet_concentration',
@@ -1012,16 +1240,17 @@ class PinZoneModel:
         self.scaler = StandardScaler()
         self.is_trained = False
         self.feature_names = []
+        self.feature_version = CURRENT_FEATURE_VERSION
+        self.feature_importances = {}
 
     def train(self, df: pd.DataFrame, n_splits: int = 5) -> Dict:
-        """Train pin zone model"""
+        """Train pin zone model with scale_pos_weight and Brier score"""
         print("\n" + "=" * 70)
-        print("MODEL 5: PIN ZONE BEHAVIOR")
+        print("MODEL 5: PIN ZONE BEHAVIOR (V2)")
         print("=" * 70)
 
         df = df.copy()
 
-        # Target: Did price close between the two largest magnets?
         def closed_in_zone(row):
             m1, m2 = row['magnet_1_strike'], row['magnet_2_strike']
             if not m1 or not m2:
@@ -1032,18 +1261,34 @@ class PinZoneModel:
         df['closed_in_pin_zone'] = df.apply(closed_in_zone, axis=1)
 
         available = [c for c in self.FEATURE_COLUMNS if c in df.columns]
+        if len(available) < len(self.FEATURE_COLUMNS) * 0.7:
+            available = [c for c in self.FEATURE_COLUMNS_V1 if c in df.columns]
+            self.feature_version = 1
         self.feature_names = available
 
         X = np.nan_to_num(df[available].values, nan=0.0)
         y = df['closed_in_pin_zone'].values
 
+        # Compute scale_pos_weight
+        n_pos = y.sum()
+        n_neg = len(y) - n_pos
+        spw = n_neg / n_pos if n_pos > 0 else 1.0
+
+        print(f"  Positive: {n_pos} ({n_pos/len(y):.1%}), Negative: {n_neg} ({n_neg/len(y):.1%})")
+        print(f"  scale_pos_weight: {spw:.2f}")
+
         # Walk-forward validation
         tscv = TimeSeriesSplit(n_splits=n_splits)
         fold_accuracies = []
+        fold_briers = []
 
         for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
+
+            n_pos_fold = y_train.sum()
+            n_neg_fold = len(y_train) - n_pos_fold
+            spw_fold = n_neg_fold / n_pos_fold if n_pos_fold > 0 else 1.0
 
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
@@ -1051,43 +1296,67 @@ class PinZoneModel:
             if HAS_XGBOOST:
                 model = xgb.XGBClassifier(
                     n_estimators=100, max_depth=3, learning_rate=0.1,
-                    min_child_weight=15, random_state=42, verbosity=0
+                    min_child_weight=15, scale_pos_weight=spw_fold,
+                    random_state=42, verbosity=0
                 )
+                model.fit(X_train_scaled, y_train)
             else:
+                from sklearn.ensemble import GradientBoostingClassifier
+                sw_train = np.where(y_train == 1, n_neg_fold / len(y_train), n_pos_fold / len(y_train))
                 model = GradientBoostingClassifier(
                     n_estimators=100, max_depth=3, learning_rate=0.1,
                     min_samples_leaf=15, random_state=42
                 )
+                model.fit(X_train_scaled, y_train, sample_weight=sw_train)
 
-            model.fit(X_train_scaled, y_train)
             y_pred = model.predict(X_test_scaled)
+            y_proba = model.predict_proba(X_test_scaled)
 
             fold_acc = accuracy_score(y_test, y_pred)
             fold_accuracies.append(fold_acc)
-            print(f"  Fold {fold + 1}: {fold_acc:.1%}")
+
+            prob_pos = y_proba[:, 1] if y_proba.shape[1] > 1 else y_proba[:, 0]
+            fold_brier = brier_score_loss(y_test, prob_pos)
+            fold_briers.append(fold_brier)
+
+            print(f"  Fold {fold + 1}: Acc={fold_acc:.1%}, Brier={fold_brier:.4f}")
 
         # Final model
         X_scaled = self.scaler.fit_transform(X)
         if HAS_XGBOOST:
             self.model = xgb.XGBClassifier(
                 n_estimators=100, max_depth=3, learning_rate=0.1,
-                min_child_weight=15, random_state=42, verbosity=0
+                min_child_weight=15, scale_pos_weight=spw,
+                random_state=42, verbosity=0
             )
+            self.model.fit(X_scaled, y)
         else:
+            from sklearn.ensemble import GradientBoostingClassifier
+            sw_all = np.where(y == 1, n_neg / len(y), n_pos / len(y))
             self.model = GradientBoostingClassifier(
                 n_estimators=100, max_depth=3, learning_rate=0.1,
                 min_samples_leaf=15, random_state=42
             )
-        self.model.fit(X_scaled, y)
+            self.model.fit(X_scaled, y, sample_weight=sw_all)
         self.is_trained = True
 
+        if hasattr(self.model, 'feature_importances_'):
+            self.feature_importances = dict(zip(self.feature_names, self.model.feature_importances_))
+
         base_rate = y.mean()
+        brier_cv = np.mean(fold_briers)
+
         print(f"\n  Base Rate (closed in pin zone): {base_rate:.1%}")
         print(f"  Mean CV Accuracy: {np.mean(fold_accuracies):.1%}")
+        print(f"  Mean Brier (CV): {brier_cv:.4f}")
+        print(f"  Feature version: V{self.feature_version}")
 
         return {
             'base_rate': float(base_rate),
             'cv_mean': np.mean(fold_accuracies),
+            'brier_cv': float(brier_cv),
+            'feature_version': self.feature_version,
+            'feature_importances': self.feature_importances,
             'samples': len(df)
         }
 
@@ -1163,15 +1432,29 @@ class GEXSignalGenerator:
 
         # Summary
         print("\n" + "=" * 70)
-        print("TRAINING SUMMARY")
+        print("TRAINING SUMMARY (V2)")
         print("=" * 70)
         for name, res in results.items():
+            parts = []
             if 'accuracy' in res:
-                print(f"  {name}: Accuracy={res.get('accuracy', res.get('cv_mean', 0)):.1%}")
-            elif 'cv_mae' in res:
-                print(f"  {name}: MAE={res['cv_mae']:.3f}%")
-            else:
-                print(f"  {name}: CV={res.get('cv_mean', 0):.1%}")
+                parts.append(f"Acc={res['accuracy']:.1%}")
+            if 'cv_mean' in res:
+                parts.append(f"CV={res['cv_mean']:.1%}")
+            if 'brier_cv' in res:
+                parts.append(f"Brier={res['brier_cv']:.4f}")
+            if 'cv_mae' in res:
+                parts.append(f"MAE={res['cv_mae']:.3f}%")
+            if 'base_rate' in res:
+                parts.append(f"BaseRate={res['base_rate']:.1%}")
+            if 'feature_version' in res:
+                parts.append(f"V{res['feature_version']}")
+            print(f"  {name}: {', '.join(parts)}")
+
+        # Store aggregate metadata
+        results['_meta'] = {
+            'feature_version': CURRENT_FEATURE_VERSION,
+            'total_records': sum(r.get('samples', 0) for r in results.values() if isinstance(r, dict) and 'samples' in r),
+        }
 
         return results
 
@@ -1323,45 +1606,34 @@ class GEXSignalGenerator:
         print(f"\nModels saved to {filepath}")
 
     def load(self, filepath: str = 'models/gex_signal_generator.joblib'):
-        """Load all models from disk"""
+        """Load all models from disk with V2 metadata support"""
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
         model_data = joblib.load(filepath)
 
-        # Load direction model
-        self.direction_model.model = model_data['direction_model']['model']
-        self.direction_model.scaler = model_data['direction_model']['scaler']
-        self.direction_model.label_encoder = model_data['direction_model']['label_encoder']
-        self.direction_model.feature_names = model_data['direction_model']['feature_names']
-        self.direction_model.is_trained = True
+        def _restore(model_obj, data_key, has_label_encoder=False):
+            d = model_data[data_key]
+            model_obj.model = d['model']
+            model_obj.scaler = d['scaler']
+            model_obj.feature_names = d['feature_names']
+            if has_label_encoder:
+                model_obj.label_encoder = d['label_encoder']
+            model_obj.feature_version = d.get('feature_version', 1)
+            model_obj.feature_importances = d.get('feature_importances', {})
+            model_obj.is_trained = True
 
-        # Load flip gravity model
-        self.flip_gravity_model.model = model_data['flip_gravity_model']['model']
-        self.flip_gravity_model.scaler = model_data['flip_gravity_model']['scaler']
-        self.flip_gravity_model.feature_names = model_data['flip_gravity_model']['feature_names']
-        self.flip_gravity_model.is_trained = True
+        _restore(self.direction_model, 'direction_model', has_label_encoder=True)
+        _restore(self.flip_gravity_model, 'flip_gravity_model')
+        _restore(self.magnet_attraction_model, 'magnet_attraction_model')
+        _restore(self.volatility_model, 'volatility_model')
 
-        # Load magnet attraction model
-        self.magnet_attraction_model.model = model_data['magnet_attraction_model']['model']
-        self.magnet_attraction_model.scaler = model_data['magnet_attraction_model']['scaler']
-        self.magnet_attraction_model.feature_names = model_data['magnet_attraction_model']['feature_names']
-        self.magnet_attraction_model.is_trained = True
-
-        # Load volatility model
-        self.volatility_model.model = model_data['volatility_model']['model']
-        self.volatility_model.scaler = model_data['volatility_model']['scaler']
-        self.volatility_model.feature_names = model_data['volatility_model']['feature_names']
-        self.volatility_model.is_trained = True
-
-        # Load pin zone model
-        self.pin_zone_model.model = model_data['pin_zone_model']['model']
-        self.pin_zone_model.scaler = model_data['pin_zone_model']['scaler']
-        self.pin_zone_model.feature_names = model_data['pin_zone_model']['feature_names']
-        self.pin_zone_model.is_trained = True
+        _restore(self.pin_zone_model, 'pin_zone_model')
 
         self.is_trained = True
-        print(f"Models loaded from {filepath}")
+        meta = model_data.get('_meta', {})
+        fv = meta.get('feature_version', 1)
+        print(f"Models loaded from {filepath} (feature_version=V{fv})")
 
     def save_to_db(self, metrics: dict = None, training_records: int = None):
         """Save models to PostgreSQL database for persistence across Render deploys"""
@@ -1376,27 +1648,41 @@ class GEXSignalGenerator:
                     'model': self.direction_model.model,
                     'scaler': self.direction_model.scaler,
                     'label_encoder': self.direction_model.label_encoder,
-                    'feature_names': self.direction_model.feature_names
+                    'feature_names': self.direction_model.feature_names,
+                    'feature_version': getattr(self.direction_model, 'feature_version', 1),
+                    'feature_importances': getattr(self.direction_model, 'feature_importances', {}),
                 },
                 'flip_gravity_model': {
                     'model': self.flip_gravity_model.model,
                     'scaler': self.flip_gravity_model.scaler,
-                    'feature_names': self.flip_gravity_model.feature_names
+                    'feature_names': self.flip_gravity_model.feature_names,
+                    'feature_version': getattr(self.flip_gravity_model, 'feature_version', 1),
+                    'feature_importances': getattr(self.flip_gravity_model, 'feature_importances', {}),
                 },
                 'magnet_attraction_model': {
                     'model': self.magnet_attraction_model.model,
                     'scaler': self.magnet_attraction_model.scaler,
-                    'feature_names': self.magnet_attraction_model.feature_names
+                    'feature_names': self.magnet_attraction_model.feature_names,
+                    'feature_version': getattr(self.magnet_attraction_model, 'feature_version', 1),
+                    'feature_importances': getattr(self.magnet_attraction_model, 'feature_importances', {}),
                 },
                 'volatility_model': {
                     'model': self.volatility_model.model,
                     'scaler': self.volatility_model.scaler,
-                    'feature_names': self.volatility_model.feature_names
+                    'feature_names': self.volatility_model.feature_names,
+                    'feature_version': getattr(self.volatility_model, 'feature_version', 1),
+                    'feature_importances': getattr(self.volatility_model, 'feature_importances', {}),
                 },
                 'pin_zone_model': {
                     'model': self.pin_zone_model.model,
                     'scaler': self.pin_zone_model.scaler,
-                    'feature_names': self.pin_zone_model.feature_names
+                    'feature_names': self.pin_zone_model.feature_names,
+                    'feature_version': getattr(self.pin_zone_model, 'feature_version', 1),
+                    'feature_importances': getattr(self.pin_zone_model, 'feature_importances', {}),
+                },
+                '_meta': {
+                    'feature_version': CURRENT_FEATURE_VERSION,
+                    'model_version': '2.0.0',
                 }
             }
 
@@ -1411,7 +1697,7 @@ class GEXSignalGenerator:
             return False
 
     def load_from_db(self) -> bool:
-        """Load models from PostgreSQL database"""
+        """Load models from PostgreSQL database with V2 metadata support"""
         try:
             from quant.model_persistence import load_model_from_db, MODEL_GEX_PROBABILITY
 
@@ -1419,38 +1705,33 @@ class GEXSignalGenerator:
             if model_data is None:
                 return False
 
-            # Load direction model
-            self.direction_model.model = model_data['direction_model']['model']
-            self.direction_model.scaler = model_data['direction_model']['scaler']
-            self.direction_model.label_encoder = model_data['direction_model']['label_encoder']
-            self.direction_model.feature_names = model_data['direction_model']['feature_names']
-            self.direction_model.is_trained = True
+            def _restore_model(model_obj, data_key, has_label_encoder=False):
+                """Helper to restore a sub-model with V2 metadata"""
+                d = model_data[data_key]
+                model_obj.model = d['model']
+                model_obj.scaler = d['scaler']
+                model_obj.feature_names = d['feature_names']
+                if has_label_encoder:
+                    model_obj.label_encoder = d['label_encoder']
+                # V2 metadata (backward compat with V1 saved models)
+                model_obj.feature_version = d.get('feature_version', 1)
+                model_obj.feature_importances = d.get('feature_importances', {})
+                model_obj.is_trained = True
 
-            # Load flip gravity model
-            self.flip_gravity_model.model = model_data['flip_gravity_model']['model']
-            self.flip_gravity_model.scaler = model_data['flip_gravity_model']['scaler']
-            self.flip_gravity_model.feature_names = model_data['flip_gravity_model']['feature_names']
-            self.flip_gravity_model.is_trained = True
-
-            # Load magnet attraction model
-            self.magnet_attraction_model.model = model_data['magnet_attraction_model']['model']
-            self.magnet_attraction_model.scaler = model_data['magnet_attraction_model']['scaler']
-            self.magnet_attraction_model.feature_names = model_data['magnet_attraction_model']['feature_names']
-            self.magnet_attraction_model.is_trained = True
-
-            # Load volatility model
-            self.volatility_model.model = model_data['volatility_model']['model']
-            self.volatility_model.scaler = model_data['volatility_model']['scaler']
-            self.volatility_model.feature_names = model_data['volatility_model']['feature_names']
-            self.volatility_model.is_trained = True
-
-            # Load pin zone model
-            self.pin_zone_model.model = model_data['pin_zone_model']['model']
-            self.pin_zone_model.scaler = model_data['pin_zone_model']['scaler']
-            self.pin_zone_model.feature_names = model_data['pin_zone_model']['feature_names']
-            self.pin_zone_model.is_trained = True
+            _restore_model(self.direction_model, 'direction_model', has_label_encoder=True)
+            _restore_model(self.flip_gravity_model, 'flip_gravity_model')
+            _restore_model(self.magnet_attraction_model, 'magnet_attraction_model')
+            _restore_model(self.volatility_model, 'volatility_model')
+            _restore_model(self.pin_zone_model, 'pin_zone_model')
 
             self.is_trained = True
+
+            # Log version info
+            meta = model_data.get('_meta', {})
+            fv = meta.get('feature_version', 1)
+            mv = meta.get('model_version', '1.0.0')
+            logger.info(f"GEXSignalGenerator loaded from DB: model_version={mv}, feature_version=V{fv}")
+
             return True
 
         except Exception as e:
@@ -1628,6 +1909,20 @@ class GEXProbabilityModels:
         distance_to_flip = abs(spot_price - flip_point) / spot_price if flip_point else 0
         magnet_distance = nearest_distance / spot_price if nearest_magnet else 0.1
 
+        # V2: cyclical day encoding
+        dow = datetime.now().weekday()
+        day_sin = np.sin(2 * np.pi * dow / 5)
+        day_cos = np.cos(2 * np.pi * dow / 5)
+
+        # V2: VRP approximation (VIX-based since we lack realized vol here)
+        em_pct = (expected_move / spot_price * 100) if spot_price else 1
+        vrp = (vix / np.sqrt(252)) - 1.0  # Rough approximation
+
+        # Calendar
+        today = datetime.now()
+        is_opex = 1 if 15 <= today.day <= 21 else 0
+        is_month_end = 1 if today.day >= 25 else 0
+
         return {
             # Gamma features
             'gamma_regime_positive': 1 if gamma_regime == 'POSITIVE' else 0,
@@ -1635,27 +1930,46 @@ class GEXProbabilityModels:
             'net_gamma_normalized': net_gamma / total_gamma if total_gamma else 0,
             'gamma_ratio_log': np.log1p(abs(net_gamma) / (total_gamma or 1)),
 
+            # Imbalance features
+            'gamma_imbalance_pct': 0,  # Would need call/put breakdown
+            'top_magnet_concentration': 0.5,  # Default without per-strike data
+
             # Position features
-            'distance_to_flip': distance_to_flip,
-            'distance_to_flip_pct': distance_to_flip * 100,
-            'above_flip': 1 if spot_price > flip_point else 0,
+            'flip_distance_normalized': distance_to_flip * 100,
+            'near_flip': 1 if distance_to_flip < 0.005 else 0,
             'near_magnet': 1 if magnet_distance < 0.005 else 0,
             'magnet_distance_normalized': magnet_distance,
-            'nearest_magnet_strike': nearest_magnet or spot_price,
+            'num_magnets_above': sum(1 for m in magnets if (m.get('strike', m) if isinstance(m, dict) else m) > spot_price),
+            'num_magnets_below': sum(1 for m in magnets if (m.get('strike', m) if isinstance(m, dict) else m) < spot_price),
+            'wall_spread_pct': magnet_distance * 200,
 
             # Volatility features
             'vix_level': vix,
+            'vix_regime_low': 1 if vix < 15 else 0,
+            'vix_regime_mid': 1 if 15 <= vix <= 25 else 0,
             'vix_regime_high': 1 if vix > 25 else 0,
-            'expected_move_pct': (expected_move / spot_price * 100) if spot_price else 1,
+            'vix_percentile': 0.5,  # Default without history
+            'expected_move_pct': em_pct,
+            'volatility_risk_premium': vrp,
 
             # Pin zone features
             'open_in_pin_zone': 1 if len(magnets) >= 2 else 0,
             'pin_zone_width_pct': magnet_distance * 100,
-            'top_magnet_concentration': 0.5,  # Default
 
-            # Time features
-            'is_opex_week': 0,  # Would need date calculation
-            'day_of_week': datetime.now().weekday(),
+            # Momentum features (defaults without history)
+            'gamma_change_1d': 0,
+            'gamma_regime_changed': 0,
+            'prev_price_change_pct': 0,
+            'prev_price_range_pct': 1.0,
+
+            # Time features — V2 cyclical + V1 backward compat
+            'day_of_week': dow,
+            'day_of_week_sin': day_sin,
+            'day_of_week_cos': day_cos,
+            'is_monday': 1 if dow == 0 else 0,
+            'is_friday': 1 if dow == 4 else 0,
+            'is_opex_week': is_opex,
+            'is_month_end': is_month_end,
 
             # Price features
             'spot_open': spot_price,
