@@ -1282,7 +1282,7 @@ class JubileeICSignalGenerator:
         2. GEX walls (if available)
         3. Delta-based strikes (fallback)
         """
-        width = self.config.spread_width  # $25 for JUBILEE
+        width = self.config.spread_width  # $12 for JUBILEE (match SAMSON)
 
         def round_to_5(x):
             return round(x / 5) * 5
@@ -1305,10 +1305,10 @@ class JubileeICSignalGenerator:
             call_short = round_to_5(call_wall)
             use_gex = True
 
-        # Priority 3: Delta-based fallback (~10 delta = ~1.0-1.2 SD)
+        # Priority 3: SD-based fallback - AGGRESSIVE (match SAMSON 0.8 SD)
         if not use_oracle and not use_gex:
-            # ~10 delta is approximately 1.0-1.2 standard deviations
-            sd_multiplier = 1.0
+            # 0.8 SD = closer to spot = more aggressive (same as SAMSON)
+            sd_multiplier = 0.8
             min_expected_move = spot * 0.005
             effective_em = max(expected_move, min_expected_move)
             put_short = round_to_5(spot - sd_multiplier * effective_em)
