@@ -22,7 +22,7 @@
 3. [ML Advisory Systems Audit](#ml-advisory-systems-audit)
    - [Prophet Advisor](#prophet-advisor---central-decision-maker)
    - [Fortress ML Advisor](#fortress-ml-advisor---iron-condor-specialist)
-   - [ORION (GEX Probability Models)](#orion---gex-probability-models)
+   - [GEX Probability Models (WATCHTOWER/GLORY)](#gex-probability-models-watchtowerglory)
    - [Proverbs Enhancements](#proverbs-enhancements---risk-management)
 4. [Cross-Bot Analysis](#cross-bot-analysis)
    - [Overlap & Redundancy Map](#overlap--redundancy-map)
@@ -337,7 +337,7 @@ trading/spx_iron_condor/  (single bot, preset-driven)
 JUBILEE is **completely unique** in the AlphaGEX ecosystem:
 - Only system doing synthetic borrowing
 - Only system with 90+ DTE positions (everything else is 0DTE)
-- Coordinates capital deployment across ARES/TITAN/ANCHOR
+- Coordinates capital deployment across FORTRESS/ANCHOR/SAMSON
 - Transparent borrowing cost tracking (daily cost, annual rate, vs alternatives)
 
 #### Risk Controls
@@ -548,9 +548,10 @@ Either:
 
 ---
 
-### ORION - GEX Probability Models
+### GEX Probability Models (WATCHTOWER/GLORY)
 
 **File**: `quant/gex_probability_models.py` (1,762 lines)
+**Integration**: Used by WATCHTOWER (gamma visualization) and GLORY (gamma analysis/ML training)
 
 #### 5 Sub-Models
 
@@ -853,7 +854,7 @@ CRYPTO
     - 100 max positions at 1-minute frequency is excessive
     - Recommend 5-10 max concurrent
 
-12. **Address ORION weak models**
+12. **Address GEX Probability Models weak sub-models**
     - Flip Gravity: 44.4% (below random for binary)
     - Pin Zone: 55.2% (barely above random)
     - Either improve these or disable them to prevent noise
@@ -881,7 +882,7 @@ These are open questions the audit raised that don't have clear answers in the c
 
 1. **Prophet retraining**: Should it auto-retrain weekly? What triggers retraining today?
 2. **Capital allocation**: Thompson Sampling adjusts per-bot weights, but is anyone reviewing the allocations?
-3. **Regime mismatch**: What happens when ORION says POSITIVE gamma but Prophet says SKIP? Who wins?
+3. **Regime mismatch**: What happens when GEX models say POSITIVE gamma but Prophet says SKIP? Who wins?
 4. **Crypto hypothesis**: Is there published evidence that funding rates predict price direction reliably enough to trade?
 5. **Box spread risk**: JUBILEE's box spreads are theoretically risk-free at expiration, but early assignment on American-style options would break this. Are SPX options European? (Yes, but worth verifying for any SPY box variants)
 6. **Time-of-day edge**: Proverbs tracks best/worst hours per bot. Is this data being used to restrict trading windows?

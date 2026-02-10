@@ -11,7 +11,7 @@
 1. [Executive Summary: Is the ML Doing Anything?](#executive-summary)
 2. [Prophet Advisor - The "God" That May Be Mortal](#prophet-advisor)
 3. [Fortress ML Advisor - XGBoost With Data Leakage](#fortress-ml-advisor)
-4. [ORION GEX Models - 5 Models, 0 Proven Edges](#orion-gex-models)
+4. [GEX Probability Models (WATCHTOWER/GLORY) - 5 Models, 0 Proven Edges](#gex-probability-models)
 5. [SAGE - Well-Built But Never Used](#sage)
 6. [How ML Actually Flows Into Trade Decisions](#ml-decision-flow)
 7. [The Uncomfortable Questions](#uncomfortable-questions)
@@ -29,7 +29,7 @@ Here's why:
 |--------|-----------|------------------------|-------------|-------------------|
 | **Prophet** | GradientBoosting | YES (it's "god") | NO evidence | Glorified VIX + GEX if/else with ML wrapping |
 | **Fortress ML** | XGBoost | NO (informational only) | NO evidence | Has data leakage; probably useless |
-| **ORION** | 5 XGBoost models | Partially (via ARGUS) | 1 of 5 models WORSE than random | Over-engineered; distance-based math does 40-100% of the work |
+| **GEX Prob Models** | 5 XGBoost models | Partially (via WATCHTOWER) | 1 of 5 models WORSE than random | Over-engineered; distance-based math does 40-100% of the work |
 | **SAGE** | RandomForest | NO (never integrated) | N/A | Well-designed but literally unused |
 
 **The critical finding**: For FORTRESS and SOLOMON (the two primary bots), the ML prediction is **logged but ignored**. Prophet's advice enum (TRADE/SKIP) controls all decisions. The ML win_probability number goes into the database for auditing but does not gate trades.
@@ -232,9 +232,10 @@ This is Prophet's fallback with slightly different numbers.
 
 ---
 
-## ORION GEX Probability Models
+## GEX Probability Models (WATCHTOWER/GLORY)
 
 **File**: `quant/gex_probability_models.py` (~1,762 lines)
+**Integration**: Used by WATCHTOWER (gamma visualization) and GLORY (gamma analysis/ML training)
 
 ### 5 Sub-Models - Honest Assessment
 
@@ -308,7 +309,7 @@ The ML contributes zero. The system runs on pure exponential distance decay math
 
 **Has anyone compared hybrid vs distance-only?** No. There is no A/B test, no accuracy comparison, no logged evidence that the 60% ML component improves anything.
 
-### ORION Verdict
+### GEX Probability Models Verdict
 
 | Model | Action |
 |-------|--------|
@@ -434,10 +435,10 @@ def should_trade(vix, gex_regime, gex_between_walls):
 
 This captures the essence of what Prophet does. The ML model may find slight non-linear interactions between features, but nobody has proven those interactions exist or are stable.
 
-### 5. Are the ORION models making ARGUS better?
-When ORION models are trained: 60% ML + 40% distance math.
-When ORION models are NOT trained: 100% distance math.
-Nobody has compared whether ARGUS with ORION is more accurate than ARGUS without. The default (untrained) state uses pure math and probably works fine.
+### 5. Are the GEX Probability Models making WATCHTOWER better?
+When GEX models are trained: 60% ML + 40% distance math.
+When GEX models are NOT trained: 100% distance math.
+Nobody has compared whether WATCHTOWER with ML is more accurate than WATCHTOWER without. The default (untrained) state uses pure math and probably works fine.
 
 ### 6. Is SAGE the only ML system worth saving?
 Yes, from a methodology standpoint. It has:
@@ -459,7 +460,7 @@ But it needs to be actually connected to trading before it can prove value.
    - Retrain on the remaining 10 features.
    - Accept that accuracy will drop. The current accuracy is fake.
 
-2. **Delete ORION Flip Gravity model**
+2. **Delete the Flip Gravity sub-model from GEX Probability Models**
    - It's confirmed WORSE than random (44.4% on binary).
    - Every prediction from this model adds noise.
 
@@ -520,7 +521,7 @@ Until someone runs that comparison, the honest answer is: **we don't know, and t
 
 The good news: the rule-based fallbacks are solid. The VIX + GEX decision logic is sound trading intuition. The bots would probably perform similarly with or without the ML models, because the ML models are likely just learning the same VIX + GEX patterns that the rules already capture.
 
-The bad news: 5,600 lines of Prophet + 1,178 lines of Fortress ML + 1,762 lines of ORION = **8,540 lines of ML code with no proven edge**. That's significant maintenance burden for unproven value.
+The bad news: 5,600 lines of Prophet + 1,178 lines of Fortress ML + 1,762 lines of GEX Probability Models = **8,540 lines of ML code with no proven edge**. That's significant maintenance burden for unproven value.
 
 ---
 
