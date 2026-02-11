@@ -235,6 +235,19 @@ class ValorTrader:
                                        skip_reason="Futures market closed")
                 return scan_result
 
+            # Check Proverbs kill switch — blocks new entries
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    enhanced = get_proverbs_enhanced()
+                    if enhanced and enhanced.proverbs.is_bot_killed('VALOR'):
+                        logger.warning("[VALOR] Kill switch ACTIVE — skipping scan (no new entries)")
+                        scan_result["status"] = "kill_switch_active"
+                        self._log_scan_activity(scan_id, "KILL_SWITCH", scan_result, scan_context,
+                                               skip_reason="Kill switch active")
+                        return scan_result
+                except Exception as e:
+                    logger.debug(f"[VALOR] Kill switch check failed (fail-open): {e}")
+
             # Get current market data
             quote = self.executor.get_mes_quote()
             if not quote:
@@ -312,8 +325,9 @@ class ValorTrader:
                     self.loss_streak_pause_until = None
                     # Keep consecutive_losses count - only reset on a win
 
-            # VALOR has its own built-in loss streak pause (self.loss_streak_pause_until)
-            # with configurable max_consecutive_losses and pause_minutes — no Proverbs needed
+            # VALOR uses its own built-in loss streak pause (self.loss_streak_pause_until)
+            # with configurable max_consecutive_losses and pause_minutes
+            # Proverbs monitor is kept in sync for dashboard visibility
 
             # No max position limit - always look for signals
             # Generate signal
@@ -1009,6 +1023,14 @@ class ValorTrader:
                             logger.info(f"Loss streak reset (was {self.consecutive_losses})")
                         self.consecutive_losses = 0
                         self.loss_streak_pause_until = None
+                        # Also reset Proverbs monitor so dashboard stays in sync
+                        if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                            try:
+                                proverbs = get_proverbs_enhanced()
+                                if proverbs:
+                                    proverbs.consecutive_loss_monitor.reset('VALOR')
+                            except Exception:
+                                pass
                     else:
                         # Increment streak on loss
                         self.consecutive_losses += 1

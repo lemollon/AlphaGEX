@@ -132,6 +132,9 @@ class SolomonTrader(MathOptimizerMixin):
         self.signals = SignalGenerator(self.config)
         self.executor = OrderExecutor(self.config)
 
+        # Proverbs consecutive loss tracking
+        self._loss_streak_pause_until: Optional[datetime] = None
+
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
@@ -204,6 +207,58 @@ class SolomonTrader(MathOptimizerMixin):
 
                 self._log_scan_activity(result, scan_context, skip_reason="Close-only mode after market")
                 return result
+
+            # Check Proverbs kill switch — blocks NEW entries but allows close_only
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    enhanced = get_proverbs_enhanced()
+                    if enhanced and enhanced.proverbs.is_bot_killed('SOLOMON'):
+                        logger.warning("[SOLOMON] Kill switch ACTIVE — skipping cycle (no new entries)")
+                        result['action'] = 'kill_switch_active'
+                        self._log_scan_activity(result, scan_context, skip_reason="Kill switch active")
+                        return result
+                except Exception as e:
+                    logger.debug(f"[SOLOMON] Kill switch check failed (fail-open): {e}")
+
+            # Check consecutive loss cooldown (5-min pause after 3 losses)
+            if self._loss_streak_pause_until is not None:
+                remaining = (self._loss_streak_pause_until - now).total_seconds()
+                if remaining > 0:
+                    reason = f'Proverbs: Loss streak cooldown ({remaining:.0f}s remaining)'
+                    result['action'] = 'skip'
+                    result['details']['skip_reason'] = reason
+                    self.db.log("INFO", f"SOLOMON: {reason}")
+                    self._log_scan_activity(result, scan_context, skip_reason=reason)
+                    self.db.update_heartbeat("COOLDOWN", reason)
+                    return result
+                else:
+                    logger.info("SOLOMON: Loss streak cooldown expired, resuming trading")
+                    self._loss_streak_pause_until = None
+                    if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                        try:
+                            proverbs = get_proverbs_enhanced()
+                            if proverbs:
+                                proverbs.consecutive_loss_monitor.reset('SOLOMON')
+                        except Exception:
+                            pass
+
+            # Check if Proverbs detected 3 consecutive losses (triggers new 5-min cooldown)
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    proverbs = get_proverbs_enhanced()
+                    if proverbs:
+                        consec_status = proverbs.consecutive_loss_monitor.get_status('SOLOMON')
+                        if consec_status and consec_status.get('triggered_kill') and self._loss_streak_pause_until is None:
+                            self._loss_streak_pause_until = now + timedelta(minutes=5)
+                            reason = f'Proverbs: {consec_status.get("consecutive_losses", 3)} consecutive losses — pausing 5 min (until {self._loss_streak_pause_until.strftime("%H:%M:%S")})'
+                            result['action'] = 'skip'
+                            result['details']['skip_reason'] = reason
+                            self.db.log("WARNING", f"SOLOMON: {reason}")
+                            self._log_scan_activity(result, scan_context, skip_reason=reason)
+                            self.db.update_heartbeat("COOLDOWN", reason)
+                            return result
+                except Exception as e:
+                    logger.warning(f"Proverbs guardrail check failed (non-blocking): {e}")
 
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans

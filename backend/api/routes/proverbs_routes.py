@@ -160,7 +160,7 @@ async def get_bot_dashboard(bot_name: str):
         raise HTTPException(status_code=503, detail="Proverbs system not available")
 
     bot_name = bot_name.upper()
-    if bot_name not in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'LAZARUS']:
+    if bot_name not in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'VALOR', 'LAZARUS']:
         raise HTTPException(status_code=400, detail=f"Invalid bot name: {bot_name}")
 
     try:
@@ -205,8 +205,11 @@ async def get_audit_log(
     try:
         proverbs = get_proverbs()
 
-        start = datetime.fromisoformat(start_date) if start_date else None
-        end = datetime.fromisoformat(end_date) if end_date else None
+        try:
+            start = datetime.fromisoformat(start_date) if start_date else None
+            end = datetime.fromisoformat(end_date) if end_date else None
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
 
         logs = proverbs.get_audit_log(
             bot_name=bot_name.upper() if bot_name else None,
@@ -264,26 +267,28 @@ async def get_proposals(
         from database_adapter import get_connection
 
         conn = get_connection()
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
 
-        query = "SELECT * FROM proverbs_proposals WHERE 1=1"
-        params = []
+            query = "SELECT * FROM proverbs_proposals WHERE 1=1"
+            params = []
 
-        if status:
-            query += " AND status = %s"
-            params.append(status.upper())
+            if status:
+                query += " AND status = %s"
+                params.append(status.upper())
 
-        if bot_name:
-            query += " AND bot_name = %s"
-            params.append(bot_name.upper())
+            if bot_name:
+                query += " AND bot_name = %s"
+                params.append(bot_name.upper())
 
-        query += " ORDER BY created_at DESC LIMIT %s"
-        params.append(limit)
+            query += " ORDER BY created_at DESC LIMIT %s"
+            params.append(limit)
 
-        cursor.execute(query, params)
-        columns = [desc[0] for desc in cursor.description]
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute(query, params)
+            columns = [desc[0] for desc in cursor.description]
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
 
         proposals = [dict(zip(columns, row)) for row in rows]
 
@@ -332,12 +337,13 @@ async def get_proposal(proposal_id: str):
         from database_adapter import get_connection
 
         conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT * FROM proverbs_proposals WHERE proposal_id = %s", (proposal_id,))
-        columns = [desc[0] for desc in cursor.description]
-        row = cursor.fetchone()
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM proverbs_proposals WHERE proposal_id = %s", (proposal_id,))
+            columns = [desc[0] for desc in cursor.description]
+            row = cursor.fetchone()
+        finally:
+            conn.close()
 
         if not row:
             raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
@@ -596,7 +602,7 @@ async def get_kill_switch_status():
         status = proverbs.get_kill_switch_status()
 
         # Add bots not yet in the table
-        for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'LAZARUS']:
+        for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'VALOR', 'LAZARUS']:
             if bot not in status:
                 status[bot] = {
                     'bot_name': bot,
@@ -684,14 +690,16 @@ async def clear_all_kill_switches():
     try:
         from database_adapter import get_connection
         conn = get_connection()
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
 
-        # Clear all killswitch records
-        cursor.execute("DELETE FROM proverbs_kill_switch")
-        deleted_count = cursor.rowcount
+            # Clear all killswitch records
+            cursor.execute("DELETE FROM proverbs_kill_switch")
+            deleted_count = cursor.rowcount
 
-        conn.commit()
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
 
         return {
             "success": True,
@@ -758,16 +766,23 @@ async def get_feedback_loop_status():
             limit=5
         )
 
-        return {
-            "session_id": proverbs.session_id,
-            "recent_runs": runs,
-            "guardrails": {
+        # Pull guardrails from the actual GUARDRAILS config rather than hardcoding
+        try:
+            from quant.proverbs_feedback_loop import GUARDRAILS
+            guardrail_config = dict(GUARDRAILS)
+        except (ImportError, AttributeError):
+            guardrail_config = {
                 'min_sample_size': 50,
                 'max_parameter_change_pct': 20,
                 'degradation_threshold': 15,
                 'rollback_on_drawdown_pct': 10,
                 'proposal_expiry_hours': 72
-            },
+            }
+
+        return {
+            "session_id": proverbs.session_id,
+            "recent_runs": runs,
+            "guardrails": guardrail_config,
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
         }
     except Exception as e:
@@ -872,76 +887,80 @@ async def get_realtime_status(
         from database_adapter import get_connection
 
         conn = get_connection()
-        cursor = conn.cursor()
+        try:
+            cursor = conn.cursor()
 
-        # Bot tables mapping - query actual position tables
-        BOT_TABLES = {
-            'FORTRESS': 'fortress_positions',
-            'SOLOMON': 'solomon_positions',
-            'SAMSON': 'samson_positions',
-            'ANCHOR': 'anchor_positions',
-            'GIDEON': 'gideon_positions',
-            'JUBILEE': 'jubilee_ic_positions',
-        }
+            # Bot tables mapping - query actual position tables
+            BOT_TABLES = {
+                'FORTRESS': 'fortress_positions',
+                'SOLOMON': 'solomon_positions',
+                'SAMSON': 'samson_positions',
+                'ANCHOR': 'anchor_positions',
+                'GIDEON': 'gideon_positions',
+                'VALOR': 'valor_positions',
+                'JUBILEE': 'jubilee_ic_positions',
+            }
 
-        # Collect performance from each bot's actual table
-        bot_rows = []
-        today_by_bot = {}
-        streak_rows = []
+            days_interval = f'{days} days'
 
-        for bot_name, table_name in BOT_TABLES.items():
-            try:
-                # Get recent trade performance for this bot
-                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-                cursor.execute(f"""
-                    SELECT
-                        COUNT(*) as total_trades,
-                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-                        COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                        COALESCE(AVG(realized_pnl), 0) as avg_pnl,
-                        MAX(close_time::timestamptz) as last_trade_time
-                    FROM {table_name}
-                    WHERE status = 'closed'
-                      AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
-                """)
-                row = cursor.fetchone()
-                if row and row[0] > 0:
-                    bot_rows.append((bot_name, row[0], row[1], row[2], row[3], row[4], row[5]))
+            # Collect performance from each bot's actual table
+            bot_rows = []
+            today_by_bot = {}
+            streak_rows = []
 
-                # Get today's performance for this bot
-                # Cast to timestamptz to handle FORTRESS TEXT columns
-                cursor.execute(f"""
-                    SELECT
-                        COUNT(*) as today_trades,
-                        COALESCE(SUM(realized_pnl), 0) as today_pnl
-                    FROM {table_name}
-                    WHERE status = 'closed'
-                      AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = CURRENT_DATE
-                """)
-                today_row = cursor.fetchone()
-                if today_row and today_row[0] > 0:
-                    today_by_bot[bot_name] = {'trades': today_row[0], 'pnl': float(today_row[1] or 0)}
+            for bot_name, table_name in BOT_TABLES.items():
+                try:
+                    # Get recent trade performance for this bot
+                    # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                    cursor.execute(f"""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+                            COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                            COALESCE(AVG(realized_pnl), 0) as avg_pnl,
+                            MAX(close_time::timestamptz) as last_trade_time
+                        FROM {table_name}
+                        WHERE status = 'closed'
+                          AND close_time::timestamptz >= NOW() - INTERVAL %s
+                    """, (days_interval,))
+                    row = cursor.fetchone()
+                    if row and row[0] > 0:
+                        bot_rows.append((bot_name, row[0], row[1], row[2], row[3], row[4], row[5]))
 
-                # Get last 10 trades for streak calculation
-                # Cast to timestamptz to handle FORTRESS TEXT columns
-                cursor.execute(f"""
-                    SELECT realized_pnl
-                    FROM {table_name}
-                    WHERE status = 'closed'
-                      AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
-                    ORDER BY close_time::timestamptz DESC
-                    LIMIT 10
-                """)
-                trades = cursor.fetchall()
-                for trade in trades:
-                    streak_rows.append((bot_name, trade[0]))
+                    # Get today's performance for this bot
+                    # Cast to timestamptz to handle FORTRESS TEXT columns
+                    cursor.execute(f"""
+                        SELECT
+                            COUNT(*) as today_trades,
+                            COALESCE(SUM(realized_pnl), 0) as today_pnl
+                        FROM {table_name}
+                        WHERE status = 'closed'
+                          AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                    """)
+                    today_row = cursor.fetchone()
+                    if today_row and today_row[0] > 0:
+                        today_by_bot[bot_name] = {'trades': today_row[0], 'pnl': float(today_row[1] or 0)}
 
-            except Exception as table_err:
-                logger.warning(f"Could not query {table_name}: {table_err}")
-                continue
+                    # Get last 10 trades for streak calculation
+                    # Cast to timestamptz to handle FORTRESS TEXT columns
+                    cursor.execute(f"""
+                        SELECT realized_pnl
+                        FROM {table_name}
+                        WHERE status = 'closed'
+                          AND close_time::timestamptz >= NOW() - INTERVAL %s
+                        ORDER BY close_time::timestamptz DESC
+                        LIMIT 10
+                    """, (days_interval,))
+                    trades = cursor.fetchall()
+                    for trade in trades:
+                        streak_rows.append((bot_name, trade[0]))
 
-        conn.close()
+                except Exception as table_err:
+                    logger.warning(f"Could not query {table_name} ({type(table_err).__name__}): {table_err}")
+                    continue
+        finally:
+            conn.close()
 
         # Calculate streaks
         bot_streaks = {}
@@ -1432,6 +1451,8 @@ async def ai_analyze_performance(bot_name: str):
 
     Uses Claude to provide insights and recommendations.
     """
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
     if not AI_ANALYST_AVAILABLE:
         raise HTTPException(status_code=503, detail="AI Analyst not available")
 
@@ -1703,12 +1724,11 @@ async def apply_validated_proposal(proposal_id: str, request: ApplyValidatedProp
         )
 
         if not result.get('success'):
+            error_msg = result.get('error', 'Failed to apply proposal')
+            details = result.get('details', {})
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "error": result.get('error', 'Failed to apply proposal'),
-                    "details": result.get('details', {})
-                }
+                detail=f"{error_msg}: {details}" if details else error_msg
             )
 
         return result

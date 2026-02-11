@@ -44,6 +44,25 @@ except ImportError:
     DB_AVAILABLE = False
     get_connection = None
 
+from contextlib import contextmanager
+
+@contextmanager
+def _get_db_connection():
+    """Context manager for database connections — ensures cleanup on exceptions."""
+    conn = None
+    try:
+        if not DB_AVAILABLE or get_connection is None:
+            yield None
+        else:
+            conn = get_connection()
+            yield conn
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 
 # =============================================================================
 # ENHANCED GUARDRAILS
@@ -436,35 +455,35 @@ class VersionComparer:
             return {'error': 'Database not available'}
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return {'error': 'Database not available'}
+                cursor = conn.cursor()
 
-            # Get performance for each version
-            results = {}
-            for version_id, label in [(version_a_id, 'A'), (version_b_id, 'B')]:
-                cursor.execute("""
-                    SELECT
-                        COUNT(*) as total_trades,
-                        AVG(win_rate) as avg_win_rate,
-                        SUM(total_pnl) as total_pnl,
-                        AVG(CASE WHEN total_pnl > 0 THEN total_pnl END) as avg_win,
-                        AVG(CASE WHEN total_pnl < 0 THEN total_pnl END) as avg_loss
-                    FROM proverbs_performance
-                    WHERE version_id = %s
-                """, (version_id,))
+                # Get performance for each version
+                results = {}
+                for version_id, label in [(version_a_id, 'A'), (version_b_id, 'B')]:
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            AVG(win_rate) as avg_win_rate,
+                            SUM(total_pnl) as total_pnl,
+                            AVG(CASE WHEN total_pnl > 0 THEN total_pnl END) as avg_win,
+                            AVG(CASE WHEN total_pnl < 0 THEN total_pnl END) as avg_loss
+                        FROM proverbs_performance
+                        WHERE version_id = %s
+                    """, (version_id,))
 
-                row = cursor.fetchone()
-                if row:
-                    results[label] = {
-                        'version_id': version_id,
-                        'total_snapshots': row[0] or 0,
-                        'avg_win_rate': float(row[1]) if row[1] else 0,
-                        'total_pnl': float(row[2]) if row[2] else 0,
-                        'avg_win': float(row[3]) if row[3] else 0,
-                        'avg_loss': float(row[4]) if row[4] else 0
-                    }
-
-            conn.close()
+                    row = cursor.fetchone()
+                    if row:
+                        results[label] = {
+                            'version_id': version_id,
+                            'total_snapshots': row[0] or 0,
+                            'avg_win_rate': float(row[1]) if row[1] else 0,
+                            'total_pnl': float(row[2]) if row[2] else 0,
+                            'avg_win': float(row[3]) if row[3] else 0,
+                            'avg_loss': float(row[4]) if row[4] else 0
+                        }
 
             # Calculate comparison
             if 'A' in results and 'B' in results:
@@ -521,31 +540,32 @@ class VersionComparer:
             return []
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return []
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT
-                    version_id,
-                    MIN(timestamp) as period_start,
-                    MAX(timestamp) as period_end,
-                    SUM(total_trades) as total_trades,
-                    AVG(win_rate) as avg_win_rate,
-                    SUM(total_pnl) as total_pnl,
-                    AVG(avg_win) as avg_win,
-                    AVG(avg_loss) as avg_loss,
-                    MAX(max_drawdown) as max_drawdown,
-                    AVG(sharpe_ratio) as sharpe_ratio
-                FROM proverbs_performance
-                WHERE bot_name = %s
-                AND timestamp > NOW() - INTERVAL '%s days'
-                AND version_id IS NOT NULL
-                GROUP BY version_id
-                ORDER BY period_start DESC
-            """, (bot_name, days))
+                cursor.execute("""
+                    SELECT
+                        version_id,
+                        MIN(timestamp) as period_start,
+                        MAX(timestamp) as period_end,
+                        SUM(total_trades) as total_trades,
+                        AVG(win_rate) as avg_win_rate,
+                        SUM(total_pnl) as total_pnl,
+                        AVG(avg_win) as avg_win,
+                        AVG(avg_loss) as avg_loss,
+                        MAX(max_drawdown) as max_drawdown,
+                        AVG(sharpe_ratio) as sharpe_ratio
+                    FROM proverbs_performance
+                    WHERE bot_name = %s
+                    AND timestamp > NOW() - INTERVAL '%s days'
+                    AND version_id IS NOT NULL
+                    GROUP BY version_id
+                    ORDER BY period_start DESC
+                """, (bot_name, days))
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             results = []
             for row in rows:
@@ -600,26 +620,27 @@ class TimeOfDayAnalyzer:
             return []
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return []
+                cursor = conn.cursor()
 
-            # Get trades with hour info - using bot-specific positions table
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            cursor.execute(f"""
-                SELECT
-                    EXTRACT(HOUR FROM close_time::timestamptz AT TIME ZONE 'America/Chicago') as hour,
-                    COUNT(*) as trades,
-                    AVG(CASE WHEN realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
-                    AVG(realized_pnl) as avg_pnl
-                FROM {table_name}
-                WHERE status = 'closed'
-                AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
-                GROUP BY EXTRACT(HOUR FROM close_time::timestamptz AT TIME ZONE 'America/Chicago')
-                ORDER BY hour
-            """)
+                # Get trades with hour info - using bot-specific positions table
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    SELECT
+                        EXTRACT(HOUR FROM close_time::timestamptz AT TIME ZONE 'America/Chicago') as hour,
+                        COUNT(*) as trades,
+                        AVG(CASE WHEN realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(realized_pnl) as avg_pnl
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                    AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                    GROUP BY EXTRACT(HOUR FROM close_time::timestamptz AT TIME ZONE 'America/Chicago')
+                    ORDER BY hour
+                """)
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             if not rows:
                 return []
@@ -697,41 +718,42 @@ class CrossBotAnalyzer:
             return None
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return None
+                cursor = conn.cursor()
 
-            # Get daily P&L for each bot from their respective tables
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            cursor.execute(f"""
-                WITH daily_a AS (
+                # Get daily P&L for each bot from their respective tables
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    WITH daily_a AS (
+                        SELECT
+                            DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
+                            SUM(realized_pnl) as daily_pnl
+                        FROM {table_a}
+                        WHERE status = 'closed'
+                        AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                        GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
+                    ),
+                    daily_b AS (
+                        SELECT
+                            DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
+                            SUM(realized_pnl) as daily_pnl
+                        FROM {table_b}
+                        WHERE status = 'closed'
+                        AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                        GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
+                    )
                     SELECT
-                        DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
-                        SUM(realized_pnl) as daily_pnl
-                    FROM {table_a}
-                    WHERE status = 'closed'
-                    AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
-                    GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
-                ),
-                daily_b AS (
-                    SELECT
-                        DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
-                        SUM(realized_pnl) as daily_pnl
-                    FROM {table_b}
-                    WHERE status = 'closed'
-                    AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
-                    GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
-                )
-                SELECT
-                    a.trade_date,
-                    a.daily_pnl as a_pnl,
-                    b.daily_pnl as b_pnl
-                FROM daily_a a
-                JOIN daily_b b ON a.trade_date = b.trade_date
-                ORDER BY a.trade_date
-            """)
+                        a.trade_date,
+                        a.daily_pnl as a_pnl,
+                        b.daily_pnl as b_pnl
+                    FROM daily_a a
+                    JOIN daily_b b ON a.trade_date = b.trade_date
+                    ORDER BY a.trade_date
+                """)
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             if len(rows) < 5:
                 return None
@@ -818,29 +840,30 @@ class RegimePerformanceTracker:
             return []
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return []
+                cursor = conn.cursor()
 
-            # Join trades with regime classifications
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            cursor.execute(f"""
-                SELECT
-                    rc.regime,
-                    COUNT(*) as trades,
-                    AVG(CASE WHEN t.realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
-                    AVG(t.realized_pnl) as avg_pnl
-                FROM {table_name} t
-                LEFT JOIN regime_classifications rc
-                    ON DATE(t.close_time::timestamptz AT TIME ZONE 'America/Chicago') = rc.classification_date
-                WHERE t.status = 'closed'
-                AND t.close_time::timestamptz > NOW() - INTERVAL '{days} days'
-                AND rc.regime IS NOT NULL
-                GROUP BY rc.regime
-                ORDER BY trades DESC
-            """)
+                # Join trades with regime classifications
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    SELECT
+                        rc.regime,
+                        COUNT(*) as trades,
+                        AVG(CASE WHEN t.realized_pnl > 0 THEN 1.0 ELSE 0.0 END) * 100 as win_rate,
+                        AVG(t.realized_pnl) as avg_pnl
+                    FROM {table_name} t
+                    LEFT JOIN regime_classifications rc
+                        ON DATE(t.close_time::timestamptz AT TIME ZONE 'America/Chicago') = rc.classification_date
+                    WHERE t.status = 'closed'
+                    AND t.close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                    AND rc.regime IS NOT NULL
+                    GROUP BY rc.regime
+                    ORDER BY trades DESC
+                """)
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             results = []
             for row in rows:
@@ -879,21 +902,22 @@ class ABTestingFramework:
 
         try:
             import json
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT test_id, bot_name, created_at,
-                       control_config, variant_config, control_allocation,
-                       control_trades, variant_trades,
-                       control_win_rate, variant_win_rate,
-                       control_pnl, variant_pnl,
-                       status, winner, confidence
-                FROM proverbs_ab_tests
-                WHERE status IN ('RUNNING', 'COMPLETED')
-                ORDER BY created_at DESC
-            """)
-            rows = cursor.fetchall()
-            conn.close()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT test_id, bot_name, created_at,
+                           control_config, variant_config, control_allocation,
+                           control_trades, variant_trades,
+                           control_win_rate, variant_win_rate,
+                           control_pnl, variant_pnl,
+                           status, winner, confidence
+                    FROM proverbs_ab_tests
+                    WHERE status IN ('RUNNING', 'COMPLETED')
+                    ORDER BY created_at DESC
+                """)
+                rows = cursor.fetchall()
 
             for row in rows:
                 test_id = row[0]
@@ -927,49 +951,50 @@ class ABTestingFramework:
 
         try:
             import json
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO proverbs_ab_tests (
-                    test_id, bot_name, created_at,
-                    control_config, variant_config, control_allocation,
-                    control_trades, variant_trades,
-                    control_win_rate, variant_win_rate,
-                    control_pnl, variant_pnl,
-                    status, winner, confidence,
-                    updated_at
-                ) VALUES (
-                    %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s,
-                    %s, %s, %s,
-                    NOW()
-                )
-                ON CONFLICT (test_id) DO UPDATE SET
-                    control_trades = EXCLUDED.control_trades,
-                    variant_trades = EXCLUDED.variant_trades,
-                    control_win_rate = EXCLUDED.control_win_rate,
-                    variant_win_rate = EXCLUDED.variant_win_rate,
-                    control_pnl = EXCLUDED.control_pnl,
-                    variant_pnl = EXCLUDED.variant_pnl,
-                    status = EXCLUDED.status,
-                    winner = EXCLUDED.winner,
-                    confidence = EXCLUDED.confidence,
-                    updated_at = NOW()
-            """, (
-                test.test_id, test.bot_name, test.created_at,
-                json.dumps(test.control_config), json.dumps(test.variant_config), test.control_allocation,
-                test.control_trades, test.variant_trades,
-                test.control_win_rate, test.variant_win_rate,
-                test.control_pnl, test.variant_pnl,
-                test.status, test.winner, test.confidence
-            ))
+                cursor.execute("""
+                    INSERT INTO proverbs_ab_tests (
+                        test_id, bot_name, created_at,
+                        control_config, variant_config, control_allocation,
+                        control_trades, variant_trades,
+                        control_win_rate, variant_win_rate,
+                        control_pnl, variant_pnl,
+                        status, winner, confidence,
+                        updated_at
+                    ) VALUES (
+                        %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s,
+                        %s, %s,
+                        %s, %s,
+                        %s, %s, %s,
+                        NOW()
+                    )
+                    ON CONFLICT (test_id) DO UPDATE SET
+                        control_trades = EXCLUDED.control_trades,
+                        variant_trades = EXCLUDED.variant_trades,
+                        control_win_rate = EXCLUDED.control_win_rate,
+                        variant_win_rate = EXCLUDED.variant_win_rate,
+                        control_pnl = EXCLUDED.control_pnl,
+                        variant_pnl = EXCLUDED.variant_pnl,
+                        status = EXCLUDED.status,
+                        winner = EXCLUDED.winner,
+                        confidence = EXCLUDED.confidence,
+                        updated_at = NOW()
+                """, (
+                    test.test_id, test.bot_name, test.created_at,
+                    json.dumps(test.control_config), json.dumps(test.variant_config), test.control_allocation,
+                    test.control_trades, test.variant_trades,
+                    test.control_win_rate, test.variant_win_rate,
+                    test.control_pnl, test.variant_pnl,
+                    test.status, test.winner, test.confidence
+                ))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
             return True
 
         except Exception as e:
@@ -1306,44 +1331,43 @@ class WeekendPreChecker:
         if not DB_AVAILABLE:
             return 15.0
 
-        conn = None
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return 15.0
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT vix FROM market_data
-                ORDER BY timestamp DESC LIMIT 1
-            """)
+                cursor.execute("""
+                    SELECT vix FROM market_data
+                    ORDER BY timestamp DESC LIMIT 1
+                """)
 
-            row = cursor.fetchone()
+                row = cursor.fetchone()
 
             return float(row[0]) if row else 15.0
 
         except (ValueError, TypeError, AttributeError) as e:
             logger.debug(f"Could not get VIX: {e}")
             return 15.0
-        finally:
-            if conn:
-                conn.close()
 
     def _detect_market_trend(self) -> str:
         """Detect current market trend"""
         if not DB_AVAILABLE:
             return 'UNKNOWN'
 
-        conn = None
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return 'UNKNOWN'
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT close FROM market_data
-                WHERE symbol = 'SPY'
-                ORDER BY timestamp DESC LIMIT 5
-            """)
+                cursor.execute("""
+                    SELECT close FROM market_data
+                    WHERE symbol = 'SPY'
+                    ORDER BY timestamp DESC LIMIT 5
+                """)
 
-            rows = cursor.fetchall()
+                rows = cursor.fetchall()
 
             if len(rows) >= 5:
                 closes = [r[0] for r in rows]
@@ -1359,9 +1383,6 @@ class WeekendPreChecker:
         except (ValueError, TypeError, AttributeError) as e:
             logger.debug(f"Could not detect market trend: {e}")
             return 'UNKNOWN'
-        finally:
-            if conn:
-                conn.close()
 
     def _get_upcoming_events(self) -> List[str]:
         """Get upcoming market-moving events"""
@@ -1480,23 +1501,24 @@ class DailyDigestGenerator:
             return {'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0}
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return {'trades': 0, 'wins': 0, 'losses': 0, 'pnl': 0}
+                cursor = conn.cursor()
 
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            cursor.execute(f"""
-                SELECT
-                    COUNT(*) as trades,
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-                    COALESCE(SUM(realized_pnl), 0) as total_pnl
-                FROM {table_name}
-                WHERE status = 'closed'
-                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
-            """, (date,))
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as trades,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+                        COALESCE(SUM(realized_pnl), 0) as total_pnl
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                    AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                """, (date,))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
             if row:
                 return {
@@ -1616,20 +1638,21 @@ class ProposalValidator:
             return
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT validation_id, proposal_id, bot_name, method, started_at,
-                       current_config, proposed_config, status,
-                       current_trades, current_wins, current_pnl, current_win_rate,
-                       proposed_trades, proposed_wins, proposed_pnl, proposed_win_rate,
-                       problem_statement, hypothesis, supporting_evidence,
-                       expected_improvement, confidence_level, success_criteria, rollback_trigger
-                FROM proverbs_validations
-                WHERE status = 'RUNNING'
-            """)
-            rows = cursor.fetchall()
-            conn.close()
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT validation_id, proposal_id, bot_name, method, started_at,
+                           current_config, proposed_config, status,
+                           current_trades, current_wins, current_pnl, current_win_rate,
+                           proposed_trades, proposed_wins, proposed_pnl, proposed_win_rate,
+                           problem_statement, hypothesis, supporting_evidence,
+                           expected_improvement, confidence_level, success_criteria, rollback_trigger
+                    FROM proverbs_validations
+                    WHERE status = 'RUNNING'
+                """)
+                rows = cursor.fetchall()
 
             for row in rows:
                 validation_id = row[0]
@@ -1677,70 +1700,71 @@ class ProposalValidator:
 
         try:
             import json
-            conn = get_connection()
-            cursor = conn.cursor()
-
             reasoning = validation.get('reasoning', {})
             current_perf = validation.get('current_performance', {})
             proposed_perf = validation.get('proposed_performance', {})
 
-            cursor.execute("""
-                INSERT INTO proverbs_validations (
-                    validation_id, proposal_id, bot_name, method, started_at,
-                    current_config, proposed_config, status,
-                    current_trades, current_wins, current_pnl, current_win_rate,
-                    proposed_trades, proposed_wins, proposed_pnl, proposed_win_rate,
-                    problem_statement, hypothesis, supporting_evidence,
-                    expected_improvement, confidence_level, success_criteria, rollback_trigger,
-                    updated_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    NOW()
-                )
-                ON CONFLICT (validation_id) DO UPDATE SET
-                    status = EXCLUDED.status,
-                    current_trades = EXCLUDED.current_trades,
-                    current_wins = EXCLUDED.current_wins,
-                    current_pnl = EXCLUDED.current_pnl,
-                    current_win_rate = EXCLUDED.current_win_rate,
-                    proposed_trades = EXCLUDED.proposed_trades,
-                    proposed_wins = EXCLUDED.proposed_wins,
-                    proposed_pnl = EXCLUDED.proposed_pnl,
-                    proposed_win_rate = EXCLUDED.proposed_win_rate,
-                    updated_at = NOW()
-            """, (
-                validation['validation_id'],
-                validation['proposal_id'],
-                validation['bot_name'],
-                validation['method'],
-                validation['started_at'],
-                json.dumps(validation.get('current_config', {})),
-                json.dumps(validation.get('proposed_config', {})),
-                validation.get('status', 'RUNNING'),
-                current_perf.get('trades', 0),
-                current_perf.get('wins', 0),
-                current_perf.get('pnl', 0),
-                current_perf.get('win_rate', 0),
-                proposed_perf.get('trades', 0),
-                proposed_perf.get('wins', 0),
-                proposed_perf.get('pnl', 0),
-                proposed_perf.get('win_rate', 0),
-                reasoning.get('problem_statement'),
-                reasoning.get('hypothesis'),
-                json.dumps(reasoning.get('supporting_evidence', [])),
-                json.dumps(reasoning.get('expected_improvement', {})),
-                reasoning.get('confidence_level', 0.7),
-                json.dumps(reasoning.get('success_criteria', {})),
-                json.dumps(reasoning.get('rollback_trigger', {}))
-            ))
+            with _get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            conn.commit()
-            conn.close()
+                cursor.execute("""
+                    INSERT INTO proverbs_validations (
+                        validation_id, proposal_id, bot_name, method, started_at,
+                        current_config, proposed_config, status,
+                        current_trades, current_wins, current_pnl, current_win_rate,
+                        proposed_trades, proposed_wins, proposed_pnl, proposed_win_rate,
+                        problem_statement, hypothesis, supporting_evidence,
+                        expected_improvement, confidence_level, success_criteria, rollback_trigger,
+                        updated_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s, %s,
+                        NOW()
+                    )
+                    ON CONFLICT (validation_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        current_trades = EXCLUDED.current_trades,
+                        current_wins = EXCLUDED.current_wins,
+                        current_pnl = EXCLUDED.current_pnl,
+                        current_win_rate = EXCLUDED.current_win_rate,
+                        proposed_trades = EXCLUDED.proposed_trades,
+                        proposed_wins = EXCLUDED.proposed_wins,
+                        proposed_pnl = EXCLUDED.proposed_pnl,
+                        proposed_win_rate = EXCLUDED.proposed_win_rate,
+                        updated_at = NOW()
+                """, (
+                    validation['validation_id'],
+                    validation['proposal_id'],
+                    validation['bot_name'],
+                    validation['method'],
+                    validation['started_at'],
+                    json.dumps(validation.get('current_config', {})),
+                    json.dumps(validation.get('proposed_config', {})),
+                    validation.get('status', 'RUNNING'),
+                    current_perf.get('trades', 0),
+                    current_perf.get('wins', 0),
+                    current_perf.get('pnl', 0),
+                    current_perf.get('win_rate', 0),
+                    proposed_perf.get('trades', 0),
+                    proposed_perf.get('wins', 0),
+                    proposed_perf.get('pnl', 0),
+                    proposed_perf.get('win_rate', 0),
+                    reasoning.get('problem_statement'),
+                    reasoning.get('hypothesis'),
+                    json.dumps(reasoning.get('supporting_evidence', [])),
+                    json.dumps(reasoning.get('expected_improvement', {})),
+                    reasoning.get('confidence_level', 0.7),
+                    json.dumps(reasoning.get('success_criteria', {})),
+                    json.dumps(reasoning.get('rollback_trigger', {}))
+                ))
+
+                conn.commit()
             return True
 
         except Exception as e:
@@ -2150,55 +2174,55 @@ class ProverbsEnhanced:
         if not DB_AVAILABLE:
             return
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        # Infer strategy_type from bot_name if not provided
+        if not strategy_type:
+            if bot_name in ['SOLOMON', 'GIDEON']:
+                strategy_type = 'DIRECTIONAL'
+            else:
+                strategy_type = 'IRON_CONDOR'
 
-            # Infer strategy_type from bot_name if not provided
-            if not strategy_type:
-                if bot_name in ['SOLOMON', 'GIDEON']:
-                    strategy_type = 'DIRECTIONAL'
-                else:
-                    strategy_type = 'IRON_CONDOR'
+        with _get_db_connection() as conn:
+            if conn is None:
+                return
+            try:
+                cursor = conn.cursor()
 
-            # Insert or update proverbs_performance with enhanced data
-            cursor.execute("""
-                INSERT INTO proverbs_performance (
-                    bot_name, trade_date, pnl, is_win,
-                    strategy_type, outcome_type, oracle_advice,
-                    oracle_prediction_id, direction_taken, direction_correct,
-                    created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (bot_name, trade_date) DO UPDATE SET
-                    pnl = EXCLUDED.pnl,
-                    is_win = EXCLUDED.is_win,
-                    strategy_type = COALESCE(EXCLUDED.strategy_type, proverbs_performance.strategy_type),
-                    outcome_type = COALESCE(EXCLUDED.outcome_type, proverbs_performance.outcome_type),
-                    oracle_advice = COALESCE(EXCLUDED.oracle_advice, proverbs_performance.oracle_advice),
-                    oracle_prediction_id = COALESCE(EXCLUDED.oracle_prediction_id, proverbs_performance.oracle_prediction_id),
-                    direction_taken = COALESCE(EXCLUDED.direction_taken, proverbs_performance.direction_taken),
-                    direction_correct = COALESCE(EXCLUDED.direction_correct, proverbs_performance.direction_correct),
-                    updated_at = NOW()
-            """, (
-                bot_name,
-                trade_date,
-                pnl,
-                pnl > 0,  # is_win
-                strategy_type,
-                outcome_type,
-                oracle_advice,
-                oracle_prediction_id,
-                direction_predicted,
-                direction_correct
-            ))
+                # Insert or update proverbs_performance with enhanced data
+                cursor.execute("""
+                    INSERT INTO proverbs_performance (
+                        bot_name, trade_date, pnl, is_win,
+                        strategy_type, outcome_type, oracle_advice,
+                        oracle_prediction_id, direction_taken, direction_correct,
+                        created_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (bot_name, trade_date) DO UPDATE SET
+                        pnl = EXCLUDED.pnl,
+                        is_win = EXCLUDED.is_win,
+                        strategy_type = COALESCE(EXCLUDED.strategy_type, proverbs_performance.strategy_type),
+                        outcome_type = COALESCE(EXCLUDED.outcome_type, proverbs_performance.outcome_type),
+                        oracle_advice = COALESCE(EXCLUDED.oracle_advice, proverbs_performance.oracle_advice),
+                        oracle_prediction_id = COALESCE(EXCLUDED.oracle_prediction_id, proverbs_performance.oracle_prediction_id),
+                        direction_taken = COALESCE(EXCLUDED.direction_taken, proverbs_performance.direction_taken),
+                        direction_correct = COALESCE(EXCLUDED.direction_correct, proverbs_performance.direction_correct),
+                        updated_at = NOW()
+                """, (
+                    bot_name,
+                    trade_date,
+                    pnl,
+                    pnl > 0,  # is_win
+                    strategy_type,
+                    outcome_type,
+                    oracle_advice,
+                    oracle_prediction_id,
+                    direction_predicted,
+                    direction_correct
+                ))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
+                logger.debug(f"Proverbs: Enhanced outcome recorded for {bot_name} on {trade_date}")
 
-            logger.debug(f"Proverbs: Enhanced outcome recorded for {bot_name} on {trade_date}")
-
-        except Exception as e:
-            logger.warning(f"Proverbs: Failed to record enhanced outcome: {e}")
+            except Exception as e:
+                logger.warning(f"Proverbs: Failed to record enhanced outcome: {e}")
 
     def get_comprehensive_analysis(self, bot_name: str) -> Dict:
         """Get comprehensive analysis for a bot"""
@@ -2263,73 +2287,73 @@ class ProverbsEnhanced:
         if not DB_AVAILABLE:
             return {'status': 'database_unavailable'}
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        # Bot tables mapping - bots store closed trades in *_positions tables
+        BOT_TABLES = {
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
+        }
 
-            # Bot tables mapping - bots store closed trades in *_positions tables
-            BOT_TABLES = {
-                'FORTRESS': 'fortress_positions',
-                'SOLOMON': 'solomon_positions',
-                'SAMSON': 'samson_positions',
-                'ANCHOR': 'anchor_positions',
-                'GIDEON': 'gideon_positions',
-                'JUBILEE': 'jubilee_ic_positions',
-            }
+        ic_bot_breakdown = {}
+        dir_bot_breakdown = {}
 
-            # Get performance from actual bot positions tables
-            ic_bot_breakdown = {}
-            dir_bot_breakdown = {}
+        with _get_db_connection() as conn:
+            if conn is None:
+                return {'status': 'database_unavailable'}
+            try:
+                cursor = conn.cursor()
 
-            # IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            for bot_name in ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']:
-                table = BOT_TABLES.get(bot_name)
-                if table:
-                    cursor.execute(f"""
-                        SELECT
-                            COUNT(*) as trades,
-                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                            SUM(realized_pnl) as total_pnl,
-                            AVG(realized_pnl) as avg_pnl
-                        FROM {table}
-                        WHERE status = 'closed'
-                            AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
-                    """)
-                    row = cursor.fetchone()
-                    if row and row[0]:
-                        ic_bot_breakdown[bot_name] = {
-                            'trades': row[0] or 0,
-                            'wins': row[1] or 0,
-                            'pnl': float(row[2] or 0),
-                            'win_rate': (row[1] / row[0] * 100) if row[0] else 0
-                        }
+                # IC bots: FORTRESS, SAMSON, ANCHOR, JUBILEE
+                for bot_name in ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']:
+                    table = BOT_TABLES.get(bot_name)
+                    if table:
+                        cursor.execute(f"""
+                            SELECT
+                                COUNT(*) as trades,
+                                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                                SUM(realized_pnl) as total_pnl,
+                                AVG(realized_pnl) as avg_pnl
+                            FROM {table}
+                            WHERE status = 'closed'
+                                AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
+                        """)
+                        row = cursor.fetchone()
+                        if row and row[0]:
+                            ic_bot_breakdown[bot_name] = {
+                                'trades': row[0] or 0,
+                                'wins': row[1] or 0,
+                                'pnl': float(row[2] or 0),
+                                'win_rate': (row[1] / row[0] * 100) if row[0] else 0
+                            }
 
-            # Directional bots: SOLOMON, GIDEON
-            # Cast to timestamptz to handle TEXT columns where applicable
-            for bot_name in ['SOLOMON', 'GIDEON']:
-                table = BOT_TABLES.get(bot_name)
-                if table:
-                    cursor.execute(f"""
-                        SELECT
-                            COUNT(*) as trades,
-                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                            SUM(realized_pnl) as total_pnl,
-                            AVG(realized_pnl) as avg_pnl
-                        FROM {table}
-                        WHERE status = 'closed'
-                            AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
-                    """)
-                    row = cursor.fetchone()
-                    if row and row[0]:
-                        dir_bot_breakdown[bot_name] = {
-                            'trades': row[0] or 0,
-                            'wins': row[1] or 0,
-                            'pnl': float(row[2] or 0),
-                            'win_rate': (row[1] / row[0] * 100) if row[0] else 0
-                        }
-
-            conn.close()
+                # Directional bots: SOLOMON, GIDEON
+                for bot_name in ['SOLOMON', 'GIDEON']:
+                    table = BOT_TABLES.get(bot_name)
+                    if table:
+                        cursor.execute(f"""
+                            SELECT
+                                COUNT(*) as trades,
+                                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                                SUM(realized_pnl) as total_pnl,
+                                AVG(realized_pnl) as avg_pnl
+                            FROM {table}
+                            WHERE status = 'closed'
+                                AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
+                        """)
+                        row = cursor.fetchone()
+                        if row and row[0]:
+                            dir_bot_breakdown[bot_name] = {
+                                'trades': row[0] or 0,
+                                'wins': row[1] or 0,
+                                'pnl': float(row[2] or 0),
+                                'win_rate': (row[1] / row[0] * 100) if row[0] else 0
+                            }
+            except Exception as e:
+                logger.error(f"Proverbs: Failed to query strategy data: {e}")
+                return {'status': 'error', 'message': str(e)}
 
             # Aggregate IC stats
             ic_trades = sum(b.get('trades', 0) for b in ic_bot_breakdown.values())
@@ -2372,10 +2396,6 @@ class ProverbsEnhanced:
                 'directional': dir_result,
                 'recommendation': self._generate_strategy_recommendation_v2(ic_result, dir_result)
             }
-
-        except Exception as e:
-            logger.error(f"Proverbs: Failed to analyze strategies: {e}")
-            return {'status': 'error', 'message': str(e)}
 
     def _generate_strategy_recommendation(self, ic_row, dir_row, ic_trades: int, dir_trades: int) -> str:
         """Generate a recommendation based on strategy performance comparison."""
@@ -2435,141 +2455,131 @@ class ProverbsEnhanced:
         if not DB_AVAILABLE:
             return {'status': 'database_unavailable'}
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        BOT_TABLES = {
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
+        }
 
-            # Bot tables mapping - all have oracle_advice column
-            BOT_TABLES = {
-                'FORTRESS': 'fortress_positions',
-                'SOLOMON': 'solomon_positions',
-                'SAMSON': 'samson_positions',
-                'ANCHOR': 'anchor_positions',
-                'GIDEON': 'gideon_positions',
-                'JUBILEE': 'jubilee_ic_positions',
+        ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
+
+        by_advice = {}
+        by_strategy = {
+            'IRON_CONDOR': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}},
+            'DIRECTIONAL': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
+        }
+
+        with _get_db_connection() as conn:
+            if conn is None:
+                return {'status': 'database_unavailable'}
+            try:
+                cursor = conn.cursor()
+
+                for bot_name, table in BOT_TABLES.items():
+                    try:
+                        cursor.execute(f"""
+                            SELECT
+                                COALESCE(oracle_advice, 'UNKNOWN') as advice,
+                                COUNT(*) as trades,
+                                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                                COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                                COALESCE(AVG(realized_pnl), 0) as avg_pnl
+                            FROM {table}
+                            WHERE status = 'closed'
+                                AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
+                            GROUP BY COALESCE(oracle_advice, 'UNKNOWN')
+                        """)
+                        rows = cursor.fetchall()
+
+                        for row in rows:
+                            advice, trades, wins, total_pnl, avg_pnl = row
+                            if not advice or advice == '' or advice == 'UNKNOWN':
+                                advice = 'NO_ADVICE'
+
+                            if advice not in by_advice:
+                                by_advice[advice] = {'count': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
+                            by_advice[advice]['count'] += trades or 0
+                            by_advice[advice]['wins'] += wins or 0
+                            by_advice[advice]['total_pnl'] += float(total_pnl or 0)
+                            if bot_name not in by_advice[advice]['bots']:
+                                by_advice[advice]['bots'][bot_name] = {'trades': 0, 'wins': 0}
+                            by_advice[advice]['bots'][bot_name]['trades'] += trades or 0
+                            by_advice[advice]['bots'][bot_name]['wins'] += wins or 0
+
+                            strategy = 'IRON_CONDOR' if bot_name in ic_bots else 'DIRECTIONAL'
+                            by_strategy[strategy]['trades'] += trades or 0
+                            by_strategy[strategy]['wins'] += wins or 0
+                            by_strategy[strategy]['total_pnl'] += float(total_pnl or 0)
+                            if bot_name not in by_strategy[strategy]['bots']:
+                                by_strategy[strategy]['bots'][bot_name] = {'trades': 0, 'wins': 0, 'total_pnl': 0}
+                            by_strategy[strategy]['bots'][bot_name]['trades'] += trades or 0
+                            by_strategy[strategy]['bots'][bot_name]['wins'] += wins or 0
+                            by_strategy[strategy]['bots'][bot_name]['total_pnl'] += float(total_pnl or 0)
+
+                    except Exception as e:
+                        logger.warning(f"Could not query oracle_advice from {table}: {e}")
+                        continue
+
+            except Exception as e:
+                logger.error(f"Proverbs: Failed to query Prophet accuracy data: {e}")
+                return {'status': 'error', 'message': str(e)}
+
+        # Calculate accuracy metrics for each advice type
+        for advice in by_advice:
+            count = by_advice[advice]['count']
+            wins = by_advice[advice]['wins']
+            total_pnl = by_advice[advice]['total_pnl']
+            by_advice[advice]['accuracy'] = (wins / count * 100) if count > 0 else 0
+            by_advice[advice]['avg_pnl'] = (total_pnl / count) if count > 0 else 0
+
+        # Calculate strategy-level metrics
+        for strategy in by_strategy:
+            trades = by_strategy[strategy]['trades']
+            wins = by_strategy[strategy]['wins']
+            total_pnl = by_strategy[strategy]['total_pnl']
+            by_strategy[strategy]['count'] = trades
+            by_strategy[strategy]['accuracy'] = (wins / trades * 100) if trades > 0 else 0
+            by_strategy[strategy]['avg_pnl'] = (total_pnl / trades) if trades > 0 else 0
+            for bot in by_strategy[strategy]['bots']:
+                b = by_strategy[strategy]['bots'][bot]
+                b['win_rate'] = (b['wins'] / b['trades'] * 100) if b['trades'] > 0 else 0
+
+        # Generate summary
+        total_trades = sum(s['trades'] for s in by_strategy.values())
+        total_wins = sum(s['wins'] for s in by_strategy.values())
+        overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+
+        take_trade = by_advice.get('TAKE_TRADE', {})
+        take_accuracy = take_trade.get('accuracy', 0)
+        take_count = take_trade.get('count', 0)
+
+        summary_text = f"Analyzed {total_trades} trades over {days} days. "
+        if take_count > 0:
+            summary_text += f"When Prophet advised TAKE_TRADE: {take_accuracy:.1f}% win rate ({take_count} trades). "
+        if overall_win_rate >= 60:
+            summary_text += f"Overall win rate of {overall_win_rate:.1f}% is strong."
+        elif overall_win_rate >= 50:
+            summary_text += f"Overall win rate of {overall_win_rate:.1f}% is acceptable."
+        else:
+            summary_text += f"Overall win rate of {overall_win_rate:.1f}% needs improvement."
+
+        return {
+            'status': 'analyzed',
+            'period_days': days,
+            'data_source': 'bot_positions_tables (oracle_advice column)',
+            'by_advice': by_advice,
+            'by_strategy': by_strategy,
+            'summary': summary_text,
+            'summary_data': {
+                'total_trades': total_trades,
+                'total_wins': total_wins,
+                'overall_win_rate': overall_win_rate,
+                'summary_text': summary_text
             }
-
-            ic_bots = ['FORTRESS', 'SAMSON', 'ANCHOR', 'JUBILEE']
-            dir_bots = ['SOLOMON', 'GIDEON']
-
-            # Step 1: Get Prophet advice accuracy from actual positions tables
-            by_advice = {}
-            by_strategy = {
-                'IRON_CONDOR': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}},
-                'DIRECTIONAL': {'trades': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
-            }
-
-            for bot_name, table in BOT_TABLES.items():
-                try:
-                    # Query oracle_advice accuracy for this bot
-                    # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-                    cursor.execute(f"""
-                        SELECT
-                            COALESCE(oracle_advice, 'UNKNOWN') as advice,
-                            COUNT(*) as trades,
-                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                            COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                            COALESCE(AVG(realized_pnl), 0) as avg_pnl
-                        FROM {table}
-                        WHERE status = 'closed'
-                            AND close_time::timestamptz >= NOW() - INTERVAL '{days} days'
-                        GROUP BY COALESCE(oracle_advice, 'UNKNOWN')
-                    """)
-                    rows = cursor.fetchall()
-
-                    for row in rows:
-                        advice, trades, wins, total_pnl, avg_pnl = row
-                        if not advice or advice == '' or advice == 'UNKNOWN':
-                            advice = 'NO_ADVICE'
-
-                        # Aggregate by Prophet advice type
-                        if advice not in by_advice:
-                            by_advice[advice] = {'count': 0, 'wins': 0, 'total_pnl': 0, 'bots': {}}
-                        by_advice[advice]['count'] += trades or 0
-                        by_advice[advice]['wins'] += wins or 0
-                        by_advice[advice]['total_pnl'] += float(total_pnl or 0)
-                        if bot_name not in by_advice[advice]['bots']:
-                            by_advice[advice]['bots'][bot_name] = {'trades': 0, 'wins': 0}
-                        by_advice[advice]['bots'][bot_name]['trades'] += trades or 0
-                        by_advice[advice]['bots'][bot_name]['wins'] += wins or 0
-
-                        # Aggregate by strategy
-                        strategy = 'IRON_CONDOR' if bot_name in ic_bots else 'DIRECTIONAL'
-                        by_strategy[strategy]['trades'] += trades or 0
-                        by_strategy[strategy]['wins'] += wins or 0
-                        by_strategy[strategy]['total_pnl'] += float(total_pnl or 0)
-                        if bot_name not in by_strategy[strategy]['bots']:
-                            by_strategy[strategy]['bots'][bot_name] = {'trades': 0, 'wins': 0, 'total_pnl': 0}
-                        by_strategy[strategy]['bots'][bot_name]['trades'] += trades or 0
-                        by_strategy[strategy]['bots'][bot_name]['wins'] += wins or 0
-                        by_strategy[strategy]['bots'][bot_name]['total_pnl'] += float(total_pnl or 0)
-
-                except Exception as e:
-                    logger.warning(f"Could not query oracle_advice from {table}: {e}")
-                    continue
-
-            conn.close()
-
-            # Calculate accuracy metrics for each advice type
-            for advice in by_advice:
-                count = by_advice[advice]['count']
-                wins = by_advice[advice]['wins']
-                total_pnl = by_advice[advice]['total_pnl']
-                by_advice[advice]['accuracy'] = (wins / count * 100) if count > 0 else 0
-                by_advice[advice]['avg_pnl'] = (total_pnl / count) if count > 0 else 0
-
-            # Calculate strategy-level metrics
-            for strategy in by_strategy:
-                trades = by_strategy[strategy]['trades']
-                wins = by_strategy[strategy]['wins']
-                total_pnl = by_strategy[strategy]['total_pnl']
-                by_strategy[strategy]['count'] = trades
-                by_strategy[strategy]['accuracy'] = (wins / trades * 100) if trades > 0 else 0
-                by_strategy[strategy]['avg_pnl'] = (total_pnl / trades) if trades > 0 else 0
-                # Calculate per-bot win rates
-                for bot in by_strategy[strategy]['bots']:
-                    b = by_strategy[strategy]['bots'][bot]
-                    b['win_rate'] = (b['wins'] / b['trades'] * 100) if b['trades'] > 0 else 0
-
-            # Generate summary
-            total_trades = sum(s['trades'] for s in by_strategy.values())
-            total_wins = sum(s['wins'] for s in by_strategy.values())
-            overall_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
-
-            # Check Prophet advice effectiveness
-            take_trade = by_advice.get('TAKE_TRADE', {})
-            skip = by_advice.get('SKIP', {})
-            take_accuracy = take_trade.get('accuracy', 0)
-            take_count = take_trade.get('count', 0)
-
-            summary_text = f"Analyzed {total_trades} trades over {days} days. "
-            if take_count > 0:
-                summary_text += f"When Prophet advised TAKE_TRADE: {take_accuracy:.1f}% win rate ({take_count} trades). "
-            if overall_win_rate >= 60:
-                summary_text += f"Overall win rate of {overall_win_rate:.1f}% is strong."
-            elif overall_win_rate >= 50:
-                summary_text += f"Overall win rate of {overall_win_rate:.1f}% is acceptable."
-            else:
-                summary_text += f"Overall win rate of {overall_win_rate:.1f}% needs improvement."
-
-            return {
-                'status': 'analyzed',
-                'period_days': days,
-                'data_source': 'bot_positions_tables (oracle_advice column)',
-                'by_advice': by_advice,
-                'by_strategy': by_strategy,
-                'summary': summary_text,
-                'summary_data': {
-                    'total_trades': total_trades,
-                    'total_wins': total_wins,
-                    'overall_win_rate': overall_win_rate,
-                    'summary_text': summary_text
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"Proverbs: Failed to analyze Prophet accuracy: {e}")
-            return {'status': 'error', 'message': str(e)}
+        }
 
     def _generate_prophet_accuracy_summary(self, advice_analysis: Dict) -> Dict:
         """Generate summary of Prophet accuracy."""
@@ -2734,16 +2744,16 @@ class ProverbsEnhanced:
         if not proposal:
             # Also check non-pending proposals
             try:
-                from database_adapter import get_connection
-                conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT reason, supporting_metrics, expected_improvement, risk_factors, description "
-                    "FROM proverbs_proposals WHERE proposal_id = %s",
-                    (proposal_id,)
-                )
-                row = cursor.fetchone()
-                conn.close()
+                with _get_db_connection() as conn:
+                    if conn is None:
+                        return None
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT reason, supporting_metrics, expected_improvement, risk_factors, description "
+                        "FROM proverbs_proposals WHERE proposal_id = %s",
+                        (proposal_id,)
+                    )
+                    row = cursor.fetchone()
 
                 if row:
                     reason, supporting_metrics, expected_improvement, risk_factors, description = row

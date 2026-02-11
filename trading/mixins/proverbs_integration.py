@@ -94,17 +94,20 @@ class ProverbsIntegrationMixin:
         """
         Check if this bot is allowed to trade.
 
-        NOTE: Kill switch functionality has been removed.
-        This method always returns True (trading allowed).
+        Queries the kill switch state via ProverbsFeedbackLoop.
 
         Args:
             cache_seconds: Ignored (kept for API compatibility)
 
         Returns:
-            Always True - trading is always allowed
+            True if trading is allowed, False if kill switch is active
         """
-        # Kill switch removed - always allow trading
-        return True
+        if not self._proverbs_available or self._proverbs is None:
+            return True  # If proverbs unavailable, allow trading
+        try:
+            return not self._proverbs.is_bot_killed(self._proverbs_bot_name)
+        except Exception:
+            return True  # On error, allow trading (fail-open)
 
     def proverbs_record_outcome(
         self,
@@ -250,14 +253,19 @@ def check_proverbs_kill_switch(bot_name: str) -> bool:
     """
     Check if a bot's kill switch is active.
 
-    NOTE: Kill switch functionality has been removed.
-    This function always returns False (trading allowed).
+    Queries the kill switch state from the database via ProverbsFeedbackLoop.
 
     Returns:
-        Always False - kill switch is never active
+        True if kill switch is active (bot should NOT trade), False otherwise
     """
-    # Kill switch removed - always allow trading
-    return False
+    try:
+        from quant.proverbs_feedback_loop import get_proverbs
+        proverbs = get_proverbs()
+        if proverbs is None:
+            return False
+        return proverbs.is_bot_killed(bot_name)
+    except Exception:
+        return False  # On error, allow trading (fail-open)
 
 
 def record_bot_outcome(
