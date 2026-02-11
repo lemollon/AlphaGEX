@@ -277,19 +277,7 @@ class FortressTrader(MathOptimizerMixin):
                 self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
                 return result
 
-            # Step 3: Check if we already have an open position (only 1 at a time)
-            # NOTE: Daily trade limit removed - Prophet decides trade frequency
-            open_positions = self.db.get_position_count()
-
-            if open_positions > 0:
-                if result['action'] == 'none':
-                    result['action'] = 'monitoring'
-                result['details']['skip_reason'] = f'Position already open ({open_positions})'
-                self.db.log("DEBUG", f"Already have {open_positions} open position(s)")
-                self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
-                self._update_daily_summary(today, result)
-                self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
-                return result
+            # No max position limit - always look for new entries
 
             # Step 3.5: Check Proverbs consecutive loss cooldown (5-min pause after 3 losses)
             # Check if we're in a cooldown pause
@@ -1665,10 +1653,10 @@ class FortressTrader(MathOptimizerMixin):
 
     def process_expired_positions(self) -> Dict[str, Any]:
         """
-        Process expired 0DTE positions at end of day.
+        Process expired positions at end of day.
 
         Called by scheduler at 3:05 PM CT to handle positions that expired
-        during the trading day. For 0DTE options:
+        today or earlier. For expired options:
         - If price stayed within IC wings → max profit (credit received)
         - If price breached a wing → calculate loss based on final price
 

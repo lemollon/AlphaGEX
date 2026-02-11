@@ -262,7 +262,7 @@ class ConsecutiveLossMonitor:
         """
         Record a trade outcome and check for consecutive losses.
 
-        Returns alert dict if kill switch should be triggered.
+        Kill switch activation removed - only tracks and logs consecutive losses.
         """
         tracker = self._get_tracker(bot_name)
 
@@ -274,28 +274,12 @@ class ConsecutiveLossMonitor:
 
             logger.info(f"{bot_name}: Consecutive loss #{tracker.consecutive_losses} (${pnl:,.2f})")
 
-            # Check kill threshold
+            # Log warning at threshold but do NOT activate kill switch
             if tracker.consecutive_losses >= ENHANCED_GUARDRAILS['consecutive_loss_kill_threshold']:
-                if not tracker.triggered_kill:
-                    tracker.triggered_kill = True
-
-                    alert = {
-                        'type': 'CONSECUTIVE_LOSS_KILL',
-                        'bot_name': bot_name,
-                        'consecutive_losses': tracker.consecutive_losses,
-                        'total_streak_loss': tracker.total_loss_streak_pnl,
-                        'last_loss_date': tracker.last_loss_date,
-                        'action': 'KILL_SWITCH_ACTIVATED'
-                    }
-
-                    # Activate kill switch
-                    self.proverbs.activate_kill_switch(
-                        bot_name=bot_name,
-                        reason=f"Consecutive loss limit reached: {tracker.consecutive_losses} losses in a row (${tracker.total_loss_streak_pnl:,.2f})",
-                        killed_by="PROVERBS_AUTO"
-                    )
-
-                    return alert
+                logger.warning(
+                    f"{bot_name}: {tracker.consecutive_losses} consecutive losses "
+                    f"(${tracker.total_loss_streak_pnl:,.2f}) - kill switch DISABLED, continuing to trade"
+                )
         else:
             # Win - reset counter
             if tracker.consecutive_losses > 0:
@@ -356,7 +340,7 @@ class DailyLossMonitor:
         """
         Record a trade and check daily limits.
 
-        Returns alert dict if kill switch should be triggered.
+        Kill switch activation removed - only tracks and logs daily P&L.
         """
         tracker = self._get_tracker(bot_name)
 
@@ -369,51 +353,21 @@ class DailyLossMonitor:
         else:
             tracker.losing_trades += 1
 
-        # Check dollar limit
+        # Log warnings at limits but do NOT activate kill switches
         if tracker.total_pnl <= -ENHANCED_GUARDRAILS['max_daily_loss_dollars']:
-            if not tracker.triggered_kill:
-                tracker.triggered_kill = True
+            logger.warning(
+                f"{bot_name}: Daily loss ${tracker.total_pnl:,.2f} exceeds "
+                f"${ENHANCED_GUARDRAILS['max_daily_loss_dollars']:,.2f} limit - "
+                f"kill switch DISABLED, continuing to trade"
+            )
 
-                alert = {
-                    'type': 'DAILY_LOSS_DOLLAR_KILL',
-                    'bot_name': bot_name,
-                    'date': tracker.date,
-                    'daily_pnl': tracker.total_pnl,
-                    'limit': ENHANCED_GUARDRAILS['max_daily_loss_dollars'],
-                    'action': 'KILL_SWITCH_ACTIVATED'
-                }
-
-                self.proverbs.activate_kill_switch(
-                    bot_name=bot_name,
-                    reason=f"Daily loss limit reached: ${tracker.total_pnl:,.2f} (limit: ${ENHANCED_GUARDRAILS['max_daily_loss_dollars']:,.2f})",
-                    killed_by="PROVERBS_AUTO"
-                )
-
-                return alert
-
-        # Check percent limit
-        loss_pct = abs(tracker.total_pnl) / capital_base * 100
+        loss_pct = abs(tracker.total_pnl) / capital_base * 100 if tracker.total_pnl < 0 else 0
         if tracker.total_pnl < 0 and loss_pct >= ENHANCED_GUARDRAILS['max_daily_loss_percent']:
-            if not tracker.triggered_kill:
-                tracker.triggered_kill = True
-
-                alert = {
-                    'type': 'DAILY_LOSS_PERCENT_KILL',
-                    'bot_name': bot_name,
-                    'date': tracker.date,
-                    'daily_pnl': tracker.total_pnl,
-                    'loss_percent': loss_pct,
-                    'limit_percent': ENHANCED_GUARDRAILS['max_daily_loss_percent'],
-                    'action': 'KILL_SWITCH_ACTIVATED'
-                }
-
-                self.proverbs.activate_kill_switch(
-                    bot_name=bot_name,
-                    reason=f"Daily loss % limit reached: {loss_pct:.1f}% (limit: {ENHANCED_GUARDRAILS['max_daily_loss_percent']:.1f}%)",
-                    killed_by="PROVERBS_AUTO"
-                )
-
-                return alert
+            logger.warning(
+                f"{bot_name}: Daily loss {loss_pct:.1f}% exceeds "
+                f"{ENHANCED_GUARDRAILS['max_daily_loss_percent']:.1f}% limit - "
+                f"kill switch DISABLED, continuing to trade"
+            )
 
         return None
 

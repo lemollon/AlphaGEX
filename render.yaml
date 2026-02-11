@@ -80,6 +80,15 @@ services:
         sync: false
       - key: TRADIER_SANDBOX_ACCOUNT_ID
         sync: false
+      # Tradier - FORTRESS additional sandbox accounts for trade mirroring
+      - key: TRADIER_FORTRESS_SANDBOX_API_KEY_2
+        sync: false
+      - key: TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2
+        sync: false
+      - key: TRADIER_FORTRESS_SANDBOX_API_KEY_3
+        sync: false
+      - key: TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3
+        sync: false
       # Anthropic API for Claude AI explanations
       - key: ANTHROPIC_API_KEY
         sync: false

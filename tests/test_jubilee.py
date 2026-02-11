@@ -70,7 +70,7 @@ class TestJubileeConfig:
         assert data['ticker'] == "SPX"
         assert data['mode'] == "paper"
         assert 'allocations' in data
-        assert data['allocations']['ares_pct'] == 35.0
+        assert data['allocations']['fortress_pct'] == 35.0
         assert data['allocations']['samson_pct'] == 35.0
         assert data['allocations']['anchor_pct'] == 20.0
         assert data['allocations']['reserve_pct'] == 10.0
@@ -230,13 +230,13 @@ class TestBoxSpreadPosition:
             fed_funds_at_entry=4.5,
             margin_rate_at_entry=8.0,
             savings_vs_margin=350.0,
-            cash_deployed_to_ares=17377.50,
-            cash_deployed_to_titan=17377.50,
+            cash_deployed_to_fortress=17377.50,
+            cash_deployed_to_samson=17377.50,
             cash_deployed_to_anchor=9930.0,
             cash_held_in_reserve=4965.0,
             total_cash_deployed=49650.0,
-            returns_from_ares=0.0,
-            returns_from_titan=0.0,
+            returns_from_fortress=0.0,
+            returns_from_samson=0.0,
             returns_from_anchor=0.0,
             total_ic_returns=0.0,
             net_profit=0.0,
@@ -285,13 +285,13 @@ class TestBoxSpreadPosition:
             fed_funds_at_entry=4.5,
             margin_rate_at_entry=8.0,
             savings_vs_margin=350.0,
-            cash_deployed_to_ares=17377.50,
-            cash_deployed_to_titan=17377.50,
+            cash_deployed_to_fortress=17377.50,
+            cash_deployed_to_samson=17377.50,
             cash_deployed_to_anchor=9930.0,
             cash_held_in_reserve=4965.0,
             total_cash_deployed=49650.0,
-            returns_from_ares=0.0,
-            returns_from_titan=0.0,
+            returns_from_fortress=0.0,
+            returns_from_samson=0.0,
             returns_from_anchor=0.0,
             total_ic_returns=0.0,
             net_profit=0.0,

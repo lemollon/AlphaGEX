@@ -2273,11 +2273,11 @@ export default function PrometheusBoxDashboard() {
                           {(icStatus?.status?.available_capital || 0) >= (reconciliation?.config?.min_capital_per_trade || 5000) ? '✓' : '✗'} Capital: {formatCurrency(icStatus?.status?.available_capital || 0)}
                           {(icStatus?.status?.available_capital || 0) < (reconciliation?.config?.min_capital_per_trade || 5000) && <span className="text-xs text-gray-500">(need {formatCurrency(reconciliation?.config?.min_capital_per_trade || 5000)} min)</span>}
                         </div>
-                        <div className={`flex items-center gap-2 ${(icStatus?.status?.open_positions || 0) < (reconciliation?.config?.ic_max_positions || 3) ? 'text-green-400' : 'text-red-400'}`}>
-                          {(icStatus?.status?.open_positions || 0) < (reconciliation?.config?.ic_max_positions || 3) ? '✓' : '✗'} Positions: {icStatus?.status?.open_positions || 0} / {reconciliation?.config?.ic_max_positions || 3} max
+                        <div className="flex items-center gap-2 text-green-400">
+                          ✓ Positions: {icStatus?.status?.open_positions || 0} (no limit)
                         </div>
-                        <div className={`flex items-center gap-2 ${(icStatus?.status?.daily_trades || 0) < (icStatus?.status?.max_daily_trades || 5) ? 'text-green-400' : 'text-red-400'}`}>
-                          {(icStatus?.status?.daily_trades || 0) < (icStatus?.status?.max_daily_trades || 5) ? '✓' : '✗'} Daily trades: {icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 5}
+                        <div className="flex items-center gap-2 text-green-400">
+                          ✓ Daily trades: {icStatus?.status?.daily_trades || 0} (no limit)
                         </div>
                       </div>
                       <div className="space-y-2">

@@ -208,15 +208,15 @@ class BoxSpreadPosition:
     savings_vs_margin: float      # What you saved vs margin loan
 
     # Capital deployment tracking - WHERE DID THE CASH GO?
-    cash_deployed_to_ares: float
-    cash_deployed_to_titan: float
+    cash_deployed_to_fortress: float
+    cash_deployed_to_samson: float
     cash_deployed_to_anchor: float
     cash_held_in_reserve: float
     total_cash_deployed: float
 
     # Returns from deployed capital - THE PAYOFF
-    returns_from_ares: float
-    returns_from_titan: float
+    returns_from_fortress: float
+    returns_from_samson: float
     returns_from_anchor: float
     total_ic_returns: float
     net_profit: float             # total_ic_returns - borrowing_cost
@@ -267,13 +267,13 @@ class BoxSpreadPosition:
             'fed_funds_at_entry': self.fed_funds_at_entry,
             'margin_rate_at_entry': self.margin_rate_at_entry,
             'savings_vs_margin': self.savings_vs_margin,
-            'cash_deployed_to_ares': self.cash_deployed_to_ares,
-            'cash_deployed_to_titan': self.cash_deployed_to_titan,
+            'cash_deployed_to_fortress': self.cash_deployed_to_fortress,
+            'cash_deployed_to_samson': self.cash_deployed_to_samson,
             'cash_deployed_to_anchor': self.cash_deployed_to_anchor,
             'cash_held_in_reserve': self.cash_held_in_reserve,
             'total_cash_deployed': self.total_cash_deployed,
-            'returns_from_ares': self.returns_from_ares,
-            'returns_from_titan': self.returns_from_titan,
+            'returns_from_fortress': self.returns_from_fortress,
+            'returns_from_samson': self.returns_from_samson,
             'returns_from_anchor': self.returns_from_anchor,
             'total_ic_returns': self.total_ic_returns,
             'net_profit': self.net_profit,
@@ -543,8 +543,8 @@ class JubileeConfig:
             'max_margin_pct': self.max_margin_pct,
             'margin_buffer_pct': self.margin_buffer_pct,
             'allocations': {
-                'ares_pct': self.fortress_allocation_pct,
-                'titan_pct': self.samson_allocation_pct,
+                'fortress_pct': self.fortress_allocation_pct,
+                'samson_pct': self.samson_allocation_pct,
                 'anchor_pct': self.anchor_allocation_pct,
                 'reserve_pct': self.reserve_pct,
             },
@@ -567,8 +567,8 @@ class JubileeConfig:
             if key == 'mode':
                 continue
             if key == 'allocations':
-                config.fortress_allocation_pct = value.get('ares_pct', 35.0)
-                config.samson_allocation_pct = value.get('titan_pct', 35.0)
+                config.fortress_allocation_pct = value.get('fortress_pct', 35.0)
+                config.samson_allocation_pct = value.get('samson_pct', 35.0)
                 config.anchor_allocation_pct = value.get('anchor_pct', 20.0)
                 config.reserve_pct = value.get('reserve_pct', 10.0)
             elif hasattr(config, key):
@@ -1001,47 +1001,45 @@ class JubileeICConfig:
     # Underlying
     ticker: str = "SPX"           # Trade SPX (matches box spreads)
 
-    # Expiration preferences
-    target_dte_min: int = 0       # 0DTE trading
+    # Expiration preferences - WEEKLY (match SAMSON)
+    target_dte_min: int = 0       # Minimum DTE
     target_dte_max: int = 7       # Up to weekly
-    prefer_0dte: bool = True      # Focus on 0DTE
+    prefer_0dte: bool = False     # Trade weekly SPXW (next Friday), same as SAMSON
 
-    # Strike selection (delta-based)
+    # Strike selection - AGGRESSIVE (match SAMSON)
     short_put_delta: float = 0.10   # ~10 delta for short put
     short_call_delta: float = 0.10  # ~10 delta for short call
-    spread_width: float = 10.0      # $10 wide spreads on SPX (matches ANCHOR)
+    spread_width: float = 12.0      # $12 wide spreads on SPX (match SAMSON)
 
-    # Position sizing - MATCH ANCHOR exactly
-    max_positions: int = 5          # Max simultaneous IC positions (same as ANCHOR)
-    max_capital_per_trade_pct: float = 10.0  # Max 10% of borrowed capital per trade
-    max_daily_trades: int = 0       # NO LIMIT - ANCHOR has no daily limit (0 = unlimited)
-    max_contracts: int = 100        # Max contracts per IC trade (match ANCHOR)
+    # Position sizing - AGGRESSIVE (match SAMSON)
+    max_positions: int = 10         # Max simultaneous IC positions (match SAMSON)
+    max_capital_per_trade_pct: float = 15.0  # 15% risk per trade (match SAMSON)
+    max_daily_trades: int = 0       # NO LIMIT (0 = unlimited)
+    max_contracts: int = 100        # Max contracts per IC trade
 
-    # Risk management
+    # Risk management - AGGRESSIVE (match SAMSON)
     stop_loss_pct: float = 200.0    # Close if loss = 200% of credit
-    profit_target_pct: float = 50.0 # Close if profit = 50% of credit
+    profit_target_pct: float = 30.0 # Earlier exit at 30% (match SAMSON)
     time_stop_dte: int = 0          # Close at expiration
 
-    # Prophet integration - EXACT SAME thresholds as ANCHOR
-    # Uses get_anchor_advice() - same Prophet endpoint as ANCHOR
+    # Prophet integration - AGGRESSIVE (match SAMSON)
     require_oracle_approval: bool = True
-    min_oracle_confidence: float = 0.3   # Same as ANCHOR min_ic_suitability
-    min_win_probability: float = 0.42    # Same as ANCHOR (42%)
+    min_oracle_confidence: float = 0.2   # Lower bar (match SAMSON min_ic_suitability)
+    min_win_probability: float = 0.40    # Lower threshold (match SAMSON 40%)
 
-    # VIX filters
+    # VIX filters - RELAXED (match SAMSON)
     min_vix: float = 12.0         # Don't trade if VIX too low (thin premiums)
-    max_vix: float = 35.0         # Don't trade if VIX too high (too risky)
+    max_vix: float = 40.0         # Higher tolerance (match SAMSON)
 
     # Trading window - MATCH ANCHOR exactly
     entry_start: str = "08:30"    # 8:30 AM CT (same as ANCHOR)
     entry_end: str = "14:45"      # 2:45 PM CT (same as ANCHOR - stop 15 min before close)
     exit_by: str = "14:50"        # 2:50 PM CT (same as ANCHOR force_exit)
 
-    # Cooldown - MATCH ANCHOR exactly (NO COOLDOWNS)
-    # ANCHOR has no cooldown logic - it trades as often as Prophet approves (every 5 min)
-    cooldown_after_loss_minutes: int = 0   # No pause after loss (like ANCHOR)
-    cooldown_after_win_minutes: int = 0    # No pause after win (like ANCHOR)
-    cooldown_minutes_after_trade: int = 0  # No cooldown between trades (like ANCHOR)
+    # Cooldown - DISABLED (no gates other than 5-min loss streak pause)
+    cooldown_after_loss_minutes: int = 0   # No cooldown after loss
+    cooldown_after_win_minutes: int = 0    # No cooldown after win
+    cooldown_minutes_after_trade: int = 0  # No cooldown between trades
 
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)

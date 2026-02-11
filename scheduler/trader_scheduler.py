@@ -487,13 +487,13 @@ class AutonomousTraderScheduler:
 
         # FORTRESS V2 - SPY Iron Condors (10% monthly target)
         # Capital: Uses AlphaGEX internal capital allocation
-        # LIVE mode: Sends orders to Tradier SANDBOX account for testing
+        # PAPER mode: Internal paper trading only (no Tradier orders)
         self.fortress_trader = None
         if FORTRESS_AVAILABLE:
             try:
-                config = FortressConfig(mode=FortressTradingMode.LIVE)
+                config = FortressConfig(mode=FortressTradingMode.PAPER)
                 self.fortress_trader = FortressTrader(config=config)
-                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
+                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, PAPER mode - internal tracking only)")
             except Exception as e:
                 logger.warning(f"FORTRESS V2 initialization failed: {e}")
                 self.fortress_trader = None
@@ -562,6 +562,21 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"JUBILEE initialization failed: {e}")
                 self.jubilee_trader = None
+
+        # JUBILEE: Ensure a box spread position exists at startup.
+        # Without a box spread, IC trading has no capital and is completely blocked.
+        # This runs once on boot so Jubilee can trade immediately after deploy.
+        if self.jubilee_trader:
+            try:
+                open_positions = self.jubilee_trader.get_positions()
+                if not open_positions:
+                    logger.warning("JUBILEE STARTUP: No open box spread found - creating one now")
+                    self.jubilee_trader._create_emergency_paper_position()
+                    logger.info("JUBILEE STARTUP: Box spread position created - IC trading is funded")
+                else:
+                    logger.info(f"JUBILEE STARTUP: {len(open_positions)} open box spread(s) found - IC trading is funded")
+            except Exception as e:
+                logger.error(f"JUBILEE STARTUP: Failed to verify box spread: {e}")
 
         # JUBILEE IC - Iron Condor trading with borrowed capital
         # Uses capital from box spreads to trade SPX Iron Condors
@@ -2374,9 +2389,11 @@ class AutonomousTraderScheduler:
             # Box spreads provide the capital for IC trading - without them, IC trading stops
             open_positions = self.jubilee_trader.get_positions()
             if not open_positions:
-                logger.info("JUBILEE: No open box spreads - opening new position for IC capital")
+                logger.warning("JUBILEE: No open box spreads detected - IC trading is blocked!")
+                position_created = False
+
+                # First try: Generate a proper signal (requires market hours + favorable rates)
                 try:
-                    # Generate and execute a new box spread signal
                     signal_result = self.jubilee_trader.run_signal_scan()
                     if signal_result.get('signal') and signal_result['signal'].is_valid:
                         execute_result = self.jubilee_trader.execute_signal(signal_result['signal'])
@@ -2384,15 +2401,27 @@ class AutonomousTraderScheduler:
                             pos = execute_result.get('position')
                             position_id = pos.position_id if pos else 'unknown'
                             credit = pos.total_credit_received if pos else 0
-                            logger.info(f"✅ Opened new box spread: {position_id}")
+                            logger.info(f"JUBILEE: Opened new box spread: {position_id}")
                             logger.info(f"   Cash generated: ${credit:,.2f}")
+                            position_created = True
                         else:
-                            logger.warning(f"⚠️ Failed to open new box spread: {execute_result.get('error')}")
+                            logger.warning(f"JUBILEE: Signal scan succeeded but execution failed: {execute_result.get('error')}")
                     else:
                         reason = signal_result.get('reason', 'Unknown')
-                        logger.warning(f"⚠️ No favorable box spread opportunity: {reason}")
+                        logger.warning(f"JUBILEE: No favorable signal: {reason}")
                 except Exception as open_error:
-                    logger.error(f"❌ Error opening new box spread: {open_error}")
+                    logger.error(f"JUBILEE: Error in signal scan fallback: {open_error}")
+
+                # Last resort: Force-create a paper box spread so IC trading can resume today.
+                # This bypasses rate analysis and trading window checks.
+                if not position_created:
+                    logger.warning("JUBILEE: Signal-based recovery failed. Creating paper box spread as last resort.")
+                    try:
+                        self.jubilee_trader._create_emergency_paper_position()
+                        position_created = True
+                        logger.info("JUBILEE: Emergency paper box spread created - IC trading can resume")
+                    except Exception as emergency_error:
+                        logger.error(f"JUBILEE CRITICAL: All recovery attempts failed: {emergency_error}")
 
             logger.info(f"JUBILEE Daily Cycle completed successfully")
             logger.info(f"=" * 80)

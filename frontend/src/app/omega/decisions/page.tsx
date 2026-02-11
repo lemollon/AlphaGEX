@@ -501,7 +501,7 @@ export default function OmegaDecisionExplorer() {
 
             {/* Summary Chips */}
             <div className="flex items-center gap-2 ml-auto">
-              {Object.entries(decisionCounts).map(([decision, count]) => {
+              {(Object.entries(decisionCounts) as [string, number][]).map(([decision, count]) => {
                 const colors = DECISION_COLORS[decision] || DECISION_COLORS.SKIP_TODAY
                 return (
                   <span

@@ -406,10 +406,7 @@ class AnchorTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After {self.config.entry_end}"
 
-        # Check position limits instead of once-per-day restriction
-        open_count = self.db.get_position_count()
-        if open_count >= self.config.max_open_positions:
-            return False, f"Max open positions ({self.config.max_open_positions}) reached"
+        # Max position limit removed - no gates
 
         return True, "Ready"
 

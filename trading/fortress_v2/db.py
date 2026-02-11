@@ -311,6 +311,7 @@ class FortressDatabase:
     def _ensure_oracle_columns(self, cursor) -> None:
         """Add new Prophet/Chronicles columns if they don't exist (migration)"""
         columns_to_add = [
+            ("ticker", "VARCHAR(10) DEFAULT 'SPY'"),
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
             ("oracle_win_probability", "DECIMAL(8, 4)"),  # DECIMAL(8,4) for proper precision

@@ -329,50 +329,54 @@ class ValorTrader:
             # with configurable max_consecutive_losses and pause_minutes
             # Proverbs monitor is kept in sync for dashboard visibility
 
-            if open_count < self.config.max_open_positions:
-                # Generate signal
-                signal = self.signal_generator.generate_signal(
-                    current_price=current_price,
-                    gex_data=gex_data,
-                    vix=vix,
-                    atr=atr,
-                    account_balance=account_balance,
-                    is_overnight=is_overnight
-                )
-                scan_context["signal"] = signal
+            # No max position limit - always look for signals
+            # Generate signal
+            signal = self.signal_generator.generate_signal(
+                current_price=current_price,
+                gex_data=gex_data,
+                vix=vix,
+                atr=atr,
+                account_balance=account_balance,
+                is_overnight=is_overnight
+            )
+            scan_context["signal"] = signal
+            scan_context["open_positions"] = open_count
 
-                if signal:
-                    scan_result["signals_generated"] += 1
+            if signal:
+                scan_result["signals_generated"] += 1
 
-                    if signal.is_valid:
-                        # Execute the signal with scan_id for ML tracking
-                        success, position_id = self._execute_signal_with_id(signal, account_balance, scan_id)
-                        if success:
-                            scan_result["trades_executed"] += 1
-                            scan_context["position_id"] = position_id
+                if signal.is_valid:
+                    # Execute the signal with scan_id for ML tracking
+                    success, position_id = self._execute_signal_with_id(signal, account_balance, scan_id)
+                    if success:
+                        scan_result["trades_executed"] += 1
+                        scan_context["position_id"] = position_id
 
-                            # Log signal
-                            self.db.save_signal(signal, was_executed=True)
+                        # Log signal
+                        self.db.save_signal(signal, was_executed=True)
 
-                            # Log scan activity with trade
-                            self._log_scan_activity(scan_id, "TRADED", scan_result, scan_context,
-                                                   action=f"Opened {signal.direction.value} position")
-                        else:
-                            self.db.save_signal(signal, was_executed=False, skip_reason="Execution failed")
-                            self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                                   skip_reason="Execution failed")
+                        # Log scan activity with trade
+                        self._log_scan_activity(scan_id, "TRADED", scan_result, scan_context,
+                                               action=f"Opened {signal.direction.value} position")
                     else:
-                        self.db.save_signal(signal, was_executed=False, skip_reason="Invalid signal")
+                        self.db.save_signal(signal, was_executed=False, skip_reason="Execution failed")
                         self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                               skip_reason=f"Invalid signal: {signal.reasoning[:100] if signal.reasoning else 'No reason'}")
+                                               skip_reason="Execution failed")
                 else:
-                    # No signal generated
+                    self.db.save_signal(signal, was_executed=False, skip_reason="Invalid signal")
                     self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                           skip_reason="No signal generated")
+                                           skip_reason=f"Invalid signal: {signal.reasoning[:100] if signal.reasoning else 'No reason'}")
             else:
-                # Max positions reached
-                self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
-                                       skip_reason=f"Max positions ({self.config.max_open_positions}) reached")
+                # No signal generated - signal generator returned None
+                # Detailed reason already logged at INFO level by signal generator
+                gex_data_summary = (
+                    f"price={current_price:.2f}, "
+                    f"flip={gex_data.get('flip_point', 0):.2f}, "
+                    f"regime={gex_data.get('gamma_regime', 'unknown')}, "
+                    f"VIX={vix:.1f}"
+                )
+                self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                       skip_reason=f"No signal: {gex_data_summary}")
 
             # 3. Save equity snapshot with CURRENT positions (refresh to include any new positions)
             current_positions = self.db.get_open_positions()

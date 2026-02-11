@@ -227,13 +227,18 @@ class FortressConfig:
     # FIX (Jan 2025): Default was 1.0 SD which placed strikes at EXACTLY the
     # expected move boundary. Changed to 1.2 SD for 20% more cushion.
     sd_multiplier: float = 1.2  # 1.2 SD = strikes 20% OUTSIDE expected move (safer)
-    spread_width: float = 2.0   # $2 wide spreads for SPY
+    spread_width: float = 5.0   # $5 wide spreads for SPY (was $2 - too narrow for premium)
+
+    # Expiration selection
+    # FIX (Feb 2026): Changed from 0DTE to 3DTE minimum. 0DTE SPY ICs
+    # have virtually no premium. 3DTE gives enough theta to collect real credit.
+    min_dte: int = 3  # Minimum 3 trading days to expiration
 
     # Risk limits
     capital: float = 100000.0  # Starting capital - can be overridden by Tradier balance
     risk_per_trade_pct: float = 15.0  # Increased from 10% for better returns with thin premiums
     max_contracts: int = 75  # Increased from 50 to allow larger positions
-    min_credit: float = 0.02  # Min credit per spread
+    min_credit: float = 0.05  # Min credit per spread (raised from 0.02 to reject garbage quotes)
     max_trades_per_day: int = 3  # Allow up to 3 trades per day with re-entry
 
     # Prophet thresholds

@@ -139,6 +139,10 @@ class APIConfig:
     TRADIER_FORTRESS_SANDBOX_API_KEY_2: Optional[str] = os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_2') or os.getenv('TRADIER_ARES_SANDBOX_API_KEY_2')
     TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2: Optional[str] = os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2') or os.getenv('TRADIER_ARES_SANDBOX_ACCOUNT_ID_2')
 
+    # Tradier - FORTRESS Third Sandbox Account (for mirroring trades to a third account)
+    TRADIER_FORTRESS_SANDBOX_API_KEY_3: Optional[str] = os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_3')
+    TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3: Optional[str] = os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3')
+
     @classmethod
     def get_tradier_prod_credentials(cls) -> tuple:
         """Get production credentials, checking TRADIER_PROD_* first, then TRADIER_API_KEY"""

@@ -13,7 +13,7 @@ Key concepts:
 
 import math
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
@@ -85,6 +85,14 @@ except ImportError:
     WalkForwardOptimizer = None
     WalkForwardResult = None
 
+# Market Calendar - holiday-aware trading day calculation
+MARKET_CALENDAR_AVAILABLE = False
+try:
+    from trading.market_calendar import MarketCalendar
+    _MARKET_CALENDAR = MarketCalendar()
+    MARKET_CALENDAR_AVAILABLE = True
+except ImportError:
+    _MARKET_CALENDAR = None
 
 
 class SignalGenerator:
@@ -164,6 +172,45 @@ class SignalGenerator:
             logger.warning(f"FORTRESS: Tradier init failed, using estimated credits: {e}")
             self.tradier = None
 
+
+    def _get_target_expiration(self, now: datetime) -> str:
+        """
+        Get target expiration date that is at least min_dte trading days out.
+
+        SPY has daily expirations Mon-Fri, so we advance by trading days
+        (skipping weekends and market holidays).
+
+        Examples with min_dte=2:
+          Monday    -> Wednesday
+          Tuesday   -> Thursday
+          Wednesday -> Friday
+          Thursday  -> next Monday
+          Friday    -> next Tuesday
+        """
+        min_dte = self.config.min_dte
+
+        if min_dte <= 0:
+            # Legacy 0DTE behavior
+            return now.strftime("%Y-%m-%d")
+
+        target = now
+        trading_days_counted = 0
+
+        while trading_days_counted < min_dte:
+            target = target + timedelta(days=1)
+
+            # Use MarketCalendar if available (handles holidays)
+            if MARKET_CALENDAR_AVAILABLE and _MARKET_CALENDAR:
+                if _MARKET_CALENDAR.is_trading_day(target):
+                    trading_days_counted += 1
+            else:
+                # Fallback: skip weekends only (Mon=0, Sun=6)
+                if target.weekday() < 5:
+                    trading_days_counted += 1
+
+        expiration = target.strftime("%Y-%m-%d")
+        logger.info(f"FORTRESS: Target expiration {expiration} ({min_dte} trading days out)")
+        return expiration
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get current market data including price, VIX, and GEX"""
@@ -381,9 +428,10 @@ class SignalGenerator:
 
         Strikes = spot +/- (SD_multiplier * expected_move), rounded away from spot.
         """
-        # FIX (Feb 2026): Minimum 1.5 SD from spot.
-        # 1.2 SD was too tight - FORTRESS lost $5,850 on Feb 6 with wings at 1.21 SD.
-        MIN_SD_FLOOR = 1.5
+        # FIX (Feb 2026): Lowered from 1.5 to 1.2 SD.
+        # 1.5 SD with $2-wide spreads had no premium. With $5-wide spreads and 3DTE,
+        # 1.2 SD provides enough cushion while collecting real credit.
+        MIN_SD_FLOOR = 1.2
         sd = max(self.config.sd_multiplier, MIN_SD_FLOOR)
         width = self.config.spread_width
 
@@ -989,9 +1037,11 @@ class SignalGenerator:
             expected_move=expected_move,
         )
 
-        # Step 5: Get expiration (0DTE) - needed for real quotes
+        # Step 5: Get expiration (min 2DTE) - needed for real quotes
+        # FIX (Feb 2026): 0DTE SPY $2-wide ICs had no premium ($0.02 credits).
+        # Now targets min_dte trading days out for real theta to collect.
         now = datetime.now(CENTRAL_TZ)
-        expiration = now.strftime("%Y-%m-%d")
+        expiration = self._get_target_expiration(now)
 
         # Step 6: Try to get REAL quotes from Tradier first
         pricing = self.get_real_credits(

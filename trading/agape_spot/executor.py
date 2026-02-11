@@ -256,6 +256,14 @@ class AgapeSpotExecutor:
                 f"SKIPPING LIVE trade. Set COINBASE_API_KEY/SECRET "
                 f"or COINBASE_{symbol}_API_KEY/SECRET."
             )
+            # Log to DB so it shows up in the error dashboard
+            if self.db:
+                self.db.log(
+                    "ERROR", "NO_COINBASE_CLIENT",
+                    f"No Coinbase client for {signal.ticker}. "
+                    f"Cannot execute live order.",
+                    ticker=signal.ticker,
+                )
             return None
 
         try:
@@ -363,6 +371,14 @@ class AgapeSpotExecutor:
                 f"AGAPE-SPOT Executor: LIVE ORDER REJECTED {signal.ticker}: "
                 f"failure_reason={failure}, error_response={error_resp}"
             )
+            if self.db:
+                self.db.log(
+                    "ERROR", "ORDER_REJECTED",
+                    f"Coinbase rejected {signal.ticker} BUY: "
+                    f"reason={failure}, qty={signal.quantity}, "
+                    f"price=${signal.spot_price:.2f}, error={error_resp}",
+                    ticker=signal.ticker,
+                )
             return None
 
         except Exception as e:
@@ -370,6 +386,12 @@ class AgapeSpotExecutor:
                 f"AGAPE-SPOT Executor: LIVE EXECUTION EXCEPTION {signal.ticker}: {e}",
                 exc_info=True,
             )
+            if self.db:
+                self.db.log(
+                    "ERROR", "EXEC_EXCEPTION",
+                    f"Coinbase exception for {signal.ticker} BUY: {e}",
+                    ticker=signal.ticker,
+                )
             return None
 
     # =========================================================================

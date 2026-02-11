@@ -350,16 +350,29 @@ class AgapeSpotSignalGenerator:
 
         return (SignalAction.WAIT, f"NO_SIGNAL_{combined_signal}")
 
+    def _is_altcoin(self, ticker: str) -> bool:
+        """Return True for non-ETH tickers (XRP, SHIB, DOGE)."""
+        return ticker != "ETH-USD"
+
     def _derive_range_bound_direction(
         self, ticker: str, market_data: Dict, tracker
     ) -> Tuple[SignalAction, str]:
-        """Derive direction from range-bound market. LONG or WAIT only."""
+        """Derive direction from range-bound market. LONG or WAIT only.
+
+        For altcoins (XRP, SHIB, DOGE): a small long bias (+0.3) is added
+        because RANGE_BOUND HIGH is the dominant signal and the old neutral
+        threshold caused 0 trades for days.  Crypto is long-only so a mild
+        bullish lean in ranging markets is appropriate.
+        """
         funding_rate = market_data.get("funding_rate", 0)
         ls_ratio = market_data.get("ls_ratio", 1.0)
         max_pain = market_data.get("max_pain")
         spot = market_data.get("spot_price", 0)
 
-        score = 0.0
+        # Altcoins get a small long bias — RANGE_BOUND with no extreme signals
+        # was producing RANGE_BOUND_NO_BIAS 100% of the time, blocking all trades.
+        score = 0.3 if self._is_altcoin(ticker) else 0.0
+
         if funding_rate < -self.config.min_funding_rate_signal:
             score += 1.0
         elif funding_rate > self.config.min_funding_rate_signal:
@@ -391,10 +404,17 @@ class AgapeSpotSignalGenerator:
     def _derive_fallback_direction(
         self, ticker: str, market_data: Dict, tracker
     ) -> Tuple[SignalAction, str]:
-        """Derive direction from squeeze/funding fallback. LONG or WAIT only."""
+        """Derive direction from squeeze/funding fallback. LONG or WAIT only.
+
+        For altcoins: relaxed conditions.  The old logic required extreme
+        funding or high squeeze which almost never fires for XRP/SHIB/DOGE
+        (408 NO_FALLBACK_SIGNAL for XRP in 7 days).  For altcoins, also
+        accept ELEVATED squeeze and moderate negative funding.
+        """
         squeeze_risk = market_data.get("squeeze_risk", "LOW")
         ls_bias = market_data.get("ls_bias", "NEUTRAL")
         funding_regime = market_data.get("funding_regime", "NEUTRAL")
+        is_alt = self._is_altcoin(ticker)
 
         if squeeze_risk == "HIGH":
             if ls_bias == "SHORT_HEAVY":
@@ -406,13 +426,35 @@ class AgapeSpotSignalGenerator:
                 # Long squeeze -> bearish, WAIT (long-only)
                 return (SignalAction.WAIT, "SQUEEZE_BEARISH_LONG_ONLY")
 
+        # Altcoins: also accept ELEVATED squeeze with non-bearish bias
+        if is_alt and squeeze_risk == "ELEVATED" and ls_bias != "LONG_HEAVY":
+            should_skip, _ = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                return (SignalAction.LONG, self._build_reasoning("ELEVATED_SQUEEZE_LONG", market_data))
+
         if funding_regime in ("HEAVILY_NEGATIVE", "EXTREME_NEGATIVE"):
             should_skip, _ = tracker.should_skip_direction("LONG")
             if not should_skip:
                 return (SignalAction.LONG, self._build_reasoning("FUNDING_LONG", market_data))
-        elif funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
+
+        # Altcoins: also accept moderate negative funding (contrarian long)
+        if is_alt and funding_regime in ("NEGATIVE", "SLIGHTLY_NEGATIVE"):
+            should_skip, _ = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                return (SignalAction.LONG, self._build_reasoning("MILD_FUNDING_LONG", market_data))
+
+        if funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
             # Bearish funding -> WAIT (long-only)
             return (SignalAction.WAIT, "FUNDING_BEARISH_LONG_ONLY")
+
+        # Altcoins: if nothing else triggers, allow a LONG when funding is balanced
+        # and bias is not bearish.  This prevents days of zero trades.
+        if is_alt and ls_bias != "LONG_HEAVY" and funding_regime not in (
+            "HEAVILY_POSITIVE", "EXTREME_POSITIVE", "POSITIVE",
+        ):
+            should_skip, _ = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
 
         return (SignalAction.WAIT, "NO_FALLBACK_SIGNAL")
 
@@ -452,8 +494,9 @@ class AgapeSpotSignalGenerator:
 
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
 
-        # Risk per unit based on 2% stop distance
-        stop_distance_pct = 0.02
+        # Risk per unit based on per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
+        exit_params = self.config.get_exit_params(ticker)
+        stop_distance_pct = exit_params["max_unrealized_loss_pct"] / 100
         risk_per_unit = spot_price * stop_distance_pct
 
         if risk_per_unit <= 0:
@@ -477,17 +520,25 @@ class AgapeSpotSignalGenerator:
         return (quantity, round(actual_risk, 2))
 
     def _calculate_levels(self, spot: float, market_data: Dict, ticker: str = "ETH-USD") -> Tuple[float, float]:
-        """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above."""
-        stop_pct = 0.02
-        target_pct = 0.03
+        """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above.
+
+        Uses per-ticker exit params: altcoins get tighter stops and targets
+        for the quick-scalp strategy (small range, frequent trades).
+        """
+        exit_params = self.config.get_exit_params(ticker)
+        max_loss_pct = exit_params["max_unrealized_loss_pct"]
+
+        # Base stop/target from per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
+        stop_pct = max_loss_pct / 100
+        target_pct = stop_pct * 2  # 2:1 reward:risk
 
         squeeze = market_data.get("squeeze_risk", "LOW")
         if squeeze == "HIGH":
-            stop_pct = 0.025
-            target_pct = 0.04
+            stop_pct *= 1.25
+            target_pct *= 1.33
         elif squeeze == "ELEVATED":
-            stop_pct = 0.022
-            target_pct = 0.035
+            stop_pct *= 1.1
+            target_pct *= 1.17
 
         near_long_liq = market_data.get("nearest_long_liq")
         near_short_liq = market_data.get("nearest_short_liq")
