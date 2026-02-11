@@ -2,8 +2,8 @@
 
 import React, { useState } from 'react'
 import {
-  Shield, AlertOctagon, AlertTriangle, CheckCircle, Lock,
-  Activity, TrendingUp, TrendingDown, Minus, Clock,
+  Shield, AlertOctagon, AlertTriangle, Lock,
+  Activity, TrendingUp, TrendingDown, Minus,
   ChevronLeft, Bug, Eye, Power, FileText, RefreshCw
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -58,11 +58,12 @@ interface EquityScalingData {
 }
 
 interface AuditEntry {
-  timestamp: string
-  action: string
-  bot: string
-  details: string | Record<string, any>
-  user?: string
+  created_at: string
+  action_type: string
+  bot_name: string
+  actor?: string
+  action_description?: string
+  reason?: string
 }
 
 // ==================== CONSTANTS ====================
@@ -285,21 +286,6 @@ const CorrelationRow = ({ pair, value }: { pair: string; value: number }) => {
 // ==================== AUDIT LOG TABLE ====================
 
 const AuditLogTable = ({ entries }: { entries: AuditEntry[] }) => {
-  const parseDetails = (details: string | Record<string, any>): string => {
-    if (typeof details === 'string') {
-      try {
-        const parsed = JSON.parse(details)
-        return parsed.reason || parsed.message || details
-      } catch {
-        return details
-      }
-    }
-    if (typeof details === 'object' && details !== null) {
-      return (details as Record<string, any>).reason || (details as Record<string, any>).message || JSON.stringify(details)
-    }
-    return String(details || '-')
-  }
-
   const getActionIcon = (action: string) => {
     switch (action) {
       case 'MANUAL_KILL':
@@ -334,25 +320,25 @@ const AuditLogTable = ({ entries }: { entries: AuditEntry[] }) => {
         </thead>
         <tbody>
           {entries.map((entry, i) => {
-            const actionStyle = ACTION_COLORS[entry.action] || 'text-gray-400 bg-gray-500/10'
+            const actionStyle = ACTION_COLORS[entry.action_type] || 'text-gray-400 bg-gray-500/10'
             return (
               <tr key={i} className="border-b border-gray-700/50 hover:bg-gray-800/30">
                 <td className="p-3 text-text-secondary font-mono">
-                  {new Date(entry.timestamp).toLocaleString()}
+                  {new Date(entry.created_at).toLocaleString()}
                 </td>
                 <td className="p-3">
                   <span
                     className={`inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium ${actionStyle}`}
                   >
-                    {getActionIcon(entry.action)}
-                    {entry.action}
+                    {getActionIcon(entry.action_type)}
+                    {entry.action_type}
                   </span>
                 </td>
                 <td className="p-3 text-text-primary font-medium">
-                  {entry.bot || 'ALL'}
+                  {entry.bot_name || 'ALL'}
                 </td>
                 <td className="p-3 text-text-secondary max-w-md truncate">
-                  {parseDetails(entry.details)}
+                  {entry.reason || entry.action_description || '—'}
                 </td>
               </tr>
             )

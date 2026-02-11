@@ -121,11 +121,6 @@ class KillSwitchRequest(BaseModel):
     reason: str = Field(..., min_length=5, max_length=500, description="Reason for kill/revive")
 
 
-class LayerToggleRequest(BaseModel):
-    """Request model for layer toggle"""
-    enabled: bool = Field(..., description="Enable or disable the layer")
-    reason: str = Field(..., min_length=5, max_length=500, description="Reason for toggle")
-
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -166,6 +161,7 @@ def _get_kill_switch_db_state(bot_name: str) -> Dict[str, Any]:
         result["error"] = "Database not available"
         return result
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -178,7 +174,6 @@ def _get_kill_switch_db_state(bot_name: str) -> Dict[str, Any]:
             [bot_name]
         )
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             result["db_is_killed"] = bool(row[0])
@@ -187,6 +182,12 @@ def _get_kill_switch_db_state(bot_name: str) -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Could not read kill switch DB for {bot_name}: {e}")
         result["error"] = str(e)
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     # Check what is_bot_killed() actually returns (known to always be False)
     if PROVERBS_FEEDBACK_AVAILABLE:
@@ -342,6 +343,7 @@ async def get_live_decisions():
         # Build current market context from available data
         gex_data = {"regime": "UNKNOWN", "net_gamma": 0, "trend": "UNKNOWN"}
         features = {"vix": 20.0}  # Minimal features - OMEGA will use what's available
+        data_sources = {"vix": "DEFAULT (20.0)", "spot_price": "NOT_AVAILABLE"}
 
         # Try to get real market data
         try:
@@ -349,6 +351,7 @@ async def get_live_decisions():
             vix_val = get_vix()
             if vix_val:
                 features["vix"] = float(vix_val)
+                data_sources["vix"] = "LIVE"
         except Exception:
             pass
 
@@ -357,6 +360,7 @@ async def get_live_decisions():
             spot = get_price("SPY")
             if spot:
                 features["spot_price"] = float(spot)
+                data_sources["spot_price"] = "LIVE"
         except Exception:
             pass
 
@@ -378,6 +382,7 @@ async def get_live_decisions():
                 "vix": features.get("vix"),
                 "spot_price": features.get("spot_price"),
                 "gex_regime": gex_data.get("regime"),
+                "data_sources": data_sources,
             },
             "note": "These are simulated decisions — OMEGA is not currently wired into trading bots",
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
@@ -467,12 +472,21 @@ async def simulate_decision(request: SimulationRequest):
                 (request.spot_price - request.flip_point) / request.spot_price * 100
             )
 
+        # Capture history length before simulation so we can remove the
+        # simulated entry — get_trading_decision always appends to history.
+        history_len_before = len(omega.decision_history)
+
         decision = omega.get_trading_decision(
             bot_name=request.bot_name.upper(),
             gex_data=gex_data,
             features=features,
             current_regime=request.gex_regime
         )
+
+        # Remove simulated decision from history (prevent pollution)
+        with omega._lock:
+            if len(omega.decision_history) > history_len_before:
+                omega.decision_history = omega.decision_history[:history_len_before]
 
         return {
             "status": "success",
@@ -834,6 +848,7 @@ async def kill_bot(bot_name: str, request: KillSwitchRequest):
     if not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -849,19 +864,20 @@ async def kill_bot(bot_name: str, request: KillSwitchRequest):
                 killed_at = EXCLUDED.killed_at
         """, [bot, f"MANUAL KILL via OMEGA API: {request.reason}", now])
 
-        # Log to audit trail
+        # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
         cursor.execute("""
-            INSERT INTO proverbs_audit_log (action, bot_name, details, created_at)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO proverbs_audit_log (action_type, bot_name, actor, action_description, reason, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, [
             "MANUAL_KILL",
             bot,
-            json.dumps({"reason": request.reason, "source": "OMEGA API", "timestamp": now.isoformat()}),
+            "OMEGA API",
+            f"Manual kill switch activation for {bot}",
+            request.reason,
             now
         ])
 
         conn.commit()
-        conn.close()
 
         logger.warning(f"OMEGA API: Manual kill activated for {bot} — reason: {request.reason}")
 
@@ -877,6 +893,12 @@ async def kill_bot(bot_name: str, request: KillSwitchRequest):
     except Exception as e:
         logger.error(f"Kill bot {bot} failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @router.post("/bots/{bot_name}/revive")
@@ -894,30 +916,37 @@ async def revive_bot(bot_name: str, request: KillSwitchRequest):
     if not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
         now = datetime.now(CENTRAL_TZ)
 
+        # UPSERT instead of UPDATE — handles case where bot has no row yet
         cursor.execute("""
-            UPDATE proverbs_kill_switch
-            SET is_killed = FALSE, kill_reason = %s
-            WHERE bot_name = %s
-        """, [f"REVIVED via OMEGA API: {request.reason}", bot])
+            INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, resumed_at, resumed_by)
+            VALUES (%s, FALSE, %s, %s, %s)
+            ON CONFLICT (bot_name) DO UPDATE SET
+                is_killed = FALSE,
+                kill_reason = EXCLUDED.kill_reason,
+                resumed_at = EXCLUDED.resumed_at,
+                resumed_by = EXCLUDED.resumed_by
+        """, [bot, f"REVIVED via OMEGA API: {request.reason}", now, "OMEGA API"])
 
-        # Log to audit trail
+        # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
         cursor.execute("""
-            INSERT INTO proverbs_audit_log (action, bot_name, details, created_at)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO proverbs_audit_log (action_type, bot_name, actor, action_description, reason, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, [
             "MANUAL_REVIVE",
             bot,
-            json.dumps({"reason": request.reason, "source": "OMEGA API", "timestamp": now.isoformat()}),
+            "OMEGA API",
+            f"Kill switch deactivated (bot revived) for {bot}",
+            request.reason,
             now
         ])
 
         conn.commit()
-        conn.close()
 
         logger.info(f"OMEGA API: Bot {bot} revived — reason: {request.reason}")
 
@@ -931,6 +960,12 @@ async def revive_bot(bot_name: str, request: KillSwitchRequest):
     except Exception as e:
         logger.error(f"Revive bot {bot} failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @router.post("/bots/kill-all")
@@ -943,6 +978,7 @@ async def kill_all_bots(request: KillSwitchRequest):
     if not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -959,19 +995,20 @@ async def kill_all_bots(request: KillSwitchRequest):
                     killed_at = EXCLUDED.killed_at
             """, [bot, f"EMERGENCY KILL ALL via OMEGA API: {request.reason}", now])
 
-        # Log to audit trail
+        # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
         cursor.execute("""
-            INSERT INTO proverbs_audit_log (action, bot_name, details, created_at)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO proverbs_audit_log (action_type, bot_name, actor, action_description, reason, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, [
             "EMERGENCY_KILL_ALL",
             "ALL_BOTS",
-            json.dumps({"reason": request.reason, "source": "OMEGA API", "bots": bots, "timestamp": now.isoformat()}),
+            "OMEGA API",
+            f"Emergency kill all bots: {', '.join(bots)}",
+            request.reason,
             now
         ])
 
         conn.commit()
-        conn.close()
 
         logger.critical(f"OMEGA API: EMERGENCY KILL ALL — reason: {request.reason}")
 
@@ -987,6 +1024,12 @@ async def kill_all_bots(request: KillSwitchRequest):
     except Exception as e:
         logger.error(f"Kill all bots failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # =============================================================================
@@ -1177,11 +1220,12 @@ async def get_audit_log(
     if not DB_AVAILABLE:
         raise HTTPException(status_code=503, detail="Database not available")
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        query = "SELECT action, bot_name, details, created_at FROM proverbs_audit_log"
+        query = "SELECT action_type, bot_name, actor, action_description, reason, created_at FROM proverbs_audit_log"
         conditions = []
         params = []
 
@@ -1189,7 +1233,7 @@ async def get_audit_log(
             conditions.append("bot_name = %s")
             params.append(bot_name.upper())
         if action:
-            conditions.append("action = %s")
+            conditions.append("action_type = %s")
             params.append(action.upper())
 
         if conditions:
@@ -1201,17 +1245,10 @@ async def get_audit_log(
         cursor.execute(query, params)
         columns = [desc[0] for desc in cursor.description]
         rows = cursor.fetchall()
-        conn.close()
 
         entries = []
         for row in rows:
             entry = dict(zip(columns, row))
-            # Parse JSON details
-            if entry.get("details") and isinstance(entry["details"], str):
-                try:
-                    entry["details"] = json.loads(entry["details"])
-                except (json.JSONDecodeError, TypeError):
-                    pass
             # Convert datetime
             if entry.get("created_at"):
                 entry["created_at"] = entry["created_at"].isoformat()
@@ -1226,6 +1263,12 @@ async def get_audit_log(
     except Exception as e:
         logger.error(f"Audit log failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # =============================================================================
@@ -1311,6 +1354,88 @@ async def get_ml_systems():
             "lines": 900,
             "type": "XGBoost classifier",
             "role": "Market direction prediction from GEX structure",
+            "version": "V1",
+            "status": "OPERATIONAL",
+        },
+        {
+            "name": "SPX Wheel ML",
+            "file": "trading/spx_wheel_ml.py",
+            "lines": 300,
+            "type": "RF/GBC",
+            "role": "ML for SPX Wheel strategy (CORNERSTONE)",
+            "version": "V1",
+            "status": "PARTIAL",
+            "known_issue": "Not wired into CORNERSTONE trader",
+        },
+        {
+            "name": "VALOR ML",
+            "file": "trading/valor/ml.py",
+            "lines": 100,
+            "type": "XGBoost",
+            "role": "ML for MES futures (mirrors WISDOM)",
+            "version": "V1",
+            "status": "DESIGNED",
+        },
+        {
+            "name": "Pattern Learner",
+            "file": "ai/autonomous_ml_pattern_learner.py",
+            "lines": 150,
+            "type": "RandomForest",
+            "role": "Multi-timeframe RSI pattern learning",
+            "version": "V1",
+            "status": "OPERATIONAL",
+        },
+        {
+            "name": "Walk-Forward Optimizer",
+            "file": "quant/walk_forward_optimizer.py",
+            "lines": 565,
+            "type": "Validation framework",
+            "role": "Walk-forward cross-validation for ML models",
+            "version": "V1",
+            "status": "OPERATIONAL",
+        },
+        {
+            "name": "Model Persistence",
+            "file": "quant/model_persistence.py",
+            "lines": 374,
+            "type": "PostgreSQL storage",
+            "role": "Store/load trained models from database",
+            "version": "V1",
+            "status": "OPERATIONAL",
+        },
+        {
+            "name": "Proverbs AI Analyst",
+            "file": "quant/proverbs_ai_analyst.py",
+            "lines": 634,
+            "type": "Claude API analysis",
+            "role": "AI-powered trading pattern analysis",
+            "version": "V1",
+            "status": "OPERATIONAL",
+        },
+        {
+            "name": "Price Trend Tracker",
+            "file": "quant/price_trend_tracker.py",
+            "lines": 726,
+            "type": "Rule-based trends",
+            "role": "Multi-timeframe price trend detection",
+            "version": "V1",
+            "status": "OPERATIONAL",
+        },
+        {
+            "name": "Strategy Competition",
+            "file": "core/autonomous_strategy_competition.py",
+            "lines": 100,
+            "type": "Benchmark framework",
+            "role": "Strategy performance comparison and ranking",
+            "version": "V1",
+            "status": "OPERATIONAL",
+        },
+        {
+            "name": "Integration Layer",
+            "file": "quant/integration.py",
+            "lines": 639,
+            "type": "Walk-forward + Kelly",
+            "role": "Combines walk-forward validation with Kelly criterion sizing",
             "version": "V1",
             "status": "OPERATIONAL",
         },

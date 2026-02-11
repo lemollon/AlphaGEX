@@ -1,12 +1,12 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import {
-  Brain, Activity, AlertTriangle, CheckCircle, XCircle,
+  Brain, Activity, AlertTriangle, CheckCircle,
   Shield, Layers, Target, BarChart2, RefreshCw,
-  Zap, TrendingUp, TrendingDown, Clock, Eye,
-  Power, AlertOctagon, GitBranch, Cpu, Lock,
-  ChevronRight, CircleDot, Minus
+  Zap, TrendingUp, Clock, Eye,
+  AlertOctagon, GitBranch, Cpu, Lock,
+  ChevronRight
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -222,8 +222,8 @@ const BotCard = ({ botName, botData, onKill, onRevive }: {
 // ==================== MAIN PAGE ====================
 
 export default function OmegaDashboard() {
-  const { data: statusData, error: statusError, isLoading: statusLoading } = useOmegaStatus()
-  const { data: botsData } = useOmegaBots()
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: mutateStatus } = useOmegaStatus()
+  const { data: botsData, mutate: mutateBots } = useOmegaBots()
   const { data: layersData } = useOmegaLayers()
   const { data: regimeData } = useOmegaRegime()
   const { data: capitalData } = useOmegaCapitalAllocation()
@@ -246,7 +246,8 @@ export default function OmegaDashboard() {
       }
       setKillModal(null)
       setKillReason('')
-      window.location.reload()
+      mutateBots()
+      mutateStatus()
     } catch (err) {
       alert(`Failed: ${err}`)
     }
@@ -258,7 +259,8 @@ export default function OmegaDashboard() {
       await apiClient.killAllOmegaBots({ reason: killAllReason })
       setKillAllModal(false)
       setKillAllReason('')
-      window.location.reload()
+      mutateBots()
+      mutateStatus()
     } catch (err) {
       alert(`Failed: ${err}`)
     }

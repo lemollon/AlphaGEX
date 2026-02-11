@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import {
   Zap, Play, Loader2, AlertTriangle, ChevronDown, ChevronUp,
-  Shield, Layers, Brain, Target, CheckCircle, XCircle,
+  Shield, CheckCircle, XCircle,
   Minus, ArrowLeft, BarChart2, TrendingUp, TrendingDown,
   Activity, Clock, Cpu, Info
 } from 'lucide-react'
