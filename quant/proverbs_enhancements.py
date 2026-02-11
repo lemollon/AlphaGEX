@@ -1253,8 +1253,9 @@ class WeekendPreChecker:
         # Analyze each bot
         # Migration 023: Updated bot list to include SAMSON and GIDEON
         # Migration 024: Added JUBILEE (Box Spread + IC Trading)
+        # Migration 025: Added VALOR (MES Futures Scalping)
         bot_recommendations = {}
-        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE']:
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE', 'VALOR']:
             bot_recommendations[bot] = self._analyze_bot_readiness(bot)
 
         # Overall risk assessment
@@ -1407,7 +1408,8 @@ class DailyDigestGenerator:
 
         # Migration 023: Updated bot list to include SAMSON and GIDEON
         # Migration 024: Added JUBILEE (Box Spread + IC Trading)
-        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE']:
+        # Migration 025: Added VALOR (MES Futures Scalping)
+        for bot in ['FORTRESS', 'SOLOMON', 'SAMSON', 'ANCHOR', 'GIDEON', 'JUBILEE', 'VALOR']:
             bot_stats = self._get_bot_daily_stats(bot, for_date)
             digest['bots'][bot] = bot_stats
 

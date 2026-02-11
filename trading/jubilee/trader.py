@@ -51,6 +51,14 @@ except ImportError:
     import pytz
     CENTRAL_TZ = pytz.timezone("America/Chicago")
 
+# Proverbs kill switch integration (same pattern as SAMSON)
+try:
+    from quant.proverbs_enhancements import get_proverbs_enhanced
+    PROVERBS_ENHANCED_AVAILABLE = True
+except ImportError:
+    PROVERBS_ENHANCED_AVAILABLE = False
+    get_proverbs_enhanced = None
+
 
 class JubileeTrader:
     """
@@ -1050,6 +1058,17 @@ class JubileeICTrader:
                 result['skip_reason'] = "Outside trading window"
                 return result
 
+            # Check Proverbs kill switch — blocks NEW entries (same as SAMSON)
+            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                try:
+                    enhanced = get_proverbs_enhanced()
+                    if enhanced and enhanced.proverbs.is_bot_killed('JUBILEE'):
+                        logger.warning("[JUBILEE IC] Kill switch ACTIVE — skipping cycle (no new entries)")
+                        result['skip_reason'] = "Kill switch active"
+                        return result
+                except Exception as e:
+                    logger.debug(f"[JUBILEE IC] Kill switch check failed (fail-open): {e}")
+
             # Step 1: Check exit conditions on all open positions
             exit_results = self._check_all_exits()
             result['positions_checked'] = exit_results['checked']
@@ -1352,11 +1371,13 @@ class JubileeICTrader:
         # Get source box position
         source_box_id = self._get_source_box_position()
         if not source_box_id:
+            logger.warning("[JUBILEE IC] No open box spread position to fund IC trade")
             result['error'] = "No open box spread position to fund IC trade"
             return result
 
         # Get available capital
         available_capital = self._get_available_capital()
+        logger.info(f"[JUBILEE IC] Available capital: ${available_capital:,.2f}, source box: {source_box_id}")
 
         # Generate signal
         signal = self.signal_gen.generate_signal(
@@ -1365,6 +1386,7 @@ class JubileeICTrader:
         )
 
         if not signal:
+            logger.warning("[JUBILEE IC] Signal generator returned None (no market data or Prophet unavailable)")
             result['error'] = "Failed to generate signal"
             return result
 
@@ -1374,13 +1396,21 @@ class JubileeICTrader:
         self.db.log_ic_signal(signal, was_executed=False)
 
         if not signal.is_valid:
+            logger.info(f"[JUBILEE IC] Signal invalid: {signal.skip_reason}")
             result['error'] = f"Signal invalid: {signal.skip_reason}"
             return result
+
+        logger.info(
+            f"[JUBILEE IC] Valid signal: {signal.put_short_strike}/{signal.put_long_strike} PUT, "
+            f"{signal.call_short_strike}/{signal.call_long_strike} CALL, "
+            f"credit=${signal.total_credit:.4f}, contracts={signal.contracts}"
+        )
 
         # Execute the signal
         position = self.executor.execute_signal(signal)
         if position:
             result['new_position'] = position.position_id
+            logger.info(f"[JUBILEE IC] Position OPENED: {position.position_id}")
 
             # Update the box position's IC returns tracking
             self.db.log_action(
@@ -1396,6 +1426,7 @@ class JubileeICTrader:
                 position_id=source_box_id,
             )
         else:
+            logger.error("[JUBILEE IC] Executor failed to create position from valid signal")
             result['error'] = "Failed to execute signal"
 
         return result

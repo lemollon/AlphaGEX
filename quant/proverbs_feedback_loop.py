@@ -145,6 +145,7 @@ class BotName(Enum):
     ANCHOR = "ANCHOR"     # SPX Weekly Iron Condor
     GIDEON = "GIDEON"       # SPY Aggressive Directional
     JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
+    VALOR = "VALOR"       # MES Futures Scalping (GEX-based)
     # Legacy bots (not actively traded)
     CORNERSTONE = "CORNERSTONE"         # SPX Wheel (Cash-Secured Puts)
     LAZARUS = "LAZARUS"     # 0DTE Options (partial implementation)
@@ -2297,6 +2298,8 @@ class ProverbsFeedbackLoop:
         """Check if a bot's kill switch is active.
 
         Queries the proverbs_kill_switch table for the bot's current status.
+        Also checks auto_resume_at — if the scheduled resume time has passed,
+        automatically deactivates the kill switch.
 
         Returns:
             True if kill switch is active (bot should NOT trade), False otherwise
@@ -2310,17 +2313,81 @@ class ProverbsFeedbackLoop:
             try:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "SELECT is_killed FROM proverbs_kill_switch WHERE bot_name = %s",
+                    "SELECT is_killed, auto_resume_at, killed_by, kill_reason, killed_at "
+                    "FROM proverbs_kill_switch WHERE bot_name = %s",
                     (bot_name,)
                 )
                 row = cursor.fetchone()
-                if row and row[0]:
-                    logger.warning(f"[PROVERBS] Kill switch ACTIVE for {bot_name} — trading blocked")
-                    return True
-                return False
+                if not row:
+                    return False
+
+                is_killed = row[0]
+                auto_resume_at = row[1]
+                killed_by = row[2] or "unknown"
+                kill_reason = row[3] or "no reason"
+                killed_at = row[4]
+
+                if not is_killed:
+                    return False
+
+                # Check auto_resume_at — if scheduled resume time has passed, auto-deactivate
+                if auto_resume_at:
+                    now = datetime.now(CENTRAL_TZ)
+                    if now >= auto_resume_at:
+                        logger.info(
+                            f"[PROVERBS] Kill switch for {bot_name} has passed auto_resume_at "
+                            f"({auto_resume_at}) — auto-deactivating"
+                        )
+                        self.deactivate_kill_switch(bot_name, "SYSTEM:auto_resume")
+                        return False
+
+                logger.warning(
+                    f"[PROVERBS] Kill switch ACTIVE for {bot_name} — trading blocked | "
+                    f"Reason: {kill_reason} | Killed by: {killed_by} | "
+                    f"Killed at: {killed_at}"
+                )
+                return True
             except Exception as e:
                 logger.error(f"[PROVERBS] Failed to check kill switch for {bot_name}: {e}")
                 return False
+
+    def get_kill_switch_detail(self, bot_name: str) -> Optional[Dict]:
+        """Get full kill switch detail for a specific bot.
+
+        Returns:
+            Dict with all kill switch fields, or None if no record exists
+        """
+        if not DB_AVAILABLE:
+            return None
+
+        with get_db_connection() as conn:
+            if conn is None:
+                return None
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT bot_name, is_killed, killed_at, killed_by, kill_reason, "
+                    "auto_resume_at, resumed_at, resumed_by "
+                    "FROM proverbs_kill_switch WHERE bot_name = %s",
+                    (bot_name,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+
+                return {
+                    'bot_name': row[0],
+                    'is_killed': row[1],
+                    'killed_at': row[2].isoformat() if row[2] else None,
+                    'killed_by': row[3],
+                    'kill_reason': row[4],
+                    'auto_resume_at': row[5].isoformat() if row[5] else None,
+                    'resumed_at': row[6].isoformat() if row[6] else None,
+                    'resumed_by': row[7],
+                }
+            except Exception as e:
+                logger.error(f"[PROVERBS] Failed to get kill switch detail for {bot_name}: {e}")
+                return None
 
     def get_kill_switch_status(self) -> Dict[str, Dict]:
         """Get kill switch status for all bots"""

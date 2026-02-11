@@ -137,10 +137,101 @@ class ValorTrader:
             # If discrepancy detected, auto-reset to prevent data corruption
             self._startup_integrity_check()
 
+        # CRITICAL: Validate and clear stale kill switches on startup
+        self._startup_kill_switch_check()
+
         logger.info(
             f"VALOR initialized: mode={self.config.mode.value}, "
             f"symbol={self.config.symbol}, capital=${self.config.capital:,.2f}"
         )
+
+    def _startup_kill_switch_check(self) -> None:
+        """
+        Validate kill switch state on startup and clear stale activations.
+
+        A kill switch is considered stale if:
+        1. It was activated by SYSTEM (not a USER) AND was activated on a previous calendar day
+        2. The auto_resume_at time has passed (handled by is_bot_killed itself)
+
+        Manual (USER-activated) kill switches are ALWAYS respected and require
+        explicit deactivation via the API.
+        """
+        if not PROVERBS_ENHANCED_AVAILABLE or not get_proverbs_enhanced:
+            logger.info("[VALOR] [KILL_SWITCH] Proverbs not available — kill switch check skipped")
+            return
+
+        try:
+            enhanced = get_proverbs_enhanced()
+            if not enhanced:
+                logger.info("[VALOR] [KILL_SWITCH] Proverbs Enhanced not initialized — skipping kill switch check")
+                return
+
+            detail = enhanced.proverbs.get_kill_switch_detail('VALOR')
+
+            if detail is None:
+                logger.info("[VALOR] [KILL_SWITCH] No kill switch record found — VALOR is clear to trade")
+                return
+
+            is_killed = detail.get('is_killed', False)
+            killed_by = detail.get('killed_by', '') or ''
+            kill_reason = detail.get('kill_reason', '') or ''
+            killed_at_str = detail.get('killed_at', '')
+
+            if not is_killed:
+                logger.info("[VALOR] [KILL_SWITCH] Kill switch is INACTIVE — VALOR is clear to trade")
+                return
+
+            # Kill switch is active — analyze whether it's stale
+            logger.warning(
+                f"[VALOR] [KILL_SWITCH] Kill switch is ACTIVE on startup | "
+                f"Reason: {kill_reason} | Killed by: {killed_by} | "
+                f"Killed at: {killed_at_str}"
+            )
+
+            # Manual kills (USER:*) are always respected — require explicit deactivation
+            is_manual = killed_by.upper().startswith('USER:') if killed_by else False
+            if is_manual:
+                logger.warning(
+                    f"[VALOR] [KILL_SWITCH] Kill switch was MANUALLY activated by {killed_by} — "
+                    f"respecting manual control. Use API to deactivate."
+                )
+                return
+
+            # System kills — check if stale (activated on a previous day)
+            now = datetime.now(CENTRAL_TZ)
+            today_str = now.strftime('%Y-%m-%d')
+            is_stale = False
+
+            if killed_at_str:
+                try:
+                    # Parse the killed_at timestamp
+                    from datetime import datetime as dt
+                    killed_at = dt.fromisoformat(killed_at_str)
+                    killed_date = killed_at.strftime('%Y-%m-%d')
+                    is_stale = killed_date < today_str
+                except (ValueError, TypeError):
+                    # If we can't parse the date, treat as stale for safety
+                    is_stale = True
+                    logger.warning(f"[VALOR] [KILL_SWITCH] Could not parse killed_at: {killed_at_str}")
+            else:
+                # No killed_at timestamp — treat as stale
+                is_stale = True
+
+            if is_stale:
+                logger.warning(
+                    f"[VALOR] [KILL_SWITCH] STALE kill switch detected (system-activated on previous day). "
+                    f"Deactivating to allow fresh trading day."
+                )
+                enhanced.proverbs.deactivate_kill_switch('VALOR', 'SYSTEM:stale_startup_reset')
+                logger.info("[VALOR] [KILL_SWITCH] Stale kill switch deactivated — VALOR is clear to trade")
+            else:
+                logger.warning(
+                    f"[VALOR] [KILL_SWITCH] Kill switch was activated TODAY by {killed_by}. "
+                    f"Keeping it active. Reason: {kill_reason}"
+                )
+
+        except Exception as e:
+            logger.warning(f"[VALOR] [KILL_SWITCH] Startup kill switch check failed (fail-open): {e}")
 
     def _startup_integrity_check(self) -> None:
         """
@@ -239,14 +330,28 @@ class ValorTrader:
             if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
                 try:
                     enhanced = get_proverbs_enhanced()
-                    if enhanced and enhanced.proverbs.is_bot_killed('VALOR'):
-                        logger.warning("[VALOR] Kill switch ACTIVE — skipping scan (no new entries)")
-                        scan_result["status"] = "kill_switch_active"
-                        self._log_scan_activity(scan_id, "KILL_SWITCH", scan_result, scan_context,
-                                               skip_reason="Kill switch active")
-                        return scan_result
+                    if enhanced:
+                        is_killed = enhanced.proverbs.is_bot_killed('VALOR')
+                        if is_killed:
+                            # Get detailed info for logging
+                            detail = enhanced.proverbs.get_kill_switch_detail('VALOR')
+                            kill_reason = detail.get('kill_reason', 'unknown') if detail else 'unknown'
+                            killed_by = detail.get('killed_by', 'unknown') if detail else 'unknown'
+                            killed_at = detail.get('killed_at', 'unknown') if detail else 'unknown'
+                            logger.warning(
+                                f"[VALOR] [KILL_SWITCH] ACTIVE — skipping scan | "
+                                f"Reason: {kill_reason} | By: {killed_by} | Since: {killed_at}"
+                            )
+                            scan_result["status"] = "kill_switch_active"
+                            self._log_scan_activity(scan_id, "KILL_SWITCH", scan_result, scan_context,
+                                                   skip_reason=f"Kill switch active: {kill_reason} (by {killed_by})")
+                            return scan_result
+                        else:
+                            logger.debug("[VALOR] [KILL_SWITCH] Check: PASS — trading allowed")
+                    else:
+                        logger.debug("[VALOR] [KILL_SWITCH] Proverbs Enhanced not available — fail-open, trading allowed")
                 except Exception as e:
-                    logger.debug(f"[VALOR] Kill switch check failed (fail-open): {e}")
+                    logger.debug(f"[VALOR] [KILL_SWITCH] Check failed (fail-open): {e}")
 
             # Get current market data
             quote = self.executor.get_mes_quote()
