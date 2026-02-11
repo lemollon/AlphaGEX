@@ -120,6 +120,7 @@ except ImportError:
 # GEX Signal Integration - ML direction for SOLOMON/GIDEON
 GEX_ML_AVAILABLE = False
 _gex_signal_integration = None
+_gex_signal_lock = threading.Lock()  # V3 FIX: Thread-safe singleton initialization
 try:
     from quant.gex_signal_integration import GEXSignalIntegration
     GEX_ML_AVAILABLE = True
@@ -331,6 +332,9 @@ class ProphetPrediction:
     hours_since_training: float = 0.0  # Hours since model was last trained
     model_loaded_at: Optional[str] = None  # ISO timestamp when model was loaded
     is_model_fresh: bool = True  # True if model < 24 hours old
+
+    # Phase 3: Which sub-model made this prediction
+    _model_type: str = 'combined_v3'  # 'ic_model', 'directional_model', or 'combined_v3'
 
 
 @dataclass
@@ -1362,8 +1366,67 @@ class ProphetAdvisor:
     - Real-time outcome updates
     """
 
-    # V3 feature columns: cyclical day encoding, VRP, longer win rate horizon
-    # Matches WISDOM V3 patterns for consistency across ML advisory layer
+    # =========================================================================
+    # STRATEGY MODEL MAP (Phase 3: Strategy-Aware Sub-Models)
+    # Maps each bot to its sub-model type. Only this map needs updating
+    # when a new bot is added or a bot changes strategy.
+    # =========================================================================
+    STRATEGY_MODEL_MAP = {
+        'FORTRESS': 'ic_model',       # SPY 2DTE Iron Condor
+        'ANCHOR': 'ic_model',         # SPX weekly Iron Condor
+        'TITAN': 'ic_model',          # SPX aggressive Iron Condor
+        'PEGASUS': 'ic_model',        # SPX weekly Iron Condor (conservative)
+        'SOLOMON': 'directional_model',  # SPY directional spreads
+        'GIDEON': 'directional_model',   # SPY directional (SOLOMON variant)
+        'LAZARUS': 'directional_model',  # SPY directional calls
+        'CORNERSTONE': 'directional_model',  # SPY Cash-Secured Puts
+        'SAMSON': 'ic_model',         # SPX IC (ANCHOR variant)
+        'JUBILEE': 'ic_model',        # SPX IC (ANCHOR variant)
+    }
+
+    # IC sub-model: base features + wall position, Friday flag
+    IC_FEATURE_COLS = [
+        'vix',
+        'vix_percentile_30d',
+        'vix_change_1d',
+        'day_of_week_sin',
+        'day_of_week_cos',
+        'price_change_1d',
+        'expected_move_pct',
+        'volatility_risk_premium',
+        'win_rate_60d',
+        'gex_normalized',
+        'gex_regime_positive',
+        'gex_distance_to_flip_pct',
+        'gex_between_walls',
+        # IC-specific features (Phase 2: absorb post-ML rules)
+        'position_in_wall_range_pct',  # Where price sits between GEX walls (0-100)
+        'dist_to_nearest_wall_pct',    # Distance to closest wall as % of price
+        'is_friday',                   # Binary: expiration day risk
+    ]
+
+    # Directional sub-model: base features + flip distance, momentum
+    DIRECTIONAL_FEATURE_COLS = [
+        'vix',
+        'vix_percentile_30d',
+        'vix_change_1d',
+        'day_of_week_sin',
+        'day_of_week_cos',
+        'price_change_1d',
+        'expected_move_pct',
+        'volatility_risk_premium',
+        'win_rate_60d',
+        'gex_normalized',
+        'gex_regime_positive',
+        'gex_distance_to_flip_pct',
+        'gex_between_walls',
+        # Directional-specific features (Phase 2: absorb post-ML rules)
+        'flip_distance_pct',           # Abs distance to flip as % of price
+        'is_friday',                   # Binary: 0DTE + weekend gap risk
+        'direction_confidence',        # ORION direction confidence (0-1)
+    ]
+
+    # V3 feature columns (combined model — backward compat fallback)
     FEATURE_COLS = [
         'vix',
         'vix_percentile_30d',
@@ -1380,6 +1443,19 @@ class ProphetAdvisor:
         'gex_distance_to_flip_pct',
         'gex_between_walls',
     ]
+
+    # =========================================================================
+    # RULE RETIREMENT TRACKER (Phase 4)
+    # When a new feature proves the model can learn a pattern, retire the rule.
+    # Set to True ONLY after A/B validation shows model-with-feature matches
+    # or beats model-with-feature-and-rule.
+    # =========================================================================
+    RETIRED_RULES = {
+        'friday_penalty': False,        # SOLOMON -0.05 Friday penalty → is_friday feature
+        'wall_proximity_boost': False,   # SOLOMON +0.10 wall boost → position_in_wall_range_pct
+        'flip_filter': False,            # SOLOMON flip distance filter → flip_distance_pct feature
+        'anchor_friday_skip': False,     # ANCHOR Mon/Fri VIX skip → is_friday feature
+    }
 
     # V2 features with VIX regime for strategy selection (backward compat)
     FEATURE_COLS_V2 = [
@@ -1421,6 +1497,7 @@ class ProphetAdvisor:
                 - Integrates Ensemble signals for context
                 - Acts as bot-specific adapter rather than decision maker
         """
+        # Combined model (backward compat / fallback)
         self.model = None
         self.calibrated_model = None
         self.scaler = None
@@ -1430,6 +1507,38 @@ class ProphetAdvisor:
         self._has_gex_features = False
         self._feature_version = 3  # V3 features (cyclical day, VRP, 60d win rate)
         self._trained_feature_cols = self.FEATURE_COLS  # Track which features model uses
+
+        # =========================================================================
+        # SUB-MODELS (Phase 3: Strategy-Aware)
+        # Each sub-model has its own GBC, calibration, scaler, and thresholds.
+        # Falls back to combined model if sub-model not available.
+        # =========================================================================
+        self._sub_models: Dict[str, Dict[str, Any]] = {
+            'ic_model': {
+                'model': None,
+                'calibrated_model': None,
+                'scaler': None,
+                'is_trained': False,
+                'feature_cols': self.IC_FEATURE_COLS,
+                'base_rate': None,
+                'high_threshold': 0.65,
+                'low_threshold': 0.45,
+                'training_metrics': None,
+                'model_version': '0.0.0',
+            },
+            'directional_model': {
+                'model': None,
+                'calibrated_model': None,
+                'scaler': None,
+                'is_trained': False,
+                'feature_cols': self.DIRECTIONAL_FEATURE_COLS,
+                'base_rate': None,
+                'high_threshold': 0.65,
+                'low_threshold': 0.45,
+                'training_metrics': None,
+                'model_version': '0.0.0',
+            },
+        }
 
         # =========================================================================
         # MODEL STALENESS TRACKING (Issue #1 fix)
@@ -2295,6 +2404,7 @@ class ProphetAdvisor:
         if not DB_AVAILABLE:
             return {"error": "Database not available"}
 
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -2314,7 +2424,6 @@ class ProphetAdvisor:
             """, (days,))
 
             rows = cursor.fetchall()
-            conn.close()
 
             if not rows:
                 return {"error": "No outcome data available", "days": days}
@@ -2429,6 +2538,13 @@ class ProphetAdvisor:
         except Exception as e:
             logger.error(f"Failed to analyze strategy performance: {e}")
             return {"error": str(e)}
+        finally:
+            # V3 FIX: Ensure connection is always closed (was leaking on exception paths)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     # =========================================================================
     # BOT-SPECIFIC ADVICE
@@ -2584,8 +2700,8 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("FORTRESS", "INPUT", input_data)
 
-        # Get base prediction
-        base_pred = self._get_base_prediction(context)
+        # Get base prediction (Phase 3: tries IC sub-model first)
+        base_pred = self._get_base_prediction(context, bot_name='FORTRESS')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("FORTRESS", "ML_OUTPUT", {
@@ -2891,7 +3007,7 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("CORNERSTONE", "INPUT", input_data)
 
-        base_pred = self._get_base_prediction(context)
+        base_pred = self._get_base_prediction(context, bot_name='CORNERSTONE')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("CORNERSTONE", "ML_OUTPUT", {
@@ -2992,7 +3108,7 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("LAZARUS", "INPUT", input_data)
 
-        base_pred = self._get_base_prediction(context)
+        base_pred = self._get_base_prediction(context, bot_name='LAZARUS')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("LAZARUS", "ML_OUTPUT", {
@@ -3138,7 +3254,7 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow(bot_name, "INPUT", input_data)
 
-        base_pred = self._get_base_prediction(context)
+        base_pred = self._get_base_prediction(context, bot_name=bot_name)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow(bot_name, "ML_OUTPUT", {
@@ -3186,9 +3302,12 @@ class ProphetAdvisor:
         ml_direction_used = False
         if GEX_ML_AVAILABLE and GEXSignalIntegration is not None:
             try:
+                # V3 FIX: Thread-safe singleton initialization (multiple bots call concurrently)
                 global _gex_signal_integration
                 if _gex_signal_integration is None:
-                    _gex_signal_integration = GEXSignalIntegration()
+                    with _gex_signal_lock:
+                        if _gex_signal_integration is None:  # Double-check after acquiring lock
+                            _gex_signal_integration = GEXSignalIntegration()
 
                 ml_signal = _gex_signal_integration.get_combined_signal(
                     ticker="SPY",
@@ -3331,11 +3450,22 @@ class ProphetAdvisor:
                     reasoning_parts.append(f"Wall filter: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
 
         # =====================================================================
-        # Win probability calculation (NO MORE HARDCODED 0.45!)
+        # Win probability: BLEND GBC model + direction confidence (V3 FIX)
         # =====================================================================
+        # V3 FIX: Previously REPLACED base_pred['win_probability'] with direction_confidence,
+        # which completely discarded the calibrated GBC model output. The GBC model trained
+        # on historical IC/directional data was made irrelevant for directional bots.
+        #
+        # New approach: 40% GBC model (quality-of-setup) + 60% direction confidence.
+        # Direction confidence gets higher weight because SOLOMON is directional trading
+        # and the GBC model was primarily trained on IC outcomes.
+        gbc_prob = base_pred['win_probability']
+
         if direction != "FLAT":
-            # Base probability from direction confidence
-            base_pred['win_probability'] = max(0.50, min(0.85, direction_confidence))
+            dir_conf_clamped = max(0.40, min(0.85, direction_confidence))
+            blended_prob = (gbc_prob * 0.4) + (dir_conf_clamped * 0.6)
+            base_pred['win_probability'] = max(0.35, min(0.90, blended_prob))
+            reasoning_parts.append(f"Blended prob: GBC {gbc_prob:.1%} × 0.4 + direction {dir_conf_clamped:.1%} × 0.6 = {base_pred['win_probability']:.1%}")
 
             # Boost if wall filter passed
             if wall_filter_passed:
@@ -3345,8 +3475,10 @@ class ProphetAdvisor:
             if trend_strength > 0.6:
                 base_pred['win_probability'] = min(0.90, base_pred['win_probability'] + 0.05)
         else:
-            # FLAT direction - still give reasonable probability, not 0.45!
-            base_pred['win_probability'] = 0.50  # Neutral, not negative expectancy
+            # FLAT direction - keep GBC probability (it still reflects market quality)
+            # Clamp to neutral range since no directional edge
+            base_pred['win_probability'] = max(0.40, min(0.60, gbc_prob))
+            reasoning_parts.append(f"FLAT direction: using GBC prob {gbc_prob:.1%} clamped to 0.40-0.60")
 
         # VIX impact
         if context.vix > 25:
@@ -3669,8 +3801,8 @@ class ProphetAdvisor:
         }
         self.live_log.log_data_flow("ANCHOR", "INPUT", input_data)
 
-        # Get base prediction
-        base_pred = self._get_base_prediction(context)
+        # Get base prediction (Phase 3: tries IC sub-model first)
+        base_pred = self._get_base_prediction(context, bot_name='ANCHOR')
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
         self.live_log.log_data_flow("ANCHOR", "ML_OUTPUT", {
@@ -3778,24 +3910,22 @@ class ProphetAdvisor:
         # Determine trading advice based on probability
         win_prob = base_pred['win_probability']
 
-        # SPX IC thresholds (slightly more conservative than SPY 0DTE)
-        # Note: TradingAdvice only has TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
-        if win_prob >= 0.58:
-            advice = TradingAdvice.TRADE_FULL
-            risk_pct = 0.03  # 3% risk for full position
-            reasoning_parts.append(f"Strong setup: {win_prob:.1%} win probability")
-        elif win_prob >= 0.52:
-            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_HALF (undefined)
-            risk_pct = 0.015  # 1.5% risk for reduced position
+        # V3 FIX: Use adaptive thresholds (same as FORTRESS/CORNERSTONE/LAZARUS)
+        # Previously hardcoded 0.58/0.52/0.48 which bypassed the V2 adaptive system.
+        # Adaptive thresholds key off base_rate learned from training data.
+        advice, risk_pct = self._get_advice_from_probability(win_prob)
+
+        # ANCHOR-specific risk scaling: SPX weekly IC uses lower risk % than SPY 0DTE
+        # _get_advice_from_probability returns 10.0/3.0-8.0/0.0 for FORTRESS-scale trades.
+        # ANCHOR needs ~30% of those values because SPX contracts are ~10x SPY notional.
+        risk_pct = risk_pct * 0.30  # e.g. FULL 10% → 3%, REDUCED ~5% → 1.5%
+
+        if advice == TradingAdvice.TRADE_FULL:
+            reasoning_parts.append(f"Strong setup: {win_prob:.1%} win probability (adaptive threshold: {self.high_confidence_threshold:.2f})")
+        elif advice == TradingAdvice.TRADE_REDUCED:
             reasoning_parts.append(f"Moderate setup: {win_prob:.1%} win probability")
-        elif win_prob >= 0.48:
-            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_CAUTIOUS (undefined)
-            risk_pct = 0.01  # 1% risk for cautious position
-            reasoning_parts.append(f"Marginal setup: {win_prob:.1%} win probability")
         else:
-            advice = TradingAdvice.SKIP_TODAY
-            risk_pct = 0.0
-            reasoning_parts.append(f"Poor setup: {win_prob:.1%} win probability - skip")
+            reasoning_parts.append(f"Below threshold: {win_prob:.1%} < {self.low_confidence_threshold:.2f} - skip")
 
         # GEX wall-based strike suggestions for SPX
         # ANCHOR RULE: Strikes must ALWAYS be at least 1 SD from spot
@@ -3846,14 +3976,15 @@ class ProphetAdvisor:
                         win_prob = min(0.95, max(0.05, win_prob + claude_analysis.confidence_adjustment))
 
                     # VALIDATE hallucination_risk and reduce confidence if HIGH
+                    # V3 FIX: Standardized to 5%/2% (was 10%/5%, 2x higher than other bots)
                     hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
                     if hallucination_risk == 'HIGH':
-                        penalty = 0.10
+                        penalty = 0.05  # V3: Standardized from 0.10 to match FORTRESS/LAZARUS/SOLOMON
                         win_prob = max(0.05, win_prob - penalty)
                         reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
                         logger.warning(f"[ANCHOR] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
                     elif hallucination_risk == 'MEDIUM':
-                        penalty = 0.05
+                        penalty = 0.02  # V3: Standardized from 0.05 to match FORTRESS/LAZARUS/SOLOMON
                         win_prob = max(0.05, win_prob - penalty)
                         reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
                         logger.info(f"[ANCHOR] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
@@ -3921,11 +4052,21 @@ class ProphetAdvisor:
     # BASE PREDICTION
     # =========================================================================
 
-    def _get_base_prediction(self, context: MarketContext) -> Dict[str, Any]:
+    def _get_base_prediction(self, context: MarketContext, bot_name: str = None) -> Dict[str, Any]:
         """Get base ML prediction from context.
+
+        Phase 3: Tries strategy-specific sub-model first (if bot_name provided and
+        sub-model trained), then falls back to combined V3 model.
 
         V2: Supports V3 features (cyclical day, VRP) with backward compat for V2/V1 models.
         """
+        # Phase 3: Try sub-model first
+        if bot_name and hasattr(self, '_sub_models'):
+            sub_pred = self._get_sub_model_prediction(context, bot_name)
+            if sub_pred is not None:
+                logger.debug(f"[{bot_name}] Using {sub_pred.get('model_used', 'sub')} model")
+                return sub_pred
+
         if not self.is_trained:
             return self._fallback_prediction(context)
 
@@ -3939,9 +4080,14 @@ class ProphetAdvisor:
             day_sin = math.sin(2 * math.pi * context.day_of_week / 5)
             day_cos = math.cos(2 * math.pi * context.day_of_week / 5)
 
-            # Calculate VRP: expected move (IV proxy) - approximate realized vol
-            # In live inference, use expected_move_pct * 0.2 as typical VRP
-            volatility_risk_premium = context.expected_move_pct * 0.2
+            # V3 FIX: VRP proxy that scales with VIX level
+            # Training computes VRP = expected_move_pct - realized_vol_5d (rolling 5-trade)
+            # At inference we don't have historical price changes, so approximate:
+            # - Low VIX (<15): VRP ~10% of EM (tight spread between implied and realized)
+            # - Normal VIX (15-25): VRP ~20% of EM (typical risk premium)
+            # - High VIX (>25): VRP ~30% of EM (VIX overestimates realized vol more)
+            vrp_ratio = 0.10 + 0.004 * min(context.vix, 50)  # Scales: VIX10→0.14, VIX20→0.18, VIX30→0.22, VIX40→0.26
+            volatility_risk_premium = context.expected_move_pct * vrp_ratio
 
             features = np.array([[
                 context.vix,
@@ -4012,7 +4158,8 @@ class ProphetAdvisor:
         return {
             'win_probability': win_probability,
             'top_factors': top_factors,
-            'probabilities': {'win': float(proba[1]), 'loss': float(proba[0])}
+            'probabilities': {'win': float(proba[1]), 'loss': float(proba[0])},
+            'model_used': 'combined_v3',
         }
 
     def _fallback_prediction(self, context: MarketContext) -> Dict[str, Any]:
@@ -4549,6 +4696,394 @@ class ProphetAdvisor:
         return self.training_metrics
 
     # =========================================================================
+    # PHASE 3: STRATEGY-SPECIFIC SUB-MODEL TRAINING
+    # =========================================================================
+
+    def train_sub_models(
+        self,
+        backtest_results: Dict[str, Any],
+        min_samples: int = 30
+    ) -> Dict[str, Optional[TrainingMetrics]]:
+        """
+        Train IC and Directional sub-models from chronicles data.
+
+        Filters training data by bot name using STRATEGY_MODEL_MAP, then trains
+        each sub-model on its strategy-specific feature set. Falls back to
+        combined model if a sub-model has insufficient data.
+
+        Args:
+            backtest_results: Chronicles backtest results with 'all_trades'
+            min_samples: Minimum trades required per sub-model (default 30)
+
+        Returns:
+            Dict mapping model_type to TrainingMetrics (or None if skipped)
+        """
+        if not ML_AVAILABLE:
+            raise ImportError("ML libraries required")
+
+        # First extract all features (V3 base features)
+        df = self.extract_features_from_chronicles(backtest_results)
+        if df.empty:
+            raise ValueError("No data to train on")
+
+        results = {}
+
+        # Determine which bot each trade came from (if available in data)
+        # Chronicles data may not have bot_name, in which case train combined model
+        has_bot_names = 'bot_name' in df.columns
+        if not has_bot_names:
+            logger.info("No bot_name in training data — training combined model only")
+            # Train combined model (existing path)
+            metrics = self.train_from_chronicles(backtest_results, min_samples=min_samples)
+            results['combined_v3'] = metrics
+            return results
+
+        # Split data by strategy type
+        ic_bots = [bot for bot, model in self.STRATEGY_MODEL_MAP.items() if model == 'ic_model']
+        dir_bots = [bot for bot, model in self.STRATEGY_MODEL_MAP.items() if model == 'directional_model']
+
+        ic_df = df[df['bot_name'].isin(ic_bots)]
+        dir_df = df[df['bot_name'].isin(dir_bots)]
+
+        logger.info(f"Sub-model data split: IC={len(ic_df)} trades ({ic_bots}), "
+                     f"Directional={len(dir_df)} trades ({dir_bots})")
+
+        # Train IC sub-model
+        if len(ic_df) >= min_samples:
+            try:
+                ic_metrics = self._train_single_sub_model(
+                    ic_df, 'ic_model', self.IC_FEATURE_COLS
+                )
+                results['ic_model'] = ic_metrics
+                logger.info(f"IC sub-model trained: {ic_metrics.accuracy:.1%} accuracy, "
+                           f"{ic_metrics.total_samples} samples")
+            except Exception as e:
+                logger.warning(f"IC sub-model training failed: {e}")
+                results['ic_model'] = None
+        else:
+            logger.warning(f"IC sub-model: insufficient data ({len(ic_df)} < {min_samples})")
+            results['ic_model'] = None
+
+        # Train Directional sub-model
+        if len(dir_df) >= min_samples:
+            try:
+                dir_metrics = self._train_single_sub_model(
+                    dir_df, 'directional_model', self.DIRECTIONAL_FEATURE_COLS
+                )
+                results['directional_model'] = dir_metrics
+                logger.info(f"Directional sub-model trained: {dir_metrics.accuracy:.1%} accuracy, "
+                           f"{dir_metrics.total_samples} samples")
+            except Exception as e:
+                logger.warning(f"Directional sub-model training failed: {e}")
+                results['directional_model'] = None
+        else:
+            logger.warning(f"Directional sub-model: insufficient data ({len(dir_df)} < {min_samples})")
+            results['directional_model'] = None
+
+        # Always train combined model as fallback
+        metrics = self.train_from_chronicles(backtest_results, min_samples=min_samples)
+        results['combined_v3'] = metrics
+
+        self.live_log.log("SUBTRAIN_DONE", "Sub-model training complete", {
+            "ic_trained": results.get('ic_model') is not None,
+            "dir_trained": results.get('directional_model') is not None,
+            "ic_samples": len(ic_df),
+            "dir_samples": len(dir_df),
+        })
+
+        return results
+
+    def _train_single_sub_model(
+        self,
+        df: 'pd.DataFrame',
+        model_type: str,
+        feature_cols: List[str]
+    ) -> TrainingMetrics:
+        """
+        Train a single sub-model (IC or Directional) on filtered data.
+
+        Uses same GBC hyperparameters, sample weighting, and calibration as
+        the combined model but with strategy-specific feature set.
+
+        Args:
+            df: Filtered DataFrame (only trades for this strategy)
+            model_type: 'ic_model' or 'directional_model'
+            feature_cols: Which features this sub-model uses
+        """
+        sub = self._sub_models[model_type]
+
+        # Compute strategy-specific features that may not be in base extraction
+        df = self._compute_strategy_features(df, model_type)
+
+        # Use only columns that exist in the DataFrame
+        available_cols = [c for c in feature_cols if c in df.columns]
+        missing_cols = [c for c in feature_cols if c not in df.columns]
+
+        if missing_cols:
+            logger.info(f"[{model_type}] Missing features (imputed as 0): {missing_cols}")
+            for col in missing_cols:
+                df[col] = 0  # Neutral imputation for missing features
+
+            available_cols = feature_cols  # Now all exist
+
+        X = df[available_cols].values
+        y = df['is_win'].values.astype(int)
+
+        # Class imbalance: compute sample_weight
+        n_wins = int(y.sum())
+        n_losses = int(len(y) - n_wins)
+        if n_wins > 0 and n_losses > 0:
+            weight_win = n_losses / len(y)
+            weight_loss = n_wins / len(y)
+            sample_weight_array = np.where(y == 1, weight_win, weight_loss)
+        else:
+            sample_weight_array = np.ones(len(y))
+
+        base_rate = float(y.mean())
+        sub['base_rate'] = base_rate
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        tscv = TimeSeriesSplit(n_splits=min(5, max(2, len(y) // 30)))
+
+        model = GradientBoostingClassifier(
+            n_estimators=150,
+            max_depth=4,
+            learning_rate=0.1,
+            min_samples_split=20,
+            min_samples_leaf=10,
+            subsample=0.8,
+            random_state=42
+        )
+
+        accuracies, precisions, recalls, f1s, aucs, briers = [], [], [], [], [], []
+
+        for train_idx, test_idx in tscv.split(X_scaled):
+            X_train, X_test = X_scaled[train_idx], X_scaled[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+            sw_train = sample_weight_array[train_idx]
+
+            model.fit(X_train, y_train, sample_weight=sw_train)
+            y_pred = model.predict(X_test)
+            y_proba = model.predict_proba(X_test)[:, 1]
+
+            accuracies.append(accuracy_score(y_test, y_pred))
+            precisions.append(precision_score(y_test, y_pred, zero_division=0))
+            recalls.append(recall_score(y_test, y_pred, zero_division=0))
+            f1s.append(f1_score(y_test, y_pred, zero_division=0))
+            briers.append(brier_score_loss(y_test, y_proba))
+            try:
+                aucs.append(roc_auc_score(y_test, y_proba))
+            except ValueError:
+                aucs.append(0.5)
+
+        # Final fit on all data
+        model.fit(X_scaled, y, sample_weight=sample_weight_array)
+
+        # Calibrate
+        calibrated = CalibratedClassifierCV(model, method='isotonic', cv=min(3, max(2, n_losses)))
+        calibrated.fit(X_scaled, y)
+
+        # Store in sub-model registry
+        sub['model'] = model
+        sub['calibrated_model'] = calibrated
+        sub['scaler'] = scaler
+        sub['is_trained'] = True
+        sub['feature_cols'] = available_cols
+        sub['model_version'] = f"3.1.0-{model_type}"
+
+        # Set adaptive thresholds for this sub-model
+        if base_rate > 0.5:
+            sub['low_threshold'] = base_rate - 0.15
+            sub['high_threshold'] = base_rate - 0.05
+        logger.info(f"[{model_type}] Adaptive thresholds: SKIP < {sub['low_threshold']:.2f}, "
+                     f"FULL >= {sub['high_threshold']:.2f} (base_rate={base_rate:.2f})")
+
+        brier_cv = np.mean(briers) if briers else 0.25
+        feature_importances = dict(zip(available_cols, model.feature_importances_))
+
+        metrics = TrainingMetrics(
+            accuracy=np.mean(accuracies),
+            precision=np.mean(precisions),
+            recall=np.mean(recalls),
+            f1_score=np.mean(f1s),
+            auc_roc=np.mean(aucs),
+            brier_score=brier_cv,
+            win_rate_predicted=float(calibrated.predict_proba(X_scaled)[:, 1].mean()),
+            win_rate_actual=y.mean(),
+            total_samples=len(df),
+            train_samples=int(len(df) * 0.8),
+            test_samples=int(len(df) * 0.2),
+            positive_samples=n_wins,
+            negative_samples=n_losses,
+            feature_importances=feature_importances,
+            training_date=datetime.now().isoformat(),
+            model_version=sub['model_version']
+        )
+        sub['training_metrics'] = metrics
+
+        # Log feature importances (Phase 2 validation)
+        sorted_features = sorted(feature_importances.items(), key=lambda x: -x[1])
+        logger.info(f"[{model_type}] Top features: {sorted_features[:5]}")
+
+        return metrics
+
+    def _compute_strategy_features(self, df: 'pd.DataFrame', model_type: str) -> 'pd.DataFrame':
+        """
+        Compute strategy-specific features that aren't in the base feature extraction.
+
+        IC features: position_in_wall_range_pct, dist_to_nearest_wall_pct, is_friday
+        Directional features: flip_distance_pct, is_friday, direction_confidence
+        """
+        df = df.copy()
+
+        # is_friday — common to both strategies
+        if 'is_friday' not in df.columns:
+            if 'day_of_week' in df.columns:
+                df['is_friday'] = (df['day_of_week'] == 4).astype(int)
+            else:
+                df['is_friday'] = 0
+
+        if model_type == 'ic_model':
+            # position_in_wall_range_pct: where price sits between GEX walls
+            if 'position_in_wall_range_pct' not in df.columns:
+                gex_call = df.get('gex_call_wall', pd.Series([0] * len(df)))
+                gex_put = df.get('gex_put_wall', pd.Series([0] * len(df)))
+                spot = df.get('spot_at_entry', df.get('open_price', pd.Series([0] * len(df))))
+                wall_range = gex_call - gex_put
+                df['position_in_wall_range_pct'] = np.where(
+                    wall_range > 0,
+                    (spot - gex_put) / wall_range * 100,
+                    50.0  # Neutral if walls missing
+                )
+                df['position_in_wall_range_pct'] = df['position_in_wall_range_pct'].clip(0, 100)
+
+            # dist_to_nearest_wall_pct
+            if 'dist_to_nearest_wall_pct' not in df.columns:
+                gex_call = df.get('gex_call_wall', pd.Series([0] * len(df)))
+                gex_put = df.get('gex_put_wall', pd.Series([0] * len(df)))
+                spot = df.get('spot_at_entry', df.get('open_price', pd.Series([0] * len(df))))
+                dist_call = np.where(spot > 0, abs(gex_call - spot) / spot * 100, 5.0)
+                dist_put = np.where(spot > 0, abs(spot - gex_put) / spot * 100, 5.0)
+                df['dist_to_nearest_wall_pct'] = np.minimum(dist_call, dist_put)
+                df['dist_to_nearest_wall_pct'] = df['dist_to_nearest_wall_pct'].clip(0, 20)
+
+        elif model_type == 'directional_model':
+            # flip_distance_pct
+            if 'flip_distance_pct' not in df.columns:
+                df['flip_distance_pct'] = df.get('gex_distance_to_flip_pct',
+                                                  pd.Series([0.0] * len(df))).abs()
+                df['flip_distance_pct'] = df['flip_distance_pct'].clip(0, 20)
+
+            # direction_confidence — not available in historical data, impute as 0.5
+            if 'direction_confidence' not in df.columns:
+                df['direction_confidence'] = 0.5
+
+        return df
+
+    def _get_sub_model_prediction(self, context: MarketContext, bot_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get prediction from the appropriate strategy sub-model.
+
+        Routes to IC or Directional sub-model based on STRATEGY_MODEL_MAP.
+        Returns None if sub-model not available (caller should fall back to combined).
+        """
+        model_type = self.STRATEGY_MODEL_MAP.get(bot_name, None)
+        if model_type is None:
+            logger.debug(f"Bot {bot_name} not in STRATEGY_MODEL_MAP — using combined model")
+            return None
+
+        sub = self._sub_models.get(model_type)
+        if sub is None or not sub['is_trained']:
+            return None
+
+        # Build feature vector for this sub-model
+        gex_regime_positive = 1 if context.gex_regime == GEXRegime.POSITIVE else 0
+        gex_between_walls = 1 if context.gex_between_walls else 0
+        day_sin = math.sin(2 * math.pi * context.day_of_week / 5)
+        day_cos = math.cos(2 * math.pi * context.day_of_week / 5)
+
+        # VRP proxy (same as combined model, V3 fix)
+        vrp_ratio = 0.10 + 0.004 * min(context.vix, 50)
+        volatility_risk_premium = context.expected_move_pct * vrp_ratio
+
+        # Base features (common to both sub-models)
+        base_features = {
+            'vix': context.vix,
+            'vix_percentile_30d': context.vix_percentile_30d,
+            'vix_change_1d': context.vix_change_1d,
+            'day_of_week_sin': day_sin,
+            'day_of_week_cos': day_cos,
+            'price_change_1d': context.price_change_1d,
+            'expected_move_pct': context.expected_move_pct,
+            'volatility_risk_premium': volatility_risk_premium,
+            'win_rate_60d': context.win_rate_30d,  # Field name maps to 60d value
+            'gex_normalized': context.gex_normalized,
+            'gex_regime_positive': gex_regime_positive,
+            'gex_distance_to_flip_pct': context.gex_distance_to_flip_pct,
+            'gex_between_walls': gex_between_walls,
+        }
+
+        # Strategy-specific features
+        if model_type == 'ic_model':
+            # Compute wall position from context
+            wall_range = context.gex_call_wall - context.gex_put_wall
+            if wall_range > 0 and context.spot_price > 0:
+                position_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
+            else:
+                position_pct = 50.0
+            position_pct = max(0.0, min(100.0, position_pct))
+
+            dist_call = abs(context.gex_call_wall - context.spot_price) / context.spot_price * 100 if context.spot_price > 0 else 5.0
+            dist_put = abs(context.spot_price - context.gex_put_wall) / context.spot_price * 100 if context.spot_price > 0 else 5.0
+
+            base_features['position_in_wall_range_pct'] = position_pct
+            base_features['dist_to_nearest_wall_pct'] = min(dist_call, dist_put)
+            base_features['is_friday'] = 1 if context.day_of_week == 4 else 0
+
+        elif model_type == 'directional_model':
+            flip_dist = abs(context.gex_distance_to_flip_pct) if context.gex_distance_to_flip_pct else 0.0
+            base_features['flip_distance_pct'] = min(flip_dist, 20.0)
+            base_features['is_friday'] = 1 if context.day_of_week == 4 else 0
+            # Direction confidence from ORION — set to 0.5 (neutral) at base prediction level.
+            # SOLOMON's advice method will override with actual ORION confidence in the blend.
+            base_features['direction_confidence'] = 0.5
+
+        # Build feature vector in correct column order
+        feature_vector = []
+        for col in sub['feature_cols']:
+            feature_vector.append(base_features.get(col, 0.0))
+
+        features = np.array([feature_vector])
+        features_scaled = sub['scaler'].transform(features)
+
+        if sub['calibrated_model']:
+            proba_result = sub['calibrated_model'].predict_proba(features_scaled)
+        else:
+            proba_result = sub['model'].predict_proba(features_scaled)
+
+        if proba_result is None or len(proba_result) == 0:
+            return None
+        proba = proba_result[0]
+        if len(proba) < 2:
+            return None
+
+        win_probability = float(proba[1])
+
+        feature_importance = dict(zip(sub['feature_cols'], sub['model'].feature_importances_))
+        top_factors = sorted(feature_importance.items(), key=lambda x: -x[1])[:3]
+
+        return {
+            'win_probability': win_probability,
+            'top_factors': top_factors,
+            'probabilities': {'win': float(proba[1]), 'loss': float(proba[0])},
+            'model_used': model_type,
+            'model_version': sub['model_version'],
+            'feature_count': len(sub['feature_cols']),
+        }
+
+    # =========================================================================
     # DATABASE PERSISTENCE
     # =========================================================================
 
@@ -4670,11 +5205,16 @@ class ProphetAdvisor:
                     ("actual_pnl", "REAL"),
                     ("outcome_date", "DATE"),
                     ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
-                    # New columns for feedback loop enhancements
+                    # Feedback loop enhancements (Migration 023)
                     ("position_id", "VARCHAR(100)"),
                     ("strategy_recommendation", "VARCHAR(20)"),
                     ("direction_predicted", "VARCHAR(10)"),
                     ("direction_correct", "BOOLEAN"),
+                    # Multi-prediction support (Migration 027)
+                    ("scan_timestamp", "TIMESTAMPTZ DEFAULT NOW()"),
+                    ("model_type", "VARCHAR(50) DEFAULT 'combined_v3'"),
+                    ("strategy_type", "VARCHAR(20)"),
+                    ("feature_snapshot", "JSONB"),
                 ]
                 for col_name, col_type in migration_columns:
                     try:
@@ -4715,8 +5255,14 @@ class ProphetAdvisor:
                         "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
                     }))
 
-                # Issue #3 fix: Use RETURNING to get prediction_id for outcome linking
-                # Option C: Include position_id for 1:1 prediction-to-position linking
+                # Migration 027: Plain INSERT — store every prediction, no overwrites.
+                # Old behavior: ON CONFLICT DO UPDATE → only 1 prediction per bot per day.
+                # New behavior: Multiple predictions per day, linked by position_id when available.
+                # Determine strategy_type from bot name
+                strategy_type = 'DIRECTIONAL' if prediction.bot_name.value in (
+                    'SOLOMON', 'GIDEON', 'LAZARUS'
+                ) else 'IRON_CONDOR'
+
                 cursor.execute("""
                     INSERT INTO prophet_predictions (
                         trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
@@ -4725,19 +5271,14 @@ class ProphetAdvisor:
                         suggested_sd_multiplier, model_version,
                         use_gex_walls, suggested_put_strike, suggested_call_strike,
                         reasoning, top_factors, probabilities, claude_analysis,
-                        position_id, strategy_recommendation
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (trade_date, bot_name)
-                    WHERE position_id IS NULL
-                    DO UPDATE SET
-                        advice = EXCLUDED.advice,
-                        win_probability = EXCLUDED.win_probability,
-                        confidence = EXCLUDED.confidence,
-                        reasoning = EXCLUDED.reasoning,
-                        top_factors = EXCLUDED.top_factors,
-                        probabilities = EXCLUDED.probabilities,
-                        claude_analysis = EXCLUDED.claude_analysis,
-                        timestamp = NOW()
+                        position_id, strategy_recommendation,
+                        scan_timestamp, model_type, strategy_type
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s,
+                        NOW(), %s, %s
+                    )
                     RETURNING id
                 """, (
                     trade_date,
@@ -4765,7 +5306,9 @@ class ProphetAdvisor:
                     probabilities_json,
                     claude_json,
                     position_id,
-                    strategy_recommendation
+                    strategy_recommendation,
+                    getattr(prediction, '_model_type', 'combined_v3'),
+                    strategy_type,
                 ))
 
                 # Issue #3 fix: Fetch the returned prediction_id for linking
@@ -4851,163 +5394,184 @@ class ProphetAdvisor:
         if not DB_AVAILABLE:
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        # V3 FIX: Use context manager to prevent connection leaks (was raw get_connection)
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            # Issue #3: Support both linking methods
-            # If prediction_id is provided, use it for direct linking (more robust)
-            # Otherwise, fall back to (trade_date, bot_name) composite key
-            if prediction_id:
-                # Direct linking by prediction_id - includes direction tracking (Migration 023)
-                cursor.execute("""
-                    UPDATE prophet_predictions
-                    SET prediction_used = TRUE,
-                        actual_outcome = %s,
-                        actual_pnl = %s,
-                        outcome_date = CURRENT_DATE,
-                        direction_predicted = COALESCE(%s, direction_predicted),
-                        direction_correct = %s
-                    WHERE id = %s
-                """, (outcome.value, actual_pnl, direction_predicted, direction_correct, prediction_id))
-                logger.info(f"Updated outcome for prediction_id={prediction_id}, direction_correct={direction_correct}")
-            else:
-                # Fall back to composite key linking - includes direction tracking (Migration 023)
-                cursor.execute("""
-                    UPDATE prophet_predictions
-                    SET prediction_used = TRUE,
-                        actual_outcome = %s,
-                        actual_pnl = %s,
-                        outcome_date = CURRENT_DATE,
-                        direction_predicted = COALESCE(%s, direction_predicted),
-                        direction_correct = %s
-                    WHERE trade_date = %s AND bot_name = %s
-                """, (outcome.value, actual_pnl, direction_predicted, direction_correct, trade_date, bot_name.value))
+                # Issue #3: Support both linking methods
+                # If prediction_id is provided, use it for direct linking (more robust)
+                # Otherwise, fall back to (trade_date, bot_name) composite key
+                if prediction_id:
+                    cursor.execute("""
+                        UPDATE prophet_predictions
+                        SET prediction_used = TRUE,
+                            actual_outcome = %s,
+                            actual_pnl = %s,
+                            outcome_date = CURRENT_DATE,
+                            direction_predicted = COALESCE(%s, direction_predicted),
+                            direction_correct = %s
+                        WHERE id = %s
+                    """, (outcome.value, actual_pnl, direction_predicted, direction_correct, prediction_id))
+                    logger.info(f"Updated outcome for prediction_id={prediction_id}, direction_correct={direction_correct}")
+                else:
+                    # Fall back to composite key — update the LATEST prediction for this bot+date
+                    cursor.execute("""
+                        UPDATE prophet_predictions
+                        SET prediction_used = TRUE,
+                            actual_outcome = %s,
+                            actual_pnl = %s,
+                            outcome_date = CURRENT_DATE,
+                            direction_predicted = COALESCE(%s, direction_predicted),
+                            direction_correct = %s
+                        WHERE id = (
+                            SELECT id FROM prophet_predictions
+                            WHERE trade_date = %s AND bot_name = %s
+                            ORDER BY scan_timestamp DESC NULLS LAST
+                            LIMIT 1
+                        )
+                    """, (outcome.value, actual_pnl, direction_predicted, direction_correct, trade_date, bot_name.value))
 
-            # Also store in prophet_training_outcomes for ML feedback loop
-            # First, get the original prediction features
-            if prediction_id:
-                cursor.execute("""
-                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
-                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                           win_probability, suggested_put_strike, suggested_call_strike,
-                           model_version
-                    FROM prophet_predictions
-                    WHERE id = %s
-                """, (prediction_id,))
-            else:
-                cursor.execute("""
-                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
-                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                           win_probability, suggested_put_strike, suggested_call_strike,
-                           model_version
-                    FROM prophet_predictions
-                    WHERE trade_date = %s AND bot_name = %s
-                """, (trade_date, bot_name.value))
+                # Also store in prophet_training_outcomes for ML feedback loop
+                # First, get the original prediction features
+                if prediction_id:
+                    cursor.execute("""
+                        SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                               gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                               win_probability, suggested_put_strike, suggested_call_strike,
+                               model_version, model_type
+                        FROM prophet_predictions
+                        WHERE id = %s
+                    """, (prediction_id,))
+                else:
+                    cursor.execute("""
+                        SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                               gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                               win_probability, suggested_put_strike, suggested_call_strike,
+                               model_version, COALESCE(model_type, 'combined_v3')
+                        FROM prophet_predictions
+                        WHERE trade_date = %s AND bot_name = %s
+                        ORDER BY scan_timestamp DESC NULLS LAST
+                        LIMIT 1
+                    """, (trade_date, bot_name.value))
 
-            row = cursor.fetchone()
-            if row:
-                spot_at_entry, vix, gex_net, gex_norm, gex_regime, flip, call_wall, put_wall, dow, \
-                    win_prob, pred_put, pred_call, model_ver = row
+                row = cursor.fetchone()
+                if row:
+                    spot_at_entry, vix, gex_net, gex_norm, gex_regime, flip, call_wall, put_wall, dow, \
+                        win_prob, pred_put, pred_call, model_ver, model_type = row
 
-                is_win = outcome.value in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN']
+                    is_win = outcome.value in ['MAX_PROFIT', 'WIN', 'PARTIAL_WIN']
 
-                # Build features JSON for training
-                features_json = json.dumps({
-                    'vix': vix,
-                    'gex_net': gex_net,
-                    'gex_normalized': gex_norm,
-                    'gex_regime': gex_regime,
-                    'gex_flip_point': flip,
-                    'gex_call_wall': call_wall,
-                    'gex_put_wall': put_wall,
-                    'day_of_week': dow,
-                    'predicted_win_probability': win_prob,
-                })
+                    # Build features JSON for training
+                    features_json = json.dumps({
+                        'vix': vix,
+                        'gex_net': gex_net,
+                        'gex_normalized': gex_norm,
+                        'gex_regime': gex_regime,
+                        'gex_flip_point': flip,
+                        'gex_call_wall': call_wall,
+                        'gex_put_wall': put_wall,
+                        'day_of_week': dow,
+                        'predicted_win_probability': win_prob,
+                    })
 
-                # Create training outcomes table if needed (Migration 023: added direction tracking)
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS prophet_training_outcomes (
-                        id SERIAL PRIMARY KEY,
-                        trade_date DATE NOT NULL,
-                        bot_name TEXT NOT NULL,
-                        features JSONB NOT NULL,
-                        outcome TEXT NOT NULL,
-                        is_win BOOLEAN NOT NULL,
-                        net_pnl REAL,
-                        put_strike REAL,
-                        call_strike REAL,
-                        spot_at_entry REAL,
-                        spot_at_exit REAL,
-                        created_at TIMESTAMPTZ DEFAULT NOW(),
-                        -- Migration 023: Feedback loop enhancements
-                        strategy_type VARCHAR(20),       -- IRON_CONDOR or DIRECTIONAL
-                        outcome_type VARCHAR(30),        -- MAX_PROFIT, PUT_BREACHED, etc.
-                        direction_predicted VARCHAR(10), -- BULLISH or BEARISH
-                        direction_correct BOOLEAN,       -- Was direction prediction correct?
-                        prediction_id INTEGER,           -- Link to prophet_predictions
-                        UNIQUE(trade_date, bot_name)
-                    )
-                """)
+                    # Migration 027: Create table WITHOUT the old UNIQUE(trade_date, bot_name) constraint
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS prophet_training_outcomes (
+                            id SERIAL PRIMARY KEY,
+                            trade_date DATE NOT NULL,
+                            bot_name TEXT NOT NULL,
+                            features JSONB NOT NULL,
+                            outcome TEXT NOT NULL,
+                            is_win BOOLEAN NOT NULL,
+                            net_pnl REAL,
+                            put_strike REAL,
+                            call_strike REAL,
+                            spot_at_entry REAL,
+                            spot_at_exit REAL,
+                            created_at TIMESTAMPTZ DEFAULT NOW(),
+                            strategy_type VARCHAR(20),
+                            outcome_type VARCHAR(30),
+                            direction_predicted VARCHAR(10),
+                            direction_correct BOOLEAN,
+                            prediction_id INTEGER,
+                            model_type VARCHAR(50),
+                            scan_timestamp TIMESTAMPTZ
+                        )
+                    """)
 
-                # Determine strategy type from bot name
-                strategy_type = 'DIRECTIONAL' if bot_name.value in ['SOLOMON', 'GIDEON'] else 'IRON_CONDOR'
+                    # Determine strategy type from bot name
+                    strategy_type = 'DIRECTIONAL' if bot_name.value in ['SOLOMON', 'GIDEON', 'LAZARUS'] else 'IRON_CONDOR'
 
-                # Store training outcome for ML retraining (Migration 023: added direction tracking)
-                cursor.execute("""
-                    INSERT INTO prophet_training_outcomes (
-                        trade_date, bot_name, features, outcome, is_win, net_pnl,
-                        put_strike, call_strike, spot_at_entry, spot_at_exit,
-                        strategy_type, outcome_type, direction_predicted, direction_correct, prediction_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (trade_date, bot_name) DO UPDATE SET
-                        outcome = EXCLUDED.outcome,
-                        is_win = EXCLUDED.is_win,
-                        net_pnl = EXCLUDED.net_pnl,
-                        spot_at_exit = EXCLUDED.spot_at_exit,
-                        outcome_type = EXCLUDED.outcome_type,
-                        direction_predicted = EXCLUDED.direction_predicted,
-                        direction_correct = EXCLUDED.direction_correct,
-                        prediction_id = EXCLUDED.prediction_id
-                """, (
-                    trade_date,
-                    bot_name.value,
-                    features_json,
-                    outcome.value,
-                    is_win,
-                    actual_pnl,
-                    put_strike or pred_put,
-                    call_strike or pred_call,
-                    spot_at_entry,
-                    spot_at_exit,
-                    strategy_type,
-                    outcome_type or outcome.value,  # Use outcome_type if provided, else use outcome
-                    direction_predicted,
-                    direction_correct,
-                    prediction_id
-                ))
+                    # Migration 027: Use plain INSERT — allow multiple outcomes per bot per day
+                    # If prediction_id provided, use unique index to prevent exact duplicates
+                    if prediction_id:
+                        cursor.execute("""
+                            INSERT INTO prophet_training_outcomes (
+                                trade_date, bot_name, features, outcome, is_win, net_pnl,
+                                put_strike, call_strike, spot_at_entry, spot_at_exit,
+                                strategy_type, outcome_type, direction_predicted, direction_correct,
+                                prediction_id, model_type
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (prediction_id) WHERE prediction_id IS NOT NULL
+                            DO UPDATE SET
+                                outcome = EXCLUDED.outcome,
+                                is_win = EXCLUDED.is_win,
+                                net_pnl = EXCLUDED.net_pnl,
+                                spot_at_exit = EXCLUDED.spot_at_exit,
+                                outcome_type = EXCLUDED.outcome_type,
+                                direction_correct = EXCLUDED.direction_correct
+                        """, (
+                            trade_date, bot_name.value, features_json, outcome.value,
+                            is_win, actual_pnl,
+                            put_strike or pred_put, call_strike or pred_call,
+                            spot_at_entry, spot_at_exit,
+                            strategy_type, outcome_type or outcome.value,
+                            direction_predicted, direction_correct,
+                            prediction_id, model_type
+                        ))
+                    else:
+                        # Legacy path: no prediction_id, just INSERT
+                        cursor.execute("""
+                            INSERT INTO prophet_training_outcomes (
+                                trade_date, bot_name, features, outcome, is_win, net_pnl,
+                                put_strike, call_strike, spot_at_entry, spot_at_exit,
+                                strategy_type, outcome_type, direction_predicted, direction_correct,
+                                model_type
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            trade_date, bot_name.value, features_json, outcome.value,
+                            is_win, actual_pnl,
+                            put_strike or pred_put, call_strike or pred_call,
+                            spot_at_entry, spot_at_exit,
+                            strategy_type, outcome_type or outcome.value,
+                            direction_predicted, direction_correct,
+                            model_type
+                        ))
 
-                # Log to live log (Migration 023: includes direction tracking)
-                log_data = {
-                    "bot": bot_name.value,
-                    "outcome": outcome.value,
-                    "pnl": actual_pnl,
-                    "is_win": is_win,
-                    "strategy_type": strategy_type
-                }
-                if direction_predicted:
-                    log_data["direction_predicted"] = direction_predicted
-                    log_data["direction_correct"] = direction_correct
-                self.live_log.log("OUTCOME", f"{bot_name.value}: {outcome.value} (${actual_pnl:+.2f})", log_data)
+                    # Log to live log
+                    log_data = {
+                        "bot": bot_name.value,
+                        "outcome": outcome.value,
+                        "pnl": actual_pnl,
+                        "is_win": is_win,
+                        "strategy_type": strategy_type,
+                        "model_type": model_type,
+                    }
+                    if direction_predicted:
+                        log_data["direction_predicted"] = direction_predicted
+                        log_data["direction_correct"] = direction_correct
+                    self.live_log.log("OUTCOME", f"{bot_name.value}: {outcome.value} (${actual_pnl:+.2f})", log_data)
 
-            conn.commit()
-            conn.close()
-            logger.info(f"Updated outcome for {bot_name.value}: {outcome.value} - training data stored")
-            return True
+                conn.commit()
+                logger.info(f"Updated outcome for {bot_name.value}: {outcome.value} - training data stored")
+                return True
 
-        except Exception as e:
-            logger.error(f"Failed to update outcome: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"Failed to update outcome: {e}")
+                return False
 
 
 # =============================================================================
@@ -5560,6 +6124,7 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
     prophet = get_prophet()
     prophet.live_log.log("TRAIN_DB_START", "Training from database backtest results", {})
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -5592,7 +6157,9 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
             # Rollback the failed transaction
             conn.rollback()
 
+        # V3 FIX: Close connection in finally block (was leaking on exception in train_from_chronicles)
         conn.close()
+        conn = None  # Mark as closed so finally doesn't double-close
 
         if not rows or len(rows) < min_samples:
             prophet.live_log.log("TRAIN_DB_SKIP", f"Insufficient trades: {len(rows) if rows else 0} < {min_samples}", {})
@@ -5643,6 +6210,13 @@ def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMe
         import traceback
         traceback.print_exc()
         return None
+    finally:
+        # V3 FIX: Ensure connection is always closed
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
