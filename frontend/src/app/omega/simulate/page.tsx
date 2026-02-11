@@ -5,7 +5,7 @@ import {
   Zap, Play, Loader2, AlertTriangle, ChevronDown, ChevronUp,
   Shield, CheckCircle, XCircle,
   Minus, ArrowLeft, BarChart2, TrendingUp, TrendingDown,
-  Activity, Clock, Cpu, Info
+  Activity, Clock, Cpu, Info, Layers, Brain, Target
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
