@@ -584,14 +584,14 @@ class BoxSpreadExecutor:
             fed_funds_at_entry=signal.fed_funds_rate,
             margin_rate_at_entry=signal.margin_rate,
             savings_vs_margin=signal.cash_received * (signal.margin_rate - signal.implied_annual_rate) / 100,
-            cash_deployed_to_fortress=deployment.fortress_allocation,
-            cash_deployed_to_samson=deployment.samson_allocation,
-            cash_deployed_to_anchor=deployment.anchor_allocation,
+            cash_deployed_to_ares=deployment.fortress_allocation,
+            cash_deployed_to_titan=deployment.samson_allocation,
+            cash_deployed_to_pegasus=deployment.anchor_allocation,
             cash_held_in_reserve=deployment.reserve_amount,
             total_cash_deployed=deployment.total_capital_available,
-            returns_from_fortress=0.0,
-            returns_from_samson=0.0,
-            returns_from_anchor=0.0,
+            returns_from_ares=0.0,
+            returns_from_titan=0.0,
+            returns_from_pegasus=0.0,
             total_ic_returns=0.0,
             net_profit=0.0,
             spot_at_entry=signal.spot_price,
@@ -974,9 +974,9 @@ Track this position through the JUBILEE dashboard:
         now = datetime.now(CENTRAL_TZ)
 
         # Update returns
-        position.returns_from_fortress = fortress_returns
-        position.returns_from_samson = samson_returns
-        position.returns_from_anchor = anchor_returns
+        position.returns_from_ares = fortress_returns
+        position.returns_from_titan = samson_returns
+        position.returns_from_pegasus = anchor_returns
         position.total_ic_returns = fortress_returns + samson_returns + anchor_returns
 
         # Update cost accrual with timestamp tracking
@@ -1125,9 +1125,9 @@ Opened: {position.open_time.strftime('%Y-%m-%d %H:%M:%S CT')}
 Days Held: {days_held} | Days Remaining: {position.current_dte}
 {mtm_section}
 IC BOT RETURNS TO DATE:
-├─ FORTRESS: ${position.returns_from_fortress:,.2f}
-├─ SAMSON: ${position.returns_from_samson:,.2f}
-├─ ANCHOR: ${position.returns_from_anchor:,.2f}
+├─ FORTRESS: ${position.returns_from_ares:,.2f}
+├─ SAMSON: ${position.returns_from_titan:,.2f}
+├─ ANCHOR: ${position.returns_from_pegasus:,.2f}
 └─ TOTAL: ${position.total_ic_returns:,.2f}
 {accrual_section}
 {roll_section}

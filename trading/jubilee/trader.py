@@ -120,9 +120,9 @@ class JubileeTrader:
 
                     # Fetch IC bot returns (would integrate with actual bots)
                     ic_returns = self._fetch_ic_returns(position)
-                    position.returns_from_fortress = ic_returns.get('fortress', 0)
-                    position.returns_from_samson = ic_returns.get('samson', 0)
-                    position.returns_from_anchor = ic_returns.get('anchor', 0)
+                    position.returns_from_ares = ic_returns.get('fortress', 0)
+                    position.returns_from_titan = ic_returns.get('samson', 0)
+                    position.returns_from_pegasus = ic_returns.get('anchor', 0)
                     position.total_ic_returns = sum(ic_returns.values())
                     position.net_profit = position.total_ic_returns - position.cost_accrued_to_date
 
@@ -538,15 +538,15 @@ class JubileeTrader:
         deployments = self.db.get_active_deployments()
 
         # Total by bot
-        fortress_total = sum(p.cash_deployed_to_fortress for p in positions)
-        samson_total = sum(p.cash_deployed_to_samson for p in positions)
-        anchor_total = sum(p.cash_deployed_to_anchor for p in positions)
+        fortress_total = sum(p.cash_deployed_to_ares for p in positions)
+        samson_total = sum(p.cash_deployed_to_titan for p in positions)
+        anchor_total = sum(p.cash_deployed_to_pegasus for p in positions)
         reserve_total = sum(p.cash_held_in_reserve for p in positions)
 
         # Returns by bot
-        fortress_returns = sum(p.returns_from_fortress for p in positions)
-        samson_returns = sum(p.returns_from_samson for p in positions)
-        anchor_returns = sum(p.returns_from_anchor for p in positions)
+        fortress_returns = sum(p.returns_from_ares for p in positions)
+        samson_returns = sum(p.returns_from_titan for p in positions)
+        anchor_returns = sum(p.returns_from_pegasus for p in positions)
 
         return {
             'total_cash_generated': sum(p.total_credit_received for p in positions),
@@ -879,7 +879,7 @@ For box spreads to be profitable:
                     logger.warning(f"Failed to fetch SAMSON returns: {e}")
 
             # Query ANCHOR returns
-            if position.cash_deployed_to_anchor > 0:
+            if position.cash_deployed_to_pegasus > 0:
                 try:
                     cur.execute("""
                         SELECT COALESCE(SUM(realized_pnl), 0)
@@ -897,7 +897,7 @@ For box spreads to be profitable:
                     anchor_capital = float(anchor_cap_result[0]) if anchor_cap_result else 100000.0
 
                     if anchor_capital > 0:
-                        attribution_pct = position.cash_deployed_to_anchor / anchor_capital
+                        attribution_pct = position.cash_deployed_to_pegasus / anchor_capital
                         returns['anchor'] = total_anchor_pnl * min(attribution_pct, 1.0)
 
                     logger.debug(f"ANCHOR returns: ${returns['anchor']:.2f}")
@@ -935,9 +935,9 @@ For box spreads to be profitable:
         daily_rate = monthly_return_rate / 30
 
         return {
-            'fortress': position.cash_deployed_to_fortress * daily_rate * days_held,
-            'samson': position.cash_deployed_to_samson * daily_rate * days_held,
-            'anchor': position.cash_deployed_to_anchor * daily_rate * days_held,
+            'fortress': position.cash_deployed_to_ares * daily_rate * days_held,
+            'samson': position.cash_deployed_to_titan * daily_rate * days_held,
+            'anchor': position.cash_deployed_to_pegasus * daily_rate * days_held,
         }
 
     def _get_yesterday_rate(self) -> Optional[float]:
@@ -1287,16 +1287,16 @@ class JubileeICTrader:
                 savings_vs_margin=(8.50 - implied_rate) * total_owed / 100,
 
                 # Capital deployment - ALL goes to JUBILEE IC trading
-                cash_deployed_to_fortress=0.0,
-                cash_deployed_to_samson=0.0,
-                cash_deployed_to_anchor=0.0,
+                cash_deployed_to_ares=0.0,
+                cash_deployed_to_titan=0.0,
+                cash_deployed_to_pegasus=0.0,
                 cash_held_in_reserve=50000.0,  # 10% reserve
                 total_cash_deployed=total_credit,  # $495K available
 
                 # Returns tracking (starts at 0)
-                returns_from_fortress=0.0,
-                returns_from_samson=0.0,
-                returns_from_anchor=0.0,
+                returns_from_ares=0.0,
+                returns_from_titan=0.0,
+                returns_from_pegasus=0.0,
                 total_ic_returns=0.0,
                 net_profit=0.0,
 
