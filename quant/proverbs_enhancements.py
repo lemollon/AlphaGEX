@@ -371,16 +371,6 @@ class DailyLossMonitor:
 
         return None
 
-                self.proverbs.activate_kill_switch(
-                    bot_name=bot_name,
-                    reason=f"Daily loss % limit reached: {loss_pct:.1f}% (limit: {ENHANCED_GUARDRAILS['max_daily_loss_percent']:.1f}%)",
-                    killed_by="PROVERBS_AUTO"
-                )
-
-                return alert
-
-        return None
-
     def get_status(self, bot_name: str = None) -> Dict:
         """Get daily loss status"""
         today = self._get_today()
