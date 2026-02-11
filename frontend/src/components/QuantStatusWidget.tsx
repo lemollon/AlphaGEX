@@ -44,20 +44,19 @@ interface QuantAlert {
 export default function QuantStatusWidget() {
   const [expanded, setExpanded] = useState(true)
 
-  const { data: statusData, isLoading, mutate } = useSWR<{ data: QuantStatus }>(
+  const { data: status, isLoading, mutate } = useSWR<QuantStatus>(
     '/api/quant/status',
     fetcher,
     { refreshInterval: 30000 }
   )
 
-  const { data: alertsData } = useSWR<{ data: { alerts: QuantAlert[] } }>(
+  const { data: alertsData } = useSWR<{ alerts: QuantAlert[], total: number }>(
     '/api/quant/alerts?limit=5&unacknowledged_only=true',
     fetcher,
     { refreshInterval: 15000 }
   )
 
-  const status = statusData?.data
-  const alerts = alertsData?.data?.alerts || []
+  const alerts = alertsData?.alerts || []
   const unackAlerts = alerts.filter(a => !a.acknowledged).length
 
   // Calculate stats

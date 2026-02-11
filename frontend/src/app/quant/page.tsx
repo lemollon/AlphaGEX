@@ -59,13 +59,6 @@ interface PredictionLog {
   used_by_bot?: string | null
 }
 
-interface QuantStats {
-  days: number
-  by_type: { model: string; count: number; avg_confidence: number }[]
-  by_day: { date: string; count: number }[]
-  by_value: { value: string; count: number }[]
-}
-
 interface QuantAlert {
   id: number
   timestamp: string
@@ -124,7 +117,7 @@ interface ModelComparison {
   consensus_prediction?: string
 }
 
-type TabType = 'overview' | 'predictions' | 'logs' | 'outcomes' | 'alerts' | 'performance' | 'training' | 'compare' | 'stats'
+type TabType = 'overview' | 'predictions' | 'logs' | 'outcomes' | 'alerts' | 'performance' | 'training' | 'compare'
 
 // ============================================================================
 // MAIN COMPONENT
@@ -134,9 +127,9 @@ export default function QuantPage() {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [status, setStatus] = useState<QuantStatus | null>(null)
   const [logs, setLogs] = useState<PredictionLog[]>([])
-  const [stats, setStats] = useState<QuantStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [tabError, setTabError] = useState<string | null>(null)
 
   // Prediction state
   const [predicting, setPredicting] = useState(false)
@@ -150,6 +143,10 @@ export default function QuantPage() {
   const [trainingHistory, setTrainingHistory] = useState<TrainingHistory[]>([])
   const [modelComparison, setModelComparison] = useState<ModelComparison | null>(null)
   const [botUsageStats, setBotUsageStats] = useState<Record<string, unknown> | null>(null)
+
+  // Loading states for button actions
+  const [recordingOutcome, setRecordingOutcome] = useState<Record<number, boolean>>({})
+  const [acknowledgingAlert, setAcknowledgingAlert] = useState<Record<number, boolean>>({})
 
   // ============================================================================
   // DATA FETCHING
@@ -175,57 +172,58 @@ export default function QuantPage() {
     }
   }, [])
 
-  const fetchStats = useCallback(async () => {
-    try {
-      const res = await apiClient.getQuantLogsStats(7)
-      setStats(res.data)
-    } catch (err) {
-      console.error('Failed to fetch stats:', err)
-    }
-  }, [])
-
   const fetchPendingOutcomes = useCallback(async () => {
     try {
+      setTabError(null)
       const res = await apiClient.getQuantPendingOutcomes(20)
       setPendingOutcomes(res.data?.predictions || [])
     } catch (err) {
       console.error('Failed to fetch pending outcomes:', err)
+      setTabError('Failed to load pending outcomes')
     }
   }, [])
 
   const fetchAlerts = useCallback(async () => {
     try {
+      setTabError(null)
       const res = await apiClient.getQuantAlerts(50, false)
       setAlerts(res.data?.alerts || [])
     } catch (err) {
       console.error('Failed to fetch alerts:', err)
+      setTabError('Failed to load alerts')
     }
   }, [])
 
   const fetchPerformance = useCallback(async () => {
     try {
+      setTabError(null)
       const res = await apiClient.getQuantPerformanceSummary(7)
       setPerformanceSummary(res.data)
     } catch (err) {
       console.error('Failed to fetch performance:', err)
+      setTabError('Failed to load performance data')
     }
   }, [])
 
   const fetchTrainingHistory = useCallback(async () => {
     try {
+      setTabError(null)
       const res = await apiClient.getQuantTrainingHistory(20)
       setTrainingHistory(res.data?.history || [])
     } catch (err) {
       console.error('Failed to fetch training history:', err)
+      setTabError('Failed to load training history')
     }
   }, [])
 
   const fetchComparison = useCallback(async () => {
     try {
+      setTabError(null)
       const res = await apiClient.getQuantComparison()
       setModelComparison(res.data)
     } catch (err) {
       console.error('Failed to fetch comparison:', err)
+      setTabError('Failed to load model comparison')
     }
   }, [])
 
@@ -290,6 +288,8 @@ export default function QuantPage() {
   }, [fetchLogs, fetchComparison])
 
   const recordOutcome = useCallback(async (predictionId: number, correct: boolean, pnl?: number) => {
+    if (recordingOutcome[predictionId]) return
+    setRecordingOutcome((prev: Record<number, boolean>) => ({ ...prev, [predictionId]: true }))
     try {
       await apiClient.recordQuantOutcome({
         prediction_id: predictionId,
@@ -301,17 +301,23 @@ export default function QuantPage() {
       await fetchPerformance()
     } catch (err) {
       console.error('Failed to record outcome:', err)
+    } finally {
+      setRecordingOutcome((prev: Record<number, boolean>) => ({ ...prev, [predictionId]: false }))
     }
-  }, [fetchPendingOutcomes, fetchPerformance])
+  }, [fetchPendingOutcomes, fetchPerformance, recordingOutcome])
 
   const acknowledgeAlert = useCallback(async (alertId: number) => {
+    if (acknowledgingAlert[alertId]) return
+    setAcknowledgingAlert((prev: Record<number, boolean>) => ({ ...prev, [alertId]: true }))
     try {
       await apiClient.acknowledgeQuantAlert(alertId)
       await fetchAlerts()
     } catch (err) {
       console.error('Failed to acknowledge alert:', err)
+    } finally {
+      setAcknowledgingAlert((prev: Record<number, boolean>) => ({ ...prev, [alertId]: false }))
     }
-  }, [fetchAlerts])
+  }, [fetchAlerts, acknowledgingAlert])
 
   // ============================================================================
   // EFFECTS
@@ -320,7 +326,7 @@ export default function QuantPage() {
   useEffect(() => {
     const loadData = async () => {
       setLoading(true)
-      await Promise.all([fetchStatus(), fetchLogs(), fetchStats()])
+      await Promise.all([fetchStatus(), fetchLogs()])
       setLoading(false)
     }
     loadData()
@@ -328,7 +334,6 @@ export default function QuantPage() {
     const interval = setInterval(() => {
       fetchStatus()
       if (activeTab === 'logs') fetchLogs()
-      if (activeTab === 'stats') fetchStats()
       if (activeTab === 'outcomes') fetchPendingOutcomes()
       if (activeTab === 'alerts') fetchAlerts()
       if (activeTab === 'performance') fetchPerformance()
@@ -337,9 +342,10 @@ export default function QuantPage() {
     }, 30000)
 
     return () => clearInterval(interval)
-  }, [fetchStatus, fetchLogs, fetchStats, fetchPendingOutcomes, fetchAlerts, fetchPerformance, fetchTrainingHistory, fetchComparison, activeTab])
+  }, [fetchStatus, fetchLogs, fetchPendingOutcomes, fetchAlerts, fetchPerformance, fetchTrainingHistory, fetchComparison, activeTab])
 
   useEffect(() => {
+    setTabError(null)
     if (activeTab === 'outcomes') fetchPendingOutcomes()
     if (activeTab === 'alerts') fetchAlerts()
     if (activeTab === 'performance') {
@@ -403,6 +409,14 @@ export default function QuantPage() {
 
   const formatTimestamp = (ts: string) => {
     return new Date(ts).toLocaleString()
+  }
+
+  // Normalize confidence for display - handles both 0-1 and 0-100 scales
+  const formatConfidence = (confidence: number | null | undefined): string => {
+    if (confidence === null || confidence === undefined) return 'N/A'
+    // If stored in 0-1 scale (legacy data), convert to percentage
+    const pct = confidence > 0 && confidence <= 1.0 ? confidence * 100 : confidence
+    return pct.toFixed(1)
   }
 
   // ============================================================================
@@ -485,9 +499,24 @@ export default function QuantPage() {
         ))}
       </div>
 
+      {/* Tab Error Banner */}
+      {tabError && (
+        <div className="mb-4 bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-3 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-yellow-400 shrink-0" />
+          <span className="text-yellow-300 text-sm">{tabError}</span>
+        </div>
+      )}
+
       {/* ======================================================================== */}
       {/* OVERVIEW TAB */}
       {/* ======================================================================== */}
+      {activeTab === 'overview' && !status && (
+        <div className="bg-gray-800 rounded-lg p-8 text-center">
+          <Brain className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+          <p className="text-gray-400">No model status available</p>
+          <p className="text-gray-500 text-sm">The QUANT system may be initializing or the backend is unreachable</p>
+        </div>
+      )}
       {activeTab === 'overview' && status && (
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -712,7 +741,7 @@ export default function QuantPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-300">
-                        {log.confidence?.toFixed(1)}%
+                        {formatConfidence(log.confidence)}%
                       </td>
                       <td className="px-4 py-3">
                         {log.outcome_correct === null || log.outcome_correct === undefined ? (
@@ -775,22 +804,32 @@ export default function QuantPage() {
                       {pred.predicted_value}
                     </div>
                     <div className="text-gray-400 text-sm">
-                      {pred.confidence?.toFixed(1)}% confidence
+                      {formatConfidence(pred.confidence)}% confidence
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => recordOutcome(pred.id, true)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded text-white text-sm"
+                      disabled={recordingOutcome[pred.id]}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:bg-green-800 disabled:opacity-50 rounded text-white text-sm"
                     >
-                      <ThumbsUp className="h-4 w-4" />
+                      {recordingOutcome[pred.id] ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ThumbsUp className="h-4 w-4" />
+                      )}
                       Correct
                     </button>
                     <button
                       onClick={() => recordOutcome(pred.id, false)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 rounded text-white text-sm"
+                      disabled={recordingOutcome[pred.id]}
+                      className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:opacity-50 rounded text-white text-sm"
                     >
-                      <ThumbsDown className="h-4 w-4" />
+                      {recordingOutcome[pred.id] ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ThumbsDown className="h-4 w-4" />
+                      )}
                       Incorrect
                     </button>
                   </div>
@@ -863,10 +902,15 @@ export default function QuantPage() {
                     {!alert.acknowledged && (
                       <button
                         onClick={() => acknowledgeAlert(alert.id)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded text-gray-300 text-sm ml-4"
+                        disabled={acknowledgingAlert[alert.id]}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:opacity-50 rounded text-gray-300 text-sm ml-4"
                       >
-                        <Eye className="h-4 w-4" />
-                        Acknowledge
+                        {acknowledgingAlert[alert.id] ? (
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Eye className="h-4 w-4" />
+                        )}
+                        {acknowledgingAlert[alert.id] ? 'Saving...' : 'Acknowledge'}
                       </button>
                     )}
                   </div>
@@ -952,7 +996,7 @@ export default function QuantPage() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-400">Avg Confidence</span>
-                        <span className="text-blue-400">{model.avg_confidence?.toFixed(1)}%</span>
+                        <span className="text-blue-400">{formatConfidence(model.avg_confidence)}%</span>
                       </div>
                       {model.total_pnl !== undefined && model.total_pnl !== 0 && (
                         <div className="flex justify-between">
@@ -1103,10 +1147,10 @@ export default function QuantPage() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-400">
-                        {run.duration_seconds}s
+                        {run.duration_seconds != null ? `${run.duration_seconds}s` : '-'}
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-400">
-                        {run.triggered_by}
+                        {run.triggered_by || '-'}
                       </td>
                     </tr>
                   ))}
@@ -1182,7 +1226,7 @@ export default function QuantPage() {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-400">Confidence</span>
-                        <span className="text-blue-400">{(model.confidence * 100).toFixed(1)}%</span>
+                        <span className="text-blue-400">{formatConfidence(model.confidence)}%</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-gray-400">7-Day Accuracy</span>
@@ -1213,77 +1257,6 @@ export default function QuantPage() {
         </div>
       )}
 
-      {/* ======================================================================== */}
-      {/* STATS TAB (Legacy) */}
-      {/* ======================================================================== */}
-      {activeTab === 'stats' && stats && (
-        <div className="space-y-6">
-          <h2 className="text-xl text-white font-semibold">Prediction Statistics (Last {stats.days} days)</h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="bg-gray-800 rounded-lg p-4">
-              <h3 className="text-lg text-white mb-4">By Model</h3>
-              {stats.by_type.length === 0 ? (
-                <p className="text-gray-500">No data yet</p>
-              ) : (
-                <div className="space-y-3">
-                  {stats.by_type.map((item, idx) => (
-                    <div key={idx} className="flex justify-between items-center">
-                      <span className="text-gray-300">{item.model}</span>
-                      <div className="text-right">
-                        <span className="text-blue-400 font-semibold">{item.count}</span>
-                        <span className="text-gray-500 text-sm ml-2">
-                          ({item.avg_confidence?.toFixed(0)}% avg)
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="bg-gray-800 rounded-lg p-4">
-              <h3 className="text-lg text-white mb-4">By Prediction</h3>
-              {stats.by_value.length === 0 ? (
-                <p className="text-gray-500">No data yet</p>
-              ) : (
-                <div className="space-y-3">
-                  {stats.by_value.map((item, idx) => (
-                    <div key={idx} className="flex justify-between items-center">
-                      <span className={getActionColor(item.value)}>{item.value}</span>
-                      <span className="text-gray-300">{item.count}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {stats.by_day.length > 0 && (
-            <div className="bg-gray-800 rounded-lg p-4">
-              <h3 className="text-lg text-white mb-4">Daily Volume</h3>
-              <div className="flex items-end gap-1 h-32">
-                {stats.by_day.map((day, idx) => {
-                  const maxCount = Math.max(...stats.by_day.map(d => d.count))
-                  const height = maxCount > 0 ? (day.count / maxCount) * 100 : 0
-                  return (
-                    <div
-                      key={idx}
-                      className="flex-1 bg-blue-500/50 hover:bg-blue-500 transition-colors rounded-t"
-                      style={{ height: `${height}%` }}
-                      title={`${day.date}: ${day.count} predictions`}
-                    />
-                  )
-                })}
-              </div>
-              <div className="flex justify-between text-xs text-gray-500 mt-2">
-                <span>{stats.by_day[0]?.date}</span>
-                <span>{stats.by_day[stats.by_day.length - 1]?.date}</span>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
         </div>
       </main>
     </>
