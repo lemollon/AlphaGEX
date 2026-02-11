@@ -12,11 +12,7 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  Zap,
-  Target,
   Activity,
-  TrendingUp,
-  TrendingDown,
   Bell
 } from 'lucide-react'
 
@@ -205,9 +201,9 @@ export default function QuantStatusWidget() {
                 <div
                   key={alert.id}
                   className={`p-2 rounded text-xs ${
-                    alert.severity === 'high'
+                    alert.severity === 'CRITICAL'
                       ? 'bg-danger/10 border border-danger/30 text-danger'
-                      : alert.severity === 'medium'
+                      : alert.severity === 'WARNING'
                       ? 'bg-warning/10 border border-warning/30 text-warning'
                       : 'bg-info/10 border border-info/30 text-info'
                   }`}

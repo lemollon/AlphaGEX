@@ -14,7 +14,6 @@ import {
   Brain,
   Zap,
   Target,
-  BarChart3,
   Clock,
   AlertTriangle,
   Bell,
@@ -1034,9 +1033,7 @@ export default function QuantPage() {
                   ML models are automatically retrained every <span className="text-purple-400 font-medium">Sunday at 5:00 PM CT</span> when markets are closed.
                 </p>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <span className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">REGIME_CLASSIFIER</span>
                   <span className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">GEX_DIRECTIONAL</span>
-                  <span className="px-2 py-1 bg-gray-700/50 rounded text-xs text-gray-400">ENSEMBLE (auto-calibrates)</span>
                 </div>
               </div>
             </div>
