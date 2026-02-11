@@ -841,7 +841,7 @@ async def kill_bot(bot_name: str, request: KillSwitchRequest):
     bypassing the broken is_bot_killed() method.
     """
     bot = bot_name.upper()
-    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE"]
+    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR"]
     if bot not in valid_bots:
         raise HTTPException(status_code=400, detail=f"Invalid bot. Must be one of: {', '.join(valid_bots)}")
 
@@ -856,13 +856,14 @@ async def kill_bot(bot_name: str, request: KillSwitchRequest):
 
         # Upsert kill switch state
         cursor.execute("""
-            INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, killed_at)
-            VALUES (%s, TRUE, %s, %s)
+            INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, killed_at, killed_by)
+            VALUES (%s, TRUE, %s, %s, %s)
             ON CONFLICT (bot_name) DO UPDATE SET
                 is_killed = TRUE,
                 kill_reason = EXCLUDED.kill_reason,
-                killed_at = EXCLUDED.killed_at
-        """, [bot, f"MANUAL KILL via OMEGA API: {request.reason}", now])
+                killed_at = EXCLUDED.killed_at,
+                killed_by = EXCLUDED.killed_by
+        """, [bot, f"MANUAL KILL via OMEGA API: {request.reason}", now, f"USER:OMEGA_API"])
 
         # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
         cursor.execute("""
@@ -907,7 +908,7 @@ async def revive_bot(bot_name: str, request: KillSwitchRequest):
     Requires explicit confirmation reason.
     """
     bot = bot_name.upper()
-    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE"]
+    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR"]
     if bot not in valid_bots:
         raise HTTPException(status_code=400, detail=f"Invalid bot. Must be one of: {', '.join(valid_bots)}")
 
@@ -981,17 +982,18 @@ async def kill_all_bots(request: KillSwitchRequest):
         conn = get_connection()
         cursor = conn.cursor()
         now = datetime.now(CENTRAL_TZ)
-        bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE"]
+        bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR"]
 
         for bot in bots:
             cursor.execute("""
-                INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, killed_at)
-                VALUES (%s, TRUE, %s, %s)
+                INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, killed_at, killed_by)
+                VALUES (%s, TRUE, %s, %s, %s)
                 ON CONFLICT (bot_name) DO UPDATE SET
                     is_killed = TRUE,
                     kill_reason = EXCLUDED.kill_reason,
-                    killed_at = EXCLUDED.killed_at
-            """, [bot, f"EMERGENCY KILL ALL via OMEGA API: {request.reason}", now])
+                    killed_at = EXCLUDED.killed_at,
+                    killed_by = EXCLUDED.killed_by
+            """, [bot, f"EMERGENCY KILL ALL via OMEGA API: {request.reason}", now, "USER:OMEGA_API"])
 
         # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
         cursor.execute("""
