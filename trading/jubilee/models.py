@@ -1036,10 +1036,10 @@ class JubileeICConfig:
     entry_end: str = "14:45"      # 2:45 PM CT (same as ANCHOR - stop 15 min before close)
     exit_by: str = "14:50"        # 2:50 PM CT (same as ANCHOR force_exit)
 
-    # Cooldown - MATCH SAMSON (30-min between trades)
-    cooldown_after_loss_minutes: int = 30  # 30 min pause after loss (match SAMSON)
-    cooldown_after_win_minutes: int = 0    # No pause after win
-    cooldown_minutes_after_trade: int = 30 # 30 min cooldown between trades (match SAMSON)
+    # Cooldown - DISABLED (no gates other than 5-min loss streak pause)
+    cooldown_after_loss_minutes: int = 0   # No cooldown after loss
+    cooldown_after_win_minutes: int = 0    # No cooldown after win
+    cooldown_minutes_after_trade: int = 0  # No cooldown between trades
 
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)

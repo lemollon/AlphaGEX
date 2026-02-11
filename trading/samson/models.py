@@ -227,8 +227,8 @@ class SamsonConfig:
     entry_end: str = "14:45"  # Stop new entries 15 min before close
     force_exit: str = "14:50"  # Force close 10 min before market close
 
-    # Cooldown between trades (minutes) - for daily trading
-    trade_cooldown_minutes: int = 30  # Wait 30 min between trades
+    # Cooldown between trades (minutes) - DISABLED (no gates)
+    trade_cooldown_minutes: int = 0  # No cooldown - trade freely
 
     # Mode
     mode: TradingMode = TradingMode.PAPER

@@ -378,13 +378,7 @@ class SamsonTrader(MathOptimizerMixin):
         if open_count >= self.config.max_open_positions:
             return False, f"Max open positions ({self.config.max_open_positions}) reached"
 
-        # SAMSON: Check trade cooldown (time since last trade)
-        last_trade = self.db.get_last_trade_time()
-        if last_trade:
-            cooldown = timedelta(minutes=self.config.trade_cooldown_minutes)
-            if now - last_trade < cooldown:
-                minutes_remaining = (cooldown - (now - last_trade)).seconds // 60
-                return False, f"Cooldown: {minutes_remaining}min remaining"
+        # Trade cooldown removed - no gates other than 5-min loss streak pause
 
         return True, "Ready"
 
