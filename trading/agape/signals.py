@@ -358,6 +358,10 @@ class AgapeSignalGenerator:
         # Step 1: Get market data
         market_data = self.get_market_data()
         if not market_data:
+            logger.info(
+                "AGAPE NO SIGNAL: Failed to fetch market data. "
+                "Check crypto data provider (Deribit/CoinGlass) connectivity."
+            )
             return AgapeSignal(
                 spot_price=0,
                 timestamp=now,
@@ -416,6 +420,15 @@ class AgapeSignalGenerator:
         )
 
         if action == SignalAction.WAIT:
+            logger.info(
+                f"AGAPE NO SIGNAL: {reasoning}. "
+                f"spot={spot:.2f}, combined_signal={combined_signal}, confidence={combined_confidence}, "
+                f"funding={market_data.get('funding_regime', 'UNKNOWN')}, "
+                f"ls_bias={market_data.get('ls_bias', 'NEUTRAL')}, "
+                f"squeeze={market_data.get('squeeze_risk', 'LOW')}, "
+                f"crypto_gex={market_data.get('crypto_gex_regime', 'NEUTRAL')}, "
+                f"prophet={oracle_advice} (win_prob={oracle_win_prob:.2%})"
+            )
             return AgapeSignal(
                 spot_price=spot,
                 timestamp=now,
@@ -492,6 +505,13 @@ class AgapeSignalGenerator:
         # Check minimum confidence - LOW means trade on anything
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
         if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 1):
+            logger.info(
+                f"AGAPE NO SIGNAL: Confidence {confidence} below minimum {min_confidence}. "
+                f"combined_signal={combined_signal}, spot={market_data.get('spot_price', 0):.2f}, "
+                f"funding={market_data.get('funding_regime', 'UNKNOWN')}, "
+                f"ls_bias={market_data.get('ls_bias', 'NEUTRAL')}, "
+                f"squeeze={market_data.get('squeeze_risk', 'LOW')}"
+            )
             return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
 
         # Direction Tracker: skip directions on cooldown after losses
@@ -576,6 +596,11 @@ class AgapeSignalGenerator:
             reasoning = self._build_reasoning("RANGE_SHORT", market_data)
             return (SignalAction.SHORT, "short", reasoning)
 
+        logger.info(
+            f"AGAPE NO SIGNAL: Range-bound with no directional bias. "
+            f"score={score:.1f}, funding_rate={funding_rate:.6f}, "
+            f"ls_ratio={ls_ratio:.2f}, max_pain={max_pain}, spot={spot:.2f}"
+        )
         return (SignalAction.WAIT, None, "RANGE_BOUND_NO_BIAS")
 
     def _derive_fallback_direction(
@@ -618,6 +643,12 @@ class AgapeSignalGenerator:
                 reasoning = self._build_reasoning("FUNDING_SHORT", market_data)
                 return (SignalAction.SHORT, "short", reasoning)
 
+        logger.info(
+            f"AGAPE NO SIGNAL: No fallback signal strong enough. "
+            f"funding_regime={funding_regime}, squeeze_risk={squeeze_risk}, "
+            f"ls_bias={ls_bias}, crypto_gex={crypto_gex_regime}, "
+            f"spot={market_data.get('spot_price', 0):.2f}"
+        )
         return (SignalAction.WAIT, None, "NO_FALLBACK_SIGNAL")
 
     def _build_reasoning(self, direction: str, market_data: Dict) -> str:
