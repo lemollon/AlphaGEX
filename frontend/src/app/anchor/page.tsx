@@ -549,13 +549,16 @@ export default function AnchorPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetANCHORData(true)
-    if (response.data?.success) {
-      addToast({ type: 'success', title: 'Reset Complete', message: 'ANCHOR data has been reset successfully' })
-      refreshStatus()
-    } else {
-      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset ANCHOR data' })
-      throw new Error(response.data?.message || 'Failed to reset')
+    try {
+      const response = await apiClient.resetANCHORData(true)
+      if (response.data?.success) {
+        addToast({ type: 'success', title: 'Reset Complete', message: 'ANCHOR data has been reset successfully' })
+        refreshStatus()
+      } else {
+        addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset ANCHOR data' })
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Reset Failed', message: 'Failed to reset ANCHOR data' })
     }
   }
 

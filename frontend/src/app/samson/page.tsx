@@ -550,13 +550,16 @@ export default function TitanPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetSamsonData(true)
-    if (response.data?.success) {
-      addToast({ type: 'success', title: 'Reset Complete', message: 'SAMSON data has been reset successfully' })
-      refreshStatus()
-    } else {
-      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset SAMSON data' })
-      throw new Error(response.data?.message || 'Failed to reset')
+    try {
+      const response = await apiClient.resetSamsonData(true)
+      if (response.data?.success) {
+        addToast({ type: 'success', title: 'Reset Complete', message: 'SAMSON data has been reset successfully' })
+        refreshStatus()
+      } else {
+        addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset SAMSON data' })
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Reset Failed', message: 'Failed to reset SAMSON data' })
     }
   }
 

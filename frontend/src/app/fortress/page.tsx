@@ -535,14 +535,16 @@ export default function FortressPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetFortressData(true)
-    if (response.data?.success) {
-      addToast({ type: 'success', title: 'Reset Complete', message: 'FORTRESS data has been reset successfully' })
-      // Refresh status after reset
-      refreshStatus()
-    } else {
-      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset FORTRESS data' })
-      throw new Error(response.data?.message || 'Failed to reset')
+    try {
+      const response = await apiClient.resetFortressData(true)
+      if (response.data?.success) {
+        addToast({ type: 'success', title: 'Reset Complete', message: 'FORTRESS data has been reset successfully' })
+        refreshStatus()
+      } else {
+        addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset FORTRESS data' })
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Reset Failed', message: 'Failed to reset FORTRESS data' })
     }
   }
 

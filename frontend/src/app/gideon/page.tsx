@@ -477,13 +477,16 @@ export default function GideonPage() {
   }
 
   const handleReset = async () => {
-    const response = await apiClient.resetGideonData(true)
-    if (response.data?.success) {
-      addToast({ type: 'success', title: 'Reset Complete', message: 'GIDEON data has been reset successfully' })
-      refreshStatus()
-    } else {
-      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset GIDEON data' })
-      throw new Error(response.data?.message || 'Failed to reset')
+    try {
+      const response = await apiClient.resetGideonData(true)
+      if (response.data?.success) {
+        addToast({ type: 'success', title: 'Reset Complete', message: 'GIDEON data has been reset successfully' })
+        refreshStatus()
+      } else {
+        addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset GIDEON data' })
+      }
+    } catch (err) {
+      addToast({ type: 'error', title: 'Reset Failed', message: 'Failed to reset GIDEON data' })
     }
   }
 
