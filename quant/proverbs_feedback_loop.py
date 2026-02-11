@@ -2212,39 +2212,40 @@ class ProverbsFeedbackLoop:
             logger.warning(f"[PROVERBS KILL SWITCH] {bot_name} KILLED (DB not available)")
             return True
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO proverbs_kill_switch (bot_name, is_killed, killed_at, killed_by, kill_reason)
-                VALUES (%s, TRUE, NOW(), %s, %s)
-                ON CONFLICT (bot_name) DO UPDATE SET
-                    is_killed = TRUE,
-                    killed_at = NOW(),
-                    killed_by = EXCLUDED.killed_by,
-                    kill_reason = EXCLUDED.kill_reason,
-                    resumed_at = NULL,
-                    resumed_by = NULL
-            """, (bot_name, killed_by, reason))
+                cursor.execute("""
+                    INSERT INTO proverbs_kill_switch (bot_name, is_killed, killed_at, killed_by, kill_reason)
+                    VALUES (%s, TRUE, NOW(), %s, %s)
+                    ON CONFLICT (bot_name) DO UPDATE SET
+                        is_killed = TRUE,
+                        killed_at = NOW(),
+                        killed_by = EXCLUDED.killed_by,
+                        kill_reason = EXCLUDED.kill_reason,
+                        resumed_at = NULL,
+                        resumed_by = NULL
+                """, (bot_name, killed_by, reason))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
-            self.log_action(
-                bot_name=bot_name,
-                action_type=ActionType.KILL_SWITCH_ACTIVATED,
-                description=f"Kill switch activated: {reason}",
-                reason=reason,
-                actor=killed_by
-            )
+                self.log_action(
+                    bot_name=bot_name,
+                    action_type=ActionType.KILL_SWITCH_ACTIVATED,
+                    description=f"Kill switch activated: {reason}",
+                    reason=reason,
+                    actor=killed_by
+                )
 
-            logger.warning(f"[PROVERBS KILL SWITCH] Kill switch ACTIVATED for {bot_name} - all trading halted")
-            return True
+                logger.warning(f"[PROVERBS KILL SWITCH] Kill switch ACTIVATED for {bot_name} - all trading halted")
+                return True
 
-        except Exception as e:
-            logger.error(f"[PROVERBS KILL SWITCH] Failed to activate kill switch for {bot_name}: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"[PROVERBS KILL SWITCH] Failed to activate kill switch for {bot_name}: {e}")
+                return False
 
     def deactivate_kill_switch(self, bot_name: str, resumed_by: str) -> bool:
         """Deactivate kill switch for a bot"""
@@ -2255,45 +2256,63 @@ class ProverbsFeedbackLoop:
             logger.info(f"[PROVERBS KILL SWITCH] {bot_name} resumed (DB not available)")
             return True
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                UPDATE proverbs_kill_switch
-                SET is_killed = FALSE, resumed_at = NOW(), resumed_by = %s
-                WHERE bot_name = %s
-            """, (resumed_by, bot_name))
+                cursor.execute("""
+                    UPDATE proverbs_kill_switch
+                    SET is_killed = FALSE, resumed_at = NOW(), resumed_by = %s
+                    WHERE bot_name = %s
+                """, (resumed_by, bot_name))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
-            self.log_action(
-                bot_name=bot_name,
-                action_type=ActionType.KILL_SWITCH_DEACTIVATED,
-                description=f"Kill switch deactivated by {resumed_by}",
-                reason="Manual resume",
-                actor=f"USER:{resumed_by}"
-            )
+                self.log_action(
+                    bot_name=bot_name,
+                    action_type=ActionType.KILL_SWITCH_DEACTIVATED,
+                    description=f"Kill switch deactivated by {resumed_by}",
+                    reason="Manual resume",
+                    actor=f"USER:{resumed_by}"
+                )
 
-            logger.info(f"[PROVERBS KILL SWITCH] Kill switch DEACTIVATED for {bot_name} - trading resumed")
-            return True
+                logger.info(f"[PROVERBS KILL SWITCH] Kill switch DEACTIVATED for {bot_name} - trading resumed")
+                return True
 
-        except Exception as e:
-            logger.error(f"[PROVERBS KILL SWITCH] Failed to deactivate kill switch for {bot_name}: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"[PROVERBS KILL SWITCH] Failed to deactivate kill switch for {bot_name}: {e}")
+                return False
 
     def is_bot_killed(self, bot_name: str) -> bool:
         """Check if a bot's kill switch is active.
 
-        NOTE: Kill switch functionality has been removed.
-        This method always returns False (trading allowed).
+        Queries the proverbs_kill_switch table for the bot's current status.
 
         Returns:
-            Always False - kill switch is never active
+            True if kill switch is active (bot should NOT trade), False otherwise
         """
-        # Kill switch removed - always allow trading
-        return False
+        if not DB_AVAILABLE:
+            return False
+
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT is_killed FROM proverbs_kill_switch WHERE bot_name = %s",
+                    (bot_name,)
+                )
+                row = cursor.fetchone()
+                if row and row[0]:
+                    logger.warning(f"[PROVERBS] Kill switch ACTIVE for {bot_name} — trading blocked")
+                    return True
+                return False
+            except Exception as e:
+                logger.error(f"[PROVERBS] Failed to check kill switch for {bot_name}: {e}")
+                return False
 
     def get_kill_switch_status(self) -> Dict[str, Dict]:
         """Get kill switch status for all bots"""
