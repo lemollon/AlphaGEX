@@ -2027,25 +2027,7 @@ async def get_full_reconciliation():
                     'message': f"IC {pos.get('ticker')} at +{pnl_pct:.1f}% profit - consider closing (target: +{profit_target_pct}%)",
                 })
 
-        # Add margin utilization alert
-        max_margin_pct = box_config.max_margin_pct if box_config else 50
-        ic_max_positions = ic_config.max_positions if ic_config else 3
-        margin_utilization = (len(ic_positions) / ic_max_positions * 100) if ic_max_positions > 0 else 0
-
-        if margin_utilization >= 100:
-            risk_alerts.append({
-                'type': 'MARGIN_FULL',
-                'severity': 'MEDIUM',
-                'position_id': None,
-                'message': f"At max IC positions ({len(ic_positions)}/{ic_max_positions}) - no new trades until positions close",
-            })
-        elif margin_utilization >= 80:
-            risk_alerts.append({
-                'type': 'MARGIN_HIGH',
-                'severity': 'LOW',
-                'position_id': None,
-                'message': f"IC positions at {margin_utilization:.0f}% capacity ({len(ic_positions)}/{ic_max_positions})",
-            })
+        # Position limit alerts removed - no max positions
 
         # Get IC closed trades summary
         closed_trades = ic_performance.get('closed_trades', {})

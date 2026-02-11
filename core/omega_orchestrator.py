@@ -900,49 +900,19 @@ class OmegaOrchestrator:
                 reason="Proverbs not available, proceeding with caution"
             )
 
-        # Check consecutive losses
+        # Kill switch, consecutive loss kill, and daily loss kill all DISABLED
+        # Only track stats for informational purposes
         consec_status = proverbs.consecutive_loss_monitor.get_status(bot_name)
         consecutive_losses = consec_status.get('consecutive_losses', 0)
 
-        # Check daily loss
         daily_status = proverbs.daily_loss_monitor.get_status(bot_name)
         daily_pnl = daily_status.get('total_pnl', 0)
         daily_loss_pct = abs(daily_pnl / self.capital * 100) if daily_pnl < 0 else 0
 
-        # Check kill switch
-        is_killed = proverbs.proverbs.is_bot_killed(bot_name)
-
-        # Determine if trading is allowed
-        if is_killed:
-            return ProverbsVerdict(
-                can_trade=False,
-                reason="Kill switch is active",
-                consecutive_losses=consecutive_losses,
-                daily_loss_pct=daily_loss_pct,
-                is_killed=True
-            )
-
-        if consec_status.get('triggered_kill', False):
-            return ProverbsVerdict(
-                can_trade=False,
-                reason=f"Consecutive loss limit reached: {consecutive_losses} losses",
-                consecutive_losses=consecutive_losses,
-                daily_loss_pct=daily_loss_pct,
-                is_killed=False
-            )
-
-        if daily_status.get('triggered_kill', False):
-            return ProverbsVerdict(
-                can_trade=False,
-                reason=f"Daily loss limit reached: {daily_loss_pct:.1f}%",
-                consecutive_losses=consecutive_losses,
-                daily_loss_pct=daily_loss_pct,
-                is_killed=False
-            )
-
+        # Always allow trading - no kill switches
         return ProverbsVerdict(
             can_trade=True,
-            reason="All safety checks passed",
+            reason="All gates disabled - always allow trading",
             consecutive_losses=consecutive_losses,
             daily_loss_pct=daily_loss_pct,
             is_killed=False

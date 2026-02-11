@@ -487,13 +487,13 @@ class AutonomousTraderScheduler:
 
         # FORTRESS V2 - SPY Iron Condors (10% monthly target)
         # Capital: Uses AlphaGEX internal capital allocation
-        # LIVE mode: Sends orders to Tradier SANDBOX account for testing
+        # PAPER mode: Internal paper trading only (no Tradier orders)
         self.fortress_trader = None
         if FORTRESS_AVAILABLE:
             try:
-                config = FortressConfig(mode=FortressTradingMode.LIVE)
+                config = FortressConfig(mode=FortressTradingMode.PAPER)
                 self.fortress_trader = FortressTrader(config=config)
-                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
+                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, PAPER mode - internal tracking only)")
             except Exception as e:
                 logger.warning(f"FORTRESS V2 initialization failed: {e}")
                 self.fortress_trader = None
