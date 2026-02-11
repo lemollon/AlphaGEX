@@ -395,7 +395,128 @@ class AgapeSpotExecutor:
             return None
 
     # =========================================================================
-    # Position closing
+    # Spot sell (used by trader._close_position for live exits)
+    # =========================================================================
+
+    def sell_spot(
+        self,
+        ticker: str,
+        quantity: float,
+        position_id: str,
+        reason: str,
+    ) -> Tuple[bool, Optional[float]]:
+        """Execute a live market sell on Coinbase for a position being closed.
+
+        Returns (success, fill_price).
+        fill_price is None when the sell succeeded but fill lookup failed
+        (caller should fall back to current_price).
+        Returns (False, None) when no client or order rejected/exception.
+        """
+        client = self._get_client(ticker)
+        if not client:
+            logger.error(
+                f"AGAPE-SPOT: No Coinbase client for {ticker}, cannot sell "
+                f"{position_id}"
+            )
+            return (False, None)
+
+        try:
+            ticker_config = SPOT_TICKERS.get(ticker, {})
+            qty_decimals = ticker_config.get("quantity_decimals", 8)
+            sell_qty = round(quantity, qty_decimals)
+            client_order_id = str(uuid.uuid4())
+
+            is_dedicated = ticker in self._ticker_clients
+            acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIVE SELL {ticker} [{acct_label}] "
+                f"{position_id} qty={sell_qty} ({reason})"
+            )
+
+            order = client.market_order_sell(
+                client_order_id=client_order_id,
+                product_id=ticker,
+                base_size=str(sell_qty),
+            )
+
+            # Log raw response
+            try:
+                if hasattr(order, "to_dict"):
+                    logger.info(f"AGAPE-SPOT: Sell response: {order.to_dict()}")
+                else:
+                    logger.info(f"AGAPE-SPOT: Sell response: {order}")
+            except Exception:
+                pass
+
+            success = self._resp(order, "success", False)
+
+            if success:
+                success_resp = self._resp(order, "success_response")
+                order_id = self._resp(success_resp, "order_id", "")
+                fill_price = None
+
+                try:
+                    fills = client.get_fills(order_id=str(order_id))
+                    fills_list = self._resp(fills, "fills", [])
+                    if fills_list:
+                        total_value = sum(
+                            float(self._resp(f, "price", 0))
+                            * float(self._resp(f, "size", 0))
+                            for f in fills_list
+                        )
+                        total_size = sum(
+                            float(self._resp(f, "size", 0))
+                            for f in fills_list
+                        )
+                        if total_size > 0:
+                            fill_price = total_value / total_size
+                except Exception as fe:
+                    logger.debug(f"AGAPE-SPOT: Sell fill lookup skipped: {fe}")
+
+                pd = self._price_decimals(ticker)
+                if fill_price is not None:
+                    fill_price = round(fill_price, pd)
+
+                logger.info(
+                    f"AGAPE-SPOT: LIVE SELL SUCCESS {ticker} "
+                    f"{position_id} qty={sell_qty} "
+                    f"fill=${fill_price if fill_price else 'N/A'} "
+                    f"(order={order_id}, reason={reason})"
+                )
+                return (True, fill_price)
+
+            # Order rejected
+            error_resp = self._resp(order, "error_response", "unknown")
+            failure = self._resp(order, "failure_reason", "unknown")
+            logger.error(
+                f"AGAPE-SPOT: LIVE SELL REJECTED {ticker} {position_id}: "
+                f"failure_reason={failure}, error_response={error_resp}"
+            )
+            if self.db:
+                self.db.log(
+                    "ERROR", "SELL_REJECTED",
+                    f"Coinbase rejected {ticker} SELL: reason={failure}, "
+                    f"qty={sell_qty}, position={position_id}, "
+                    f"error={error_resp}",
+                    ticker=ticker,
+                )
+            return (False, None)
+
+        except Exception as e:
+            logger.error(
+                f"AGAPE-SPOT: LIVE SELL EXCEPTION {ticker} {position_id}: {e}",
+                exc_info=True,
+            )
+            if self.db:
+                self.db.log(
+                    "ERROR", "SELL_EXCEPTION",
+                    f"Coinbase sell exception for {ticker} {position_id}: {e}",
+                    ticker=ticker,
+                )
+            return (False, None)
+
+    # =========================================================================
+    # Position closing (legacy interface used by executor.close_position)
     # =========================================================================
 
     def close_position(
