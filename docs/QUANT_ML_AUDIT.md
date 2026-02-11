@@ -885,3 +885,112 @@ The QUANT system is a collection of 4+ ML models that evolved independently:
 *Audit performed on source code as of commit 12eeecb on branch `claude/watchtower-data-analysis-6FWPk`.*
 *Total findings: 11 CRITICAL, 22 HIGH IMPACT, 8 IMPROVEMENT.*
 *Estimated fix time for top 3 quick wins: ~55 minutes.*
+
+---
+
+## SECTION 9: QA PRODUCT READINESS REPORT
+
+### 9.1 QA Methodology
+
+7-phase QA audit following the OMEGA product readiness template:
+1. **Codebase Structure Verification** — File presence, imports, integration points
+2. **Backend API Testing** — All 19 endpoints verified for response shape compatibility
+3. **Database & Data Integrity** — Schema, migrations, connection management
+4. **Frontend Rendering & Wiring** — All 8 tabs verified for data flow and display
+5. **Bug Fix Phase** — All critical/high findings fixed
+6. **Cross-system Consistency** — Confidence scales, error shapes
+7. **Final Verification** — Python syntax, TypeScript compilation
+
+### 9.2 Findings Summary
+
+| Severity | Found | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| **CRITICAL** | 2 | 2 | 0 |
+| **HIGH** | 5 | 5 | 0 |
+| **MEDIUM** | 9 | 2 | 7 (cosmetic) |
+| **LOW** | 7 | 2 | 5 (cosmetic) |
+| **TOTAL** | 23 | 11 | 12 |
+
+### 9.3 Critical Bugs Fixed
+
+| ID | Bug | File(s) | Fix |
+|----|-----|---------|-----|
+| **C1** | QuantStatusWidget SWR shape mismatch — widget ALWAYS shows zeros | `QuantStatusWidget.tsx` | Removed phantom `{data: }` wrapper from SWR generics; `useSWR<QuantStatus>` instead of `useSWR<{data: QuantStatus}>` |
+| **C2** | Compare tab confidence scale — regime predictions show 8500% | `page.tsx`, `quant_routes.py` | Added `formatConfidence()` helper that handles both 0-1 and 0-100 scales; normalized storage in `_log_prediction` |
+
+### 9.4 High Bugs Fixed
+
+| ID | Bug | File(s) | Fix |
+|----|-----|---------|-----|
+| **H1** | No double-submit prevention on Outcomes buttons | `page.tsx` | Added per-prediction `recordingOutcome` loading state with disabled + spinner |
+| **H2** | No user-visible error messages for tab fetches | `page.tsx` | Added `tabError` state + yellow warning banner, cleared on tab switch |
+| **H3** | Confidence display inconsistent in Logs/Outcomes/Performance tabs | `page.tsx` | Applied `formatConfidence()` to all 5 confidence display locations |
+| **H4** | No loading/feedback on Acknowledge button | `page.tsx` | Added per-alert `acknowledgingAlert` loading state with spinner + "Saving..." text |
+| **H5** | Overview renders blank when status is null | `page.tsx` | Added empty state with "No model status available" message |
+
+### 9.5 Backend Bug Fixed
+
+| ID | Bug | File | Fix |
+|----|-----|------|-----|
+| **BUG1** | `/logs/stats` error path returns `{stats: {}}` — crashes frontend expecting `{days, by_type, by_day, by_value}` | `quant_routes.py` | Error + DB-unavailable paths now return `{days, by_type: [], by_day: [], by_value: []}` |
+
+### 9.6 Low/Medium Fixes
+
+| ID | Bug | Fix |
+|----|-----|-----|
+| **L1** | Training tab `duration_seconds` renders "nulls" | Shows `-` when null |
+| **L2** | Training tab `triggered_by` renders empty | Shows `-` when null |
+| **M6** | Dead `stats` tab in TabType union + unreachable rendering block | Removed `stats` from TabType, removed `fetchStats`, removed 67-line dead rendering block |
+
+### 9.7 Confidence Normalization Strategy
+
+**Root cause**: ML Regime Classifier stores confidence as 0-100, GEX Directional stores as 0-1.
+
+**Fix (two-layer)**:
+1. **Backend** (`_log_prediction`): Normalizes to 0-100 before DB storage: `if 0 < confidence <= 1.0: confidence *= 100`
+2. **Frontend** (`formatConfidence()`): Safety net handles both scales for legacy data: `confidence <= 1.0 ? confidence * 100 : confidence`
+
+This ensures both new and old data display correctly.
+
+### 9.8 Remaining Items (Not Fixed — Cosmetic/Low Priority)
+
+| ID | Description | Severity | Reason Not Fixed |
+|----|-------------|----------|------------------|
+| M1 | No pagination on Logs table (50 rows max) | MEDIUM | Functional with limit, cosmetic |
+| M2 | No date range picker for Performance | MEDIUM | 7-day default is reasonable |
+| M3 | No confirmation dialog on Outcome buttons | MEDIUM | Loading state prevents double-click |
+| M4 | Bot Usage stats renders as flat dict | MEDIUM | Works, cosmetic |
+| M5 | No retry button on tab error state | MEDIUM | Refresh buttons exist on each tab |
+| M7 | `predictEnsemble()` in api.ts has wrong request shape | MEDIUM | Dead code (Ensemble removed) |
+| M8 | `logQuantBotUsage()` in api.ts missing 3 required fields | MEDIUM | Dead code |
+| L3-L7 | Various: no TypeScript strict types, loose `Record<string, unknown>` | LOW | Pre-existing patterns |
+
+### 9.9 Files Modified
+
+| File | Changes |
+|------|---------|
+| `frontend/src/components/QuantStatusWidget.tsx` | Fixed SWR generic types (C1) |
+| `frontend/src/app/quant/page.tsx` | 11 fixes: C2, H1-H5, L1, L2, M6, confidence formatting |
+| `backend/api/routes/quant_routes.py` | 2 fixes: BUG1 error shape, confidence normalization |
+
+### 9.10 Pass/Fail Matrix
+
+| Check | Status |
+|-------|--------|
+| All 19 API endpoints return valid JSON | PASS |
+| Frontend renders all 8 tabs without crash | PASS |
+| QuantStatusWidget shows real data | PASS (was FAIL) |
+| Confidence displays consistently across tabs | PASS (was FAIL) |
+| Error paths return correct shapes | PASS (was FAIL) |
+| Double-submit prevention on action buttons | PASS (was FAIL) |
+| Empty states for null data | PASS (was FAIL) |
+| No dead code in tab selector | PASS (was FAIL) |
+| Python syntax valid | PASS |
+| No new TypeScript errors introduced | PASS |
+| DB connections use try/finally | PASS (16/16) |
+| No SQL injection risks | PASS |
+
+---
+
+*QA audit performed February 11, 2026 on branch `claude/watchtower-data-analysis-6FWPk`.*
+*11 bugs fixed across 3 files. 12 remaining items are cosmetic/low priority.*

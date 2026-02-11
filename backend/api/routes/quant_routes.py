@@ -551,7 +551,7 @@ async def get_quant_stats(days: int = Query(7, le=90)):
     Get Quant prediction statistics.
     """
     if not DB_AVAILABLE:
-        return {"stats": {}, "message": "Database not available"}
+        return {"days": days, "by_type": [], "by_day": [], "by_value": [], "message": "Database not available"}
 
     conn = None
     try:
@@ -619,7 +619,7 @@ async def get_quant_stats(days: int = Query(7, le=90)):
 
     except Exception as e:
         logger.error(f"Failed to get Quant stats: {e}")
-        return {"stats": {}, "error": str(e)}
+        return {"days": days, "by_type": [], "by_day": [], "by_value": [], "error": str(e)}
     finally:
         if conn:
             conn.close()
@@ -1403,6 +1403,11 @@ def _log_prediction(prediction_type: str, result: Dict, features: Dict, spot_pri
 
         predicted_value = result.get('action') or result.get('direction') or result.get('final_signal', 'UNKNOWN')
 
+        # Normalize confidence to 0-100 scale for consistent storage
+        # GEX Directional returns 0-1, Regime Classifier returns 0-100
+        raw_confidence = result.get('confidence', 0)
+        confidence_normalized = raw_confidence * 100 if raw_confidence is not None and 0 < raw_confidence <= 1.0 else (raw_confidence or 0)
+
         cursor.execute("""
             INSERT INTO ml_predictions (
                 timestamp, symbol, prediction_type, predicted_value,
@@ -1413,7 +1418,7 @@ def _log_prediction(prediction_type: str, result: Dict, features: Dict, spot_pri
             "SPY",
             prediction_type,
             predicted_value,
-            result.get('confidence', 0),
+            confidence_normalized,
             json.dumps({
                 'input': features,
                 'output': result
