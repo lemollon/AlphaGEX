@@ -12,16 +12,28 @@ USE CASE:
   * When to go short (bearish GEX pattern)
   * When to stay flat (neutral GEX pattern)
 
-FEATURES USED:
+FEATURES USED (V2 - 25 features):
 - GEX regime (positive/negative/neutral)
 - Net GEX normalized (scale-independent)
 - Distance to flip point (%)
-- Distance to call wall (%)
-- Distance to put wall (%)
+- Distance to call wall / put wall (%)
 - Price position between walls
-- VIX level
-- Day of week
-- GEX momentum (change from previous day)
+- Magnet Theory: GEX ratio, log ratio, asymmetry, wall proximity
+- VIX level + regime indicators
+- Volatility Risk Premium (V2: expected_move - realized_vol)
+- Cyclical day encoding (V2: sin/cos, replaces integer day_of_week)
+- Opening gap (spot vs prev close)
+- Calendar: is_monday, is_friday, is_opex_week
+
+V2 CHANGES:
+- REMOVED: vix_percentile (data leakage - hardcoded 0.5 at inference)
+- REMOVED: gex_change_1d, gex_regime_changed (always 0 at inference)
+- REMOVED: integer day_of_week (Friday-Monday discontinuity)
+- ADDED: volatility_risk_premium (strongest edge signal for options)
+- ADDED: cyclical day encoding (sin/cos, matches WISDOM/Prophet/ORION)
+- ADDED: sample_weight for 3-class imbalance handling
+- ADDED: isotonic calibration for reliable confidence values
+- ADDED: Brier score evaluation on held-out CV folds
 
 LABELS:
 - BULLISH: close > open by threshold (e.g., +0.3%)
@@ -33,18 +45,21 @@ Author: AlphaGEX Quant
 
 import os
 import sys
+import math
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+from collections import Counter
 import warnings
 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, brier_score_loss
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.calibration import CalibratedClassifierCV
 import joblib
 
 # XGBoost for all ML in AlphaGEX
@@ -96,6 +111,8 @@ class TrainingResult:
     confusion_matrix: np.ndarray
     training_samples: int
     test_samples: int
+    brier_score: float = 0.0  # V2: multiclass Brier on held-out CV folds
+    feature_version: str = 'V2'  # V2: track which feature set was used
 
 
 class GEXDirectionalPredictor:
@@ -109,6 +126,17 @@ class GEXDirectionalPredictor:
     # Direction thresholds (percentage price change)
     BULLISH_THRESHOLD = 0.30  # +0.3% or more = bullish
     BEARISH_THRESHOLD = -0.30  # -0.3% or more = bearish
+
+    # Feature version tracking (V1 = original 26, V2 = fixed 25)
+    FEATURE_VERSION = 'V2'
+
+    # V2 Changes:
+    #   REMOVED: vix_percentile (data leakage - hardcoded 0.5 at inference)
+    #   REMOVED: gex_change_1d (always 0 at inference - no prior-day context)
+    #   REMOVED: gex_regime_changed (always 0 at inference - no prior-day context)
+    #   REMOVED: day_of_week (integer creates Friday-Monday discontinuity)
+    #   ADDED: day_of_week_sin, day_of_week_cos (cyclical encoding, matches WISDOM/Prophet/ORION)
+    #   ADDED: volatility_risk_premium (VRP = expected_move - realized_vol, strongest edge signal)
 
     # Feature columns used for prediction
     FEATURE_COLUMNS = [
@@ -132,18 +160,17 @@ class GEXDirectionalPredictor:
 
         # Market context
         'vix_level',
-        'vix_percentile',
+        'volatility_risk_premium',  # V2: VRP = expected_move - realized_vol
         'vix_regime_low',         # VIX < 15 (low vol, trending)
         'vix_regime_mid',         # VIX 15-25 (best risk-adjusted)
         'vix_regime_high',        # VIX > 25 (high vol, mean-revert)
 
-        # Momentum features
-        'gex_change_1d',
-        'gex_regime_changed',
+        # Momentum features (V2: removed gex_change_1d, gex_regime_changed)
         'spot_vs_prev_close_pct',
 
-        # Calendar features
-        'day_of_week',
+        # Calendar features (V2: cyclical encoding)
+        'day_of_week_sin',        # V2: sin(2*pi*dow/5) - cyclical
+        'day_of_week_cos',        # V2: cos(2*pi*dow/5) - cyclical
         'is_monday',
         'is_friday',
         'is_opex_week',
@@ -158,6 +185,7 @@ class GEXDirectionalPredictor:
         """
         self.ticker = ticker
         self.model = None
+        self.calibrated_model = None  # V2: isotonic calibration wrapper
         self.scaler = StandardScaler()
         self.label_encoder = LabelEncoder()
         self.feature_importance = {}
@@ -363,22 +391,24 @@ class GEXDirectionalPredictor:
 
         # === VIX Features ===
         df['vix_level'] = df['vix_close'].fillna(20)
-        df['vix_percentile'] = df['vix_level'].rolling(30, min_periods=5).apply(
-            lambda x: (x.iloc[-1] - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0.5
-        ).fillna(0.5)
 
         # VIX regime indicators (15-25 has best risk-adjusted returns)
         df['vix_regime_low'] = (df['vix_level'] < 15).astype(int)
         df['vix_regime_mid'] = ((df['vix_level'] >= 15) & (df['vix_level'] <= 25)).astype(int)
         df['vix_regime_high'] = (df['vix_level'] > 25).astype(int)
 
-        # === Momentum Features ===
-        # GEX change from previous day
-        df['gex_change_1d'] = df['gex_normalized'].diff().fillna(0)
+        # === V2: Volatility Risk Premium (VRP) ===
+        # VRP = expected_move (IV proxy) - realized_vol
+        # Strongest edge signal for options strategies
+        daily_expected_move_pct = df['vix_level'] / (252 ** 0.5)  # VIX annualized -> daily %
+        price_changes_pct = df['close'].pct_change().abs() * 100
+        realized_vol_5d = price_changes_pct.rolling(5, min_periods=2).std().fillna(
+            daily_expected_move_pct * 0.8  # Conservative fallback
+        )
+        df['volatility_risk_premium'] = daily_expected_move_pct - realized_vol_5d
 
-        # Did regime change?
-        df['prev_regime'] = df['gex_regime'].shift(1)
-        df['gex_regime_changed'] = (df['gex_regime'] != df['prev_regime']).astype(int)
+        # === Momentum Features ===
+        # V2: Removed gex_change_1d and gex_regime_changed (always 0 at inference)
 
         # Opening gap (spot vs previous close)
         df['prev_close'] = df['close'].shift(1)
@@ -386,9 +416,12 @@ class GEXDirectionalPredictor:
             (df['open'] - df['prev_close']) / df['prev_close'] * 100
         ).fillna(0)
 
-        # === Calendar Features ===
+        # === Calendar Features (V2: cyclical encoding) ===
         df['trade_date'] = pd.to_datetime(df['trade_date'])
         df['day_of_week'] = df['trade_date'].dt.dayofweek
+        # V2: Cyclical encoding (matches WISDOM/Prophet/ORION pattern)
+        df['day_of_week_sin'] = df['day_of_week'].apply(lambda d: math.sin(2 * math.pi * d / 5))
+        df['day_of_week_cos'] = df['day_of_week'].apply(lambda d: math.cos(2 * math.pi * d / 5))
         df['is_monday'] = (df['day_of_week'] == 0).astype(int)
         df['is_friday'] = (df['day_of_week'] == 4).astype(int)
 
@@ -479,22 +512,40 @@ class GEXDirectionalPredictor:
         # Time series split for validation
         tscv = TimeSeriesSplit(n_splits=n_splits)
 
+        # V2: Compute sample weights for 3-class imbalance
+        # (scale_pos_weight is binary-only; sample_weight works for multiclass)
+        class_counts = Counter(y_encoded)
+        n_samples = len(y_encoded)
+        n_classes = len(class_counts)
+        class_weights = {
+            cls: n_samples / (n_classes * count)
+            for cls, count in class_counts.items()
+        }
+        sample_weights_all = np.array([class_weights[y] for y in y_encoded])
+
+        logger.info(f"V2 class balance: {dict(class_counts)}")
+        logger.info(f"V2 class weights: { {self.label_encoder.inverse_transform([k])[0]: f'{v:.2f}' for k, v in class_weights.items()} }")
+
         # Track metrics across folds
         fold_accuracies = []
+        fold_briers = []  # V2: Brier score per fold
         all_y_true = []
         all_y_pred = []
+        all_y_proba = []  # V2: for multiclass Brier
 
         print("\n" + "=" * 60)
-        print("WALK-FORWARD VALIDATION")
+        print("WALK-FORWARD VALIDATION (V2)")
         print("=" * 60)
 
         for fold, (train_idx, test_idx) in enumerate(tscv.split(X)):
             X_train, X_test = X[train_idx], X[test_idx]
             y_train, y_test = y_encoded[train_idx], y_encoded[test_idx]
+            sw_train = sample_weights_all[train_idx]  # V2: per-fold sample weights
 
-            # Scale features
-            X_train_scaled = self.scaler.fit_transform(X_train)
-            X_test_scaled = self.scaler.transform(X_test)
+            # Scale features (fit on train fold only — no leakage)
+            scaler_fold = StandardScaler()
+            X_train_scaled = scaler_fold.fit_transform(X_train)
+            X_test_scaled = scaler_fold.transform(X_test)
 
             # Train model (XGBoost if available, else sklearn GradientBoosting)
             if HAS_XGBOOST:
@@ -519,18 +570,28 @@ class GEXDirectionalPredictor:
                     subsample=0.8,
                     random_state=42
                 )
-            model.fit(X_train_scaled, y_train)
+            model.fit(X_train_scaled, y_train, sample_weight=sw_train)  # V2: weighted
 
             # Predict
             y_pred = model.predict(X_test_scaled)
+            y_proba = model.predict_proba(X_test_scaled)
+
+            # V2: Multiclass Brier score = mean of one-vs-rest Brier scores
+            fold_brier = 0.0
+            for cls_idx in range(n_classes):
+                y_binary = (y_test == cls_idx).astype(int)
+                fold_brier += brier_score_loss(y_binary, y_proba[:, cls_idx])
+            fold_brier /= n_classes
+            fold_briers.append(fold_brier)
 
             # Track
             fold_acc = accuracy_score(y_test, y_pred)
             fold_accuracies.append(fold_acc)
             all_y_true.extend(y_test)
             all_y_pred.extend(y_pred)
+            all_y_proba.extend(y_proba.tolist())
 
-            print(f"Fold {fold + 1}: Accuracy = {fold_acc:.1%} (train={len(train_idx)}, test={len(test_idx)})")
+            print(f"Fold {fold + 1}: Accuracy = {fold_acc:.1%}, Brier = {fold_brier:.4f} (train={len(train_idx)}, test={len(test_idx)})")
 
         # Final training on all data
         print("\n" + "-" * 60)
@@ -562,7 +623,18 @@ class GEXDirectionalPredictor:
                 subsample=0.8,
                 random_state=42
             )
-        self.model.fit(X_scaled, y_encoded)
+        self.model.fit(X_scaled, y_encoded, sample_weight=sample_weights_all)  # V2: weighted
+
+        # V2: Isotonic calibration for reliable confidence values
+        try:
+            self.calibrated_model = CalibratedClassifierCV(
+                self.model, method='isotonic', cv=3
+            )
+            self.calibrated_model.fit(X_scaled, y_encoded, sample_weight=sample_weights_all)
+            print("V2: Isotonic calibration applied successfully")
+        except Exception as e:
+            logger.warning(f"V2: Calibration failed, using raw model: {e}")
+            self.calibrated_model = None
 
         # Store feature names for later use
         self.feature_names = feature_names
@@ -586,12 +658,25 @@ class GEXDirectionalPredictor:
         precision_by_class = {cls: report[cls]['precision'] for cls in class_names}
         recall_by_class = {cls: report[cls]['recall'] for cls in class_names}
 
+        # V2: Compute mean Brier score across CV folds
+        mean_brier = np.mean(fold_briers) if fold_briers else 0.0
+
         # Print results
         print("\n" + "=" * 60)
-        print("TRAINING RESULTS")
+        print("TRAINING RESULTS (V2)")
         print("=" * 60)
         print(f"\nOverall Accuracy: {overall_accuracy:.1%}")
         print(f"Mean CV Accuracy: {np.mean(fold_accuracies):.1%} (+/- {np.std(fold_accuracies):.1%})")
+        print(f"Mean CV Brier Score: {mean_brier:.4f} (lower is better, 0=perfect)")
+        print(f"Calibrated Model: {'YES' if self.calibrated_model else 'NO'}")
+        print(f"Feature Version: {self.FEATURE_VERSION}")
+        print(f"Features: {len(feature_names)} (was 26 in V1)")
+
+        print("\nV2 Class Weights Applied:")
+        for cls_idx, cls_name in enumerate(class_names):
+            weight = class_weights.get(cls_idx, 1.0)
+            count = class_counts.get(cls_idx, 0)
+            print(f"  {cls_name}: count={count}, weight={weight:.2f}")
 
         print("\nPer-Class Performance:")
         print("-" * 40)
@@ -615,7 +700,9 @@ class GEXDirectionalPredictor:
             feature_importance=self.feature_importance,
             confusion_matrix=cm,
             training_samples=len(X),
-            test_samples=len(all_y_true)
+            test_samples=len(all_y_true),
+            brier_score=mean_brier,
+            feature_version=self.FEATURE_VERSION,
         )
 
     def predict(
@@ -648,8 +735,9 @@ class GEXDirectionalPredictor:
         X = np.array([list(features.values())])
         X_scaled = self.scaler.transform(X)
 
-        # Predict
-        proba = self.model.predict_proba(X_scaled)[0]
+        # Predict (V2: prefer calibrated model for reliable confidence)
+        predict_model = self.calibrated_model if self.calibrated_model else self.model
+        proba = predict_model.predict_proba(X_scaled)[0]
         pred_idx = np.argmax(proba)
         pred_label = self.label_encoder.inverse_transform([pred_idx])[0]
 
@@ -724,25 +812,31 @@ class GEXDirectionalPredictor:
 
         # === VIX Features ===
         features['vix_level'] = vix
-        features['vix_percentile'] = 0.5  # Would need historical data
+
+        # V2: VRP inference proxy (matches Prophet V3 approach)
+        # Expected daily move from VIX, realized from opening gap
+        daily_expected_move = vix / (252 ** 0.5)
+        # Use opening gap as realized vol proxy when available
+        spot_gap_pct = abs((spot - prev_close) / prev_close * 100) if prev_close and prev_close > 0 else daily_expected_move * 0.8
+        features['volatility_risk_premium'] = daily_expected_move - spot_gap_pct
 
         # VIX regime indicators
         features['vix_regime_low'] = 1 if vix < 15 else 0
         features['vix_regime_mid'] = 1 if 15 <= vix <= 25 else 0
         features['vix_regime_high'] = 1 if vix > 25 else 0
 
-        # Momentum (would need previous day's data)
-        features['gex_change_1d'] = 0
-        features['gex_regime_changed'] = 0
+        # Momentum (V2: removed gex_change_1d, gex_regime_changed — were always 0)
         features['spot_vs_prev_close_pct'] = (
             (spot - prev_close) / prev_close * 100 if prev_close and prev_close > 0 else 0
         )
 
-        # Calendar
+        # Calendar (V2: cyclical encoding)
         today = datetime.now()
-        features['day_of_week'] = today.weekday()
-        features['is_monday'] = 1 if today.weekday() == 0 else 0
-        features['is_friday'] = 1 if today.weekday() == 4 else 0
+        dow = today.weekday()
+        features['day_of_week_sin'] = math.sin(2 * math.pi * dow / 5)
+        features['day_of_week_cos'] = math.cos(2 * math.pi * dow / 5)
+        features['is_monday'] = 1 if dow == 0 else 0
+        features['is_friday'] = 1 if dow == 4 else 0
         features['is_opex_week'] = 1 if 15 <= today.day <= 21 else 0
 
         # Only return features the model was trained on
@@ -757,11 +851,13 @@ class GEXDirectionalPredictor:
 
         model_data = {
             'model': self.model,
+            'calibrated_model': self.calibrated_model,  # V2
             'scaler': self.scaler,
             'label_encoder': self.label_encoder,
             'feature_names': self.feature_names,
             'feature_importance': self.feature_importance,
             'ticker': self.ticker,
+            'feature_version': self.FEATURE_VERSION,  # V2
             'thresholds': {
                 'bullish': self.BULLISH_THRESHOLD,
                 'bearish': self.BEARISH_THRESHOLD
@@ -781,11 +877,13 @@ class GEXDirectionalPredictor:
 
             model_data = {
                 'model': self.model,
+                'calibrated_model': self.calibrated_model,  # V2
                 'scaler': self.scaler,
                 'label_encoder': self.label_encoder,
                 'feature_names': self.feature_names,
                 'feature_importance': self.feature_importance,
                 'ticker': self.ticker,
+                'feature_version': self.FEATURE_VERSION,  # V2
                 'thresholds': {
                     'bullish': self.BULLISH_THRESHOLD,
                     'bearish': self.BEARISH_THRESHOLD
@@ -812,6 +910,7 @@ class GEXDirectionalPredictor:
                 return False
 
             self.model = model_data['model']
+            self.calibrated_model = model_data.get('calibrated_model')  # V2 (None for V1 models)
             self.scaler = model_data['scaler']
             self.label_encoder = model_data['label_encoder']
             self.feature_names = model_data['feature_names']
@@ -819,7 +918,8 @@ class GEXDirectionalPredictor:
             self.ticker = model_data['ticker']
             self.is_trained = True
 
-            logger.info("Model loaded from database")
+            loaded_version = model_data.get('feature_version', 'V1')
+            logger.info(f"Model loaded from database (feature_version={loaded_version})")
             return True
 
         except Exception as e:
@@ -834,6 +934,7 @@ class GEXDirectionalPredictor:
         model_data = joblib.load(filepath)
 
         self.model = model_data['model']
+        self.calibrated_model = model_data.get('calibrated_model')  # V2 (None for V1 models)
         self.scaler = model_data['scaler']
         self.label_encoder = model_data['label_encoder']
         self.feature_names = model_data['feature_names']
@@ -841,7 +942,8 @@ class GEXDirectionalPredictor:
         self.ticker = model_data['ticker']
         self.is_trained = True
 
-        logger.info(f"Model loaded from {filepath}")
+        loaded_version = model_data.get('feature_version', 'V1')
+        logger.info(f"Model loaded from {filepath} (feature_version={loaded_version})")
 
 
 def main():
