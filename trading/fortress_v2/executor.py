@@ -217,6 +217,7 @@ class OrderExecutor:
         self.config = config
         self.tradier = None
         self.tradier_2 = None  # Second sandbox account for trade mirroring
+        self.tradier_3 = None  # Third sandbox account for trade mirroring
         self.tradier_init_error = None  # Track initialization error for status reporting
         self.db = db  # Optional DB reference for orphaned order tracking
         self.paper_trading_enabled = True  # Always run paper trades alongside live
@@ -266,6 +267,24 @@ class OrderExecutor:
             else:
                 logger.warning("FORTRESS OrderExecutor: Second account NOT configured - set TRADIER_FORTRESS_SANDBOX_API_KEY_2 and TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2")
 
+            # Initialize third sandbox account for trade mirroring (optional)
+            sandbox_key_3 = APIConfig.TRADIER_FORTRESS_SANDBOX_API_KEY_3
+            sandbox_account_3 = APIConfig.TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3
+
+            if sandbox_key_3 and sandbox_account_3:
+                try:
+                    self.tradier_3 = TradierDataFetcher(
+                        api_key=sandbox_key_3,
+                        account_id=sandbox_account_3,
+                        sandbox=True
+                    )
+                    logger.info("FORTRESS OrderExecutor: Third Tradier account initialized for trade mirroring")
+                    logger.info(f"FORTRESS OrderExecutor: Account 3 ID {sandbox_account_3[:4]}...{sandbox_account_3[-4:] if len(sandbox_account_3) > 8 else ''}")
+                except Exception as e:
+                    logger.warning(f"FORTRESS OrderExecutor: Third account init failed (trades will still execute on primary): {e}")
+            else:
+                logger.warning("FORTRESS OrderExecutor: Third account NOT configured - set TRADIER_FORTRESS_SANDBOX_API_KEY_3 and TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3")
+
             logger.info(f"FORTRESS OrderExecutor: Paper trading alongside live: ENABLED")
 
         # Position Management Agent - tracks entry conditions for exit timing
@@ -288,10 +307,12 @@ class OrderExecutor:
             "can_execute": self.can_execute_trades,
             "tradier_initialized": self.tradier is not None,
             "tradier_2_initialized": self.tradier_2 is not None,
+            "tradier_3_initialized": self.tradier_3 is not None,
             "paper_trading_enabled": self.paper_trading_enabled,
             "accounts_active": sum([
                 self.tradier is not None,
                 self.tradier_2 is not None,
+                self.tradier_3 is not None,
                 self.paper_trading_enabled,
             ]),
             "init_error": self.tradier_init_error,
@@ -372,6 +393,81 @@ class OrderExecutor:
             logger.info(f"FORTRESS MIRROR: Close mirrored to account 2 for {position.position_id}")
         except Exception as e:
             logger.warning(f"FORTRESS MIRROR: Close mirror to account 2 failed (non-blocking): {e}")
+
+    def _mirror_ic_to_third_account(
+        self,
+        signal: IronCondorSignal,
+        contracts: int,
+        limit_price: float
+    ) -> None:
+        """
+        Mirror an Iron Condor trade to the third sandbox account.
+
+        Fire and forget - no tracking, no error propagation.
+        Primary account trade has already succeeded when this is called.
+        """
+        if not self.tradier_3:
+            return
+
+        try:
+            result = self.tradier_3.place_iron_condor(
+                symbol=self.config.ticker,
+                expiration=signal.expiration,
+                put_long=signal.put_long,
+                put_short=signal.put_short,
+                call_short=signal.call_short,
+                call_long=signal.call_long,
+                quantity=contracts,
+                limit_price=round(limit_price, 2),
+            )
+            if result and result.get('order'):
+                order_id = result['order'].get('id', 'UNKNOWN')
+                logger.info(f"FORTRESS MIRROR: IC mirrored to account 3 [Order: {order_id}]")
+            else:
+                logger.warning(f"FORTRESS MIRROR: IC mirror to account 3 returned no order: {result}")
+        except Exception as e:
+            logger.warning(f"FORTRESS MIRROR: IC mirror to account 3 failed (non-blocking): {e}")
+
+    def _mirror_close_to_third_account(
+        self,
+        position: IronCondorPosition,
+        put_value: float,
+        call_value: float
+    ) -> None:
+        """
+        Mirror a close order to the third sandbox account.
+
+        Fire and forget - no tracking, no error propagation.
+        """
+        if not self.tradier_3:
+            return
+
+        try:
+            # Close put spread on third account
+            self.tradier_3.place_vertical_spread(
+                symbol=position.ticker,
+                expiration=position.expiration,
+                long_strike=position.put_short_strike,
+                short_strike=position.put_long_strike,
+                option_type="put",
+                quantity=position.contracts,
+                limit_price=round(put_value, 2),
+            )
+
+            # Close call spread on third account
+            self.tradier_3.place_vertical_spread(
+                symbol=position.ticker,
+                expiration=position.expiration,
+                long_strike=position.call_short_strike,
+                short_strike=position.call_long_strike,
+                option_type="call",
+                quantity=position.contracts,
+                limit_price=round(call_value, 2),
+            )
+
+            logger.info(f"FORTRESS MIRROR: Close mirrored to account 3 for {position.position_id}")
+        except Exception as e:
+            logger.warning(f"FORTRESS MIRROR: Close mirror to account 3 failed (non-blocking): {e}")
 
     def _send_orphaned_order_alert(
         self,
@@ -738,8 +834,9 @@ class OrderExecutor:
                 f"x{contracts} @ ${actual_credit:.2f} [Order: {ic_order_id}]"
             )
 
-            # Mirror trade to second account (fire and forget - no tracking)
+            # Mirror trade to additional accounts (fire and forget - no tracking)
             self._mirror_ic_to_second_account(signal, contracts, actual_credit)
+            self._mirror_ic_to_third_account(signal, contracts, actual_credit)
 
             return position
 
@@ -907,8 +1004,9 @@ class OrderExecutor:
                 f"@ ${close_price:.2f}, P&L: ${realized_pnl:.2f} [{reason}]"
             )
 
-            # Mirror close to second account (fire and forget)
+            # Mirror close to additional accounts (fire and forget)
             self._mirror_close_to_second_account(position, ic_quote['put_value'], ic_quote['call_value'])
+            self._mirror_close_to_third_account(position, ic_quote['put_value'], ic_quote['call_value'])
 
             return True, close_price, realized_pnl
 
