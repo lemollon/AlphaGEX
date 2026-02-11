@@ -766,16 +766,23 @@ async def get_feedback_loop_status():
             limit=5
         )
 
-        return {
-            "session_id": proverbs.session_id,
-            "recent_runs": runs,
-            "guardrails": {
+        # Pull guardrails from the actual GUARDRAILS config rather than hardcoding
+        try:
+            from quant.proverbs_feedback_loop import GUARDRAILS
+            guardrail_config = dict(GUARDRAILS)
+        except (ImportError, AttributeError):
+            guardrail_config = {
                 'min_sample_size': 50,
                 'max_parameter_change_pct': 20,
                 'degradation_threshold': 15,
                 'rollback_on_drawdown_pct': 10,
                 'proposal_expiry_hours': 72
-            },
+            }
+
+        return {
+            "session_id": proverbs.session_id,
+            "recent_runs": runs,
+            "guardrails": guardrail_config,
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
         }
     except Exception as e:
@@ -950,7 +957,7 @@ async def get_realtime_status(
                         streak_rows.append((bot_name, trade[0]))
 
                 except Exception as table_err:
-                    logger.warning(f"Could not query {table_name}: {table_err}")
+                    logger.warning(f"Could not query {table_name} ({type(table_err).__name__}): {table_err}")
                     continue
         finally:
             conn.close()
@@ -1444,6 +1451,8 @@ async def ai_analyze_performance(bot_name: str):
 
     Uses Claude to provide insights and recommendations.
     """
+    if not PROVERBS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Proverbs system not available")
     if not AI_ANALYST_AVAILABLE:
         raise HTTPException(status_code=503, detail="AI Analyst not available")
 
@@ -1715,12 +1724,11 @@ async def apply_validated_proposal(proposal_id: str, request: ApplyValidatedProp
         )
 
         if not result.get('success'):
+            error_msg = result.get('error', 'Failed to apply proposal')
+            details = result.get('details', {})
             raise HTTPException(
                 status_code=400,
-                detail={
-                    "error": result.get('error', 'Failed to apply proposal'),
-                    "details": result.get('details', {})
-                }
+                detail=f"{error_msg}: {details}" if details else error_msg
             )
 
         return result

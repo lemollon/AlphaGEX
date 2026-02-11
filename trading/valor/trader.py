@@ -325,8 +325,9 @@ class ValorTrader:
                     self.loss_streak_pause_until = None
                     # Keep consecutive_losses count - only reset on a win
 
-            # VALOR has its own built-in loss streak pause (self.loss_streak_pause_until)
-            # with configurable max_consecutive_losses and pause_minutes — no Proverbs needed
+            # VALOR uses its own built-in loss streak pause (self.loss_streak_pause_until)
+            # with configurable max_consecutive_losses and pause_minutes
+            # Proverbs monitor is kept in sync for dashboard visibility
 
             if open_count < self.config.max_open_positions:
                 # Generate signal
@@ -1018,6 +1019,14 @@ class ValorTrader:
                             logger.info(f"Loss streak reset (was {self.consecutive_losses})")
                         self.consecutive_losses = 0
                         self.loss_streak_pause_until = None
+                        # Also reset Proverbs monitor so dashboard stays in sync
+                        if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
+                            try:
+                                proverbs = get_proverbs_enhanced()
+                                if proverbs:
+                                    proverbs.consecutive_loss_monitor.reset('VALOR')
+                            except Exception:
+                                pass
                     else:
                         # Increment streak on loss
                         self.consecutive_losses += 1

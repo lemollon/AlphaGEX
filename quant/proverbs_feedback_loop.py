@@ -1071,44 +1071,43 @@ class ProverbsFeedbackLoop:
             return False
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            # Get the proposal
-            cursor.execute("""
-                SELECT proposal_type, bot_name, title, current_value, proposed_value,
-                       reason, supporting_metrics, status
-                FROM proverbs_proposals
-                WHERE proposal_id = %s
-            """, (proposal_id,))
+                # Get the proposal
+                cursor.execute("""
+                    SELECT proposal_type, bot_name, title, current_value, proposed_value,
+                           reason, supporting_metrics, status
+                    FROM proverbs_proposals
+                    WHERE proposal_id = %s
+                """, (proposal_id,))
 
-            row = cursor.fetchone()
-            if not row:
-                logger.error(f"[PROVERBS] Proposal {proposal_id} not found - cannot approve")
-                conn.close()
-                return False
+                row = cursor.fetchone()
+                if not row:
+                    logger.error(f"[PROVERBS] Proposal {proposal_id} not found - cannot approve")
+                    return False
 
-            proposal_type, bot_name, title, current_value, proposed_value, reason, metrics, status = row
+                proposal_type, bot_name, title, current_value, proposed_value, reason, metrics, status = row
 
-            if status != ProposalStatus.PENDING.value:
-                logger.warning(f"[PROVERBS] Proposal {proposal_id} is not pending (current status: {status}) - cannot approve")
-                conn.close()
-                return False
+                if status != ProposalStatus.PENDING.value:
+                    logger.warning(f"[PROVERBS] Proposal {proposal_id} is not pending (current status: {status}) - cannot approve")
+                    return False
 
-            logger.info(f"[PROVERBS APPROVAL] Processing approval for {proposal_id}")
-            logger.info(f"[PROVERBS APPROVAL]   Bot: {bot_name} | Title: {title}")
-            logger.info(f"[PROVERBS APPROVAL]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
+                logger.info(f"[PROVERBS APPROVAL] Processing approval for {proposal_id}")
+                logger.info(f"[PROVERBS APPROVAL]   Bot: {bot_name} | Title: {title}")
+                logger.info(f"[PROVERBS APPROVAL]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
 
-            # Update proposal status
-            reviewed_at = datetime.now(CENTRAL_TZ)
-            cursor.execute("""
-                UPDATE proverbs_proposals
-                SET status = %s, reviewed_by = %s, reviewed_at = %s, review_notes = %s
-                WHERE proposal_id = %s
-            """, (ProposalStatus.APPROVED.value, reviewer, reviewed_at, notes, proposal_id))
+                # Update proposal status
+                reviewed_at = datetime.now(CENTRAL_TZ)
+                cursor.execute("""
+                    UPDATE proverbs_proposals
+                    SET status = %s, reviewed_by = %s, reviewed_at = %s, review_notes = %s
+                    WHERE proposal_id = %s
+                """, (ProposalStatus.APPROVED.value, reviewer, reviewed_at, notes, proposal_id))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             # Log the approval
             self.log_action(
@@ -1128,15 +1127,15 @@ class ProverbsFeedbackLoop:
 
             if success:
                 # Mark as applied
-                conn = get_connection()
-                cursor = conn.cursor()
-                cursor.execute("""
-                    UPDATE proverbs_proposals
-                    SET status = %s, applied_at = %s
-                    WHERE proposal_id = %s
-                """, (ProposalStatus.APPLIED.value, datetime.now(CENTRAL_TZ), proposal_id))
-                conn.commit()
-                conn.close()
+                with get_db_connection() as conn:
+                    if conn is not None:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            UPDATE proverbs_proposals
+                            SET status = %s, applied_at = %s
+                            WHERE proposal_id = %s
+                        """, (ProposalStatus.APPLIED.value, datetime.now(CENTRAL_TZ), proposal_id))
+                        conn.commit()
                 logger.info(f"[PROVERBS APPROVAL] Successfully applied proposal {proposal_id}")
                 logger.info(f"[PROVERBS APPROVAL]   Changes applied to {bot_name} at {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')} CT")
             else:
@@ -1162,30 +1161,30 @@ class ProverbsFeedbackLoop:
             return False
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            # Get proposal info for logging
-            cursor.execute("""
-                SELECT bot_name, title FROM proverbs_proposals WHERE proposal_id = %s
-            """, (proposal_id,))
+                # Get proposal info for logging
+                cursor.execute("""
+                    SELECT bot_name, title FROM proverbs_proposals WHERE proposal_id = %s
+                """, (proposal_id,))
 
-            row = cursor.fetchone()
-            if not row:
-                conn.close()
-                return False
+                row = cursor.fetchone()
+                if not row:
+                    return False
 
-            bot_name, title = row
+                bot_name, title = row
 
-            # Update status
-            cursor.execute("""
-                UPDATE proverbs_proposals
-                SET status = %s, reviewed_by = %s, reviewed_at = %s, review_notes = %s
-                WHERE proposal_id = %s
-            """, (ProposalStatus.REJECTED.value, reviewer, datetime.now(CENTRAL_TZ), notes, proposal_id))
+                # Update status
+                cursor.execute("""
+                    UPDATE proverbs_proposals
+                    SET status = %s, reviewed_by = %s, reviewed_at = %s, review_notes = %s
+                    WHERE proposal_id = %s
+                """, (ProposalStatus.REJECTED.value, reviewer, datetime.now(CENTRAL_TZ), notes, proposal_id))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             # Log rejection
             self.log_action(
@@ -1273,28 +1272,29 @@ class ProverbsFeedbackLoop:
             return False
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            # Get current config before updating (for version tracking)
-            cursor.execute("""
-                SELECT value FROM autonomous_config WHERE key = %s
-            """, (f"{bot_name.lower()}_parameters",))
-            current_row = cursor.fetchone()
-            current_config = json.loads(current_row[0]) if current_row and current_row[0] else {}
+                # Get current config before updating (for version tracking)
+                cursor.execute("""
+                    SELECT value FROM autonomous_config WHERE key = %s
+                """, (f"{bot_name.lower()}_parameters",))
+                current_row = cursor.fetchone()
+                current_config = json.loads(current_row[0]) if current_row and current_row[0] else {}
 
-            # Store parameters in bot config table
-            if isinstance(proposed_value, str):
-                proposed_value = json.loads(proposed_value)
+                # Store parameters in bot config table
+                if isinstance(proposed_value, str):
+                    proposed_value = json.loads(proposed_value)
 
-            cursor.execute("""
-                INSERT INTO autonomous_config (key, value, updated_at)
-                VALUES (%s, %s, NOW())
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-            """, (f"{bot_name.lower()}_parameters", json.dumps(proposed_value)))
+                cursor.execute("""
+                    INSERT INTO autonomous_config (key, value, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                """, (f"{bot_name.lower()}_parameters", json.dumps(proposed_value)))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             # Save version for tracking
             self.save_version(
@@ -1331,27 +1331,28 @@ class ProverbsFeedbackLoop:
             return False
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
-
             if isinstance(proposed_value, str):
                 proposed_value = json.loads(proposed_value)
 
-            # Get current strategy config
-            cursor.execute("""
-                SELECT value FROM autonomous_config WHERE key = %s
-            """, (f"{bot_name.lower()}_strategy",))
-            current_row = cursor.fetchone()
-            current_strategy = json.loads(current_row[0]) if current_row and current_row[0] else {}
+            with get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO autonomous_config (key, value, updated_at)
-                VALUES (%s, %s, NOW())
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
-            """, (f"{bot_name.lower()}_strategy", json.dumps(proposed_value)))
+                # Get current strategy config
+                cursor.execute("""
+                    SELECT value FROM autonomous_config WHERE key = %s
+                """, (f"{bot_name.lower()}_strategy",))
+                current_row = cursor.fetchone()
+                current_strategy = json.loads(current_row[0]) if current_row and current_row[0] else {}
 
-            conn.commit()
-            conn.close()
+                cursor.execute("""
+                    INSERT INTO autonomous_config (key, value, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+                """, (f"{bot_name.lower()}_strategy", json.dumps(proposed_value)))
+
+                conn.commit()
 
             # Save version with STRATEGY type
             self.save_version(
@@ -1393,25 +1394,26 @@ class ProverbsFeedbackLoop:
             return []
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return []
+                cursor = conn.cursor()
 
-            query = """
-                SELECT * FROM proverbs_proposals
-                WHERE status = 'PENDING' AND expires_at > NOW()
-            """
-            params = []
+                query = """
+                    SELECT * FROM proverbs_proposals
+                    WHERE status = 'PENDING' AND expires_at > NOW()
+                """
+                params = []
 
-            if bot_name:
-                query += " AND bot_name = %s"
-                params.append(bot_name)
+                if bot_name:
+                    query += " AND bot_name = %s"
+                    params.append(bot_name)
 
-            query += " ORDER BY created_at DESC"
+                query += " ORDER BY created_at DESC"
 
-            cursor.execute(query, params)
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
+                cursor.execute(query, params)
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
             return [dict(zip(columns, row)) for row in rows]
 
@@ -1425,19 +1427,20 @@ class ProverbsFeedbackLoop:
             return 0
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return 0
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                UPDATE proverbs_proposals
-                SET status = 'EXPIRED'
-                WHERE status = 'PENDING' AND expires_at < NOW()
-                RETURNING proposal_id, bot_name, title
-            """)
+                cursor.execute("""
+                    UPDATE proverbs_proposals
+                    SET status = 'EXPIRED'
+                    WHERE status = 'PENDING' AND expires_at < NOW()
+                    RETURNING proposal_id, bot_name, title
+                """)
 
-            expired = cursor.fetchall()
-            conn.commit()
-            conn.close()
+                expired = cursor.fetchall()
+                conn.commit()
 
             for proposal_id, bot_name, title in expired:
                 self.log_action(
@@ -1493,37 +1496,38 @@ class ProverbsFeedbackLoop:
             return version_id
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return None
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO proverbs_versions (
-                    version_id, version_number, created_at, version_type, bot_name,
-                    artifact_name, artifact_hash, artifact_data, metadata,
-                    performance_metrics, parent_version, is_active, approved_by,
-                    approved_at
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-            """, (
-                version_id,
-                version_number,
-                datetime.now(CENTRAL_TZ),
-                version_type.value,
-                bot_name,
-                artifact_name,
-                artifact_hash,
-                serialized,
-                json.dumps(metadata or {}),
-                json.dumps(performance_metrics or {}),
-                parent_version,
-                False,  # Not active until explicitly activated
-                approved_by,
-                datetime.now(CENTRAL_TZ) if approved_by else None
-            ))
+                cursor.execute("""
+                    INSERT INTO proverbs_versions (
+                        version_id, version_number, created_at, version_type, bot_name,
+                        artifact_name, artifact_hash, artifact_data, metadata,
+                        performance_metrics, parent_version, is_active, approved_by,
+                        approved_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    version_id,
+                    version_number,
+                    datetime.now(CENTRAL_TZ),
+                    version_type.value,
+                    bot_name,
+                    artifact_name,
+                    artifact_hash,
+                    serialized,
+                    json.dumps(metadata or {}),
+                    json.dumps(performance_metrics or {}),
+                    parent_version,
+                    False,  # Not active until explicitly activated
+                    approved_by,
+                    datetime.now(CENTRAL_TZ) if approved_by else None
+                ))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             logger.info(f"Saved version {version_id}")
             return version_id
@@ -1538,17 +1542,18 @@ class ProverbsFeedbackLoop:
             return "1.0.0"
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return "1.0.0"
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT version_number FROM proverbs_versions
-                WHERE bot_name = %s AND version_type = %s AND artifact_name = %s
-                ORDER BY created_at DESC LIMIT 1
-            """, (bot_name, version_type.value, artifact_name))
+                cursor.execute("""
+                    SELECT version_number FROM proverbs_versions
+                    WHERE bot_name = %s AND version_type = %s AND artifact_name = %s
+                    ORDER BY created_at DESC LIMIT 1
+                """, (bot_name, version_type.value, artifact_name))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
             if row:
                 parts = row[0].split('.')
@@ -1567,17 +1572,18 @@ class ProverbsFeedbackLoop:
             return None
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return None
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT version_id FROM proverbs_versions
-                WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
-                LIMIT 1
-            """, (bot_name, version_type.value, artifact_name))
+                cursor.execute("""
+                    SELECT version_id FROM proverbs_versions
+                    WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
+                    LIMIT 1
+                """, (bot_name, version_type.value, artifact_name))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
             return row[0] if row else None
 
@@ -1593,49 +1599,49 @@ class ProverbsFeedbackLoop:
             return False
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            # Get version info
-            cursor.execute("""
-                SELECT bot_name, version_type, artifact_name, version_number
-                FROM proverbs_versions WHERE version_id = %s
-            """, (version_id,))
+                # Get version info
+                cursor.execute("""
+                    SELECT bot_name, version_type, artifact_name, version_number
+                    FROM proverbs_versions WHERE version_id = %s
+                """, (version_id,))
 
-            row = cursor.fetchone()
-            if not row:
-                conn.close()
-                return False
+                row = cursor.fetchone()
+                if not row:
+                    return False
 
-            bot_name, version_type, artifact_name, version_number = row
+                bot_name, version_type, artifact_name, version_number = row
 
-            # Get current active version
-            cursor.execute("""
-                SELECT version_id, version_number FROM proverbs_versions
-                WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
-            """, (bot_name, version_type, artifact_name))
+                # Get current active version
+                cursor.execute("""
+                    SELECT version_id, version_number FROM proverbs_versions
+                    WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
+                """, (bot_name, version_type, artifact_name))
 
-            current = cursor.fetchone()
-            current_version_id = current[0] if current else None
-            current_version_number = current[1] if current else None
+                current = cursor.fetchone()
+                current_version_id = current[0] if current else None
+                current_version_number = current[1] if current else None
 
-            # Deactivate current
-            if current_version_id:
+                # Deactivate current
+                if current_version_id:
+                    cursor.execute("""
+                        UPDATE proverbs_versions
+                        SET is_active = FALSE, deactivated_at = NOW()
+                        WHERE version_id = %s
+                    """, (current_version_id,))
+
+                # Activate new
                 cursor.execute("""
                     UPDATE proverbs_versions
-                    SET is_active = FALSE, deactivated_at = NOW()
+                    SET is_active = TRUE, approved_by = COALESCE(approved_by, %s), approved_at = COALESCE(approved_at, NOW())
                     WHERE version_id = %s
-                """, (current_version_id,))
+                """, (activated_by, version_id))
 
-            # Activate new
-            cursor.execute("""
-                UPDATE proverbs_versions
-                SET is_active = TRUE, approved_by = COALESCE(approved_by, %s), approved_at = COALESCE(approved_at, NOW())
-                WHERE version_id = %s
-            """, (activated_by, version_id))
-
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             # Log activation
             self.log_action(
@@ -1660,29 +1666,30 @@ class ProverbsFeedbackLoop:
             return []
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return []
+                cursor = conn.cursor()
 
-            query = """
-                SELECT version_id, version_number, created_at, version_type, artifact_name,
-                       artifact_hash, metadata, performance_metrics, parent_version,
-                       is_active, approved_by, approved_at
-                FROM proverbs_versions
-                WHERE bot_name = %s
-            """
-            params = [bot_name]
+                query = """
+                    SELECT version_id, version_number, created_at, version_type, artifact_name,
+                           artifact_hash, metadata, performance_metrics, parent_version,
+                           is_active, approved_by, approved_at
+                    FROM proverbs_versions
+                    WHERE bot_name = %s
+                """
+                params = [bot_name]
 
-            if artifact_name:
-                query += " AND artifact_name = %s"
-                params.append(artifact_name)
+                if artifact_name:
+                    query += " AND artifact_name = %s"
+                    params.append(artifact_name)
 
-            query += " ORDER BY created_at DESC LIMIT %s"
-            params.append(limit)
+                query += " ORDER BY created_at DESC LIMIT %s"
+                params.append(limit)
 
-            cursor.execute(query, params)
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
+                cursor.execute(query, params)
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
             return [dict(zip(columns, row)) for row in rows]
 
@@ -1720,76 +1727,75 @@ class ProverbsFeedbackLoop:
         logger.info(f"[PROVERBS ROLLBACK]   Triggered by: {triggered_by} | Automatic: {automatic}")
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return False
+                cursor = conn.cursor()
 
-            # Get target version info
-            cursor.execute("""
-                SELECT version_type, artifact_name, version_number
-                FROM proverbs_versions WHERE version_id = %s
-            """, (to_version_id,))
+                # Get target version info
+                cursor.execute("""
+                    SELECT version_type, artifact_name, version_number
+                    FROM proverbs_versions WHERE version_id = %s
+                """, (to_version_id,))
 
-            row = cursor.fetchone()
-            if not row:
-                logger.error(f"Target version {to_version_id} not found")
-                conn.close()
-                return False
+                row = cursor.fetchone()
+                if not row:
+                    logger.error(f"Target version {to_version_id} not found")
+                    return False
 
-            version_type, artifact_name, target_version_number = row
+                version_type, artifact_name, target_version_number = row
 
-            # Get current active version
-            cursor.execute("""
-                SELECT version_id, version_number FROM proverbs_versions
-                WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
-            """, (bot_name, version_type, artifact_name))
+                # Get current active version
+                cursor.execute("""
+                    SELECT version_id, version_number FROM proverbs_versions
+                    WHERE bot_name = %s AND version_type = %s AND artifact_name = %s AND is_active = TRUE
+                """, (bot_name, version_type, artifact_name))
 
-            current = cursor.fetchone()
-            if not current:
-                logger.error(f"No active version found for {bot_name}")
-                conn.close()
-                return False
+                current = cursor.fetchone()
+                if not current:
+                    logger.error(f"No active version found for {bot_name}")
+                    return False
 
-            from_version_id, from_version_number = current
+                from_version_id, from_version_number = current
 
-            # Get performance before rollback
-            perf_before = self._get_current_performance(bot_name)
+                # Get performance before rollback
+                perf_before = self._get_current_performance(bot_name)
 
-            # Perform rollback (deactivate current, activate target)
-            cursor.execute("""
-                UPDATE proverbs_versions
-                SET is_active = FALSE, deactivated_at = NOW(), deactivation_reason = %s
-                WHERE version_id = %s
-            """, (f"Rolled back: {reason}", from_version_id))
+                # Perform rollback (deactivate current, activate target)
+                cursor.execute("""
+                    UPDATE proverbs_versions
+                    SET is_active = FALSE, deactivated_at = NOW(), deactivation_reason = %s
+                    WHERE version_id = %s
+                """, (f"Rolled back: {reason}", from_version_id))
 
-            cursor.execute("""
-                UPDATE proverbs_versions
-                SET is_active = TRUE
-                WHERE version_id = %s
-            """, (to_version_id,))
+                cursor.execute("""
+                    UPDATE proverbs_versions
+                    SET is_active = TRUE
+                    WHERE version_id = %s
+                """, (to_version_id,))
 
-            # Record rollback
-            cursor.execute("""
-                INSERT INTO proverbs_rollbacks (
-                    rollback_id, executed_at, bot_name, rollback_type, from_version,
-                    to_version, reason, triggered_by, automatic, performance_before
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-            """, (
-                rollback_id,
-                datetime.now(CENTRAL_TZ),
-                bot_name,
-                version_type,
-                from_version_id,
-                to_version_id,
-                reason,
-                triggered_by,
-                automatic,
-                json.dumps(perf_before)
-            ))
+                # Record rollback
+                cursor.execute("""
+                    INSERT INTO proverbs_rollbacks (
+                        rollback_id, executed_at, bot_name, rollback_type, from_version,
+                        to_version, reason, triggered_by, automatic, performance_before
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    rollback_id,
+                    datetime.now(CENTRAL_TZ),
+                    bot_name,
+                    version_type,
+                    from_version_id,
+                    to_version_id,
+                    reason,
+                    triggered_by,
+                    automatic,
+                    json.dumps(perf_before)
+                ))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             # Log rollback
             self.log_action(
@@ -1818,43 +1824,44 @@ class ProverbsFeedbackLoop:
         if not DB_AVAILABLE:
             return {}
 
-        conn = None
+        # Map bot names to their actual positions tables
+        # Bots store closed trades in *_positions tables with status='closed'
+        BOT_TABLES = {
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
+        }
+
+        table = BOT_TABLES.get(bot_name.upper())
+        if not table:
+            logger.warning(f"Unknown bot_name '{bot_name}' - no table mapping")
+            return {}
+
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return {}
+                cursor = conn.cursor()
 
-            # Map bot names to their actual positions tables
-            # Bots store closed trades in *_positions tables with status='closed'
-            BOT_TABLES = {
-                'FORTRESS': 'fortress_positions',
-                'SOLOMON': 'solomon_positions',
-                'SAMSON': 'samson_positions',
-                'ANCHOR': 'anchor_positions',
-                'GIDEON': 'gideon_positions',
-                'JUBILEE': 'jubilee_ic_positions',
-            }
+                # Query closed positions from the bot's actual table
+                # Table name is from whitelisted BOT_TABLES dict (safe)
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    SELECT
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+                        SUM(realized_pnl) as total_pnl,
+                        AVG(realized_pnl) as avg_pnl
+                    FROM {table}
+                    WHERE status = 'closed'
+                        AND close_time::timestamptz > NOW() - INTERVAL '30 days'
+                """)
 
-            table = BOT_TABLES.get(bot_name.upper())
-            if not table:
-                logger.warning(f"Unknown bot_name '{bot_name}' - no table mapping")
-                return {}
-
-            # Query closed positions from the bot's actual table
-            # Table name is from whitelisted BOT_TABLES dict (safe)
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            cursor.execute(f"""
-                SELECT
-                    COUNT(*) as total_trades,
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
-                    SUM(realized_pnl) as total_pnl,
-                    AVG(realized_pnl) as avg_pnl
-                FROM {table}
-                WHERE status = 'closed'
-                    AND close_time::timestamptz > NOW() - INTERVAL '30 days'
-            """)
-
-            row = cursor.fetchone()
+                row = cursor.fetchone()
 
             if row and row[0]:
                 total, wins, losses, pnl, avg_pnl = row
@@ -1871,9 +1878,6 @@ class ProverbsFeedbackLoop:
         except Exception as e:
             logger.debug(f"Could not get performance: {e}")
             return {}
-        finally:
-            if conn:
-                conn.close()
 
     def get_rollback_history(self, bot_name: str = None, limit: int = 20) -> List[Dict]:
         """Get rollback history"""
@@ -1881,23 +1885,24 @@ class ProverbsFeedbackLoop:
             return []
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return []
+                cursor = conn.cursor()
 
-            query = "SELECT * FROM proverbs_rollbacks"
-            params = []
+                query = "SELECT * FROM proverbs_rollbacks"
+                params = []
 
-            if bot_name:
-                query += " WHERE bot_name = %s"
-                params.append(bot_name)
+                if bot_name:
+                    query += " WHERE bot_name = %s"
+                    params.append(bot_name)
 
-            query += " ORDER BY executed_at DESC LIMIT %s"
-            params.append(limit)
+                query += " ORDER BY executed_at DESC LIMIT %s"
+                params.append(limit)
 
-            cursor.execute(query, params)
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
+                cursor.execute(query, params)
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
             return [dict(zip(columns, row)) for row in rows]
 
@@ -1925,34 +1930,35 @@ class ProverbsFeedbackLoop:
             return snapshot_id
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return None
+                cursor = conn.cursor()
 
-            total = perf.get('total_trades', 0)
-            wins = perf.get('wins', 0)
-            losses = perf.get('losses', 0)
+                total = perf.get('total_trades', 0)
+                wins = perf.get('wins', 0)
+                losses = perf.get('losses', 0)
 
-            cursor.execute("""
-                INSERT INTO proverbs_performance (
-                    snapshot_id, timestamp, bot_name, version_id, win_rate,
-                    total_trades, winning_trades, losing_trades, total_pnl
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s
-                )
-            """, (
-                snapshot_id,
-                datetime.now(CENTRAL_TZ),
-                bot_name,
-                version_id,
-                perf.get('win_rate', 0),
-                total,
-                wins,
-                losses,
-                perf.get('total_pnl', 0)
-            ))
+                cursor.execute("""
+                    INSERT INTO proverbs_performance (
+                        snapshot_id, timestamp, bot_name, version_id, win_rate,
+                        total_trades, winning_trades, losing_trades, total_pnl
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    snapshot_id,
+                    datetime.now(CENTRAL_TZ),
+                    bot_name,
+                    version_id,
+                    perf.get('win_rate', 0),
+                    total,
+                    wins,
+                    losses,
+                    perf.get('total_pnl', 0)
+                ))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             return snapshot_id
 
@@ -1980,27 +1986,28 @@ class ProverbsFeedbackLoop:
             return []
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return []
+                cursor = conn.cursor()
 
-            # Get daily P&L for sparkline data
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            cursor.execute(f"""
-                SELECT
-                    DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
-                    COUNT(*) as trades,
-                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                    COALESCE(AVG(realized_pnl), 0) as avg_pnl
-                FROM {table_name}
-                WHERE status = 'closed'
-                AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
-                GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
-                ORDER BY trade_date DESC
-            """)
+                # Get daily P&L for sparkline data
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    SELECT
+                        DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
+                        COUNT(*) as trades,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                        COALESCE(AVG(realized_pnl), 0) as avg_pnl
+                    FROM {table_name}
+                    WHERE status = 'closed'
+                    AND close_time::timestamptz > NOW() - INTERVAL '{days} days'
+                    GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
+                    ORDER BY trade_date DESC
+                """)
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             results = []
             for row in rows:
@@ -2030,54 +2037,55 @@ class ProverbsFeedbackLoop:
         if not DB_AVAILABLE:
             return None
 
+        # Map bot names to their actual positions tables
+        BOT_TABLES = {
+            'FORTRESS': 'fortress_positions',
+            'SOLOMON': 'solomon_positions',
+            'SAMSON': 'samson_positions',
+            'ANCHOR': 'anchor_positions',
+            'GIDEON': 'gideon_positions',
+            'JUBILEE': 'jubilee_ic_positions',
+        }
+
+        table = BOT_TABLES.get(bot_name.upper())
+        if not table:
+            return None
+
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return None
+                cursor = conn.cursor()
 
-            # Map bot names to their actual positions tables
-            BOT_TABLES = {
-                'FORTRESS': 'fortress_positions',
-                'SOLOMON': 'solomon_positions',
-                'SAMSON': 'samson_positions',
-                'ANCHOR': 'anchor_positions',
-                'GIDEON': 'gideon_positions',
-                'JUBILEE': 'jubilee_ic_positions',
-            }
-
-            table = BOT_TABLES.get(bot_name.upper())
-            if not table:
-                return None
-
-            # Compare last 7 days vs previous 7 days using bot's actual positions table
-            # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
-            cursor.execute(f"""
-                WITH period_stats AS (
+                # Compare last 7 days vs previous 7 days using bot's actual positions table
+                # Cast to timestamptz to handle FORTRESS TEXT columns and other bots' timestamp columns
+                cursor.execute(f"""
+                    WITH period_stats AS (
+                        SELECT
+                            CASE
+                                WHEN close_time::timestamptz > NOW() - INTERVAL '7 days' THEN 'recent'
+                                ELSE 'previous'
+                            END as period,
+                            COUNT(*) as trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            SUM(realized_pnl) as total_pnl
+                        FROM {table}
+                        WHERE status = 'closed'
+                            AND close_time::timestamptz > NOW() - INTERVAL '14 days'
+                        GROUP BY
+                            CASE
+                                WHEN close_time::timestamptz > NOW() - INTERVAL '7 days' THEN 'recent'
+                                ELSE 'previous'
+                            END
+                    )
                     SELECT
-                        CASE
-                            WHEN close_time::timestamptz > NOW() - INTERVAL '7 days' THEN 'recent'
-                            ELSE 'previous'
-                        END as period,
-                        COUNT(*) as trades,
-                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                        SUM(realized_pnl) as total_pnl
-                    FROM {table}
-                    WHERE status = 'closed'
-                        AND close_time::timestamptz > NOW() - INTERVAL '14 days'
-                    GROUP BY
-                        CASE
-                            WHEN close_time::timestamptz > NOW() - INTERVAL '7 days' THEN 'recent'
-                            ELSE 'previous'
-                        END
-                )
-                SELECT
-                    period, trades, wins, total_pnl,
-                    CASE WHEN trades > 0 THEN wins::float / trades * 100 ELSE 0 END as win_rate
-                FROM period_stats
-                ORDER BY period
-            """)
+                        period, trades, wins, total_pnl,
+                        CASE WHEN trades > 0 THEN wins::float / trades * 100 ELSE 0 END as win_rate
+                    FROM period_stats
+                    ORDER BY period
+                """)
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
 
             # Parse results
             recent_stats = None
@@ -2616,18 +2624,19 @@ class ProverbsFeedbackLoop:
             return None
 
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                if conn is None:
+                    return None
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT version_id, version_number, created_at, artifact_name, approved_by
-                FROM proverbs_versions
-                WHERE bot_name = %s AND is_active = TRUE
-                LIMIT 1
-            """, (bot_name,))
+                cursor.execute("""
+                    SELECT version_id, version_number, created_at, artifact_name, approved_by
+                    FROM proverbs_versions
+                    WHERE bot_name = %s AND is_active = TRUE
+                    LIMIT 1
+                """, (bot_name,))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
             if row:
                 return {
@@ -2660,32 +2669,31 @@ class ProverbsFeedbackLoop:
 
         if DB_AVAILABLE:
             try:
-                conn = get_connection()
-                cursor = conn.cursor()
+                with get_db_connection() as conn:
+                    if conn is not None:
+                        cursor = conn.cursor()
 
-                # Last feedback run
-                cursor.execute("""
-                    SELECT timestamp FROM proverbs_audit_log
-                    WHERE action_type = 'FEEDBACK_LOOP_RUN'
-                    ORDER BY timestamp DESC LIMIT 1
-                """)
-                row = cursor.fetchone()
-                if row:
-                    health['last_feedback_run'] = row[0].isoformat()
+                        # Last feedback run
+                        cursor.execute("""
+                            SELECT timestamp FROM proverbs_audit_log
+                            WHERE action_type = 'FEEDBACK_LOOP_RUN'
+                            ORDER BY timestamp DESC LIMIT 1
+                        """)
+                        row = cursor.fetchone()
+                        if row:
+                            health['last_feedback_run'] = row[0].isoformat()
 
-                # Pending proposals count
-                cursor.execute("SELECT COUNT(*) FROM proverbs_proposals WHERE status = 'PENDING'")
-                health['pending_proposals_count'] = cursor.fetchone()[0]
+                        # Pending proposals count
+                        cursor.execute("SELECT COUNT(*) FROM proverbs_proposals WHERE status = 'PENDING'")
+                        health['pending_proposals_count'] = cursor.fetchone()[0]
 
-                # Degradation alerts (last 24h)
-                cursor.execute("""
-                    SELECT COUNT(*) FROM proverbs_audit_log
-                    WHERE action_type = 'DEGRADATION_DETECTED'
-                    AND timestamp > NOW() - INTERVAL '24 hours'
-                """)
-                health['degradation_alerts'] = cursor.fetchone()[0]
-
-                conn.close()
+                        # Degradation alerts (last 24h)
+                        cursor.execute("""
+                            SELECT COUNT(*) FROM proverbs_audit_log
+                            WHERE action_type = 'DEGRADATION_DETECTED'
+                            AND timestamp > NOW() - INTERVAL '24 hours'
+                        """)
+                        health['degradation_alerts'] = cursor.fetchone()[0]
             except Exception as e:
                 logger.debug(f"Could not get health info: {e}")
 
