@@ -3,9 +3,9 @@
 import React, { useState } from 'react'
 import {
   Zap, Play, Loader2, AlertTriangle, ChevronDown, ChevronUp,
-  Shield, CheckCircle, XCircle,
+  Shield, CheckCircle, XCircle, Layers, Brain,
   Minus, ArrowLeft, BarChart2, TrendingUp, TrendingDown,
-  Activity, Clock, Cpu, Info
+  Activity, Clock, Cpu, Info, Target
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
