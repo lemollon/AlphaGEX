@@ -41,21 +41,12 @@ class RiskManager:
 
     def check_all_limits(self, account_value: float, proposed_trade: Dict) -> Tuple[bool, str]:
         """
-        Check ALL risk limits before allowing trade
+        Check risk limits before allowing trade.
+        Daily loss and max drawdown limits have been removed.
 
         Returns:
             (can_trade: bool, reason: str)
         """
-        # Check max drawdown
-        can_trade, reason = self.check_max_drawdown(account_value)
-        if not can_trade:
-            return False, f"❌ MAX DRAWDOWN BREACH: {reason}"
-
-        # Check daily loss limit
-        can_trade, reason = self.check_daily_loss_limit(account_value)
-        if not can_trade:
-            return False, f"❌ DAILY LOSS LIMIT BREACH: {reason}"
-
         # Check position size limit
         can_trade, reason = self.check_position_size(
             account_value,
@@ -72,34 +63,6 @@ class RiskManager:
             return False, f"❌ CORRELATION LIMIT BREACH: {reason}"
 
         return True, "✅ All risk checks passed"
-
-    def check_max_drawdown(self, current_value: float) -> Tuple[bool, str]:
-        """Check if we've exceeded max drawdown from peak equity"""
-        peak_value = self._get_peak_equity()
-
-        if peak_value == 0:
-            return True, "No historical peak"
-
-        current_drawdown_pct = ((peak_value - current_value) / peak_value) * 100
-
-        if current_drawdown_pct >= self.max_drawdown_pct:
-            return False, f"Drawdown {current_drawdown_pct:.1f}% exceeds limit {self.max_drawdown_pct:.1f}%"
-
-        return True, f"Drawdown {current_drawdown_pct:.1f}% within limit"
-
-    def check_daily_loss_limit(self, current_value: float) -> Tuple[bool, str]:
-        """Check if we've exceeded daily loss limit"""
-        start_of_day_value = self._get_start_of_day_equity()
-
-        if start_of_day_value == 0:
-            return True, "No daily equity data"
-
-        daily_loss_pct = ((start_of_day_value - current_value) / start_of_day_value) * 100
-
-        if daily_loss_pct >= self.daily_loss_limit_pct:
-            return False, f"Daily loss {daily_loss_pct:.1f}% exceeds limit {self.daily_loss_limit_pct:.1f}%"
-
-        return True, f"Daily loss {daily_loss_pct:.1f}% within limit"
 
     def check_position_size(self, account_value: float, position_cost: float) -> Tuple[bool, str]:
         """Check if position size exceeds limit"""

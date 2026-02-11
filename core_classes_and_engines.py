@@ -1092,11 +1092,6 @@ class RiskManager:
         current_exposure = sum([p.get('risk', 0) for p in self.positions])
         risk_check['current_exposure'] = current_exposure
 
-        # Check daily loss limit
-        if self.daily_pnl <= -self.max_daily_loss:
-            risk_check['reason'] = 'Daily loss limit reached'
-            return risk_check
-
         # Check position limits
         strategy_positions = [p for p in self.positions if p['strategy'] == setup.strategy_type]
         if len(strategy_positions) >= 3:

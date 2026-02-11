@@ -148,10 +148,6 @@ class RiskManagerMixin:
             if new_delta > self.max_delta_exposure:
                 return False, f"Would exceed delta exposure (${new_delta:,.0f} > ${self.max_delta_exposure:,.0f})"
 
-            # Check daily loss limit
-            if daily_pnl < -(self.starting_capital * self.DEFAULT_RISK_LIMITS.get(self.symbol, {}).get('max_daily_loss_pct', 0.05)):
-                return False, f"Daily loss limit reached (${daily_pnl:,.0f})"
-
             # Check max positions
             max_positions = self.DEFAULT_RISK_LIMITS.get(self.symbol, {}).get('max_open_positions', 10)
             if greeks['position_count'] >= max_positions:

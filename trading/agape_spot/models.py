@@ -158,7 +158,7 @@ class AgapeSpotConfig:
     min_prophet_win_probability: float = 0.35
 
     # Cooldown
-    cooldown_minutes: int = 5
+    cooldown_minutes: int = 0  # Cooldowns removed — trade freely
 
     # Loss streak
     max_consecutive_losses: int = 3

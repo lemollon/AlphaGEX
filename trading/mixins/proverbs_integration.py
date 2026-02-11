@@ -3,7 +3,6 @@ Proverbs Integration Mixin for Trading Bots
 ==========================================
 
 Provides Proverbs feedback loop integration for all trading bots:
-- Kill switch checking before trading
 - Outcome recording for feedback loop
 - Version awareness for model loading
 - Performance tracking
@@ -14,11 +13,6 @@ Usage:
     class MyBot(ProverbsIntegrationMixin):
         def __init__(self):
             self._init_proverbs_integration("MY_BOT")
-
-        def before_trade(self):
-            if not self.proverbs_can_trade():
-                return False
-            ...
 
         def after_trade(self, outcome, pnl):
             self.proverbs_record_outcome(outcome, pnl)
@@ -87,27 +81,11 @@ class ProverbsIntegrationMixin:
             logger.info(f"[{bot_name} PROVERBS]   Performance tracking: ENABLED")
         else:
             logger.warning(f"[{bot_name} PROVERBS] Integration NOT available - running without feedback loop")
-            logger.warning(f"[{bot_name} PROVERBS]   Kill switch monitoring: DISABLED")
             logger.warning(f"[{bot_name} PROVERBS]   Outcome recording: DISABLED")
 
     def proverbs_can_trade(self, cache_seconds: int = 60) -> bool:
-        """
-        Check if this bot is allowed to trade.
-
-        Queries the kill switch state via ProverbsFeedbackLoop.
-
-        Args:
-            cache_seconds: Ignored (kept for API compatibility)
-
-        Returns:
-            True if trading is allowed, False if kill switch is active
-        """
-        if not self._proverbs_available or self._proverbs is None:
-            return True  # If proverbs unavailable, allow trading
-        try:
-            return not self._proverbs.is_bot_killed(self._proverbs_bot_name)
-        except Exception:
-            return True  # On error, allow trading (fail-open)
+        """Always returns True — kill switches have been removed."""
+        return True
 
     def proverbs_record_outcome(
         self,
@@ -247,25 +225,6 @@ class ProverbsIntegrationMixin:
             logger.debug(f"{self._proverbs_bot_name}: Could not record performance: {e}")
             return False
 
-
-# Convenience function for bots that don't use the mixin
-def check_proverbs_kill_switch(bot_name: str) -> bool:
-    """
-    Check if a bot's kill switch is active.
-
-    Queries the kill switch state from the database via ProverbsFeedbackLoop.
-
-    Returns:
-        True if kill switch is active (bot should NOT trade), False otherwise
-    """
-    try:
-        from quant.proverbs_feedback_loop import get_proverbs
-        proverbs = get_proverbs()
-        if proverbs is None:
-            return False
-        return proverbs.is_bot_killed(bot_name)
-    except Exception:
-        return False  # On error, allow trading (fail-open)
 
 
 def record_bot_outcome(

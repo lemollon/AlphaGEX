@@ -51,15 +51,6 @@ except ImportError:
     import pytz
     CENTRAL_TZ = pytz.timezone("America/Chicago")
 
-# Proverbs kill switch integration (same pattern as SAMSON)
-try:
-    from quant.proverbs_enhancements import get_proverbs_enhanced
-    PROVERBS_ENHANCED_AVAILABLE = True
-except ImportError:
-    PROVERBS_ENHANCED_AVAILABLE = False
-    get_proverbs_enhanced = None
-
-
 class JubileeTrader:
     """
     Main orchestrator for the JUBILEE box spread system.
@@ -1057,17 +1048,6 @@ class JubileeICTrader:
             if not self._in_trading_window():
                 result['skip_reason'] = "Outside trading window"
                 return result
-
-            # Check Proverbs kill switch — blocks NEW entries (same as SAMSON)
-            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
-                try:
-                    enhanced = get_proverbs_enhanced()
-                    if enhanced and enhanced.proverbs.is_bot_killed('JUBILEE'):
-                        logger.warning("[JUBILEE IC] Kill switch ACTIVE — skipping cycle (no new entries)")
-                        result['skip_reason'] = "Kill switch active"
-                        return result
-                except Exception as e:
-                    logger.debug(f"[JUBILEE IC] Kill switch check failed (fail-open): {e}")
 
             # Step 1: Check exit conditions on all open positions
             exit_results = self._check_all_exits()

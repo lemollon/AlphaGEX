@@ -110,7 +110,7 @@ class AgapeConfig:
     min_oracle_win_probability: float = 0.35  # Lower threshold when advisory
 
     # Cooldown - AGGRESSIVE
-    cooldown_minutes: int = 5          # Short cooldown (was 30)
+    cooldown_minutes: int = 0          # Cooldowns removed — trade freely
 
     # Loss streak protection (from VALOR)
     max_consecutive_losses: int = 3    # Pause after 3 losses in a row

@@ -1346,15 +1346,7 @@ class WeekendPreChecker:
 
     def _analyze_bot_readiness(self, bot_name: str) -> Dict:
         """Analyze if a bot is ready for the upcoming week"""
-        is_killed = self.proverbs.is_bot_killed(bot_name)
         performance = self.proverbs._get_current_performance(bot_name)
-
-        if is_killed:
-            return {
-                'action': 'DISABLED',
-                'reason': 'Kill switch is active',
-                'confidence': 1.0
-            }
 
         win_rate = performance.get('win_rate', 0)
 

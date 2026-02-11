@@ -148,58 +148,15 @@ def _get_bot_wiring_status() -> Dict[str, Any]:
 
 
 def _get_kill_switch_db_state(bot_name: str) -> Dict[str, Any]:
-    """Read actual kill switch state from database"""
-    result = {
+    """Kill switches removed — always returns not-killed state."""
+    return {
         "db_is_killed": False,
         "db_kill_reason": None,
         "db_killed_at": None,
         "is_bot_killed_returns": False,
-        "mismatch": False
+        "mismatch": False,
+        "message": "Kill switches have been removed"
     }
-
-    if not DB_AVAILABLE:
-        result["error"] = "Database not available"
-        return result
-
-    conn = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """SELECT is_killed, kill_reason, killed_at
-               FROM proverbs_kill_switch
-               WHERE bot_name = %s
-               ORDER BY killed_at DESC NULLS LAST
-               LIMIT 1""",
-            [bot_name]
-        )
-        row = cursor.fetchone()
-
-        if row:
-            result["db_is_killed"] = bool(row[0])
-            result["db_kill_reason"] = row[1]
-            result["db_killed_at"] = row[2].isoformat() if row[2] else None
-    except Exception as e:
-        logger.warning(f"Could not read kill switch DB for {bot_name}: {e}")
-        result["error"] = str(e)
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-    # Check what is_bot_killed() actually returns (known to always be False)
-    if PROVERBS_FEEDBACK_AVAILABLE:
-        try:
-            pfl = ProverbsFeedbackLoop()
-            result["is_bot_killed_returns"] = pfl.is_bot_killed(bot_name)
-        except Exception:
-            pass
-
-    # Flag mismatch
-    result["mismatch"] = result["db_is_killed"] and not result["is_bot_killed_returns"]
-    return result
 
 
 def _get_training_schedule() -> List[Dict[str, Any]]:
@@ -834,200 +791,31 @@ async def get_bot_detail(bot_name: str):
 
 @router.post("/bots/{bot_name}/kill")
 async def kill_bot(bot_name: str, request: KillSwitchRequest):
-    """
-    Manually activate kill switch for a bot.
-
-    This writes directly to the proverbs_kill_switch database table,
-    bypassing the broken is_bot_killed() method.
-    """
-    bot = bot_name.upper()
-    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR", "JUBILEE"]
-    if bot not in valid_bots:
-        raise HTTPException(status_code=400, detail=f"Invalid bot. Must be one of: {', '.join(valid_bots)}")
-
-    if not DB_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-
-    conn = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        now = datetime.now(CENTRAL_TZ)
-
-        # Upsert kill switch state
-        cursor.execute("""
-            INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, killed_at, killed_by)
-            VALUES (%s, TRUE, %s, %s, %s)
-            ON CONFLICT (bot_name) DO UPDATE SET
-                is_killed = TRUE,
-                kill_reason = EXCLUDED.kill_reason,
-                killed_at = EXCLUDED.killed_at,
-                killed_by = EXCLUDED.killed_by
-        """, [bot, f"MANUAL KILL via OMEGA API: {request.reason}", now, f"USER:OMEGA_API"])
-
-        # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
-        cursor.execute("""
-            INSERT INTO proverbs_audit_log (action_type, bot_name, actor, action_description, reason, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, [
-            "MANUAL_KILL",
-            bot,
-            "OMEGA API",
-            f"Manual kill switch activation for {bot}",
-            request.reason,
-            now
-        ])
-
-        conn.commit()
-
-        logger.warning(f"OMEGA API: Manual kill activated for {bot} — reason: {request.reason}")
-
-        return {
-            "status": "success",
-            "action": "KILL_ACTIVATED",
-            "bot_name": bot,
-            "reason": request.reason,
-            "timestamp": now.isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Kill bot {bot} failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    """Kill switches have been removed. This endpoint is a no-op."""
+    return {
+        "status": "success",
+        "message": "Kill switches have been removed. Bots cannot be killed.",
+        "bot_name": bot_name.upper()
+    }
 
 
 @router.post("/bots/{bot_name}/revive")
 async def revive_bot(bot_name: str, request: KillSwitchRequest):
-    """
-    Revive a killed bot (deactivate kill switch).
-
-    Requires explicit confirmation reason.
-    """
-    bot = bot_name.upper()
-    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR", "JUBILEE"]
-    if bot not in valid_bots:
-        raise HTTPException(status_code=400, detail=f"Invalid bot. Must be one of: {', '.join(valid_bots)}")
-
-    if not DB_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-
-    conn = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        now = datetime.now(CENTRAL_TZ)
-
-        # UPSERT instead of UPDATE — handles case where bot has no row yet
-        cursor.execute("""
-            INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, resumed_at, resumed_by)
-            VALUES (%s, FALSE, %s, %s, %s)
-            ON CONFLICT (bot_name) DO UPDATE SET
-                is_killed = FALSE,
-                kill_reason = EXCLUDED.kill_reason,
-                resumed_at = EXCLUDED.resumed_at,
-                resumed_by = EXCLUDED.resumed_by
-        """, [bot, f"REVIVED via OMEGA API: {request.reason}", now, "OMEGA API"])
-
-        # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
-        cursor.execute("""
-            INSERT INTO proverbs_audit_log (action_type, bot_name, actor, action_description, reason, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, [
-            "MANUAL_REVIVE",
-            bot,
-            "OMEGA API",
-            f"Kill switch deactivated (bot revived) for {bot}",
-            request.reason,
-            now
-        ])
-
-        conn.commit()
-
-        logger.info(f"OMEGA API: Bot {bot} revived — reason: {request.reason}")
-
-        return {
-            "status": "success",
-            "action": "BOT_REVIVED",
-            "bot_name": bot,
-            "reason": request.reason,
-            "timestamp": now.isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Revive bot {bot} failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    """Kill switches have been removed. This endpoint is a no-op."""
+    return {
+        "status": "success",
+        "message": "Kill switches have been removed. All bots are always active.",
+        "bot_name": bot_name.upper()
+    }
 
 
 @router.post("/bots/kill-all")
 async def kill_all_bots(request: KillSwitchRequest):
-    """
-    Emergency kill all bots.
-
-    This is the panic button — activates kill switch for every trading bot.
-    """
-    if not DB_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Database not available")
-
-    conn = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        now = datetime.now(CENTRAL_TZ)
-        bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR", "JUBILEE"]
-
-        for bot in bots:
-            cursor.execute("""
-                INSERT INTO proverbs_kill_switch (bot_name, is_killed, kill_reason, killed_at, killed_by)
-                VALUES (%s, TRUE, %s, %s, %s)
-                ON CONFLICT (bot_name) DO UPDATE SET
-                    is_killed = TRUE,
-                    kill_reason = EXCLUDED.kill_reason,
-                    killed_at = EXCLUDED.killed_at,
-                    killed_by = EXCLUDED.killed_by
-            """, [bot, f"EMERGENCY KILL ALL via OMEGA API: {request.reason}", now, "USER:OMEGA_API"])
-
-        # Log to audit trail (schema: action_type, bot_name, actor, action_description, reason)
-        cursor.execute("""
-            INSERT INTO proverbs_audit_log (action_type, bot_name, actor, action_description, reason, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, [
-            "EMERGENCY_KILL_ALL",
-            "ALL_BOTS",
-            "OMEGA API",
-            f"Emergency kill all bots: {', '.join(bots)}",
-            request.reason,
-            now
-        ])
-
-        conn.commit()
-
-        logger.critical(f"OMEGA API: EMERGENCY KILL ALL — reason: {request.reason}")
-
-        return {
-            "status": "success",
-            "action": "ALL_BOTS_KILLED",
-            "bots_killed": bots,
-            "reason": request.reason,
-            "timestamp": now.isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Kill all bots failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
+    """Kill switches have been removed. This endpoint is a no-op."""
+    return {
+        "status": "success",
+        "message": "Kill switches have been removed. Bots cannot be killed."
+    }
 
 
 # =============================================================================

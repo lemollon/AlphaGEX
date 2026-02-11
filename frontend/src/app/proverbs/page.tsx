@@ -5,7 +5,7 @@ import {
   Brain, Activity, AlertTriangle, CheckCircle, XCircle,
   Clock, RefreshCw, ChevronDown, ChevronUp, ChevronRight,
   RotateCcw, Play, Pause, FileText, TrendingDown,
-  History, Target, Lock, Unlock,
+  History, Target,
   BarChart2, Calendar, Sun, Moon, GitBranch, Layers,
   Timer, Repeat, CircleCheck
 } from 'lucide-react'
@@ -213,7 +213,7 @@ const RealTimePnL = ({ value, previousValue }: { value: number, previousValue?: 
 
 interface BotStatus {
   name: string
-  is_killed: boolean
+  is_killed?: boolean  // Deprecated: kill switches removed
   performance: {
     total_trades: number
     wins: number
@@ -295,7 +295,7 @@ interface DashboardData {
   bots: Record<string, BotStatus>
   pending_proposals: Proposal[]
   recent_actions: AuditEntry[]
-  kill_switch_status: Record<string, unknown>
+  kill_switch_status?: Record<string, unknown>  // Deprecated: kill switches removed
   health: {
     database: boolean
     prophet: boolean
@@ -340,8 +340,8 @@ const BotCard = ({
   sparklineData
 }: {
   bot: BotStatus
-  onKill: (name: string) => void
-  onResume: (name: string) => void
+  onKill?: (name: string) => void
+  onResume?: (name: string) => void
   onViewVersions: (name: string) => void
   sparklineData?: number[]
 }) => {
@@ -360,35 +360,13 @@ const BotCard = ({
   const streakColor = wins > losses ? 'text-green-400' : losses > wins ? 'text-red-400' : 'text-gray-400'
 
   return (
-    <div className={`bg-gray-800 rounded-lg border ${bot.is_killed ? 'border-red-500/50' : 'border-gray-700'} p-4`}>
+    <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${bot.is_killed ? 'bg-red-500' : 'bg-green-500'} animate-pulse`} />
+          <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
           <h3 className="text-lg font-bold text-white">{bot.name}</h3>
-          {bot.is_killed && (
-            <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded border border-red-500/50">
-              KILLED
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-2">
-          {bot.is_killed ? (
-            <button
-              onClick={() => onResume(bot.name)}
-              className="p-1.5 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 transition-colors"
-              title="Resume Bot"
-            >
-              <Unlock className="w-4 h-4" />
-            </button>
-          ) : (
-            <button
-              onClick={() => onKill(bot.name)}
-              className="p-1.5 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"
-              title="Kill Bot"
-            >
-              <Lock className="w-4 h-4" />
-            </button>
-          )}
           <button
             onClick={() => onViewVersions(bot.name)}
             className="p-1.5 bg-blue-500/20 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
@@ -1124,32 +1102,13 @@ export default function ProverbsPage() {
     return () => clearInterval(interval)
   }, [autoRefresh, fetchDashboard])
 
-  const handleKillBot = async (botName: string) => {
-    const reason = prompt(`Why are you killing ${botName}?`)
-    if (!reason) return
-
-    try {
-      await apiClient.activateProverbsKillswitch(botName, {
-        reason,
-        user: 'Dashboard User'
-      })
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to kill bot:', err)
-      alert('Failed to activate kill switch')
-    }
+  // Kill switches have been removed - these are no-ops
+  const handleKillBot = async (_botName: string) => {
+    // Kill switches removed from backend
   }
 
-  const handleResumeBot = async (botName: string) => {
-    try {
-      await apiClient.deactivateProverbsKillswitch(botName, {
-        user: 'Dashboard User'
-      })
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to resume bot:', err)
-      alert('Failed to deactivate kill switch')
-    }
+  const handleResumeBot = async (_botName: string) => {
+    // Kill switches removed from backend
   }
 
   const handleViewVersions = async (botName: string) => {
