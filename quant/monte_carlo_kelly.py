@@ -27,15 +27,9 @@ Date: 2025-12-03
 """
 
 import numpy as np
-import pandas as pd
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
-from enum import Enum
-import json
-
-# For statistical distributions
-from scipy import stats
 
 
 @dataclass
@@ -245,7 +239,8 @@ class MonteCarloKelly:
         trough = 1.0
         max_drawdown = 0
 
-        for _ in range(self.num_trades_per_sim):
+        actual_trades = self.num_trades_per_sim
+        for trade_idx in range(self.num_trades_per_sim):
             # Amount to risk
             risk_amount = equity * kelly_fraction
 
@@ -268,12 +263,13 @@ class MonteCarloKelly:
 
             # Check for ruin
             if equity < self.RUIN_THRESHOLD:
+                actual_trades = trade_idx + 1
                 break
 
         return SimulationResult(
             final_equity=equity,
             max_drawdown_pct=max_drawdown * 100,
-            num_trades=self.num_trades_per_sim,
+            num_trades=actual_trades,
             ruin=equity < self.RUIN_THRESHOLD,
             peak_equity=peak,
             trough_equity=trough
@@ -327,9 +323,9 @@ class MonteCarloKelly:
         var_95 = np.percentile(final_equities, 5)
 
         # Conditional VaR (mean of worst 5%)
-        cutoff = np.percentile(final_equities, 5)
-        worst_5pct = [e for e in final_equities if e <= cutoff]
-        cvar_95 = np.mean(worst_5pct) if worst_5pct else var_95
+        sorted_equities = sorted(final_equities)
+        worst_n = max(1, len(sorted_equities) // 20)  # Strict 5%
+        cvar_95 = np.mean(sorted_equities[:worst_n])
 
         return {
             'prob_ruin': ruin_count / len(results),

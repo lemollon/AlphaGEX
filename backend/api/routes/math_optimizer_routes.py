@@ -1108,32 +1108,34 @@ async def get_recent_decisions(limit: int = Query(20, description="Number of dec
             from database_adapter import get_connection
 
             conn = get_connection()
-            cursor = conn.cursor()
+            try:
+                cursor = conn.cursor()
 
-            # Query Proverbs audit log for math optimizer actions
-            cursor.execute("""
-                SELECT
-                    timestamp,
-                    bot_name,
-                    action_type,
-                    action_description,
-                    justification,
-                    success
-                FROM proverbs_audit_log
-                WHERE action_type IN (
-                    'HMM_REGIME_UPDATE',
-                    'THOMPSON_ALLOCATION',
-                    'HJB_EXIT_SIGNAL',
-                    'KALMAN_SMOOTHING',
-                    'CONVEX_STRIKE_OPTIMIZATION',
-                    'MDP_TRADE_SEQUENCE'
-                )
-                ORDER BY timestamp DESC
-                LIMIT %s
-            """, (limit,))
+                # Query Proverbs audit log for math optimizer actions
+                cursor.execute("""
+                    SELECT
+                        timestamp,
+                        bot_name,
+                        action_type,
+                        action_description,
+                        justification,
+                        success
+                    FROM proverbs_audit_log
+                    WHERE action_type IN (
+                        'HMM_REGIME_UPDATE',
+                        'THOMPSON_ALLOCATION',
+                        'HJB_EXIT_SIGNAL',
+                        'KALMAN_SMOOTHING',
+                        'CONVEX_STRIKE_OPTIMIZATION',
+                        'MDP_TRADE_SEQUENCE'
+                    )
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                """, (limit,))
 
-            rows = cursor.fetchall()
-            conn.close()
+                rows = cursor.fetchall()
+            finally:
+                conn.close()
 
             decisions = []
             for row in rows:

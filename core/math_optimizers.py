@@ -546,8 +546,9 @@ class KalmanFilter:
         # Innovation (measurement residual)
         y = observation - self.H * x_pred
 
-        # Innovation covariance
+        # Innovation covariance (guard against near-zero)
         S = self.H * P_pred * self.H + self.R
+        S = max(S, 1e-10)
 
         # Kalman gain
         K = P_pred * self.H / S
@@ -700,7 +701,8 @@ class ThompsonSamplingAllocator:
             weight = 1 + min(abs(pnl) / 100, 2)  # Cap at 3x weight
             self.alpha[bot_name] += weight
         else:
-            weight = 1 + min(abs(pnl) / 100, 2)
+            # Losses penalized more heavily (2x scale, 4x cap)
+            weight = 1 + min(abs(pnl) / 50, 3)
             self.beta[bot_name] += weight
 
         logger.debug(f"Thompson: {bot_name} outcome recorded (win={win}, α={self.alpha[bot_name]:.1f}, β={self.beta[bot_name]:.1f})")
@@ -977,8 +979,8 @@ class ConvexStrikeOptimizer:
             time_to_expiry=time_to_expiry
         )
 
-        # Calculate improvement
-        improvement = ((original_loss - best_loss) / original_loss * 100) if original_loss > 0 else 0
+        # Calculate improvement (guard against near-zero denominator)
+        improvement = ((original_loss - best_loss) / max(abs(original_loss), 1e-6) * 100) if original_loss > 0 else 0
 
         result = StrikeOptimization(
             original_strike=original_strike_data['strike'],
@@ -1262,8 +1264,10 @@ class MDPTradeSequencer:
             if pos.get('symbol') == symbol and pos.get('direction') == direction:
                 return True, f"Redundant: Already have {direction} position in {symbol}"
 
-        # Check other pending trades (higher priority)
+        # Check other pending trades (higher priority, skip self)
         for pending in other_pending:
+            if pending is trade:
+                continue
             if pending.get('priority', 0) > trade.get('priority', 0):
                 if pending.get('symbol') == symbol:
                     return True, f"Redundant: Higher priority trade pending for {symbol}"
@@ -1340,7 +1344,7 @@ class MDPTradeSequencer:
             for t in optimized_order
         )
 
-        improvement = ((ev_optimized - ev_original) / ev_original * 100) if ev_original > 0 else 0
+        improvement = ((ev_optimized - ev_original) / max(abs(ev_original), 1e-6) * 100) if ev_original > 0 else 0
 
         result = TradeSequence(
             original_order=original_order,

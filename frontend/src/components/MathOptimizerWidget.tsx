@@ -37,56 +37,77 @@ interface BotAllocation {
 
 interface MathOptimizerStatus {
   available: boolean
-  regime_detection: {
-    current_regime: string
-    probability: number
-    is_favorable: boolean
+  optimizers: Record<string, any>
+}
+
+interface LiveDashboardData {
+  status: string
+  regime: RegimeData
+  thompson: {
+    bot_stats: Record<string, {
+      expected_win_rate: number
+      uncertainty: number
+      allocation_pct: number
+      integrated: boolean
+    }>
+    total_outcomes_recorded: number
   }
-  thompson_sampling: {
-    bots: BotAllocation[]
+  kalman: {
+    smoothed_greeks: Record<string, number>
+    active: boolean
   }
-  kalman_filter: {
-    available: boolean
-  }
-  recent_decisions: number
+  optimization_counts: Record<string, number>
 }
 
 export default function MathOptimizerWidget() {
   const [expanded, setExpanded] = useState(true)
 
-  const { data: statusData, isLoading, mutate } = useSWR<{ data: MathOptimizerStatus }>(
+  const { data: statusData, isLoading, mutate } = useSWR<MathOptimizerStatus>(
     '/api/math-optimizer/status',
     fetcher,
     { refreshInterval: 30000 }
   )
 
-  const { data: liveDashboard } = useSWR<{ data: any }>(
+  const { data: liveDashboard } = useSWR<LiveDashboardData>(
     '/api/math-optimizer/live-dashboard',
     fetcher,
     { refreshInterval: 60000 }
   )
 
-  const status = statusData?.data
-  const live = liveDashboard?.data
+  // Live dashboard is the primary data source
+  const live = liveDashboard
 
-  // Extract data
-  const regime = status?.regime_detection || live?.regime_detection
-  const thompson = status?.thompson_sampling || live?.thompson_sampling
-  const bots = thompson?.bots || []
+  // Extract regime from live-dashboard (uses "regime.current", not "regime_detection")
+  const regime: RegimeData | undefined = live?.regime
+  const kalmanActive = live?.kalman?.active || false
+
+  // Build bot array from thompson.bot_stats
+  const botStats = live?.thompson?.bot_stats || {}
+  const bots: BotAllocation[] = Object.entries(botStats).map(([name, stats]) => ({
+    bot: name,
+    expected_win_rate: (stats as any).expected_win_rate || 0.5,
+    allocation_pct: ((stats as any).allocation_pct || 0.2) * 100,
+    integrated: (stats as any).integrated || false
+  }))
   const integratedBots = bots.filter((b: BotAllocation) => b.integrated).length
-  const totalDecisions = live?.recent_decisions_count || status?.recent_decisions || 0
+  const totalDecisions = live?.optimization_counts
+    ? Object.values(live.optimization_counts).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0)
+    : 0
 
   // Overall health
-  const isAvailable = status?.available !== false
-  const regimeDetected = regime?.current_regime && regime.current_regime !== 'unknown'
+  const isAvailable = statusData?.available !== false && live?.status !== 'error'
+  const regimeDetected = regime?.current && regime.current !== 'Unknown'
 
-  // Regime colors
-  const regimeColors: Record<string, string> = {
-    'trending': 'text-success',
-    'mean-reverting': 'text-cyan-400',
-    'high-volatility': 'text-warning',
-    'low-volatility': 'text-info',
-    'unknown': 'text-text-muted'
+  // Regime colors (match backend format: "Trending Bullish", "Mean Reverting", etc.)
+  const getRegimeColor = (regimeName: string): string => {
+    const lower = regimeName.toLowerCase()
+    if (lower.includes('trending')) return 'text-success'
+    if (lower.includes('mean')) return 'text-cyan-400'
+    if (lower.includes('high') && lower.includes('vol')) return 'text-warning'
+    if (lower.includes('low') && lower.includes('vol')) return 'text-info'
+    if (lower.includes('squeeze')) return 'text-danger'
+    if (lower.includes('pinned')) return 'text-purple-400'
+    return 'text-text-muted'
   }
 
   if (isLoading) {
@@ -117,9 +138,9 @@ export default function MathOptimizerWidget() {
             <h3 className="text-sm font-semibold text-text-primary">Math Optimizer</h3>
             <div className="flex items-center gap-3 text-xs text-text-muted">
               {regimeDetected ? (
-                <span className={`flex items-center gap-1 ${regimeColors[regime?.current_regime || 'unknown']}`}>
+                <span className={`flex items-center gap-1 ${getRegimeColor(regime?.current || '')}`}>
                   <GitBranch className="w-3 h-3" />
-                  {regime?.current_regime}
+                  {regime?.current}
                 </span>
               ) : (
                 <span className="flex items-center gap-1 text-text-muted">
@@ -171,7 +192,7 @@ export default function MathOptimizerWidget() {
               </div>
             </div>
             <div className={`p-2 rounded-lg border ${
-              status?.kalman_filter?.available
+              kalmanActive
                 ? 'bg-success/10 border-success/30'
                 : 'bg-background-hover border-border/50'
             }`}>
@@ -180,7 +201,7 @@ export default function MathOptimizerWidget() {
                 <span className="text-[10px] text-text-muted">Kalman</span>
               </div>
               <div className="text-xs font-medium text-text-primary">
-                {status?.kalman_filter?.available ? 'Active' : 'Init'}
+                {kalmanActive ? 'Active' : 'Init'}
               </div>
             </div>
             <div className={`p-2 rounded-lg border ${
@@ -208,8 +229,8 @@ export default function MathOptimizerWidget() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-xs text-text-muted mb-1">Current Regime</div>
-                  <div className={`text-sm font-bold capitalize ${regimeColors[regime.current_regime] || 'text-text-primary'}`}>
-                    {regime.current_regime || 'Unknown'}
+                  <div className={`text-sm font-bold capitalize ${getRegimeColor(regime.current || '')}`}>
+                    {regime.current || 'Unknown'}
                   </div>
                 </div>
                 <div className="text-right">
