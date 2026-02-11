@@ -5260,7 +5260,7 @@ class ProphetAdvisor:
                 # New behavior: Multiple predictions per day, linked by position_id when available.
                 # Determine strategy_type from bot name
                 strategy_type = 'DIRECTIONAL' if prediction.bot_name.value in (
-                    'SOLOMON', 'GIDEON', 'LAZARUS'
+                    'SOLOMON', 'GIDEON', 'LAZARUS', 'CORNERSTONE'
                 ) else 'IRON_CONDOR'
 
                 cursor.execute("""

@@ -271,7 +271,7 @@ async def get_omega_status():
                     "name": "PROVERBS Safety Gate",
                     "status": "ACTIVE" if PROVERBS_AVAILABLE else "UNAVAILABLE",
                     "authority": "ABSOLUTE — can veto all trades",
-                    "known_bug": "is_bot_killed() always returns False"
+                    "known_bug": None
                 },
                 "layer_2_ensemble": {
                     "name": "Ensemble Context",
@@ -535,7 +535,7 @@ async def get_all_layers():
                     "available": PROVERBS_AVAILABLE,
                     "enabled": True,
                     "description": "Consecutive loss tracking, daily loss limits, kill switch management",
-                    "known_bugs": ["is_bot_killed() always returns False — kill switch enforcement broken"],
+                    "known_bugs": [],
                     "files": ["quant/proverbs_enhancements.py", "quant/proverbs_feedback_loop.py"],
                     "line_count": 5919,
                 },
@@ -612,7 +612,7 @@ async def get_layer_detail(layer_number: int):
                 "layer": 1,
                 "name": "PROVERBS Safety Gate",
                 "bots": proverbs_data,
-                "known_bug": "is_bot_killed() always returns False",
+                "known_bug": None,
                 "timestamp": datetime.now(CENTRAL_TZ).isoformat()
             }
 
@@ -886,8 +886,6 @@ async def kill_bot(bot_name: str, request: KillSwitchRequest):
             "action": "KILL_ACTIVATED",
             "bot_name": bot,
             "reason": request.reason,
-            "warning": "NOTE: is_bot_killed() still returns False due to known bug. "
-                       "This sets the DB state but enforcement depends on the P0 fix.",
             "timestamp": now.isoformat()
         }
     except Exception as e:
@@ -1017,8 +1015,6 @@ async def kill_all_bots(request: KillSwitchRequest):
             "action": "ALL_BOTS_KILLED",
             "bots_killed": bots,
             "reason": request.reason,
-            "warning": "NOTE: is_bot_killed() still returns False due to known bug. "
-                       "DB state is set but enforcement depends on the P0 fix.",
             "timestamp": now.isoformat()
         }
     except Exception as e:
@@ -1326,8 +1322,8 @@ async def get_ml_systems():
             "type": "Guardrails + feedback loop",
             "role": "Safety, kill switch, outcome recording, A/B testing",
             "version": "V1",
-            "status": "PARTIALLY_BROKEN",
-            "known_bug": "is_bot_killed() always returns False",
+            "status": "OPERATIONAL",
+            "known_bug": None,
         },
         {
             "name": "DISCERNMENT",

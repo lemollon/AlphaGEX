@@ -4,7 +4,7 @@ import React, { useState } from 'react'
 import {
   Shield, AlertOctagon, AlertTriangle, Lock,
   Activity, TrendingUp, TrendingDown, Minus,
-  ChevronLeft, Bug, Eye, Power, FileText, RefreshCw
+  ChevronLeft, Eye, Power, FileText, RefreshCw
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -176,7 +176,7 @@ const KillSwitchCard = ({
             {fnReturns ? 'TRUE' : 'FALSE'}
           </div>
           <div className="text-[10px] text-yellow-400/70 mt-1">
-            {hasMismatch ? 'BUG: Always FALSE' : fnReturns ? 'Enforced' : 'Trading allowed'}
+            {hasMismatch ? 'Check DB sync' : fnReturns ? 'Enforced' : 'Trading allowed'}
           </div>
         </div>
       </div>
@@ -464,21 +464,19 @@ export default function OmegaSafetyPage() {
           </div>
         </div>
 
-        {/* ==================== KNOWN BUG BANNER ==================== */}
-        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/40 rounded-lg">
+        {/* ==================== KILL SWITCH STATUS BANNER ==================== */}
+        <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
           <div className="flex items-start gap-3">
-            <Bug className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+            <Shield className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
             <div>
-              <div className="text-sm font-bold text-red-400 mb-1">
-                PROVERBS Kill Switch Bug (P0)
+              <div className="text-sm font-bold text-green-400 mb-1">
+                Kill Switch Operational
               </div>
-              <p className="text-xs text-red-300/80 leading-relaxed">
-                <span className="font-mono bg-red-500/20 px-1 py-0.5 rounded">is_bot_killed()</span>{' '}
-                always returns <span className="font-mono font-bold">False</span>{' '}
-                (proverbs_enhancements.py, line 2286).
-                The kill switch writes to the database correctly, but the check function never reads it.
-                Bots continue trading even when &quot;killed&quot;. The Kill/Revive buttons below will
-                update the database state, but <strong>enforcement is broken until this bug is fixed</strong>.
+              <p className="text-xs text-green-300/80 leading-relaxed">
+                <span className="font-mono bg-green-500/20 px-1 py-0.5 rounded">is_bot_killed()</span>{' '}
+                queries the <span className="font-mono font-bold">proverbs_kill_switch</span> table
+                and returns the correct state. Kill/Revive actions below will take immediate effect.
+                Bots check this function before every trade cycle.
               </p>
             </div>
           </div>
@@ -735,8 +733,8 @@ export default function OmegaSafetyPage() {
               {killModal.action === 'kill' ? (
                 <div className="text-xs text-yellow-400/80 bg-yellow-500/10 border border-yellow-500/20 rounded p-2 mb-4">
                   <AlertTriangle className="w-3 h-3 inline mr-1" />
-                  The kill switch will be set in the database. Due to the is_bot_killed() bug,
-                  enforcement depends on the P0 fix being deployed.
+                  The kill switch will be activated. The bot will stop entering new trades
+                  at its next scan cycle (within 5 minutes).
                 </div>
               ) : (
                 <p className="text-xs text-text-secondary mb-4">
@@ -797,7 +795,7 @@ export default function OmegaSafetyPage() {
               <div className="text-xs text-red-300/80 bg-red-500/10 border border-red-500/20 rounded p-2 mb-4">
                 <AlertTriangle className="w-3 h-3 inline mr-1" />
                 This action is irreversible without manually reviving each bot individually.
-                Due to the is_bot_killed() bug, actual enforcement depends on the P0 fix.
+                All bots will stop entering new trades at their next scan cycle.
               </div>
               <div className="mb-4 p-2 bg-gray-800/50 rounded text-xs text-text-secondary">
                 <div className="font-medium text-text-primary mb-1">Bots to be killed:</div>
