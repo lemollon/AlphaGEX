@@ -209,18 +209,6 @@ class AnchorTrader(MathOptimizerMixin):
                 self._log_scan_activity(result, scan_context, skip_reason="Close-only mode after market")
                 return result
 
-            # Check Proverbs kill switch — blocks NEW entries but allows close_only
-            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
-                try:
-                    enhanced = get_proverbs_enhanced()
-                    if enhanced and enhanced.proverbs.is_bot_killed('ANCHOR'):
-                        logger.warning("[ANCHOR] Kill switch ACTIVE — skipping cycle (no new entries)")
-                        result['action'] = 'kill_switch_active'
-                        self._log_scan_activity(result, scan_context, skip_reason="Kill switch active")
-                        return result
-                except Exception as e:
-                    logger.debug(f"[ANCHOR] Kill switch check failed (fail-open): {e}")
-
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
             try:

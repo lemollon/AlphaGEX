@@ -1,13 +1,12 @@
 'use client'
 
-import React, { useState } from 'react'
+import React from 'react'
 import {
   Shield, AlertOctagon, AlertTriangle, Lock,
   Activity, TrendingUp, TrendingDown, Minus,
   ChevronLeft, Eye, Power, FileText, RefreshCw
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
 import {
   useOmegaBots,
   useOmegaCorrelations,
@@ -86,164 +85,37 @@ const ACTION_COLORS: Record<string, string> = {
   SYSTEM: 'text-blue-400 bg-blue-500/10',
 }
 
-// ==================== KILL SWITCH CARD ====================
+// ==================== KILL SWITCH CARD (REMOVED) ====================
 
 const KillSwitchCard = ({
   botName,
-  botData,
-  onKill,
-  onRevive,
 }: {
   botName: string
-  botData: BotData | undefined
-  onKill: (bot: string) => void
-  onRevive: (bot: string) => void
+  botData?: BotData | undefined
+  onKill?: (bot: string) => void
+  onRevive?: (bot: string) => void
 }) => {
-  const killSwitch = botData?.kill_switch || {
-    db_is_killed: false,
-    is_bot_killed_returns: false,
-    mismatch: false,
-  }
-  const verdict = botData?.proverbs_verdict || {
-    consecutive_losses: 0,
-    daily_loss_pct: 0,
-  }
-  const hasMismatch = killSwitch.mismatch === true
-  const dbKilled = killSwitch.db_is_killed === true
-  const fnReturns = killSwitch.is_bot_killed_returns === true
-
   return (
-    <div
-      className={`bg-background-card border rounded-xl p-5 shadow-card transition-all ${
-        hasMismatch
-          ? 'border-red-500/60 ring-2 ring-red-500/20'
-          : dbKilled
-          ? 'border-red-500/30'
-          : 'border-gray-700'
-      }`}
-    >
+    <div className="bg-background-card border border-gray-700 rounded-xl p-5 shadow-card transition-all">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
           <h3 className="text-lg font-bold text-text-primary">{botName}</h3>
           <p className="text-xs text-text-secondary">{STRATEGY_MAP[botName] || 'Unknown Strategy'}</p>
         </div>
-        <div
-          className={`px-3 py-1.5 rounded-full text-xs font-semibold ${
-            dbKilled
-              ? 'bg-red-500/15 text-red-400 border border-red-500/30'
-              : 'bg-green-500/15 text-green-400 border border-green-500/30'
-          }`}
-        >
-          {dbKilled ? 'KILLED' : 'ACTIVE'}
+        <div className="px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-500/15 text-gray-400 border border-gray-500/30">
+          REMOVED
         </div>
       </div>
 
-      {/* Mismatch Warning */}
-      {hasMismatch && (
-        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/40 rounded-lg">
-          <div className="flex items-center gap-2 text-red-400 font-bold text-sm mb-1">
-            <AlertOctagon className="w-4 h-4 flex-shrink-0" />
-            KILL SWITCH MISMATCH
-          </div>
-          <p className="text-xs text-red-300/80 leading-relaxed">
-            Database says <span className="font-mono font-bold">is_killed = TRUE</span> but{' '}
-            <span className="font-mono font-bold">is_bot_killed()</span> returns{' '}
-            <span className="font-mono font-bold">FALSE</span>.
-            Bot continues trading despite being &quot;killed&quot;.
-          </p>
-        </div>
-      )}
-
-      {/* Kill Switch State Grid */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <div className="text-[10px] uppercase tracking-wider text-text-secondary mb-1">DB State</div>
-          <div className={`text-sm font-bold font-mono ${dbKilled ? 'text-red-400' : 'text-green-400'}`}>
-            {dbKilled ? 'TRUE' : 'FALSE'}
-          </div>
-          {killSwitch.killed_at && (
-            <div className="text-[10px] text-text-secondary mt-1">
-              {new Date(killSwitch.killed_at).toLocaleString()}
-            </div>
-          )}
-        </div>
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <div className="text-[10px] uppercase tracking-wider text-text-secondary mb-1">
-            is_bot_killed()
-          </div>
-          <div className={`text-sm font-bold font-mono ${fnReturns ? 'text-red-400' : 'text-green-400'}`}>
-            {fnReturns ? 'TRUE' : 'FALSE'}
-          </div>
-          <div className="text-[10px] text-yellow-400/70 mt-1">
-            {hasMismatch ? 'Check DB sync' : fnReturns ? 'Enforced' : 'Trading allowed'}
-          </div>
-        </div>
-      </div>
-
-      {/* Risk Metrics */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <div className="text-[10px] uppercase tracking-wider text-text-secondary mb-1">
-            Consecutive Losses
-          </div>
-          <div
-            className={`text-xl font-bold ${
-              verdict.consecutive_losses >= 3
-                ? 'text-red-400'
-                : verdict.consecutive_losses >= 2
-                ? 'text-yellow-400'
-                : 'text-text-primary'
-            }`}
-          >
-            {verdict.consecutive_losses}
-          </div>
-        </div>
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <div className="text-[10px] uppercase tracking-wider text-text-secondary mb-1">
-            Daily Loss %
-          </div>
-          <div
-            className={`text-xl font-bold ${
-              verdict.daily_loss_pct >= 3
-                ? 'text-red-400'
-                : verdict.daily_loss_pct >= 1.5
-                ? 'text-yellow-400'
-                : 'text-text-primary'
-            }`}
-          >
-            {verdict.daily_loss_pct > 0 ? `-${verdict.daily_loss_pct.toFixed(1)}%` : '0.0%'}
-          </div>
-        </div>
-      </div>
-
-      {/* Kill Reason (if killed) */}
-      {dbKilled && killSwitch.killed_reason && (
-        <div className="mb-4 p-2 bg-gray-800/50 rounded text-xs text-text-secondary">
-          <span className="text-text-secondary/70">Reason: </span>
-          <span className="text-text-primary">{killSwitch.killed_reason}</span>
-        </div>
-      )}
-
-      {/* Action Button */}
-      <div className="mt-auto">
-        {dbKilled ? (
-          <button
-            onClick={() => onRevive(botName)}
-            className="w-full px-4 py-2.5 text-sm font-medium bg-green-600/20 text-green-400 border border-green-500/30 rounded-lg hover:bg-green-600/30 transition-colors flex items-center justify-center gap-2"
-          >
-            <Power className="w-4 h-4" />
-            Revive Bot
-          </button>
-        ) : (
-          <button
-            onClick={() => onKill(botName)}
-            className="w-full px-4 py-2.5 text-sm font-medium bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition-colors flex items-center justify-center gap-2"
-          >
-            <Lock className="w-4 h-4" />
-            Kill Bot
-          </button>
-        )}
+      {/* Removed Notice */}
+      <div className="p-3 bg-gray-800/50 rounded-lg text-center">
+        <p className="text-sm text-text-secondary">
+          Kill switches have been removed.
+        </p>
+        <p className="text-xs text-text-secondary/70 mt-1">
+          All bots always trade. Oracle controls trade frequency.
+        </p>
       </div>
     </div>
   )
@@ -357,12 +229,6 @@ export default function OmegaSafetyPage() {
   const { data: equityData } = useOmegaEquityScaling()
   const { data: auditData, mutate: mutateAudit } = useOmegaAuditLog(50)
 
-  const [killModal, setKillModal] = useState<{ bot: string; action: 'kill' | 'revive' } | null>(null)
-  const [killReason, setKillReason] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [killAllModal, setKillAllModal] = useState(false)
-  const [killAllReason, setKillAllReason] = useState('')
-
   // Derive data
   const bots: Record<string, BotData> = botsData?.bots || {}
   const correlations: CorrelationData = correlationData || {
@@ -372,57 +238,15 @@ export default function OmegaSafetyPage() {
   const equityScaling = (equityData as EquityScalingData | undefined)?.equity_scaling || null
   const auditEntries: AuditEntry[] = auditData?.entries || auditData?.audit_log || []
 
-  // Count mismatches
-  const mismatchCount = Object.values(bots).filter(
-    (b) => (b as BotData)?.kill_switch?.mismatch === true
-  ).length
-  const killedCount = Object.values(bots).filter(
-    (b) => (b as BotData)?.kill_switch?.db_is_killed === true
-  ).length
+  // Kill switches removed - counts are always 0
+  const mismatchCount = 0
+  const killedCount = 0
 
   // Direction counts from correlation data
   const directions = correlations.active_positions_by_direction || {
     bullish: 0,
     bearish: 0,
     neutral: 0,
-  }
-
-  // Handle kill/revive
-  const handleKillRevive = async () => {
-    if (!killModal || killReason.length < 5) return
-    setIsSubmitting(true)
-    try {
-      if (killModal.action === 'kill') {
-        await apiClient.killOmegaBot(killModal.bot, { reason: killReason })
-      } else {
-        await apiClient.reviveOmegaBot(killModal.bot, { reason: killReason })
-      }
-      setKillModal(null)
-      setKillReason('')
-      mutateBots()
-      mutateAudit()
-    } catch (err) {
-      alert(`Failed to ${killModal.action} ${killModal.bot}: ${err}`)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  // Handle kill all
-  const handleKillAll = async () => {
-    if (killAllReason.length < 5) return
-    setIsSubmitting(true)
-    try {
-      await apiClient.killAllOmegaBots({ reason: killAllReason })
-      setKillAllModal(false)
-      setKillAllReason('')
-      mutateBots()
-      mutateAudit()
-    } catch (err) {
-      alert(`Failed to kill all bots: ${err}`)
-    } finally {
-      setIsSubmitting(false)
-    }
   }
 
   return (
@@ -440,54 +264,37 @@ export default function OmegaSafetyPage() {
               Back to OMEGA Dashboard
             </a>
             <div className="flex items-center gap-3">
-              <Shield className="w-7 h-7 text-red-400" />
+              <Shield className="w-7 h-7 text-cyan-400" />
               <h1 className="text-2xl font-bold">Safety &amp; Risk</h1>
-              {mismatchCount > 0 && (
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 text-red-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-                  {mismatchCount} MISMATCH{mismatchCount > 1 ? 'ES' : ''}
-                </span>
-              )}
             </div>
             <p className="text-sm text-text-secondary mt-1">
-              Kill switch management, risk metrics, and audit trail
+              Risk metrics, correlations, and audit trail
             </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setKillAllModal(true)}
-              className="px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/40 rounded-lg hover:bg-red-600/30 transition-colors font-medium flex items-center gap-2"
-            >
-              <AlertOctagon className="w-4 h-4" />
-              KILL ALL BOTS
-            </button>
           </div>
         </div>
 
-        {/* ==================== KILL SWITCH STATUS BANNER ==================== */}
-        <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-lg">
+        {/* ==================== KILL SWITCH REMOVED BANNER ==================== */}
+        <div className="mb-6 p-4 bg-gray-500/10 border border-gray-500/30 rounded-lg">
           <div className="flex items-start gap-3">
-            <Shield className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+            <Shield className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
             <div>
-              <div className="text-sm font-bold text-green-400 mb-1">
-                Kill Switch Operational
+              <div className="text-sm font-bold text-gray-400 mb-1">
+                Kill Switches Removed
               </div>
-              <p className="text-xs text-green-300/80 leading-relaxed">
-                <span className="font-mono bg-green-500/20 px-1 py-0.5 rounded">is_bot_killed()</span>{' '}
-                queries the <span className="font-mono font-bold">proverbs_kill_switch</span> table
-                and returns the correct state. Kill/Revive actions below will take immediate effect.
-                Bots check this function before every trade cycle.
+              <p className="text-xs text-gray-400/80 leading-relaxed">
+                Kill switches have been removed from the backend. All bots always trade.
+                Oracle now controls trade frequency and risk decisions.
               </p>
             </div>
           </div>
         </div>
 
-        {/* ==================== KILL SWITCH DASHBOARD ==================== */}
+        {/* ==================== KILL SWITCH DASHBOARD (REMOVED) ==================== */}
         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
-          <Lock className="w-5 h-5 text-red-400" />
+          <Lock className="w-5 h-5 text-gray-500" />
           Kill Switch Dashboard
           <span className="text-xs text-text-secondary font-normal ml-2">
-            {killedCount} of {BOTS.length} killed
+            Removed — all bots always trade
           </span>
         </h2>
 
@@ -511,9 +318,6 @@ export default function OmegaSafetyPage() {
               <KillSwitchCard
                 key={name}
                 botName={name}
-                botData={bots[name]}
-                onKill={(bot) => setKillModal({ bot, action: 'kill' })}
-                onRevive={(bot) => setKillModal({ bot, action: 'revive' })}
               />
             ))}
           </div>
@@ -715,129 +519,6 @@ export default function OmegaSafetyPage() {
           <AuditLogTable entries={auditEntries} />
         </div>
 
-        {/* ==================== KILL/REVIVE MODAL ==================== */}
-        {killModal && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-            <div className="bg-background-card border border-gray-700 rounded-lg p-6 w-[420px] shadow-modal">
-              <h3 className="text-lg font-bold text-text-primary mb-2 flex items-center gap-2">
-                {killModal.action === 'kill' ? (
-                  <Lock className="w-5 h-5 text-red-400" />
-                ) : (
-                  <Power className="w-5 h-5 text-green-400" />
-                )}
-                {killModal.action === 'kill' ? 'Kill' : 'Revive'} {killModal.bot}?
-              </h3>
-              <p className="text-sm text-text-secondary mb-2">
-                {STRATEGY_MAP[killModal.bot]} bot
-              </p>
-              {killModal.action === 'kill' ? (
-                <div className="text-xs text-yellow-400/80 bg-yellow-500/10 border border-yellow-500/20 rounded p-2 mb-4">
-                  <AlertTriangle className="w-3 h-3 inline mr-1" />
-                  The kill switch will be activated. The bot will stop entering new trades
-                  at its next scan cycle (within 5 minutes).
-                </div>
-              ) : (
-                <p className="text-xs text-text-secondary mb-4">
-                  This will deactivate the kill switch and allow the bot to resume trading.
-                </p>
-              )}
-              <label className="block text-xs text-text-secondary mb-1.5">Reason (required)</label>
-              <input
-                type="text"
-                value={killReason}
-                onChange={(e) => setKillReason(e.target.value)}
-                placeholder="Enter reason (min 5 characters)..."
-                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-sm text-text-primary mb-4 focus:border-blue-500 focus:outline-none"
-                autoFocus
-              />
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setKillModal(null)
-                    setKillReason('')
-                  }}
-                  className="flex-1 px-4 py-2 text-sm bg-gray-700 text-text-secondary rounded hover:bg-gray-600 transition-colors"
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleKillRevive}
-                  disabled={killReason.length < 5 || isSubmitting}
-                  className={`flex-1 px-4 py-2 text-sm rounded transition-colors font-medium ${
-                    killModal.action === 'kill'
-                      ? 'bg-red-600 text-white hover:bg-red-500 disabled:bg-red-900 disabled:text-red-300'
-                      : 'bg-green-600 text-white hover:bg-green-500 disabled:bg-green-900 disabled:text-green-300'
-                  }`}
-                >
-                  {isSubmitting
-                    ? 'Processing...'
-                    : killModal.action === 'kill'
-                    ? 'Kill Bot'
-                    : 'Revive Bot'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ==================== KILL ALL MODAL ==================== */}
-        {killAllModal && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-            <div className="bg-background-card border border-red-500/30 rounded-lg p-6 w-[420px] shadow-modal">
-              <h3 className="text-lg font-bold text-red-400 mb-2 flex items-center gap-2">
-                <AlertOctagon className="w-5 h-5" />
-                EMERGENCY: Kill All Bots?
-              </h3>
-              <p className="text-sm text-text-secondary mb-2">
-                This will activate the kill switch for ALL {BOTS.length} trading bots.
-              </p>
-              <div className="text-xs text-red-300/80 bg-red-500/10 border border-red-500/20 rounded p-2 mb-4">
-                <AlertTriangle className="w-3 h-3 inline mr-1" />
-                This action is irreversible without manually reviving each bot individually.
-                All bots will stop entering new trades at their next scan cycle.
-              </div>
-              <div className="mb-4 p-2 bg-gray-800/50 rounded text-xs text-text-secondary">
-                <div className="font-medium text-text-primary mb-1">Bots to be killed:</div>
-                {BOTS.map((name) => (
-                  <div key={name} className="flex items-center gap-2 py-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                    <span>{name}</span>
-                    <span className="text-text-secondary/70">- {STRATEGY_MAP[name]}</span>
-                  </div>
-                ))}
-              </div>
-              <label className="block text-xs text-text-secondary mb-1.5">Reason (required)</label>
-              <input
-                type="text"
-                value={killAllReason}
-                onChange={(e) => setKillAllReason(e.target.value)}
-                placeholder="Enter reason (min 5 characters)..."
-                className="w-full px-3 py-2 bg-gray-800 border border-red-500/30 rounded text-sm text-text-primary mb-4 focus:border-red-500 focus:outline-none"
-                autoFocus
-              />
-              <div className="flex gap-3">
-                <button
-                  onClick={() => {
-                    setKillAllModal(false)
-                    setKillAllReason('')
-                  }}
-                  className="flex-1 px-4 py-2 text-sm bg-gray-700 text-text-secondary rounded hover:bg-gray-600 transition-colors"
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleKillAll}
-                  disabled={killAllReason.length < 5 || isSubmitting}
-                  className="flex-1 px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-500 disabled:bg-red-900 disabled:text-red-300 transition-colors font-medium"
-                >
-                  {isSubmitting ? 'Processing...' : 'KILL ALL BOTS'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   )

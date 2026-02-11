@@ -168,7 +168,7 @@ async def get_bot_dashboard(bot_name: str):
 
         return {
             "bot_name": bot_name,
-            "is_killed": proverbs.is_bot_killed(bot_name),
+            "is_killed": False,
             "performance": proverbs._get_current_performance(bot_name),
             "performance_history": proverbs.get_performance_history(bot_name, days=30),
             "active_version": proverbs._get_active_version_info(bot_name),
@@ -586,129 +586,45 @@ async def rollback_bot_endpoint(bot_name: str, request: RollbackRequest):
 
 
 # =============================================================================
-# KILL SWITCH
+# KILL SWITCH (REMOVED — endpoints return disabled status)
 # =============================================================================
 
 @router.get("/killswitch")
 async def get_kill_switch_status():
-    """
-    Get kill switch status for all bots.
-    """
-    if not PROVERBS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Proverbs system not available")
-
-    try:
-        proverbs = get_proverbs()
-        status = proverbs.get_kill_switch_status()
-
-        # Add bots not yet in the table
-        for bot in ['FORTRESS', 'SOLOMON', 'GIDEON', 'ANCHOR', 'SAMSON', 'VALOR', 'LAZARUS']:
-            if bot not in status:
-                status[bot] = {
-                    'bot_name': bot,
-                    'is_killed': False,
-                    'killed_at': None,
-                    'killed_by': None,
-                    'kill_reason': None
-                }
-
-        return {
-            "status": status,
-            "timestamp": datetime.now(CENTRAL_TZ).isoformat()
-        }
-    except Exception as e:
-        logger.error(f"Failed to get kill switch status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Kill switches have been removed. All bots always trade."""
+    return {
+        "status": {},
+        "message": "Kill switches have been removed. All bots are always allowed to trade.",
+        "timestamp": datetime.now(CENTRAL_TZ).isoformat()
+    }
 
 
 @router.post("/killswitch/{bot_name}/activate")
 async def activate_kill_switch(bot_name: str, request: KillSwitchRequest):
-    """
-    Activate kill switch for a bot.
-
-    Immediately stops all trading for the specified bot.
-    """
-    if not PROVERBS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Proverbs system not available")
-
-    try:
-        success = kill_bot(bot_name.upper(), request.reason, request.user)
-
-        if not success:
-            raise HTTPException(status_code=400, detail="Failed to activate kill switch")
-
-        return {
-            "success": True,
-            "bot_name": bot_name.upper(),
-            "killed_by": request.user,
-            "reason": request.reason,
-            "message": f"Kill switch activated for {bot_name.upper()}. All trading stopped."
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to activate kill switch: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Kill switches have been removed. This endpoint is a no-op."""
+    return {
+        "success": False,
+        "message": "Kill switches have been removed. Bots cannot be killed."
+    }
 
 
 @router.post("/killswitch/{bot_name}/deactivate")
 async def deactivate_kill_switch(bot_name: str, request: ResumeRequest):
-    """
-    Deactivate kill switch for a bot.
-
-    Allows the bot to resume trading.
-    """
-    if not PROVERBS_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Proverbs system not available")
-
-    try:
-        success = resume_bot(bot_name.upper(), request.user)
-
-        if not success:
-            raise HTTPException(status_code=400, detail="Failed to deactivate kill switch")
-
-        return {
-            "success": True,
-            "bot_name": bot_name.upper(),
-            "resumed_by": request.user,
-            "message": f"Kill switch deactivated for {bot_name.upper()}. Trading can resume."
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to deactivate kill switch: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Kill switches have been removed. This endpoint is a no-op."""
+    return {
+        "success": True,
+        "message": "Kill switches have been removed. All bots are always active."
+    }
 
 
 @router.post("/killswitch/clear-all")
 async def clear_all_kill_switches():
-    """
-    Clear all kill switch records from the database.
-
-    This completely removes all killswitch entries, allowing all bots to trade.
-    """
-    try:
-        from database_adapter import get_connection
-        conn = get_connection()
-        try:
-            cursor = conn.cursor()
-
-            # Clear all killswitch records
-            cursor.execute("DELETE FROM proverbs_kill_switch")
-            deleted_count = cursor.rowcount
-
-            conn.commit()
-        finally:
-            conn.close()
-
-        return {
-            "success": True,
-            "message": f"Cleared {deleted_count} kill switch records. All bots can now trade.",
-            "deleted_count": deleted_count
-        }
-    except Exception as e:
-        logger.error(f"Failed to clear kill switches: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Kill switches have been removed. This endpoint is a no-op."""
+    return {
+        "success": True,
+        "message": "Kill switches have been removed. Nothing to clear.",
+        "deleted_count": 0
+    }
 
 
 # =============================================================================

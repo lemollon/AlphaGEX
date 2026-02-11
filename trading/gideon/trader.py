@@ -218,18 +218,6 @@ class GideonTrader(MathOptimizerMixin):
                 self._log_scan_activity(result, scan_context, skip_reason="Close-only mode after market")
                 return result
 
-            # Check Proverbs kill switch — blocks NEW entries but allows close_only
-            if PROVERBS_ENHANCED_AVAILABLE and get_proverbs_enhanced:
-                try:
-                    enhanced = get_proverbs_enhanced()
-                    if enhanced and enhanced.proverbs.is_bot_killed('GIDEON'):
-                        logger.warning("[GIDEON] Kill switch ACTIVE — skipping cycle (no new entries)")
-                        result['action'] = 'kill_switch_active'
-                        self._log_scan_activity(result, scan_context, skip_reason="Kill switch active")
-                        return result
-                except Exception as e:
-                    logger.debug(f"[GIDEON] Kill switch check failed (fail-open): {e}")
-
             # Check consecutive loss cooldown (5-min pause after 3 losses)
             if self._loss_streak_pause_until is not None:
                 remaining = (self._loss_streak_pause_until - now).total_seconds()

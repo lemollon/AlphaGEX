@@ -743,12 +743,6 @@ class AutonomousPaperTrader(
             capital = float(capital_str) if capital_str else 10000.0
         except (ValueError, TypeError):
             capital = 10000.0  # Default capital
-        daily_loss_limit_pct = 5.0  # 5% daily loss limit
-        daily_loss_limit = capital * (daily_loss_limit_pct / 100)
-
-        if today_pnl < -daily_loss_limit:
-            return False  # Daily loss limit exceeded
-
         # MATH OPTIMIZER: HMM Regime Check - Bayesian market regime detection
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
             try:

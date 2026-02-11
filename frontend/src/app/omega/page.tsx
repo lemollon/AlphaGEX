@@ -1,15 +1,14 @@
 'use client'
 
-import React, { useState } from 'react'
+import React from 'react'
 import {
   Brain, Activity, AlertTriangle, CheckCircle,
   Shield, Layers, Target, BarChart2, RefreshCw,
   Zap, TrendingUp, Clock, Eye,
-  AlertOctagon, GitBranch, Cpu, Lock,
+  GitBranch, Cpu,
   ChevronRight
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
 import {
   useOmegaStatus,
   useOmegaBots,
@@ -91,16 +90,14 @@ const LayerCard = ({ layer }: { layer: any }) => {
 
 // ==================== BOT CARD ====================
 
-const BotCard = ({ botName, botData, onKill, onRevive }: {
+const BotCard = ({ botName, botData }: {
   botName: string
   botData: any
-  onKill: (bot: string) => void
-  onRevive: (bot: string) => void
+  onKill?: (bot: string) => void
+  onRevive?: (bot: string) => void
 }) => {
-  const killSwitch = botData?.kill_switch || {}
   const wiring = botData?.wiring || {}
   const verdict = botData?.proverbs_verdict || {}
-  const hasMismatch = killSwitch.mismatch === true
 
   const strategyMap: Record<string, string> = {
     FORTRESS: 'SPY 0DTE IC',
@@ -111,9 +108,7 @@ const BotCard = ({ botName, botData, onKill, onRevive }: {
   }
 
   return (
-    <div className={`bg-background-card border rounded-lg p-4 shadow-card ${
-      hasMismatch ? 'border-red-500/50 ring-1 ring-red-500/20' : 'border-gray-700'
-    }`}>
+    <div className="bg-background-card border border-gray-700 rounded-lg p-4 shadow-card">
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="text-sm font-bold text-text-primary">{botName}</h3>
@@ -128,30 +123,12 @@ const BotCard = ({ botName, botData, onKill, onRevive }: {
         </div>
       </div>
 
-      {/* Kill Switch Status */}
-      <div className={`p-2 rounded text-xs mb-3 ${
-        hasMismatch
-          ? 'bg-red-500/10 border border-red-500/30'
-          : killSwitch.db_is_killed
-          ? 'bg-red-500/10 border border-red-500/20'
-          : 'bg-green-500/10 border border-green-500/20'
-      }`}>
-        <div className="flex items-center justify-between">
-          <span className={hasMismatch ? 'text-red-400 font-bold' : killSwitch.db_is_killed ? 'text-red-400' : 'text-green-400'}>
-            {hasMismatch ? (
-              <><AlertOctagon className="w-3 h-3 inline mr-1" />KILL SWITCH MISMATCH</>
-            ) : killSwitch.db_is_killed ? (
-              <><Lock className="w-3 h-3 inline mr-1" />KILLED</>
-            ) : (
-              <><CheckCircle className="w-3 h-3 inline mr-1" />TRADING ALLOWED</>
-            )}
-          </span>
-        </div>
-        {hasMismatch && (
-          <p className="mt-1 text-red-300/80">
-            DB: is_killed=TRUE but is_bot_killed() returns FALSE
-          </p>
-        )}
+      {/* Kill Switch Removed Notice */}
+      <div className="p-2 rounded text-xs mb-3 bg-gray-500/10 border border-gray-600/30">
+        <span className="text-gray-400">
+          <CheckCircle className="w-3 h-3 inline mr-1" />ALWAYS TRADING
+        </span>
+        <p className="mt-1 text-gray-500 text-[10px]">Kill switches removed</p>
       </div>
 
       {/* Proverbs Verdict */}
@@ -193,26 +170,11 @@ const BotCard = ({ botName, botData, onKill, onRevive }: {
 
       {/* Actions */}
       <div className="flex gap-2">
-        {killSwitch.db_is_killed ? (
-          <button
-            onClick={() => onRevive(botName)}
-            className="flex-1 px-3 py-1.5 text-xs bg-green-600/20 text-green-400 border border-green-500/30 rounded hover:bg-green-600/30 transition-colors"
-          >
-            Revive Bot
-          </button>
-        ) : (
-          <button
-            onClick={() => onKill(botName)}
-            className="flex-1 px-3 py-1.5 text-xs bg-red-600/20 text-red-400 border border-red-500/30 rounded hover:bg-red-600/30 transition-colors"
-          >
-            Kill Bot
-          </button>
-        )}
         <a
           href={`/omega/safety`}
-          className="px-3 py-1.5 text-xs bg-gray-700/50 text-text-secondary border border-gray-600 rounded hover:bg-gray-700 transition-colors"
+          className="flex-1 px-3 py-1.5 text-xs text-center bg-gray-700/50 text-text-secondary border border-gray-600 rounded hover:bg-gray-700 transition-colors"
         >
-          Details
+          Safety Details
         </a>
       </div>
     </div>
@@ -222,8 +184,8 @@ const BotCard = ({ botName, botData, onKill, onRevive }: {
 // ==================== MAIN PAGE ====================
 
 export default function OmegaDashboard() {
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: mutateStatus } = useOmegaStatus()
-  const { data: botsData, mutate: mutateBots } = useOmegaBots()
+  const { data: statusData, error: statusError, isLoading: statusLoading } = useOmegaStatus()
+  const { data: botsData } = useOmegaBots()
   const { data: layersData } = useOmegaLayers()
   const { data: regimeData } = useOmegaRegime()
   const { data: capitalData } = useOmegaCapitalAllocation()
@@ -231,45 +193,9 @@ export default function OmegaDashboard() {
   const { data: retrainData } = useOmegaRetrainStatus()
   const { data: mlData } = useOmegaMLSystems()
 
-  const [killModal, setKillModal] = useState<{ bot: string; action: 'kill' | 'revive' } | null>(null)
-  const [killReason, setKillReason] = useState('')
-  const [killAllModal, setKillAllModal] = useState(false)
-  const [killAllReason, setKillAllReason] = useState('')
-
-  const handleKill = async () => {
-    if (!killModal || killReason.length < 5) return
-    try {
-      if (killModal.action === 'kill') {
-        await apiClient.killOmegaBot(killModal.bot, { reason: killReason })
-      } else {
-        await apiClient.reviveOmegaBot(killModal.bot, { reason: killReason })
-      }
-      setKillModal(null)
-      setKillReason('')
-      mutateBots()
-      mutateStatus()
-    } catch (err) {
-      alert(`Failed: ${err}`)
-    }
-  }
-
-  const handleKillAll = async () => {
-    if (killAllReason.length < 5) return
-    try {
-      await apiClient.killAllOmegaBots({ reason: killAllReason })
-      setKillAllModal(false)
-      setKillAllReason('')
-      mutateBots()
-      mutateStatus()
-    } catch (err) {
-      alert(`Failed: ${err}`)
-    }
-  }
-
   const health = statusData?.health || 'UNKNOWN'
   const wiredCount = statusData?.wired_bot_count || 0
   const totalBots = statusData?.total_bot_count || 5
-  const hasBug = statusData?.kill_switch_bug_detected || false
   const healthIssues = statusData?.health_issues || []
 
   // Regime info
@@ -305,19 +231,9 @@ export default function OmegaDashboard() {
               Central Trading Decision Coordination Hub
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Emergency Kill All */}
-            <button
-              onClick={() => setKillAllModal(true)}
-              className="px-4 py-2 text-sm bg-red-600/20 text-red-400 border border-red-500/40 rounded-lg hover:bg-red-600/30 transition-colors font-medium"
-            >
-              <AlertOctagon className="w-4 h-4 inline mr-1" />
-              KILL ALL BOTS
-            </button>
-            <div className="text-right">
-              <div className="text-xs text-text-secondary">
-                {statusData?.timestamp ? new Date(statusData.timestamp).toLocaleTimeString() : '--:--'}
-              </div>
+          <div className="text-right">
+            <div className="text-xs text-text-secondary">
+              {statusData?.timestamp ? new Date(statusData.timestamp).toLocaleTimeString() : '--:--'}
             </div>
           </div>
         </div>
@@ -336,21 +252,8 @@ export default function OmegaDashboard() {
           </div>
         )}
 
-        {hasBug && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-lg">
-            <div className="flex items-center gap-2 text-red-400 font-semibold text-sm">
-              <AlertOctagon className="w-5 h-5" />
-              KILL SWITCH BUG DETECTED — is_bot_killed() always returns False
-            </div>
-            <p className="text-xs text-red-300/70 mt-1">
-              One or more bots have kill switches activated in the database, but the enforcement
-              function always returns False. Bots continue trading despite being &quot;killed&quot;.
-            </p>
-          </div>
-        )}
-
         {/* Health Issues */}
-        {healthIssues.length > 0 && !hasBug && wiredCount > 0 && (
+        {healthIssues.length > 0 && wiredCount > 0 && (
           <div className="mb-6 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
             {healthIssues.map((issue: string, i: number) => (
               <div key={i} className="flex items-center gap-2 text-yellow-400 text-xs">
@@ -431,8 +334,6 @@ export default function OmegaDashboard() {
               key={name}
               botName={name}
               botData={data}
-              onKill={(bot) => setKillModal({ bot, action: 'kill' })}
-              onRevive={(bot) => setKillModal({ bot, action: 'revive' })}
             />
           ))}
           {(!botsData?.bots || Object.keys(botsData.bots).length === 0) && (
@@ -598,85 +499,6 @@ export default function OmegaDashboard() {
         </div>
       </div>
 
-      {/* Kill/Revive Modal */}
-      {killModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-background-card border border-gray-700 rounded-lg p-6 w-96 shadow-modal">
-            <h3 className="text-lg font-bold text-text-primary mb-2">
-              {killModal.action === 'kill' ? 'Kill' : 'Revive'} {killModal.bot}?
-            </h3>
-            <p className="text-sm text-text-secondary mb-4">
-              {killModal.action === 'kill'
-                ? 'This will activate the kill switch in the database. Note: is_bot_killed() bug means enforcement depends on the P0 fix.'
-                : 'This will deactivate the kill switch and allow the bot to trade.'}
-            </p>
-            <input
-              type="text"
-              value={killReason}
-              onChange={(e) => setKillReason(e.target.value)}
-              placeholder="Reason (min 5 characters)..."
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-sm text-text-primary mb-4 focus:border-blue-500 focus:outline-none"
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setKillModal(null); setKillReason('') }}
-                className="flex-1 px-4 py-2 text-sm bg-gray-700 text-text-secondary rounded hover:bg-gray-600 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleKill}
-                disabled={killReason.length < 5}
-                className={`flex-1 px-4 py-2 text-sm rounded transition-colors ${
-                  killModal.action === 'kill'
-                    ? 'bg-red-600 text-white hover:bg-red-500 disabled:bg-red-900 disabled:text-red-300'
-                    : 'bg-green-600 text-white hover:bg-green-500 disabled:bg-green-900 disabled:text-green-300'
-                }`}
-              >
-                {killModal.action === 'kill' ? 'Kill Bot' : 'Revive Bot'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Kill All Modal */}
-      {killAllModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-background-card border border-red-500/30 rounded-lg p-6 w-96 shadow-modal">
-            <h3 className="text-lg font-bold text-red-400 mb-2">
-              <AlertOctagon className="w-5 h-5 inline mr-2" />
-              EMERGENCY: Kill All Bots?
-            </h3>
-            <p className="text-sm text-text-secondary mb-4">
-              This will activate the kill switch for ALL trading bots.
-              This is irreversible without manually reviving each bot.
-            </p>
-            <input
-              type="text"
-              value={killAllReason}
-              onChange={(e) => setKillAllReason(e.target.value)}
-              placeholder="Reason (min 5 characters)..."
-              className="w-full px-3 py-2 bg-gray-800 border border-red-500/30 rounded text-sm text-text-primary mb-4 focus:border-red-500 focus:outline-none"
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setKillAllModal(false); setKillAllReason('') }}
-                className="flex-1 px-4 py-2 text-sm bg-gray-700 text-text-secondary rounded hover:bg-gray-600 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleKillAll}
-                disabled={killAllReason.length < 5}
-                className="flex-1 px-4 py-2 text-sm bg-red-600 text-white rounded hover:bg-red-500 disabled:bg-red-900 disabled:text-red-300 transition-colors"
-              >
-                KILL ALL BOTS
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
