@@ -347,7 +347,8 @@ class TradeSyncService:
                         cursor,
                         config['table'],
                         config['name'],
-                        config['credit_field']
+                        config['credit_field'],
+                        config.get('type', '')
                     )
                     results['by_bot'][config['name']] = synced
                     results['open_synced'] += synced.get('open_synced', 0)
@@ -416,10 +417,17 @@ class TradeSyncService:
         cursor,
         table: str,
         bot_name: str,
-        credit_field: str
+        credit_field: str,
+        bot_type: str = ''
     ) -> Dict[str, int]:
         """Sync a single bot's positions to unified tables"""
         result = {'open_synced': 0, 'closed_synced': 0}
+
+        # Map bot type to human-readable strategy name
+        strategy_name = {
+            'iron_condor': 'Iron Condor',
+            'directional': 'Directional Spread',
+        }.get(bot_type, f"{bot_name}_TRADE")
 
         # Sync open positions
         cursor.execute(f"""
@@ -445,7 +453,7 @@ class TradeSyncService:
                 str(position_id),
                 bot_name,
                 symbol,
-                f"{bot_name}_TRADE",
+                strategy_name,
                 entry_time,
                 float(entry_price) if entry_price else 0,
                 int(contracts) if contracts else 1
@@ -483,7 +491,7 @@ class TradeSyncService:
                     str(position_id),
                     bot_name,
                     symbol,
-                    f"{bot_name}_TRADE",
+                    strategy_name,
                     entry_time,
                     exit_time,
                     float(entry_price) if entry_price else 0,
