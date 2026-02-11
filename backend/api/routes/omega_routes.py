@@ -841,7 +841,7 @@ async def kill_bot(bot_name: str, request: KillSwitchRequest):
     bypassing the broken is_bot_killed() method.
     """
     bot = bot_name.upper()
-    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR"]
+    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR", "JUBILEE"]
     if bot not in valid_bots:
         raise HTTPException(status_code=400, detail=f"Invalid bot. Must be one of: {', '.join(valid_bots)}")
 
@@ -908,7 +908,7 @@ async def revive_bot(bot_name: str, request: KillSwitchRequest):
     Requires explicit confirmation reason.
     """
     bot = bot_name.upper()
-    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR"]
+    valid_bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR", "JUBILEE"]
     if bot not in valid_bots:
         raise HTTPException(status_code=400, detail=f"Invalid bot. Must be one of: {', '.join(valid_bots)}")
 
@@ -982,7 +982,7 @@ async def kill_all_bots(request: KillSwitchRequest):
         conn = get_connection()
         cursor = conn.cursor()
         now = datetime.now(CENTRAL_TZ)
-        bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR"]
+        bots = ["FORTRESS", "ANCHOR", "SOLOMON", "LAZARUS", "CORNERSTONE", "SAMSON", "GIDEON", "VALOR", "JUBILEE"]
 
         for bot in bots:
             cursor.execute("""

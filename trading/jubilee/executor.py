@@ -1527,7 +1527,10 @@ class JubileeICExecutor:
             put_order_id = put_order.get('id', 'LIVE-PUT')
             call_order_id = call_order.get('id', 'LIVE-CALL')
         else:
-            # Paper trading - use real production quotes
+            # Paper trading — same pattern as SAMSON executor:
+            # Signal generator already fetched real Tradier quotes and set credits.
+            # Try to refresh with latest quotes, but use signal's Tradier credits
+            # if the executor's fetch fails (signal already has real pricing).
             put_order_id = f"PAPER-PUT-{uuid.uuid4().hex[:8]}"
             call_order_id = f"PAPER-CALL-{uuid.uuid4().hex[:8]}"
 
@@ -1546,16 +1549,16 @@ class JubileeICExecutor:
                 signal.call_spread_credit = real_quotes['call_spread_credit']
                 signal.total_credit = real_quotes['total_credit']
                 logger.info(
-                    f"PAPER TRADING with REAL quotes: credit=${real_quotes['total_credit']:.4f}"
+                    f"JUBILEE IC PAPER: Using FRESH Tradier quotes: credit=${real_quotes['total_credit']:.4f}"
                 )
             else:
-                # REQUIRE real quotes - don't execute with bad estimated pricing
-                # Estimated pricing produces ~$0.50 instead of actual ~$2-5 SPX credits
-                logger.error(
-                    f"JUBILEE IC: Cannot execute - failed to get real quotes: {real_quotes.get('error')}. "
-                    f"Estimated pricing is unreliable. Skipping signal."
+                # Executor refresh failed — use signal's Tradier credits from generator.
+                # SAMSON executor does the same: uses signal credits directly without re-fetch.
+                logger.warning(
+                    f"JUBILEE IC PAPER: Executor quote refresh failed ({real_quotes.get('error')}). "
+                    f"Using signal's Tradier credits: ${signal.total_credit:.4f} "
+                    f"(put=${signal.put_spread_credit:.4f}, call=${signal.call_spread_credit:.4f})"
                 )
-                return None
 
         # Calculate totals
         total_credit_received = signal.total_credit * signal.contracts * 100
