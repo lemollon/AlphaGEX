@@ -619,24 +619,29 @@ class SamsonDatabase:
             logger.debug(f"Failed to update heartbeat: {e}")
 
     def load_config(self) -> SamsonConfig:
-        """Load config from DB"""
+        """Load config from DB.
+
+        The autonomous_config table has columns: key TEXT, value TEXT.
+        SAMSON config keys use the 'samson_' prefix (e.g., 'samson_mode', 'samson_ticker').
+        """
         config = SamsonConfig()
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                c.execute("SELECT config_key, config_value FROM autonomous_config WHERE bot_name = 'SAMSON'")
+                c.execute("SELECT key, value FROM autonomous_config WHERE key LIKE 'samson_%'")
                 for key, value in c.fetchall():
-                    if hasattr(config, key):
-                        if key == 'mode':
-                            setattr(config, key, TradingMode(value))
-                        elif key == 'preset':
-                            setattr(config, key, StrategyPreset(value))
-                        elif isinstance(getattr(config, key), float):
-                            setattr(config, key, float(value))
-                        elif isinstance(getattr(config, key), int):
-                            setattr(config, key, int(value))
+                    field_name = key.replace('samson_', '', 1)
+                    if hasattr(config, field_name):
+                        if field_name == 'mode':
+                            setattr(config, field_name, TradingMode(value))
+                        elif field_name == 'preset':
+                            setattr(config, field_name, StrategyPreset(value))
+                        elif isinstance(getattr(config, field_name), float):
+                            setattr(config, field_name, float(value))
+                        elif isinstance(getattr(config, field_name), int):
+                            setattr(config, field_name, int(value))
                         else:
-                            setattr(config, key, value)
+                            setattr(config, field_name, value)
         except Exception as e:
             logger.warning(f"{self.bot_name}: Using default config: {e}")
         return config

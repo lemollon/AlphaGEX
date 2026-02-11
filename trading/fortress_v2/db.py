@@ -175,6 +175,10 @@ class FortressDatabase:
                     )
                 """)
 
+                # Run column migration for fortress_positions — ensures columns
+                # from newer schema exist even if table was created with old schema
+                self._ensure_oracle_columns(c)
+
                 conn.commit()
                 logger.info(f"{self.bot_name}: Database tables verified")
         except Exception as e:
@@ -309,18 +313,39 @@ class FortressDatabase:
             return False
 
     def _ensure_oracle_columns(self, cursor) -> None:
-        """Add new Prophet/Chronicles columns if they don't exist (migration)"""
+        """Add all potentially missing columns for save_position() and get_open_positions().
+
+        The fortress_positions table may have been created with an older schema
+        (config_and_database.py) that uses different column names. This migration
+        ensures all columns needed by the current save_position() INSERT exist.
+        """
         columns_to_add = [
+            # Core fields that may be missing from old schema
             ("ticker", "VARCHAR(10) DEFAULT 'SPY'"),
+            ("max_profit", "DECIMAL(10, 2)"),
+            ("underlying_at_entry", "DECIMAL(10, 2)"),
+            # GEX context
+            ("call_wall", "DECIMAL(10, 2)"),
+            ("put_wall", "DECIMAL(10, 2)"),
+            ("gex_regime", "VARCHAR(30)"),
+            # Chronicles context
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
-            ("oracle_win_probability", "DECIMAL(8, 4)"),  # DECIMAL(8,4) for proper precision
+            # Prophet/Oracle context
+            ("oracle_confidence", "DECIMAL(5, 4)"),
+            ("oracle_win_probability", "DECIMAL(8, 4)"),
             ("oracle_advice", "VARCHAR(20)"),
+            ("oracle_reasoning", "TEXT"),
             ("oracle_top_factors", "TEXT"),
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
-            ("open_date", "DATE"),  # Extracted date from open_time for easier queries
+            # Order tracking (old schema used put_spread_order_id/call_spread_order_id)
+            ("put_order_id", "VARCHAR(50)"),
+            ("call_order_id", "VARCHAR(50)"),
+            # Status fields
+            ("close_reason", "VARCHAR(100)"),
+            ("open_date", "DATE"),
             # Migration 023: Feedback loop enhancements
-            ("oracle_prediction_id", "INTEGER"),  # Links to prophet_predictions.id
+            ("oracle_prediction_id", "INTEGER"),
         ]
 
         for col_name, col_type in columns_to_add:
@@ -657,31 +682,39 @@ class FortressDatabase:
     # =========================================================================
 
     def load_config(self) -> FortressConfig:
-        """Load config from database"""
+        """Load config from database.
+
+        The autonomous_config table has columns: key TEXT, value TEXT.
+        FORTRESS config keys use the 'fortress_' prefix (e.g., 'fortress_mode', 'fortress_ticker').
+        """
         config = FortressConfig()
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+                # autonomous_config table uses 'key' and 'value' columns
+                # FORTRESS keys are prefixed with 'fortress_' (e.g., fortress_mode, fortress_ticker)
                 c.execute("""
-                    SELECT config_key, config_value
+                    SELECT key, value
                     FROM autonomous_config
-                    WHERE bot_name = 'FORTRESS'
+                    WHERE key LIKE 'fortress_%'
                 """)
 
                 for key, value in c.fetchall():
-                    if hasattr(config, key):
-                        if key == 'mode':
-                            setattr(config, key, TradingMode(value))
-                        elif key == 'preset':
-                            setattr(config, key, StrategyPreset(value))
-                        elif isinstance(getattr(config, key), float):
-                            setattr(config, key, float(value))
-                        elif isinstance(getattr(config, key), int):
-                            setattr(config, key, int(value))
-                        elif isinstance(getattr(config, key), bool):
-                            setattr(config, key, value.lower() == 'true')
+                    # Strip 'fortress_' prefix to get the config field name
+                    field_name = key.replace('fortress_', '', 1)
+                    if hasattr(config, field_name):
+                        if field_name == 'mode':
+                            setattr(config, field_name, TradingMode(value))
+                        elif field_name == 'preset':
+                            setattr(config, field_name, StrategyPreset(value))
+                        elif isinstance(getattr(config, field_name), float):
+                            setattr(config, field_name, float(value))
+                        elif isinstance(getattr(config, field_name), int):
+                            setattr(config, field_name, int(value))
+                        elif isinstance(getattr(config, field_name), bool):
+                            setattr(config, field_name, value.lower() == 'true')
                         else:
-                            setattr(config, key, value)
+                            setattr(config, field_name, value)
 
                 logger.info(f"{self.bot_name}: Loaded config from DB")
         except Exception as e:

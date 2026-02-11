@@ -2487,8 +2487,8 @@ def get_fortress_trader():
     """Get or create FORTRESS trader instance"""
     global _fortress_trader
     if _fortress_trader is None and ARES_AVAILABLE:
-        # Use default FortressConfig which is LIVE mode (sandbox=True in executor)
-        config = FortressConfig()
+        # PAPER mode: consistent with scheduler (no Tradier sandbox orders)
+        config = FortressConfig(mode=ARESTradingMode.PAPER)
         _fortress_trader = FortressTrader(config=config)
     return _fortress_trader
 
@@ -2549,7 +2549,7 @@ async def run_fortress_cycle():
                 detail="Could not initialize FORTRESS trader"
             )
 
-        result = fortress.run_daily_cycle()
+        result = fortress.run_cycle()
         return {
             "success": True,
             "data": result
