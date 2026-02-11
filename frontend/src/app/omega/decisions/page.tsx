@@ -501,14 +501,14 @@ export default function OmegaDecisionExplorer() {
 
             {/* Summary Chips */}
             <div className="flex items-center gap-2 ml-auto">
-              {(Object.entries(decisionCounts) as [string, number][]).map(([decision, count]) => {
+              {Object.entries(decisionCounts).map(([decision, count]) => {
                 const colors = DECISION_COLORS[decision] || DECISION_COLORS.SKIP_TODAY
                 return (
                   <span
                     key={decision}
                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${colors.bg} ${colors.text}`}
                   >
-                    {count}
+                    {String(count)}
                     <span className="hidden sm:inline">{decision.replace(/_/g, ' ')}</span>
                   </span>
                 )
