@@ -742,11 +742,7 @@ For box spreads to be profitable:
 
     def _should_scan_for_signals(self) -> bool:
         """Check if we should look for new positions"""
-        positions = self.db.get_open_positions()
-
-        # Check max positions
-        if len(positions) >= self.config.max_positions:
-            return False
+        # Max position limit removed - no gates
 
         # Check if in trading window
         if not self._in_trading_window():
@@ -756,11 +752,6 @@ For box spreads to be profitable:
 
     def _get_skip_reason(self) -> str:
         """Get reason for skipping signal scan"""
-        positions = self.db.get_open_positions()
-
-        if len(positions) >= self.config.max_positions:
-            return f"At max positions ({self.config.max_positions})"
-
         if not self._in_trading_window():
             return "Outside trading window"
 
@@ -1114,20 +1105,8 @@ class JubileeICTrader:
 
     def _can_open_new_position(self) -> bool:
         """Check if we can open a new IC position"""
-        # Check max positions
-        open_positions = self.db.get_open_ic_positions()
-        if len(open_positions) >= self.config.max_positions:
-            return False
-
-        # Check daily limit (0 = unlimited)
-        if self.config.max_trades_per_day > 0:
-            daily_trades = self.db.get_daily_ic_trades_count()
-            if daily_trades >= self.config.max_trades_per_day:
-                return False
-
-        # Check cooldown
-        if self._in_cooldown():
-            return False
+        # Max position limit removed - no gates
+        # Cooldown already disabled (set to 0)
 
         # Check available capital
         available = self._get_available_capital()
@@ -1138,19 +1117,6 @@ class JubileeICTrader:
 
     def _get_skip_reason(self) -> str:
         """Get reason for not opening new position"""
-        open_positions = self.db.get_open_ic_positions()
-        if len(open_positions) >= self.config.max_positions:
-            return f"At max positions ({self.config.max_positions})"
-
-        # Check daily limit (0 = unlimited)
-        if self.config.max_trades_per_day > 0:
-            daily_trades = self.db.get_daily_ic_trades_count()
-            if daily_trades >= self.config.max_trades_per_day:
-                return f"Daily trade limit reached ({self.config.max_trades_per_day})"
-
-        if self._in_cooldown():
-            return "In cooldown period after recent trade"
-
         available = self._get_available_capital()
         if available < self.config.min_capital_per_trade:
             return f"Insufficient capital (${available:,.2f} < ${self.config.min_capital_per_trade:,.2f})"

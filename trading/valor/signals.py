@@ -496,10 +496,11 @@ class ValorSignalGenerator:
             # Determine gamma regime
             gamma_regime = self._determine_gamma_regime(net_gex)
 
-            # Log signal generation context for debugging
-            logger.debug(
-                f"Signal generation: price={current_price:.2f}, flip={flip_point:.2f}, "
-                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}"
+            # Log signal generation context
+            logger.info(
+                f"VALOR signal scan: price={current_price:.2f}, flip={flip_point:.2f}, "
+                f"net_gex={net_gex:.2e}, regime={gamma_regime.value}, "
+                f"walls=[put={put_wall:.2f}, call={call_wall:.2f}], VIX={vix:.1f}, ATR={atr:.2f}"
             )
 
             # ================================================================
@@ -527,10 +528,22 @@ class ValorSignalGenerator:
                 )
 
             if signal is None:
-                logger.debug(
-                    f"No signal generated: regime={gamma_regime.value}, "
-                    f"distance_from_flip={((current_price - flip_point) / flip_point) * 100:.2f}%"
-                )
+                distance_pct = ((current_price - flip_point) / flip_point) * 100
+                if gamma_regime == GammaRegime.POSITIVE:
+                    logger.info(
+                        f"VALOR NO SIGNAL: POSITIVE gamma mean reversion - price {current_price:.2f} "
+                        f"is only {abs(distance_pct):.2f}% from flip {flip_point:.2f} "
+                        f"(need >{self.config.flip_point_proximity_pct}% to fade). "
+                        f"Walls: put={put_wall:.2f}, call={call_wall:.2f}, VIX={vix:.1f}"
+                    )
+                else:
+                    near_flip_threshold = atr * self.config.breakout_atr_threshold * 0.5
+                    logger.info(
+                        f"VALOR NO SIGNAL: NEGATIVE gamma momentum - price {current_price:.2f} "
+                        f"is {abs(current_price - flip_point):.2f} pts from flip {flip_point:.2f} "
+                        f"(need >{near_flip_threshold:.2f} pts for direction). "
+                        f"Walls: put={put_wall:.2f}, call={call_wall:.2f}, VIX={vix:.1f}, ATR={atr:.2f}"
+                    )
                 return None
 
             # ================================================================
@@ -643,9 +656,10 @@ class ValorSignalGenerator:
         # Signal strength based on distance
         confidence = min(0.95, 0.5 + (abs(distance_pct) / 2))
 
-        logger.debug(
-            f"Mean reversion check: distance_pct={distance_pct:.2f}%, "
-            f"min_distance_pct={min_distance_pct}%, exceeds={abs(distance_pct) > min_distance_pct}"
+        logger.info(
+            f"VALOR mean reversion check: price={current_price:.2f}, flip={flip_point:.2f}, "
+            f"distance={distance_pct:+.2f}%, min_required={min_distance_pct}%, "
+            f"signal={'YES' if abs(distance_pct) > min_distance_pct else 'NO (too close to flip)'}"
         )
 
         if distance_pct > min_distance_pct:
@@ -737,10 +751,11 @@ class ValorSignalGenerator:
         flip_to_put_range = max(1.0, flip_point - put_wall)    # Min 1 point
         total_range = call_to_flip_range + flip_to_put_range
 
-        logger.debug(
-            f"Momentum check: distance_from_flip={distance_from_flip:.2f} pts, "
-            f"distance_to_put={distance_to_put_wall:.2f}, distance_to_call={distance_to_call_wall:.2f}, "
-            f"wall_proximity_threshold={wall_proximity_threshold:.2f} pts"
+        logger.info(
+            f"VALOR momentum check: price={current_price:.2f}, flip={flip_point:.2f}, "
+            f"dist_from_flip={distance_from_flip:+.2f} pts, breakout_threshold={breakout_threshold:.2f}, "
+            f"dist_to_put={distance_to_put_wall:.2f}, dist_to_call={distance_to_call_wall:.2f}, "
+            f"wall_proximity={wall_proximity_threshold:.2f} pts"
         )
 
         direction = None
@@ -862,9 +877,10 @@ class ValorSignalGenerator:
                 )
             else:
                 # Price is RIGHT at flip point - wait for direction
-                logger.debug(
-                    f"No momentum signal: price at flip point. "
-                    f"dist_from_flip={distance_from_flip:.2f}, threshold={near_flip_threshold:.2f}"
+                logger.info(
+                    f"VALOR NO SIGNAL: Price {current_price:.2f} at flip point {flip_point:.2f} "
+                    f"(dist={distance_from_flip:.2f} pts, need >{near_flip_threshold:.2f} pts). "
+                    f"Waiting for directional move. Put wall={put_wall:.2f}, call wall={call_wall:.2f}"
                 )
                 return None
 

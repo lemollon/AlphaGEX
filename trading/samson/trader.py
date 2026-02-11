@@ -373,12 +373,7 @@ class SamsonTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After {self.config.entry_end}"
 
-        # Check position limits
-        open_count = self.db.get_position_count()
-        if open_count >= self.config.max_open_positions:
-            return False, f"Max open positions ({self.config.max_open_positions}) reached"
-
-        # Trade cooldown removed - no gates other than 5-min loss streak pause
+        # Max position limit removed - no gates other than 5-min loss streak pause
 
         return True, "Ready"
 

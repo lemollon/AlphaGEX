@@ -252,28 +252,26 @@ class SolomonTrader(MathOptimizerMixin):
             result['trades_closed'] = closed_count
             result['realized_pnl'] = close_pnl
 
-            # Step 3: Look for new entry if we have capacity
-            open_positions = self.db.get_open_positions()
-            if len(open_positions) < self.config.max_open_positions:
-                # Pass early-fetched prophet_data to avoid double Prophet call (bug fix)
-                position, signal = self._try_new_entry_with_context(prophet_data=scan_context.get('prophet_data'))
-                result['trades_opened'] = 1 if position else 0
-                if position:
-                    result['action'] = 'opened'
-                    result['details']['position'] = position.to_dict()
-                    scan_context['position'] = position
-                if signal:
-                    scan_context['signal'] = signal
-                    scan_context['market_data'] = {
-                        'underlying_price': signal.spot_price,
-                        'symbol': 'SPY',
-                        'vix': signal.vix,
-                    }
-                    scan_context['gex_data'] = {
-                        'regime': signal.gex_regime,
-                        'call_wall': signal.call_wall,
-                        'put_wall': signal.put_wall,
-                    }
+            # Step 3: Look for new entry (no position limit)
+            # Pass early-fetched prophet_data to avoid double Prophet call (bug fix)
+            position, signal = self._try_new_entry_with_context(prophet_data=scan_context.get('prophet_data'))
+            result['trades_opened'] = 1 if position else 0
+            if position:
+                result['action'] = 'opened'
+                result['details']['position'] = position.to_dict()
+                scan_context['position'] = position
+            if signal:
+                scan_context['signal'] = signal
+                scan_context['market_data'] = {
+                    'underlying_price': signal.spot_price,
+                    'symbol': 'SPY',
+                    'vix': signal.vix,
+                }
+                scan_context['gex_data'] = {
+                    'regime': signal.gex_regime,
+                    'call_wall': signal.call_wall,
+                    'put_wall': signal.put_wall,
+                }
 
             if result['trades_closed'] > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
@@ -346,10 +344,7 @@ class SolomonTrader(MathOptimizerMixin):
 
         # NOTE: Daily trade limit removed - Prophet decides trade frequency
 
-        # Position limit
-        open_count = self.db.get_position_count()
-        if open_count >= self.config.max_open_positions:
-            return False, f"Max positions ({self.config.max_open_positions})"
+        # Max position limit removed - no gates
 
         return True, "Ready"
 

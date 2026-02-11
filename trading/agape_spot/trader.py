@@ -211,12 +211,7 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context)
                 return result
 
-            # Step 6: Check max positions for this ticker
-            open_positions = self._get_open_positions_for_ticker(ticker)
-            if len(open_positions) >= self.config.max_open_positions_per_ticker:
-                result["outcome"] = f"MAX_POSITIONS_{len(open_positions)}"
-                self._log_scan(ticker, result, scan_context)
-                return result
+            # Max position limit removed - no gates
 
             # Step 7: Generate signal for this ticker
             signal = self._generate_signal(ticker, prophet_data)
