@@ -97,8 +97,8 @@ export default function DriftStatusCard({ botName, compact = false }: DriftStatu
     )
   }
 
-  // Error or no data state
-  if (error || !data || data.status === 'no_data' || data.status === 'unavailable') {
+  // Error or no data state — guard against missing data.data to prevent crash
+  if (error || !data || data.status === 'no_data' || data.status === 'unavailable' || !data.data || !data.data.metrics) {
     return (
       <div className="card bg-background-secondary border border-border/50">
         <div className="flex items-center gap-3">
@@ -118,7 +118,7 @@ export default function DriftStatusCard({ botName, compact = false }: DriftStatu
     )
   }
 
-  const report = data.data!
+  const report = data.data
   const config = severityConfig[report.overall_severity as keyof typeof severityConfig] || severityConfig.NORMAL
   const Icon = config.icon
 
