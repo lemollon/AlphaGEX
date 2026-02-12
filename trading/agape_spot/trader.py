@@ -452,6 +452,9 @@ class AgapeSpotTrader:
         profit_target_pct = exit_params["no_loss_profit_target_pct"]
         max_hold = exit_params["max_hold_hours"]
 
+        # Use per-ticker price decimals (SHIB=8, XRP/DOGE=4, ETH=2)
+        pd = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
+
         # Long-only profit
         profit_pct = ((current_price - entry_price) / entry_price) * 100
 
@@ -503,7 +506,7 @@ class AgapeSpotTrader:
 
             # Long-only: stop below HWM, never below entry
             initial_stop = max(entry_price, hwm - trail_distance)
-            initial_stop = round(initial_stop, 2)
+            initial_stop = round(initial_stop, pd)
 
             self.db.update_high_water_mark(position_id, hwm)
             try:
@@ -522,7 +525,7 @@ class AgapeSpotTrader:
         if trailing_active:
             trail_distance = entry_price * (trail_distance_pct / 100)
 
-            new_stop = round(hwm - trail_distance, 2)
+            new_stop = round(hwm - trail_distance, pd)
             if new_stop > (current_stop or 0) and new_stop >= entry_price:
                 try:
                     self.db._execute(
