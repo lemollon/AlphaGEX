@@ -594,38 +594,22 @@ Strike width tradeoff:
                 return None
 
             # Calculate box spread price
-            # Selling the box = receiving call spread credit + put spread credit
-            # Bull call spread: Sell high call, buy low call
-            # Bear put spread: Sell low put, buy high put
-
-            # For selling the box, we want the BID prices for what we sell
-            # and ASK prices for what we buy
-            # OptionContract is a dataclass - access attributes directly
-
-            call_spread_credit = (
-                legs['call_short'].bid -  # Sell upper call
-                legs['call_long'].ask     # Buy lower call
-            )
-            put_spread_credit = (
-                legs['put_short'].bid -   # Sell lower put
-                legs['put_long'].ask      # Buy upper put
+            # Box BID = credit received when SELLING the box (synthetic borrowing)
+            # Sell lower call (call_long) at bid, buy upper call (call_short) at ask
+            # Sell upper put (put_long) at bid, buy lower put (put_short) at ask
+            box_bid = (
+                (legs['call_long'].bid - legs['call_short'].ask) +
+                (legs['put_long'].bid - legs['put_short'].ask)
             )
 
-            box_bid = call_spread_credit + put_spread_credit
-
-            # For the ask side (buying the box = we buy the bull call + bear put)
-            # Buy lower call at ask, sell upper call at bid
-            # Buy upper put at ask, sell lower put at bid
-            call_spread_debit = (
-                legs['call_long'].ask -   # Buy lower call at ask
-                legs['call_short'].bid    # Sell upper call at bid
-            )
-            put_spread_debit = (
-                legs['put_long'].ask -    # Buy upper put at ask
-                legs['put_short'].bid     # Sell lower put at bid
+            # Box ASK = debit paid when BUYING the box
+            # Buy lower call (call_long) at ask, sell upper call (call_short) at bid
+            # Buy upper put (put_long) at ask, sell lower put (put_short) at bid
+            box_ask = (
+                (legs['call_long'].ask - legs['call_short'].bid) +
+                (legs['put_long'].ask - legs['put_short'].bid)
             )
 
-            box_ask = call_spread_debit + put_spread_debit
             mid_price = (box_bid + box_ask) / 2
 
             # Convert OptionContract dataclasses to dicts for serialization
@@ -750,6 +734,10 @@ Strike width tradeoff:
         """
         # Cash generated per contract
         cash_per_contract = mid_price * 100
+
+        if cash_per_contract <= 0:
+            logger.warning(f"Invalid cash_per_contract={cash_per_contract} (mid_price={mid_price}), defaulting to 1 contract")
+            return 1
 
         # Max contracts by cash limit
         max_by_cash = int(self.config.max_position_size / cash_per_contract)
