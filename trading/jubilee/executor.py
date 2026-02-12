@@ -248,7 +248,7 @@ def get_box_spread_quotes(
                         for quote in quote_list:
                             quote_symbol = quote.get('symbol', '')
                             for leg, sym in symbols.items():
-                                if quote_symbol == sym:
+                                if quote_symbol.upper() == sym.upper():
                                     fetched_quotes[leg] = quote
                                     _quote_cache[sym] = (time.time(), quote)
 
@@ -1355,7 +1355,7 @@ def get_ic_quotes(
                         for quote in quote_list:
                             quote_symbol = quote.get('symbol', '')
                             for leg, sym in symbols.items():
-                                if quote_symbol == sym:
+                                if quote_symbol.upper() == sym.upper():
                                     fetched_quotes[leg] = quote
                                     _quote_cache[sym] = (time.time(), quote)
 

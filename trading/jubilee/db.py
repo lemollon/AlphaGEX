@@ -217,6 +217,28 @@ class JubileeDatabase:
                 )
             """)
 
+            # Add columns that may be missing from older table versions
+            _migration_columns = [
+                ("cash_deployed_to_ares", "DECIMAL(15, 2) DEFAULT 0"),
+                ("cash_deployed_to_titan", "DECIMAL(15, 2) DEFAULT 0"),
+                ("cash_deployed_to_pegasus", "DECIMAL(15, 2) DEFAULT 0"),
+                ("cash_held_in_reserve", "DECIMAL(15, 2) DEFAULT 0"),
+                ("total_cash_deployed", "DECIMAL(15, 2) DEFAULT 0"),
+                ("returns_from_ares", "DECIMAL(15, 2) DEFAULT 0"),
+                ("returns_from_titan", "DECIMAL(15, 2) DEFAULT 0"),
+                ("returns_from_pegasus", "DECIMAL(15, 2) DEFAULT 0"),
+                ("total_ic_returns", "DECIMAL(15, 2) DEFAULT 0"),
+                ("net_profit", "DECIMAL(15, 2) DEFAULT 0"),
+            ]
+            for col_name, col_type in _migration_columns:
+                try:
+                    cursor.execute(f"""
+                        ALTER TABLE jubilee_positions
+                        ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                    """)
+                except Exception:
+                    pass  # Column already exists or DB doesn't support IF NOT EXISTS
+
             # Signals table (generated signals, executed or not)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS jubilee_signals (
