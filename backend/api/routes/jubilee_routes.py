@@ -1804,6 +1804,14 @@ async def get_full_reconciliation():
         box_config = db.load_config()
         ic_config = db.load_ic_config()
 
+        # Ensure a paper box spread exists for display/reconciliation.
+        # In PAPER mode, IC trading capital is guaranteed by config,
+        # but the dashboard needs a box spread position to show capital source.
+        try:
+            ic_trader._ensure_paper_box_spread()
+        except Exception as e:
+            logger.warning(f"Failed to ensure paper box spread for reconciliation: {e}")
+
         # Get all positions
         box_positions = box_trader.get_positions()
         ic_positions = ic_trader.get_positions()
@@ -2042,6 +2050,8 @@ async def get_full_reconciliation():
         # ic_config.min_capital_per_trade is the margin required per IC trade
         margin_per_trade = ic_config.min_capital_per_trade if ic_config and ic_config.min_capital_per_trade else 5000.0
 
+        # Capital comes from box spreads - the sole source of borrowed capital.
+        # _ensure_paper_box_spread (called above) guarantees one exists in PAPER mode.
         reserved_capital = total_borrowed * reserve_pct
         capital_in_ic_trades = len(ic_positions) * margin_per_trade
         available_capital = total_borrowed - reserved_capital - capital_in_ic_trades
