@@ -39,7 +39,6 @@ class AgapeSpotDatabase:
 
     def __init__(self, bot_name: str = "AGAPE-SPOT"):
         self.bot_name = bot_name
-        self._has_account_label: bool = False
         self._ensure_tables()
 
     def _get_conn(self):
@@ -123,11 +122,6 @@ class AgapeSpotDatabase:
                 )
             """)
 
-            # Add account_label column if missing (existing tables)
-            # NOTE: This is placed in the CREATE TABLE above for new installs.
-            # For existing tables, the migration runs after the rename block
-            # below (which may rollback the current transaction).
-
             # ----- agape_spot_equity_snapshots -----
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS agape_spot_equity_snapshots (
@@ -196,25 +190,23 @@ class AgapeSpotDatabase:
             """)
 
             # --- positions: rename eth_quantity -> quantity ---
-            try:
-                cursor.execute("""
+            # Uses PL/pgSQL exception handler so failure doesn't rollback
+            # the entire Python-level transaction (which would undo all
+            # earlier migrations in this block).
+            cursor.execute("""
+                DO $$
+                BEGIN
                     ALTER TABLE agape_spot_positions
-                    RENAME COLUMN eth_quantity TO quantity
-                """)
-            except Exception:
-                # Column already renamed or doesn't exist
-                conn.rollback()
-                # Re-start transaction after rollback
-                cursor = conn.cursor()
+                    RENAME COLUMN eth_quantity TO quantity;
+                EXCEPTION WHEN undefined_column THEN NULL;
+                END $$;
+            """)
 
             # --- positions: add account_label column ---
-            # MUST be after the rename block above because conn.rollback()
-            # there undoes anything added earlier in the same transaction.
             cursor.execute("""
                 ALTER TABLE agape_spot_positions
                 ADD COLUMN IF NOT EXISTS account_label VARCHAR(50) DEFAULT 'default'
             """)
-            self._has_account_label = True
 
             # --- equity_snapshots: add ticker column ---
             cursor.execute("""
@@ -316,20 +308,25 @@ class AgapeSpotDatabase:
 
             account_label = getattr(pos, "account_label", "default")
 
-            # Build column list and values — include account_label only if column exists
-            cols = [
-                "position_id", "ticker", "side", "quantity", "entry_price",
-                "stop_loss", "take_profit", "max_risk_usd",
-                "underlying_at_entry", "funding_rate_at_entry",
-                "funding_regime_at_entry", "ls_ratio_at_entry",
-                "squeeze_risk_at_entry", "max_pain_at_entry",
-                "crypto_gex_at_entry", "crypto_gex_regime_at_entry",
-                "oracle_advice", "oracle_win_probability", "oracle_confidence",
-                "oracle_top_factors",
-                "signal_action", "signal_confidence", "signal_reasoning",
-                "status", "open_time", "high_water_mark",
-            ]
-            vals = [
+            cursor.execute("""
+                INSERT INTO agape_spot_positions (
+                    position_id, ticker, side, quantity, entry_price,
+                    stop_loss, take_profit, max_risk_usd,
+                    underlying_at_entry, funding_rate_at_entry,
+                    funding_regime_at_entry, ls_ratio_at_entry,
+                    squeeze_risk_at_entry, max_pain_at_entry,
+                    crypto_gex_at_entry, crypto_gex_regime_at_entry,
+                    oracle_advice, oracle_win_probability, oracle_confidence,
+                    oracle_top_factors,
+                    signal_action, signal_confidence, signal_reasoning,
+                    status, open_time, high_water_mark,
+                    account_label
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s
+                )
+            """, (
                 pos.position_id, ticker, side, quantity, pos.entry_price,
                 pos.stop_loss, pos.take_profit, pos.max_risk_usd,
                 pos.underlying_at_entry, pos.funding_rate_at_entry,
@@ -342,17 +339,8 @@ class AgapeSpotDatabase:
                 pos.status.value if hasattr(pos.status, "value") else pos.status,
                 pos.open_time or _now_ct(),
                 pos.entry_price,
-            ]
-            if self._has_account_label:
-                cols.append("account_label")
-                vals.append(account_label)
-
-            placeholders = ", ".join(["%s"] * len(vals))
-            col_str = ", ".join(cols)
-            cursor.execute(
-                f"INSERT INTO agape_spot_positions ({col_str}) VALUES ({placeholders})",
-                tuple(vals),
-            )
+                account_label,
+            ))
             conn.commit()
             logger.info(f"AGAPE-SPOT DB: Saved position {pos.position_id} ({ticker})")
             return True
@@ -416,8 +404,7 @@ class AgapeSpotDatabase:
         try:
             cursor = conn.cursor()
 
-            acct_col = ", COALESCE(account_label, 'default')" if self._has_account_label else ""
-            base_sql = f"""
+            base_sql = """
                 SELECT position_id, ticker, side, quantity, entry_price,
                        stop_loss, take_profit, max_risk_usd,
                        underlying_at_entry, funding_rate_at_entry,
@@ -428,8 +415,8 @@ class AgapeSpotDatabase:
                        oracle_top_factors,
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
-                       COALESCE(trailing_active, FALSE), current_stop
-                       {acct_col}
+                       COALESCE(trailing_active, FALSE), current_stop,
+                       COALESCE(account_label, 'default')
                 FROM agape_spot_positions
                 WHERE status = 'open'
             """
@@ -491,15 +478,14 @@ class AgapeSpotDatabase:
         try:
             cursor = conn.cursor()
 
-            acct_col = ", COALESCE(account_label, 'default')" if self._has_account_label else ""
-            base_sql = f"""
+            base_sql = """
                 SELECT position_id, ticker, side, quantity, entry_price,
                        close_price, realized_pnl, close_reason,
                        open_time, close_time,
                        funding_regime_at_entry, squeeze_risk_at_entry,
                        oracle_advice, oracle_win_probability,
-                       signal_action, signal_confidence
-                       {acct_col}
+                       signal_action, signal_confidence,
+                       COALESCE(account_label, 'default')
                 FROM agape_spot_positions
                 WHERE status IN ('closed', 'expired', 'stopped')
             """
