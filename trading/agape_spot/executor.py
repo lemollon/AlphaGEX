@@ -26,7 +26,7 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from typing import Optional, Dict, Tuple
+from typing import Any, Optional, Dict, Tuple
 from zoneinfo import ZoneInfo
 
 from trading.agape_spot.models import (
