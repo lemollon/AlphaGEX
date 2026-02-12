@@ -102,17 +102,17 @@ def _get_tradier():
 import time  # For retry delays
 
 
-def _tradier_call_with_retry(func, *args, max_retries: int = 3, **kwargs):
+def _tradier_call_with_retry(func, *args, max_retries: int = 4, **kwargs):
     """
     Execute a Tradier API call with exponential backoff retry.
 
-    This ensures resilience against transient network/API failures.
-    Pattern borrowed from ANCHOR executor.py.
+    Tradier is the SOLE source of market data - there are no fallbacks.
+    This function retries aggressively to ensure data is always available.
 
     Args:
         func: The function to call (e.g., _get_tradier().get_quote)
         *args: Positional arguments to pass to the function
-        max_retries: Number of retry attempts (default 3)
+        max_retries: Number of retry attempts (default 4)
         **kwargs: Keyword arguments to pass to the function
 
     Returns:
@@ -124,20 +124,28 @@ def _tradier_call_with_retry(func, *args, max_retries: int = 3, **kwargs):
             result = func(*args, **kwargs)
             if result is not None:
                 return result
-            # Empty result is not necessarily an error - might just be no data
-            logger.warning(f"Tradier returned empty result on attempt {attempt + 1}")
+            # Empty result - retry (Tradier may return None transiently)
+            if attempt < max_retries - 1:
+                delay = 2.0 * (2 ** attempt)  # 2s, 4s, 8s
+                logger.warning(
+                    f"Tradier returned empty (attempt {attempt + 1}/{max_retries}). "
+                    f"Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+                continue
+            logger.error(f"Tradier returned empty after {max_retries} attempts")
             return None
         except Exception as e:
             last_error = e
             if attempt < max_retries - 1:
-                delay = 1.0 * (2 ** attempt)  # Exponential backoff: 1s, 2s, 4s
+                delay = 2.0 * (2 ** attempt)  # Exponential backoff: 2s, 4s, 8s
                 logger.warning(
                     f"Tradier API error (attempt {attempt + 1}/{max_retries}): {e}. "
                     f"Retrying in {delay:.1f}s..."
                 )
                 time.sleep(delay)
             else:
-                logger.error(f"Tradier API failed after {max_retries} attempts: {e}")
+                logger.error(f"Tradier API failed after {max_retries} attempts: {last_error}")
 
     return None
 
@@ -217,7 +225,10 @@ class BoxSpreadSignalGenerator:
             return None
 
         spot_price = market_data['spot_price']
-        vix = market_data.get('vix', 15.0)
+        vix = market_data.get('vix')
+        if not vix:
+            logger.error("VIX unavailable from Tradier - cannot generate box spread signal")
+            return None
 
         # Find optimal expiration
         expiration, dte, why_expiration = self._select_expiration(market_data)
@@ -351,18 +362,17 @@ class BoxSpreadSignalGenerator:
             'source': 'tradier_production',
         }
 
-    def _get_vix(self) -> float:
-        """Get current VIX level with retry logic"""
+    def _get_vix(self) -> Optional[float]:
+        """Get current VIX level from Tradier with retry. Returns None if unavailable."""
         tradier = _get_tradier()
         if tradier:
-            quote = _tradier_call_with_retry(tradier.get_quote, 'VIX', max_retries=2)
+            quote = _tradier_call_with_retry(tradier.get_quote, 'VIX')
             if quote:
-                vix = quote.get('last', 15.0)
-                if vix and vix > 0:
+                vix = quote.get('last')
+                if vix and float(vix) > 0:
                     return float(vix)
-        # VIX is supplementary - use conservative default if unavailable
-        logger.debug("VIX quote unavailable, using default 15.0")
-        return 15.0
+        logger.error("VIX unavailable from Tradier after retries")
+        return None
 
     def _select_expiration(
         self, market_data: Dict[str, Any]
@@ -962,12 +972,16 @@ Example math (monthly):
         """
         now = datetime.now(CENTRAL_TZ)
 
-        # Get current market data
+        # Get current market data from Tradier - sole source
         market_data = self._get_market_data()
         if not market_data:
-            spot_price = 5950.0 if 'SPX' in self.config.ticker else 595.0
-        else:
-            spot_price = market_data['spot_price']
+            logger.error("Cannot analyze rates - Tradier market data unavailable")
+            return {
+                'available': False,
+                'error': 'Tradier market data unavailable after retries',
+            }
+
+        spot_price = market_data['spot_price']
 
         # Price a sample box spread for rate calculation
         lower = round(spot_price / 10) * 10 - 25
@@ -975,13 +989,17 @@ Example math (monthly):
         exp_date = date.today() + timedelta(days=180)
         expiration = exp_date.strftime('%Y-%m-%d')
 
-        pricing = self._price_box_spread(lower, upper, expiration, market_data or {})
+        pricing = self._price_box_spread(lower, upper, expiration, market_data)
         if pricing:
             implied_rate = self._calculate_implied_rate(
                 pricing['mid_price'], 50, 180
             )
         else:
-            implied_rate = 4.5  # Fallback estimate
+            logger.error("Cannot analyze rates - box spread pricing unavailable from Tradier")
+            return {
+                'available': False,
+                'error': 'Box spread pricing unavailable from Tradier after retries',
+            }
 
         # Get comparison rates (now dynamic!)
         self._refresh_rates()  # Ensure we have latest rates
@@ -1153,16 +1171,20 @@ class JubileeICSignalGenerator:
             if quote:
                 spot = quote.get('last', quote.get('bid', 0))
 
-            # Get VIX with retry
-            vix_quote = _tradier_call_with_retry(tradier.get_quote, 'VIX', max_retries=2)
+            # Get VIX with retry - Tradier is the sole source
+            vix_quote = _tradier_call_with_retry(tradier.get_quote, 'VIX')
             if vix_quote:
-                vix = vix_quote.get('last', 20.0)
+                vix = vix_quote.get('last')
+                if vix:
+                    vix = float(vix)
 
             if not spot:
                 logger.error("JUBILEE IC: No spot price available from Tradier")
                 return None
 
-            vix = vix or 20.0
+            if not vix or vix <= 0:
+                logger.error("JUBILEE IC: VIX unavailable from Tradier - cannot assess volatility")
+                return None
 
             # Get GEX data for gamma regime
             if self.gex_calculator:
@@ -1360,11 +1382,12 @@ class JubileeICSignalGenerator:
             call_short_sym = build_symbol(call_short, 'C')
             call_long_sym = build_symbol(call_long, 'C')
 
-            # Get quotes for all four legs
-            put_short_quote = _tradier_call_with_retry(tradier.get_option_quote, put_short_sym, max_retries=2)
-            put_long_quote = _tradier_call_with_retry(tradier.get_option_quote, put_long_sym, max_retries=2)
-            call_short_quote = _tradier_call_with_retry(tradier.get_option_quote, call_short_sym, max_retries=2)
-            call_long_quote = _tradier_call_with_retry(tradier.get_option_quote, call_long_sym, max_retries=2)
+            # Get quotes for all four legs - Tradier is the sole pricing source.
+            # Use full retry count (4 attempts with exponential backoff).
+            put_short_quote = _tradier_call_with_retry(tradier.get_option_quote, put_short_sym)
+            put_long_quote = _tradier_call_with_retry(tradier.get_option_quote, put_long_sym)
+            call_short_quote = _tradier_call_with_retry(tradier.get_option_quote, call_short_sym)
+            call_long_quote = _tradier_call_with_retry(tradier.get_option_quote, call_long_sym)
 
             if not all([put_short_quote, put_long_quote, call_short_quote, call_long_quote]):
                 logger.warning(f"JUBILEE IC: Missing option quotes for {expiration}")
@@ -1574,7 +1597,9 @@ class JubileeICSignalGenerator:
             expiration = exp_date.strftime('%Y-%m-%d')
             dte = days_until_friday
 
-        # Try REAL quotes from Tradier first (same as SAMSON)
+        # Get REAL quotes from Tradier - the ONLY source of pricing data.
+        # No fallback to estimates. If Tradier is unavailable after retries,
+        # skip this signal and wait for the next cycle.
         pricing = self.get_real_credits(
             expiration=expiration,
             put_short=strikes['put_short'],
@@ -1583,16 +1608,12 @@ class JubileeICSignalGenerator:
             call_long=strikes['call_long'],
         )
 
-        # Fall back to estimation if real quotes unavailable
         if not pricing:
-            logger.info("JUBILEE IC: Using estimated credits (Tradier quotes unavailable)")
-            pricing = self.estimate_credits(
-                spot,
-                market['expected_move'],
-                strikes['put_short'],
-                strikes['call_short'],
-                vix,
+            logger.warning(
+                "JUBILEE IC: Tradier quotes unavailable after retries - skipping signal. "
+                "Will retry on next scan cycle."
             )
+            return None
 
         # Credit check - warning only, does not block trades (same as SAMSON)
         if pricing['total_credit'] < 0.50:
