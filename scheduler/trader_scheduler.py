@@ -246,6 +246,51 @@ except ImportError:
     GEXSignalGenerator = None
     print("Warning: GEXSignalGenerator not available. GEX ML training will be disabled.")
 
+# Import FORTRESS ML Advisor for scheduled ML training
+try:
+    from quant.fortress_ml_advisor import get_advisor as get_fortress_ml_advisor
+    FORTRESS_ML_AVAILABLE = True
+except ImportError:
+    FORTRESS_ML_AVAILABLE = False
+    get_fortress_ml_advisor = None
+    print("Warning: FORTRESS ML Advisor not available. FORTRESS ML training will be disabled.")
+
+# Import DISCERNMENT ML Engine for scheduled ML training
+try:
+    from core.discernment_ml_engine import get_discernment_engine
+    DISCERNMENT_ML_AVAILABLE = True
+except ImportError:
+    DISCERNMENT_ML_AVAILABLE = False
+    get_discernment_engine = None
+    print("Warning: DISCERNMENT ML Engine not available. DISCERNMENT training will be disabled.")
+
+# Import VALOR ML Advisor for scheduled ML training
+try:
+    from trading.valor.ml import get_valor_ml_advisor
+    VALOR_ML_AVAILABLE = True
+except ImportError:
+    VALOR_ML_AVAILABLE = False
+    get_valor_ml_advisor = None
+    print("Warning: VALOR ML Advisor not available. VALOR ML training will be disabled.")
+
+# Import SPX Wheel ML Trainer for scheduled ML training
+try:
+    from trading.spx_wheel_ml import get_spx_wheel_ml_trainer
+    SPX_WHEEL_ML_AVAILABLE = True
+except ImportError:
+    SPX_WHEEL_ML_AVAILABLE = False
+    get_spx_wheel_ml_trainer = None
+    print("Warning: SPX Wheel ML not available. SPX Wheel ML training will be disabled.")
+
+# Import Pattern Learner for scheduled ML training
+try:
+    from ai.autonomous_ml_pattern_learner import PatternLearner
+    PATTERN_LEARNER_AVAILABLE = True
+except ImportError:
+    PATTERN_LEARNER_AVAILABLE = False
+    PatternLearner = None
+    print("Warning: Pattern Learner not available. Pattern learning will be disabled.")
+
 
 def populate_recent_gex_structures(days: int = 30) -> dict:
     """
@@ -3384,6 +3429,66 @@ class AutonomousTraderScheduler:
                 logger.warning(f"GEX_ML: Last trained {days_since} days ago - OVERDUE")
                 recovery_needed.append(('GEX_ML', days_since))
 
+            # Check FORTRESS_ML (weekly - should have run within 8 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'FORTRESS_ML' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            fortress_ml_last = row[0] if row and row[0] else None
+            if FORTRESS_ML_AVAILABLE and (not fortress_ml_last or (now.replace(tzinfo=None) - fortress_ml_last).days > 8):
+                days_since = (now.replace(tzinfo=None) - fortress_ml_last).days if fortress_ml_last else 999
+                logger.warning(f"FORTRESS_ML: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('FORTRESS_ML', days_since))
+
+            # Check DISCERNMENT_ML (weekly - should have run within 8 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'DISCERNMENT_ML' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            discernment_last = row[0] if row and row[0] else None
+            if DISCERNMENT_ML_AVAILABLE and (not discernment_last or (now.replace(tzinfo=None) - discernment_last).days > 8):
+                days_since = (now.replace(tzinfo=None) - discernment_last).days if discernment_last else 999
+                logger.warning(f"DISCERNMENT_ML: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('DISCERNMENT_ML', days_since))
+
+            # Check VALOR_ML (weekly - should have run within 8 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'VALOR_ML' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            valor_ml_last = row[0] if row and row[0] else None
+            if VALOR_ML_AVAILABLE and (not valor_ml_last or (now.replace(tzinfo=None) - valor_ml_last).days > 8):
+                days_since = (now.replace(tzinfo=None) - valor_ml_last).days if valor_ml_last else 999
+                logger.warning(f"VALOR_ML: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('VALOR_ML', days_since))
+
+            # Check SPX_WHEEL_ML (weekly - should have run within 8 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'SPX_WHEEL_ML' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            wheel_ml_last = row[0] if row and row[0] else None
+            if SPX_WHEEL_ML_AVAILABLE and (not wheel_ml_last or (now.replace(tzinfo=None) - wheel_ml_last).days > 8):
+                days_since = (now.replace(tzinfo=None) - wheel_ml_last).days if wheel_ml_last else 999
+                logger.warning(f"SPX_WHEEL_ML: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('SPX_WHEEL_ML', days_since))
+
+            # Check PATTERN_LEARNER (weekly - should have run within 8 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'PATTERN_LEARNER' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            pattern_last = row[0] if row and row[0] else None
+            if PATTERN_LEARNER_AVAILABLE and (not pattern_last or (now.replace(tzinfo=None) - pattern_last).days > 8):
+                days_since = (now.replace(tzinfo=None) - pattern_last).days if pattern_last else 999
+                logger.warning(f"PATTERN_LEARNER: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('PATTERN_LEARNER', days_since))
+
             conn.close()
 
         except Exception as e:
@@ -3412,6 +3517,16 @@ class AutonomousTraderScheduler:
                     self.scheduled_quant_training_logic()
                 elif model_name == 'GEX_ML':
                     self.scheduled_gex_ml_training_logic()
+                elif model_name == 'FORTRESS_ML':
+                    self.scheduled_fortress_ml_training_logic()
+                elif model_name == 'DISCERNMENT_ML':
+                    self.scheduled_discernment_ml_training_logic()
+                elif model_name == 'VALOR_ML':
+                    self.scheduled_valor_ml_training_logic()
+                elif model_name == 'SPX_WHEEL_ML':
+                    self.scheduled_spx_wheel_ml_training_logic()
+                elif model_name == 'PATTERN_LEARNER':
+                    self.scheduled_pattern_learner_training_logic()
 
                 logger.info(f"STARTUP RECOVERY: ✅ {model_name} catch-up complete")
 
@@ -3630,6 +3745,406 @@ class AutonomousTraderScheduler:
             self._save_heartbeat('AUTO_VALIDATION', 'ERROR', {'error': str(e)})
             logger.info("AUTO-VALIDATION will retry next Saturday at 6:00 PM CT")
             logger.info(f"=" * 80)
+
+    def scheduled_fortress_ml_training_logic(self):
+        """
+        FORTRESS ML Advisor Training - runs WEEKLY on Sunday at 7:00 PM CT
+
+        Trains the FORTRESS ML Advisor (XGBoost classifier) on CHRONICLES
+        backtest results and live trade outcomes. FORTRESS ML provides
+        probability predictions used by all Iron Condor bots.
+
+        Training order on Sundays:
+        - 4:30 PM: WISDOM
+        - 5:00 PM: QUANT (GEX Directional)
+        - 6:00 PM: GEX ML (Probability Models)
+        - 7:00 PM: FORTRESS ML (this job)
+        - 7:30 PM: DISCERNMENT ML
+        - 8:00 PM: VALOR ML
+        - 8:30 PM: SPX WHEEL ML
+        - 9:00 PM: PATTERN LEARNER
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"FORTRESS ML Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not FORTRESS_ML_AVAILABLE:
+            logger.warning("FORTRESS ML: Advisor not available - skipping")
+            return
+
+        try:
+            logger.info("FORTRESS ML: Starting weekly model training...")
+
+            advisor = get_fortress_ml_advisor()
+
+            # Try training from live outcomes first
+            try:
+                metrics = advisor.retrain_from_outcomes(min_new_samples=30)
+                if metrics:
+                    logger.info(f"FORTRESS ML: ✅ Trained from live outcomes")
+                    logger.info(f"  Accuracy: {metrics.accuracy:.2%}")
+                    logger.info(f"  AUC: {metrics.auc:.4f}" if hasattr(metrics, 'auc') else "")
+
+                    self._save_heartbeat('FORTRESS_ML', 'TRAINING_COMPLETE', {
+                        'method': 'live_outcomes',
+                        'accuracy': metrics.accuracy
+                    })
+                    self._record_training_history(
+                        model_name='FORTRESS_ML',
+                        status='COMPLETED',
+                        accuracy_after=metrics.accuracy * 100,
+                        triggered_by='SCHEDULED'
+                    )
+                    logger.info(f"FORTRESS ML: Next training next Sunday at 7:00 PM CT")
+                    logger.info(f"=" * 80)
+                    return
+            except Exception as e:
+                logger.info(f"FORTRESS ML: Live outcomes training not possible: {e}")
+
+            # Fallback: Train from CHRONICLES backtests
+            try:
+                from backtest.zero_dte_backtest import ZeroDTEBacktester
+                backtester = ZeroDTEBacktester()
+                results = backtester.get_recent_results(limit=500)
+
+                if results and len(results) >= 30:
+                    metrics = advisor.train_from_chronicles(results, min_samples=30)
+                    if metrics:
+                        logger.info(f"FORTRESS ML: ✅ Trained from CHRONICLES data")
+                        logger.info(f"  Accuracy: {metrics.accuracy:.2%}")
+                        logger.info(f"  Samples: {len(results)}")
+
+                        self._save_heartbeat('FORTRESS_ML', 'TRAINING_COMPLETE', {
+                            'method': 'chronicles',
+                            'accuracy': metrics.accuracy,
+                            'samples': len(results)
+                        })
+                        self._record_training_history(
+                            model_name='FORTRESS_ML',
+                            status='COMPLETED',
+                            accuracy_after=metrics.accuracy * 100,
+                            training_samples=len(results),
+                            triggered_by='SCHEDULED'
+                        )
+                        logger.info(f"FORTRESS ML: Next training next Sunday at 7:00 PM CT")
+                        logger.info(f"=" * 80)
+                        return
+                else:
+                    logger.warning(f"FORTRESS ML: Not enough CHRONICLES data ({len(results) if results else 0} samples)")
+            except Exception as e:
+                logger.warning(f"FORTRESS ML: CHRONICLES training failed: {e}")
+
+            logger.warning("FORTRESS ML: ⚠️ No training data available - skipping")
+            self._save_heartbeat('FORTRESS_ML', 'TRAINING_SKIPPED', {'reason': 'no_data'})
+
+        except Exception as e:
+            logger.error(f"FORTRESS ML: ❌ Training failed: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('FORTRESS_ML', 'ERROR', {'error': str(e)})
+            self._record_training_history(
+                model_name='FORTRESS_ML',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+
+        logger.info(f"FORTRESS ML: Next training next Sunday at 7:00 PM CT")
+        logger.info(f"=" * 80)
+
+    def scheduled_discernment_ml_training_logic(self):
+        """
+        DISCERNMENT ML Engine Training - runs WEEKLY on Sunday at 7:30 PM CT
+
+        Trains 3 separate models (direction, magnitude, timing) from
+        historical predictions with recorded outcomes. DISCERNMENT provides
+        market structure analysis predictions.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"DISCERNMENT ML Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not DISCERNMENT_ML_AVAILABLE:
+            logger.warning("DISCERNMENT ML: Engine not available - skipping")
+            return
+
+        conn = None
+        try:
+            import pandas as pd
+
+            logger.info("DISCERNMENT ML: Starting weekly model training...")
+
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get training data (predictions with outcomes)
+            cursor.execute('''
+                SELECT
+                    p.features,
+                    o.actual_direction,
+                    o.actual_magnitude,
+                    CASE
+                        WHEN ABS(o.actual_return_pct) < 0.5 THEN 'immediate'
+                        WHEN ABS(o.actual_return_pct) < 1.5 THEN '1_day'
+                        ELSE '3_day'
+                    END as actual_timing
+                FROM discernment_predictions p
+                JOIN discernment_outcomes o ON p.prediction_id = o.prediction_id
+                WHERE o.actual_direction IS NOT NULL
+                AND o.actual_magnitude IS NOT NULL
+            ''')
+
+            rows = cursor.fetchall()
+            conn.close()
+            conn = None
+
+            if len(rows) < 100:
+                logger.info(f"DISCERNMENT ML: Insufficient data ({len(rows)} samples, need 100+) - skipping")
+                self._save_heartbeat('DISCERNMENT_ML', 'TRAINING_SKIPPED', {
+                    'reason': 'insufficient_data',
+                    'samples': len(rows)
+                })
+                logger.info(f"DISCERNMENT ML: Next training next Sunday at 7:30 PM CT")
+                logger.info(f"=" * 80)
+                return
+
+            # Prepare training dataframe
+            import json as json_lib
+            training_data = []
+            for row in rows:
+                features = json_lib.loads(row[0]) if row[0] else {}
+                features['actual_direction'] = row[1]
+                features['actual_magnitude'] = row[2]
+                features['actual_timing'] = row[3]
+                training_data.append(features)
+
+            df = pd.DataFrame(training_data)
+
+            # Train models
+            engine = get_discernment_engine()
+            engine.train_models(df)
+
+            logger.info(f"DISCERNMENT ML: ✅ Training completed on {len(rows)} samples")
+
+            self._save_heartbeat('DISCERNMENT_ML', 'TRAINING_COMPLETE', {
+                'samples': len(rows)
+            })
+            self._record_training_history(
+                model_name='DISCERNMENT_ML',
+                status='COMPLETED',
+                training_samples=len(rows),
+                triggered_by='SCHEDULED'
+            )
+
+        except Exception as e:
+            logger.error(f"DISCERNMENT ML: ❌ Training failed: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('DISCERNMENT_ML', 'ERROR', {'error': str(e)})
+            self._record_training_history(
+                model_name='DISCERNMENT_ML',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        logger.info(f"DISCERNMENT ML: Next training next Sunday at 7:30 PM CT")
+        logger.info(f"=" * 80)
+
+    def scheduled_valor_ml_training_logic(self):
+        """
+        VALOR ML Advisor Training - runs WEEKLY on Sunday at 8:00 PM CT
+
+        Trains XGBoost classifier for MES futures trade win probability
+        prediction. Uses scan_activity data from VALOR trades.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"VALOR ML Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not VALOR_ML_AVAILABLE:
+            logger.warning("VALOR ML: Advisor not available - skipping")
+            return
+
+        try:
+            logger.info("VALOR ML: Starting weekly model training...")
+
+            advisor = get_valor_ml_advisor()
+            metrics = advisor.train(min_samples=50, use_new_params_only=True)
+
+            if metrics:
+                logger.info(f"VALOR ML: ✅ Training completed")
+                logger.info(f"  Accuracy: {metrics.accuracy:.2%}")
+                logger.info(f"  Brier Score: {metrics.brier_score:.4f}" if hasattr(metrics, 'brier_score') else "")
+                logger.info(f"  Samples: {metrics.total_samples}" if hasattr(metrics, 'total_samples') else "")
+
+                self._save_heartbeat('VALOR_ML', 'TRAINING_COMPLETE', {
+                    'accuracy': metrics.accuracy,
+                    'samples': getattr(metrics, 'total_samples', 0)
+                })
+                self._record_training_history(
+                    model_name='VALOR_ML',
+                    status='COMPLETED',
+                    accuracy_after=metrics.accuracy * 100,
+                    training_samples=getattr(metrics, 'total_samples', 0),
+                    triggered_by='SCHEDULED'
+                )
+            else:
+                logger.warning("VALOR ML: ⚠️ Training returned no metrics")
+                self._save_heartbeat('VALOR_ML', 'TRAINING_SKIPPED', {'reason': 'no_metrics'})
+
+        except ValueError as e:
+            # Insufficient data is not an error - just skip
+            logger.info(f"VALOR ML: {e} - skipping")
+            self._save_heartbeat('VALOR_ML', 'TRAINING_SKIPPED', {'reason': str(e)})
+        except Exception as e:
+            logger.error(f"VALOR ML: ❌ Training failed: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('VALOR_ML', 'ERROR', {'error': str(e)})
+            self._record_training_history(
+                model_name='VALOR_ML',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+
+        logger.info(f"VALOR ML: Next training next Sunday at 8:00 PM CT")
+        logger.info(f"=" * 80)
+
+    def scheduled_spx_wheel_ml_training_logic(self):
+        """
+        SPX WHEEL ML Training - runs WEEKLY on Sunday at 8:30 PM CT
+
+        Trains RandomForest classifier for SPX put selling outcome prediction.
+        Uses completed wheel trade outcomes from spx_wheel_ml_outcomes table.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"SPX WHEEL ML Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not SPX_WHEEL_ML_AVAILABLE:
+            logger.warning("SPX WHEEL ML: Trainer not available - skipping")
+            return
+
+        try:
+            logger.info("SPX WHEEL ML: Starting weekly model training...")
+
+            trainer = get_spx_wheel_ml_trainer()
+
+            # Load outcomes from database
+            outcomes = trainer._load_all_outcomes_from_db()
+
+            if not outcomes or len(outcomes) < 30:
+                logger.info(f"SPX WHEEL ML: Insufficient data ({len(outcomes) if outcomes else 0} samples, need 30+) - skipping")
+                self._save_heartbeat('SPX_WHEEL_ML', 'TRAINING_SKIPPED', {
+                    'reason': 'insufficient_data',
+                    'samples': len(outcomes) if outcomes else 0
+                })
+                logger.info(f"SPX WHEEL ML: Next training next Sunday at 8:30 PM CT")
+                logger.info(f"=" * 80)
+                return
+
+            result = trainer.train(outcomes, min_samples=30)
+
+            if result.get('error'):
+                logger.warning(f"SPX WHEEL ML: ⚠️ {result['error']}")
+                self._save_heartbeat('SPX_WHEEL_ML', 'TRAINING_SKIPPED', result)
+            else:
+                accuracy = result.get('accuracy', 0)
+                samples = result.get('samples', len(outcomes))
+                logger.info(f"SPX WHEEL ML: ✅ Training completed")
+                logger.info(f"  Accuracy: {accuracy:.2%}")
+                logger.info(f"  Samples: {samples}")
+
+                self._save_heartbeat('SPX_WHEEL_ML', 'TRAINING_COMPLETE', result)
+                self._record_training_history(
+                    model_name='SPX_WHEEL_ML',
+                    status='COMPLETED',
+                    accuracy_after=accuracy * 100,
+                    training_samples=samples,
+                    triggered_by='SCHEDULED'
+                )
+
+        except Exception as e:
+            logger.error(f"SPX WHEEL ML: ❌ Training failed: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('SPX_WHEEL_ML', 'ERROR', {'error': str(e)})
+            self._record_training_history(
+                model_name='SPX_WHEEL_ML',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+
+        logger.info(f"SPX WHEEL ML: Next training next Sunday at 8:30 PM CT")
+        logger.info(f"=" * 80)
+
+    def scheduled_pattern_learner_training_logic(self):
+        """
+        PATTERN LEARNER Training - runs WEEKLY on Sunday at 9:00 PM CT
+
+        Trains RandomForest classifier for pattern success/failure prediction.
+        Learns from historical pattern data to improve detection accuracy.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"PATTERN LEARNER Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not PATTERN_LEARNER_AVAILABLE:
+            logger.warning("PATTERN LEARNER: Not available - skipping")
+            return
+
+        try:
+            logger.info("PATTERN LEARNER: Starting weekly model training...")
+
+            learner = PatternLearner()
+            result = learner.train_pattern_classifier(lookback_days=180)
+
+            if result.get('error'):
+                logger.info(f"PATTERN LEARNER: {result['error']} - skipping")
+                self._save_heartbeat('PATTERN_LEARNER', 'TRAINING_SKIPPED', result)
+            elif result.get('trained'):
+                accuracy = result.get('accuracy', 0)
+                samples = result.get('samples', 0)
+                logger.info(f"PATTERN LEARNER: ✅ Training completed")
+                logger.info(f"  Accuracy: {accuracy:.2%}")
+                logger.info(f"  Samples: {samples}")
+                logger.info(f"  Top features: {result.get('top_features', [])[:5]}")
+
+                self._save_heartbeat('PATTERN_LEARNER', 'TRAINING_COMPLETE', result)
+                self._record_training_history(
+                    model_name='PATTERN_LEARNER',
+                    status='COMPLETED',
+                    accuracy_after=accuracy * 100,
+                    training_samples=samples,
+                    triggered_by='SCHEDULED'
+                )
+            else:
+                logger.warning("PATTERN LEARNER: ⚠️ Training returned unexpected result")
+                self._save_heartbeat('PATTERN_LEARNER', 'TRAINING_SKIPPED', result)
+
+        except Exception as e:
+            logger.error(f"PATTERN LEARNER: ❌ Training failed: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('PATTERN_LEARNER', 'ERROR', {'error': str(e)})
+            self._record_training_history(
+                model_name='PATTERN_LEARNER',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+
+        logger.info(f"PATTERN LEARNER: Next training next Sunday at 9:00 PM CT")
+        logger.info(f"=" * 80)
 
     def _record_training_history(self, model_name: str, status: str, accuracy_after: float = None,
                                   training_samples: int = None, triggered_by: str = 'SCHEDULED',
@@ -4759,6 +5274,111 @@ class AutonomousTraderScheduler:
             logger.info("✅ AUTO-VALIDATION job scheduled (WEEKLY on Saturday at 6:00 PM CT)")
         else:
             logger.warning("⚠️ AutoValidationSystem not available - ML validation disabled")
+
+        # =================================================================
+        # FORTRESS ML JOB: ML Advisor Training - runs WEEKLY on Sunday at 7:00 PM CT
+        # Trains XGBoost classifier for Iron Condor probability predictions
+        # =================================================================
+        if FORTRESS_ML_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_fortress_ml_training_logic,
+                trigger=CronTrigger(
+                    hour=19,       # 7:00 PM CT - after GEX ML training
+                    minute=0,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='fortress_ml_training',
+                name='FORTRESS ML - Weekly ML Advisor Training',
+                replace_existing=True
+            )
+            logger.info("✅ FORTRESS ML job scheduled (WEEKLY on Sunday at 7:00 PM CT)")
+        else:
+            logger.warning("⚠️ FORTRESS ML not available - ML advisor training disabled")
+
+        # =================================================================
+        # DISCERNMENT ML JOB: ML Engine Training - runs WEEKLY on Sunday at 7:30 PM CT
+        # Trains direction, magnitude, timing models from prediction outcomes
+        # =================================================================
+        if DISCERNMENT_ML_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_discernment_ml_training_logic,
+                trigger=CronTrigger(
+                    hour=19,       # 7:30 PM CT
+                    minute=30,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='discernment_ml_training',
+                name='DISCERNMENT ML - Weekly Engine Training',
+                replace_existing=True
+            )
+            logger.info("✅ DISCERNMENT ML job scheduled (WEEKLY on Sunday at 7:30 PM CT)")
+        else:
+            logger.warning("⚠️ DISCERNMENT ML not available - engine training disabled")
+
+        # =================================================================
+        # VALOR ML JOB: ML Advisor Training - runs WEEKLY on Sunday at 8:00 PM CT
+        # Trains XGBoost classifier for MES futures win probability
+        # =================================================================
+        if VALOR_ML_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_valor_ml_training_logic,
+                trigger=CronTrigger(
+                    hour=20,       # 8:00 PM CT
+                    minute=0,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='valor_ml_training',
+                name='VALOR ML - Weekly Advisor Training',
+                replace_existing=True
+            )
+            logger.info("✅ VALOR ML job scheduled (WEEKLY on Sunday at 8:00 PM CT)")
+        else:
+            logger.warning("⚠️ VALOR ML not available - advisor training disabled")
+
+        # =================================================================
+        # SPX WHEEL ML JOB: ML Training - runs WEEKLY on Sunday at 8:30 PM CT
+        # Trains RandomForest for SPX put selling outcome prediction
+        # =================================================================
+        if SPX_WHEEL_ML_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_spx_wheel_ml_training_logic,
+                trigger=CronTrigger(
+                    hour=20,       # 8:30 PM CT
+                    minute=30,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='spx_wheel_ml_training',
+                name='SPX WHEEL ML - Weekly Training',
+                replace_existing=True
+            )
+            logger.info("✅ SPX WHEEL ML job scheduled (WEEKLY on Sunday at 8:30 PM CT)")
+        else:
+            logger.warning("⚠️ SPX WHEEL ML not available - training disabled")
+
+        # =================================================================
+        # PATTERN LEARNER JOB: ML Training - runs WEEKLY on Sunday at 9:00 PM CT
+        # Trains RandomForest for pattern success/failure prediction
+        # =================================================================
+        if PATTERN_LEARNER_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_pattern_learner_training_logic,
+                trigger=CronTrigger(
+                    hour=21,       # 9:00 PM CT
+                    minute=0,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='pattern_learner_training',
+                name='PATTERN LEARNER - Weekly Training',
+                replace_existing=True
+            )
+            logger.info("✅ PATTERN LEARNER job scheduled (WEEKLY on Sunday at 9:00 PM CT)")
+        else:
+            logger.warning("⚠️ PATTERN LEARNER not available - training disabled")
 
         # =================================================================
         # EQUITY SNAPSHOTS JOB: Intraday chart data - runs every 5 minutes
