@@ -443,8 +443,20 @@ class JubileeTrader:
                 position_explanation="EMERGENCY: Created after roll failure to maintain IC trading capital",
                 daily_briefing="Emergency position - roll failed, this ensures IC trading continues"
             )
-            self.db.save_position(emergency_box)
-            logger.info(f"Created emergency box spread: {emergency_box.position_id}")
+            # Save with retry - this is the capital source
+            saved = False
+            for attempt in range(3):
+                if self.db.save_position(emergency_box):
+                    saved = True
+                    logger.info(f"Created emergency box spread: {emergency_box.position_id}")
+                    break
+                else:
+                    delay = 1.0 * (2 ** attempt)
+                    logger.warning(f"Emergency box spread save failed (attempt {attempt + 1}/3), retrying in {delay}s...")
+                    time.sleep(delay)
+
+            if not saved:
+                logger.error("CRITICAL: Failed to save emergency box spread after 3 attempts")
         except Exception as e:
             logger.error(f"CRITICAL: Failed to create emergency box spread: {e}", exc_info=True)
 
@@ -1178,22 +1190,20 @@ class JubileeICTrader:
 
     def _get_available_capital(self) -> float:
         """
-        Get capital available for IC trading.
+        Get capital available for IC trading from box spread positions.
 
-        In PAPER mode, capital is guaranteed from config.starting_capital.
-        Box spread positions are maintained for display/reconciliation, but
-        their absence NEVER blocks trading in PAPER mode.
-
-        In LIVE mode, capital comes from actual box spread positions.
+        The IC trader uses BORROWED capital from box spreads. The box spread
+        is the sole source of capital. _ensure_paper_box_spread guarantees
+        one always exists in PAPER mode.
         """
-        # Try to ensure we have a box spread position (for display purposes)
+        # Ensure a box spread exists (creates or auto-extends in PAPER mode)
         self._ensure_paper_box_spread()
 
-        # Get capital from box spread positions
-        box_positions = self.db.get_open_positions()  # Box spreads
+        # Get capital from box spread positions - the sole source
+        box_positions = self.db.get_open_positions()
 
-        # Calculate total capital available from box spreads
-        total_from_boxes = 0.0
+        # Calculate total capital from viable (non-expired) box spreads
+        total_borrowed = 0.0
         for box in box_positions:
             try:
                 exp_date = datetime.strptime(box.expiration, '%Y-%m-%d').date()
@@ -1201,36 +1211,30 @@ class JubileeICTrader:
                     continue  # Skip expired positions
             except (ValueError, TypeError):
                 continue
-            total_from_boxes += box.total_cash_deployed
-
-        # PAPER MODE: Capital is ALWAYS available from config.
-        # Box spreads are a display construct in paper mode - they must never
-        # block trading. This is the root fix for the recurring $0 capital bug.
-        if self.config.mode == TradingMode.PAPER and total_from_boxes <= 0:
-            total_from_boxes = self.config.starting_capital
+            total_borrowed += box.total_cash_deployed
 
         # Subtract capital currently in use by open IC positions
         ic_positions = self.db.get_open_ic_positions()
         for ic in ic_positions:
-            total_from_boxes -= ic.total_credit_received  # Margin tied up
+            total_borrowed -= ic.total_credit_received  # Margin tied up
 
-        return max(0, total_from_boxes)
+        return max(0, total_borrowed)
 
     def _ensure_paper_box_spread(self) -> None:
         """
-        In PAPER mode, ensure a viable box spread position always exists.
+        In PAPER mode, guarantee a viable box spread position always exists.
 
-        Paper box spreads are fictional - they exist for display/reconciliation.
-        If any position is approaching expiration (DTE <= 30), auto-extend it
-        instead of letting it trigger the roll pipeline (which fails in paper mode).
-        If no positions exist at all, create a new one.
+        The box spread is the SOLE source of borrowed capital for IC trading.
+        This method must never silently fail - if a box spread doesn't exist,
+        it creates one. If one is approaching expiration, it auto-extends it.
+        Retries on failure to ensure the capital source is always available.
         """
         if self.config.mode != TradingMode.PAPER:
             return
 
         box_positions = self.db.get_open_positions()
 
-        # Check viability and auto-extend any paper positions approaching threshold
+        # Check viability and auto-extend any positions approaching threshold
         if box_positions:
             viable = False
             for pos in box_positions:
@@ -1244,20 +1248,24 @@ class JubileeICTrader:
                         new_expiration = date.today() + timedelta(days=180)
                         pos.expiration = new_expiration.strftime('%Y-%m-%d')
                         pos.current_dte = 180
-                        self.db.save_position(pos)
-                        logger.info(
-                            f"PAPER MODE: Auto-extended {pos.position_id} to "
-                            f"{pos.expiration} (was {dte} DTE)"
-                        )
-                        viable = True
+                        saved = self.db.save_position(pos)
+                        if saved:
+                            logger.info(
+                                f"PAPER MODE: Auto-extended {pos.position_id} to "
+                                f"{pos.expiration} (was {dte} DTE)"
+                            )
+                            viable = True
+                        else:
+                            logger.error(f"PAPER MODE: Failed to save auto-extended position {pos.position_id}")
                     # else: DTE <= 0, skip this expired position
                 except (ValueError, TypeError):
                     continue
             if viable:
-                return  # Have at least one viable position
+                return  # Have at least one viable position providing capital
 
-        # Create a synthetic paper box spread with $500K borrowed
-        logger.info("PAPER MODE: Creating synthetic box spread position for IC trading capital")
+        # No viable box spread exists - create one with retry.
+        # This is the capital source for IC trading, so failure is not acceptable.
+        logger.info("PAPER MODE: No viable box spread - creating one for IC trading capital")
         try:
             from .models import BoxSpreadPosition, PositionStatus
 
@@ -1352,10 +1360,31 @@ class JubileeICTrader:
                 position_explanation="PAPER MODE: Synthetic box spread providing $500K capital for IC trading",
                 daily_briefing="Paper trading position - no real capital at risk"
             )
-            self.db.save_position(synthetic_box)
-            logger.info(f"Created paper box spread: {synthetic_box.position_id} with ${total_credit:,.0f} capital")
+            # Save with retry - this is the capital source, failure is not acceptable
+            saved = False
+            for attempt in range(3):
+                if self.db.save_position(synthetic_box):
+                    saved = True
+                    logger.info(
+                        f"Created paper box spread: {synthetic_box.position_id} "
+                        f"with ${total_credit:,.0f} borrowed capital"
+                    )
+                    break
+                else:
+                    delay = 1.0 * (2 ** attempt)
+                    logger.warning(
+                        f"Box spread save failed (attempt {attempt + 1}/3), "
+                        f"retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+
+            if not saved:
+                logger.error(
+                    "CRITICAL: Failed to save paper box spread after 3 attempts. "
+                    "IC trading will have no capital until next cycle."
+                )
         except Exception as e:
-            logger.error(f"Failed to create paper box spread: {e}", exc_info=True)
+            logger.error(f"CRITICAL: Failed to create paper box spread: {e}", exc_info=True)
 
     def _get_source_box_position(self) -> Optional[str]:
         """

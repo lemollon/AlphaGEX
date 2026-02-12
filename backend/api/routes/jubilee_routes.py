@@ -2050,22 +2050,18 @@ async def get_full_reconciliation():
         # ic_config.min_capital_per_trade is the margin required per IC trade
         margin_per_trade = ic_config.min_capital_per_trade if ic_config and ic_config.min_capital_per_trade else 5000.0
 
-        # PAPER MODE FALLBACK: If no box spreads provide capital, use IC config starting capital.
-        # Box spreads are a display construct in paper mode and must never show $0 capital.
-        effective_borrowed = total_borrowed
-        if effective_borrowed <= 0 and ic_config and ic_config.mode == TradingMode.PAPER:
-            effective_borrowed = ic_config.starting_capital
-
-        reserved_capital = effective_borrowed * reserve_pct
+        # Capital comes from box spreads - the sole source of borrowed capital.
+        # _ensure_paper_box_spread (called above) guarantees one exists in PAPER mode.
+        reserved_capital = total_borrowed * reserve_pct
         capital_in_ic_trades = len(ic_positions) * margin_per_trade
-        available_capital = effective_borrowed - reserved_capital - capital_in_ic_trades
+        available_capital = total_borrowed - reserved_capital - capital_in_ic_trades
 
         # Net profit calculation (all server-side)
         total_ic_returns = ic_realized + total_ic_unrealized
         net_profit = total_ic_returns - total_cost_accrued
 
         # ROI calculations
-        roi_on_borrowed = (net_profit / effective_borrowed * 100) if effective_borrowed > 0 else 0
+        roi_on_borrowed = (net_profit / total_borrowed * 100) if total_borrowed > 0 else 0
 
         # Cost efficiency
         cost_efficiency = (total_ic_returns / total_cost_accrued) if total_cost_accrued > 0 else 0
@@ -2106,15 +2102,14 @@ async def get_full_reconciliation():
 
             # Capital Deployment Reconciliation
             "capital_deployment": {
-                "total_borrowed": effective_borrowed,
+                "total_borrowed": total_borrowed,
                 "reserved": reserved_capital,
                 "reserved_pct": reserve_pct * 100,
                 "in_ic_trades": capital_in_ic_trades,
                 "ic_positions_count": len(ic_positions),
                 "available_to_trade": available_capital,
                 # Verification: these should add up
-                "reconciles": abs((reserved_capital + capital_in_ic_trades + available_capital) - effective_borrowed) < 0.01,
-                "using_paper_fallback": effective_borrowed != total_borrowed,
+                "reconciles": abs((reserved_capital + capital_in_ic_trades + available_capital) - total_borrowed) < 0.01,
             },
 
             # IC Trading Reconciliation (per position with Prophet)
