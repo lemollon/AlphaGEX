@@ -92,11 +92,13 @@ class JubileeDatabase:
             ('prometheus_ic_equity_snapshots', 'jubilee_ic_equity_snapshots'),
         ]:
             try:
+                cursor.execute("SAVEPOINT rename_migration")
                 cursor.execute(
                     "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
                     (old_name,)
                 )
                 if not cursor.fetchone()[0]:
+                    cursor.execute("RELEASE SAVEPOINT rename_migration")
                     continue
                 cursor.execute(
                     "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
@@ -105,14 +107,18 @@ class JubileeDatabase:
                 if cursor.fetchone()[0]:
                     cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
                     if cursor.fetchone()[0] > 0:
+                        cursor.execute("RELEASE SAVEPOINT rename_migration")
                         continue
                     cursor.execute(f"DROP TABLE {new_name}")
                 cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                cursor.execute("RELEASE SAVEPOINT rename_migration")
                 logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
             except Exception as e:
+                cursor.execute("ROLLBACK TO SAVEPOINT rename_migration")
                 logger.warning(f"{self.bot_name}: Migration {old_name}: {e}")
 
         try:
+            cursor.execute("SAVEPOINT config_migration")
             cursor.execute("""
                 UPDATE autonomous_config
                 SET key = 'jubilee_' || SUBSTRING(key FROM 12)
@@ -124,7 +130,9 @@ class JubileeDatabase:
             """)
             if cursor.rowcount > 0:
                 logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys prometheus_* -> jubilee_*")
+            cursor.execute("RELEASE SAVEPOINT config_migration")
         except Exception as e:
+            cursor.execute("ROLLBACK TO SAVEPOINT config_migration")
             logger.warning(f"{self.bot_name}: Config key migration: {e}")
 
     def _ensure_tables(self):
@@ -232,12 +240,14 @@ class JubileeDatabase:
             ]
             for col_name, col_type in _migration_columns:
                 try:
+                    cursor.execute("SAVEPOINT col_migration")
                     cursor.execute(f"""
                         ALTER TABLE jubilee_positions
                         ADD COLUMN IF NOT EXISTS {col_name} {col_type}
                     """)
+                    cursor.execute("RELEASE SAVEPOINT col_migration")
                 except Exception:
-                    pass  # Column already exists or DB doesn't support IF NOT EXISTS
+                    cursor.execute("ROLLBACK TO SAVEPOINT col_migration")
 
             # Signals table (generated signals, executed or not)
             cursor.execute("""
@@ -781,12 +791,14 @@ class JubileeDatabase:
 
             for table, column, col_type in migration_columns:
                 try:
+                    cursor.execute("SAVEPOINT col_migration2")
                     cursor.execute(f"""
                         ALTER TABLE {table}
                         ADD COLUMN IF NOT EXISTS {column} {col_type}
                     """)
+                    cursor.execute("RELEASE SAVEPOINT col_migration2")
                 except Exception as e:
-                    # Column might already exist or other issue
+                    cursor.execute("ROLLBACK TO SAVEPOINT col_migration2")
                     logger.debug(f"Column migration for {table}.{column}: {e}")
 
             # ==================================================================
@@ -840,12 +852,14 @@ class JubileeDatabase:
 
             for table, constraint_name, column, references, on_delete in foreign_keys:
                 try:
+                    cursor.execute("SAVEPOINT fk_migration")
                     # Check if constraint already exists
                     cursor.execute("""
                         SELECT 1 FROM information_schema.table_constraints
                         WHERE constraint_name = %s AND table_name = %s
                     """, (constraint_name, table))
                     if cursor.fetchone():
+                        cursor.execute("RELEASE SAVEPOINT fk_migration")
                         continue  # Constraint already exists
 
                     cursor.execute(f"""
@@ -855,9 +869,10 @@ class JubileeDatabase:
                         REFERENCES {references}
                         ON DELETE {on_delete}
                     """)
+                    cursor.execute("RELEASE SAVEPOINT fk_migration")
                     logger.info(f"Added foreign key {constraint_name} on {table}")
                 except Exception as e:
-                    # Constraint might already exist or column has invalid data
+                    cursor.execute("ROLLBACK TO SAVEPOINT fk_migration")
                     logger.debug(f"Foreign key {constraint_name}: {e}")
 
             # ==================================================================
@@ -907,12 +922,14 @@ class JubileeDatabase:
 
             for table, column, default_val in default_value_columns:
                 try:
+                    cursor.execute("SAVEPOINT default_migration")
                     cursor.execute(f"""
                         ALTER TABLE {table}
                         ALTER COLUMN {column} SET DEFAULT {default_val}
                     """)
+                    cursor.execute("RELEASE SAVEPOINT default_migration")
                 except Exception as e:
-                    # Column might not exist or already has default
+                    cursor.execute("ROLLBACK TO SAVEPOINT default_migration")
                     logger.debug(f"Default value for {table}.{column}: {e}")
 
             # Update existing NULL values to their defaults
@@ -925,12 +942,15 @@ class JubileeDatabase:
 
             for table, column, default_val in null_updates:
                 try:
+                    cursor.execute("SAVEPOINT null_migration")
                     cursor.execute(f"""
                         UPDATE {table}
                         SET {column} = {default_val}
                         WHERE {column} IS NULL
                     """)
+                    cursor.execute("RELEASE SAVEPOINT null_migration")
                 except Exception as e:
+                    cursor.execute("ROLLBACK TO SAVEPOINT null_migration")
                     logger.debug(f"NULL update for {table}.{column}: {e}")
 
             conn.commit()
