@@ -64,7 +64,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_URL = os.environ.get(
+DEFAULT_DB_URL = os.environ.get('ORAT_DATABASE_URL') or os.environ.get(
     'DATABASE_URL',
     'postgresql://alphagex_user:e5DSVWnKceA16V5ysssLZCbqNE9ELRKi@dpg-d4quq1u3jp1c739oijb0-a.oregon-postgres.render.com/alphagex_backtest'
 )
