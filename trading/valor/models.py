@@ -323,11 +323,6 @@ class ValorConfig:
     # When use_no_loss_trailing is True, these affect the emergency stop only:
     overnight_emergency_stop: float = 10.0  # Tighter emergency stop overnight
 
-    # GAMMA REGIME FILTER - Optionally restrict to specific gamma regime
-    # Backtest showed POSITIVE_GAMMA only = $2,387.50 profit (more consistent)
-    # Options: None (all regimes), "POSITIVE", "NEGATIVE"
-    allowed_gamma_regime: str = ""  # Empty = all regimes allowed
-
     # Position sizing
     position_sizing_method: str = "FIXED_FRACTIONAL_ATR"  # Method for sizing
     atr_period: int = 14  # ATR calculation period

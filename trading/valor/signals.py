@@ -503,18 +503,6 @@ class ValorSignalGenerator:
                 f"walls=[put={put_wall:.2f}, call={call_wall:.2f}], VIX={vix:.1f}, ATR={atr:.2f}"
             )
 
-            # ================================================================
-            # GAMMA REGIME FILTER - Skip if regime not allowed
-            # ================================================================
-            if self.config.allowed_gamma_regime:
-                allowed = self.config.allowed_gamma_regime.upper()
-                if allowed == "POSITIVE" and gamma_regime != GammaRegime.POSITIVE:
-                    logger.info(f"Signal SKIPPED: Regime filter requires POSITIVE, got {gamma_regime.value}")
-                    return None
-                elif allowed == "NEGATIVE" and gamma_regime != GammaRegime.NEGATIVE:
-                    logger.info(f"Signal SKIPPED: Regime filter requires NEGATIVE, got {gamma_regime.value}")
-                    return None
-
             # Generate signal based on regime
             if gamma_regime == GammaRegime.POSITIVE:
                 signal = self._generate_mean_reversion_signal(
