@@ -1369,13 +1369,12 @@ class ValorTrader:
     # ========================================================================
 
     def _is_overnight_session(self) -> bool:
-        """Check if current time is overnight session (5 PM - 8:30 AM CT)"""
+        """Check if current time is overnight session (5 PM - 8 AM CT)"""
         now = datetime.now(CENTRAL_TZ)
         hour = now.hour
 
-        # Overnight: 5 PM (17:00) to 8:30 AM (when SPX options open)
-        # SPX options open at 8:30 AM CT, so 8:00-8:29 is still overnight for GEX purposes
-        return hour >= 17 or hour < 8 or (hour == 8 and now.minute < 30)
+        # Overnight: 5 PM (17:00) to 8 AM (08:00)
+        return hour >= 17 or hour < 8
 
     def _get_vix(self) -> float:
         """

@@ -1336,6 +1336,33 @@ _gex_cache: Dict[str, Any] = {}
 _gex_cache_time: Optional[datetime] = None
 _gex_cache_loaded_from_db: bool = False  # Track if we've loaded from DB this session
 
+# Singleton Tradier GEX calculator - production mode for SPX
+# SPX requires production keys (sandbox doesn't support SPX)
+# Singleton preserves internal 5-min cache and reuses HTTP connection
+_tradier_gex_calculator = None
+_tradier_gex_init_attempted = False
+
+
+def _get_tradier_gex_calculator():
+    """Get singleton Tradier GEX calculator for VALOR (production mode)."""
+    global _tradier_gex_calculator, _tradier_gex_init_attempted
+
+    if _tradier_gex_calculator is not None:
+        return _tradier_gex_calculator
+
+    if _tradier_gex_init_attempted:
+        return None
+
+    _tradier_gex_init_attempted = True
+    try:
+        from data.gex_calculator import TradierGEXCalculator
+        _tradier_gex_calculator = TradierGEXCalculator(sandbox=False)
+        logger.info("VALOR: Tradier GEX calculator initialized (production mode for SPX)")
+        return _tradier_gex_calculator
+    except Exception as e:
+        logger.error(f"VALOR: Failed to initialize Tradier GEX calculator: {e}")
+        return None
+
 
 def _persist_gex_cache_to_db(gex_data: Dict[str, Any], cache_time: datetime) -> bool:
     """
@@ -1446,11 +1473,8 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
     #
     # Use n+1 (next day) GEX data when options are closed:
     # - 3 PM - 4 PM CT: Post-close window before maintenance
-    # - 5 PM - 8:30 AM CT: Overnight session (until SPX options open)
-    # NOTE: SPX options open at 8:30 AM CT, not 8:00 AM. Using hour < 8
-    # left a 30-min gap (8:00-8:29) where overnight cache was skipped but
-    # Tradier had no live options data yet, causing flip_point=0 and halting trading.
-    is_options_closed = (hour >= 15) or (hour < 8) or (hour == 8 and now.minute < 30)
+    # - 5 PM - 8 AM CT: Overnight session (next day until options open)
+    is_options_closed = (hour >= 15) or (hour < 8)  # 3 PM - 8 AM
 
     # If in-memory cache is empty, try loading from database (survives restarts)
     if not _gex_cache and not _gex_cache_loaded_from_db:
@@ -1463,8 +1487,8 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
 
     # If options are closed and we have valid cached data, use n+1 levels
     if is_options_closed and _gex_cache and _gex_cache_time:
-        # During options-closed window, cache can be up to 20 hours old (3 PM to 8:30 AM next day)
-        max_cache_age = 1200  # 20 hours - covers full overnight window
+        # During overnight, cache can be up to 18 hours old (3 PM to 8 AM)
+        max_cache_age = 1200 if hour >= 15 or hour < 8 else 120  # 20 hours overnight, 2 hours otherwise
         cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
 
         if cache_age_minutes < max_cache_age:
@@ -1473,7 +1497,7 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
             n1_call = _gex_cache.get('n1_call_wall') or _gex_cache.get('call_wall', 0)
             n1_put = _gex_cache.get('n1_put_wall') or _gex_cache.get('put_wall', 0)
 
-            session_type = "OVERNIGHT" if (hour >= 17 or hour < 8) else ("PRE_OPEN" if hour == 8 else "POST_CLOSE")
+            session_type = "OVERNIGHT" if (hour >= 17 or hour < 8) else "POST_CLOSE"
             logger.info(
                 f"VALOR using N+1 GEX data ({session_type}, options closed). "
                 f"Cache age: {cache_age_minutes:.0f} min. "
@@ -1493,60 +1517,66 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
             }
 
     # =========================================================================
-    # MARKET HOURS (8:30 AM - 3 PM CT): Use TRADIER for real-time GEX data
-    # OVERNIGHT (3 PM - 8:30 AM CT): Use TradingVolatility for n+1 GEX data
-    # Note: If we reach here, is_options_closed was False (8:30 AM+) or cache was empty.
+    # MARKET HOURS (8 AM - 3 PM CT): Use TRADIER for real-time GEX data
+    # OVERNIGHT (3 PM - 8 AM CT): Use TradingVolatility for n+1 GEX data
     # =========================================================================
-    is_market_hours = 8 <= hour < 15  # Covers 8:30 AM+ (earlier times handled by cache above)
+    is_market_hours = 8 <= hour < 15  # 8 AM - 3 PM CT
 
     if is_market_hours:
         # =====================================================================
-        # MARKET HOURS: TRADIER FIRST (real-time options data)
+        # MARKET HOURS: TRADIER FIRST (real-time SPX options data)
+        # Uses singleton calculator with production keys (SPX requires production)
         # =====================================================================
-        try:
-            from data.gex_calculator import TradierGEXCalculator
+        calculator = _get_tradier_gex_calculator()
+        if calculator:
+            try:
+                gex_result = calculator.calculate_gex(symbol)
 
-            calculator = TradierGEXCalculator(sandbox=False)
-            gex_result = calculator.calculate_gex(symbol)
+                if gex_result:
+                    flip_point = gex_result.get('flip_point', 0)
+                    call_wall = gex_result.get('call_wall', 0)
+                    put_wall = gex_result.get('put_wall', 0)
+                    net_gex = gex_result.get('net_gex', 0)
 
-            if gex_result:
-                flip_point = gex_result.get('flip_point', 0)
-                call_wall = gex_result.get('call_wall', 0)
-                put_wall = gex_result.get('put_wall', 0)
-                net_gex = gex_result.get('net_gex', 0)
+                    if flip_point > 0:
+                        if call_wall <= 0:
+                            call_wall = flip_point * 1.01
+                        if put_wall <= 0:
+                            put_wall = flip_point * 0.99
 
-                if flip_point > 0:
-                    if call_wall <= 0:
-                        call_wall = flip_point * 1.01
-                    if put_wall <= 0:
-                        put_wall = flip_point * 0.99
+                        logger.info(
+                            f"VALOR GEX from TRADIER (market hours): flip={flip_point:.2f}, "
+                            f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
+                        )
 
-                    logger.info(
-                        f"VALOR GEX from TRADIER (market hours): flip={flip_point:.2f}, "
-                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
-                    )
+                        gex_data = {
+                            'flip_point': flip_point,
+                            'call_wall': call_wall,
+                            'put_wall': put_wall,
+                            'net_gex': net_gex,
+                            'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                            'data_source': 'tradier_calculator',
+                        }
 
-                    gex_data = {
-                        'flip_point': flip_point,
-                        'call_wall': call_wall,
-                        'put_wall': put_wall,
-                        'net_gex': net_gex,
-                        'gex_ratio': gex_result.get('gex_ratio', 1.0),
-                        'data_source': 'tradier_calculator',
-                    }
+                        # Cache for potential fallback
+                        _gex_cache.clear()
+                        _gex_cache.update(gex_data)
+                        _gex_cache_time = now
+                        _persist_gex_cache_to_db(gex_data, now)
 
-                    # Cache for potential fallback
-                    _gex_cache.clear()
-                    _gex_cache.update(gex_data)
-                    _gex_cache_time = now
-                    _persist_gex_cache_to_db(gex_data, now)
+                        return gex_data
+                    else:
+                        logger.warning(
+                            f"VALOR Tradier returned flip_point={flip_point} for {symbol} "
+                            f"(full result keys: {list(gex_result.keys())})"
+                        )
+                else:
+                    logger.warning(f"VALOR Tradier calculate_gex returned None for {symbol}")
 
-                    return gex_data
-
-            logger.warning(f"TradierGEXCalculator returned no valid data for {symbol}")
-
-        except Exception as e:
-            logger.warning(f"TradierGEXCalculator error: {e}")
+            except Exception as e:
+                logger.warning(f"VALOR TradierGEXCalculator error for {symbol}: {e}", exc_info=True)
+        else:
+            logger.warning("VALOR Tradier GEX calculator not available (init failed)")
 
         # Market hours fallback: TradingVolatility
         try:
