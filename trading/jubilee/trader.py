@@ -118,12 +118,19 @@ class JubileeTrader:
                     days_held = (date.today() - position.open_time.date()).days
                     position.cost_accrued_to_date = position.daily_cost * days_held
 
-                    # Fetch IC bot returns (would integrate with actual bots)
-                    ic_returns = self._fetch_ic_returns(position)
-                    position.returns_from_ares = ic_returns.get('fortress', 0)
-                    position.returns_from_titan = ic_returns.get('samson', 0)
-                    position.returns_from_pegasus = ic_returns.get('anchor', 0)
-                    position.total_ic_returns = sum(ic_returns.values())
+                    # Fetch JUBILEE IC returns from jubilee_ic_closed_trades.
+                    # The standalone IC trader tracks its own P&L — the legacy
+                    # _fetch_ic_returns (FORTRESS/SAMSON/ANCHOR) is no longer used.
+                    try:
+                        ic_perf = self.db.get_ic_performance()
+                        closed_stats = ic_perf.get('closed_trades', {})
+                        open_stats = ic_perf.get('open_positions', {})
+                        realized = closed_stats.get('total_pnl', 0) or 0
+                        unrealized = open_stats.get('total_unrealized', 0) or 0
+                        position.total_ic_returns = realized + unrealized
+                    except Exception as ic_err:
+                        logger.warning(f"Failed to fetch JUBILEE IC returns: {ic_err}")
+                        position.total_ic_returns = 0.0
                     position.net_profit = position.total_ic_returns - position.cost_accrued_to_date
 
                     # Check for roll
@@ -767,8 +774,22 @@ For box spreads to be profitable:
     # ========== Internal Helpers ==========
 
     def _should_scan_for_signals(self) -> bool:
-        """Check if we should look for new positions"""
-        # Max position limit removed - no gates
+        """Check if we should look for new box spread positions.
+
+        The box spread opens ONCE and stays open until it needs to roll.
+        Only scan for a new one if there are no viable positions.
+        """
+        # Only open a new box spread if none exist
+        positions = self.db.get_open_positions()
+        if positions:
+            # Check if any are still viable (not expired)
+            for pos in positions:
+                try:
+                    exp_date = datetime.strptime(pos.expiration, '%Y-%m-%d').date()
+                    if (exp_date - date.today()).days > 0:
+                        return False  # Already have a viable box spread
+                except (ValueError, TypeError):
+                    continue
 
         # Check if in trading window
         if not self._in_trading_window():
