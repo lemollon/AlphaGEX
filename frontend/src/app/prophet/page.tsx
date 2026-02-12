@@ -1320,10 +1320,12 @@ export default function ProphetPage() {
 
               {/* Enhanced Equity Curve with Event Markers */}
               <EquityCurveChart
-                title="Combined Bot Performance"
+                botFilter="PROPHET"
+                title="Prophet Prediction Performance"
                 defaultDays={90}
                 height={400}
                 showDrawdown={true}
+                showIntradayOption={false}
               />
 
               {performance?.overall ? (

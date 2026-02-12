@@ -427,7 +427,7 @@ test.describe('Prophet Knowledge Base - Error Handling', () => {
 
   test('Handles API errors gracefully', async ({ page }) => {
     // Block Prophet API endpoints
-    await page.route('**/api/zero-dte/prophet/**', route => route.abort())
+    await page.route('**/api/prophet/**', route => route.abort())
 
     await page.goto(BASE_URL + '/prophet')
     await page.waitForTimeout(5000)
@@ -454,7 +454,7 @@ test.describe('Prophet Knowledge Base - Error Handling', () => {
 
   test('Page handles missing data gracefully', async ({ page }) => {
     // Mock empty API responses
-    await page.route('**/api/zero-dte/prophet/status', route =>
+    await page.route('**/api/prophet/status', route =>
       route.fulfill({
         status: 200,
         contentType: 'application/json',
