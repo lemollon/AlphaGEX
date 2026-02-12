@@ -137,10 +137,15 @@ def build_occ_symbol(
     strike_int = int(strike * 1000)
     strike_str = f"{strike_int:08d}"
 
-    # Handle SPX -> SPXW conversion for weeklies
+    # Handle SPX root symbol: SPX for standard monthly (3rd Friday), SPXW for weeklies
     root = underlying.upper()
     if root == 'SPX':
-        root = 'SPXW'
+        # 3rd Friday of the month = standard monthly expiration → root stays 'SPX'
+        # All other expirations are weeklies → root becomes 'SPXW'
+        if exp_date.weekday() == 4 and 15 <= exp_date.day <= 21:
+            root = 'SPX'   # Standard monthly (AM-settled)
+        else:
+            root = 'SPXW'  # Weekly (PM-settled)
 
     return f"{root}{date_str}{opt_type}{strike_str}"
 
