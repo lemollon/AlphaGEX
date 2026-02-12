@@ -211,12 +211,25 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context)
                 return result
 
-            # Step 6: Check max position limit per ticker
-            open_count = len(self._get_open_positions_for_ticker(ticker))
-            if open_count >= self.config.max_open_positions_per_ticker:
+            # Step 6: Get all accounts for this ticker and check position limits per-account
+            accounts = self.executor.get_all_accounts(ticker)
+            all_open = self._get_open_positions_for_ticker(ticker)
+
+            # Filter to accounts that still have capacity
+            eligible_accounts = []
+            for account_label, is_live in accounts:
+                acct_open = [
+                    p for p in all_open
+                    if p.get("account_label", "default") == account_label
+                ]
+                if len(acct_open) < self.config.max_open_positions_per_ticker:
+                    eligible_accounts.append((account_label, is_live))
+
+            if not eligible_accounts:
+                total_open = len(all_open)
                 result["outcome"] = (
-                    f"MAX_POSITIONS_{open_count}/"
-                    f"{self.config.max_open_positions_per_ticker}"
+                    f"MAX_POSITIONS_{total_open}/"
+                    f"{self.config.max_open_positions_per_ticker} (all accounts)"
                 )
                 self._log_scan(ticker, result, scan_context)
                 return result
@@ -230,71 +243,60 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context, signal=signal)
                 return result
 
-            # Step 8: Execute trade (always LONG)
-            trade_mode = "LIVE" if self.config.is_live(ticker) else "PAPER"
-            position = self.executor.execute_trade(signal)
-            if position:
-                self.db.save_position(position)
-                result["new_trade"] = True
-                result["outcome"] = f"TRADED_LONG_{ticker}_{trade_mode}"
-                result["position_id"] = position.position_id
-                scan_context["position_id"] = position.position_id
+            # Step 8: Execute trade on ALL eligible accounts
+            traded_accounts = []
+            for account_label, is_live in eligible_accounts:
+                position = self.executor.execute_trade_on_account(
+                    signal, account_label, is_live,
+                )
+                if position:
+                    self.db.save_position(position)
+                    traded_accounts.append(account_label)
 
-                notional = signal.quantity * position.entry_price
-                self.db.log(
-                    "INFO", "NEW_TRADE",
-                    f"[{trade_mode}] LONG {ticker} {signal.quantity} "
-                    f"@ ${position.entry_price:.2f} (${notional:.2f})",
-                    details=signal.to_dict(),
-                    ticker=ticker,
+                    mode_str = "LIVE" if is_live else "PAPER"
+                    notional = signal.quantity * position.entry_price
+                    self.db.log(
+                        "INFO", "NEW_TRADE",
+                        f"[{mode_str}:{account_label}] LONG {ticker} "
+                        f"{signal.quantity} @ ${position.entry_price:.2f} "
+                        f"(${notional:.2f})",
+                        details=signal.to_dict(),
+                        ticker=ticker,
+                    )
+                else:
+                    if is_live:
+                        # Live failed — execute paper fallback for this account
+                        logger.warning(
+                            f"AGAPE-SPOT: LIVE execution failed for {ticker} "
+                            f"[{account_label}], falling back to PAPER"
+                        )
+                        fb_position = self.executor._execute_paper(
+                            signal, account_label=f"{account_label}_fallback",
+                        )
+                        if fb_position:
+                            self.db.save_position(fb_position)
+                            traded_accounts.append(f"{account_label}_fb")
+                            self.db.log(
+                                "WARNING", "LIVE_EXEC_FAILED",
+                                f"Live failed for {ticker} [{account_label}], "
+                                f"paper fallback created.",
+                                ticker=ticker,
+                            )
+
+            if traded_accounts:
+                result["new_trade"] = True
+                result["outcome"] = (
+                    f"TRADED_LONG_{ticker}_"
+                    f"{'_'.join(traded_accounts)}"
                 )
             else:
-                # Live execution failed — fall back to paper so the bot
-                # still tracks hypothetical performance instead of going
-                # silent for days (254 DOGE failures, 201 SHIB, 191 XRP
-                # in a single week with zero trades).
-                if self.config.is_live(ticker):
-                    logger.warning(
-                        f"AGAPE-SPOT: LIVE execution failed for {ticker}, "
-                        f"falling back to PAPER"
-                    )
-                    self.db.log(
-                        "WARNING", "LIVE_EXEC_FAILED",
-                        f"Live execution failed for {ticker} "
-                        f"(qty={signal.quantity}, price=${signal.spot_price:.2f}). "
-                        f"Falling back to paper.",
-                        ticker=ticker,
-                    )
-                    position = self.executor._execute_paper(signal)
-                    if position:
-                        self.db.save_position(position)
-                        result["new_trade"] = True
-                        result["outcome"] = f"TRADED_LONG_{ticker}_PAPER_FALLBACK"
-                        result["position_id"] = position.position_id
-                        scan_context["position_id"] = position.position_id
-                        notional = signal.quantity * position.entry_price
-                        self.db.log(
-                            "INFO", "NEW_TRADE",
-                            f"[PAPER_FALLBACK] LONG {ticker} {signal.quantity} "
-                            f"@ ${position.entry_price:.2f} (${notional:.2f})",
-                            details=signal.to_dict(),
-                            ticker=ticker,
-                        )
-                    else:
-                        result["outcome"] = "EXECUTION_FAILED"
-                        self.db.log(
-                            "ERROR", "EXEC_FAILED",
-                            f"Both live AND paper execution failed for {ticker}",
-                            ticker=ticker,
-                        )
-                else:
-                    result["outcome"] = "EXECUTION_FAILED"
-                    self.db.log(
-                        "ERROR", "EXEC_FAILED",
-                        f"Paper execution failed for {ticker} "
-                        f"(qty={signal.quantity}, price=${signal.spot_price:.2f})",
-                        ticker=ticker,
-                    )
+                result["outcome"] = "EXECUTION_FAILED"
+                self.db.log(
+                    "ERROR", "EXEC_FAILED",
+                    f"All account executions failed for {ticker} "
+                    f"(qty={signal.quantity}, price=${signal.spot_price:.2f})",
+                    ticker=ticker,
+                )
 
             self._log_scan(ticker, result, scan_context, signal=signal)
             return result
@@ -611,9 +613,13 @@ class AgapeSpotTrader:
 
         # ---- Execute LIVE sell on Coinbase for live tickers ----
         actual_close_price = current_price
-        if self.config.is_live(ticker):
+        account_label = pos_dict.get("account_label", "default")
+        is_live_account = account_label != "paper" and self.config.is_live(ticker)
+
+        if is_live_account:
             sell_ok, fill_price = self.executor.sell_spot(
                 ticker, quantity, position_id, reason,
+                account_label=account_label,
             )
             if sell_ok and fill_price is not None:
                 actual_close_price = fill_price

@@ -371,6 +371,10 @@ class AgapeSpotPosition:
     close_reason: Optional[str] = None
     realized_pnl: Optional[float] = None
 
+    # Account tracking (which Coinbase account this position belongs to)
+    # "default" = COINBASE_API_KEY, "{SYMBOL}" = COINBASE_{SYMBOL}_API_KEY, "paper" = simulated
+    account_label: str = "default"
+
     # Tracking
     unrealized_pnl: float = 0.0
     high_water_mark: float = 0.0
@@ -412,6 +416,7 @@ class AgapeSpotPosition:
             "close_price": self.close_price,
             "close_reason": self.close_reason,
             "realized_pnl": self.realized_pnl,
+            "account_label": self.account_label,
             "unrealized_pnl": self.unrealized_pnl,
             "high_water_mark": self.high_water_mark,
         }
