@@ -780,8 +780,8 @@ function PerformanceTab({ ticker }: { ticker: TickerId }) {
     )
   }
 
-  if (!perf || (perf.total_trades ?? 0) === 0) {
-    return <EmptyBox message={`No completed trades yet for ${ticker}.`} />
+  if (!perf) {
+    return <EmptyBox message={`No performance data available for ${ticker}.`} />
   }
 
   const meta = TICKER_META[ticker]
