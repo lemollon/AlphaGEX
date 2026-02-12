@@ -290,6 +290,30 @@ class AgapeSpotSignalGenerator:
 
         # Spot-native position sizing (per-ticker)
         quantity, max_risk = self._calculate_position_size(ticker, spot)
+
+        # If sizing returned 0 (below min notional), emit WAIT instead of LONG
+        if quantity <= 0:
+            return AgapeSpotSignal(
+                ticker=ticker,
+                spot_price=spot, timestamp=now,
+                funding_rate=market_data.get("funding_rate", 0),
+                funding_regime=market_data.get("funding_regime", "UNKNOWN"),
+                ls_ratio=market_data.get("ls_ratio", 1.0),
+                ls_bias=market_data.get("ls_bias", "NEUTRAL"),
+                squeeze_risk=market_data.get("squeeze_risk", "LOW"),
+                leverage_regime=market_data.get("leverage_regime", "UNKNOWN"),
+                max_pain=market_data.get("max_pain"),
+                crypto_gex=market_data.get("crypto_gex", 0),
+                crypto_gex_regime=market_data.get("crypto_gex_regime", "NEUTRAL"),
+                action=SignalAction.WAIT,
+                confidence=combined_confidence,
+                reasoning=f"BELOW_MIN_NOTIONAL_{ticker}",
+                oracle_advice=oracle_advice,
+                oracle_win_probability=oracle_win_prob,
+                oracle_confidence=prophet_data.get("confidence", 0),
+                oracle_top_factors=prophet_data.get("top_factors", []),
+            )
+
         stop_loss, take_profit = self._calculate_levels(spot, market_data, ticker)
 
         return AgapeSpotSignal(
@@ -515,6 +539,26 @@ class AgapeSpotSignalGenerator:
         quantity = min(risk_based_qty, capital_based_qty, max_per_trade)
         quantity = max(min_order, quantity)
         quantity = round(quantity, quantity_decimals)
+
+        # Enforce Coinbase minimum notional ($2 default, $1 API minimum + buffer)
+        min_notional = ticker_config.get("min_notional_usd", 2.0)
+        notional = quantity * spot_price
+        if notional < min_notional:
+            # Bump quantity to meet minimum notional
+            min_qty = min_notional / spot_price
+            min_qty = max(min_qty, min_order)
+            min_qty = round(min_qty, quantity_decimals)
+            # If min_qty fits within capital and max_per_trade, use it
+            if min_qty <= max_per_trade and (min_qty * spot_price) <= capital:
+                quantity = min_qty
+            else:
+                # Can't meet minimum notional within constraints — skip trade
+                logger.warning(
+                    f"AGAPE-SPOT Signals: {ticker} notional ${notional:.2f} "
+                    f"below min ${min_notional:.2f} and can't bump up — "
+                    f"returning 0 quantity"
+                )
+                return (0, 0.0)
 
         actual_risk = quantity * risk_per_unit
         return (quantity, round(actual_risk, 2))

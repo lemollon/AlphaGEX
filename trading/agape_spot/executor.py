@@ -76,6 +76,10 @@ class AgapeSpotExecutor:
         # Per-ticker clients keyed by ticker (e.g. "DOGE-USD" -> RESTClient)
         self._ticker_clients: Dict[str, object] = {}
 
+        # Coinbase product limits fetched at init (real minimums from API)
+        # {ticker: {"base_min_size": float, "quote_min_size": float, "base_increment": float}}
+        self._product_limits: Dict[str, Dict[str, float]] = {}
+
         # Always init Coinbase clients (needed for price data even in paper mode)
         if coinbase_available:
             self._init_coinbase()
@@ -97,6 +101,7 @@ class AgapeSpotExecutor:
                 product = self._client.get_product(verify_ticker)
                 if product:
                     price = float(self._resp(product, "price", 0))
+                    self._store_product_limits(verify_ticker, product)
                     logger.info(
                         f"AGAPE-SPOT Executor: Default client connected. "
                         f"{verify_ticker} = ${price:,.2f}"
@@ -125,6 +130,7 @@ class AgapeSpotExecutor:
                     product = client.get_product(ticker)
                     if product:
                         price = float(self._resp(product, "price", 0))
+                        self._store_product_limits(ticker, product)
                         logger.info(
                             f"AGAPE-SPOT Executor: {symbol} dedicated client connected. "
                             f"{ticker} = ${price:,.2f}"
@@ -178,6 +184,46 @@ class AgapeSpotExecutor:
         if isinstance(obj, dict):
             return obj.get(key, default)
         return default
+
+    def _store_product_limits(self, ticker: str, product) -> None:
+        """Extract and store base_min_size/quote_min_size from a Coinbase product response."""
+        try:
+            base_min = float(self._resp(product, "base_min_size", 0))
+            quote_min = float(self._resp(product, "quote_min_size", 0))
+            base_inc = float(self._resp(product, "base_increment", 0))
+            self._product_limits[ticker] = {
+                "base_min_size": base_min,
+                "quote_min_size": quote_min,
+                "base_increment": base_inc,
+            }
+            logger.info(
+                f"AGAPE-SPOT Executor: {ticker} limits — "
+                f"base_min={base_min}, quote_min=${quote_min}, "
+                f"base_increment={base_inc}"
+            )
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT Executor: Could not parse product limits for {ticker}: {e}")
+
+    def get_min_notional(self, ticker: str) -> float:
+        """Get the minimum notional (USD) for a ticker.
+
+        Priority: Coinbase API quote_min_size (fetched at init) > config min_notional_usd > $2 default.
+        Adds a 10% buffer above the Coinbase minimum to avoid edge-case rejects from price slippage.
+        """
+        # Use real Coinbase limit if fetched
+        limits = self._product_limits.get(ticker)
+        if limits and limits.get("quote_min_size", 0) > 0:
+            return limits["quote_min_size"] * 1.1  # 10% buffer
+
+        # Fall back to config
+        return SPOT_TICKERS.get(ticker, {}).get("min_notional_usd", 2.0)
+
+    def get_min_base_size(self, ticker: str) -> float:
+        """Get the minimum base quantity for a ticker from Coinbase product data."""
+        limits = self._product_limits.get(ticker)
+        if limits and limits.get("base_min_size", 0) > 0:
+            return limits["base_min_size"]
+        return SPOT_TICKERS.get(ticker, {}).get("min_order", 0.001)
 
     # =========================================================================
     # Trade execution
@@ -273,6 +319,25 @@ class AgapeSpotExecutor:
             client_order_id = str(uuid.uuid4())
 
             notional_est = quantity * signal.spot_price
+            min_notional = self.get_min_notional(signal.ticker)
+            min_base = self.get_min_base_size(signal.ticker)
+            if quantity < min_base or notional_est < min_notional:
+                logger.warning(
+                    f"AGAPE-SPOT: BUY SKIPPED {signal.ticker} — "
+                    f"notional ${notional_est:.2f} (min ${min_notional:.2f}) "
+                    f"or qty {quantity} (min {min_base})"
+                )
+                if self.db:
+                    self.db.log(
+                        "WARNING", "BELOW_MIN_NOTIONAL",
+                        f"Buy skipped for {signal.ticker}: notional "
+                        f"${notional_est:.2f} (min ${min_notional:.2f}), "
+                        f"qty={quantity} (min {min_base}), "
+                        f"price=${signal.spot_price:.4f}",
+                        ticker=signal.ticker,
+                    )
+                return None
+
             is_dedicated = signal.ticker in self._ticker_clients
             acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
             logger.info(
@@ -395,7 +460,154 @@ class AgapeSpotExecutor:
             return None
 
     # =========================================================================
-    # Position closing
+    # Spot sell (used by trader._close_position for live exits)
+    # =========================================================================
+
+    def sell_spot(
+        self,
+        ticker: str,
+        quantity: float,
+        position_id: str,
+        reason: str,
+    ) -> Tuple[bool, Optional[float]]:
+        """Execute a live market sell on Coinbase for a position being closed.
+
+        Returns (success, fill_price).
+        fill_price is None when the sell succeeded but fill lookup failed
+        (caller should fall back to current_price).
+        Returns (False, None) when no client or order rejected/exception.
+        """
+        client = self._get_client(ticker)
+        if not client:
+            logger.error(
+                f"AGAPE-SPOT: No Coinbase client for {ticker}, cannot sell "
+                f"{position_id}"
+            )
+            return (False, None)
+
+        try:
+            ticker_config = SPOT_TICKERS.get(ticker, {})
+            qty_decimals = ticker_config.get("quantity_decimals", 8)
+            sell_qty = round(quantity, qty_decimals)
+
+            # Check minimum notional — if below, this is a dust position
+            # that Coinbase will reject. Let caller close the DB position
+            # without a Coinbase sell (dust value is negligible).
+            current_price = self.get_current_price(ticker)
+            notional_est = sell_qty * (current_price or 0)
+            min_notional = self.get_min_notional(ticker)
+            min_base = self.get_min_base_size(ticker)
+            if sell_qty < min_base or notional_est < min_notional:
+                logger.info(
+                    f"AGAPE-SPOT: SELL SKIPPED (dust) {ticker} {position_id} — "
+                    f"notional ${notional_est:.2f} below "
+                    f"minimum ${min_notional:.2f}. "
+                    f"Coins remain in account as dust."
+                )
+                if self.db:
+                    self.db.log(
+                        "INFO", "DUST_SKIP",
+                        f"Sell skipped for {ticker} {position_id}: "
+                        f"notional ${notional_est:.2f} < ${min_notional:.2f}. "
+                        f"qty={sell_qty} is dust.",
+                        ticker=ticker,
+                    )
+                # Return True so caller closes DB position (dust is negligible)
+                return (True, current_price)
+
+            client_order_id = str(uuid.uuid4())
+
+            is_dedicated = ticker in self._ticker_clients
+            acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIVE SELL {ticker} [{acct_label}] "
+                f"{position_id} qty={sell_qty} (~${notional_est:.2f}) ({reason})"
+            )
+
+            order = client.market_order_sell(
+                client_order_id=client_order_id,
+                product_id=ticker,
+                base_size=str(sell_qty),
+            )
+
+            # Log raw response
+            try:
+                if hasattr(order, "to_dict"):
+                    logger.info(f"AGAPE-SPOT: Sell response: {order.to_dict()}")
+                else:
+                    logger.info(f"AGAPE-SPOT: Sell response: {order}")
+            except Exception:
+                pass
+
+            success = self._resp(order, "success", False)
+
+            if success:
+                success_resp = self._resp(order, "success_response")
+                order_id = self._resp(success_resp, "order_id", "")
+                fill_price = None
+
+                try:
+                    fills = client.get_fills(order_id=str(order_id))
+                    fills_list = self._resp(fills, "fills", [])
+                    if fills_list:
+                        total_value = sum(
+                            float(self._resp(f, "price", 0))
+                            * float(self._resp(f, "size", 0))
+                            for f in fills_list
+                        )
+                        total_size = sum(
+                            float(self._resp(f, "size", 0))
+                            for f in fills_list
+                        )
+                        if total_size > 0:
+                            fill_price = total_value / total_size
+                except Exception as fe:
+                    logger.debug(f"AGAPE-SPOT: Sell fill lookup skipped: {fe}")
+
+                pd = self._price_decimals(ticker)
+                if fill_price is not None:
+                    fill_price = round(fill_price, pd)
+
+                logger.info(
+                    f"AGAPE-SPOT: LIVE SELL SUCCESS {ticker} "
+                    f"{position_id} qty={sell_qty} "
+                    f"fill=${fill_price if fill_price else 'N/A'} "
+                    f"(order={order_id}, reason={reason})"
+                )
+                return (True, fill_price)
+
+            # Order rejected
+            error_resp = self._resp(order, "error_response", "unknown")
+            failure = self._resp(order, "failure_reason", "unknown")
+            logger.error(
+                f"AGAPE-SPOT: LIVE SELL REJECTED {ticker} {position_id}: "
+                f"failure_reason={failure}, error_response={error_resp}"
+            )
+            if self.db:
+                self.db.log(
+                    "ERROR", "SELL_REJECTED",
+                    f"Coinbase rejected {ticker} SELL: reason={failure}, "
+                    f"qty={sell_qty}, position={position_id}, "
+                    f"error={error_resp}",
+                    ticker=ticker,
+                )
+            return (False, None)
+
+        except Exception as e:
+            logger.error(
+                f"AGAPE-SPOT: LIVE SELL EXCEPTION {ticker} {position_id}: {e}",
+                exc_info=True,
+            )
+            if self.db:
+                self.db.log(
+                    "ERROR", "SELL_EXCEPTION",
+                    f"Coinbase sell exception for {ticker} {position_id}: {e}",
+                    ticker=ticker,
+                )
+            return (False, None)
+
+    # =========================================================================
+    # Position closing (legacy interface used by executor.close_position)
     # =========================================================================
 
     def close_position(
@@ -444,13 +656,27 @@ class AgapeSpotExecutor:
             ticker_config = SPOT_TICKERS.get(position.ticker, {})
             qty_decimals = ticker_config.get("quantity_decimals", 8)
             quantity = round(position.quantity, qty_decimals)
+
+            # Check minimum notional/base — dust positions can't be sold
+            notional_est = quantity * current_price
+            min_notional = self.get_min_notional(position.ticker)
+            min_base = self.get_min_base_size(position.ticker)
+            if quantity < min_base or notional_est < min_notional:
+                realized_pnl = position.calculate_pnl(current_price)
+                logger.info(
+                    f"AGAPE-SPOT: LEGACY SELL SKIPPED (dust) {position.ticker} "
+                    f"{position.position_id} — notional ${notional_est:.2f} "
+                    f"(min ${min_notional:.2f}), qty {quantity} (min {min_base})"
+                )
+                return (True, current_price, realized_pnl)
+
             client_order_id = str(uuid.uuid4())
 
             is_dedicated = position.ticker in self._ticker_clients
             acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
             logger.info(
                 f"AGAPE-SPOT: PLACING LIVE SELL {position.ticker} [{acct_label}] "
-                f"{position.position_id} qty={quantity} ({reason})"
+                f"{position.position_id} qty={quantity} (~${notional_est:.2f}) ({reason})"
             )
 
             # LONG-ONLY: Always sell to close

@@ -211,7 +211,15 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context)
                 return result
 
-            # Max position limit removed - no gates
+            # Step 6: Check max position limit per ticker
+            open_count = len(self._get_open_positions_for_ticker(ticker))
+            if open_count >= self.config.max_open_positions_per_ticker:
+                result["outcome"] = (
+                    f"MAX_POSITIONS_{open_count}/"
+                    f"{self.config.max_open_positions_per_ticker}"
+                )
+                self._log_scan(ticker, result, scan_context)
+                return result
 
             # Step 7: Generate signal for this ticker
             signal = self._generate_signal(ticker, prophet_data)
@@ -592,19 +600,50 @@ class AgapeSpotTrader:
         current_price: float,
         reason: str,
     ) -> bool:
-        """Close a position. LONG-ONLY: P&L = (current - entry) * quantity."""
+        """Close a position. LONG-ONLY: P&L = (current - entry) * quantity.
+
+        For LIVE tickers, executes a real sell order on Coinbase via
+        executor.sell_spot() and uses the actual fill price for P&L.
+        """
         position_id = pos_dict["position_id"]
         entry_price = pos_dict["entry_price"]
         quantity = pos_dict.get("quantity", pos_dict.get("eth_quantity", 0))
 
+        # ---- Execute LIVE sell on Coinbase for live tickers ----
+        actual_close_price = current_price
+        if self.config.is_live(ticker):
+            sell_ok, fill_price = self.executor.sell_spot(
+                ticker, quantity, position_id, reason,
+            )
+            if sell_ok and fill_price is not None:
+                actual_close_price = fill_price
+            elif sell_ok:
+                # Sell succeeded but fill lookup failed — use current_price
+                pass
+            else:
+                # Sell failed — still close DB position to avoid stale state,
+                # but warn loudly so the user can check their Coinbase account.
+                logger.warning(
+                    f"AGAPE-SPOT: LIVE SELL FAILED for {ticker} {position_id}. "
+                    f"DB position will be closed but coins may still be in "
+                    f"Coinbase account. Manual check recommended."
+                )
+                self.db.log(
+                    "WARNING", "LIVE_SELL_FAILED",
+                    f"Coinbase sell failed for {ticker} {position_id} "
+                    f"(qty={quantity}). Position closed in DB at "
+                    f"${current_price}. Coins may still be in account.",
+                    ticker=ticker,
+                )
+
         # Long-only P&L -- no direction multiplier
-        realized_pnl = round((current_price - entry_price) * quantity, 2)
+        realized_pnl = round((actual_close_price - entry_price) * quantity, 2)
 
         if reason == "MAX_HOLD_TIME":
-            success = self.db.expire_position(position_id, realized_pnl, current_price)
+            success = self.db.expire_position(position_id, realized_pnl, actual_close_price)
         else:
             success = self.db.close_position(
-                position_id, current_price, realized_pnl, reason,
+                position_id, actual_close_price, realized_pnl, reason,
             )
 
         if success:
@@ -640,16 +679,21 @@ class AgapeSpotTrader:
                 scan_number=self._cycle_count,
             )
 
+            trade_mode = "LIVE" if self.config.is_live(ticker) else "PAPER"
             self.db.log(
                 "INFO", "CLOSE_POSITION",
-                f"Closed {ticker} {position_id} @ ${current_price:.2f} "
+                f"[{trade_mode}] Closed {ticker} {position_id} "
+                f"@ ${actual_close_price:.2f} "
                 f"P&L=${realized_pnl:+.2f} ({reason})",
                 details={
                     "position_id": position_id,
                     "ticker": ticker,
                     "realized_pnl": realized_pnl,
                     "reason": reason,
+                    "close_price": actual_close_price,
+                    "mode": trade_mode,
                 },
+                ticker=ticker,
             )
 
         return success
