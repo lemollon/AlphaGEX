@@ -13,11 +13,14 @@ Implements the 8-phase profitability proof framework:
   Phase 7: Monte Carlo stress test
   Phase 8: Final 25-stat scorecard
 
-Key realism features vs run_backtest.py:
-  - Slippage modeling ($0.01/leg = $0.04 total per contract)
-  - Commission modeling ($0.65/contract x 8 transactions = $5.20/trade)
+Defaults match production run_backtest.py:
+  - SD-based strike selection (1.2x multiplier)
+  - $5 wide wings, 3 trading day DTE
+  - 15% risk per trade, $100K capital
+  - 50% profit target, VIX > 50 filter
+  - Slippage: $0.01/leg (entry via net_credit, exit via exit_debit)
+  - Commission: $0.65/contract x 8 transactions (scales by contracts)
   - Stop loss logic with intermediate-day MTM
-  - Delta-based strike selection (uses ORAT greeks)
   - Economic event calendar filtering
   - Multiple exit strategy grid testing
 
@@ -198,25 +201,25 @@ class RealisticConfig:
     """Full realistic backtest configuration."""
     # Core
     ticker: str = 'SPY'
-    initial_capital: float = 50_000
+    initial_capital: float = 100_000
     start_date: Optional[str] = None
     end_date: Optional[str] = None
 
-    # Strike selection
-    strike_method: str = 'delta'  # 'delta', 'sd', 'otm_pct', 'expected_move', 'atr'
+    # Strike selection - default to SD method (matches production run_backtest.py)
+    strike_method: str = 'sd'     # 'delta', 'sd', 'otm_pct', 'expected_move', 'atr'
     target_delta: float = 0.16    # For delta method
-    sd_multiplier: float = 1.2    # For SD method
+    sd_multiplier: float = 1.2    # For SD method (production: 1.2 minimum floor)
     otm_pct: float = 1.0          # For OTM% method (% from spot)
     atr_multiplier: float = 1.0   # For ATR method
 
-    # Structure
-    spread_width: float = 2.0     # $2 wide wings (plan baseline)
-    min_dte_trading_days: int = 2  # 2DTE per plan
+    # Structure - matches production run_backtest.py
+    spread_width: float = 5.0     # $5 wide wings (production)
+    min_dte_trading_days: int = 3  # 3 trading days to expiration (production)
 
-    # Position sizing
-    max_risk_per_trade: float = 200.0  # $200 max loss per IC (plan: 1 contract, $2 wide)
-    max_contracts: int = 50
-    risk_per_trade_pct: float = 0.0    # 0 = use max_risk_per_trade fixed amount
+    # Position sizing - matches production run_backtest.py
+    max_risk_per_trade: float = 200.0  # Fallback if risk_per_trade_pct = 0
+    max_contracts: int = 75
+    risk_per_trade_pct: float = 15.0   # 15% of capital (production)
 
     # Costs (CRITICAL for realism)
     slippage_per_leg: float = 0.01     # $0.01 per leg
@@ -224,13 +227,13 @@ class RealisticConfig:
     commission_per_contract: float = 0.65  # $0.65 per contract
     num_transactions: int = 8           # 4 open + 4 close
 
-    # Exit rules
-    profit_target_pct: float = 0.0     # 0 = hold to expiration (baseline)
+    # Exit rules - matches production run_backtest.py
+    profit_target_pct: float = 50.0    # Take profit at 50% of credit (production)
     stop_loss_multiplier: float = 0.0  # 0 = no stop loss (baseline)
     time_exit_before_exp: bool = False  # Close EOD before expiration if profitable
 
-    # Filters
-    max_vix: float = 999.0             # No VIX filter (baseline)
+    # Filters - matches production run_backtest.py
+    max_vix: float = 50.0              # VIX > 50 blocks trading (production)
     vix_spike_threshold: float = 0.0   # 0 = no spike filter
     skip_fomc: bool = False
     skip_fomc_next_day: bool = False
@@ -242,7 +245,7 @@ class RealisticConfig:
 
     # Pricing
     use_mid_price: bool = False        # False = bid/ask realistic
-    min_credit: float = 0.05           # Minimum credit to take trade
+    min_credit: float = 0.10           # Minimum credit to take trade (production)
     max_concurrent: int = 1            # 1 position at a time
 
     @property
@@ -256,10 +259,14 @@ class RealisticConfig:
         return self.commission_per_contract * self.num_transactions
 
     def cost_for_trade(self, contracts: int) -> float:
-        """Total transaction costs for a trade."""
-        slippage = self.slippage_per_contract * contracts * 100  # per-share to dollar
-        commission = self.commission_per_trade
-        return slippage + commission
+        """Total transaction costs for a trade (commission only).
+
+        Slippage is handled separately via net_credit (entry) and exit_debit (exit),
+        so this returns ONLY commission to avoid double-counting slippage.
+        Commission scales per contract: $0.65/contract * 8 transactions * N contracts.
+        """
+        commission = self.commission_per_contract * self.num_transactions * contracts
+        return commission
 
 
 # ============================================================================
@@ -1679,16 +1686,17 @@ def run_phase_5(bt: FortressRealisticBacktest) -> List[Dict]:
     best_method = max(results, key=lambda s: s.get('sharpe', -999))
     print(f"\n  Best strike method: {best_method.get('label', '?')}")
 
+    original_width = bt.config.spread_width
     print(f"\n  --- Wing Width Comparison (using best method) ---")
-    for width in [1, 2, 3, 5]:
+    for width in [1, 2, 3, 5, 10]:
         bt.config.spread_width = float(width)
         trades = bt.run_backtest()
         stats = compute_full_stats(trades, bt.config.initial_capital, f"${width} wings")
         print_compact_stats(stats)
         results.append(stats)
 
-    # Reset
-    bt.config.spread_width = 2.0
+    # Reset to original config value
+    bt.config.spread_width = original_width
 
     return results
 
@@ -1948,10 +1956,10 @@ def main():
     parser.add_argument('--phase', type=str, default='2',
                         help='Phase to run: 0,2,3,4,5,6,7,8,all')
     parser.add_argument('--ticker', default='SPY')
-    parser.add_argument('--capital', type=float, default=50_000)
-    parser.add_argument('--spread-width', type=float, default=2.0)
-    parser.add_argument('--min-dte', type=int, default=2)
-    parser.add_argument('--strike-method', default='delta',
+    parser.add_argument('--capital', type=float, default=100_000)
+    parser.add_argument('--spread-width', type=float, default=5.0)
+    parser.add_argument('--min-dte', type=int, default=3)
+    parser.add_argument('--strike-method', default='sd',
                         choices=['delta', 'sd', 'otm_pct', 'atr', 'expected_move'])
     parser.add_argument('--target-delta', type=float, default=0.16)
     parser.add_argument('--sd-multiplier', type=float, default=1.2)
