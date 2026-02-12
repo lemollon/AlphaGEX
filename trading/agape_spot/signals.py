@@ -11,6 +11,7 @@ Reuses AGAPE's DirectionTracker for nimble reversal detection.
 """
 
 import logging
+from collections import deque
 from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from zoneinfo import ZoneInfo
@@ -98,12 +99,29 @@ class AgapeSpotSignalGenerator:
     - LONG-ONLY: never generates SHORT signals (WAIT instead)
     - Multi-ticker: accepts ticker parameter, uses per-ticker config
     - Position sizing uses per-ticker capital, min_order, max_per_trade
+    - ETH-leader filter: uses ETH's Deribit GEX signal as compass for altcoins
+    - Momentum filter: blocks entries during price downtrends
     """
+
+    # Momentum tracker: rolling window of recent prices per ticker
+    # Used to detect short-term trend direction before entering
+    MOMENTUM_WINDOW = 10  # Last 10 readings (~10 min at 1-min scans)
 
     def __init__(self, config: AgapeSpotConfig):
         self.config = config
         self._crypto_provider = None
         self._prophet = None
+
+        # Per-ticker price history for momentum detection
+        self._price_history: Dict[str, deque] = {}
+        for ticker in config.tickers:
+            self._price_history[ticker] = deque(maxlen=self.MOMENTUM_WINDOW)
+
+        # Cached ETH leader signal (refreshed each cycle, shared across tickers)
+        self._eth_leader_signal: Optional[str] = None
+        self._eth_leader_confidence: Optional[str] = None
+        self._eth_leader_bias: Optional[str] = None
+        self._eth_leader_updated: Optional[datetime] = None
 
         if get_crypto_data_provider:
             try:
@@ -160,6 +178,111 @@ class AgapeSpotSignalGenerator:
         except Exception as e:
             logger.error(f"AGAPE-SPOT Signals: Market data fetch failed for {ticker}: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # ETH-Leader Filter: use ETH's Deribit GEX as directional compass
+    # ------------------------------------------------------------------
+
+    def _refresh_eth_leader(self) -> None:
+        """Fetch ETH's market snapshot and cache the combined signal.
+
+        ETH has full Deribit options GEX data that XRP/SHIB/DOGE lack.
+        Since altcoins are ~80%+ correlated with ETH, we use ETH's
+        signal as a directional compass: if ETH says bearish, don't
+        enter altcoin longs.
+
+        Cached per cycle so we only call the provider once for all tickers.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        # Only refresh if stale (>30 seconds)
+        if self._eth_leader_updated and (now - self._eth_leader_updated).total_seconds() < 30:
+            return
+
+        if not self._crypto_provider:
+            return
+
+        try:
+            eth_snapshot = self._crypto_provider.get_snapshot("ETH")
+            if eth_snapshot and eth_snapshot.spot_price > 0:
+                self._eth_leader_signal = eth_snapshot.combined_signal
+                self._eth_leader_confidence = eth_snapshot.combined_confidence
+                self._eth_leader_bias = eth_snapshot.directional_bias
+                self._eth_leader_updated = now
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT Signals: ETH leader refresh failed: {e}")
+
+    def check_eth_leader(self, ticker: str) -> Tuple[bool, str]:
+        """Check if ETH's signal allows an altcoin long entry.
+
+        Returns (allowed, reason).
+
+        Policy:
+          ETH LONG/RANGE_BOUND  → allow altcoin entry
+          ETH SHORT (HIGH/MED)  → block altcoin entry
+          ETH WAIT              → allow (no strong signal either way)
+          ETH unavailable       → allow (don't block on missing data)
+        """
+        entry_filters = self.config.get_entry_filters(ticker)
+        if not entry_filters.get("use_eth_leader"):
+            return (True, "")
+
+        self._refresh_eth_leader()
+
+        if self._eth_leader_signal is None:
+            return (True, "")  # No ETH data, don't block
+
+        sig = self._eth_leader_signal
+        conf = self._eth_leader_confidence or "LOW"
+        bias = self._eth_leader_bias or "NEUTRAL"
+
+        # Block when ETH is clearly bearish
+        if sig == "SHORT" and conf in ("HIGH", "MEDIUM"):
+            return (False, f"ETH_LEADER_SHORT_{conf}")
+
+        # Block when ETH directional bias is bearish with high confidence
+        if bias == "BEARISH" and sig != "LONG":
+            return (False, f"ETH_LEADER_BEARISH_BIAS")
+
+        return (True, "")
+
+    # ------------------------------------------------------------------
+    # Momentum Filter: block entries during price downtrends
+    # ------------------------------------------------------------------
+
+    def record_price(self, ticker: str, price: float) -> None:
+        """Record a price observation for momentum tracking."""
+        if ticker not in self._price_history:
+            self._price_history[ticker] = deque(maxlen=self.MOMENTUM_WINDOW)
+        self._price_history[ticker].append(price)
+
+    def check_momentum(self, ticker: str, current_price: float) -> Tuple[bool, str]:
+        """Check if short-term momentum supports a long entry.
+
+        Returns (allowed, reason).
+
+        Uses a simple lookback: if price has fallen more than 0.2% from
+        the oldest reading in the window, block entry.  We want to buy
+        into rising or flat markets, not falling ones.
+        """
+        entry_filters = self.config.get_entry_filters(ticker)
+        if not entry_filters.get("use_momentum_filter"):
+            return (True, "")
+
+        history = self._price_history.get(ticker)
+        if not history or len(history) < 3:
+            return (True, "")  # Not enough data yet, don't block
+
+        oldest_price = history[0]
+        if oldest_price <= 0:
+            return (True, "")
+
+        momentum_pct = ((current_price - oldest_price) / oldest_price) * 100
+
+        # Block entry if price dropped >0.2% over the lookback window
+        if momentum_pct < -0.2:
+            return (False, f"MOMENTUM_DOWN_{momentum_pct:+.2f}pct")
+
+        return (True, "")
 
     def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
         if not self._prophet:
@@ -349,8 +472,11 @@ class AgapeSpotSignalGenerator:
     ) -> Tuple[SignalAction, str]:
         """Translate combined signal into LONG or WAIT (never SHORT).
 
-        Respects per-ticker entry filters: require_funding_data blocks entry
-        when we have no real market data (UNKNOWN regime).
+        Entry quality gates (checked in order):
+        1. Minimum confidence level
+        2. Require actual funding data (XRP/SHIB)
+        3. ETH-leader filter: block when ETH GEX says bearish
+        4. Momentum filter: block when price is falling
         """
         min_confidence = self.config.min_confidence
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
@@ -363,6 +489,19 @@ class AgapeSpotSignalGenerator:
             funding_regime = market_data.get("funding_regime", "UNKNOWN")
             if funding_regime in ("UNKNOWN", "", None):
                 return (SignalAction.WAIT, "NO_FUNDING_DATA")
+
+        # ETH-leader filter: use ETH's Deribit GEX as directional compass
+        eth_ok, eth_reason = self.check_eth_leader(ticker)
+        if not eth_ok:
+            return (SignalAction.WAIT, eth_reason)
+
+        # Momentum filter: block entries during price downtrends
+        spot = market_data.get("spot_price", 0)
+        if spot > 0:
+            self.record_price(ticker, spot)
+            mom_ok, mom_reason = self.check_momentum(ticker, spot)
+            if not mom_ok:
+                return (SignalAction.WAIT, mom_reason)
 
         tracker = get_spot_direction_tracker(ticker, self.config)
 

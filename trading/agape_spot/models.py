@@ -54,7 +54,9 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         # Signal quality gates — XRP has no Deribit options data, need actual funding signal
         "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
         "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
-        "min_scans_between_trades": 6,      # 30 min between entries (was 0 — stacked 5 positions in 25 min)
+        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
+        "use_momentum_filter": True,        # Block entries during price downtrends
+        "min_scans_between_trades": 10,     # 10 min between entries (1-min scans)
         "max_positions": 2,                 # Was 5 — reduce concurrent exposure
     },
     "SHIB-USD": {
@@ -77,7 +79,9 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         # Signal quality gates — SHIB has no Deribit data, meme coin needs real signal
         "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
         "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
-        "min_scans_between_trades": 6,      # 30 min between entries
+        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
+        "use_momentum_filter": True,        # Block entries during price downtrends
+        "min_scans_between_trades": 10,     # 10 min between entries (1-min scans)
         "max_positions": 2,                 # Was 5 — reduce concurrent exposure
     },
     "DOGE-USD": {
@@ -97,10 +101,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_unrealized_loss_pct": 0.75,
         "no_loss_profit_target_pct": 0.0,  # Was 1.0% — disabled, let trail manage (this IS why PF is high)
         "max_hold_hours": 2,
-        # Signal quality gates — DOGE trending well, keep base_long but add spacing
+        # Signal quality gates — DOGE trending well, keep base_long but add ETH leader + momentum
         "require_funding_data": False,      # DOGE works without funding data (trending market)
         "allow_base_long": True,            # Keep catchall — DOGE profits from it
-        "min_scans_between_trades": 3,      # 15 min between entries (was 0)
+        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
+        "use_momentum_filter": True,        # Block entries during price downtrends
+        "min_scans_between_trades": 5,      # 5 min between entries (1-min scans)
         "max_positions": 3,                 # Was 5 — slight reduction
     },
 }
@@ -226,6 +232,8 @@ class AgapeSpotConfig:
         Controls when a ticker is allowed to enter new trades:
         - require_funding_data: Block entry if funding regime is UNKNOWN
         - allow_base_long: Allow the ALTCOIN_BASE_LONG fallback signal
+        - use_eth_leader: Use ETH's GEX signal as directional compass for altcoins
+        - use_momentum_filter: Block entries during price downtrends
         - min_scans_between_trades: Minimum scans between new entries (prevents stacking)
         - max_positions: Per-ticker max open positions (overrides shared config)
         """
@@ -233,6 +241,8 @@ class AgapeSpotConfig:
         return {
             "require_funding_data": cfg.get("require_funding_data", False),
             "allow_base_long": cfg.get("allow_base_long", True),
+            "use_eth_leader": cfg.get("use_eth_leader", False),
+            "use_momentum_filter": cfg.get("use_momentum_filter", False),
             "min_scans_between_trades": cfg.get("min_scans_between_trades", 0),
             "max_positions": cfg.get("max_positions", self.max_open_positions_per_ticker),
         }
