@@ -721,11 +721,11 @@ export const apiClient = {
   compareZeroDTEBacktests: (jobIds: string[]) => api.get(`/api/zero-dte/compare?job_ids=${jobIds.join(',')}`),
 
   // Prophet AI - Claude-powered prediction validation and analysis
-  getProphetStatus: () => api.get('/api/zero-dte/prophet/status'),
-  getProphetLogs: () => api.get('/api/zero-dte/prophet/logs'),
-  clearProphetLogs: () => api.delete('/api/zero-dte/prophet/logs'),
+  getProphetStatus: () => api.get('/api/prophet/status'),
+  getProphetLogs: () => api.get('/api/prophet/logs'),
+  clearProphetLogs: () => api.delete('/api/prophet/logs'),
   getProphetPredictions: (params?: { limit?: number, bot_name?: string, days?: number }) =>
-    api.get('/api/logs/prophet', { params }),
+    api.get('/api/prophet/predictions', { params }),
   prophetAnalyze: (data: {
     spot_price: number
     vix: number
@@ -739,55 +739,55 @@ export const apiClient = {
     distance_to_call_wall?: number
     distance_to_put_wall?: number
     bot_name?: string
-  }) => api.post('/api/zero-dte/prophet/analyze', data),
+  }) => api.post('/api/prophet/strategy-recommendation', data),
   prophetExplain: (data: {
     prediction: any
     market_context?: any
-  }) => api.post('/api/zero-dte/prophet/explain', data),
+  }) => api.post('/api/prophet/explain', data),
   prophetAnalyzePatterns: (data: {
     backtest_trades: any[]
     focus_area?: string
-  }) => api.post('/api/zero-dte/prophet/analyze-patterns', data),
+  }) => api.post('/api/prophet/analyze-patterns', data),
 
   // Prophet Training & Bot Interactions
-  getProphetTrainingStatus: () => api.get('/api/zero-dte/prophet/training-status'),
+  getProphetTrainingStatus: () => api.get('/api/prophet/training-status'),
   triggerProphetTraining: (force: boolean = false) =>
-    api.post(`/api/zero-dte/prophet/trigger-training?force=${force}`),
+    api.post(`/api/prophet/trigger-training?force=${force}`),
   getProphetBotInteractions: (params?: { days?: number, limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.days) queryParams.append('days', String(params.days))
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
-    return api.get(`/api/zero-dte/prophet/bot-interactions?${queryParams.toString()}`)
+    return api.get(`/api/prophet/bot-interactions?${queryParams.toString()}`)
   },
   getProphetPerformance: (days: number = 90) =>
-    api.get(`/api/zero-dte/prophet/performance?days=${days}`),
+    api.get(`/api/prophet/performance?days=${days}`),
   getProphetPredictionsFull: (params?: { days?: number, limit?: number, bot_name?: string, include_claude?: boolean }) => {
     const queryParams = new URLSearchParams()
     if (params?.days) queryParams.append('days', String(params.days))
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
     if (params?.include_claude !== undefined) queryParams.append('include_claude', String(params.include_claude))
-    return api.get(`/api/zero-dte/prophet/predictions?${queryParams.toString()}`)
+    return api.get(`/api/prophet/predictions?${queryParams.toString()}`)
   },
 
-  // Prophet Full Transparency - NEW: Complete visibility into Prophet data flow
+  // Prophet Full Transparency - Complete visibility into Prophet data flow
   getProphetDataFlows: (params?: { limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
-    return api.get(`/api/zero-dte/prophet/data-flows?${queryParams.toString()}`)
+    return api.get(`/api/prophet/data-flows?${queryParams.toString()}`)
   },
   getProphetClaudeExchanges: (params?: { limit?: number, bot_name?: string }) => {
     const queryParams = new URLSearchParams()
     if (params?.limit) queryParams.append('limit', String(params.limit))
     if (params?.bot_name) queryParams.append('bot_name', params.bot_name)
-    return api.get(`/api/zero-dte/prophet/claude-exchanges?${queryParams.toString()}`)
+    return api.get(`/api/prophet/claude-exchanges?${queryParams.toString()}`)
   },
   getProphetFullTransparency: (bot_name?: string) => {
     const queryParams = new URLSearchParams()
     if (bot_name) queryParams.append('bot_name', bot_name)
-    return api.get(`/api/zero-dte/prophet/full-transparency?${queryParams.toString()}`)
+    return api.get(`/api/prophet/full-transparency?${queryParams.toString()}`)
   },
 
   // Export Routes

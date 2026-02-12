@@ -223,7 +223,7 @@ export default function ZeroDTEBacktestPage() {
   // Load Prophet status
   const loadProphetStatus = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/zero-dte/prophet/status`)
+      const response = await fetch(`${API_URL}/api/prophet/status`)
       if (response.ok) {
         const data = await response.json()
         if (data.success) {
@@ -238,7 +238,7 @@ export default function ZeroDTEBacktestPage() {
   // Load Prophet logs
   const loadProphetLogs = async () => {
     try {
-      const response = await fetch(`${API_URL}/api/zero-dte/prophet/logs?limit=20`)
+      const response = await fetch(`${API_URL}/api/prophet/logs?limit=20`)
       if (response.ok) {
         const data = await response.json()
         if (data.success) {

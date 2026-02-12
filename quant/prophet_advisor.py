@@ -5769,8 +5769,8 @@ def get_training_status() -> Dict[str, Any]:
         "pending_outcomes": pending_count,
         "total_outcomes": total_outcomes,
         "last_trained": last_trained,
-        "threshold_for_retrain": 100,
-        "needs_training": pending_count >= 100 or not prophet.is_trained,
+        "threshold_for_retrain": 1,
+        "needs_training": pending_count >= 1 or not prophet.is_trained,
         "training_metrics": prophet.training_metrics.__dict__ if prophet.training_metrics else None,
         "claude_available": prophet.claude_available,
         "model_source": model_source,
@@ -5779,7 +5779,7 @@ def get_training_status() -> Dict[str, Any]:
     }
 
 
-def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics]:
+def train_from_live_outcomes(min_samples: int = 1) -> Optional[TrainingMetrics]:
     """
     Train Prophet model from live trading outcomes stored in database.
 
@@ -6044,24 +6044,18 @@ def auto_train(
         "success": False
     }
 
-    # Decide if training is needed
-    needs_training = False
+    # Always attempt training - no minimum threshold gate
+    needs_training = True
     reason = ""
 
     if force:
-        needs_training = True
         reason = "Forced training requested"
     elif not prophet.is_trained:
-        needs_training = True
         reason = "Model not trained - initial training"
     elif pending_count >= threshold_outcomes:
-        needs_training = True
         reason = f"Threshold reached: {pending_count} >= {threshold_outcomes} new outcomes"
-
-    if not needs_training:
-        result["reason"] = f"No training needed - only {pending_count}/{threshold_outcomes} new outcomes"
-        prophet.live_log.log("AUTO_TRAIN_SKIP", result["reason"], result)
-        return result
+    else:
+        reason = f"Auto-training with {pending_count} outcomes (always attempts)"
 
     result["triggered"] = True
     result["reason"] = reason
@@ -6069,9 +6063,9 @@ def auto_train(
     prophet.live_log.log("AUTO_TRAIN_START", reason, {"pending_outcomes": pending_count})
 
     # Try training from live outcomes first (more accurate)
-    # Reduced threshold from 50 to 20 for faster learning from live data
-    if pending_count >= 20:  # Need at least 20 for live training
-        metrics = train_from_live_outcomes(min_samples=20)
+    # Always attempt if any outcomes exist - no minimum gate
+    if pending_count >= 1:
+        metrics = train_from_live_outcomes(min_samples=max(1, pending_count))
         if metrics:
             result["training_metrics"] = metrics.__dict__
             result["success"] = True
@@ -6110,7 +6104,7 @@ def auto_train(
     return result
 
 
-def train_from_database_backtests(min_samples: int = 100) -> Optional[TrainingMetrics]:
+def train_from_database_backtests(min_samples: int = 10) -> Optional[TrainingMetrics]:
     """
     Train Prophet from backtest results stored in database.
 
