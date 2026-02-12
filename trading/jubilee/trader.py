@@ -1146,12 +1146,8 @@ class JubileeICTrader:
                 result['cooldown_active'] = True
                 result['skip_reason'] = self._get_skip_reason()
 
-            # Step 3: Record equity snapshot (per STANDARDS.md)
-            try:
-                self.db.record_ic_equity_snapshot()
-            except Exception as e:
-                logger.warning(f"Failed to record IC equity snapshot: {e}")
-                result['errors'].append(f"Equity snapshot failed: {e}")
+            # Note: Equity snapshots are now event-driven (on open/close) to match SAMSON
+            # No per-cycle snapshot needed
 
             logger.info(f"JUBILEE IC cycle complete: {result['positions_closed']} closed, new={bool(result['new_position'])}")
 
@@ -1177,6 +1173,13 @@ class JubileeICTrader:
                     if success:
                         closed += 1
                         logger.info(f"Closed IC position {position.position_id}: {reason}")
+
+                        # Save equity snapshot after closing position (match SAMSON: event-driven MTM)
+                        try:
+                            self.db.record_ic_equity_snapshot()
+                            logger.info(f"[JUBILEE IC] Equity snapshot recorded after closing {position.position_id}")
+                        except Exception as e:
+                            logger.warning(f"[JUBILEE IC] Failed to record equity snapshot on close: {e}")
 
             except Exception as e:
                 logger.error(f"Error checking position {position.position_id}: {e}")
@@ -1533,6 +1536,13 @@ class JubileeICTrader:
         if position:
             result['new_position'] = position.position_id
             logger.info(f"[JUBILEE IC] Position OPENED: {position.position_id}")
+
+            # Save equity snapshot after opening position (match SAMSON: event-driven MTM)
+            try:
+                self.db.record_ic_equity_snapshot()
+                logger.info(f"[JUBILEE IC] Equity snapshot recorded after opening {position.position_id}")
+            except Exception as e:
+                logger.warning(f"[JUBILEE IC] Failed to record equity snapshot on open: {e}")
 
             # Update the box position's IC returns tracking
             self.db.log_action(

@@ -1007,9 +1007,11 @@ class JubileeICConfig:
     prefer_0dte: bool = False     # Trade weekly SPXW (next Friday), same as SAMSON
 
     # Strike selection - AGGRESSIVE (match SAMSON)
-    short_put_delta: float = 0.10   # ~10 delta for short put
-    short_call_delta: float = 0.10  # ~10 delta for short call
+    sd_multiplier: float = 0.8      # 0.8 SD from spot (match SAMSON)
+    short_put_delta: float = 0.10   # ~10 delta for short put (metadata only)
+    short_call_delta: float = 0.10  # ~10 delta for short call (metadata only)
     spread_width: float = 12.0      # $12 wide spreads on SPX (match SAMSON)
+    min_credit: float = 0.50        # Min credit threshold (warning only, match SAMSON)
 
     # Position sizing - AGGRESSIVE (match SAMSON)
     max_positions: int = 10         # Max simultaneous IC positions (match SAMSON)
@@ -1027,9 +1029,9 @@ class JubileeICConfig:
     min_oracle_confidence: float = 0.2   # Lower bar (match SAMSON min_ic_suitability)
     min_win_probability: float = 0.40    # Lower threshold (match SAMSON 40%)
 
-    # VIX filters - RELAXED (match SAMSON)
-    min_vix: float = 12.0         # Don't trade if VIX too low (thin premiums)
-    max_vix: float = 40.0         # Higher tolerance (match SAMSON)
+    # VIX filters - DISABLED (match SAMSON: always allow trading)
+    min_vix: float = 0.0          # Disabled - always trade (match SAMSON)
+    max_vix: float = 999.0        # Disabled - always trade (match SAMSON)
 
     # Trading window - MATCH ANCHOR exactly
     entry_start: str = "08:30"    # 8:30 AM CT (same as ANCHOR)
@@ -1061,9 +1063,11 @@ class JubileeICConfig:
                 'prefer_0dte': self.prefer_0dte,
             },
             'strikes': {
+                'sd_multiplier': self.sd_multiplier,
                 'short_put_delta': self.short_put_delta,
                 'short_call_delta': self.short_call_delta,
                 'spread_width': self.spread_width,
+                'min_credit': self.min_credit,
             },
             'sizing': {
                 'max_positions': self.max_positions,
