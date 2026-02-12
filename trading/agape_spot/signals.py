@@ -347,11 +347,22 @@ class AgapeSpotSignalGenerator:
     def _determine_action(
         self, ticker: str, combined_signal: str, confidence: str, market_data: Dict
     ) -> Tuple[SignalAction, str]:
-        """Translate combined signal into LONG or WAIT (never SHORT)."""
+        """Translate combined signal into LONG or WAIT (never SHORT).
+
+        Respects per-ticker entry filters: require_funding_data blocks entry
+        when we have no real market data (UNKNOWN regime).
+        """
         min_confidence = self.config.min_confidence
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
         if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 1):
             return (SignalAction.WAIT, f"LOW_CONFIDENCE_{confidence}")
+
+        # Per-ticker entry filter: require actual funding data before entering
+        entry_filters = self.config.get_entry_filters(ticker)
+        if entry_filters.get("require_funding_data"):
+            funding_regime = market_data.get("funding_regime", "UNKNOWN")
+            if funding_regime in ("UNKNOWN", "", None):
+                return (SignalAction.WAIT, "NO_FUNDING_DATA")
 
         tracker = get_spot_direction_tracker(ticker, self.config)
 
@@ -472,13 +483,17 @@ class AgapeSpotSignalGenerator:
             return (SignalAction.WAIT, "FUNDING_BEARISH_LONG_ONLY")
 
         # Altcoins: if nothing else triggers, allow a LONG when funding is balanced
-        # and bias is not bearish.  This prevents days of zero trades.
-        if is_alt and ls_bias != "LONG_HEAVY" and funding_regime not in (
-            "HEAVILY_POSITIVE", "EXTREME_POSITIVE", "POSITIVE",
-        ):
-            should_skip, _ = tracker.should_skip_direction("LONG")
-            if not should_skip:
-                return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
+        # and bias is not bearish.  Gated per-ticker: XRP/SHIB have this disabled
+        # because without Deribit data, this fired every scan with zero conviction,
+        # producing random entries and sub-1.0 profit factors.
+        entry_filters = self.config.get_entry_filters(ticker)
+        if is_alt and entry_filters.get("allow_base_long", True):
+            if ls_bias != "LONG_HEAVY" and funding_regime not in (
+                "HEAVILY_POSITIVE", "EXTREME_POSITIVE", "POSITIVE",
+            ):
+                should_skip, _ = tracker.should_skip_direction("LONG")
+                if not should_skip:
+                    return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
 
         return (SignalAction.WAIT, "NO_FALLBACK_SIGNAL")
 
