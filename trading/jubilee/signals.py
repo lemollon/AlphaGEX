@@ -398,7 +398,7 @@ class BoxSpreadSignalGenerator:
             tradier = _get_tradier()
             if tradier:
                 expirations = _tradier_call_with_retry(
-                    tradier.get_expirations, self.config.ticker, max_retries=2
+                    tradier.get_option_expirations, self.config.ticker, max_retries=2
                 )
             else:
                 expirations = None
