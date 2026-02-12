@@ -24,6 +24,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "default_quantity": 0.1,
         "min_order": 0.001,
         "max_per_trade": 1.0,
+        "min_notional_usd": 2.0,  # Coinbase $1 min + safety buffer
         "quantity_decimals": 4,
         "price_decimals": 2,
         # ETH exit params: wider trail for bigger moves
@@ -41,6 +42,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "default_quantity": 100.0,
         "min_order": 1.0,
         "max_per_trade": 5000.0,
+        "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
         # XRP exit params: quick scalp — small range, take sub-dollar profits
@@ -58,6 +60,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "default_quantity": 1000000.0,
         "min_order": 1000.0,
         "max_per_trade": 100000000.0,
+        "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 8,
         # SHIB exit params: quick scalp — meme coin, take profits fast
@@ -75,6 +78,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "default_quantity": 500.0,
         "min_order": 1.0,
         "max_per_trade": 50000.0,
+        "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
         # DOGE exit params: quick scalp — already profitable at 64% WR

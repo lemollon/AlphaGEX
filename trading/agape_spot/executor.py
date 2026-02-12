@@ -273,6 +273,23 @@ class AgapeSpotExecutor:
             client_order_id = str(uuid.uuid4())
 
             notional_est = quantity * signal.spot_price
+            min_notional = ticker_config.get("min_notional_usd", 2.0)
+            if notional_est < min_notional:
+                logger.warning(
+                    f"AGAPE-SPOT: BUY SKIPPED {signal.ticker} — "
+                    f"notional ${notional_est:.2f} below "
+                    f"minimum ${min_notional:.2f}"
+                )
+                if self.db:
+                    self.db.log(
+                        "WARNING", "BELOW_MIN_NOTIONAL",
+                        f"Buy skipped for {signal.ticker}: notional "
+                        f"${notional_est:.2f} < ${min_notional:.2f} min. "
+                        f"qty={quantity}, price=${signal.spot_price:.4f}",
+                        ticker=signal.ticker,
+                    )
+                return None
+
             is_dedicated = signal.ticker in self._ticker_clients
             acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
             logger.info(
@@ -424,13 +441,38 @@ class AgapeSpotExecutor:
             ticker_config = SPOT_TICKERS.get(ticker, {})
             qty_decimals = ticker_config.get("quantity_decimals", 8)
             sell_qty = round(quantity, qty_decimals)
+
+            # Check minimum notional — if below, this is a dust position
+            # that Coinbase will reject. Let caller close the DB position
+            # without a Coinbase sell (dust value is negligible).
+            current_price = self.get_current_price(ticker)
+            notional_est = sell_qty * (current_price or 0)
+            min_notional = ticker_config.get("min_notional_usd", 2.0)
+            if notional_est < min_notional:
+                logger.info(
+                    f"AGAPE-SPOT: SELL SKIPPED (dust) {ticker} {position_id} — "
+                    f"notional ${notional_est:.2f} below "
+                    f"minimum ${min_notional:.2f}. "
+                    f"Coins remain in account as dust."
+                )
+                if self.db:
+                    self.db.log(
+                        "INFO", "DUST_SKIP",
+                        f"Sell skipped for {ticker} {position_id}: "
+                        f"notional ${notional_est:.2f} < ${min_notional:.2f}. "
+                        f"qty={sell_qty} is dust.",
+                        ticker=ticker,
+                    )
+                # Return True so caller closes DB position (dust is negligible)
+                return (True, current_price)
+
             client_order_id = str(uuid.uuid4())
 
             is_dedicated = ticker in self._ticker_clients
             acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
             logger.info(
                 f"AGAPE-SPOT: PLACING LIVE SELL {ticker} [{acct_label}] "
-                f"{position_id} qty={sell_qty} ({reason})"
+                f"{position_id} qty={sell_qty} (~${notional_est:.2f}) ({reason})"
             )
 
             order = client.market_order_sell(
