@@ -7,6 +7,7 @@ import {
   MinusCircle, Info, Activity, TrendingUp, List
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { useOmegaDecisionHistory } from '@/lib/hooks/useMarketData'
 
 // =============================================================================
@@ -402,6 +403,7 @@ function DecisionDetail({ decision }: { decision: any }) {
 // =============================================================================
 
 export default function OmegaDecisionExplorer() {
+  const sidebarPadding = useSidebarPadding()
   const [selectedBot, setSelectedBot] = useState<string>('')
   const [limit, setLimit] = useState<number>(50)
   const [expandedRow, setExpandedRow] = useState<number | null>(null)
@@ -427,7 +429,8 @@ export default function OmegaDecisionExplorer() {
   return (
     <div className="min-h-screen bg-background-deep text-text-primary">
       <Navigation />
-      <div className="flex-1 p-6">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -738,7 +741,8 @@ export default function OmegaDecisionExplorer() {
             </div>
           </div>
         </div>
-      </div>
+        </div>
+      </main>
     </div>
   )
 }

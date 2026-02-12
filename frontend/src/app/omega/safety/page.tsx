@@ -7,6 +7,7 @@ import {
   ChevronLeft, Eye, Power, FileText, RefreshCw
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   useOmegaBots,
   useOmegaCorrelations,
@@ -224,6 +225,7 @@ const AuditLogTable = ({ entries }: { entries: AuditEntry[] }) => {
 // ==================== MAIN PAGE ====================
 
 export default function OmegaSafetyPage() {
+  const sidebarPadding = useSidebarPadding()
   const { data: botsData, isLoading: botsLoading, mutate: mutateBots } = useOmegaBots()
   const { data: correlationData } = useOmegaCorrelations()
   const { data: equityData } = useOmegaEquityScaling()
@@ -252,7 +254,8 @@ export default function OmegaSafetyPage() {
   return (
     <div className="min-h-screen bg-background-deep text-text-primary">
       <Navigation />
-      <div className="flex-1 p-6">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Back Link + Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -519,7 +522,8 @@ export default function OmegaSafetyPage() {
           <AuditLogTable entries={auditEntries} />
         </div>
 
-      </div>
+        </div>
+      </main>
     </div>
   )
 }
