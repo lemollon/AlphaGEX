@@ -246,7 +246,9 @@ class JubileeDatabase:
                         ADD COLUMN IF NOT EXISTS {col_name} {col_type}
                     """)
                     cursor.execute("RELEASE SAVEPOINT col_migration")
-                except Exception:
+                    logger.info(f"Column migration OK: jubilee_positions.{col_name}")
+                except Exception as e:
+                    logger.warning(f"Column migration FAILED: jubilee_positions.{col_name}: {e}")
                     cursor.execute("ROLLBACK TO SAVEPOINT col_migration")
 
             # Signals table (generated signals, executed or not)
@@ -1072,8 +1074,6 @@ class JubileeDatabase:
                     total_credit_received,
                     borrowing_cost,
                     implied_annual_rate,
-                    total_ic_returns,
-                    net_profit as realized_pnl,
                     open_time,
                     close_time,
                     close_reason,
@@ -1111,29 +1111,18 @@ class JubileeDatabase:
                     theoretical_value, total_owed_at_expiration,
                     borrowing_cost, implied_annual_rate, daily_cost, cost_accrued_to_date,
                     fed_funds_at_entry, margin_rate_at_entry, savings_vs_margin,
-                    cash_deployed_to_ares, cash_deployed_to_titan, cash_deployed_to_pegasus,
-                    cash_held_in_reserve, total_cash_deployed,
-                    returns_from_ares, returns_from_titan, returns_from_pegasus,
-                    total_ic_returns, net_profit,
                     spot_at_entry, vix_at_entry,
                     early_assignment_risk, current_margin_used, margin_cushion,
                     status, open_time,
                     position_explanation, daily_briefing
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (position_id) DO UPDATE SET
                     expiration = EXCLUDED.expiration,
                     current_dte = EXCLUDED.current_dte,
-                    total_cash_deployed = EXCLUDED.total_cash_deployed,
                     cost_accrued_to_date = EXCLUDED.cost_accrued_to_date,
-                    returns_from_ares = EXCLUDED.returns_from_ares,
-                    returns_from_titan = EXCLUDED.returns_from_titan,
-                    returns_from_pegasus = EXCLUDED.returns_from_pegasus,
-                    total_ic_returns = EXCLUDED.total_ic_returns,
-                    net_profit = EXCLUDED.net_profit,
                     current_margin_used = EXCLUDED.current_margin_used,
                     margin_cushion = EXCLUDED.margin_cushion,
                     status = EXCLUDED.status,
@@ -1152,11 +1141,6 @@ class JubileeDatabase:
                 position.daily_cost, position.cost_accrued_to_date,
                 position.fed_funds_at_entry, position.margin_rate_at_entry,
                 position.savings_vs_margin,
-                position.cash_deployed_to_ares, position.cash_deployed_to_titan,
-                position.cash_deployed_to_pegasus, position.cash_held_in_reserve,
-                position.total_cash_deployed,
-                position.returns_from_ares, position.returns_from_titan,
-                position.returns_from_pegasus, position.total_ic_returns, position.net_profit,
                 position.spot_at_entry, position.vix_at_entry,
                 position.early_assignment_risk, position.current_margin_used,
                 position.margin_cushion,
@@ -1184,7 +1168,7 @@ class JubileeDatabase:
 
             # Get current position data to calculate net profit
             cursor.execute("""
-                SELECT borrowing_cost, total_ic_returns
+                SELECT borrowing_cost
                 FROM jubilee_positions
                 WHERE position_id = %s
             """, (position_id,))
@@ -1192,20 +1176,15 @@ class JubileeDatabase:
 
             if row:
                 borrowing_cost = float(row[0] or 0)
-                current_returns = float(row[1] or 0)
-                total_returns = current_returns + final_ic_returns
-                net_profit = total_returns - borrowing_cost
 
                 cursor.execute("""
                     UPDATE jubilee_positions
                     SET status = 'closed',
                         close_time = NOW(),
                         close_reason = %s,
-                        total_ic_returns = %s,
-                        net_profit = %s,
                         updated_at = NOW()
                     WHERE position_id = %s
-                """, (close_reason, total_returns, net_profit, position_id))
+                """, (close_reason, position_id))
 
             conn.commit()
             cursor.close()
@@ -1244,16 +1223,16 @@ class JubileeDatabase:
             fed_funds_at_entry=float(data['fed_funds_at_entry'] or 0),
             margin_rate_at_entry=float(data['margin_rate_at_entry'] or 0),
             savings_vs_margin=float(data['savings_vs_margin'] or 0),
-            cash_deployed_to_ares=float(data['cash_deployed_to_ares'] or 0),
-            cash_deployed_to_titan=float(data['cash_deployed_to_titan'] or 0),
-            cash_deployed_to_pegasus=float(data['cash_deployed_to_pegasus'] or 0),
-            cash_held_in_reserve=float(data['cash_held_in_reserve'] or 0),
-            total_cash_deployed=float(data['total_cash_deployed'] or 0),
-            returns_from_ares=float(data['returns_from_ares'] or 0),
-            returns_from_titan=float(data['returns_from_titan'] or 0),
-            returns_from_pegasus=float(data['returns_from_pegasus'] or 0),
-            total_ic_returns=float(data['total_ic_returns'] or 0),
-            net_profit=float(data['net_profit'] or 0),
+            cash_deployed_to_ares=float(data.get('cash_deployed_to_ares') or 0),
+            cash_deployed_to_titan=float(data.get('cash_deployed_to_titan') or 0),
+            cash_deployed_to_pegasus=float(data.get('cash_deployed_to_pegasus') or 0),
+            cash_held_in_reserve=float(data.get('cash_held_in_reserve') or 0),
+            total_cash_deployed=float(data.get('total_cash_deployed') or 0),
+            returns_from_ares=float(data.get('returns_from_ares') or 0),
+            returns_from_titan=float(data.get('returns_from_titan') or 0),
+            returns_from_pegasus=float(data.get('returns_from_pegasus') or 0),
+            total_ic_returns=float(data.get('total_ic_returns') or 0),
+            net_profit=float(data.get('net_profit') or 0),
             spot_at_entry=float(data['spot_at_entry'] or 0),
             vix_at_entry=float(data['vix_at_entry'] or 0),
             early_assignment_risk=data['early_assignment_risk'] or 'UNKNOWN',
