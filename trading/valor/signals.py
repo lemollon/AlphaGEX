@@ -1446,8 +1446,11 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
     #
     # Use n+1 (next day) GEX data when options are closed:
     # - 3 PM - 4 PM CT: Post-close window before maintenance
-    # - 5 PM - 8 AM CT: Overnight session (next day until options open)
-    is_options_closed = (hour >= 15) or (hour < 8)  # 3 PM - 8 AM
+    # - 5 PM - 8:30 AM CT: Overnight session (until SPX options open)
+    # NOTE: SPX options open at 8:30 AM CT, not 8:00 AM. Using hour < 8
+    # left a 30-min gap (8:00-8:29) where overnight cache was skipped but
+    # Tradier had no live options data yet, causing flip_point=0 and halting trading.
+    is_options_closed = (hour >= 15) or (hour < 8) or (hour == 8 and now.minute < 30)
 
     # If in-memory cache is empty, try loading from database (survives restarts)
     if not _gex_cache and not _gex_cache_loaded_from_db:
@@ -1460,8 +1463,8 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
 
     # If options are closed and we have valid cached data, use n+1 levels
     if is_options_closed and _gex_cache and _gex_cache_time:
-        # During overnight, cache can be up to 18 hours old (3 PM to 8 AM)
-        max_cache_age = 1200 if hour >= 15 or hour < 8 else 120  # 20 hours overnight, 2 hours otherwise
+        # During options-closed window, cache can be up to 20 hours old (3 PM to 8:30 AM next day)
+        max_cache_age = 1200  # 20 hours - covers full overnight window
         cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
 
         if cache_age_minutes < max_cache_age:
@@ -1470,7 +1473,7 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
             n1_call = _gex_cache.get('n1_call_wall') or _gex_cache.get('call_wall', 0)
             n1_put = _gex_cache.get('n1_put_wall') or _gex_cache.get('put_wall', 0)
 
-            session_type = "OVERNIGHT" if (hour >= 17 or hour < 8) else "POST_CLOSE"
+            session_type = "OVERNIGHT" if (hour >= 17 or hour < 8) else ("PRE_OPEN" if hour == 8 else "POST_CLOSE")
             logger.info(
                 f"VALOR using N+1 GEX data ({session_type}, options closed). "
                 f"Cache age: {cache_age_minutes:.0f} min. "
@@ -1490,10 +1493,11 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
             }
 
     # =========================================================================
-    # MARKET HOURS (8 AM - 3 PM CT): Use TRADIER for real-time GEX data
-    # OVERNIGHT (3 PM - 8 AM CT): Use TradingVolatility for n+1 GEX data
+    # MARKET HOURS (8:30 AM - 3 PM CT): Use TRADIER for real-time GEX data
+    # OVERNIGHT (3 PM - 8:30 AM CT): Use TradingVolatility for n+1 GEX data
+    # Note: If we reach here, is_options_closed was False (8:30 AM+) or cache was empty.
     # =========================================================================
-    is_market_hours = 8 <= hour < 15  # 8 AM - 3 PM CT
+    is_market_hours = 8 <= hour < 15  # Covers 8:30 AM+ (earlier times handled by cache above)
 
     if is_market_hours:
         # =====================================================================
@@ -1666,8 +1670,28 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
     except Exception as e:
         logger.warning(f"Could not get GEX data from API: {e}")
 
-    # Return empty data if all fails
-    logger.error(f"Failed to get GEX data for {symbol} - VALOR signals will use fallback prices")
+    # Last resort: use cached data if available and reasonably fresh
+    # This prevents VALOR from halting when all live sources have a temporary outage
+    # or during the transition from overnight to market hours.
+    if _gex_cache and _gex_cache_time:
+        cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
+        if cache_age_minutes < 120:  # Cache less than 2 hours old
+            logger.warning(
+                f"All live GEX sources failed - using cached data as fallback "
+                f"(age: {cache_age_minutes:.0f} min, source: {_gex_cache.get('data_source', 'cache')}). "
+                f"flip={_gex_cache.get('flip_point', 0):.2f}"
+            )
+            return {
+                'flip_point': _gex_cache.get('flip_point', 0),
+                'call_wall': _gex_cache.get('call_wall', 0),
+                'put_wall': _gex_cache.get('put_wall', 0),
+                'net_gex': _gex_cache.get('net_gex', 0),
+                'gex_ratio': _gex_cache.get('gex_ratio', 1.0),
+                'data_source': 'cache_fallback',
+            }
+
+    # Return empty data if all fails and no valid cache
+    logger.error(f"Failed to get GEX data for {symbol} - no live sources and no valid cache. VALOR will skip trading.")
     return {
         'flip_point': 0,
         'call_wall': 0,
