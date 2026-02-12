@@ -2304,7 +2304,7 @@ class AutonomousTraderScheduler:
 
     def scheduled_agape_spot_logic(self):
         """
-        AGAPE-SPOT 24/7 Coinbase Spot ETH-USD - runs every 5 minutes.
+        AGAPE-SPOT 24/7 Coinbase Spot Multi-Coin - runs every 1 minute.
         No market hours restrictions - trades around the clock.
         """
         if not self.agape_spot_trader:
@@ -2312,17 +2312,18 @@ class AutonomousTraderScheduler:
 
         try:
             result = self.agape_spot_trader.run_cycle()
-            outcome = result.get("outcome", "UNKNOWN")
 
-            if result.get("new_trade"):
-                logger.info(f"AGAPE-SPOT: New trade! {outcome}")
-            elif result.get("positions_closed", 0) > 0:
-                logger.info(f"AGAPE-SPOT: Closed {result['positions_closed']} position(s)")
-            elif result.get("error"):
-                logger.error(f"AGAPE-SPOT: Cycle error: {result['error']}")
+            if result.get("total_new_trades", 0) > 0:
+                logger.info(f"AGAPE-SPOT: New trade(s)! {result.get('tickers', {})}")
+            elif result.get("total_positions_closed", 0) > 0:
+                logger.info(f"AGAPE-SPOT: Closed {result['total_positions_closed']} position(s)")
+            elif result.get("errors"):
+                for err in result["errors"]:
+                    logger.error(f"AGAPE-SPOT: {err}")
             else:
-                if self.agape_spot_trader._cycle_count % 12 == 0:
-                    logger.debug(f"AGAPE-SPOT scan #{self.agape_spot_trader._cycle_count}: {outcome}")
+                # Log status every 60 scans (~1 hour) to avoid log spam at 1-min intervals
+                if self.agape_spot_trader._cycle_count % 60 == 0:
+                    logger.debug(f"AGAPE-SPOT scan #{self.agape_spot_trader._cycle_count}")
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-SPOT scan: {str(e)}")
@@ -4461,21 +4462,22 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ AGAPE not available - ETH crypto trading disabled")
 
         # =================================================================
-        # AGAPE-SPOT JOB: 24/7 Coinbase Spot ETH-USD - every 5 minutes
+        # AGAPE-SPOT JOB: 24/7 Coinbase Spot Multi-Coin - every 1 minute
         # Trades around the clock, no market hours restrictions
+        # Faster scans = tighter trailing stops + quicker signal detection
         # =================================================================
         if self.agape_spot_trader:
             self.scheduler.add_job(
                 self.scheduled_agape_spot_logic,
                 trigger=IntervalTrigger(
-                    minutes=5,
+                    minutes=1,
                     timezone='America/Chicago'
                 ),
                 id='agape_spot_trading',
-                name='AGAPE-SPOT - 24/7 Coinbase Spot ETH-USD (5-min intervals)',
+                name='AGAPE-SPOT - 24/7 Coinbase Spot Multi-Coin (1-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ AGAPE-SPOT job scheduled (every 5 min, 24/7)")
+            logger.info("✅ AGAPE-SPOT job scheduled (every 1 min, 24/7)")
         else:
             logger.warning("⚠️ AGAPE-SPOT not available - 24/7 spot ETH trading disabled")
 
