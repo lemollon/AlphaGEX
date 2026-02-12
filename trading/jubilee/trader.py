@@ -408,14 +408,14 @@ class JubileeTrader:
                 fed_funds_at_entry=4.38,
                 margin_rate_at_entry=8.50,
                 savings_vs_margin=(8.50 - implied_rate) * total_owed / 100,
-                cash_deployed_to_fortress=0.0,
-                cash_deployed_to_samson=0.0,
-                cash_deployed_to_anchor=0.0,
+                cash_deployed_to_ares=0.0,
+                cash_deployed_to_titan=0.0,
+                cash_deployed_to_pegasus=0.0,
                 cash_held_in_reserve=50000.0,
                 total_cash_deployed=total_credit,
-                returns_from_fortress=0.0,
-                returns_from_samson=0.0,
-                returns_from_anchor=0.0,
+                returns_from_ares=0.0,
+                returns_from_titan=0.0,
+                returns_from_pegasus=0.0,
                 total_ic_returns=0.0,
                 net_profit=0.0,
                 spot_at_entry=5825.0,
@@ -824,8 +824,8 @@ For box spreads to be profitable:
             # Get the start date for this position
             start_date = position.open_time.strftime('%Y-%m-%d')
 
-            # Query FORTRESS returns
-            if position.cash_deployed_to_fortress > 0:
+            # Query ARES/FORTRESS returns
+            if position.cash_deployed_to_ares > 0:
                 try:
                     cur.execute("""
                         SELECT COALESCE(SUM(realized_pnl), 0)
@@ -845,15 +845,15 @@ For box spreads to be profitable:
 
                     # Attribute returns proportionally
                     if fortress_capital > 0:
-                        attribution_pct = position.cash_deployed_to_fortress / fortress_capital
+                        attribution_pct = position.cash_deployed_to_ares / fortress_capital
                         returns['fortress'] = total_fortress_pnl * min(attribution_pct, 1.0)
 
                     logger.debug(f"FORTRESS returns: ${returns['fortress']:.2f} (total: ${total_fortress_pnl:.2f}, attribution: {attribution_pct*100:.1f}%)")
                 except Exception as e:
                     logger.warning(f"Failed to fetch FORTRESS returns: {e}")
 
-            # Query SAMSON returns
-            if position.cash_deployed_to_samson > 0:
+            # Query TITAN/SAMSON returns
+            if position.cash_deployed_to_titan > 0:
                 try:
                     cur.execute("""
                         SELECT COALESCE(SUM(realized_pnl), 0)
@@ -871,7 +871,7 @@ For box spreads to be profitable:
                     samson_capital = float(titan_cap_result[0]) if titan_cap_result else 100000.0
 
                     if samson_capital > 0:
-                        attribution_pct = position.cash_deployed_to_samson / samson_capital
+                        attribution_pct = position.cash_deployed_to_titan / samson_capital
                         returns['samson'] = total_samson_pnl * min(attribution_pct, 1.0)
 
                     logger.debug(f"SAMSON returns: ${returns['samson']:.2f}")
@@ -1163,22 +1163,22 @@ class JubileeICTrader:
 
     def _get_available_capital(self) -> float:
         """
-        Get capital available for IC trading from box spread positions.
+        Get capital available for IC trading.
 
-        IC trading uses borrowed capital from box spreads.
-        In PAPER mode, auto-creates a paper box spread if none exists.
-        Only counts capital from positions with DTE > 0.
+        In PAPER mode, capital is guaranteed from config.starting_capital.
+        Box spread positions are maintained for display/reconciliation, but
+        their absence NEVER blocks trading in PAPER mode.
+
+        In LIVE mode, capital comes from actual box spread positions.
         """
-        # Ensure we have a box spread position (creates paper one if needed)
+        # Try to ensure we have a box spread position (for display purposes)
         self._ensure_paper_box_spread()
 
         # Get capital from box spread positions
         box_positions = self.db.get_open_positions()  # Box spreads
-        if not box_positions:
-            return 0.0
 
-        # Calculate total capital available for IC trading (only from viable positions)
-        total_available = 0.0
+        # Calculate total capital available from box spreads
+        total_from_boxes = 0.0
         for box in box_positions:
             try:
                 exp_date = datetime.strptime(box.expiration, '%Y-%m-%d').date()
@@ -1186,14 +1186,20 @@ class JubileeICTrader:
                     continue  # Skip expired positions
             except (ValueError, TypeError):
                 continue
-            total_available += box.total_cash_deployed
+            total_from_boxes += box.total_cash_deployed
+
+        # PAPER MODE: Capital is ALWAYS available from config.
+        # Box spreads are a display construct in paper mode - they must never
+        # block trading. This is the root fix for the recurring $0 capital bug.
+        if self.config.mode == TradingMode.PAPER and total_from_boxes <= 0:
+            total_from_boxes = self.config.starting_capital
 
         # Subtract capital currently in use by open IC positions
         ic_positions = self.db.get_open_ic_positions()
         for ic in ic_positions:
-            total_available -= ic.total_credit_received  # Margin tied up
+            total_from_boxes -= ic.total_credit_received  # Margin tied up
 
-        return max(0, total_available)
+        return max(0, total_from_boxes)
 
     def _ensure_paper_box_spread(self) -> None:
         """

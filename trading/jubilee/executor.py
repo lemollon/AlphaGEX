@@ -1784,10 +1784,38 @@ class JubileeICExecutor:
         exit_price = mtm.get('current_value', position.entry_credit) if mtm['success'] else position.entry_credit
         realized_pnl = (position.entry_credit - exit_price) * position.contracts * 100
 
-        # Execute closing orders in live mode
+        # Execute closing orders in live mode (matching SAMSON pattern)
         if self.config.mode == TradingMode.LIVE and self.tradier:
-            # LIVE mode IC closing not yet implemented - log warning
-            logger.warning(f"LIVE mode close_position not implemented for IC {position_id}")
+            try:
+                # Close put spread: buy back short put, sell long put (debit)
+                put_result = self.tradier.place_vertical_spread(
+                    symbol=position.ticker,
+                    expiration=position.expiration,
+                    long_strike=position.put_short_strike,   # Buy back the short
+                    short_strike=position.put_long_strike,    # Sell the long
+                    option_type="put",
+                    quantity=position.contracts,
+                    limit_price=round(exit_price / 2, 2),
+                )
+                if not put_result or not put_result.get('id'):
+                    logger.error(f"Failed to close IC put spread via Tradier: {put_result}")
+
+                # Close call spread: buy back short call, sell long call (debit)
+                call_result = self.tradier.place_vertical_spread(
+                    symbol=position.ticker,
+                    expiration=position.expiration,
+                    long_strike=position.call_short_strike,   # Buy back the short
+                    short_strike=position.call_long_strike,    # Sell the long
+                    option_type="call",
+                    quantity=position.contracts,
+                    limit_price=round(exit_price / 2, 2),
+                )
+                if not call_result or not call_result.get('id'):
+                    logger.error(f"Failed to close IC call spread via Tradier: {call_result}")
+
+                logger.info(f"JUBILEE IC LIVE CLOSE: {position_id} via Tradier, exit=${exit_price:.4f}")
+            except Exception as e:
+                logger.error(f"Failed to close IC position via Tradier: {e}")
 
         # Close in database
         success = self.db.close_ic_position(position_id, exit_price, close_reason)
