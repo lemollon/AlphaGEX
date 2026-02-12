@@ -154,6 +154,42 @@ class AgapeSpotExecutor:
         """
         return self._ticker_clients.get(ticker, self._client)
 
+    def _get_client_for_account(self, ticker: str, account_label: str) -> Optional[object]:
+        """Get the Coinbase client for a specific account label.
+
+        'default' → self._client, '{SYMBOL}' → self._ticker_clients[ticker].
+        'paper' → None (no Coinbase client needed).
+        """
+        if account_label == "paper":
+            return None
+        if account_label == "default":
+            return self._client
+        # Dedicated account (label matches the ticker's symbol)
+        return self._ticker_clients.get(ticker)
+
+    def get_all_accounts(self, ticker: str) -> list:
+        """Return all (account_label, is_live) pairs available for a ticker.
+
+        For live tickers, returns one entry per Coinbase client (default + dedicated)
+        plus a paper entry.  For paper-only tickers, returns just paper.
+        """
+        accounts = []
+        symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
+
+        if self.config.is_live(ticker):
+            # Add default Coinbase account if a default client exists
+            if self._client is not None:
+                accounts.append(("default", True))
+            # Add dedicated Coinbase account if it has its own API key
+            if ticker in self._ticker_clients:
+                accounts.append((symbol, True))
+            # Always add paper account for parallel tracking
+            accounts.append(("paper", False))
+        else:
+            accounts.append(("paper", False))
+
+        return accounts
+
     @property
     def has_any_client(self) -> bool:
         """True if at least one Coinbase client is connected."""
@@ -230,7 +266,7 @@ class AgapeSpotExecutor:
     # =========================================================================
 
     def execute_trade(self, signal: AgapeSpotSignal) -> Optional[AgapeSpotPosition]:
-        """Execute a long-only spot trade for signal.ticker."""
+        """Execute a long-only spot trade for signal.ticker (single-account legacy path)."""
         if not signal.is_valid:
             logger.warning(
                 f"AGAPE-SPOT Executor: Invalid signal for {signal.ticker}, skipping"
@@ -241,14 +277,43 @@ class AgapeSpotExecutor:
             return self._execute_live(signal)
         return self._execute_paper(signal)
 
-    def _execute_paper(self, signal: AgapeSpotSignal) -> Optional[AgapeSpotPosition]:
+    def execute_trade_on_account(
+        self,
+        signal: AgapeSpotSignal,
+        account_label: str,
+        is_live: bool,
+    ) -> Optional[AgapeSpotPosition]:
+        """Execute a trade on a specific account.
+
+        account_label: 'default', '{SYMBOL}', or 'paper'
+        is_live: True → Coinbase order, False → simulated
+        """
+        if not signal.is_valid:
+            return None
+
+        if is_live:
+            client = self._get_client_for_account(signal.ticker, account_label)
+            if not client:
+                logger.warning(
+                    f"AGAPE-SPOT: No client for {signal.ticker} account={account_label}, "
+                    f"skipping live execution"
+                )
+                return None
+            position = self._execute_live(signal, client=client, account_label=account_label)
+        else:
+            position = self._execute_paper(signal, account_label=account_label)
+
+        return position
+
+    def _execute_paper(self, signal: AgapeSpotSignal, account_label: str = "paper") -> Optional[AgapeSpotPosition]:
         """Simulate a long-only spot buy with slippage."""
         try:
             slippage = signal.spot_price * 0.001  # 0.1%
             fill_price = signal.spot_price + slippage  # Buying = pay more
 
             ticker_symbol = SPOT_TICKERS.get(signal.ticker, {}).get("symbol", signal.ticker.split("-")[0])
-            position_id = f"SPOT-{ticker_symbol}-{uuid.uuid4().hex[:8].upper()}"
+            acct_tag = account_label.upper()[:3] if account_label != "paper" else "PPR"
+            position_id = f"SPOT-{ticker_symbol}-{acct_tag}-{uuid.uuid4().hex[:8].upper()}"
             now = datetime.now(CENTRAL_TZ)
 
             pd = self._price_decimals(signal.ticker)
@@ -279,11 +344,12 @@ class AgapeSpotExecutor:
                 status=PositionStatus.OPEN,
                 open_time=now,
                 high_water_mark=round(fill_price, pd),
+                account_label=account_label,
             )
 
             notional = signal.quantity * fill_price
             logger.info(
-                f"AGAPE-SPOT: PAPER BUY {signal.ticker} "
+                f"AGAPE-SPOT: PAPER BUY [{account_label}] {signal.ticker} "
                 f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.{pd}f}"
             )
             return position
@@ -292,9 +358,22 @@ class AgapeSpotExecutor:
             logger.error(f"AGAPE-SPOT Executor: Paper execution failed: {e}")
             return None
 
-    def _execute_live(self, signal: AgapeSpotSignal) -> Optional[AgapeSpotPosition]:
+    def _execute_live(
+        self,
+        signal: AgapeSpotSignal,
+        client: Optional[object] = None,
+        account_label: Optional[str] = None,
+    ) -> Optional[AgapeSpotPosition]:
         """Execute a real long-only spot buy via Coinbase."""
-        client = self._get_client(signal.ticker)
+        if client is None:
+            client = self._get_client(signal.ticker)
+        if account_label is None:
+            # Legacy path: determine from client
+            account_label = (
+                SPOT_TICKERS.get(signal.ticker, {}).get("symbol", "default")
+                if signal.ticker in self._ticker_clients
+                else "default"
+            )
         if not client:
             symbol = SPOT_TICKERS.get(signal.ticker, {}).get("symbol", signal.ticker.split("-")[0])
             logger.error(
@@ -338,10 +417,8 @@ class AgapeSpotExecutor:
                     )
                 return None
 
-            is_dedicated = signal.ticker in self._ticker_clients
-            acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
             logger.info(
-                f"AGAPE-SPOT: PLACING LIVE BUY {signal.ticker} [{acct_label}] "
+                f"AGAPE-SPOT: PLACING LIVE BUY {signal.ticker} [{account_label}] "
                 f"qty={quantity} base_size='{quantity}' "
                 f"(~${notional_est:.2f}) client_order_id={client_order_id}"
             )
@@ -421,10 +498,11 @@ class AgapeSpotExecutor:
                     status=PositionStatus.OPEN,
                     open_time=now,
                     high_water_mark=round(fill_price, pd),
+                    account_label=account_label,
                 )
 
                 logger.info(
-                    f"AGAPE-SPOT: LIVE BUY SUCCESS {signal.ticker} "
+                    f"AGAPE-SPOT: LIVE BUY SUCCESS [{account_label}] {signal.ticker} "
                     f"{quantity} @ ${fill_price:.{pd}f} (order={order_id})"
                 )
                 return position
@@ -469,6 +547,7 @@ class AgapeSpotExecutor:
         quantity: float,
         position_id: str,
         reason: str,
+        account_label: str = "default",
     ) -> Tuple[bool, Optional[float]]:
         """Execute a live market sell on Coinbase for a position being closed.
 
@@ -476,8 +555,17 @@ class AgapeSpotExecutor:
         fill_price is None when the sell succeeded but fill lookup failed
         (caller should fall back to current_price).
         Returns (False, None) when no client or order rejected/exception.
+
+        account_label routes to the correct Coinbase client that owns this position.
         """
-        client = self._get_client(ticker)
+        if account_label == "paper":
+            # Paper positions don't need a Coinbase sell
+            return (False, None)
+
+        client = self._get_client_for_account(ticker, account_label)
+        if not client:
+            # Fall back to legacy routing
+            client = self._get_client(ticker)
         if not client:
             logger.error(
                 f"AGAPE-SPOT: No Coinbase client for {ticker}, cannot sell "
@@ -616,8 +704,16 @@ class AgapeSpotExecutor:
         current_price: float,
         reason: str,
     ) -> Tuple[bool, float, float]:
-        """Close a long position (always sells)."""
-        client = self._get_client(position.ticker)
+        """Close a long position (always sells).
+
+        Routes to the correct Coinbase account using position.account_label.
+        """
+        acct = getattr(position, "account_label", "default")
+        if acct == "paper":
+            return self._close_paper(position, current_price, reason)
+        client = self._get_client_for_account(position.ticker, acct)
+        if not client:
+            client = self._get_client(position.ticker)
         if self.config.is_live(position.ticker) and client:
             return self._close_live(position, current_price, reason)
         return self._close_paper(position, current_price, reason)
@@ -648,7 +744,10 @@ class AgapeSpotExecutor:
         reason: str,
     ) -> Tuple[bool, float, float]:
         """Execute a real sell to close a long position via Coinbase."""
-        client = self._get_client(position.ticker)
+        acct = getattr(position, "account_label", "default")
+        client = self._get_client_for_account(position.ticker, acct)
+        if not client:
+            client = self._get_client(position.ticker)
         if not client:
             return self._close_paper(position, current_price, reason)
 

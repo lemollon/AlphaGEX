@@ -117,8 +117,18 @@ class AgapeSpotDatabase:
                     trailing_active BOOLEAN DEFAULT FALSE,
                     current_stop FLOAT,
                     oracle_prediction_id INTEGER,
+                    account_label VARCHAR(50) DEFAULT 'default',
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
+            """)
+
+            # Add account_label column if missing (existing tables)
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    ALTER TABLE agape_spot_positions ADD COLUMN account_label VARCHAR(50) DEFAULT 'default';
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
             """)
 
             # ----- agape_spot_equity_snapshots -----
@@ -298,6 +308,8 @@ class AgapeSpotDatabase:
                 side_val = pos.side
                 side = side_val.value if hasattr(side_val, "value") else str(side_val)
 
+            account_label = getattr(pos, "account_label", "default")
+
             cursor.execute("""
                 INSERT INTO agape_spot_positions (
                     position_id, ticker, side, quantity, entry_price,
@@ -309,11 +321,12 @@ class AgapeSpotDatabase:
                     oracle_advice, oracle_win_probability, oracle_confidence,
                     oracle_top_factors,
                     signal_action, signal_confidence, signal_reasoning,
-                    status, open_time, high_water_mark
+                    status, open_time, high_water_mark,
+                    account_label
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s
                 )
             """, (
                 pos.position_id, ticker, side, quantity, pos.entry_price,
@@ -328,6 +341,7 @@ class AgapeSpotDatabase:
                 pos.status.value if hasattr(pos.status, "value") else pos.status,
                 pos.open_time or _now_ct(),
                 pos.entry_price,
+                account_label,
             ))
             conn.commit()
             logger.info(f"AGAPE-SPOT DB: Saved position {pos.position_id} ({ticker})")
@@ -403,7 +417,8 @@ class AgapeSpotDatabase:
                        oracle_top_factors,
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
-                       COALESCE(trailing_active, FALSE), current_stop
+                       COALESCE(trailing_active, FALSE), current_stop,
+                       COALESCE(account_label, 'default')
                 FROM agape_spot_positions
                 WHERE status = 'open'
             """
@@ -447,6 +462,7 @@ class AgapeSpotDatabase:
                     "high_water_mark": float(row[25]) if row[25] and float(row[25]) > 0 else float(row[4]),
                     "trailing_active": bool(row[26]),
                     "current_stop": float(row[27]) if row[27] else None,
+                    "account_label": row[28] if len(row) > 28 else "default",
                 })
             return positions
         except Exception as e:
@@ -470,7 +486,8 @@ class AgapeSpotDatabase:
                        open_time, close_time,
                        funding_regime_at_entry, squeeze_risk_at_entry,
                        oracle_advice, oracle_win_probability,
-                       signal_action, signal_confidence
+                       signal_action, signal_confidence,
+                       COALESCE(account_label, 'default')
                 FROM agape_spot_positions
                 WHERE status IN ('closed', 'expired', 'stopped')
             """
@@ -502,6 +519,7 @@ class AgapeSpotDatabase:
                     "oracle_win_probability": float(row[13]) if row[13] else None,
                     "signal_action": row[14],
                     "signal_confidence": row[15],
+                    "account_label": row[16] if len(row) > 16 else "default",
                 })
             return trades
         except Exception as e:
