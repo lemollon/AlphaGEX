@@ -1412,6 +1412,192 @@ async def diagnostic():
     return {"success": True, "diagnostic": result, "fetched_at": _format_ct()}
 
 
+@router.get("/accounts")
+async def get_accounts():
+    """List all connected Coinbase accounts with status.
+
+    Shows default account, per-ticker dedicated accounts, and which
+    tickers are live vs paper.
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
+
+    try:
+        accounts = []
+        for ticker in trader.config.tickers:
+            is_live = trader.config.is_live(ticker)
+            has_client = trader.executor._get_client(ticker) is not None
+            has_dedicated = ticker in trader.executor._ticker_clients
+            cfg = SPOT_TICKERS.get(ticker, {})
+
+            accounts.append({
+                "ticker": ticker,
+                "display_name": cfg.get("display_name", ticker),
+                "mode": "live" if is_live else "paper",
+                "coinbase_connected": has_client,
+                "account_type": "dedicated" if has_dedicated else "default",
+                "live_capital": cfg.get("live_capital", cfg.get("starting_capital", 0)),
+                "starting_capital": cfg.get("starting_capital", 0),
+            })
+
+        return {
+            "success": True,
+            "data": accounts,
+            "has_default_client": trader.executor._client is not None,
+            "dedicated_tickers": list(trader.executor._ticker_clients.keys()),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT accounts error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/account-balances")
+async def get_account_balances():
+    """Get real Coinbase account balances (USD + crypto holdings).
+
+    Returns balances from all connected accounts (default + dedicated).
+    Only available when Coinbase API is connected.
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "data": {}, "message": "AGAPE-SPOT not available"}
+
+    try:
+        balances = trader.executor.get_all_account_balances()
+        return {
+            "success": True,
+            "data": balances,
+            "accounts_queried": len(balances),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT account balances error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/execution-quality")
+async def get_execution_quality(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker"),
+    limit: int = Query(default=100, le=500, description="Number of trades to analyze"),
+):
+    """Analyze execution quality: slippage, fees, and fill performance.
+
+    Shows entry/exit slippage distribution, total fees paid, and
+    average execution quality across recent trades.
+    """
+    ticker = _validate_ticker(ticker)
+
+    if not get_connection:
+        return {"success": False, "data": {}, "message": "No database connection"}
+
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Query trades with execution details
+        sql = """
+            SELECT
+                position_id, ticker, entry_price, close_price,
+                entry_slippage_pct, exit_slippage_pct,
+                entry_fee_usd, exit_fee_usd,
+                coinbase_order_id, coinbase_sell_order_id,
+                realized_pnl, close_time, account_label
+            FROM agape_spot_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+              AND close_time IS NOT NULL
+        """
+        params: list = []
+        if ticker:
+            sql += " AND ticker = %s"
+            params.append(ticker)
+        sql += " ORDER BY close_time DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(sql, tuple(params))
+        rows = cursor.fetchall()
+
+        trades = []
+        total_entry_slippage = 0.0
+        total_exit_slippage = 0.0
+        total_fees = 0.0
+        slippage_count = 0
+        fee_count = 0
+        has_order_id_count = 0
+
+        for row in rows:
+            entry_slip = float(row[4]) if row[4] is not None else None
+            exit_slip = float(row[5]) if row[5] is not None else None
+            entry_fee = float(row[6]) if row[6] is not None else None
+            exit_fee = float(row[7]) if row[7] is not None else None
+            has_order = row[8] is not None
+
+            trade = {
+                "position_id": row[0],
+                "ticker": row[1],
+                "entry_price": float(row[2]) if row[2] else None,
+                "close_price": float(row[3]) if row[3] else None,
+                "entry_slippage_pct": entry_slip,
+                "exit_slippage_pct": exit_slip,
+                "entry_fee_usd": entry_fee,
+                "exit_fee_usd": exit_fee,
+                "has_coinbase_order_id": has_order,
+                "has_coinbase_sell_order_id": row[9] is not None,
+                "realized_pnl": float(row[10]) if row[10] else None,
+                "close_time": row[11].isoformat() if row[11] else None,
+                "account_label": row[12] or "default",
+            }
+            trades.append(trade)
+
+            if entry_slip is not None:
+                total_entry_slippage += abs(entry_slip)
+                slippage_count += 1
+            if exit_slip is not None:
+                total_exit_slippage += abs(exit_slip)
+                slippage_count += 1
+            if entry_fee is not None:
+                total_fees += entry_fee
+                fee_count += 1
+            if exit_fee is not None:
+                total_fees += exit_fee
+                fee_count += 1
+            if has_order:
+                has_order_id_count += 1
+
+        avg_entry_slippage = (
+            round(total_entry_slippage / slippage_count, 4)
+            if slippage_count > 0 else None
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "trades": trades,
+                "summary": {
+                    "total_trades_analyzed": len(trades),
+                    "trades_with_order_id": has_order_id_count,
+                    "trades_with_slippage_data": slippage_count,
+                    "avg_slippage_pct": avg_entry_slippage,
+                    "total_fees_usd": round(total_fees, 2),
+                    "avg_fee_per_trade": (
+                        round(total_fees / fee_count, 2)
+                        if fee_count > 0 else None
+                    ),
+                },
+            },
+            "ticker_filter": ticker,
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT execution quality error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
 @router.post("/force-close")
 async def force_close_positions(
     ticker: Optional[str] = Query(default=None, description="Close positions for this ticker only"),

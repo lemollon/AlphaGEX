@@ -168,6 +168,10 @@ class AgapeSpotConfig:
     max_consecutive_losses: int = 3
     loss_streak_pause_minutes: int = 5
 
+    # Daily loss limit (portfolio circuit breaker)
+    daily_loss_limit_usd: float = 50.0  # Pause ALL tickers if daily realized P&L < -$50
+    daily_loss_limit_enabled: bool = True
+
     # Direction Tracker
     direction_cooldown_scans: int = 2
     direction_win_streak_caution: int = 100
@@ -375,6 +379,14 @@ class AgapeSpotPosition:
     # "default" = COINBASE_API_KEY, "{SYMBOL}" = COINBASE_{SYMBOL}_API_KEY, "paper" = simulated
     account_label: str = "default"
 
+    # Coinbase execution tracking
+    coinbase_order_id: Optional[str] = None
+    coinbase_sell_order_id: Optional[str] = None
+    entry_slippage_pct: Optional[float] = None
+    exit_slippage_pct: Optional[float] = None
+    entry_fee_usd: Optional[float] = None
+    exit_fee_usd: Optional[float] = None
+
     # Tracking
     unrealized_pnl: float = 0.0
     high_water_mark: float = 0.0
@@ -417,6 +429,12 @@ class AgapeSpotPosition:
             "close_reason": self.close_reason,
             "realized_pnl": self.realized_pnl,
             "account_label": self.account_label,
+            "coinbase_order_id": self.coinbase_order_id,
+            "coinbase_sell_order_id": self.coinbase_sell_order_id,
+            "entry_slippage_pct": self.entry_slippage_pct,
+            "exit_slippage_pct": self.exit_slippage_pct,
+            "entry_fee_usd": self.entry_fee_usd,
+            "exit_fee_usd": self.exit_fee_usd,
             "unrealized_pnl": self.unrealized_pnl,
             "high_water_mark": self.high_water_mark,
         }
