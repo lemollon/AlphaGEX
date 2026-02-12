@@ -204,27 +204,24 @@ class AgapeSpotExecutor:
     def get_all_accounts(self, ticker: str) -> list:
         """Return all (account_label, is_live) pairs available for a ticker.
 
-        For live tickers with a dedicated/shared-dedicated client:
-          returns [(symbol, True), ("paper", False)]
-        For live tickers with only the default client:
-          returns [("default", True), ("paper", False)]
-        For paper-only tickers:
-          returns [("paper", False)]
+        For live tickers returns up to 3 entries:
+          ("default", True)  -- your Coinbase account
+          (symbol, True)     -- dedicated/shared-dedicated Coinbase account
+          ("paper", False)   -- paper tracking
 
-        NOTE: We do NOT return BOTH default + dedicated for the same ticker
-        to avoid double-trading.  Dedicated client takes priority.
+        Each signal opens independent positions on EVERY returned account.
         """
         accounts = []
         symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
 
         if self.config.is_live(ticker):
-            if ticker in self._ticker_clients:
-                # Dedicated (or shared-dedicated) client -- use it exclusively
-                accounts.append((symbol, True))
-            elif self._client is not None:
-                # Fall back to default client
+            # Default Coinbase account (your account)
+            if self._client is not None:
                 accounts.append(("default", True))
-            # Always add paper account for parallel tracking
+            # Dedicated / shared-dedicated Coinbase account (friend's account)
+            if ticker in self._ticker_clients:
+                accounts.append((symbol, True))
+            # Paper account for parallel tracking
             accounts.append(("paper", False))
         else:
             accounts.append(("paper", False))
@@ -977,7 +974,7 @@ class AgapeSpotExecutor:
             return None
 
     def get_account_balance(self, ticker: str = None) -> Optional[Dict]:
-        """Get account balances for USD and all supported crypto currencies.
+        """Get account balances for USD, USDC, and all supported crypto currencies.
 
         If *ticker* is specified, uses that ticker's client (dedicated or default).
         If None, uses the default client.
@@ -990,8 +987,8 @@ class AgapeSpotExecutor:
             acct_list = self._resp(accounts, "accounts", [])
             if acct_list:
                 balances: Dict[str, float] = {}
-                # Collect all currencies we care about
-                tracked_currencies = {"USD"}
+                # Collect all currencies we care about (USD + USDC + all traded coins)
+                tracked_currencies = {"USD", "USDC"}
                 for ticker_key in self.config.tickers:
                     symbol = SPOT_TICKERS.get(ticker_key, {}).get("symbol")
                     if symbol:
