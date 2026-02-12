@@ -269,6 +269,16 @@ class JubileeTrader:
 
     def get_status(self) -> Dict[str, Any]:
         """Get comprehensive JUBILEE status"""
+        # In PAPER mode, ensure a box spread exists so capital is never $0
+        if self.config.mode == TradingMode.PAPER:
+            positions = self.db.get_open_positions()
+            has_viable = any(
+                self._position_is_viable(p) for p in positions
+            )
+            if not has_viable:
+                logger.info("PAPER MODE: No viable box spread on status check - creating one")
+                self._create_emergency_paper_position()
+
         positions = self.db.get_open_positions()
         performance = self.db.get_performance_summary()
         config = self.config.to_dict()
@@ -829,6 +839,14 @@ For box spreads to be profitable:
 
         return start <= current_time <= end
 
+    def _position_is_viable(self, position: BoxSpreadPosition) -> bool:
+        """Check if a box spread position has non-expired DTE."""
+        try:
+            exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
+            return (exp_date - date.today()).days > 0
+        except (ValueError, TypeError):
+            return False
+
     def _determine_system_status(
         self,
         positions: List[BoxSpreadPosition]
@@ -1231,6 +1249,10 @@ class JubileeICTrader:
         The IC trader uses BORROWED capital from box spreads. The box spread
         is the sole source of capital. _ensure_paper_box_spread guarantees
         one always exists in PAPER mode.
+
+        PAPER MODE FALLBACK: If no box spread capital is available (e.g. first
+        run, DB save failure, expired boxes), fall back to config starting_capital
+        so IC trading is never blocked in paper mode.
         """
         # Ensure a box spread exists (creates or auto-extends in PAPER mode)
         self._ensure_paper_box_spread()
@@ -1248,6 +1270,16 @@ class JubileeICTrader:
             except (ValueError, TypeError):
                 continue
             total_borrowed += box.total_cash_deployed
+
+        # PAPER MODE FALLBACK: If no box capital exists, use config capital
+        # so IC trading is never blocked by missing/expired/failed box spreads
+        if total_borrowed <= 0 and self.config.mode == TradingMode.PAPER:
+            fallback_capital = self.config.starting_capital
+            logger.warning(
+                f"PAPER MODE: No box spread capital available, using config "
+                f"starting_capital (${fallback_capital:,.0f}) as fallback"
+            )
+            total_borrowed = fallback_capital
 
         # Subtract capital currently in use by open IC positions
         ic_positions = self.db.get_open_ic_positions()

@@ -1083,7 +1083,9 @@ class JubileeDatabase:
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
                 ON CONFLICT (position_id) DO UPDATE SET
+                    expiration = EXCLUDED.expiration,
                     current_dte = EXCLUDED.current_dte,
+                    total_cash_deployed = EXCLUDED.total_cash_deployed,
                     cost_accrued_to_date = EXCLUDED.cost_accrued_to_date,
                     returns_from_ares = EXCLUDED.returns_from_ares,
                     returns_from_titan = EXCLUDED.returns_from_titan,
