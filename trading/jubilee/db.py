@@ -73,11 +73,67 @@ class JubileeDatabase:
             raise RuntimeError("Database adapter not available")
         return get_connection()
 
+    def _migrate_from_prometheus(self, cursor) -> None:
+        """Migrate old prometheus_* tables to jubilee_* after the PROMETHEUS->JUBILEE rename."""
+        for old_name, new_name in [
+            ('prometheus_positions', 'jubilee_positions'),
+            ('prometheus_signals', 'jubilee_signals'),
+            ('prometheus_capital_deployments', 'jubilee_capital_deployments'),
+            ('prometheus_rate_analysis', 'jubilee_rate_analysis'),
+            ('prometheus_daily_briefings', 'jubilee_daily_briefings'),
+            ('prometheus_roll_decisions', 'jubilee_roll_decisions'),
+            ('prometheus_config', 'jubilee_config'),
+            ('prometheus_logs', 'jubilee_logs'),
+            ('prometheus_equity_snapshots', 'jubilee_equity_snapshots'),
+            ('prometheus_ic_positions', 'jubilee_ic_positions'),
+            ('prometheus_ic_closed_trades', 'jubilee_ic_closed_trades'),
+            ('prometheus_ic_signals', 'jubilee_ic_signals'),
+            ('prometheus_ic_config', 'jubilee_ic_config'),
+            ('prometheus_ic_equity_snapshots', 'jubilee_ic_equity_snapshots'),
+        ]:
+            try:
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (old_name,)
+                )
+                if not cursor.fetchone()[0]:
+                    continue
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (new_name,)
+                )
+                if cursor.fetchone()[0]:
+                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                    if cursor.fetchone()[0] > 0:
+                        continue
+                    cursor.execute(f"DROP TABLE {new_name}")
+                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
+            except Exception as e:
+                logger.warning(f"{self.bot_name}: Migration {old_name}: {e}")
+
+        try:
+            cursor.execute("""
+                UPDATE autonomous_config
+                SET key = 'jubilee_' || SUBSTRING(key FROM 12)
+                WHERE key LIKE 'prometheus_%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM autonomous_config ac2
+                      WHERE ac2.key = 'jubilee_' || SUBSTRING(autonomous_config.key FROM 12)
+                  )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys prometheus_* -> jubilee_*")
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Config key migration: {e}")
+
     def _ensure_tables(self):
         """Create all JUBILEE tables if they don't exist"""
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
+
+            self._migrate_from_prometheus(cursor)
 
             # Main positions table
             cursor.execute("""

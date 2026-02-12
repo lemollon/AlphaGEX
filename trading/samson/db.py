@@ -58,11 +58,58 @@ class SamsonDatabase:
         self.bot_name = bot_name
         self._ensure_tables()
 
+    def _migrate_from_titan(self, cursor) -> None:
+        """Migrate old titan_* tables to samson_* after the TITAN->SAMSON rename."""
+        for old_name, new_name in [
+            ('titan_positions', 'samson_positions'),
+            ('titan_signals', 'samson_signals'),
+            ('titan_daily_perf', 'samson_daily_perf'),
+            ('titan_logs', 'samson_logs'),
+            ('titan_equity_snapshots', 'samson_equity_snapshots'),
+        ]:
+            try:
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (old_name,)
+                )
+                if not cursor.fetchone()[0]:
+                    continue
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (new_name,)
+                )
+                if cursor.fetchone()[0]:
+                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                    if cursor.fetchone()[0] > 0:
+                        continue
+                    cursor.execute(f"DROP TABLE {new_name}")
+                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
+            except Exception as e:
+                logger.warning(f"{self.bot_name}: Migration {old_name}: {e}")
+
+        try:
+            cursor.execute("""
+                UPDATE autonomous_config
+                SET key = 'samson_' || SUBSTRING(key FROM 7)
+                WHERE key LIKE 'titan_%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM autonomous_config ac2
+                      WHERE ac2.key = 'samson_' || SUBSTRING(autonomous_config.key FROM 7)
+                  )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys titan_* -> samson_*")
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Config key migration: {e}")
+
     def _ensure_tables(self) -> None:
         """Ensure tables exist"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+
+                self._migrate_from_titan(c)
 
                 c.execute("""
                     CREATE TABLE IF NOT EXISTS samson_positions (
