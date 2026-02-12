@@ -356,10 +356,13 @@ class ValorTrader:
             else:
                 # No signal generated - signal generator returned None
                 # Detailed reason already logged at INFO level by signal generator
+                # Determine regime from net_gex (same logic as signal generator)
+                net_gex_val = gex_data.get('net_gex', 0) or 0
+                regime_str = "POSITIVE" if net_gex_val > 0 else ("NEGATIVE" if net_gex_val < 0 else "NEUTRAL")
                 gex_data_summary = (
                     f"price={current_price:.2f}, "
                     f"flip={gex_data.get('flip_point', 0):.2f}, "
-                    f"regime={gex_data.get('gamma_regime', 'unknown')}, "
+                    f"regime={regime_str}, "
                     f"VIX={vix:.1f}"
                 )
                 self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
