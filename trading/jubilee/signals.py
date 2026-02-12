@@ -1676,7 +1676,7 @@ class JubileeICSignalGenerator:
             margin_required=margin_required,
             capital_at_risk=max_loss,
             # Prophet
-            oracle_approved=oracle_approved,
+            oracle_approved=oracle_says_trade,
             oracle_confidence=oracle_confidence,
             oracle_reasoning=" | ".join(reasoning_parts),
             # Market context

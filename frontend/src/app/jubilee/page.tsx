@@ -2296,53 +2296,6 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* IC Performance Stats */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h3 className="text-lg font-bold mb-4">IC Trading Performance</h3>
-                  <div className="grid md:grid-cols-6 gap-4">
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Total Trades</div>
-                      <div className="text-xl font-bold">{icPerformance?.performance?.closed_trades?.total || 0}</div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Win Rate</div>
-                      <div className={`text-xl font-bold ${
-                        (icPerformance?.performance?.closed_trades?.win_rate || 0) >= 0.5 ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {formatPct((icPerformance?.performance?.closed_trades?.win_rate || 0) * 100)}
-                      </div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Profit Factor</div>
-                      <div className={`text-xl font-bold ${
-                        (icPerformance?.performance?.closed_trades?.profit_factor || 0) >= 1 ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {(icPerformance?.performance?.closed_trades?.profit_factor || 0).toFixed(2)}
-                      </div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Total P&L</div>
-                      <div className={`text-xl font-bold ${
-                        (icPerformance?.performance?.closed_trades?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {formatCurrency(icPerformance?.performance?.closed_trades?.total_pnl || 0)}
-                      </div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Avg Win</div>
-                      <div className="text-xl font-bold text-green-400">
-                        {formatCurrency(icPerformance?.performance?.closed_trades?.best_trade || 0)}
-                      </div>
-                    </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-xs text-gray-400 mb-1">Avg Loss</div>
-                      <div className="text-xl font-bold text-red-400">
-                        {formatCurrency(icPerformance?.performance?.closed_trades?.worst_trade || 0)}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
                 {/* Open IC Positions */}
                 <div className="bg-gray-800 rounded-lg p-6">
                   <h3 className="text-lg font-bold mb-4">Open IC Positions ({icPositions?.count || 0})</h3>
@@ -2542,11 +2495,13 @@ export default function PrometheusBoxDashboard() {
                     return chartData.length > 0 ? (
                       <>
                         {/* Summary Stats */}
-                        <div className="grid md:grid-cols-4 gap-4 mb-4">
+                        <div className="grid md:grid-cols-6 gap-3 mb-4">
                           <div className="bg-gray-700/50 rounded-lg p-3">
-                            <div className="text-xs text-gray-400">Starting Capital</div>
-                            <div className="text-lg font-bold text-blue-400">
-                              {formatCurrency(startingCapital)}
+                            <div className="text-xs text-gray-400">{isIcIntraday ? 'Unrealized P&L' : 'Total P&L'}</div>
+                            <div className={`text-lg font-bold ${
+                              currentPnl >= 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {formatCurrency(currentPnl)}
                             </div>
                           </div>
                           <div className="bg-gray-700/50 rounded-lg p-3">
@@ -2558,16 +2513,32 @@ export default function PrometheusBoxDashboard() {
                             </div>
                           </div>
                           <div className="bg-gray-700/50 rounded-lg p-3">
-                            <div className="text-xs text-gray-400">{isIcIntraday ? 'Unrealized P&L' : 'Cumulative P&L'}</div>
+                            <div className="text-xs text-gray-400">Win Rate</div>
                             <div className={`text-lg font-bold ${
-                              currentPnl >= 0 ? 'text-green-400' : 'text-red-400'
+                              (icPerformance?.performance?.closed_trades?.win_rate || 0) >= 0.5 ? 'text-green-400' : 'text-red-400'
                             }`}>
-                              {formatCurrency(currentPnl)}
+                              {formatPct((icPerformance?.performance?.closed_trades?.win_rate || 0) * 100)}
                             </div>
                           </div>
                           <div className="bg-gray-700/50 rounded-lg p-3">
-                            <div className="text-xs text-gray-400">{isIcIntraday ? 'Snapshots' : 'Trades'}</div>
-                            <div className="text-lg font-bold text-orange-400">{dataCount}</div>
+                            <div className="text-xs text-gray-400">Profit Factor</div>
+                            <div className={`text-lg font-bold ${
+                              (icPerformance?.performance?.closed_trades?.profit_factor || 0) >= 1 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {(icPerformance?.performance?.closed_trades?.profit_factor || 0).toFixed(2)}
+                            </div>
+                          </div>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">Avg Win</div>
+                            <div className="text-lg font-bold text-green-400">
+                              {formatCurrency(icPerformance?.performance?.closed_trades?.best_trade || 0)}
+                            </div>
+                          </div>
+                          <div className="bg-gray-700/50 rounded-lg p-3">
+                            <div className="text-xs text-gray-400">Avg Loss</div>
+                            <div className="text-lg font-bold text-red-400">
+                              {formatCurrency(icPerformance?.performance?.closed_trades?.worst_trade || 0)}
+                            </div>
                           </div>
                         </div>
 
