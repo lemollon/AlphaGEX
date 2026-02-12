@@ -354,6 +354,33 @@ class JubileeDatabase:
                 )
             """)
 
+            # Rename old bot columns in jubilee_capital_deployments (table was renamed but columns weren't)
+            _deployment_col_renames = [
+                ("ares_allocation", "fortress_allocation"),
+                ("ares_allocation_pct", "fortress_allocation_pct"),
+                ("ares_allocation_reasoning", "fortress_allocation_reasoning"),
+                ("ares_returns_to_date", "fortress_returns_to_date"),
+                ("titan_allocation", "samson_allocation"),
+                ("titan_allocation_pct", "samson_allocation_pct"),
+                ("titan_allocation_reasoning", "samson_allocation_reasoning"),
+                ("titan_returns_to_date", "samson_returns_to_date"),
+                ("pegasus_allocation", "anchor_allocation"),
+                ("pegasus_allocation_pct", "anchor_allocation_pct"),
+                ("pegasus_allocation_reasoning", "anchor_allocation_reasoning"),
+                ("pegasus_returns_to_date", "anchor_returns_to_date"),
+            ]
+            for old_name, new_name in _deployment_col_renames:
+                try:
+                    cursor.execute("SAVEPOINT deploy_col_rename")
+                    cursor.execute(f"""
+                        ALTER TABLE jubilee_capital_deployments
+                        RENAME COLUMN {old_name} TO {new_name}
+                    """)
+                    cursor.execute("RELEASE SAVEPOINT deploy_col_rename")
+                    logger.info(f"Column rename OK: jubilee_capital_deployments.{old_name} -> {new_name}")
+                except Exception:
+                    cursor.execute("ROLLBACK TO SAVEPOINT deploy_col_rename")
+
             # Borrowing cost analysis history
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS jubilee_rate_analysis (
