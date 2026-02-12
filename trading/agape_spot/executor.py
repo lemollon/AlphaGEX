@@ -76,6 +76,10 @@ class AgapeSpotExecutor:
         # Per-ticker clients keyed by ticker (e.g. "DOGE-USD" -> RESTClient)
         self._ticker_clients: Dict[str, object] = {}
 
+        # Coinbase product limits fetched at init (real minimums from API)
+        # {ticker: {"base_min_size": float, "quote_min_size": float, "base_increment": float}}
+        self._product_limits: Dict[str, Dict[str, float]] = {}
+
         # Always init Coinbase clients (needed for price data even in paper mode)
         if coinbase_available:
             self._init_coinbase()
@@ -97,6 +101,7 @@ class AgapeSpotExecutor:
                 product = self._client.get_product(verify_ticker)
                 if product:
                     price = float(self._resp(product, "price", 0))
+                    self._store_product_limits(verify_ticker, product)
                     logger.info(
                         f"AGAPE-SPOT Executor: Default client connected. "
                         f"{verify_ticker} = ${price:,.2f}"
@@ -125,6 +130,7 @@ class AgapeSpotExecutor:
                     product = client.get_product(ticker)
                     if product:
                         price = float(self._resp(product, "price", 0))
+                        self._store_product_limits(ticker, product)
                         logger.info(
                             f"AGAPE-SPOT Executor: {symbol} dedicated client connected. "
                             f"{ticker} = ${price:,.2f}"
@@ -178,6 +184,46 @@ class AgapeSpotExecutor:
         if isinstance(obj, dict):
             return obj.get(key, default)
         return default
+
+    def _store_product_limits(self, ticker: str, product) -> None:
+        """Extract and store base_min_size/quote_min_size from a Coinbase product response."""
+        try:
+            base_min = float(self._resp(product, "base_min_size", 0))
+            quote_min = float(self._resp(product, "quote_min_size", 0))
+            base_inc = float(self._resp(product, "base_increment", 0))
+            self._product_limits[ticker] = {
+                "base_min_size": base_min,
+                "quote_min_size": quote_min,
+                "base_increment": base_inc,
+            }
+            logger.info(
+                f"AGAPE-SPOT Executor: {ticker} limits — "
+                f"base_min={base_min}, quote_min=${quote_min}, "
+                f"base_increment={base_inc}"
+            )
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT Executor: Could not parse product limits for {ticker}: {e}")
+
+    def get_min_notional(self, ticker: str) -> float:
+        """Get the minimum notional (USD) for a ticker.
+
+        Priority: Coinbase API quote_min_size (fetched at init) > config min_notional_usd > $2 default.
+        Adds a 10% buffer above the Coinbase minimum to avoid edge-case rejects from price slippage.
+        """
+        # Use real Coinbase limit if fetched
+        limits = self._product_limits.get(ticker)
+        if limits and limits.get("quote_min_size", 0) > 0:
+            return limits["quote_min_size"] * 1.1  # 10% buffer
+
+        # Fall back to config
+        return SPOT_TICKERS.get(ticker, {}).get("min_notional_usd", 2.0)
+
+    def get_min_base_size(self, ticker: str) -> float:
+        """Get the minimum base quantity for a ticker from Coinbase product data."""
+        limits = self._product_limits.get(ticker)
+        if limits and limits.get("base_min_size", 0) > 0:
+            return limits["base_min_size"]
+        return SPOT_TICKERS.get(ticker, {}).get("min_order", 0.001)
 
     # =========================================================================
     # Trade execution
@@ -273,19 +319,21 @@ class AgapeSpotExecutor:
             client_order_id = str(uuid.uuid4())
 
             notional_est = quantity * signal.spot_price
-            min_notional = ticker_config.get("min_notional_usd", 2.0)
-            if notional_est < min_notional:
+            min_notional = self.get_min_notional(signal.ticker)
+            min_base = self.get_min_base_size(signal.ticker)
+            if quantity < min_base or notional_est < min_notional:
                 logger.warning(
                     f"AGAPE-SPOT: BUY SKIPPED {signal.ticker} — "
-                    f"notional ${notional_est:.2f} below "
-                    f"minimum ${min_notional:.2f}"
+                    f"notional ${notional_est:.2f} (min ${min_notional:.2f}) "
+                    f"or qty {quantity} (min {min_base})"
                 )
                 if self.db:
                     self.db.log(
                         "WARNING", "BELOW_MIN_NOTIONAL",
                         f"Buy skipped for {signal.ticker}: notional "
-                        f"${notional_est:.2f} < ${min_notional:.2f} min. "
-                        f"qty={quantity}, price=${signal.spot_price:.4f}",
+                        f"${notional_est:.2f} (min ${min_notional:.2f}), "
+                        f"qty={quantity} (min {min_base}), "
+                        f"price=${signal.spot_price:.4f}",
                         ticker=signal.ticker,
                     )
                 return None
@@ -447,8 +495,9 @@ class AgapeSpotExecutor:
             # without a Coinbase sell (dust value is negligible).
             current_price = self.get_current_price(ticker)
             notional_est = sell_qty * (current_price or 0)
-            min_notional = ticker_config.get("min_notional_usd", 2.0)
-            if notional_est < min_notional:
+            min_notional = self.get_min_notional(ticker)
+            min_base = self.get_min_base_size(ticker)
+            if sell_qty < min_base or notional_est < min_notional:
                 logger.info(
                     f"AGAPE-SPOT: SELL SKIPPED (dust) {ticker} {position_id} — "
                     f"notional ${notional_est:.2f} below "
@@ -607,13 +656,27 @@ class AgapeSpotExecutor:
             ticker_config = SPOT_TICKERS.get(position.ticker, {})
             qty_decimals = ticker_config.get("quantity_decimals", 8)
             quantity = round(position.quantity, qty_decimals)
+
+            # Check minimum notional/base — dust positions can't be sold
+            notional_est = quantity * current_price
+            min_notional = self.get_min_notional(position.ticker)
+            min_base = self.get_min_base_size(position.ticker)
+            if quantity < min_base or notional_est < min_notional:
+                realized_pnl = position.calculate_pnl(current_price)
+                logger.info(
+                    f"AGAPE-SPOT: LEGACY SELL SKIPPED (dust) {position.ticker} "
+                    f"{position.position_id} — notional ${notional_est:.2f} "
+                    f"(min ${min_notional:.2f}), qty {quantity} (min {min_base})"
+                )
+                return (True, current_price, realized_pnl)
+
             client_order_id = str(uuid.uuid4())
 
             is_dedicated = position.ticker in self._ticker_clients
             acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
             logger.info(
                 f"AGAPE-SPOT: PLACING LIVE SELL {position.ticker} [{acct_label}] "
-                f"{position.position_id} qty={quantity} ({reason})"
+                f"{position.position_id} qty={quantity} (~${notional_est:.2f}) ({reason})"
             )
 
             # LONG-ONLY: Always sell to close
