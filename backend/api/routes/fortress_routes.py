@@ -114,6 +114,106 @@ if not TRADIER_AVAILABLE:
 if not TRADIER_AVAILABLE:
     logger.warning("TradierDataFetcher not available - FORTRESS will use default capital")
 
+# =========================================================================
+# DATABASE MIGRATION: ares_* → fortress_* tables
+# The bot was renamed from ARES to FORTRESS, but the database tables
+# still have the old ares_* names. This migration renames them once.
+# =========================================================================
+_migration_done = False
+
+
+def _run_ares_to_fortress_migration():
+    """
+    One-time migration: rename ares_* database tables to fortress_*.
+
+    Called at module load to ensure tables are ready before any endpoints.
+    Safe to call multiple times - checks are idempotent.
+    """
+    global _migration_done
+    if _migration_done:
+        return
+
+    tables_to_migrate = [
+        ('ares_positions', 'fortress_positions'),
+        ('ares_signals', 'fortress_signals'),
+        ('ares_daily_perf', 'fortress_daily_perf'),
+        ('ares_logs', 'fortress_logs'),
+        ('ares_equity_snapshots', 'fortress_equity_snapshots'),
+    ]
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        for old_name, new_name in tables_to_migrate:
+            try:
+                # Check if old table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = %s
+                    )
+                """, (old_name,))
+                old_exists = cursor.fetchone()[0]
+
+                if not old_exists:
+                    continue
+
+                # Check if new table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = %s
+                    )
+                """, (new_name,))
+                new_exists = cursor.fetchone()[0]
+
+                if new_exists:
+                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                    new_count = cursor.fetchone()[0]
+                    if new_count > 0:
+                        logger.info(f"FORTRESS migration: Both {old_name} and {new_name} have data, skipping")
+                        continue
+                    cursor.execute(f"DROP TABLE {new_name}")
+                    logger.info(f"FORTRESS migration: Dropped empty {new_name}")
+
+                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                logger.info(f"FORTRESS migration: Renamed {old_name} → {new_name}")
+            except Exception as e:
+                logger.warning(f"FORTRESS migration for {old_name}: {e}")
+
+        # Migrate config keys from ares_* to fortress_*
+        try:
+            cursor.execute("""
+                UPDATE autonomous_config
+                SET key = 'fortress_' || SUBSTRING(key FROM 6)
+                WHERE key LIKE 'ares_%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM autonomous_config ac2
+                      WHERE ac2.key = 'fortress_' || SUBSTRING(autonomous_config.key FROM 6)
+                  )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"FORTRESS migration: Migrated {cursor.rowcount} config keys from ares_* to fortress_*")
+        except Exception as e:
+            logger.warning(f"FORTRESS config key migration: {e}")
+
+        conn.commit()
+        conn.close()
+        _migration_done = True
+        logger.info("FORTRESS: ares_* → fortress_* migration check complete")
+    except Exception as e:
+        logger.warning(f"FORTRESS migration check failed (non-fatal): {e}")
+        _migration_done = True  # Don't retry on every request
+
+
+# Run migration at module load (server startup)
+try:
+    _run_ares_to_fortress_migration()
+except Exception:
+    pass  # Non-fatal - tables may already be correct
+
+
 # Try to import FORTRESS V2 trader and strategy presets
 fortress_trader = None
 try:

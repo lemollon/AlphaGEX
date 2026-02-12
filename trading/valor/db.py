@@ -74,11 +74,63 @@ class ValorDatabase:
         self.bot_name = bot_name
         self._ensure_tables()
 
+    def _migrate_from_heracles(self, cursor) -> None:
+        """Migrate old heracles_* tables to valor_* after the HERACLES->VALOR rename."""
+        for old_name, new_name in [
+            ('heracles_positions', 'valor_positions'),
+            ('heracles_closed_trades', 'valor_closed_trades'),
+            ('heracles_signals', 'valor_signals'),
+            ('heracles_equity_snapshots', 'valor_equity_snapshots'),
+            ('heracles_config', 'valor_config'),
+            ('heracles_win_tracker', 'valor_win_tracker'),
+            ('heracles_logs', 'valor_logs'),
+            ('heracles_daily_perf', 'valor_daily_perf'),
+            ('heracles_paper_account', 'valor_paper_account'),
+            ('heracles_scan_activity', 'valor_scan_activity'),
+        ]:
+            try:
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (old_name,)
+                )
+                if not cursor.fetchone()[0]:
+                    continue
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (new_name,)
+                )
+                if cursor.fetchone()[0]:
+                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                    if cursor.fetchone()[0] > 0:
+                        continue
+                    cursor.execute(f"DROP TABLE {new_name}")
+                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
+            except Exception as e:
+                logger.warning(f"{self.bot_name}: Migration {old_name}: {e}")
+
+        try:
+            cursor.execute("""
+                UPDATE autonomous_config
+                SET key = 'valor_' || SUBSTRING(key FROM 10)
+                WHERE key LIKE 'heracles_%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM autonomous_config ac2
+                      WHERE ac2.key = 'valor_' || SUBSTRING(autonomous_config.key FROM 10)
+                  )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys heracles_* -> valor_*")
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Config key migration: {e}")
+
     def _ensure_tables(self) -> None:
         """Ensure required tables exist"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+
+                self._migrate_from_heracles(c)
 
                 # Main positions table
                 c.execute("""

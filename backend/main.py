@@ -1678,6 +1678,100 @@ async def startup_event():
     print("  - GET  /api/psychology/statistics         Sucker statistics")
     print("=" * 80)
 
+    # =========================================================================
+    # DATABASE MIGRATION: Rename old Greek bot tables to new Biblical names
+    # The bots were renamed (ARES->FORTRESS, TITAN->SAMSON, etc.) but the
+    # database tables still have the old names. Migrate them before anything
+    # else creates empty tables with the new names.
+    # =========================================================================
+    print("\n🔄 Checking bot table migrations (Greek -> Biblical names)...")
+    try:
+        from database_adapter import get_connection as _get_migration_conn
+
+        _bot_table_renames = {
+            # old_prefix -> new_prefix
+            'ares': ('fortress', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
+            'titan': ('samson', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
+            'athena': ('solomon', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
+            'pegasus': ('anchor', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
+            'icarus': ('gideon', ['positions', 'signals', 'daily_perf', 'logs', 'equity_snapshots']),
+            'prometheus': ('jubilee', [
+                'positions', 'signals', 'capital_deployments', 'rate_analysis',
+                'daily_briefings', 'roll_decisions', 'config', 'logs',
+                'equity_snapshots', 'ic_positions', 'ic_closed_trades',
+                'ic_signals', 'ic_config', 'ic_equity_snapshots',
+            ]),
+            'heracles': ('valor', [
+                'positions', 'closed_trades', 'signals', 'equity_snapshots',
+                'config', 'win_tracker', 'logs', 'daily_perf',
+                'paper_account', 'scan_activity',
+            ]),
+        }
+
+        _mig_conn = _get_migration_conn()
+        _mig_cur = _mig_conn.cursor()
+        _migrated_count = 0
+
+        for old_prefix, (new_prefix, suffixes) in _bot_table_renames.items():
+            for suffix in suffixes:
+                old_name = f"{old_prefix}_{suffix}"
+                new_name = f"{new_prefix}_{suffix}"
+                try:
+                    # Check if old table exists
+                    _mig_cur.execute(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                        (old_name,)
+                    )
+                    if not _mig_cur.fetchone()[0]:
+                        continue
+
+                    # Check if new table exists
+                    _mig_cur.execute(
+                        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                        (new_name,)
+                    )
+                    new_exists = _mig_cur.fetchone()[0]
+
+                    if new_exists:
+                        _mig_cur.execute(f"SELECT COUNT(*) FROM {new_name}")
+                        if _mig_cur.fetchone()[0] > 0:
+                            continue  # Both have data, skip
+                        _mig_cur.execute(f"DROP TABLE {new_name}")
+
+                    _mig_cur.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                    print(f"  Migrated table: {old_name} -> {new_name}")
+                    _migrated_count += 1
+                except Exception as _te:
+                    print(f"  Warning: {old_name} migration: {_te}")
+
+            # Migrate config keys for this bot
+            try:
+                _old_prefix_len = len(old_prefix) + 1  # +1 for underscore
+                _mig_cur.execute(f"""
+                    UPDATE autonomous_config
+                    SET key = '{new_prefix}_' || SUBSTRING(key FROM {_old_prefix_len + 1})
+                    WHERE key LIKE '{old_prefix}_%'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM autonomous_config ac2
+                          WHERE ac2.key = '{new_prefix}_' || SUBSTRING(autonomous_config.key FROM {_old_prefix_len + 1})
+                      )
+                """)
+                if _mig_cur.rowcount > 0:
+                    print(f"  Migrated {_mig_cur.rowcount} config keys: {old_prefix}_* -> {new_prefix}_*")
+                    _migrated_count += _mig_cur.rowcount
+            except Exception as _ce:
+                print(f"  Warning: config key migration {old_prefix} -> {new_prefix}: {_ce}")
+
+        _mig_conn.commit()
+        _mig_conn.close()
+
+        if _migrated_count > 0:
+            print(f"  Database migration complete: {_migrated_count} items migrated")
+        else:
+            print("  No migrations needed (tables already have correct names)")
+    except Exception as e:
+        print(f"  Migration check skipped: {e}")
+
     # Auto-initialize database with historical data on first startup
     print("\n🔄 Checking database initialization...")
     try:

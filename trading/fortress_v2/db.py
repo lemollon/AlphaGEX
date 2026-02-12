@@ -71,11 +71,94 @@ class FortressDatabase:
         self.bot_name = bot_name
         self._ensure_tables()
 
+    def _migrate_from_ares(self, cursor) -> None:
+        """
+        Migrate old ares_* tables to fortress_* after the ARES→FORTRESS rename.
+
+        The bot was renamed from ARES to FORTRESS, but the database tables
+        still have the old ares_* names. This migration renames them so all
+        code referencing fortress_* works correctly.
+        """
+        tables_to_migrate = [
+            ('ares_positions', 'fortress_positions'),
+            ('ares_signals', 'fortress_signals'),
+            ('ares_daily_perf', 'fortress_daily_perf'),
+            ('ares_logs', 'fortress_logs'),
+            ('ares_equity_snapshots', 'fortress_equity_snapshots'),
+        ]
+
+        migrated_any = False
+
+        for old_name, new_name in tables_to_migrate:
+            try:
+                # Check if old table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = %s
+                    )
+                """, (old_name,))
+                old_exists = cursor.fetchone()[0]
+
+                if not old_exists:
+                    continue
+
+                # Check if new table already exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = %s
+                    )
+                """, (new_name,))
+                new_exists = cursor.fetchone()[0]
+
+                if new_exists:
+                    # New table exists - check if it has data
+                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                    new_count = cursor.fetchone()[0]
+                    if new_count > 0:
+                        # Both tables have data - skip (avoid data loss)
+                        logger.info(f"{self.bot_name}: Both {old_name} and {new_name} have data, skipping migration")
+                        continue
+                    # New table is empty - drop it so we can rename old one
+                    cursor.execute(f"DROP TABLE {new_name}")
+                    logger.info(f"{self.bot_name}: Dropped empty {new_name}")
+
+                # Rename old table to new name
+                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                logger.info(f"{self.bot_name}: Migrated table {old_name} → {new_name}")
+                migrated_any = True
+            except Exception as e:
+                logger.warning(f"{self.bot_name}: Migration check for {old_name}: {e}")
+
+        # Migrate config keys from ares_* to fortress_* in autonomous_config
+        try:
+            cursor.execute("""
+                UPDATE autonomous_config
+                SET key = 'fortress_' || SUBSTRING(key FROM 6)
+                WHERE key LIKE 'ares_%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM autonomous_config ac2
+                      WHERE ac2.key = 'fortress_' || SUBSTRING(autonomous_config.key FROM 6)
+                  )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys from ares_* to fortress_*")
+                migrated_any = True
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Config key migration: {e}")
+
+        if migrated_any:
+            logger.info(f"{self.bot_name}: ARES → FORTRESS database migration complete")
+
     def _ensure_tables(self) -> None:
         """Ensure required tables exist"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+
+                # Migrate old ares_* tables if they exist (one-time migration)
+                self._migrate_from_ares(c)
 
                 # Main positions table for Iron Condors
                 c.execute("""

@@ -68,11 +68,58 @@ class SolomonDatabase:
         self.bot_name = bot_name
         self._ensure_tables()
 
+    def _migrate_from_athena(self, cursor) -> None:
+        """Migrate old athena_* tables to solomon_* after the ATHENA->SOLOMON rename."""
+        for old_name, new_name in [
+            ('athena_positions', 'solomon_positions'),
+            ('athena_signals', 'solomon_signals'),
+            ('athena_daily_perf', 'solomon_daily_perf'),
+            ('athena_logs', 'solomon_logs'),
+            ('athena_equity_snapshots', 'solomon_equity_snapshots'),
+        ]:
+            try:
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (old_name,)
+                )
+                if not cursor.fetchone()[0]:
+                    continue
+                cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                    (new_name,)
+                )
+                if cursor.fetchone()[0]:
+                    cursor.execute(f"SELECT COUNT(*) FROM {new_name}")
+                    if cursor.fetchone()[0] > 0:
+                        continue
+                    cursor.execute(f"DROP TABLE {new_name}")
+                cursor.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                logger.info(f"{self.bot_name}: Migrated {old_name} -> {new_name}")
+            except Exception as e:
+                logger.warning(f"{self.bot_name}: Migration {old_name}: {e}")
+
+        try:
+            cursor.execute("""
+                UPDATE autonomous_config
+                SET key = 'solomon_' || SUBSTRING(key FROM 8)
+                WHERE key LIKE 'athena_%'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM autonomous_config ac2
+                      WHERE ac2.key = 'solomon_' || SUBSTRING(autonomous_config.key FROM 8)
+                  )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"{self.bot_name}: Migrated {cursor.rowcount} config keys athena_* -> solomon_*")
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Config key migration: {e}")
+
     def _ensure_tables(self) -> None:
         """Ensure required tables exist"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+
+                self._migrate_from_athena(c)
 
                 # Main positions table
                 c.execute("""
