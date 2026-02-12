@@ -301,6 +301,54 @@ class OrderExecutor:
         """Check if executor can actually place trades in Tradier."""
         return self.tradier is not None
 
+    def check_buying_power(self, required_margin: float) -> tuple[bool, float, str]:
+        """
+        Check if account has enough buying power for the trade.
+
+        For Iron Condors, required margin = max_loss per contract * contracts.
+        Tradier sandbox accounts reject orders when option_buying_power is insufficient.
+
+        Args:
+            required_margin: Total margin required in dollars (max_loss * contracts)
+
+        Returns:
+            (has_enough, available_buying_power, message)
+        """
+        if not self.tradier:
+            return False, 0, "Tradier not available"
+
+        try:
+            balance = self.tradier.get_account_balance()
+            if not balance:
+                logger.warning("FORTRESS: Could not fetch account balance - proceeding with trade")
+                return True, 0, "Balance check unavailable"
+
+            buying_power = float(balance.get('option_buying_power', 0))
+
+            if buying_power <= 0:
+                logger.warning(f"FORTRESS: option_buying_power is ${buying_power:.2f} - cannot trade")
+                return False, buying_power, f"No buying power available (${buying_power:.2f})"
+
+            if buying_power < required_margin:
+                logger.warning(
+                    f"FORTRESS: Insufficient buying power: ${buying_power:.2f} < "
+                    f"${required_margin:.2f} required"
+                )
+                return False, buying_power, (
+                    f"Insufficient buying power: ${buying_power:.2f} available, "
+                    f"${required_margin:.2f} required"
+                )
+
+            logger.info(
+                f"FORTRESS: Buying power OK: ${buying_power:.2f} available, "
+                f"${required_margin:.2f} required ({required_margin/buying_power*100:.0f}% utilization)"
+            )
+            return True, buying_power, "OK"
+
+        except Exception as e:
+            logger.warning(f"FORTRESS: Balance check failed ({e}) - proceeding with trade")
+            return True, 0, f"Balance check error: {e}"
+
     def get_execution_status(self) -> dict:
         """Get detailed execution capability status for monitoring."""
         return {
@@ -759,6 +807,39 @@ class OrderExecutor:
             actual_credit = ic_quote['total_credit']
             # Apply Thompson allocation weight to position size
             contracts = self._calculate_position_size(ic_quote['max_loss_per_contract'] * 100, thompson_weight)
+
+            # Pre-trade buying power check to avoid order rejections
+            max_loss_per_contract = ic_quote['max_loss_per_contract'] * 100  # convert to dollars
+            required_margin = max_loss_per_contract * contracts
+            has_bp, available_bp, bp_msg = self.check_buying_power(required_margin)
+
+            if not has_bp:
+                # Try reducing contracts to fit available buying power
+                if available_bp > 0 and max_loss_per_contract > 0:
+                    affordable_contracts = int(available_bp / max_loss_per_contract)
+                    if affordable_contracts >= 1:
+                        logger.warning(
+                            f"FORTRESS: Reducing contracts from {contracts} to {affordable_contracts} "
+                            f"to fit buying power ${available_bp:.2f}"
+                        )
+                        contracts = affordable_contracts
+                    else:
+                        logger.error(
+                            f"FORTRESS: SKIPPING TRADE - Cannot afford even 1 contract. "
+                            f"Need ${max_loss_per_contract:.2f}, have ${available_bp:.2f}"
+                        )
+                        if self.db:
+                            self.db.log("SKIP", f"Insufficient buying power: {bp_msg}", {
+                                'required_margin': required_margin,
+                                'available_buying_power': available_bp,
+                                'contracts_wanted': contracts,
+                            })
+                        return None
+                else:
+                    logger.error(f"FORTRESS: SKIPPING TRADE - {bp_msg}")
+                    if self.db:
+                        self.db.log("SKIP", f"Buying power check failed: {bp_msg}")
+                    return None
 
             # Execute as single 4-leg Iron Condor order (atomic - all legs fill together or none)
             # Using retry wrapper for network resilience
