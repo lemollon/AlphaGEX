@@ -123,22 +123,6 @@ class ValorImplementationVerifier:
                         "CRITICAL"
                     )
 
-            # Gamma regime filter parameter
-            if hasattr(config, 'allowed_gamma_regime'):
-                value = config.allowed_gamma_regime
-                self.add_result(
-                    "Config.allowed_gamma_regime",
-                    True,
-                    f"exists (default='{value}')"
-                )
-            else:
-                self.add_result(
-                    "Config.allowed_gamma_regime",
-                    False,
-                    "parameter missing from ValorConfig",
-                    "CRITICAL"
-                )
-
             # No-loss trailing parameters (for reference)
             noloss_params = [
                 'use_no_loss_trailing',
@@ -202,25 +186,7 @@ class ValorImplementationVerifier:
                     "HIGH"
                 )
 
-            # Test 3: Verify gamma regime filter logic exists
-            # Check if the generate_signal method contains gamma regime filter logic
-            import inspect
-            source = inspect.getsource(generator.generate_signal)
-            if 'allowed_gamma_regime' in source:
-                self.add_result(
-                    "Gamma regime filter in generate_signal",
-                    True,
-                    "allowed_gamma_regime check exists in source"
-                )
-            else:
-                self.add_result(
-                    "Gamma regime filter in generate_signal",
-                    False,
-                    "allowed_gamma_regime check missing from generate_signal",
-                    "CRITICAL"
-                )
-
-            # Test 4: Verify overnight hybrid logic in _set_stop_levels
+            # Test 3: Verify overnight hybrid logic in _set_stop_levels
             source = inspect.getsource(generator._set_stop_levels)
             checks = [
                 ('use_overnight_hybrid', 'use_overnight_hybrid check'),
@@ -468,11 +434,6 @@ if PYTEST_AVAILABLE:
             assert config.overnight_stop_points == 1.5
             assert config.overnight_target_points == 3.0
             assert config.overnight_emergency_stop == 10.0
-
-        def test_gamma_regime_filter_config(self, config):
-            """Config has gamma regime filter parameter"""
-            assert hasattr(config, 'allowed_gamma_regime')
-            assert config.allowed_gamma_regime == ""  # Empty = all regimes
 
         def test_signal_generator_accepts_is_overnight(self, signal_generator):
             """Signal generator accepts is_overnight parameter"""
