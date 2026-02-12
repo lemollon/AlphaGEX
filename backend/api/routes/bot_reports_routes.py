@@ -572,13 +572,15 @@ def _generate_markdown_report(report: dict, bot: str) -> str:
     md.append("")
     md.append(f"| Metric | Value |")
     md.append(f"|--------|-------|")
-    md.append(f"| Total P&L | ${report.get('total_pnl', 0):,.2f} |")
-    md.append(f"| Trade Count | {report.get('trade_count', 0)} |")
-    md.append(f"| Wins | {report.get('win_count', 0)} |")
-    md.append(f"| Losses | {report.get('loss_count', 0)} |")
+    total_pnl = float(report.get('total_pnl') or 0)
+    trade_count = int(report.get('trade_count') or 0)
+    win_count = int(report.get('win_count') or 0)
+    loss_count = int(report.get('loss_count') or 0)
 
-    win_count = report.get('win_count', 0)
-    trade_count = report.get('trade_count', 0)
+    md.append(f"| Total P&L | ${total_pnl:,.2f} |")
+    md.append(f"| Trade Count | {trade_count} |")
+    md.append(f"| Wins | {win_count} |")
+    md.append(f"| Losses | {loss_count} |")
     win_rate = (win_count / trade_count * 100) if trade_count > 0 else 0
     md.append(f"| Win Rate | {win_rate:.1f}% |")
     md.append("")
@@ -606,7 +608,7 @@ def _generate_markdown_report(report: dict, bot: str) -> str:
 
         for i, analysis in enumerate(trade_analyses, 1):
             position_id = analysis.get('position_id', f'Trade {i}')
-            pnl = analysis.get('pnl', 0)
+            pnl = float(analysis.get('pnl') or 0)
             pnl_sign = '+' if pnl >= 0 else ''
 
             md.append(f"### Trade #{i}: {position_id}")
