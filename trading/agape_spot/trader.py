@@ -85,12 +85,14 @@ class AgapeSpotTrader:
         self._loss_streaks: Dict[str, int] = {}
         self._loss_pause_until: Dict[str, Optional[datetime]] = {}
         self._direction_trackers: Dict[str, Any] = {}
+        self._last_trade_scan: Dict[str, int] = {}  # Last scan cycle a trade was opened per ticker
 
         # Initialize per-ticker state for every configured ticker
         for ticker in self.config.tickers:
             self._loss_streaks[ticker] = 0
             self._loss_pause_until[ticker] = None
             self._direction_trackers[ticker] = get_spot_direction_tracker(ticker, self.config)
+            self._last_trade_scan[ticker] = 0
 
         self.db.log(
             "INFO", "INIT",
@@ -211,7 +213,21 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context)
                 return result
 
-            # Step 6: Get all accounts for this ticker and check position limits per-account
+            # Step 6a: Check min scan spacing between trades for this ticker
+            entry_filters = self.config.get_entry_filters(ticker)
+            min_scans = entry_filters.get("min_scans_between_trades", 0)
+            if min_scans > 0:
+                scans_since_last = self._cycle_count - self._last_trade_scan.get(ticker, 0)
+                if scans_since_last < min_scans:
+                    result["outcome"] = (
+                        f"TRADE_SPACING_{scans_since_last}/{min_scans}_scans"
+                    )
+                    self._log_scan(ticker, result, scan_context)
+                    return result
+
+            # Step 6b: Get all accounts for this ticker and check position limits per-account
+            # Uses per-ticker max_positions from entry filters (XRP/SHIB: 2, DOGE: 3, ETH: 5)
+            max_positions = entry_filters.get("max_positions", self.config.max_open_positions_per_ticker)
             accounts = self.executor.get_all_accounts(ticker)
             all_open = self._get_open_positions_for_ticker(ticker)
 
@@ -222,14 +238,14 @@ class AgapeSpotTrader:
                     p for p in all_open
                     if p.get("account_label", "default") == account_label
                 ]
-                if len(acct_open) < self.config.max_open_positions_per_ticker:
+                if len(acct_open) < max_positions:
                     eligible_accounts.append((account_label, is_live))
 
             if not eligible_accounts:
                 total_open = len(all_open)
                 result["outcome"] = (
                     f"MAX_POSITIONS_{total_open}/"
-                    f"{self.config.max_open_positions_per_ticker} (all accounts)"
+                    f"{max_positions} (all accounts)"
                 )
                 self._log_scan(ticker, result, scan_context)
                 return result
@@ -285,6 +301,7 @@ class AgapeSpotTrader:
 
             if traded_accounts:
                 result["new_trade"] = True
+                self._last_trade_scan[ticker] = self._cycle_count
                 result["outcome"] = (
                     f"TRADED_LONG_{ticker}_"
                     f"{'_'.join(traded_accounts)}"

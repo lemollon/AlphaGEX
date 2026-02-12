@@ -45,12 +45,17 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # XRP exit params: quick scalp — small range, take sub-dollar profits
+        # XRP exit params: let winners run (removed 1.0% profit cap that was capping gains)
         "no_loss_activation_pct": 0.3,
         "no_loss_trail_distance_pct": 0.25,
-        "max_unrealized_loss_pct": 0.75,
-        "no_loss_profit_target_pct": 1.0,
+        "max_unrealized_loss_pct": 0.5,   # Was 0.75% — cut losers faster (avg loss was ~1.5x avg win)
+        "no_loss_profit_target_pct": 0.0,  # Was 1.0% — disabled, let trail manage exits like DOGE
         "max_hold_hours": 2,
+        # Signal quality gates — XRP has no Deribit options data, need actual funding signal
+        "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
+        "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
+        "min_scans_between_trades": 6,      # 30 min between entries (was 0 — stacked 5 positions in 25 min)
+        "max_positions": 2,                 # Was 5 — reduce concurrent exposure
     },
     "SHIB-USD": {
         "symbol": "SHIB",
@@ -63,12 +68,17 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 8,
-        # SHIB exit params: quick scalp — meme coin, take profits fast
+        # SHIB exit params: meme coin — tighter stops, no profit cap
         "no_loss_activation_pct": 0.3,
-        "no_loss_trail_distance_pct": 0.25,
-        "max_unrealized_loss_pct": 0.75,
-        "no_loss_profit_target_pct": 1.0,
+        "no_loss_trail_distance_pct": 0.2,  # Was 0.25% — tighter trail for meme coin
+        "max_unrealized_loss_pct": 0.5,     # Was 0.75% — cut losers faster
+        "no_loss_profit_target_pct": 0.0,   # Was 1.0% — disabled, let trail manage exits
         "max_hold_hours": 2,
+        # Signal quality gates — SHIB has no Deribit data, meme coin needs real signal
+        "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
+        "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
+        "min_scans_between_trades": 6,      # 30 min between entries
+        "max_positions": 2,                 # Was 5 — reduce concurrent exposure
     },
     "DOGE-USD": {
         "symbol": "DOGE",
@@ -81,12 +91,17 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # DOGE exit params: quick scalp — already profitable at 64% WR
+        # DOGE exit params: 7.43 PF with 40% WR — trailing stop working well, don't change exits
         "no_loss_activation_pct": 0.3,
         "no_loss_trail_distance_pct": 0.25,
         "max_unrealized_loss_pct": 0.75,
-        "no_loss_profit_target_pct": 1.0,
+        "no_loss_profit_target_pct": 0.0,  # Was 1.0% — disabled, let trail manage (this IS why PF is high)
         "max_hold_hours": 2,
+        # Signal quality gates — DOGE trending well, keep base_long but add spacing
+        "require_funding_data": False,      # DOGE works without funding data (trending market)
+        "allow_base_long": True,            # Keep catchall — DOGE profits from it
+        "min_scans_between_trades": 3,      # 15 min between entries (was 0)
+        "max_positions": 3,                 # Was 5 — slight reduction
     },
 }
 
@@ -203,6 +218,23 @@ class AgapeSpotConfig:
             "max_unrealized_loss_pct": cfg.get("max_unrealized_loss_pct", self.max_unrealized_loss_pct),
             "no_loss_profit_target_pct": cfg.get("no_loss_profit_target_pct", self.no_loss_profit_target_pct),
             "max_hold_hours": cfg.get("max_hold_hours", self.max_hold_hours),
+        }
+
+    def get_entry_filters(self, ticker: str) -> Dict[str, Any]:
+        """Get per-ticker entry quality filters.
+
+        Controls when a ticker is allowed to enter new trades:
+        - require_funding_data: Block entry if funding regime is UNKNOWN
+        - allow_base_long: Allow the ALTCOIN_BASE_LONG fallback signal
+        - min_scans_between_trades: Minimum scans between new entries (prevents stacking)
+        - max_positions: Per-ticker max open positions (overrides shared config)
+        """
+        cfg = self.get_ticker_config(ticker)
+        return {
+            "require_funding_data": cfg.get("require_funding_data", False),
+            "allow_base_long": cfg.get("allow_base_long", True),
+            "min_scans_between_trades": cfg.get("min_scans_between_trades", 0),
+            "max_positions": cfg.get("max_positions", self.max_open_positions_per_ticker),
         }
 
     def get_trading_capital(self, ticker: str) -> float:
