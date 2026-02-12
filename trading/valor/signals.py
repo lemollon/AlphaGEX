@@ -756,9 +756,14 @@ class ValorSignalGenerator:
         # =====================================================================
         if distance_from_flip > breakout_threshold:
             # Above flip - momentum LONG (continuation)
+            # If price is past call wall (distance_to_call_wall < 0), that's strong momentum → high confidence
             direction = TradeDirection.LONG
             source = SignalSource.GEX_MOMENTUM
-            confidence = min(0.90, 0.5 + (distance_to_call_wall / call_to_flip_range) * 0.4)
+            if distance_to_call_wall <= 0:
+                # Price broke through call wall - strong momentum
+                confidence = 0.85
+            else:
+                confidence = min(0.90, 0.5 + (distance_to_call_wall / call_to_flip_range) * 0.4)
             reasoning = (
                 f"NEGATIVE GAMMA momentum: Price {current_price:.2f} broke "
                 f"{breakout_threshold:.2f} pts above flip {flip_point:.2f}. "
@@ -767,9 +772,14 @@ class ValorSignalGenerator:
 
         elif distance_from_flip < -breakout_threshold:
             # Below flip - momentum SHORT (continuation)
+            # If price is past put wall (distance_to_put_wall < 0), that's strong momentum → high confidence
             direction = TradeDirection.SHORT
             source = SignalSource.GEX_MOMENTUM
-            confidence = min(0.90, 0.5 + (distance_to_put_wall / flip_to_put_range) * 0.4)
+            if distance_to_put_wall <= 0:
+                # Price broke through put wall - strong momentum
+                confidence = 0.85
+            else:
+                confidence = min(0.90, 0.5 + (distance_to_put_wall / flip_to_put_range) * 0.4)
             reasoning = (
                 f"NEGATIVE GAMMA momentum: Price {current_price:.2f} broke "
                 f"{breakout_threshold:.2f} pts below flip {flip_point:.2f}. "
@@ -978,7 +988,10 @@ class ValorSignalGenerator:
         bayesian_weight = min(0.7, 0.3 + (self.win_tracker.total_trades / 100))
         confidence_weight = 1 - bayesian_weight
 
-        blended_prob = (bayesian_prob * bayesian_weight) + (signal.confidence * confidence_weight)
+        # Clamp confidence to [0, 1] before blending (negative confidence from
+        # edge cases like price beyond walls would corrupt the probability)
+        clamped_confidence = max(0.0, min(1.0, signal.confidence))
+        blended_prob = (bayesian_prob * bayesian_weight) + (clamped_confidence * confidence_weight)
 
         # VIX adjustment - higher VIX = more uncertainty = lower probability
         if signal.vix > 25:
@@ -988,7 +1001,7 @@ class ValorSignalGenerator:
             # Low VIX = calmer markets = slight boost
             blended_prob = min(0.85, blended_prob + 0.02)
 
-        return round(blended_prob, 4)
+        return round(max(0.0, min(1.0, blended_prob)), 4)
 
     def _set_stop_levels(self, signal: FuturesSignal, atr: float, is_overnight: bool = False) -> Tuple[FuturesSignal, str, float]:
         """
