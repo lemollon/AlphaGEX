@@ -1271,12 +1271,8 @@ class JubileeICSignalGenerator:
             return None
 
     def check_vix_filter(self, vix: float) -> Tuple[bool, str]:
-        """Check if VIX is within acceptable range for IC trading"""
-        if vix < self.config.min_vix:
-            return False, f"VIX {vix:.1f} below minimum {self.config.min_vix} (premiums too thin)"
-        if vix > self.config.max_vix:
-            return False, f"VIX {vix:.1f} above maximum {self.config.max_vix} (too risky)"
-        return True, f"VIX {vix:.1f} within acceptable range"
+        """VIX filter disabled - always allow trading (match SAMSON)"""
+        return True, "VIX check disabled"
 
     def calculate_strikes(
         self,
@@ -1287,45 +1283,74 @@ class JubileeICSignalGenerator:
         oracle_put_strike: Optional[float] = None,
         oracle_call_strike: Optional[float] = None,
     ) -> Dict[str, float]:
-        """
-        Calculate IC strikes with SPX $5 rounding.
+        """Calculate SPX strikes with $5 rounding - match SAMSON logic exactly.
+
+        Validates Prophet/GEX strikes against minimum SD distance.
+        JUBILEE IC is aggressive (0.8 SD) but must still enforce minimum distance.
 
         Priority:
-        1. Prophet suggested strikes (if valid)
-        2. GEX walls (if available)
-        3. Delta-based strikes (fallback)
+        1. Prophet suggested strikes (if provided AND >= 0.8 SD away)
+        2. GEX walls (if available AND >= 0.8 SD away)
+        3. SD-based strikes (fallback) - uses 0.8 SD
         """
+        sd = self.config.sd_multiplier  # 0.8 for JUBILEE (match SAMSON)
         width = self.config.spread_width  # $12 for JUBILEE (match SAMSON)
 
         def round_to_5(x):
             return round(x / 5) * 5
 
+        # Ensure minimum expected move (0.5% of spot)
+        min_expected_move = spot * 0.005
+        effective_em = max(expected_move, min_expected_move)
+
+        # Calculate MINIMUM strike distances using SD (match SAMSON validation)
+        min_sd_for_external = max(sd, 0.8)  # At least 0.8 SD
+        min_put_short = spot - (min_sd_for_external * effective_em)
+        min_call_short = spot + (min_sd_for_external * effective_em)
+
+        # Helper to validate strike is at least 0.8 SD from spot
+        def is_valid_sd_distance(put_strike: float, call_strike: float) -> tuple:
+            """Validate strikes are at least 0.8 SD from spot (match SAMSON)."""
+            put_sd = (spot - put_strike) / effective_em if effective_em > 0 else 0
+            call_sd = (call_strike - spot) / effective_em if effective_em > 0 else 0
+            is_valid = put_strike <= min_put_short and call_strike >= min_call_short
+            return is_valid, put_sd, call_sd
+
         use_oracle = False
         use_gex = False
+        put_short = 0
+        call_short = 0
 
-        # Priority 1: Prophet suggested strikes
+        # Priority 1: Prophet suggested strikes (ONLY if >= 0.8 SD away)
         if oracle_put_strike and oracle_call_strike:
-            put_dist = (spot - oracle_put_strike) / spot
-            call_dist = (oracle_call_strike - spot) / spot
-            if 0.003 <= put_dist <= 0.05 and 0.003 <= call_dist <= 0.05:
+            is_valid, put_sd, call_sd = is_valid_sd_distance(oracle_put_strike, oracle_call_strike)
+            if is_valid:
                 put_short = round_to_5(oracle_put_strike)
                 call_short = round_to_5(oracle_call_strike)
                 use_oracle = True
+                logger.info(f"[JUBILEE IC STRIKES] Using Prophet: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
+            else:
+                logger.warning(f"[JUBILEE IC STRIKES] Prophet TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 2: GEX walls
+        # Priority 2: GEX walls (ONLY if >= 0.8 SD away)
         if not use_oracle and call_wall > 0 and put_wall > 0:
-            put_short = round_to_5(put_wall)
-            call_short = round_to_5(call_wall)
-            use_gex = True
+            is_valid, put_sd, call_sd = is_valid_sd_distance(put_wall, call_wall)
+            if is_valid:
+                put_short = round_to_5(put_wall)
+                call_short = round_to_5(call_wall)
+                use_gex = True
+                logger.info(f"[JUBILEE IC STRIKES] Using GEX walls: Put ${put_short} ({put_sd:.1f} SD), Call ${call_short} ({call_sd:.1f} SD)")
+            else:
+                logger.warning(f"[JUBILEE IC STRIKES] GEX walls TOO TIGHT (put={put_sd:.1f} SD, call={call_sd:.1f} SD - need >= {min_sd_for_external} SD)")
 
-        # Priority 3: SD-based fallback - AGGRESSIVE (match SAMSON 0.8 SD)
+        # Priority 3: SD-based fallback (0.8 SD, match SAMSON)
         if not use_oracle and not use_gex:
-            # 0.8 SD = closer to spot = more aggressive (same as SAMSON)
-            sd_multiplier = 0.8
-            min_expected_move = spot * 0.005
-            effective_em = max(expected_move, min_expected_move)
-            put_short = round_to_5(spot - sd_multiplier * effective_em)
-            call_short = round_to_5(spot + sd_multiplier * effective_em)
+            put_short = round_to_5(spot - sd * effective_em)
+            call_short = round_to_5(spot + sd * effective_em)
+
+            put_sd_actual = (spot - put_short) / effective_em if effective_em > 0 else 0
+            call_sd_actual = (call_short - spot) / effective_em if effective_em > 0 else 0
+            logger.info(f"[JUBILEE IC STRIKES] Using SD-based ({sd:.1f} SD): Put ${put_short} ({put_sd_actual:.1f} SD), Call ${call_short} ({call_sd_actual:.1f} SD)")
 
         put_long = put_short - width
         call_long = call_short + width
@@ -1337,7 +1362,7 @@ class JubileeICSignalGenerator:
             'call_long': call_long,
             'using_gex': use_gex,
             'using_oracle': use_oracle,
-            'source': 'PROPHET' if use_oracle else ('GEX' if use_gex else 'DELTA'),
+            'source': 'PROPHET' if use_oracle else ('GEX' if use_gex else 'SD'),
         }
 
     def get_real_credits(
@@ -1606,9 +1631,9 @@ class JubileeICSignalGenerator:
             )
             return None
 
-        # Credit check - warning only, does not block trades (same as SAMSON)
-        if pricing['total_credit'] < 0.50:
-            logger.warning(f"JUBILEE IC: Credit ${pricing['total_credit']:.2f} < $0.50 ({pricing.get('source', 'UNKNOWN')})")
+        # Credit check - warning only, does not block trades (match SAMSON)
+        if pricing['total_credit'] < self.config.min_credit:
+            logger.warning(f"JUBILEE IC: Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} ({pricing.get('source', 'UNKNOWN')})")
 
         # Calculate position size
         contracts = self.calculate_position_size(
@@ -1676,7 +1701,7 @@ class JubileeICSignalGenerator:
             margin_required=margin_required,
             capital_at_risk=max_loss,
             # Prophet
-            oracle_approved=oracle_approved,
+            oracle_approved=oracle_says_trade,
             oracle_confidence=oracle_confidence,
             oracle_reasoning=" | ".join(reasoning_parts),
             # Market context

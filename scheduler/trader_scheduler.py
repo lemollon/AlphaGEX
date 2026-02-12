@@ -5045,18 +5045,9 @@ class AutonomousTraderScheduler:
             )
             logger.info("✅ JUBILEE IC job scheduled (every 5 min - MATCHES ANCHOR)")
 
-            # JUBILEE IC MTM Update - runs every 30 minutes
-            self.scheduler.add_job(
-                self.scheduled_jubilee_ic_mtm_update,
-                trigger=IntervalTrigger(
-                    minutes=30,
-                    timezone='America/Chicago'
-                ),
-                id='jubilee_ic_mtm',
-                name='JUBILEE IC - MTM Update (30-min intervals)',
-                replace_existing=True
-            )
-            logger.info("✅ JUBILEE IC MTM job scheduled (every 30 min)")
+            # JUBILEE IC MTM: Now event-driven (on open/close) to match SAMSON
+            # No separate scheduled MTM job needed
+            logger.info("✅ JUBILEE IC MTM is event-driven (on trade open/close, matches SAMSON)")
         else:
             logger.warning("⚠️ JUBILEE IC not available - IC trading with borrowed capital disabled")
 
