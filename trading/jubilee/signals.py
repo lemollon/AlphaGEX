@@ -398,7 +398,7 @@ class BoxSpreadSignalGenerator:
             tradier = _get_tradier()
             if tradier:
                 expirations = _tradier_call_with_retry(
-                    tradier.get_expirations, self.config.ticker, max_retries=2
+                    tradier.get_option_expirations, self.config.ticker, max_retries=2
                 )
             else:
                 expirations = None
@@ -485,10 +485,11 @@ Alternative expirations considered: {len(candidates)} options
         if self.config.prefer_round_strikes:
             # Round to nearest strike width multiple
             if 'SPX' in self.config.ticker:
-                # SPX strikes in $5 or $10 increments
-                base = round(spot_price / 10) * 10
-                lower = base - width / 2
-                upper = base + width / 2
+                # SPX far-dated strikes at $25 intervals; near-dated at $5
+                # Use $25 rounding to guarantee strikes exist in chain
+                base = int(spot_price / 25) * 25
+                lower = base
+                upper = base + width
             else:
                 # SPY strikes in $1 increments
                 base = round(spot_price)
@@ -612,14 +613,16 @@ Strike width tradeoff:
 
             box_bid = call_spread_credit + put_spread_credit
 
-            # For the ask side (if we were buying)
+            # For the ask side (buying the box = we buy the bull call + bear put)
+            # Buy lower call at ask, sell upper call at bid
+            # Buy upper put at ask, sell lower put at bid
             call_spread_debit = (
-                legs['call_short'].ask -
-                legs['call_long'].bid
+                legs['call_long'].ask -   # Buy lower call at ask
+                legs['call_short'].bid    # Sell upper call at bid
             )
             put_spread_debit = (
-                legs['put_short'].ask -
-                legs['put_long'].bid
+                legs['put_long'].ask -    # Buy upper put at ask
+                legs['put_short'].bid     # Sell lower put at bid
             )
 
             box_ask = call_spread_debit + put_spread_debit
