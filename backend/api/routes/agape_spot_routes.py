@@ -1239,6 +1239,179 @@ async def disable_bot():
     return {"success": True, "message": "AGAPE-SPOT disabled"}
 
 
+@router.get("/diagnostic")
+async def diagnostic():
+    """Diagnostic endpoint to troubleshoot data issues.
+
+    Checks database connection, table structure, column existence,
+    row counts, and trader initialization -- everything needed to
+    figure out why the frontend shows empty data.
+    """
+    result = {
+        "agape_spot_available": AGAPE_SPOT_AVAILABLE,
+        "db_connection": False,
+        "table_exists": False,
+        "columns": [],
+        "has_account_label": False,
+        "has_quantity_column": False,
+        "has_eth_quantity_column": False,
+        "open_positions_count": 0,
+        "closed_positions_count": 0,
+        "equity_snapshots_count": 0,
+        "scan_activity_count": 0,
+        "trader_initialized": False,
+        "trader_error": None,
+        "sample_closed_trade": None,
+        "query_tests": {},
+    }
+
+    # 1. Check database connection
+    conn = None
+    try:
+        if get_connection:
+            conn = get_connection()
+            result["db_connection"] = conn is not None
+    except Exception as e:
+        result["db_connection"] = False
+        result["trader_error"] = f"DB connection failed: {e}"
+
+    # 2. Check table structure
+    if conn:
+        try:
+            cursor = conn.cursor()
+
+            # Check table exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'agape_spot_positions'
+                )
+            """)
+            result["table_exists"] = cursor.fetchone()[0]
+
+            if result["table_exists"]:
+                # Get column names
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'agape_spot_positions'
+                    ORDER BY ordinal_position
+                """)
+                columns = [row[0] for row in cursor.fetchall()]
+                result["columns"] = columns
+                result["has_account_label"] = "account_label" in columns
+                result["has_quantity_column"] = "quantity" in columns
+                result["has_eth_quantity_column"] = "eth_quantity" in columns
+
+                # Row counts
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_positions WHERE status = 'open'"
+                )
+                result["open_positions_count"] = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_positions "
+                    "WHERE status IN ('closed', 'expired', 'stopped')"
+                )
+                result["closed_positions_count"] = cursor.fetchone()[0]
+
+                # Sample closed trade (most recent)
+                cursor.execute("""
+                    SELECT position_id, ticker, entry_price, close_price,
+                           realized_pnl, close_reason, close_time
+                    FROM agape_spot_positions
+                    WHERE status IN ('closed', 'expired', 'stopped')
+                      AND close_time IS NOT NULL
+                    ORDER BY close_time DESC LIMIT 1
+                """)
+                sample = cursor.fetchone()
+                if sample:
+                    result["sample_closed_trade"] = {
+                        "position_id": sample[0],
+                        "ticker": sample[1],
+                        "entry_price": float(sample[2]) if sample[2] else None,
+                        "close_price": float(sample[3]) if sample[3] else None,
+                        "realized_pnl": float(sample[4]) if sample[4] else None,
+                        "close_reason": sample[5],
+                        "close_time": sample[6].isoformat() if sample[6] else None,
+                    }
+
+                # Test the actual queries used by get_open_positions and get_closed_trades
+                try:
+                    cursor.execute("""
+                        SELECT position_id, COALESCE(account_label, 'default')
+                        FROM agape_spot_positions WHERE status = 'open' LIMIT 1
+                    """)
+                    result["query_tests"]["open_positions_query"] = "OK"
+                except Exception as e:
+                    result["query_tests"]["open_positions_query"] = f"FAILED: {e}"
+                    conn.rollback()
+
+                try:
+                    cursor.execute("""
+                        SELECT position_id, COALESCE(account_label, 'default')
+                        FROM agape_spot_positions
+                        WHERE status IN ('closed', 'expired', 'stopped') LIMIT 1
+                    """)
+                    result["query_tests"]["closed_trades_query"] = "OK"
+                except Exception as e:
+                    result["query_tests"]["closed_trades_query"] = f"FAILED: {e}"
+                    conn.rollback()
+
+                # Test equity curve query (no account_label)
+                try:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM agape_spot_positions
+                        WHERE status IN ('closed', 'expired', 'stopped')
+                          AND close_time IS NOT NULL
+                          AND realized_pnl IS NOT NULL
+                    """)
+                    result["query_tests"]["equity_curve_query"] = (
+                        f"OK ({cursor.fetchone()[0]} rows)"
+                    )
+                except Exception as e:
+                    result["query_tests"]["equity_curve_query"] = f"FAILED: {e}"
+                    conn.rollback()
+
+            # Check equity snapshots table
+            try:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_equity_snapshots"
+                )
+                result["equity_snapshots_count"] = cursor.fetchone()[0]
+            except Exception:
+                pass
+
+            # Check scan activity table
+            try:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_scan_activity"
+                )
+                result["scan_activity_count"] = cursor.fetchone()[0]
+            except Exception:
+                pass
+
+            cursor.close()
+        except Exception as e:
+            result["trader_error"] = f"Table check failed: {e}"
+        finally:
+            conn.close()
+
+    # 3. Check trader initialization
+    try:
+        trader = _get_trader()
+        result["trader_initialized"] = trader is not None
+        if trader:
+            result["trader_cycle_count"] = trader._cycle_count
+            result["trader_enabled"] = trader._enabled
+            result["trader_tickers"] = trader.config.tickers
+            result["trader_live_tickers"] = trader.config.live_tickers
+            result["coinbase_connected"] = trader.executor.has_any_client
+    except Exception as e:
+        result["trader_error"] = f"Trader init failed: {e}"
+
+    return {"success": True, "diagnostic": result, "fetched_at": _format_ct()}
+
+
 @router.post("/force-close")
 async def force_close_positions(
     ticker: Optional[str] = Query(default=None, description="Close positions for this ticker only"),
