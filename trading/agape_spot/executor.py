@@ -448,6 +448,7 @@ class AgapeSpotExecutor:
                 order_id = self._resp(success_resp, "order_id", client_order_id[:8])
 
                 fill_price = signal.spot_price
+                fills_list = []
                 try:
                     fills = client.get_fills(order_id=str(order_id))
                     fills_list = self._resp(fills, "fills", [])
@@ -471,6 +472,25 @@ class AgapeSpotExecutor:
                 now = datetime.now(CENTRAL_TZ)
 
                 pd = self._price_decimals(signal.ticker)
+
+                # Calculate entry slippage (fill vs signal price)
+                entry_slippage = (
+                    round((fill_price - signal.spot_price) / signal.spot_price * 100, 4)
+                    if signal.spot_price > 0 else None
+                )
+
+                # Extract fee from fills if available
+                entry_fee = None
+                try:
+                    if fills_list:
+                        entry_fee = sum(
+                            float(self._resp(f, "commission", 0))
+                            for f in fills_list
+                        )
+                        if entry_fee == 0:
+                            entry_fee = None
+                except Exception:
+                    pass
 
                 position = AgapeSpotPosition(
                     position_id=position_id,
@@ -499,11 +519,15 @@ class AgapeSpotExecutor:
                     open_time=now,
                     high_water_mark=round(fill_price, pd),
                     account_label=account_label,
+                    coinbase_order_id=str(order_id),
+                    entry_slippage_pct=entry_slippage,
+                    entry_fee_usd=entry_fee,
                 )
 
                 logger.info(
                     f"AGAPE-SPOT: LIVE BUY SUCCESS [{account_label}] {signal.ticker} "
-                    f"{quantity} @ ${fill_price:.{pd}f} (order={order_id})"
+                    f"{quantity} @ ${fill_price:.{pd}f} (order={order_id}, "
+                    f"slippage={entry_slippage}%)"
                 )
                 return position
 
@@ -548,19 +572,21 @@ class AgapeSpotExecutor:
         position_id: str,
         reason: str,
         account_label: str = "default",
-    ) -> Tuple[bool, Optional[float]]:
+    ) -> Tuple[bool, Optional[float], Optional[dict]]:
         """Execute a live market sell on Coinbase for a position being closed.
 
-        Returns (success, fill_price).
+        Returns (success, fill_price, exec_details).
+        exec_details is a dict with coinbase_sell_order_id, exit_slippage_pct,
+        exit_fee_usd -- or None on failure.
         fill_price is None when the sell succeeded but fill lookup failed
         (caller should fall back to current_price).
-        Returns (False, None) when no client or order rejected/exception.
+        Returns (False, None, None) when no client or order rejected/exception.
 
         account_label routes to the correct Coinbase client that owns this position.
         """
         if account_label == "paper":
             # Paper positions don't need a Coinbase sell
-            return (False, None)
+            return (False, None, None)
 
         client = self._get_client_for_account(ticker, account_label)
         if not client:
@@ -571,7 +597,7 @@ class AgapeSpotExecutor:
                 f"AGAPE-SPOT: No Coinbase client for {ticker}, cannot sell "
                 f"{position_id}"
             )
-            return (False, None)
+            return (False, None, None)
 
         try:
             ticker_config = SPOT_TICKERS.get(ticker, {})
@@ -601,7 +627,7 @@ class AgapeSpotExecutor:
                         ticker=ticker,
                     )
                 # Return True so caller closes DB position (dust is negligible)
-                return (True, current_price)
+                return (True, current_price, {"dust_skip": True})
 
             client_order_id = str(uuid.uuid4())
 
@@ -656,13 +682,39 @@ class AgapeSpotExecutor:
                 if fill_price is not None:
                     fill_price = round(fill_price, pd)
 
+                # Calculate exit slippage (fill vs current market)
+                exit_slippage = None
+                if fill_price and current_price and current_price > 0:
+                    exit_slippage = round(
+                        (fill_price - current_price) / current_price * 100, 4
+                    )
+
+                # Extract fee
+                exit_fee = None
+                try:
+                    if fills_list:
+                        exit_fee = sum(
+                            float(self._resp(f, "commission", 0))
+                            for f in fills_list
+                        )
+                        if exit_fee == 0:
+                            exit_fee = None
+                except Exception:
+                    pass
+
+                exec_details = {
+                    "coinbase_sell_order_id": str(order_id),
+                    "exit_slippage_pct": exit_slippage,
+                    "exit_fee_usd": exit_fee,
+                }
+
                 logger.info(
                     f"AGAPE-SPOT: LIVE SELL SUCCESS {ticker} "
                     f"{position_id} qty={sell_qty} "
                     f"fill=${fill_price if fill_price else 'N/A'} "
-                    f"(order={order_id}, reason={reason})"
+                    f"(order={order_id}, slippage={exit_slippage}%, reason={reason})"
                 )
-                return (True, fill_price)
+                return (True, fill_price, exec_details)
 
             # Order rejected
             error_resp = self._resp(order, "error_response", "unknown")
@@ -679,7 +731,7 @@ class AgapeSpotExecutor:
                     f"error={error_resp}",
                     ticker=ticker,
                 )
-            return (False, None)
+            return (False, None, None)
 
         except Exception as e:
             logger.error(
@@ -692,7 +744,7 @@ class AgapeSpotExecutor:
                     f"Coinbase sell exception for {ticker} {position_id}: {e}",
                     ticker=ticker,
                 )
-            return (False, None)
+            return (False, None, None)
 
     # =========================================================================
     # Position closing (legacy interface used by executor.close_position)
@@ -918,3 +970,40 @@ class AgapeSpotExecutor:
         except Exception as e:
             logger.error(f"AGAPE-SPOT Executor: Balance fetch failed: {e}")
         return None
+
+    def get_all_account_balances(self) -> Dict[str, Any]:
+        """Get balances from ALL Coinbase accounts (default + dedicated).
+
+        Returns a dict keyed by account_label with balance details.
+        """
+        results: Dict[str, Any] = {}
+
+        # Default account
+        if self._client:
+            bal = self.get_account_balance()
+            if bal:
+                results["default"] = bal
+
+        # Dedicated per-ticker accounts
+        for ticker, client in self._ticker_clients.items():
+            symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
+            try:
+                accounts = client.get_accounts()
+                acct_list = self._resp(accounts, "accounts", [])
+                balances: Dict[str, float] = {}
+                tracked = {"USD", symbol}
+                for acct in acct_list:
+                    currency = self._resp(acct, "currency", "")
+                    if currency in tracked:
+                        avail_bal = self._resp(acct, "available_balance", {})
+                        available = float(self._resp(avail_bal, "value", 0))
+                        balances[currency.lower() + "_balance"] = available
+                balances["exchange"] = "coinbase"
+                balances["account_type"] = "dedicated"
+                balances["ticker"] = ticker
+                results[symbol] = balances
+            except Exception as e:
+                logger.error(f"AGAPE-SPOT Executor: Balance fetch failed for {symbol}: {e}")
+                results[symbol] = {"error": str(e)}
+
+        return results

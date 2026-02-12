@@ -616,8 +616,9 @@ class AgapeSpotTrader:
         account_label = pos_dict.get("account_label", "default")
         is_live_account = account_label != "paper" and self.config.is_live(ticker)
 
+        exec_details = None
         if is_live_account:
-            sell_ok, fill_price = self.executor.sell_spot(
+            sell_ok, fill_price, exec_details = self.executor.sell_spot(
                 ticker, quantity, position_id, reason,
                 account_label=account_label,
             )
@@ -645,11 +646,19 @@ class AgapeSpotTrader:
         # Long-only P&L -- no direction multiplier
         realized_pnl = round((actual_close_price - entry_price) * quantity, 2)
 
+        # Extract Coinbase sell execution details if available
+        sell_order_id = exec_details.get("coinbase_sell_order_id") if exec_details else None
+        exit_slippage = exec_details.get("exit_slippage_pct") if exec_details else None
+        exit_fee = exec_details.get("exit_fee_usd") if exec_details else None
+
         if reason == "MAX_HOLD_TIME":
             success = self.db.expire_position(position_id, realized_pnl, actual_close_price)
         else:
             success = self.db.close_position(
                 position_id, actual_close_price, realized_pnl, reason,
+                coinbase_sell_order_id=sell_order_id,
+                exit_slippage_pct=exit_slippage,
+                exit_fee_usd=exit_fee,
             )
 
         if success:

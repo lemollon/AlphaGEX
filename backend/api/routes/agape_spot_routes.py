@@ -1239,6 +1239,365 @@ async def disable_bot():
     return {"success": True, "message": "AGAPE-SPOT disabled"}
 
 
+@router.get("/diagnostic")
+async def diagnostic():
+    """Diagnostic endpoint to troubleshoot data issues.
+
+    Checks database connection, table structure, column existence,
+    row counts, and trader initialization -- everything needed to
+    figure out why the frontend shows empty data.
+    """
+    result = {
+        "agape_spot_available": AGAPE_SPOT_AVAILABLE,
+        "db_connection": False,
+        "table_exists": False,
+        "columns": [],
+        "has_account_label": False,
+        "has_quantity_column": False,
+        "has_eth_quantity_column": False,
+        "open_positions_count": 0,
+        "closed_positions_count": 0,
+        "equity_snapshots_count": 0,
+        "scan_activity_count": 0,
+        "trader_initialized": False,
+        "trader_error": None,
+        "sample_closed_trade": None,
+        "query_tests": {},
+    }
+
+    # 1. Check database connection
+    conn = None
+    try:
+        if get_connection:
+            conn = get_connection()
+            result["db_connection"] = conn is not None
+    except Exception as e:
+        result["db_connection"] = False
+        result["trader_error"] = f"DB connection failed: {e}"
+
+    # 2. Check table structure
+    if conn:
+        try:
+            cursor = conn.cursor()
+
+            # Check table exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'agape_spot_positions'
+                )
+            """)
+            result["table_exists"] = cursor.fetchone()[0]
+
+            if result["table_exists"]:
+                # Get column names
+                cursor.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_name = 'agape_spot_positions'
+                    ORDER BY ordinal_position
+                """)
+                columns = [row[0] for row in cursor.fetchall()]
+                result["columns"] = columns
+                result["has_account_label"] = "account_label" in columns
+                result["has_quantity_column"] = "quantity" in columns
+                result["has_eth_quantity_column"] = "eth_quantity" in columns
+
+                # Row counts
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_positions WHERE status = 'open'"
+                )
+                result["open_positions_count"] = cursor.fetchone()[0]
+
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_positions "
+                    "WHERE status IN ('closed', 'expired', 'stopped')"
+                )
+                result["closed_positions_count"] = cursor.fetchone()[0]
+
+                # Sample closed trade (most recent)
+                cursor.execute("""
+                    SELECT position_id, ticker, entry_price, close_price,
+                           realized_pnl, close_reason, close_time
+                    FROM agape_spot_positions
+                    WHERE status IN ('closed', 'expired', 'stopped')
+                      AND close_time IS NOT NULL
+                    ORDER BY close_time DESC LIMIT 1
+                """)
+                sample = cursor.fetchone()
+                if sample:
+                    result["sample_closed_trade"] = {
+                        "position_id": sample[0],
+                        "ticker": sample[1],
+                        "entry_price": float(sample[2]) if sample[2] else None,
+                        "close_price": float(sample[3]) if sample[3] else None,
+                        "realized_pnl": float(sample[4]) if sample[4] else None,
+                        "close_reason": sample[5],
+                        "close_time": sample[6].isoformat() if sample[6] else None,
+                    }
+
+                # Test the actual queries used by get_open_positions and get_closed_trades
+                try:
+                    cursor.execute("""
+                        SELECT position_id, COALESCE(account_label, 'default')
+                        FROM agape_spot_positions WHERE status = 'open' LIMIT 1
+                    """)
+                    result["query_tests"]["open_positions_query"] = "OK"
+                except Exception as e:
+                    result["query_tests"]["open_positions_query"] = f"FAILED: {e}"
+                    conn.rollback()
+
+                try:
+                    cursor.execute("""
+                        SELECT position_id, COALESCE(account_label, 'default')
+                        FROM agape_spot_positions
+                        WHERE status IN ('closed', 'expired', 'stopped') LIMIT 1
+                    """)
+                    result["query_tests"]["closed_trades_query"] = "OK"
+                except Exception as e:
+                    result["query_tests"]["closed_trades_query"] = f"FAILED: {e}"
+                    conn.rollback()
+
+                # Test equity curve query (no account_label)
+                try:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM agape_spot_positions
+                        WHERE status IN ('closed', 'expired', 'stopped')
+                          AND close_time IS NOT NULL
+                          AND realized_pnl IS NOT NULL
+                    """)
+                    result["query_tests"]["equity_curve_query"] = (
+                        f"OK ({cursor.fetchone()[0]} rows)"
+                    )
+                except Exception as e:
+                    result["query_tests"]["equity_curve_query"] = f"FAILED: {e}"
+                    conn.rollback()
+
+            # Check equity snapshots table
+            try:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_equity_snapshots"
+                )
+                result["equity_snapshots_count"] = cursor.fetchone()[0]
+            except Exception:
+                pass
+
+            # Check scan activity table
+            try:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM agape_spot_scan_activity"
+                )
+                result["scan_activity_count"] = cursor.fetchone()[0]
+            except Exception:
+                pass
+
+            cursor.close()
+        except Exception as e:
+            result["trader_error"] = f"Table check failed: {e}"
+        finally:
+            conn.close()
+
+    # 3. Check trader initialization
+    try:
+        trader = _get_trader()
+        result["trader_initialized"] = trader is not None
+        if trader:
+            result["trader_cycle_count"] = trader._cycle_count
+            result["trader_enabled"] = trader._enabled
+            result["trader_tickers"] = trader.config.tickers
+            result["trader_live_tickers"] = trader.config.live_tickers
+            result["coinbase_connected"] = trader.executor.has_any_client
+    except Exception as e:
+        result["trader_error"] = f"Trader init failed: {e}"
+
+    return {"success": True, "diagnostic": result, "fetched_at": _format_ct()}
+
+
+@router.get("/accounts")
+async def get_accounts():
+    """List all connected Coinbase accounts with status.
+
+    Shows default account, per-ticker dedicated accounts, and which
+    tickers are live vs paper.
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
+
+    try:
+        accounts = []
+        for ticker in trader.config.tickers:
+            is_live = trader.config.is_live(ticker)
+            has_client = trader.executor._get_client(ticker) is not None
+            has_dedicated = ticker in trader.executor._ticker_clients
+            cfg = SPOT_TICKERS.get(ticker, {})
+
+            accounts.append({
+                "ticker": ticker,
+                "display_name": cfg.get("display_name", ticker),
+                "mode": "live" if is_live else "paper",
+                "coinbase_connected": has_client,
+                "account_type": "dedicated" if has_dedicated else "default",
+                "live_capital": cfg.get("live_capital", cfg.get("starting_capital", 0)),
+                "starting_capital": cfg.get("starting_capital", 0),
+            })
+
+        return {
+            "success": True,
+            "data": accounts,
+            "has_default_client": trader.executor._client is not None,
+            "dedicated_tickers": list(trader.executor._ticker_clients.keys()),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT accounts error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/account-balances")
+async def get_account_balances():
+    """Get real Coinbase account balances (USD + crypto holdings).
+
+    Returns balances from all connected accounts (default + dedicated).
+    Only available when Coinbase API is connected.
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "data": {}, "message": "AGAPE-SPOT not available"}
+
+    try:
+        balances = trader.executor.get_all_account_balances()
+        return {
+            "success": True,
+            "data": balances,
+            "accounts_queried": len(balances),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT account balances error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/execution-quality")
+async def get_execution_quality(
+    ticker: Optional[str] = Query(default=None, description="Filter by ticker"),
+    limit: int = Query(default=100, le=500, description="Number of trades to analyze"),
+):
+    """Analyze execution quality: slippage, fees, and fill performance.
+
+    Shows entry/exit slippage distribution, total fees paid, and
+    average execution quality across recent trades.
+    """
+    ticker = _validate_ticker(ticker)
+
+    if not get_connection:
+        return {"success": False, "data": {}, "message": "No database connection"}
+
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Query trades with execution details
+        sql = """
+            SELECT
+                position_id, ticker, entry_price, close_price,
+                entry_slippage_pct, exit_slippage_pct,
+                entry_fee_usd, exit_fee_usd,
+                coinbase_order_id, coinbase_sell_order_id,
+                realized_pnl, close_time, account_label
+            FROM agape_spot_positions
+            WHERE status IN ('closed', 'expired', 'stopped')
+              AND close_time IS NOT NULL
+        """
+        params: list = []
+        if ticker:
+            sql += " AND ticker = %s"
+            params.append(ticker)
+        sql += " ORDER BY close_time DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(sql, tuple(params))
+        rows = cursor.fetchall()
+
+        trades = []
+        total_entry_slippage = 0.0
+        total_exit_slippage = 0.0
+        total_fees = 0.0
+        slippage_count = 0
+        fee_count = 0
+        has_order_id_count = 0
+
+        for row in rows:
+            entry_slip = float(row[4]) if row[4] is not None else None
+            exit_slip = float(row[5]) if row[5] is not None else None
+            entry_fee = float(row[6]) if row[6] is not None else None
+            exit_fee = float(row[7]) if row[7] is not None else None
+            has_order = row[8] is not None
+
+            trade = {
+                "position_id": row[0],
+                "ticker": row[1],
+                "entry_price": float(row[2]) if row[2] else None,
+                "close_price": float(row[3]) if row[3] else None,
+                "entry_slippage_pct": entry_slip,
+                "exit_slippage_pct": exit_slip,
+                "entry_fee_usd": entry_fee,
+                "exit_fee_usd": exit_fee,
+                "has_coinbase_order_id": has_order,
+                "has_coinbase_sell_order_id": row[9] is not None,
+                "realized_pnl": float(row[10]) if row[10] else None,
+                "close_time": row[11].isoformat() if row[11] else None,
+                "account_label": row[12] or "default",
+            }
+            trades.append(trade)
+
+            if entry_slip is not None:
+                total_entry_slippage += abs(entry_slip)
+                slippage_count += 1
+            if exit_slip is not None:
+                total_exit_slippage += abs(exit_slip)
+                slippage_count += 1
+            if entry_fee is not None:
+                total_fees += entry_fee
+                fee_count += 1
+            if exit_fee is not None:
+                total_fees += exit_fee
+                fee_count += 1
+            if has_order:
+                has_order_id_count += 1
+
+        avg_entry_slippage = (
+            round(total_entry_slippage / slippage_count, 4)
+            if slippage_count > 0 else None
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "trades": trades,
+                "summary": {
+                    "total_trades_analyzed": len(trades),
+                    "trades_with_order_id": has_order_id_count,
+                    "trades_with_slippage_data": slippage_count,
+                    "avg_slippage_pct": avg_entry_slippage,
+                    "total_fees_usd": round(total_fees, 2),
+                    "avg_fee_per_trade": (
+                        round(total_fees / fee_count, 2)
+                        if fee_count > 0 else None
+                    ),
+                },
+            },
+            "ticker_filter": ticker,
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT execution quality error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
 @router.post("/force-close")
 async def force_close_positions(
     ticker: Optional[str] = Query(default=None, description="Close positions for this ticker only"),

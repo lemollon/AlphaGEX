@@ -118,17 +118,17 @@ class AgapeSpotDatabase:
                     current_stop FLOAT,
                     oracle_prediction_id INTEGER,
                     account_label VARCHAR(50) DEFAULT 'default',
+
+                    -- Coinbase execution tracking
+                    coinbase_order_id VARCHAR(100),
+                    coinbase_sell_order_id VARCHAR(100),
+                    entry_slippage_pct FLOAT,
+                    exit_slippage_pct FLOAT,
+                    entry_fee_usd FLOAT,
+                    exit_fee_usd FLOAT,
+
                     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
-            """)
-
-            # Add account_label column if missing (existing tables)
-            cursor.execute("""
-                DO $$
-                BEGIN
-                    ALTER TABLE agape_spot_positions ADD COLUMN account_label VARCHAR(50) DEFAULT 'default';
-                EXCEPTION WHEN duplicate_column THEN NULL;
-                END $$;
             """)
 
             # ----- agape_spot_equity_snapshots -----
@@ -199,16 +199,23 @@ class AgapeSpotDatabase:
             """)
 
             # --- positions: rename eth_quantity -> quantity ---
-            try:
-                cursor.execute("""
+            # Uses PL/pgSQL exception handler so failure doesn't rollback
+            # the entire Python-level transaction (which would undo all
+            # earlier migrations in this block).
+            cursor.execute("""
+                DO $$
+                BEGIN
                     ALTER TABLE agape_spot_positions
-                    RENAME COLUMN eth_quantity TO quantity
-                """)
-            except Exception:
-                # Column already renamed or doesn't exist
-                conn.rollback()
-                # Re-start transaction after rollback
-                cursor = conn.cursor()
+                    RENAME COLUMN eth_quantity TO quantity;
+                EXCEPTION WHEN undefined_column THEN NULL;
+                END $$;
+            """)
+
+            # --- positions: add account_label column ---
+            cursor.execute("""
+                ALTER TABLE agape_spot_positions
+                ADD COLUMN IF NOT EXISTS account_label VARCHAR(50) DEFAULT 'default'
+            """)
 
             # --- equity_snapshots: add ticker column ---
             cursor.execute("""
@@ -227,6 +234,20 @@ class AgapeSpotDatabase:
                 ALTER TABLE agape_spot_activity_log
                 ADD COLUMN IF NOT EXISTS ticker VARCHAR(20)
             """)
+
+            # --- positions: Coinbase execution tracking columns ---
+            for col, typedef in [
+                ("coinbase_order_id", "VARCHAR(100)"),
+                ("coinbase_sell_order_id", "VARCHAR(100)"),
+                ("entry_slippage_pct", "FLOAT"),
+                ("exit_slippage_pct", "FLOAT"),
+                ("entry_fee_usd", "FLOAT"),
+                ("exit_fee_usd", "FLOAT"),
+            ]:
+                cursor.execute(f"""
+                    ALTER TABLE agape_spot_positions
+                    ADD COLUMN IF NOT EXISTS {col} {typedef}
+                """)
 
             # ==========================================================
             # Indexes
@@ -310,6 +331,10 @@ class AgapeSpotDatabase:
 
             account_label = getattr(pos, "account_label", "default")
 
+            coinbase_order_id = getattr(pos, "coinbase_order_id", None)
+            entry_slippage_pct = getattr(pos, "entry_slippage_pct", None)
+            entry_fee_usd = getattr(pos, "entry_fee_usd", None)
+
             cursor.execute("""
                 INSERT INTO agape_spot_positions (
                     position_id, ticker, side, quantity, entry_price,
@@ -322,11 +347,12 @@ class AgapeSpotDatabase:
                     oracle_top_factors,
                     signal_action, signal_confidence, signal_reasoning,
                     status, open_time, high_water_mark,
-                    account_label
+                    account_label,
+                    coinbase_order_id, entry_slippage_pct, entry_fee_usd
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """, (
                 pos.position_id, ticker, side, quantity, pos.entry_price,
@@ -342,6 +368,7 @@ class AgapeSpotDatabase:
                 pos.open_time or _now_ct(),
                 pos.entry_price,
                 account_label,
+                coinbase_order_id, entry_slippage_pct, entry_fee_usd,
             ))
             conn.commit()
             logger.info(f"AGAPE-SPOT DB: Saved position {pos.position_id} ({ticker})")
@@ -354,7 +381,16 @@ class AgapeSpotDatabase:
             cursor.close()
             conn.close()
 
-    def close_position(self, position_id: str, close_price: float, realized_pnl: float, reason: str) -> bool:
+    def close_position(
+        self,
+        position_id: str,
+        close_price: float,
+        realized_pnl: float,
+        reason: str,
+        coinbase_sell_order_id: str = None,
+        exit_slippage_pct: float = None,
+        exit_fee_usd: float = None,
+    ) -> bool:
         conn = self._get_conn()
         if not conn:
             return False
@@ -363,9 +399,16 @@ class AgapeSpotDatabase:
             cursor.execute("""
                 UPDATE agape_spot_positions
                 SET status = 'closed', close_time = NOW(),
-                    close_price = %s, realized_pnl = %s, close_reason = %s
+                    close_price = %s, realized_pnl = %s, close_reason = %s,
+                    coinbase_sell_order_id = COALESCE(%s, coinbase_sell_order_id),
+                    exit_slippage_pct = COALESCE(%s, exit_slippage_pct),
+                    exit_fee_usd = COALESCE(%s, exit_fee_usd)
                 WHERE position_id = %s AND status = 'open'
-            """, (close_price, realized_pnl, reason, position_id))
+            """, (
+                close_price, realized_pnl, reason,
+                coinbase_sell_order_id, exit_slippage_pct, exit_fee_usd,
+                position_id,
+            ))
             conn.commit()
             return cursor.rowcount > 0
         except Exception as e:
@@ -591,6 +634,62 @@ class AgapeSpotDatabase:
         except Exception:
             conn.rollback()
             return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Daily P&L (for portfolio circuit breaker)
+    # ------------------------------------------------------------------
+
+    def get_daily_realized_pnl(self, ticker: Optional[str] = None) -> float:
+        """Sum of realized P&L for positions closed today (CT)."""
+        conn = self._get_conn()
+        if not conn:
+            return 0.0
+        try:
+            cursor = conn.cursor()
+            sql = """
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM agape_spot_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                  AND DATE(close_time AT TIME ZONE 'America/Chicago')
+                      = DATE(NOW() AT TIME ZONE 'America/Chicago')
+            """
+            params: list = []
+            if ticker:
+                sql += " AND ticker = %s"
+                params.append(ticker)
+            cursor.execute(sql, tuple(params) if params else None)
+            return float(cursor.fetchone()[0])
+        except Exception:
+            return 0.0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_daily_trade_count(self, ticker: Optional[str] = None) -> int:
+        """Count positions closed today (CT)."""
+        conn = self._get_conn()
+        if not conn:
+            return 0
+        try:
+            cursor = conn.cursor()
+            sql = """
+                SELECT COUNT(*)
+                FROM agape_spot_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                  AND DATE(close_time AT TIME ZONE 'America/Chicago')
+                      = DATE(NOW() AT TIME ZONE 'America/Chicago')
+            """
+            params: list = []
+            if ticker:
+                sql += " AND ticker = %s"
+                params.append(ticker)
+            cursor.execute(sql, tuple(params) if params else None)
+            return cursor.fetchone()[0]
+        except Exception:
+            return 0
         finally:
             cursor.close()
             conn.close()
