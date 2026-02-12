@@ -9,6 +9,7 @@ import {
   ChevronRight
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   useOmegaStatus,
   useOmegaBots,
@@ -184,6 +185,7 @@ const BotCard = ({ botName, botData }: {
 // ==================== MAIN PAGE ====================
 
 export default function OmegaDashboard() {
+  const sidebarPadding = useSidebarPadding()
   const { data: statusData, error: statusError, isLoading: statusLoading } = useOmegaStatus()
   const { data: botsData } = useOmegaBots()
   const { data: layersData } = useOmegaLayers()
@@ -218,7 +220,8 @@ export default function OmegaDashboard() {
   return (
     <div className="min-h-screen bg-background-deep text-text-primary">
       <Navigation />
-      <div className="flex-1 p-6">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -497,8 +500,8 @@ export default function OmegaDashboard() {
             </a>
           ))}
         </div>
-      </div>
-
+        </div>
+      </main>
     </div>
   )
 }

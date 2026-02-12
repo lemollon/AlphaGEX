@@ -8,6 +8,7 @@ import {
   Activity, Clock, Cpu, Info, Target
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 
 // ==================== TYPES ====================
@@ -131,6 +132,7 @@ const LayerResultCard = ({
 // ==================== MAIN PAGE ====================
 
 export default function OmegaSimulator() {
+  const sidebarPadding = useSidebarPadding()
   // Input state
   const [selectedBot, setSelectedBot] = useState('FORTRESS')
   const [vixValue, setVixValue] = useState(20)
@@ -199,7 +201,8 @@ export default function OmegaSimulator() {
   return (
     <div className="min-h-screen bg-background-deep text-text-primary">
       <Navigation />
-      <div className="flex-1 p-6">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -937,7 +940,8 @@ export default function OmegaSimulator() {
             )}
           </div>
         </div>
-      </div>
+        </div>
+      </main>
     </div>
   )
 }

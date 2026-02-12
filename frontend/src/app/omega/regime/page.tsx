@@ -9,6 +9,7 @@ import {
   Calendar, BookOpen, ArrowUpDown
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   useOmegaRegime,
   useOmegaRetrainStatus,
@@ -674,6 +675,7 @@ function RegimeImpactCard() {
 // ==================== MAIN PAGE ====================
 
 export default function RegimeMonitorPage() {
+  const sidebarPadding = useSidebarPadding()
   const { data: regimeData, error: regimeError, isLoading: regimeLoading } = useOmegaRegime()
   const { data: retrainData, error: retrainError, isLoading: retrainLoading } = useOmegaRetrainStatus()
 
@@ -683,7 +685,8 @@ export default function RegimeMonitorPage() {
   return (
     <div className="min-h-screen bg-background-deep text-text-primary">
       <Navigation />
-      <div className="flex-1 p-6">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
+        <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -751,7 +754,8 @@ export default function RegimeMonitorPage() {
             <RegimeImpactCard />
           </div>
         )}
-      </div>
+        </div>
+      </main>
     </div>
   )
 }
