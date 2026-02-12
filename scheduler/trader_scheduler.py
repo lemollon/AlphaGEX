@@ -608,9 +608,9 @@ class AutonomousTraderScheduler:
                 logger.warning(f"JUBILEE initialization failed: {e}")
                 self.jubilee_trader = None
 
-        # JUBILEE: Ensure a box spread position exists at startup.
-        # Without a box spread, IC trading has no capital and is completely blocked.
-        # This runs once on boot so Jubilee can trade immediately after deploy.
+        # JUBILEE: Ensure a viable box spread position exists at startup.
+        # IC trading needs capital from box spreads. In PAPER mode, positions
+        # are auto-extended (never roll), so just ensure one exists.
         if self.jubilee_trader:
             try:
                 open_positions = self.jubilee_trader.get_positions()
@@ -619,7 +619,18 @@ class AutonomousTraderScheduler:
                     self.jubilee_trader._create_emergency_paper_position()
                     logger.info("JUBILEE STARTUP: Box spread position created - IC trading is funded")
                 else:
-                    logger.info(f"JUBILEE STARTUP: {len(open_positions)} open box spread(s) found - IC trading is funded")
+                    # Check if existing positions are still viable (not expired)
+                    from datetime import date as _date
+                    viable = any(
+                        (datetime.strptime(p.get('expiration', '2000-01-01'), '%Y-%m-%d').date() - _date.today()).days > 0
+                        for p in open_positions
+                    )
+                    if not viable:
+                        logger.warning("JUBILEE STARTUP: All box spreads are expired - creating new one")
+                        self.jubilee_trader._create_emergency_paper_position()
+                        logger.info("JUBILEE STARTUP: Fresh box spread created - IC trading is funded")
+                    else:
+                        logger.info(f"JUBILEE STARTUP: {len(open_positions)} viable box spread(s) found - IC trading is funded")
             except Exception as e:
                 logger.error(f"JUBILEE STARTUP: Failed to verify box spread: {e}")
 

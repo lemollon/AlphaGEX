@@ -129,11 +129,26 @@ class JubileeTrader:
                     # Check for roll
                     roll_decision = self.executor.check_roll_decision(position)
                     if roll_decision['should_roll']:
-                        result['roll_candidates'].append({
-                            'position_id': position.position_id,
-                            'current_dte': roll_decision['current_dte'],
-                            'reasoning': roll_decision['reasoning'],
-                        })
+                        # PAPER MODE: Auto-extend expiration instead of rolling.
+                        # Paper box spreads are fictional - rolling them through
+                        # the real signal/execution pipeline is the root cause of
+                        # the recurring $0 capital bug. Just extend the date.
+                        if self.config.mode == TradingMode.PAPER:
+                            new_expiration = date.today() + timedelta(days=180)
+                            position.expiration = new_expiration.strftime('%Y-%m-%d')
+                            position.current_dte = 180
+                            position.dte_at_entry = 180
+                            logger.info(
+                                f"JUBILEE PAPER: Auto-extended box spread {position.position_id} "
+                                f"expiration to {position.expiration} (180 DTE). No roll needed."
+                            )
+                        else:
+                            # LIVE MODE: Real positions need actual rolling
+                            result['roll_candidates'].append({
+                                'position_id': position.position_id,
+                                'current_dte': roll_decision['current_dte'],
+                                'reasoning': roll_decision['reasoning'],
+                            })
 
                     # Save updated position
                     self.db.save_position(position)
@@ -1203,25 +1218,39 @@ class JubileeICTrader:
 
     def _ensure_paper_box_spread(self) -> None:
         """
-        In PAPER mode, create a synthetic box spread position if none exists
-        or if all existing positions have expired (DTE <= 0).
-        This provides the borrowed capital for IC trading.
+        In PAPER mode, ensure a viable box spread position always exists.
+
+        Paper box spreads are fictional - they exist for display/reconciliation.
+        If any position is approaching expiration (DTE <= 30), auto-extend it
+        instead of letting it trigger the roll pipeline (which fails in paper mode).
+        If no positions exist at all, create a new one.
         """
         if self.config.mode != TradingMode.PAPER:
             return
 
         box_positions = self.db.get_open_positions()
 
-        # Check if any position is still viable (DTE > 0)
+        # Check viability and auto-extend any paper positions approaching threshold
         if box_positions:
             viable = False
             for pos in box_positions:
                 try:
                     exp_date = datetime.strptime(pos.expiration, '%Y-%m-%d').date()
                     dte = (exp_date - date.today()).days
-                    if dte > 0:
+                    if dte > 30:
                         viable = True
-                        break
+                    elif dte > 0:
+                        # Position approaching roll threshold - auto-extend it
+                        new_expiration = date.today() + timedelta(days=180)
+                        pos.expiration = new_expiration.strftime('%Y-%m-%d')
+                        pos.current_dte = 180
+                        self.db.save_position(pos)
+                        logger.info(
+                            f"PAPER MODE: Auto-extended {pos.position_id} to "
+                            f"{pos.expiration} (was {dte} DTE)"
+                        )
+                        viable = True
+                    # else: DTE <= 0, skip this expired position
                 except (ValueError, TypeError):
                     continue
             if viable:
