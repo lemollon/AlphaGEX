@@ -54,6 +54,7 @@ const navItems = [
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
   { href: '/watchtower', label: `${ADVISOR_DISPLAY_NAMES.WATCHTOWER} (0DTE Gamma)`, icon: Eye, category: 'Analysis' },
   { href: '/gex-charts', label: 'GEX Charts (TV Style)', icon: BarChart3, category: 'Analysis' },
+  { href: '/gex-profile', label: 'GEX Profile', icon: BarChart3, category: 'Analysis' },
   { href: '/glory', label: `${ADVISOR_DISPLAY_NAMES.GLORY} (Weekly Gamma)`, icon: Sparkles, category: 'Analysis' },
   { href: '/discernment', label: `${ADVISOR_DISPLAY_NAMES.DISCERNMENT} (ML Scanner)`, icon: Sun, category: 'Trading' },
   { href: '/zero-dte-backtest', label: `${ADVISOR_DISPLAY_NAMES.CHRONICLES} (0DTE Condor)`, icon: Clock, category: 'AI & Testing' },
