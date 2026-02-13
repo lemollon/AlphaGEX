@@ -283,11 +283,12 @@ class AgapeSpotTrader:
                     traded_accounts.append(account_label)
 
                     mode_str = "LIVE" if is_live else "PAPER"
-                    notional = signal.quantity * position.entry_price
+                    actual_qty = position.quantity
+                    notional = actual_qty * position.entry_price
                     self.db.log(
                         "INFO", "NEW_TRADE",
                         f"[{mode_str}:{account_label}] LONG {ticker} "
-                        f"{signal.quantity} @ ${position.entry_price:.2f} "
+                        f"{actual_qty} @ ${position.entry_price:.2f} "
                         f"(${notional:.2f})",
                         details=signal.to_dict(),
                         ticker=ticker,
