@@ -1,7 +1,7 @@
 """
 AGAPE-SPOT Signal Generator - Multi-ticker, LONG-ONLY spot trade signals.
 
-Supports: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+Supports: ETH-USD, BTC-USD, XRP-USD, SHIB-USD, DOGE-USD
 LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
 
 Uses crypto market microstructure (funding, OI, liquidations, crypto GEX)
