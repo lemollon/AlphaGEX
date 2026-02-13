@@ -1352,8 +1352,8 @@ class JubileeICSignalGenerator:
             call_sd_actual = (call_short - spot) / effective_em if effective_em > 0 else 0
             logger.info(f"[JUBILEE IC STRIKES] Using SD-based ({sd:.1f} SD): Put ${put_short} ({put_sd_actual:.1f} SD), Call ${call_short} ({call_sd_actual:.1f} SD)")
 
-        put_long = put_short - width
-        call_long = call_short + width
+        put_long = round_to_5(put_short - width)
+        call_long = round_to_5(call_short + width)
 
         return {
             'put_short': put_short,
