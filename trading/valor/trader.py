@@ -376,10 +376,15 @@ class ValorTrader:
 
                 # ============================================================
                 # GATE 6: Signal Validation
+                # Overnight: Only check essential fields (entry, stop, contracts).
+                # Win probability and confidence gates are bypassed overnight -
+                # risk is managed by no-loss trailing + SAR + emergency stop.
                 # ============================================================
-                if signal.is_valid:
+                overnight_valid = is_overnight and signal.entry_price > 0 and signal.stop_price > 0 and signal.contracts >= 1
+                if signal.is_valid or overnight_valid:
+                    bypass_note = " (OVERNIGHT: confidence/win_prob gates bypassed)" if (not signal.is_valid and overnight_valid) else ""
                     logger.info(
-                        f"VALOR GATE 6 PASSED: Signal valid - executing {signal.direction.value} "
+                        f"VALOR GATE 6 PASSED{bypass_note}: executing {signal.direction.value} "
                         f"{signal.contracts} contracts at {signal.entry_price:.2f}"
                     )
                     # Execute the signal with scan_id for ML tracking

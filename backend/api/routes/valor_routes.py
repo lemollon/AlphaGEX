@@ -237,7 +237,7 @@ async def get_valor_performance():
 
 @router.get("/api/valor/logs")
 async def get_valor_logs(
-    limit: int = Query(100, ge=1, le=1000, description="Number of log entries")
+    limit: int = Query(1000, ge=1, le=10000, description="Number of log entries")
 ):
     """
     Get VALOR activity logs for audit trail.
@@ -263,7 +263,7 @@ async def get_valor_logs(
 
 @router.get("/api/valor/signals/recent")
 async def get_valor_recent_signals(
-    limit: int = Query(50, ge=1, le=500, description="Number of signals")
+    limit: int = Query(1000, ge=1, le=10000, description="Number of signals")
 ):
     """
     Get recent VALOR signals (scan activity).
