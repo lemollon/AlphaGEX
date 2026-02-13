@@ -199,11 +199,13 @@ export default function GexProfilePage() {
   const [autoRefresh, setAutoRefresh] = useState(true)
 
   // ── Fetch ───────────────────────────────────────────────────────
-  const fetchGexData = useCallback(async (sym: string) => {
+  const fetchGexData = useCallback(async (sym: string, clearFirst = false) => {
     try {
-      setLoading(true)
+      if (clearFirst) {
+        setData(null) // Only clear on symbol change — prevents blank flash on auto-refresh
+        setLoading(true)
+      }
       setError(null)
-      setData(null) // Clear stale data to prevent cross-symbol Y-axis distortion
       const res = await apiClient.getWatchtowerGexAnalysis(sym)
       const result = res.data
       if (result?.success) {
@@ -221,11 +223,13 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  const fetchIntradayTicks = useCallback(async (sym: string) => {
+  const fetchIntradayTicks = useCallback(async (sym: string, clearFirst = false) => {
     try {
+      if (clearFirst) {
+        setIntradayTicks([]) // Only clear on symbol change
+        setIntradayBars([])
+      }
       setIntradayLoading(true)
-      setIntradayTicks([]) // Clear stale symbol data
-      setIntradayBars([])
       const [ticksRes, barsRes] = await Promise.all([
         apiClient.getWatchtowerIntradayTicks(sym, 5),
         apiClient.getWatchtowerIntradayBars(sym, '5min'),
@@ -255,10 +259,10 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  // Initial load
+  // Initial load + symbol change (clear stale data)
   useEffect(() => {
-    fetchGexData(symbol)
-    fetchIntradayTicks(symbol)
+    fetchGexData(symbol, true)
+    fetchIntradayTicks(symbol, true)
   }, [symbol, fetchGexData, fetchIntradayTicks])
 
   // Auto-refresh during market hours
@@ -270,9 +274,9 @@ export default function GexProfilePage() {
       if (!isMarketOpen()) return
       tick++
       refreshBars(symbol) // Every 15s — near-live candlestick updates
-      if (tick % 2 === 0) { // Every 30s — full GEX + ticks refresh
-        fetchGexData(symbol)
-        fetchIntradayTicks(symbol)
+      if (tick % 2 === 0) { // Every 30s — full GEX + ticks refresh (no clear)
+        fetchGexData(symbol, false)
+        fetchIntradayTicks(symbol, false)
       }
     }, 15_000)
     return () => clearInterval(id)
@@ -684,7 +688,7 @@ export default function GexProfilePage() {
                   if (pw) yPoints.push(pw)
                   const yMin = yPoints.length > 0 ? Math.min(...yPoints) : 0
                   const yMax = yPoints.length > 0 ? Math.max(...yPoints) : 0
-                  const yPad = (yMax - yMin) * 0.15 || 2
+                  const yPad = (yMax - yMin) * 0.35 || 4
                   const yRange: [number, number] = [yMin - yPad, yMax + yPad]
 
                   // Reference level annotations (on right edge)
