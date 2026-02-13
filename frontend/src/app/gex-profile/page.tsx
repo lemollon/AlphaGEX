@@ -635,7 +635,7 @@ export default function GexProfilePage() {
                   <>
                     <div className="h-[550px]">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={sortedStrikes} layout="vertical" margin={{ top: 5, right: 30, left: 60, bottom: 5 }}>
+                        <BarChart data={sortedStrikes} layout="vertical" margin={{ top: 5, right: 60, left: 30, bottom: 5 }}>
                           {/* X-axis: bars extend left from 0 — show absolute magnitude in labels */}
                           <XAxis
                             type="number"
@@ -645,8 +645,8 @@ export default function GexProfilePage() {
                             domain={[0, 'auto']}
                             reversed
                           />
-                          {/* Strike prices on left side */}
-                          <YAxis type="category" dataKey="strike" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#374151' }} />
+                          {/* Strike prices on right side (where bars originate from 0) */}
+                          <YAxis type="category" dataKey="strike" orientation="right" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#374151' }} />
                           <Tooltip content={<StrikeTooltip />} />
 
                           {/* Reference lines */}
