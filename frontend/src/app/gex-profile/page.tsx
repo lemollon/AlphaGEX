@@ -197,6 +197,7 @@ export default function GexProfilePage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [chartView, setChartView] = useState<ChartView>('intraday')
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [nextCandleCountdown, setNextCandleCountdown] = useState('')
 
   // ── Fetch ───────────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym: string, clearFirst = false) => {
@@ -281,6 +282,23 @@ export default function GexProfilePage() {
     }, 15_000)
     return () => clearInterval(id)
   }, [autoRefresh, symbol, fetchGexData, fetchIntradayTicks, refreshBars])
+
+  // Live countdown to next 5-minute candle
+  useEffect(() => {
+    const calc = () => {
+      const now = new Date()
+      const min = now.getMinutes()
+      const sec = now.getSeconds()
+      const secsIntoBar = (min % 5) * 60 + sec
+      const secsLeft = 5 * 60 - secsIntoBar
+      const m = Math.floor(secsLeft / 60)
+      const s = secsLeft % 60
+      setNextCandleCountdown(`${m}:${s.toString().padStart(2, '0')}`)
+    }
+    calc()
+    const id = setInterval(calc, 1000)
+    return () => clearInterval(id)
+  }, [])
 
   const handleSymbolSearch = () => {
     const s = searchInput.trim().toUpperCase()
@@ -555,6 +573,11 @@ export default function GexProfilePage() {
                     ? `${symbol} Intraday 5m — Price + Net Gamma`
                     : `${symbol} ${chartView === 'net' ? 'Net' : 'Call vs Put'} GEX by Strike — ${data.expiration}`
                   }
+                  {chartView === 'intraday' && nextCandleCountdown && (
+                    <span className="ml-3 text-xs font-mono bg-gray-900 border border-gray-600 rounded px-2 py-0.5 text-cyan-400">
+                      Next candle: {nextCandleCountdown}
+                    </span>
+                  )}
                 </h3>
                 <div className="flex items-center gap-1 bg-gray-900 rounded-lg p-0.5 border border-gray-700">
                   {(['net', 'split', 'intraday'] as ChartView[]).map(view => (
@@ -788,14 +811,16 @@ export default function GexProfilePage() {
                           data={traces}
                           layout={{
                             height: 550,
-                            paper_bgcolor: 'rgba(0,0,0,0)',
-                            plot_bgcolor: 'rgba(0,0,0,0)',
+                            paper_bgcolor: '#111827',
+                            plot_bgcolor: '#1a2332',
                             font: { color: '#9ca3af', family: 'Arial, sans-serif', size: 11 },
                             xaxis: {
                               type: 'date',
                               gridcolor: '#1f2937',
                               showgrid: true,
                               rangeslider: { visible: false },
+                              hoverformat: '%I:%M %p',  // 12h AM/PM in tooltip
+                              tickformat: '%I:%M %p',
                             },
                             yaxis: {
                               title: { text: 'Price', font: { size: 11, color: '#6b7280' } },
