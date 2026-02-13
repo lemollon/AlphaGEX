@@ -1268,8 +1268,8 @@ export default function GexChartsPage() {
                             .sort((a, b) => b.strike - a.strike)
                             .map(s => ({
                               ...s,
-                              // Absolute value for bar length — color encodes sign
-                              abs_net_gamma: Math.abs(s.net_gamma),
+                              // Negative absolute value — bars extend left from 0
+                              abs_net_gamma: -Math.abs(s.net_gamma),
                               // For split view: negate put_gamma so it shows as negative bars
                               put_gamma_display: -(s.put_gamma || 0),
                             }))
@@ -1278,21 +1278,19 @@ export default function GexChartsPage() {
                           <BarChart
                             data={sortedStrikes}
                             layout="vertical"
-                            margin={{ top: 5, right: 60, left: 10, bottom: 5 }}
+                            margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
                           >
                             <XAxis
                               type="number"
                               tick={{ fill: '#9ca3af', fontSize: 10 }}
-                              tickFormatter={(v) => formatNumber(v, 1)}
-                              domain={[0, 'auto']}
-                              reversed
+                              tickFormatter={(v) => formatNumber(Math.abs(v), 1)}
+                              domain={['auto', 0]}
                             />
                             <YAxis
                               type="category"
                               dataKey="strike"
                               tick={{ fill: '#9ca3af', fontSize: 10 }}
                               width={50}
-                              orientation="right"
                             />
                             <Tooltip content={<CustomTooltip />} />
 
