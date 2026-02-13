@@ -24,6 +24,8 @@ from trading.agape_spot.models import (
     SignalAction,
     TradingMode,
     SPOT_TICKERS,
+    BayesianWinTracker,
+    FundingRegime,
 )
 from trading.agape_spot.db import AgapeSpotDatabase
 from trading.agape_spot.signals import (
@@ -75,7 +77,12 @@ class AgapeSpotTrader:
         else:
             self.config = AgapeSpotConfig.load_from_db(self.db)
 
-        self.signals = AgapeSpotSignalGenerator(self.config)
+        # Per-ticker Bayesian win trackers (loaded from DB)
+        self._win_trackers: Dict[str, BayesianWinTracker] = {}
+        for ticker in self.config.tickers:
+            self._win_trackers[ticker] = self.db.get_win_tracker(ticker)
+
+        self.signals = AgapeSpotSignalGenerator(self.config, self._win_trackers)
         self.executor = AgapeSpotExecutor(self.config, self.db)
 
         self._cycle_count: int = 0
@@ -94,11 +101,17 @@ class AgapeSpotTrader:
             self._direction_trackers[ticker] = get_spot_direction_tracker(ticker, self.config)
             self._last_trade_scan[ticker] = 0
 
+        # Log tracker state at startup
+        tracker_summary = {
+            t: f"trades={tr.total_trades}, win_prob={tr.win_probability:.3f}"
+            for t, tr in self._win_trackers.items()
+        }
         self.db.log(
             "INFO", "INIT",
             f"AGAPE-SPOT trader initialized "
             f"(live_tickers={self.config.live_tickers}, "
-            f"tickers={self.config.tickers}, 24/7 Coinbase spot, LONG-ONLY)",
+            f"tickers={self.config.tickers}, 24/7 Coinbase spot, LONG-ONLY, "
+            f"win_trackers={tracker_summary})",
         )
         logger.info(
             f"AGAPE-SPOT: Initialized "
@@ -684,6 +697,14 @@ class AgapeSpotTrader:
         if success:
             won = realized_pnl > 0
 
+            # Update Bayesian win tracker (per-ticker)
+            funding_regime_str = pos_dict.get("funding_regime_at_entry", "UNKNOWN")
+            funding_regime = FundingRegime.from_funding_string(funding_regime_str)
+            tracker = self._win_trackers.get(ticker)
+            if tracker:
+                tracker.update(won, funding_regime)
+                self.db.save_win_tracker(tracker)
+
             # Per-ticker loss streak tracking
             if won:
                 prev_streak = self._loss_streaks.get(ticker, 0)
@@ -921,6 +942,9 @@ class AgapeSpotTrader:
                     for t in self.config.tickers
                 },
             },
+            "win_trackers": {
+                t: tr.to_dict() for t, tr in self._win_trackers.items()
+            },
             "per_ticker": per_ticker,
         }
 
@@ -962,9 +986,10 @@ class AgapeSpotTrader:
             else None
         )
 
-        tracker = self._get_direction_tracker(ticker)
+        dir_tracker = self._get_direction_tracker(ticker)
         loss_streak = self._loss_streaks.get(ticker, 0)
         pause_until = self._loss_pause_until.get(ticker)
+        win_tracker = self._win_trackers.get(ticker)
 
         is_live = self.config.is_live(ticker)
         coinbase_ok = self.executor._get_client(ticker) is not None
@@ -1003,12 +1028,13 @@ class AgapeSpotTrader:
             },
             "aggressive_features": {
                 "use_no_loss_trailing": self.config.use_no_loss_trailing,
-                "direction_tracker": tracker.get_status(),
+                "direction_tracker": dir_tracker.get_status(),
                 "consecutive_losses": loss_streak,
                 "loss_streak_paused": (
                     pause_until is not None and now < pause_until
                 ),
             },
+            "win_tracker": win_tracker.to_dict() if win_tracker else None,
             "positions": open_positions,
         }
 

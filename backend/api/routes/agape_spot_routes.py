@@ -200,6 +200,14 @@ async def get_summary():
             display_name = SPOT_TICKERS.get(ticker, {}).get("display_name", ticker)
 
             is_live = trader.config.is_live(ticker)
+
+            # Bayesian win tracker data
+            win_tracker_data = None
+            if hasattr(trader, '_win_trackers'):
+                wt = trader._win_trackers.get(ticker)
+                if wt:
+                    win_tracker_data = wt.to_dict()
+
             per_ticker[ticker] = {
                 "ticker": ticker,
                 "display_name": display_name,
@@ -216,6 +224,7 @@ async def get_summary():
                 "wins": len(wins),
                 "losses": len(losses_list),
                 "win_rate": win_rate,
+                "win_tracker": win_tracker_data,
             }
 
             totals["starting_capital"] += starting_capital

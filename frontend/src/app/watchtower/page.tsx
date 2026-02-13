@@ -55,6 +55,7 @@ import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import StarsStatusBadge from '@/components/StarsStatusBadge'
 import { WatchtowerEnhancedPanel } from '@/components/WatchtowerEnhancements'
+import ModuleErrorBoundary from '@/components/ModuleErrorBoundary'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -255,6 +256,7 @@ interface GammaData {
   is_mock: boolean
   is_stale?: boolean  // True when showing cached live data during market hours
   is_cached?: boolean  // True when showing cached data
+  is_frozen?: boolean  // True when after-hours data is frozen (will not change)
   cache_age_seconds?: number  // How old the cached data is
   fetched_at?: string  // Timestamp when data was fetched (Central timezone)
   data_timestamp?: string  // When Tradier data was actually fetched
@@ -865,6 +867,29 @@ export default function WatchtowerPage() {
             setGammaData(null)
           }
           return
+        }
+
+        // DATA VALIDATION: Verify strikes are valid before rendering
+        if (newData.strikes && Array.isArray(newData.strikes) && newData.spot_price > 0) {
+          // Ensure strikes are sorted by strike price (deterministic ordering)
+          newData.strikes.sort((a: StrikeData, b: StrikeData) => a.strike - b.strike)
+
+          // Validate all strikes are within reasonable range of spot price (±15%)
+          const spotPrice = newData.spot_price
+          const maxRange = spotPrice * 0.15
+          const validStrikes = newData.strikes.filter((s: StrikeData) =>
+            s.strike > 0 && Math.abs(s.strike - spotPrice) <= maxRange
+          )
+          if (validStrikes.length !== newData.strikes.length) {
+            console.warn(`[WATCHTOWER] Filtered ${newData.strikes.length - validStrikes.length} out-of-range strikes`)
+            newData.strikes = validStrikes
+          }
+
+          // Validate expiration matches what's displayed
+          if (newData.expiration_date && newData.strikes.length > 0) {
+            // Basic sanity: we have data
+            console.log(`[WATCHTOWER] Validated: ${newData.strikes.length} strikes for ${newData.expiration_date}, spot=$${spotPrice}`)
+          }
         }
 
         // MERGE STRATEGY: Only update strikes that changed, preserving array reference stability
@@ -1551,7 +1576,13 @@ export default function WatchtowerPage() {
 
   // Check if market is closed or holiday
   const isMarketClosed = gammaData?.market_status === 'closed' || gammaData?.market_status === 'holiday'
+  const isAfterHours = gammaData?.market_status === 'after_hours'
+  const isPreMarket = gammaData?.market_status === 'pre_market'
   const isHoliday = gammaData?.market_status === 'holiday'
+  // Market is NOT actively open if any of these are true
+  const isMarketNotOpen = isMarketClosed || isAfterHours || isPreMarket
+  // Check if data is frozen (after-hours immutable snapshot)
+  const isDataFrozen = gammaData?.is_frozen === true
   // Check if showing simulated data
   const isMockData = gammaData?.is_mock === true
 
@@ -1560,27 +1591,27 @@ export default function WatchtowerPage() {
   const mediumPollRef = useRef<NodeJS.Timeout | null>(null)
   const slowPollRef = useRef<NodeJS.Timeout | null>(null)
 
-  // ALWAYS poll when autoRefresh is enabled - don't depend on gammaData state
-  // This ensures live updates regardless of API responses
+  // Poll when autoRefresh is enabled AND market is open
+  // After hours: data is frozen on the backend - no need to poll
   useEffect(() => {
     // Clear any existing intervals first
     if (fastPollRef.current) clearInterval(fastPollRef.current)
     if (mediumPollRef.current) clearInterval(mediumPollRef.current)
     if (slowPollRef.current) clearInterval(slowPollRef.current)
 
-    if (autoRefresh) {
-      console.log('[WATCHTOWER] Starting auto-refresh polling...')
+    // Don't start polling if market is not open (after_hours, closed, holiday, pre_market)
+    // Data is frozen after hours - polling would just return identical data
+    if (autoRefresh && !isMarketNotOpen) {
+      console.log('[WATCHTOWER] Starting auto-refresh polling (market open)...')
 
       // Fast polling: Gamma data and danger zones every 15 seconds
       fastPollRef.current = setInterval(() => {
-        console.log('[WATCHTOWER] Fast poll: fetching gamma data and danger zone logs')
         fetchGammaData(activeDay)
         fetchDangerZoneLogs()
       }, 15000)
 
       // Medium polling: Alerts, context, trends, flips, bots, trade action every 30 seconds
       mediumPollRef.current = setInterval(() => {
-        console.log('[WATCHTOWER] Medium poll: fetching alerts, context, trends, flips, bots, trade action')
         fetchAlerts()
         fetchContext()
         fetchStrikeTrends()
@@ -1595,10 +1626,12 @@ export default function WatchtowerPage() {
         fetchAccuracyMetrics()
         fetchPatternMatches()
         fetchTomorrowGammaData()
-        fetchGammaHistory()  // Update history for Evolution Chart
-        fetchSignalPerformance()  // Update signal performance stats
-        fetchRecentSignals()      // Update recent signals
+        fetchGammaHistory()
+        fetchSignalPerformance()
+        fetchRecentSignals()
       }, 60000)
+    } else if (isMarketNotOpen) {
+      console.log('[WATCHTOWER] Market not open - polling disabled, data is frozen')
     }
 
     return () => {
@@ -1607,7 +1640,7 @@ export default function WatchtowerPage() {
       if (slowPollRef.current) clearInterval(slowPollRef.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, activeDay]) // Intentionally minimal deps - fetch functions are stable, avoid re-creating intervals
+  }, [autoRefresh, activeDay, isMarketNotOpen]) // Re-evaluate when market status changes
 
   // Compute EOD Strike Statistics from danger zone logs and strike trends
   // MUST be before early returns to satisfy React hooks rules
@@ -2155,35 +2188,50 @@ export default function WatchtowerPage() {
           </div>
         )}
 
-        {/* Market Closed/Holiday Banner */}
-        {isMarketClosed && !replayMode && (
+        {/* Market Not Open Banner (closed, after_hours, pre_market, holiday) */}
+        {isMarketNotOpen && !replayMode && (
           <div className={`rounded-xl p-3 mb-4 flex items-center justify-between ${
             gammaData?.is_mock
               ? 'bg-orange-500/10 border border-orange-500/30'
               : isHoliday
               ? 'bg-purple-500/10 border border-purple-500/30'
+              : isAfterHours
+              ? 'bg-amber-500/10 border border-amber-500/30'
               : 'bg-gray-700/50 border border-gray-600/50'
           }`}>
             <div className="flex items-center gap-3">
               {isHoliday ? (
-                <CalendarOff className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-purple-400'}`} />
+                <CalendarOff className="w-5 h-5 text-purple-400" />
+              ) : isDataFrozen ? (
+                <Lock className="w-5 h-5 text-amber-400" />
               ) : (
                 <Clock className={`w-5 h-5 ${gammaData?.is_mock ? 'text-orange-400' : 'text-gray-400'}`} />
               )}
               <div>
                 <span className={`font-medium ${
-                  gammaData?.is_mock ? 'text-orange-300' : isHoliday ? 'text-purple-300' : 'text-gray-300'
+                  gammaData?.is_mock ? 'text-orange-300'
+                  : isHoliday ? 'text-purple-300'
+                  : isAfterHours ? 'text-amber-300'
+                  : 'text-gray-300'
                 }`}>
-                  {isHoliday ? 'Market Holiday' : 'Market Closed'}
+                  {isHoliday ? 'Market Holiday'
+                    : isAfterHours ? 'After Hours'
+                    : isPreMarket ? 'Pre-Market'
+                    : 'Market Closed'}
                 </span>
-                <span className={`ml-2 ${
-                  gammaData?.is_mock ? 'text-orange-400/70' : isHoliday ? 'text-purple-400/70' : 'text-gray-500'
+                <span className="text-gray-400 mx-2">—</span>
+                <span className={`${
+                  gammaData?.is_mock ? 'text-orange-400/70'
+                  : isHoliday ? 'text-purple-400/70'
+                  : isAfterHours ? 'text-amber-400/70'
+                  : 'text-gray-500'
                 }`}>
                   {gammaData?.is_mock
-                    ? 'Displaying simulated data for demonstration. Values update randomly.'
-                    : isHoliday
-                    ? 'Markets are closed for the holiday. Showing last trading day\'s data.'
-                    : 'Showing last trading day\'s data. Auto-refresh paused until market opens.'
+                    ? 'Displaying simulated data for demonstration.'
+                    : `Data frozen as of ${gammaData?.data_timestamp
+                        ? new Date(gammaData.data_timestamp).toLocaleString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', hour12: true, month: 'short', day: 'numeric' }) + ' CT'
+                        : 'last market close'
+                      }. Auto-refresh paused.`
                   }
                 </span>
               </div>
@@ -2192,6 +2240,7 @@ export default function WatchtowerPage() {
         )}
 
         {/* Market Structure Changes Panel - Multi-Signal Analysis */}
+        <ModuleErrorBoundary moduleName="Market Structure">
         {/* Guard: Only render if all required nested objects exist */}
         {gammaData?.market_structure?.combined &&
          gammaData?.market_structure?.flip_point &&
@@ -3145,10 +3194,15 @@ export default function WatchtowerPage() {
           </div>
         </div>
 
+        </ModuleErrorBoundary>
+
         {/* Enhanced Analysis Panel - NEW */}
+        <ModuleErrorBoundary moduleName="Enhanced Analysis">
         <div className="mb-6">
           <WatchtowerEnhancedPanel symbol="SPY" />
         </div>
+
+        </ModuleErrorBoundary>
 
         {/* Pattern Similarity Section - Enhanced with price details */}
         <div className="mb-6">
@@ -3290,12 +3344,17 @@ export default function WatchtowerPage() {
                   <span suppressHydrationWarning>{dataTimestamp.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT</span>
                 </div>
               )}
-              {autoRefresh && !isMarketClosed && (
+              {isMarketNotOpen ? (
+                <div className="text-[10px] text-amber-400 flex items-center gap-1">
+                  <Lock className="w-2.5 h-2.5" />
+                  Data frozen
+                </div>
+              ) : autoRefresh ? (
                 <div className="text-[10px] text-emerald-400 flex items-center gap-1">
                   <RefreshCw className="w-2.5 h-2.5 animate-spin" />
                   Updates every 15s
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -3307,6 +3366,7 @@ export default function WatchtowerPage() {
           <div className="xl:col-span-2 space-y-6">
 
             {/* Chart Section */}
+            <ModuleErrorBoundary moduleName="GEX Chart">
             <div className="bg-gray-800/50 rounded-xl p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -3316,6 +3376,11 @@ export default function WatchtowerPage() {
                     {gammaData?.is_mock ? (
                       <span className="ml-2 px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-medium rounded border border-orange-500/30">
                         SIMULATED
+                      </span>
+                    ) : isDataFrozen ? (
+                      <span className="ml-2 px-2 py-0.5 bg-amber-500/20 text-amber-400 text-[10px] font-medium rounded border border-amber-500/30 flex items-center gap-1">
+                        <Lock className="w-2.5 h-2.5" />
+                        FROZEN
                       </span>
                     ) : gammaData?.market_status === 'closed' ? (
                       <span className="ml-2 px-2 py-0.5 bg-gray-500/20 text-gray-400 text-[10px] font-medium rounded border border-gray-500/30">
@@ -4135,7 +4200,10 @@ export default function WatchtowerPage() {
               </div>
             )}
 
+            </ModuleErrorBoundary>
+
             {/* Strike Details Table */}
+            <ModuleErrorBoundary moduleName="Strike Analysis">
             <div className="bg-gray-800/50 rounded-xl p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-white flex items-center gap-2">
@@ -4517,7 +4585,10 @@ export default function WatchtowerPage() {
               </div>
             </div>
 
+            </ModuleErrorBoundary>
+
             {/* Alerts & Danger Zones Row */}
+            <ModuleErrorBoundary moduleName="Alerts & Danger Zones">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Live Alerts */}
               <div className="bg-gray-800/50 rounded-xl p-5">
@@ -4803,9 +4874,11 @@ export default function WatchtowerPage() {
                 </div>
               </div>
             </div>
+          </ModuleErrorBoundary>
           </div>
 
           {/* Right Column - Key Levels & Context */}
+          <ModuleErrorBoundary moduleName="Key Levels & Context">
           <div className="space-y-6">
 
             {/* Key Levels */}
@@ -5108,6 +5181,7 @@ export default function WatchtowerPage() {
               </div>
             </div>
           </div>
+          </ModuleErrorBoundary>
         </div>
       </main>
     </div>

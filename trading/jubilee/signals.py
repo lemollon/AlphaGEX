@@ -1562,19 +1562,30 @@ class JubileeICSignalGenerator:
         # CRITICAL: When Prophet says TRADE, we TRADE. Period.
         # Prophet already analyzed VIX, GEX, walls, regime, day of week.
         # Bot's min_win_probability threshold does NOT override Prophet.
+        #
+        # If Prophet is unavailable, proceed with TRADE_FULL default
+        # so IC trading is never blocked by Prophet downtime.
         # ============================================================
 
         # Get Prophet advice FIRST (before VIX filter)
         prophet = self.get_prophet_advice(market)
         if not prophet:
-            logger.warning("JUBILEE IC: No Prophet advice available")
-            return self._create_skip_signal(
-                now, source_box_position_id, market, "Prophet not available"
-            )
+            logger.warning("JUBILEE IC: Prophet unavailable - proceeding with TRADE_FULL default (never block IC trading)")
+            prophet = {
+                'confidence': 0.7,
+                'win_probability': 0.6,
+                'advice': 'TRADE_FULL',
+                'top_factors': [],
+                'suggested_sd_multiplier': self.config.sd_multiplier,
+                'suggested_put_strike': None,
+                'suggested_call_strike': None,
+                'reasoning': 'Prophet unavailable - using SD-based defaults',
+                'ic_suitability': 0.5,
+            }
 
-        oracle_advice = prophet.get('advice', 'SKIP_TODAY')
-        oracle_confidence = prophet.get('confidence', 0)
-        oracle_win_prob = prophet.get('win_probability', 0)
+        oracle_advice = prophet.get('advice', 'TRADE_FULL')
+        oracle_confidence = prophet.get('confidence', 0.7)
+        oracle_win_prob = prophet.get('win_probability', 0.6)
 
         # PROPHET IS GOD: If Prophet says TRADE, we TRADE - no threshold checks
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')

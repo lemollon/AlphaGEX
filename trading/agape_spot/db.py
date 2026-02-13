@@ -188,6 +188,24 @@ class AgapeSpotDatabase:
                 )
             """)
 
+            # ----- agape_spot_win_tracker -----
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agape_spot_win_tracker (
+                    id SERIAL PRIMARY KEY,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    ticker VARCHAR(20) NOT NULL DEFAULT 'ETH-USD',
+                    alpha DECIMAL(10, 4) DEFAULT 1.0,
+                    beta DECIMAL(10, 4) DEFAULT 1.0,
+                    total_trades INTEGER DEFAULT 0,
+                    positive_funding_wins INTEGER DEFAULT 0,
+                    positive_funding_losses INTEGER DEFAULT 0,
+                    negative_funding_wins INTEGER DEFAULT 0,
+                    negative_funding_losses INTEGER DEFAULT 0,
+                    neutral_funding_wins INTEGER DEFAULT 0,
+                    neutral_funding_losses INTEGER DEFAULT 0
+                )
+            """)
+
             # ==========================================================
             # MIGRATIONS for existing tables
             # ==========================================================
@@ -262,6 +280,7 @@ class AgapeSpotDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_scan_activity_ts ON agape_spot_scan_activity(timestamp DESC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_scan_activity_ticker ON agape_spot_scan_activity(ticker)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_activity_log_ticker ON agape_spot_activity_log(ticker)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_win_tracker_ticker ON agape_spot_win_tracker(ticker)")
 
             conn.commit()
             logger.info("AGAPE-SPOT DB: Tables ensured (multi-ticker)")
@@ -924,6 +943,93 @@ class AgapeSpotDatabase:
         except Exception as e:
             logger.error(f"AGAPE-SPOT DB: Failed to get scan activity: {e}")
             return []
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Bayesian Win Tracker (per-ticker)
+    # ------------------------------------------------------------------
+
+    def get_win_tracker(self, ticker: str) -> "BayesianWinTracker":
+        """Load the latest win tracker state for a ticker from the database.
+
+        Returns a fresh BayesianWinTracker if no record exists yet.
+        """
+        from trading.agape_spot.models import BayesianWinTracker
+
+        conn = self._get_conn()
+        if not conn:
+            return BayesianWinTracker(ticker=ticker)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT alpha, beta, total_trades,
+                       positive_funding_wins, positive_funding_losses,
+                       negative_funding_wins, negative_funding_losses,
+                       neutral_funding_wins, neutral_funding_losses
+                FROM agape_spot_win_tracker
+                WHERE ticker = %s
+                ORDER BY id DESC LIMIT 1
+            """, (ticker,))
+            row = cursor.fetchone()
+            if row:
+                return BayesianWinTracker(
+                    ticker=ticker,
+                    alpha=float(row[0]),
+                    beta=float(row[1]),
+                    total_trades=int(row[2]),
+                    positive_funding_wins=int(row[3]),
+                    positive_funding_losses=int(row[4]),
+                    negative_funding_wins=int(row[5]),
+                    negative_funding_losses=int(row[6]),
+                    neutral_funding_wins=int(row[7]),
+                    neutral_funding_losses=int(row[8]),
+                )
+            return BayesianWinTracker(ticker=ticker)
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT DB: Win tracker load failed for {ticker}: {e}")
+            return BayesianWinTracker(ticker=ticker)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def save_win_tracker(self, tracker: "BayesianWinTracker") -> bool:
+        """Insert a new win tracker snapshot for audit trail (append-only)."""
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO agape_spot_win_tracker (
+                    ticker, alpha, beta, total_trades,
+                    positive_funding_wins, positive_funding_losses,
+                    negative_funding_wins, negative_funding_losses,
+                    neutral_funding_wins, neutral_funding_losses
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                tracker.ticker,
+                tracker.alpha,
+                tracker.beta,
+                tracker.total_trades,
+                tracker.positive_funding_wins,
+                tracker.positive_funding_losses,
+                tracker.negative_funding_wins,
+                tracker.negative_funding_losses,
+                tracker.neutral_funding_wins,
+                tracker.neutral_funding_losses,
+            ))
+            conn.commit()
+            logger.info(
+                f"AGAPE-SPOT DB: Win tracker saved for {tracker.ticker} "
+                f"(trades={tracker.total_trades}, win_prob={tracker.win_probability:.3f})"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Win tracker save failed for {tracker.ticker}: {e}")
+            conn.rollback()
+            return False
         finally:
             cursor.close()
             conn.close()

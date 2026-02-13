@@ -507,12 +507,12 @@ class ValorSignalGenerator:
             if gamma_regime == GammaRegime.POSITIVE:
                 signal = self._generate_mean_reversion_signal(
                     current_price, flip_point, call_wall, put_wall,
-                    vix, atr, net_gex, gamma_regime
+                    vix, atr, net_gex, gamma_regime, is_overnight
                 )
             else:
                 signal = self._generate_momentum_signal(
                     current_price, flip_point, call_wall, put_wall,
-                    vix, atr, net_gex, gamma_regime
+                    vix, atr, net_gex, gamma_regime, is_overnight
                 )
 
             if signal is None:
@@ -535,39 +535,25 @@ class ValorSignalGenerator:
                 return None
 
             # ================================================================
-            # DIRECTION TRACKER - Makes bot nimble at detecting reversals
+            # DIRECTION TRACKER - REMOVED
+            # Risk is managed by no-loss trailing + SAR + emergency stop
+            # + 5-min loss streak pause. Direction tracker was starving
+            # the bot of trades during RTH. Confidence stays as-is.
             # ================================================================
-            direction_tracker = get_direction_tracker()
-
-            # Check if this direction should be skipped (cooldown after loss, poor recent performance)
-            should_skip, skip_reason = direction_tracker.should_skip_direction(signal.direction.value)
-            if should_skip:
-                logger.info(f"Signal SKIPPED by direction tracker: {skip_reason}")
-                return None
-
-            # Apply confidence adjustment based on recent performance
-            confidence_adj = direction_tracker.get_confidence_adjustment(signal.direction.value)
-            if confidence_adj != 1.0:
-                original_confidence = signal.confidence
-                signal.confidence = min(0.95, max(0.3, signal.confidence * confidence_adj))
-                logger.info(
-                    f"Direction tracker adjusted confidence: {original_confidence:.2%} -> {signal.confidence:.2%} "
-                    f"(multiplier: {confidence_adj:.2f})"
-                )
 
             # Calculate win probability (uses ML if trained, otherwise Bayesian)
             signal.win_probability = self._calculate_win_probability(gamma_regime, signal, is_overnight)
 
-            # Check minimum probability threshold
-            if signal.win_probability < self.config.min_win_probability:
-                logger.warning(
-                    f"VALOR WIN_PROB GATE REJECTED: {signal.direction.value} signal killed - "
-                    f"win_prob={signal.win_probability:.4f} < min={self.config.min_win_probability:.2f}, "
-                    f"confidence={signal.confidence:.3f}, regime={gamma_regime.value}, "
-                    f"tracker=[alpha={self.win_tracker.alpha:.1f}, beta={self.win_tracker.beta:.1f}, "
-                    f"trades={self.win_tracker.total_trades}, cold_start={self.win_tracker.is_cold_start}]"
-                )
-                return None
+            # Win probability gate - REMOVED
+            # Risk is managed by no-loss trailing + SAR + emergency stop
+            # + 5-min loss streak pause. Win_prob gate was starving the bot
+            # of trades during RTH when Bayesian tracker was poisoned.
+            # win_probability is still CALCULATED and LOGGED for analysis,
+            # it just doesn't block signals anymore.
+            logger.info(
+                f"VALOR win_prob={signal.win_probability:.4f} "
+                f"(informational only, not gating)"
+            )
 
             # Calculate position size
             signal.contracts = self.config.calculate_position_size(
@@ -626,7 +612,8 @@ class ValorSignalGenerator:
         vix: float,
         atr: float,
         net_gex: float,
-        gamma_regime: GammaRegime
+        gamma_regime: GammaRegime,
+        is_overnight: bool = False
     ) -> Optional[FuturesSignal]:
         """
         Generate mean reversion signal for positive gamma.
@@ -644,14 +631,17 @@ class ValorSignalGenerator:
         distance_from_flip = current_price - flip_point
         distance_pct = (distance_from_flip / flip_point) * 100
 
-        # Need some distance from flip point to fade
-        min_distance_pct = self.config.flip_point_proximity_pct
+        # Overnight: NO proximity gate - always generate a signal if price != flip.
+        # Risk is managed by no-loss trailing + SAR + emergency stop.
+        # RTH: Require minimum distance from flip to fade.
+        min_distance_pct = 0.0 if is_overnight else self.config.flip_point_proximity_pct
 
         # Signal strength based on distance
-        confidence = min(0.95, 0.5 + (abs(distance_pct) / 2))
+        confidence = min(0.95, 0.55 + (abs(distance_pct) / 2))
 
+        session = "OVERNIGHT" if is_overnight else "RTH"
         logger.info(
-            f"VALOR mean reversion check: price={current_price:.2f}, flip={flip_point:.2f}, "
+            f"VALOR mean reversion check [{session}]: price={current_price:.2f}, flip={flip_point:.2f}, "
             f"distance={distance_pct:+.2f}%, min_required={min_distance_pct}%, "
             f"signal={'YES' if abs(distance_pct) > min_distance_pct else 'NO (too close to flip)'}"
         )
@@ -676,8 +666,22 @@ class ValorSignalGenerator:
                 f"Expect bounce toward flip. Put wall at {put_wall:.2f}."
             )
 
+        elif is_overnight:
+            # Overnight: price right at flip - pick direction based on wall distance
+            dist_to_call = call_wall - current_price
+            dist_to_put = current_price - put_wall
+            if dist_to_call <= dist_to_put:
+                direction = TradeDirection.SHORT
+                reasoning = f"OVERNIGHT mean reversion: Price at flip {flip_point:.2f}, closer to call wall {call_wall:.2f} - SHORT"
+            else:
+                direction = TradeDirection.LONG
+                reasoning = f"OVERNIGHT mean reversion: Price at flip {flip_point:.2f}, closer to put wall {put_wall:.2f} - LONG"
+            source = SignalSource.GEX_MEAN_REVERSION
+            confidence = 0.55
+            logger.info(f"VALOR OVERNIGHT: Price at flip, picking {direction.value} based on wall proximity")
+
         else:
-            # Too close to flip point - no trade
+            # RTH: Too close to flip point - no trade
             return None
 
         return FuturesSignal(
@@ -705,7 +709,8 @@ class ValorSignalGenerator:
         vix: float,
         atr: float,
         net_gex: float,
-        gamma_regime: GammaRegime
+        gamma_regime: GammaRegime,
+        is_overnight: bool = False
     ) -> Optional[FuturesSignal]:
         """
         Generate momentum signal for negative gamma.
@@ -730,8 +735,12 @@ class ValorSignalGenerator:
 
         distance_from_flip = current_price - flip_point
 
-        # Breakout threshold for flip-based signals
-        breakout_threshold = atr * self.config.breakout_atr_threshold
+        # Overnight uses looser breakout threshold (smaller moves)
+        if is_overnight:
+            breakout_atr_mult = self.config.overnight_breakout_atr_mult
+        else:
+            breakout_atr_mult = self.config.breakout_atr_threshold
+        breakout_threshold = atr * breakout_atr_mult
 
         # Wall proximity threshold - within 1.5 ATR of wall is "near"
         wall_proximity_threshold = atr * 1.5
@@ -745,9 +754,10 @@ class ValorSignalGenerator:
         flip_to_put_range = max(1.0, flip_point - put_wall)    # Min 1 point
         total_range = call_to_flip_range + flip_to_put_range
 
+        session = "OVERNIGHT" if is_overnight else "RTH"
         logger.info(
-            f"VALOR momentum check: price={current_price:.2f}, flip={flip_point:.2f}, "
-            f"dist_from_flip={distance_from_flip:+.2f} pts, breakout_threshold={breakout_threshold:.2f}, "
+            f"VALOR momentum check [{session}]: price={current_price:.2f}, flip={flip_point:.2f}, "
+            f"dist_from_flip={distance_from_flip:+.2f} pts, breakout_threshold={breakout_threshold:.2f} ({breakout_atr_mult}×ATR), "
             f"dist_to_put={distance_to_put_wall:.2f}, dist_to_call={distance_to_call_wall:.2f}, "
             f"wall_proximity={wall_proximity_threshold:.2f} pts"
         )
@@ -841,33 +851,26 @@ class ValorSignalGenerator:
             )
 
         # =====================================================================
-        # PRIORITY 3: Near flip point signals (negative gamma amplifies moves)
-        # When price is near flip in negative gamma, any directional move tends
-        # to accelerate. Trade the direction away from flip.
+        # PRIORITY 3: Near flip point / dead zone
+        # Overnight: NO dead zone - always trade. Pick direction from wall proximity.
+        # RTH: Require some distance from flip before trading.
         # =====================================================================
         else:
-            # Price is in the "dead zone" - near flip but not near walls
-            # In negative gamma, this is still a valid trading zone!
-            # Trade in the direction price is moving away from flip
-
-            # Use small distance threshold for near-flip signals
             near_flip_threshold = breakout_threshold * 0.5  # Half of breakout threshold
 
             if abs(distance_from_flip) >= near_flip_threshold:
                 # Price has some distance from flip - trade in that direction
                 if distance_from_flip > 0:
-                    # Price above flip - continue LONG momentum
                     direction = TradeDirection.LONG
-                    confidence = min(0.70, 0.50 + abs(distance_from_flip) / breakout_threshold * 0.2)
+                    confidence = min(0.70, 0.55 + abs(distance_from_flip) / breakout_threshold * 0.2)
                     reasoning = (
                         f"NEGATIVE GAMMA near-flip momentum: Price {current_price:.2f} is "
                         f"{distance_from_flip:.2f} pts above flip {flip_point:.2f}. "
                         f"In neg gamma, moves accelerate away from flip. LONG targeting {call_wall:.2f}."
                     )
                 else:
-                    # Price below flip - continue SHORT momentum
                     direction = TradeDirection.SHORT
-                    confidence = min(0.70, 0.50 + abs(distance_from_flip) / breakout_threshold * 0.2)
+                    confidence = min(0.70, 0.55 + abs(distance_from_flip) / breakout_threshold * 0.2)
                     reasoning = (
                         f"NEGATIVE GAMMA near-flip momentum: Price {current_price:.2f} is "
                         f"{abs(distance_from_flip):.2f} pts below flip {flip_point:.2f}. "
@@ -879,8 +882,26 @@ class ValorSignalGenerator:
                     f"Near-flip momentum {direction.value}: price={current_price:.2f}, "
                     f"flip={flip_point:.2f}, dist={distance_from_flip:.2f}, conf={confidence:.2%}"
                 )
+
+            elif is_overnight:
+                # OVERNIGHT: No dead zone. Pick direction from wall proximity.
+                dist_to_call = call_wall - current_price
+                dist_to_put = current_price - put_wall
+                if dist_to_call <= dist_to_put:
+                    direction = TradeDirection.SHORT
+                    reasoning = f"OVERNIGHT momentum: Price at flip {flip_point:.2f}, closer to call wall {call_wall:.2f} - SHORT"
+                else:
+                    direction = TradeDirection.LONG
+                    reasoning = f"OVERNIGHT momentum: Price at flip {flip_point:.2f}, closer to put wall {put_wall:.2f} - LONG"
+                source = SignalSource.GEX_MOMENTUM
+                confidence = 0.55
+                logger.info(
+                    f"VALOR OVERNIGHT: Dead zone BYPASSED - picking {direction.value} "
+                    f"based on wall proximity (call_dist={dist_to_call:.2f}, put_dist={dist_to_put:.2f})"
+                )
+
             else:
-                # Price is RIGHT at flip point - wait for direction
+                # RTH: Price is RIGHT at flip point - wait for direction
                 logger.info(
                     f"VALOR NO SIGNAL: Price {current_price:.2f} at flip point {flip_point:.2f} "
                     f"(dist={distance_from_flip:.2f} pts, need >{near_flip_threshold:.2f} pts). "

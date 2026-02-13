@@ -1187,15 +1187,12 @@ class JubileeICTrader:
         return {'checked': checked, 'closed': closed}
 
     def _can_open_new_position(self) -> bool:
-        """Check if we can open a new IC position"""
-        # Max position limit removed - no gates
-        # Cooldown already disabled (set to 0)
+        """Check if we can open a new IC position - no gates (match SAMSON).
 
-        # Check available capital
-        available = self._get_available_capital()
-        if available < self.config.min_capital_per_trade:
-            return False
-
+        SAMSON's _check_conditions only checks: weekend, holiday, trading window.
+        No position limits, no capital checks. Capital is used for position SIZING
+        (how many contracts) not as a GATE (whether to trade at all).
+        """
         return True
 
     def _get_skip_reason(self) -> str:
@@ -1249,13 +1246,8 @@ class JubileeICTrader:
         """
         Get capital available for IC trading from box spread positions.
 
-        The IC trader uses BORROWED capital from box spreads. The box spread
-        is the sole source of capital. _ensure_paper_box_spread guarantees
-        one always exists in PAPER mode.
-
-        PAPER MODE FALLBACK: If no box spread capital is available (e.g. first
-        run, DB save failure, expired boxes), fall back to config starting_capital
-        so IC trading is never blocked in paper mode.
+        Capital flows from box spreads (borrowed money) to the IC trader.
+        The box spread is the sole source of capital for IC trading.
         """
         # Ensure a box spread exists (creates or auto-extends in PAPER mode)
         self._ensure_paper_box_spread()
@@ -1267,10 +1259,21 @@ class JubileeICTrader:
         total_borrowed = 0.0
         for box in box_positions:
             try:
-                exp_date = datetime.strptime(box.expiration, '%Y-%m-%d').date()
+                # Handle both string and date expiration formats
+                exp = box.expiration
+                if isinstance(exp, str):
+                    exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
+                elif hasattr(exp, 'date'):
+                    exp_date = exp.date()
+                else:
+                    exp_date = exp
                 if (exp_date - date.today()).days <= 0:
                     continue  # Skip expired positions
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError):
+                # If we can't parse expiration, include the capital anyway
+                # rather than silently skipping it
+                logger.warning(f"[JUBILEE IC] Could not parse expiration '{box.expiration}' for {box.position_id} - including capital")
+                total_borrowed += box.total_cash_deployed
                 continue
             total_borrowed += box.total_cash_deployed
 
@@ -1284,10 +1287,14 @@ class JubileeICTrader:
             )
             total_borrowed = fallback_capital
 
-        # Subtract capital currently in use by open IC positions
+        # Subtract margin tied up by open IC positions (spread_width * contracts * 100)
         ic_positions = self.db.get_open_ic_positions()
+        margin_in_use = 0.0
         for ic in ic_positions:
-            total_borrowed -= ic.total_credit_received  # Margin tied up
+            margin_in_use += ic.spread_width * ic.contracts * 100
+        total_borrowed -= margin_in_use
+
+        logger.info(f"[JUBILEE IC] Available capital: ${max(0, total_borrowed):,.0f} (box borrowed minus ${margin_in_use:,.0f} IC margin in use)")
 
         return max(0, total_borrowed)
 
@@ -1473,17 +1480,24 @@ class JubileeICTrader:
 
         IC trades are always linked to a box spread position (the source of capital).
         In PAPER mode, auto-creates a paper box spread if none exists.
+        Never returns None in PAPER mode - IC trading must never be blocked.
         """
         # Ensure we have a box spread position (creates paper one if needed)
         self._ensure_paper_box_spread()
 
         box_positions = self.db.get_open_positions()
-        if not box_positions:
-            return None
+        if box_positions:
+            # Use the most recently opened box position
+            sorted_boxes = sorted(box_positions, key=lambda p: p.open_time, reverse=True)
+            return sorted_boxes[0].position_id
 
-        # Use the most recently opened box position
-        sorted_boxes = sorted(box_positions, key=lambda p: p.open_time, reverse=True)
-        return sorted_boxes[0].position_id
+        # PAPER MODE FALLBACK: If ensure_paper_box_spread failed silently,
+        # use a synthetic box ID so IC trading is never blocked
+        if self.config.mode == TradingMode.PAPER:
+            logger.warning("[JUBILEE IC] No box positions found despite ensure_paper_box_spread - using synthetic ID")
+            return "PAPER_BOX_FALLBACK"
+
+        return None
 
     def _generate_and_execute_signal(self) -> Dict[str, Any]:
         """Generate an IC signal and execute if approved"""

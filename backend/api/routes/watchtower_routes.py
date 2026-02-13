@@ -753,18 +753,26 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
     When market is closed, uses longer cache (5 min) to prevent constant refetching.
     """
     # Determine cache TTL based on market hours
-    # When market is closed, use longer cache (5 min) - data won't change
+    # When market is closed, use INFINITE cache - data MUST NOT change after hours
     market_open = is_market_hours()
-    cache_ttl = CACHE_TTL_SECONDS if market_open else 300  # 30s when open, 5min when closed
-
-    # Check cache first - but skip if cached data is mock (allow retry for live)
     cache_key = f"gamma_data_{symbol}_{expiration or 'today'}"
-    cached = get_cached(cache_key, cache_ttl)
-    if cached and not cached.get('is_mock', False):
-        logger.debug(f"WATCHTOWER: Returning cached data for {expiration or 'today'} (market_open={market_open}, ttl={cache_ttl}s)")
-        return cached
-    elif cached and cached.get('is_mock', False):
-        logger.debug(f"WATCHTOWER: Skipping cached mock data, attempting fresh fetch")
+
+    if not market_open:
+        # AFTER-HOURS: Serve frozen data, never re-fetch from Tradier
+        cached = get_cached(cache_key, 999999)  # Effectively infinite TTL
+        if cached and not cached.get('is_mock', False):
+            logger.debug(f"WATCHTOWER: After-hours - returning frozen cached data for {expiration or 'today'}")
+            return cached
+        # No cache exists - fall through to fetch ONCE, then cache indefinitely
+        logger.info(f"WATCHTOWER: After-hours but no cache exists - fetching once to populate cache")
+    else:
+        # Market open: 30s cache
+        cached = get_cached(cache_key, CACHE_TTL_SECONDS)
+        if cached and not cached.get('is_mock', False):
+            logger.debug(f"WATCHTOWER: Returning cached data for {expiration or 'today'} (market_open={market_open})")
+            return cached
+        elif cached and cached.get('is_mock', False):
+            logger.debug(f"WATCHTOWER: Skipping cached mock data, attempting fresh fetch")
 
     tradier = get_tradier()
     if not tradier:
@@ -834,10 +842,11 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
             if strike and opt_type:
                 options_by_key[(strike, opt_type)] = contract
 
-        # Get unique strikes
-        unique_strike_values = set(contract.strike for contract in contracts if contract.strike)
+        # Get unique strikes - SORTED for deterministic output
+        # Using sorted() instead of set() ensures consistent strike ordering across requests
+        unique_strike_values = sorted(set(contract.strike for contract in contracts if contract.strike))
 
-        # Build strike data using O(1) lookups
+        # Build strike data using O(1) lookups (ordered by strike price)
         unique_strikes = {}
         for strike in unique_strike_values:
             call_contract = options_by_key.get((strike, 'call'))
@@ -871,7 +880,7 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
             'spot_price': spot_price,
             'vix': vix,
             'expiration': expiration,
-            'strikes': list(unique_strikes.values()),
+            'strikes': sorted(unique_strikes.values(), key=lambda s: s['strike']),  # Deterministic sort by strike
             'is_mock': False,  # Real market data from Tradier
             'fetched_at': data_fetch_time,  # Actual fetch timestamp (Central timezone)
             'data_timestamp': data_fetch_time,  # When Tradier data was actually fetched
@@ -1024,8 +1033,22 @@ async def get_gamma_data(
             logger.debug("WATCHTOWER: Skipping re-processing, using previous snapshot due to invalid spot price")
         elif not market_open and engine.previous_snapshot:
             # Market closed - use existing snapshot, don't reprocess
-            logger.debug(f"WATCHTOWER: Market closed - using existing snapshot to prevent ROC recalculation")
+            # Also freeze VIX from the snapshot for complete consistency
+            is_cached = True
+            logger.debug(f"WATCHTOWER: Market closed - using frozen snapshot to prevent data changes")
             snapshot = engine.previous_snapshot
+            raw_data['vix'] = snapshot.vix  # Use snapshot VIX, not fresh Tradier VIX
+        elif not market_open and not engine.previous_snapshot:
+            # Market closed, no previous snapshot (server just restarted)
+            # Process once to populate engine state, then treat as cached
+            logger.info(f"WATCHTOWER: Market closed, no snapshot - processing once to initialize")
+            snapshot = engine.process_options_chain(
+                raw_data,
+                raw_data['spot_price'],
+                raw_data['vix'],
+                expiration
+            )
+            is_cached = True  # Prevent DB persistence of after-hours data
         elif is_cached and engine.previous_snapshot:
             # Use existing snapshot - don't reprocess cached data
             logger.debug(f"WATCHTOWER: Using existing snapshot (cached data, age={cache_age_seconds}s)")
@@ -1048,8 +1071,12 @@ async def get_gamma_data(
             extra_strikes=5
         )
 
+        # Use snapshot VIX for EM change calculation to ensure consistency
+        # This prevents VIX fluctuations from affecting the response when using cached snapshots
+        effective_vix = snapshot.vix if is_cached else raw_data['vix']
+
         # Get expected move change data (pass spot_price to normalize for overnight gaps)
-        em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'], snapshot.spot_price)
+        em_change = await get_expected_move_change(snapshot.expected_move, effective_vix, snapshot.spot_price)
 
         # Extract flip_point, call_wall, put_wall from snapshot strikes for structure analysis
         current_flip_point = None
@@ -1106,7 +1133,7 @@ async def get_gamma_data(
         market_structure = await get_market_structure_changes(
             current_spot=snapshot.spot_price,
             current_em=snapshot.expected_move,
-            current_vix=raw_data['vix'],
+            current_vix=effective_vix,
             current_flip_point=current_flip_point,
             current_call_wall=current_call_wall,
             current_put_wall=current_put_wall,
@@ -1135,7 +1162,7 @@ async def get_gamma_data(
                 expiration_date=expiration,
                 spot_price=snapshot.spot_price,
                 expected_move=snapshot.expected_move,
-                vix=raw_data.get('vix', 0),
+                vix=effective_vix,
                 total_net_gamma=snapshot.total_net_gamma,
                 gamma_regime=snapshot.gamma_regime,
                 previous_regime=getattr(snapshot, 'previous_regime', None),
@@ -1150,7 +1177,7 @@ async def get_gamma_data(
                     symbol=symbol,
                     predicted_pin=snapshot.likely_pin,
                     gamma_regime=snapshot.gamma_regime,
-                    vix=raw_data.get('vix', 0),
+                    vix=effective_vix,
                     confidence=snapshot.pin_probability * 100  # Convert to percentage
                 )
 
@@ -1173,8 +1200,11 @@ async def get_gamma_data(
                 spot_price=snapshot.spot_price,
                 order_flow=order_flow,
                 gamma_regime=snapshot.gamma_regime,
-                vix=raw_data.get('vix', 0)
+                vix=effective_vix
             )
+
+        # Determine if data is frozen (after-hours, using cached snapshot)
+        is_frozen = not market_open and is_cached
 
         # Build response
         return {
@@ -1194,6 +1224,7 @@ async def get_gamma_data(
                 "market_status": snapshot.market_status,
                 "is_mock": raw_data.get('is_mock', False),  # True = simulated, False = real market data
                 "is_cached": is_cached,  # True if showing cached data
+                "is_frozen": is_frozen,  # True when after-hours data is frozen (will not change)
                 "cache_age_seconds": cache_age_seconds,  # How old the cached data is
                 "fetched_at": raw_data.get('fetched_at', format_central_timestamp()),  # When data was fetched from Tradier (Central TZ)
                 "data_timestamp": raw_data.get('data_timestamp', raw_data.get('fetched_at', format_central_timestamp())),  # Original data fetch time
@@ -2141,12 +2172,17 @@ async def get_flow_diagnostics(
             }
 
         # Process the options chain to get strike data
-        snapshot = engine.process_options_chain(
-            raw_data,
-            spot_price,
-            vix,
-            expiration
-        )
+        # After hours: reuse existing snapshot to prevent engine state mutation
+        market_open = is_market_hours()
+        if not market_open and engine.previous_snapshot:
+            snapshot = engine.previous_snapshot
+        else:
+            snapshot = engine.process_options_chain(
+                raw_data,
+                spot_price,
+                vix,
+                expiration
+            )
 
         # Calculate flow diagnostics
         diagnostics = engine.calculate_options_flow_diagnostics(
@@ -2164,7 +2200,8 @@ async def get_flow_diagnostics(
             'gex_at_expiration': diagnostics['summary']['net_gex'],
             'net_gex': diagnostics['summary']['net_gex'],
             'rating': diagnostics['rating']['rating'],
-            'gamma_form': snapshot.gamma_regime
+            'gamma_form': snapshot.gamma_regime,
+            'is_frozen': not market_open  # Signal to frontend that data is frozen
         }
 
         # Find GEX flip point from strikes

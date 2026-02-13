@@ -196,24 +196,15 @@ interface IntradayTick {
 // Common symbols for quick selection
 const COMMON_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'USO', 'TLT', 'DIA', 'AAPL', 'TSLA', 'NVDA', 'AMD']
 
-// Check if US market is currently open (9:30 AM - 4:15 PM ET on weekdays)
-// Uses 4:15 PM to cover the options settlement window after the 4 PM close
 function isMarketOpen(): boolean {
   const now = new Date()
   const day = now.getDay()
-  // Weekend check
   if (day === 0 || day === 6) return false
-  // Convert to ET (UTC-5 or UTC-4 during DST)
-  const utcHours = now.getUTCHours()
-  const utcMinutes = now.getUTCMinutes()
-  const totalUtcMinutes = utcHours * 60 + utcMinutes
-  // Determine EST/EDT offset: EDT (UTC-4) from 2nd Sun March to 1st Sun Nov
-  const month = now.getUTCMonth() // 0-indexed
-  const isDST = month >= 2 && month <= 9 // Approximate: March-October
-  const etOffset = isDST ? 4 : 5
-  const totalEtMinutes = totalUtcMinutes - etOffset * 60
-  // Market hours: 9:30 AM ET (570 min) to 4:15 PM ET (975 min)
-  return totalEtMinutes >= 570 && totalEtMinutes < 975
+  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes()
+  const month = now.getUTCMonth()
+  const isDST = month >= 2 && month <= 9
+  const etMin = utcMin - (isDST ? 4 : 5) * 60
+  return etMin >= 570 && etMin < 975 // 9:30 AM – 4:15 PM ET
 }
 
 export default function GexChartsPage() {

@@ -237,7 +237,7 @@ async def get_valor_performance():
 
 @router.get("/api/valor/logs")
 async def get_valor_logs(
-    limit: int = Query(100, ge=1, le=1000, description="Number of log entries")
+    limit: int = Query(1000, ge=1, le=10000, description="Number of log entries")
 ):
     """
     Get VALOR activity logs for audit trail.
@@ -263,7 +263,7 @@ async def get_valor_logs(
 
 @router.get("/api/valor/signals/recent")
 async def get_valor_recent_signals(
-    limit: int = Query(50, ge=1, le=500, description="Number of signals")
+    limit: int = Query(1000, ge=1, le=10000, description="Number of signals")
 ):
     """
     Get recent VALOR signals (scan activity).
@@ -361,6 +361,36 @@ async def get_valor_win_tracker():
         raise
     except Exception as e:
         logger.error(f"Error getting VALOR win tracker: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/api/valor/win-tracker/reset")
+async def reset_valor_win_tracker():
+    """
+    Reset VALOR Bayesian win tracker to fresh defaults.
+
+    Clears all accumulated win/loss history so the tracker starts clean
+    with prior alpha=1, beta=1, 0 trades. Old data is kept in DB for
+    audit trail. The in-memory tracker and signal generator are also
+    refreshed immediately.
+    """
+    try:
+        trader = _get_trader()
+        fresh_tracker = trader.db.reset_win_tracker()
+        # Update in-memory tracker so it takes effect immediately
+        trader.win_tracker = fresh_tracker
+        trader.signal_generator.win_tracker = fresh_tracker
+        logger.info("VALOR win tracker RESET via API")
+        return {
+            "status": "reset",
+            "win_tracker": fresh_tracker.to_dict(),
+            "message": "Win tracker reset to fresh defaults. Old buggy-era losses cleared.",
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting VALOR win tracker: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
