@@ -308,6 +308,103 @@ async def get_status(
 
 
 # ---------------------------------------------------------------------------
+# Coinbase Client Diagnostics
+# ---------------------------------------------------------------------------
+
+@router.get("/diagnostics")
+async def get_diagnostics():
+    """Diagnostic view: Coinbase client status, balances, and per-ticker account resolution.
+
+    Use this to debug why live orders aren't appearing in Coinbase.
+    """
+    trader = _get_trader()
+    if not trader:
+        return {
+            "success": False,
+            "data_unavailable": True,
+            "reason": "AGAPE-SPOT trader not initialized",
+        }
+
+    try:
+        executor = trader.executor
+
+        # Default client
+        default_client_connected = executor._client is not None
+        default_balance = None
+        if default_client_connected:
+            default_balance = executor._get_usd_balance_from_client(executor._client)
+
+        # Dedicated clients
+        dedicated_clients = {}
+        for ticker, client in executor._ticker_clients.items():
+            bal = executor._get_usd_balance_from_client(client)
+            dedicated_clients[ticker] = {
+                "connected": True,
+                "usd_balance": round(bal, 2) if bal is not None else None,
+                "same_as_default": client is executor._client,
+            }
+
+        # Per-ticker account resolution (what get_all_accounts returns)
+        ticker_accounts = {}
+        for ticker in trader.config.tickers:
+            accounts = executor.get_all_accounts(ticker)
+            is_live = trader.config.is_live(ticker)
+            open_positions = trader.db.get_open_positions(ticker=ticker)
+
+            # Count positions per account label
+            acct_position_counts = {}
+            for p in (open_positions or []):
+                label = p.get("account_label", "unknown")
+                acct_position_counts[label] = acct_position_counts.get(label, 0) + 1
+
+            ticker_accounts[ticker] = {
+                "is_live": is_live,
+                "accounts": [
+                    {"label": label, "live": live}
+                    for label, live in accounts
+                ],
+                "open_positions_by_account": acct_position_counts,
+                "has_live_account": any(live for _, live in accounts),
+            }
+
+        # Recent execution errors from logs
+        recent_errors = []
+        try:
+            logs = trader.db.get_logs(limit=50)
+            for log in (logs or []):
+                action = log.get("action", "")
+                if action in ("NO_COINBASE_CLIENT", "BELOW_MIN_NOTIONAL",
+                              "NO_USD_BALANCE", "LIVE_EXEC_FAILED",
+                              "EXEC_FAILED", "ALLOC_SIZED"):
+                    recent_errors.append({
+                        "time": str(log.get("created_at", "")),
+                        "action": action,
+                        "message": log.get("message", "")[:200],
+                        "ticker": log.get("ticker", ""),
+                    })
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "data": {
+                "default_client": {
+                    "connected": default_client_connected,
+                    "usd_balance": round(default_balance, 2) if default_balance is not None else None,
+                },
+                "dedicated_clients": dedicated_clients,
+                "ticker_accounts": ticker_accounts,
+                "coinbase_sdk_available": executor._client is not None or bool(executor._ticker_clients),
+                "recent_execution_logs": recent_errors[:20],
+            },
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT diagnostics error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Positions
 # ---------------------------------------------------------------------------
 
