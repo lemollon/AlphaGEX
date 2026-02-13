@@ -21,6 +21,8 @@ from trading.agape_spot.models import (
     AgapeSpotSignal,
     SignalAction,
     SPOT_TICKERS,
+    BayesianWinTracker,
+    FundingRegime,
 )
 
 logger = logging.getLogger(__name__)
@@ -107,10 +109,14 @@ class AgapeSpotSignalGenerator:
     # Used to detect short-term trend direction before entering
     MOMENTUM_WINDOW = 10  # Last 10 readings (~10 min at 1-min scans)
 
-    def __init__(self, config: AgapeSpotConfig):
+    # Win probability gate: minimum Bayesian probability to allow entry
+    MIN_WIN_PROBABILITY: float = 0.50
+
+    def __init__(self, config: AgapeSpotConfig, win_trackers: Optional[Dict[str, BayesianWinTracker]] = None):
         self.config = config
         self._crypto_provider = None
         self._prophet = None
+        self._win_trackers: Dict[str, BayesianWinTracker] = win_trackers or {}
 
         # Per-ticker price history for momentum detection
         self._price_history: Dict[str, deque] = {}
@@ -503,6 +509,24 @@ class AgapeSpotSignalGenerator:
             if not mom_ok:
                 return (SignalAction.WAIT, mom_reason)
 
+        # Bayesian win probability gate: block when regime win rate is too low
+        funding_regime_str = market_data.get("funding_regime", "UNKNOWN")
+        win_prob = self._calculate_win_probability(ticker, funding_regime_str)
+        if win_prob < self.MIN_WIN_PROBABILITY:
+            win_tracker = self._win_trackers.get(ticker)
+            tracker_info = ""
+            if win_tracker:
+                tracker_info = (
+                    f" [alpha={win_tracker.alpha:.1f}, beta={win_tracker.beta:.1f}, "
+                    f"trades={win_tracker.total_trades}, cold_start={win_tracker.is_cold_start}]"
+                )
+            logger.info(
+                f"AGAPE-SPOT WIN_PROB: {ticker} win_prob={win_prob:.4f} "
+                f"< gate={self.MIN_WIN_PROBABILITY:.2f}, "
+                f"regime={funding_regime_str}{tracker_info} — BLOCKED"
+            )
+            return (SignalAction.WAIT, f"WIN_PROB_{win_prob:.3f}_BELOW_GATE")
+
         tracker = get_spot_direction_tracker(ticker, self.config)
 
         if combined_signal == "LONG":
@@ -525,8 +549,11 @@ class AgapeSpotSignalGenerator:
         return (SignalAction.WAIT, f"NO_SIGNAL_{combined_signal}")
 
     def _is_altcoin(self, ticker: str) -> bool:
-        """Return True for non-ETH tickers (XRP, SHIB, DOGE)."""
-        return ticker != "ETH-USD"
+        """Return True for non-major tickers (XRP, SHIB, DOGE).
+
+        ETH-USD and BTC-USD are 'majors' with full Deribit options data.
+        """
+        return ticker not in ("ETH-USD", "BTC-USD")
 
     def _derive_range_bound_direction(
         self, ticker: str, market_data: Dict, tracker
@@ -650,6 +677,44 @@ class AgapeSpotSignalGenerator:
             dist = ((mp - spot) / spot) * 100
             parts.append(f"max_pain_dist={dist:+.1f}%")
         return " | ".join(parts)
+
+    def _calculate_win_probability(self, ticker: str, funding_regime_str: str) -> float:
+        """Calculate Bayesian win probability for a ticker in its current funding regime.
+
+        Blends regime-specific Bayesian estimate with a base rate.
+        Cold start floor ensures the bot can trade and collect data early on.
+
+        Returns a probability in [0.0, 1.0].
+        """
+        win_tracker = self._win_trackers.get(ticker)
+        if not win_tracker:
+            return 0.52  # No tracker -> allow trading
+
+        funding_regime = FundingRegime.from_funding_string(funding_regime_str)
+        bayesian_prob = win_tracker.get_regime_probability(funding_regime)
+
+        # Blend weight ramps from 0.3 (few trades) to 0.7 (100+ trades)
+        bayesian_weight = min(0.7, 0.3 + (win_tracker.total_trades / 100))
+        base_rate = 0.5  # Prior expectation: 50/50
+        blended_prob = (bayesian_prob * bayesian_weight) + (base_rate * (1 - bayesian_weight))
+
+        # Cold start floor: when too few trades, floor so the bot can trade
+        is_cold = win_tracker.is_cold_start
+        if is_cold and blended_prob < win_tracker.cold_start_floor:
+            blended_prob = win_tracker.cold_start_floor
+
+        final_prob = round(max(0.0, min(1.0, blended_prob)), 4)
+
+        logger.info(
+            f"AGAPE-SPOT WIN_PROB: {ticker} regime={funding_regime.value}, "
+            f"regime_prob={bayesian_prob:.3f}, bayes_wt={bayesian_weight:.2f}, "
+            f"blended={blended_prob:.4f}, "
+            f"cold_start={'YES' if is_cold else 'NO'} "
+            f"({win_tracker.total_trades}/{win_tracker.cold_start_trades} trades), "
+            f"final={final_prob:.4f} (gate={self.MIN_WIN_PROBABILITY:.2f})"
+        )
+
+        return final_prob
 
     def _calculate_position_size(self, ticker: str, spot_price: float) -> Tuple[float, float]:
         """Calculate position size using per-ticker config from SPOT_TICKERS.
