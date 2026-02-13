@@ -160,6 +160,26 @@ interface SymbolExpirations {
 // Common symbols for quick selection
 const COMMON_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'USO', 'TLT', 'DIA', 'AAPL', 'TSLA', 'NVDA', 'AMD']
 
+// Check if US market is currently open (9:30 AM - 4:15 PM ET on weekdays)
+// Uses 4:15 PM to cover the options settlement window after the 4 PM close
+function isMarketOpen(): boolean {
+  const now = new Date()
+  const day = now.getDay()
+  // Weekend check
+  if (day === 0 || day === 6) return false
+  // Convert to ET (UTC-5 or UTC-4 during DST)
+  const utcHours = now.getUTCHours()
+  const utcMinutes = now.getUTCMinutes()
+  const totalUtcMinutes = utcHours * 60 + utcMinutes
+  // Determine EST/EDT offset: EDT (UTC-4) from 2nd Sun March to 1st Sun Nov
+  const month = now.getUTCMonth() // 0-indexed
+  const isDST = month >= 2 && month <= 9 // Approximate: March-October
+  const etOffset = isDST ? 4 : 5
+  const totalEtMinutes = totalUtcMinutes - etOffset * 60
+  // Market hours: 9:30 AM ET (570 min) to 4:15 PM ET (975 min)
+  return totalEtMinutes >= 570 && totalEtMinutes < 975
+}
+
 export default function GexChartsPage() {
   const paddingClass = useSidebarPadding()
   const [symbol, setSymbol] = useState('SPY')
@@ -238,12 +258,15 @@ export default function GexChartsPage() {
     }
   }, [symbol, selectedExpiration, fetchData])
 
-  // Auto-refresh every 30 seconds during market hours
+  // Auto-refresh every 30 seconds during market hours only
   useEffect(() => {
     if (!autoRefresh) return
 
     const interval = setInterval(() => {
-      fetchData(symbol, selectedExpiration)
+      // Only poll when market is open — no point refreshing stale after-hours data
+      if (isMarketOpen()) {
+        fetchData(symbol, selectedExpiration)
+      }
     }, 30000)
 
     return () => clearInterval(interval)
@@ -481,11 +504,17 @@ export default function GexChartsPage() {
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={`flex items-center gap-2 px-3 py-2 rounded text-sm ${
-                autoRefresh ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                autoRefresh
+                  ? (isMarketOpen()
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                    : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30')
+                  : 'bg-gray-800 text-gray-400 border border-gray-700'
               }`}
             >
               <Clock className="w-4 h-4" />
-              {autoRefresh ? 'Auto 30s' : 'Manual'}
+              {autoRefresh
+                ? (isMarketOpen() ? 'Auto 30s' : 'Market Closed')
+                : 'Manual'}
             </button>
 
             {/* Refresh Button */}
@@ -503,6 +532,9 @@ export default function GexChartsPage() {
           {lastUpdated && (
             <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
               <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
+              {!isMarketOpen() && (
+                <span className="text-yellow-400">Data as of last market close</span>
+              )}
               {data?.expiration && (
                 <span className="text-cyan-400">Viewing: {data.expiration}</span>
               )}

@@ -420,11 +420,24 @@ class SharedGammaEngine:
         return False, None
 
     def classify_gamma_regime(self, total_net_gamma: float,
-                               neutral_threshold: float = 1e9) -> str:
-        """Classify overall gamma regime"""
-        if total_net_gamma > neutral_threshold:
+                               neutral_threshold: float = 1e9,
+                               spot_price: float = 0) -> str:
+        """Classify overall gamma regime.
+
+        Args:
+            total_net_gamma: Sum of net gamma (gamma × OI × 100 units)
+            neutral_threshold: Threshold in GEX-dollar units (default $1B)
+            spot_price: When provided, converts gamma-exposure to GEX-dollar units (× spot²)
+        """
+        # Convert to GEX-dollar units if spot_price is available
+        if spot_price > 0:
+            gex_value = total_net_gamma * (spot_price ** 2)
+        else:
+            gex_value = total_net_gamma
+
+        if gex_value > neutral_threshold:
             return GammaRegime.POSITIVE.value
-        elif total_net_gamma < -neutral_threshold:
+        elif gex_value < -neutral_threshold:
             return GammaRegime.NEGATIVE.value
         else:
             return GammaRegime.NEUTRAL.value
@@ -797,7 +810,7 @@ class SharedGammaEngine:
         signals.vix_regime, signals.vix_implication = self.classify_vix_regime(vix)
 
         # 2. Gamma Regime
-        signals.gamma_regime = self.classify_gamma_regime(total_net_gamma)
+        signals.gamma_regime = self.classify_gamma_regime(total_net_gamma, spot_price=spot_price)
         if signals.gamma_regime == "POSITIVE":
             signals.gamma_alignment = "MEAN_REVERSION"
             signals.gamma_implication = "Dealers hedge against price, expect mean reversion"
