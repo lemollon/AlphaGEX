@@ -259,6 +259,26 @@ class AgapeSpotExecutor:
             return obj.get(key, default)
         return default
 
+    def _get_usd_balance_from_client(self, client) -> Optional[float]:
+        """Get available USD balance directly from a specific Coinbase client.
+
+        Used for balance-aware position sizing so each account trades
+        within its actual available capital.
+        """
+        if not client:
+            return None
+        try:
+            accounts = client.get_accounts()
+            acct_list = self._resp(accounts, "accounts", [])
+            for acct in acct_list:
+                currency = self._resp(acct, "currency", "")
+                if currency == "USD":
+                    avail_bal = self._resp(acct, "available_balance", {})
+                    return float(self._resp(avail_bal, "value", 0))
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT Executor: USD balance lookup failed: {e}")
+        return None
+
     def _store_product_limits(self, ticker: str, product) -> None:
         """Extract and store base_min_size/quote_min_size from a Coinbase product response."""
         try:
@@ -434,6 +454,50 @@ class AgapeSpotExecutor:
             qty_decimals = ticker_config.get("quantity_decimals", 8)
             quantity = round(signal.quantity, qty_decimals)
             client_order_id = str(uuid.uuid4())
+
+            # --- Balance-aware sizing: adjust qty to fit actual account balance ---
+            try:
+                usd_available = self._get_usd_balance_from_client(client)
+                if usd_available is not None and usd_available > 0:
+                    # Reserve 5% for fees/slippage
+                    usable_usd = usd_available * 0.95
+                    notional_wanted = quantity * signal.spot_price
+                    if notional_wanted > usable_usd:
+                        # Scale down to what the account can afford
+                        affordable_qty = usable_usd / signal.spot_price
+                        affordable_qty = round(affordable_qty, qty_decimals)
+                        logger.info(
+                            f"AGAPE-SPOT: BALANCE ADJUST [{account_label}] {signal.ticker} "
+                            f"qty {quantity} -> {affordable_qty} "
+                            f"(${notional_wanted:.2f} wanted, ${usable_usd:.2f} available)"
+                        )
+                        if self.db:
+                            self.db.log(
+                                "INFO", "BALANCE_ADJUSTED",
+                                f"[{account_label}] {signal.ticker}: qty {quantity} -> "
+                                f"{affordable_qty} (balance ${usd_available:.2f}, "
+                                f"usable ${usable_usd:.2f})",
+                                ticker=signal.ticker,
+                            )
+                        quantity = affordable_qty
+                elif usd_available is not None and usd_available <= 0:
+                    logger.warning(
+                        f"AGAPE-SPOT: NO USD BALANCE [{account_label}] {signal.ticker} "
+                        f"— skipping live order"
+                    )
+                    if self.db:
+                        self.db.log(
+                            "WARNING", "NO_USD_BALANCE",
+                            f"[{account_label}] {signal.ticker}: $0 available, "
+                            f"cannot place order",
+                            ticker=signal.ticker,
+                        )
+                    return None
+            except Exception as bal_err:
+                logger.warning(
+                    f"AGAPE-SPOT: Balance check failed [{account_label}] "
+                    f"{signal.ticker}: {bal_err} — proceeding with signal qty"
+                )
 
             notional_est = quantity * signal.spot_price
             min_notional = self.get_min_notional(signal.ticker)
