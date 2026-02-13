@@ -2609,6 +2609,78 @@ async def get_intraday_ticks(
                 pass
 
 
+@router.get("/intraday-bars")
+async def get_intraday_bars(
+    symbol: str = Query("SPY", description="Symbol to get bars for"),
+    interval: str = Query("5min", description="Bar interval: 1min, 5min, 15min")
+):
+    """
+    Get intraday OHLCV bars from Tradier timesales API.
+
+    Returns 5-minute candlestick data for the current trading day.
+    Used by the GEX Profile chart to overlay price candles on gamma data.
+    """
+    cache_key = f"intraday_bars_{symbol}_{interval}"
+    cached = get_cached(cache_key, ttl=30)
+    if cached:
+        return cached
+
+    tradier = get_tradier()
+    if not tradier:
+        result = {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval, "error": "Tradier not available"}}
+        return result
+
+    try:
+        # Tradier timesales endpoint returns intraday OHLCV bars
+        now = get_central_time()
+        params = {
+            'symbol': symbol,
+            'interval': interval,
+            'start': now.strftime('%Y-%m-%d 08:30'),
+            'end': now.strftime('%Y-%m-%d 15:15'),
+            'session_filter': 'open'
+        }
+
+        response = tradier._make_request('GET', 'markets/timesales', params=params)
+        series = response.get('series', {})
+
+        if not series or series == 'null':
+            result = {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval}}
+            set_cached(cache_key, result)
+            return result
+
+        raw_data = series.get('data', [])
+        if isinstance(raw_data, dict):
+            raw_data = [raw_data]
+
+        bars = []
+        for bar in raw_data:
+            bars.append({
+                "time": bar.get('time', ''),
+                "open": round(float(bar.get('open', 0)), 2),
+                "high": round(float(bar.get('high', 0)), 2),
+                "low": round(float(bar.get('low', 0)), 2),
+                "close": round(float(bar.get('close', 0)), 2),
+                "volume": int(bar.get('volume', 0))
+            })
+
+        result = {
+            "success": True,
+            "data": {
+                "bars": bars,
+                "symbol": symbol,
+                "interval": interval,
+                "count": len(bars)
+            }
+        }
+        set_cached(cache_key, result)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error getting intraday bars from Tradier: {e}")
+        return {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval, "error": str(e)}}
+
+
 @router.get("/probability")
 async def get_probability_data():
     """
