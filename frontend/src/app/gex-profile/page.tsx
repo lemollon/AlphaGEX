@@ -722,70 +722,122 @@ export default function GexProfilePage() {
                   <NoStrikeData />
                 ) : (
                   <>
-                    <div className="h-[550px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={sortedStrikes} layout="vertical" margin={{ top: 5, right: 60, left: 30, bottom: 5 }}>
-                          {/* X-axis: bars extend left from 0 — show absolute magnitude in labels */}
-                          <XAxis
-                            type="number"
-                            tick={{ fill: '#6b7280', fontSize: 10 }}
-                            tickFormatter={v => formatGex(v, 1)}
-                            axisLine={{ stroke: '#374151' }}
-                            domain={[0, 'auto']}
-                            reversed
-                          />
-                          {/* Strike prices on right side (where bars originate from 0) */}
-                          <YAxis type="category" dataKey="strike" orientation="right" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#374151' }} />
-                          <Tooltip content={<StrikeTooltip />} />
+                    {/* Pure CSS bars — zero on right, bars grow left */}
+                    <div className="h-[550px] overflow-y-auto">
+                      {(() => {
+                        const maxGamma = Math.max(...sortedStrikes.map(s => s.abs_net_gamma), 0.001)
+                        const { price, gex_flip: flip, call_wall: cw, put_wall: pw, upper_1sd, lower_1sd } = data.levels
+                        const rowH = Math.max(Math.floor(540 / sortedStrikes.length), 12)
 
-                          {/* Reference lines */}
-                          {data.levels.gex_flip && (
-                            <ReferenceLine y={data.levels.gex_flip} stroke="#eab308" strokeDasharray="5 3"
-                              label={{ value: `Flip ${data.levels.gex_flip}`, fill: '#eab308', fontSize: 9, position: 'right' }} />
-                          )}
-                          <ReferenceLine y={data.levels.price} stroke="#3b82f6" strokeWidth={2}
-                            label={{ value: `Price ${data.levels.price}`, fill: '#3b82f6', fontSize: 9, position: 'right' }} />
-                          {data.levels.call_wall && (
-                            <ReferenceLine y={data.levels.call_wall} stroke="#06b6d4" strokeDasharray="3 3"
-                              label={{ value: `Call Wall ${data.levels.call_wall}`, fill: '#06b6d4', fontSize: 9, position: 'right' }} />
-                          )}
-                          {data.levels.put_wall && (
-                            <ReferenceLine y={data.levels.put_wall} stroke="#a855f7" strokeDasharray="3 3"
-                              label={{ value: `Put Wall ${data.levels.put_wall}`, fill: '#a855f7', fontSize: 9, position: 'right' }} />
-                          )}
-                          {data.levels.upper_1sd && (
-                            <ReferenceLine y={data.levels.upper_1sd} stroke="#22c55e" strokeDasharray="2 4"
-                              label={{ value: '+1\u03C3', fill: '#22c55e', fontSize: 9, position: 'left' }} />
-                          )}
-                          {data.levels.lower_1sd && (
-                            <ReferenceLine y={data.levels.lower_1sd} stroke="#ef4444" strokeDasharray="2 4"
-                              label={{ value: '-1\u03C3', fill: '#ef4444', fontSize: 9, position: 'left' }} />
-                          )}
+                        // Find closest strike index for each reference level
+                        const nearest = (target: number | null | undefined) => {
+                          if (!target || !sortedStrikes.length) return -1
+                          let best = 0, bestD = Infinity
+                          sortedStrikes.forEach((s, i) => { const d = Math.abs(s.strike - target); if (d < bestD) { bestD = d; best = i } })
+                          return best
+                        }
+                        const priceIdx = nearest(price)
+                        const flipIdx = nearest(flip)
+                        const cwIdx = nearest(cw)
+                        const pwIdx = nearest(pw)
 
-                          {/* Bars use absolute value — color encodes positive (green) vs negative (red) */}
-                          <Bar dataKey="abs_net_gamma" name="Net Gamma">
-                            {sortedStrikes.map((entry, i) => (
-                              <Cell
-                                key={`n-${i}`}
-                                fill={entry.net_gamma >= 0 ? '#22c55e' : '#ef4444'}
-                                fillOpacity={entry.is_magnet ? 1 : entry.is_danger ? 0.9 : 0.75}
-                                stroke={entry.is_magnet ? '#eab308' : entry.is_pin ? '#a855f7' : entry.is_danger ? '#ef4444' : 'none'}
-                                strokeWidth={entry.is_magnet || entry.is_pin || entry.is_danger ? 2 : 0}
-                              />
-                            ))}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
+                        return sortedStrikes.map((entry, i) => {
+                          const pct = (entry.abs_net_gamma / maxGamma) * 100
+                          const pos = entry.net_gamma >= 0
+
+                          // Reference level markers
+                          const atPrice = i === priceIdx
+                          const atFlip = i === flipIdx && flipIdx !== priceIdx
+                          const atCW = i === cwIdx && cwIdx !== priceIdx
+                          const atPW = i === pwIdx && pwIdx !== priceIdx
+
+                          // Row border for reference levels
+                          const refBorder = atPrice ? 'border-b-2 border-blue-500'
+                            : atFlip ? 'border-b border-dashed border-yellow-500'
+                            : atCW ? 'border-b border-dashed border-cyan-500'
+                            : atPW ? 'border-b border-dashed border-purple-500'
+                            : ''
+
+                          const refBg = atPrice ? 'bg-blue-500/8' : ''
+
+                          // Special strike decorations
+                          const barRing = entry.is_magnet ? 'ring-1 ring-yellow-500'
+                            : entry.is_pin ? 'ring-1 ring-purple-500'
+                            : entry.is_danger ? 'ring-1 ring-red-500/60' : ''
+
+                          return (
+                            <div
+                              key={entry.strike}
+                              className={`flex items-center group relative ${refBorder} ${refBg}`}
+                              style={{ height: `${rowH}px` }}
+                            >
+                              {/* Reference level label — left side */}
+                              <div className="w-24 flex-shrink-0 text-[9px] font-semibold text-right pr-2 truncate">
+                                {atPrice && <span className="text-blue-400">PRICE ${price?.toFixed(0)}</span>}
+                                {atFlip && <span className="text-yellow-400">FLIP ${flip?.toFixed(0)}</span>}
+                                {atCW && <span className="text-cyan-400">CALL WALL</span>}
+                                {atPW && <span className="text-purple-400">PUT WALL</span>}
+                              </div>
+
+                              {/* Zero line (thin vertical line between bar area and strike label) */}
+                              {/* Bar area — justify-end pushes bar to the RIGHT edge, then bar grows LEFT via width% */}
+                              <div className="flex-1 flex justify-end items-center h-full border-r border-gray-600">
+                                <div
+                                  className={`rounded-l-sm ${pos ? 'bg-green-500' : 'bg-red-500'} ${barRing}`}
+                                  style={{
+                                    width: `${Math.max(pct, 0.5)}%`,
+                                    height: `${Math.min(Math.max(rowH - 4, 6), 18)}px`,
+                                    opacity: entry.is_magnet ? 1 : entry.is_danger ? 0.9 : 0.75,
+                                  }}
+                                />
+                              </div>
+
+                              {/* Strike price on RIGHT (touching zero line) */}
+                              <div className={`w-12 text-right text-[10px] font-mono pl-1.5 flex-shrink-0 ${
+                                atPrice ? 'text-blue-400 font-bold'
+                                : atFlip ? 'text-yellow-400'
+                                : atCW ? 'text-cyan-400'
+                                : atPW ? 'text-purple-400'
+                                : 'text-gray-500'
+                              }`}>
+                                {entry.strike}
+                              </div>
+
+                              {/* Hover tooltip */}
+                              <div className="hidden group-hover:block absolute right-14 top-0 z-50 bg-gray-900/95 border border-gray-600 rounded-lg p-2.5 shadow-2xl text-xs min-w-[200px] pointer-events-none">
+                                <div className="font-bold text-white mb-1">${entry.strike}</div>
+                                <div className={`font-semibold mb-1 ${pos ? 'text-green-400' : 'text-red-400'}`}>
+                                  Net GEX: {entry.gex_label}
+                                </div>
+                                <div className="space-y-0.5 text-gray-400">
+                                  <div>Call GEX: <span className="text-green-400">{formatGex(entry.call_gamma, 2)}</span></div>
+                                  <div>Put GEX: <span className="text-red-400">{formatGex(entry.put_gamma, 2)}</span></div>
+                                  {entry.call_iv && <div>Call IV: {(entry.call_iv * 100).toFixed(1)}%</div>}
+                                  {entry.put_iv && <div>Put IV: {(entry.put_iv * 100).toFixed(1)}%</div>}
+                                  <div>Volume: {entry.total_volume?.toLocaleString()}</div>
+                                </div>
+                                {entry.is_magnet && <div className="text-yellow-400 mt-1 font-semibold">Magnet Strike</div>}
+                                {entry.is_pin && <div className="text-purple-400 mt-1 font-semibold">Pin Strike</div>}
+                                {entry.is_danger && <div className="text-red-400 mt-1 font-semibold">{entry.danger_type}</div>}
+                              </div>
+                            </div>
+                          )
+                        })
+                      })()}
                     </div>
 
                     {/* Legend */}
                     <div className="flex flex-wrap gap-4 mt-3 text-xs">
-                      <LegendItem color="bg-green-500" label="Positive Gamma (support)" />
-                      <LegendItem color="bg-red-500" label="Negative Gamma (momentum)" />
+                      <LegendItem color="bg-green-500" label="Positive Gamma" />
+                      <LegendItem color="bg-red-500" label="Negative Gamma" />
+                      <span className="text-gray-700">|</span>
+                      <span className="text-blue-400">── Price</span>
+                      <span className="text-yellow-400">╌╌ Flip</span>
+                      <span className="text-cyan-400">╌╌ Call Wall</span>
+                      <span className="text-purple-400">╌╌ Put Wall</span>
                       <span className="text-gray-700">|</span>
                       <LegendItem color="bg-yellow-500 ring-2 ring-yellow-500" label="Magnet" small />
                       <LegendItem color="bg-purple-500 ring-2 ring-purple-500" label="Pin" small />
-                      <LegendItem color="bg-red-500 ring-2 ring-red-500" label="Danger Zone" small />
                     </div>
                   </>
                 )
