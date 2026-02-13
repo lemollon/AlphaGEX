@@ -1050,38 +1050,49 @@ def generate_report_for_bot(
     # Step 1: Fetch closed trades
     trades = fetch_closed_trades_for_date(bot, report_date)
 
-    # If no trades, return None (don't generate empty reports)
-    if not trades:
-        logger.info(f"No trades for {bot.upper()} on {report_date} - skipping report generation")
-        return None
-
     # Step 2: Fetch scan activity
     scans = fetch_scan_activity_for_date(bot, report_date)
 
-    # Step 3: Fetch intraday ticks from Yahoo
-    intraday_ticks = {}
-    if YAHOO_AVAILABLE and trades:
-        try:
-            intraday_ticks = fetch_ticks_for_trades(trades, bot)
-        except Exception as e:
-            logger.warning(f"Yahoo tick fetch failed for {bot}: {e} - continuing without ticks")
-            intraday_ticks = {}
-
-    # Step 4: Build market context
+    # Step 3: Build market context (available even on 0-trade days)
     market_context = build_market_context(scans, report_date)
 
-    # Step 5: Analyze each trade with Claude
+    # Step 4: Handle trades (may be empty)
+    intraday_ticks = {}
     trade_analyses = []
-    for trade in trades:
-        position_id = trade.get("position_id")
-        ticks = intraday_ticks.get(position_id, [])
-        analysis = analyze_trade_with_claude(trade, ticks, market_context)
-        trade_analyses.append(analysis)
+    daily_summary_data = {}
 
-    # Step 6: Generate daily summary
-    daily_summary_data = generate_daily_summary_with_claude(
-        trades, trade_analyses, market_context, report_date
-    )
+    if trades:
+        # Fetch intraday ticks from Yahoo
+        if YAHOO_AVAILABLE:
+            try:
+                intraday_ticks = fetch_ticks_for_trades(trades, bot)
+            except Exception as e:
+                logger.warning(f"Yahoo tick fetch failed for {bot}: {e} - continuing without ticks")
+                intraday_ticks = {}
+
+        # Analyze each trade with Claude
+        for trade in trades:
+            position_id = trade.get("position_id")
+            ticks = intraday_ticks.get(position_id, [])
+            analysis = analyze_trade_with_claude(trade, ticks, market_context)
+            trade_analyses.append(analysis)
+
+        # Generate daily summary with Claude
+        daily_summary_data = generate_daily_summary_with_claude(
+            trades, trade_analyses, market_context, report_date
+        )
+    else:
+        logger.info(f"No trades for {bot.upper()} on {report_date} - generating summary-only report")
+        daily_summary_data = {
+            "daily_summary": f"No trades executed by {bot.upper()} on {report_date.strftime('%A, %B %d, %Y')}. The bot was active but no trading opportunities met entry criteria.",
+            "total_pnl": 0,
+            "win_rate": "N/A",
+            "lessons_learned": [],
+            "best_trade": None,
+            "worst_trade": None,
+            "_input_tokens": 0,
+            "_output_tokens": 0
+        }
 
     # Calculate metrics
     total_pnl = sum(_safe_float(t.get("realized_pnl")) for t in trades)
@@ -1127,7 +1138,7 @@ def generate_report_for_bot(
         "estimated_cost_usd": estimated_cost
     }
 
-    # Step 7: Save to archive
+    # Step 5: Save to archive
     save_report_to_archive(bot, report)
 
     logger.info(f"Generated report for {bot.upper()} in {generation_time_ms}ms: {len(trades)} trades, ${total_pnl:.2f} P&L")
