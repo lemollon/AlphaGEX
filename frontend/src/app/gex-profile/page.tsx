@@ -638,24 +638,34 @@ export default function GexProfilePage() {
                       }
                     })
 
-                  // Reference level lines (horizontal)
+                  // Reference level lines (horizontal) — thick enough to see
                   const refLines: any[] = []
                   const { gex_flip: flip, call_wall: cw, put_wall: pw } = data.levels
                   if (flip) refLines.push({
                     type: 'line', xref: 'paper', yref: 'y',
                     x0: 0, x1: 1, y0: flip, y1: flip,
-                    line: { color: '#eab308', width: 1.5, dash: 'dash' },
+                    line: { color: '#eab308', width: 2.5, dash: 'dash' },
                   })
                   if (cw) refLines.push({
                     type: 'line', xref: 'paper', yref: 'y',
                     x0: 0, x1: 1, y0: cw, y1: cw,
-                    line: { color: '#06b6d4', width: 1.5, dash: 'dot' },
+                    line: { color: '#06b6d4', width: 2.5, dash: 'dot' },
                   })
                   if (pw) refLines.push({
                     type: 'line', xref: 'paper', yref: 'y',
                     x0: 0, x1: 1, y0: pw, y1: pw,
-                    line: { color: '#a855f7', width: 1.5, dash: 'dot' },
+                    line: { color: '#a855f7', width: 2.5, dash: 'dot' },
                   })
+
+                  // Compute Y-axis range: include price data + reference levels + padding
+                  const yPoints = [...priceValues]
+                  if (flip) yPoints.push(flip)
+                  if (cw) yPoints.push(cw)
+                  if (pw) yPoints.push(pw)
+                  const yMin = yPoints.length > 0 ? Math.min(...yPoints) : 0
+                  const yMax = yPoints.length > 0 ? Math.max(...yPoints) : 0
+                  const yPad = (yMax - yMin) * 0.15 || 2
+                  const yRange: [number, number] = [yMin - yPad, yMax + yPad]
 
                   // Reference level annotations (on right edge)
                   const refAnnotations: any[] = []
@@ -732,6 +742,8 @@ export default function GexProfilePage() {
                               showgrid: true,
                               side: 'right',
                               tickformat: '$,.0f',
+                              range: yRange,
+                              autorange: false,
                             },
                             shapes: [...gexShapes, ...refLines],
                             annotations: [...gexAnnotations, ...refAnnotations],
@@ -800,14 +812,18 @@ export default function GexProfilePage() {
                           const atCW = i === cwIdx && cwIdx !== priceIdx
                           const atPW = i === pwIdx && pwIdx !== priceIdx
 
-                          // Row border for reference levels
-                          const refBorder = atPrice ? 'border-b-2 border-blue-500'
-                            : atFlip ? 'border-b border-dashed border-yellow-500'
-                            : atCW ? 'border-b border-dashed border-cyan-500'
-                            : atPW ? 'border-b border-dashed border-purple-500'
+                          // Row border + background for reference levels
+                          const refBorder = atPrice ? 'border-y-2 border-blue-500'
+                            : atFlip ? 'border-y-2 border-yellow-500/60'
+                            : atCW ? 'border-y-2 border-cyan-500/60'
+                            : atPW ? 'border-y-2 border-purple-500/60'
                             : ''
 
-                          const refBg = atPrice ? 'bg-blue-500/8' : ''
+                          const refBg = atPrice ? 'bg-blue-500/15'
+                            : atFlip ? 'bg-yellow-500/10'
+                            : atCW ? 'bg-cyan-500/10'
+                            : atPW ? 'bg-purple-500/10'
+                            : ''
 
                           // Special strike decorations
                           const barRing = entry.is_magnet ? 'ring-1 ring-yellow-500'
