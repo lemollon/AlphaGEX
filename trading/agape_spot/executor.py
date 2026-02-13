@@ -497,78 +497,72 @@ class AgapeSpotExecutor:
 
             # --- Balance-aware sizing with performance-based allocation ---
             #
-            # Live accounts size from actual balance, NOT from signal quantity.
-            # The allocator assigns each ticker a % of available USD based on
-            # its historical performance (win rate, profit factor, recent P&L).
-            # Paper account is unaffected — it uses signal.quantity directly.
+            # Live accounts ALWAYS size from real data, never paper quantities.
+            # Priority:
+            #   1. Actual Coinbase USD balance (best — sizes to what we can afford)
+            #   2. live_capital from config (fallback — conservative cap)
+            # The allocator then assigns each ticker a % based on performance.
             try:
                 usd_available = self._get_usd_balance_from_client(client)
-                if usd_available is not None and usd_available > 0:
-                    # Reserve 5% for fees/slippage
-                    usable_usd = usd_available * 0.95
-
-                    # Ask allocator how much of the balance this ticker deserves
-                    alloc_pct = 1.0
-                    if self.capital_allocator:
-                        alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
-                    allocated_usd = usable_usd * alloc_pct
-
-                    # Size quantity from the allocated USD
-                    affordable_qty = allocated_usd / signal.spot_price
-                    affordable_qty = round(affordable_qty, qty_decimals)
-
-                    logger.info(
-                        f"AGAPE-SPOT: ALLOC SIZING [{account_label}] {signal.ticker} "
-                        f"balance=${usd_available:.2f}, usable=${usable_usd:.2f}, "
-                        f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
-                        f"qty={affordable_qty}"
-                    )
-                    if self.db:
-                        self.db.log(
-                            "INFO", "ALLOC_SIZED",
-                            f"[{account_label}] {signal.ticker}: "
-                            f"balance=${usd_available:.2f}, alloc={alloc_pct:.1%} "
-                            f"(${allocated_usd:.2f}), qty={affordable_qty}",
-                            ticker=signal.ticker,
-                        )
-                    quantity = affordable_qty
-                elif usd_available is not None and usd_available <= 0:
-                    logger.warning(
-                        f"AGAPE-SPOT: NO USD BALANCE [{account_label}] {signal.ticker} "
-                        f"— skipping live order"
-                    )
-                    if self.db:
-                        self.db.log(
-                            "WARNING", "NO_USD_BALANCE",
-                            f"[{account_label}] {signal.ticker}: $0 available, "
-                            f"cannot place order",
-                            ticker=signal.ticker,
-                        )
-                    return None
-                else:
-                    # Balance lookup returned None — could not find USD wallet.
-                    # Do NOT fall through to signal quantity (paper-sized) as
-                    # that would try to buy $1000 with $199 and get rejected.
-                    logger.warning(
-                        f"AGAPE-SPOT: USD balance not found [{account_label}] "
-                        f"{signal.ticker} — skipping live order"
-                    )
-                    if self.db:
-                        self.db.log(
-                            "WARNING", "USD_WALLET_NOT_FOUND",
-                            f"[{account_label}] {signal.ticker}: "
-                            f"get_accounts() returned no USD wallet. "
-                            f"Cannot size order. Check API key permissions "
-                            f"or transfer USD to Advanced Trade.",
-                            ticker=signal.ticker,
-                        )
-                    return None
             except Exception as bal_err:
                 logger.warning(
                     f"AGAPE-SPOT: Balance check failed [{account_label}] "
-                    f"{signal.ticker}: {bal_err} — skipping live order"
+                    f"{signal.ticker}: {bal_err} — using live_capital fallback"
                 )
+                usd_available = None
+
+            if usd_available is not None and usd_available <= 0:
+                logger.warning(
+                    f"AGAPE-SPOT: NO USD BALANCE [{account_label}] {signal.ticker} "
+                    f"— $0 available, skipping"
+                )
+                if self.db:
+                    self.db.log(
+                        "WARNING", "NO_USD_BALANCE",
+                        f"[{account_label}] {signal.ticker}: $0 available, "
+                        f"cannot place order",
+                        ticker=signal.ticker,
+                    )
                 return None
+
+            # Determine sizing pool
+            if usd_available is not None and usd_available > 0:
+                sizing_source = "BALANCE"
+                sizing_pool = usd_available * 0.95  # Reserve 5% for fees
+            else:
+                # Balance lookup failed — use live_capital as conservative cap
+                live_cap = SPOT_TICKERS.get(signal.ticker, {}).get(
+                    "live_capital", 50.0
+                )
+                sizing_source = "LIVE_CAPITAL"
+                sizing_pool = live_cap
+
+            # Apply allocator ranking
+            alloc_pct = 1.0
+            if self.capital_allocator:
+                alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
+            allocated_usd = sizing_pool * alloc_pct
+
+            # Size quantity from allocated USD
+            affordable_qty = allocated_usd / signal.spot_price
+            affordable_qty = round(affordable_qty, qty_decimals)
+
+            logger.info(
+                f"AGAPE-SPOT: ALLOC SIZING [{account_label}] {signal.ticker} "
+                f"source={sizing_source}, pool=${sizing_pool:.2f}, "
+                f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                f"qty={affordable_qty}"
+            )
+            if self.db:
+                self.db.log(
+                    "INFO", "ALLOC_SIZED",
+                    f"[{account_label}] {signal.ticker}: "
+                    f"source={sizing_source}, pool=${sizing_pool:.2f}, "
+                    f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                    f"qty={affordable_qty}",
+                    ticker=signal.ticker,
+                )
+            quantity = affordable_qty
 
             notional_est = quantity * signal.spot_price
             min_notional = self.get_min_notional(signal.ticker)
