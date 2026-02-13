@@ -33,7 +33,9 @@ import {
   useANCHORLivePnL,
   useGideonLivePnL,
   useSamsonLivePnL,
-  useJUBILEELivePnL
+  useJUBILEELivePnL,
+  useAGAPEBTCStatus,
+  useAGAPEXRPStatus,
 } from '@/lib/hooks/useMarketData'
 
 // PERFORMANCE FIX: Move colorClasses outside component (was recreated every render)
@@ -164,6 +166,10 @@ export default function BotStatusOverview() {
   const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useSamsonStatus()
   const { data: jubileeStatus, isLoading: jubileeLoading, mutate: refreshJubilee } = useJUBILEEStatus()
 
+  // Crypto futures bots
+  const { data: agapeBtcStatus, isLoading: agapeBtcLoading, mutate: refreshAgapeBtc } = useAGAPEBTCStatus()
+  const { data: agapeXrpStatus, isLoading: agapeXrpLoading, mutate: refreshAgapeXrp } = useAGAPEXRPStatus()
+
   const { data: aresLivePnL } = useFortressLivePnL()
   const { data: solomonLivePnL } = useSolomonLivePnL()
   const { data: anchorLivePnL } = useANCHORLivePnL()
@@ -179,7 +185,9 @@ export default function BotStatusOverview() {
     refreshIcarus()
     refreshTitan()
     refreshJubilee()
-  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshJubilee])
+    refreshAgapeBtc()
+    refreshAgapeXrp()
+  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshJubilee, refreshAgapeBtc, refreshAgapeXrp])
 
   // PERFORMANCE FIX: useMemo for calculated P&L values (was recalculating every render)
   const { totalTodayPnL, totalUnrealizedPnL, paperTodayPnL } = useMemo(() => ({
@@ -205,11 +213,13 @@ export default function BotStatusOverview() {
     const paper = [
       icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
       titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE',
-      jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled
+      jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled,
+      agapeBtcStatus?.data?.status === 'ACTIVE',
+      agapeXrpStatus?.data?.status === 'ACTIVE',
     ].filter(Boolean).length
 
     return { activeLiveBots: live, activePaperBots: paper, totalActiveBots: live + paper }
-  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, jubileeStatus])
+  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, jubileeStatus, agapeBtcStatus, agapeXrpStatus])
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">
@@ -226,7 +236,7 @@ export default function BotStatusOverview() {
             <div className="flex items-center gap-3 text-xs text-text-muted">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 bg-success rounded-full animate-pulse" />
-                {totalActiveBots}/6 active
+                {totalActiveBots}/8 active
               </span>
               <span className={totalTodayPnL >= 0 ? 'text-success' : 'text-danger'}>
                 Live: {totalTodayPnL >= 0 ? '+' : ''}${totalTodayPnL.toFixed(0)}
@@ -346,6 +356,30 @@ export default function BotStatusOverview() {
                 }}
                 color="orange"
                 isLoading={jubileeLoading}
+              />
+              <BotStatusCard
+                name="AGAPE-BTC"
+                icon={<TrendingUp className="w-5 h-5 text-orange-500" />}
+                href="/agape-btc"
+                status={agapeBtcStatus?.data}
+                livePnL={{
+                  today_pnl: agapeBtcStatus?.data?.today_pnl || 0,
+                  total_unrealized_pnl: agapeBtcStatus?.data?.total_unrealized_pnl || 0
+                }}
+                color="orange"
+                isLoading={agapeBtcLoading}
+              />
+              <BotStatusCard
+                name="AGAPE-XRP"
+                icon={<TrendingUp className="w-5 h-5 text-cyan-500" />}
+                href="/agape-xrp"
+                status={agapeXrpStatus?.data}
+                livePnL={{
+                  today_pnl: agapeXrpStatus?.data?.today_pnl || 0,
+                  total_unrealized_pnl: agapeXrpStatus?.data?.total_unrealized_pnl || 0
+                }}
+                color="cyan"
+                isLoading={agapeXrpLoading}
               />
             </div>
           </div>

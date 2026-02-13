@@ -92,6 +92,8 @@ export default function AllBotReportsSummary() {
     VALOR: undefined,
     AGAPE: undefined,
     AGAPE_SPOT: undefined,
+    AGAPE_BTC: undefined,
+    AGAPE_XRP: undefined,
   }
 
   // Calculate aggregate stats
