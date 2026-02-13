@@ -228,18 +228,33 @@ class ValorTrader:
         }
 
         try:
-            # Check market hours
+            # ============================================================
+            # GATE 1: Market Hours Check
+            # ============================================================
             if not self.executor.is_market_open():
                 scan_result["status"] = "market_closed"
+                now_ct = datetime.now(CENTRAL_TZ)
+                logger.info(
+                    f"VALOR GATE 1 BLOCKED: Market closed "
+                    f"(day={now_ct.strftime('%A')}, hour={now_ct.hour}, min={now_ct.minute})"
+                )
                 self._log_scan_activity(scan_id, "MARKET_CLOSED", scan_result, scan_context,
                                        skip_reason="Futures market closed")
                 return scan_result
+            logger.debug("VALOR GATE 1 PASSED: Market open")
 
-            # Get current market data
+            # ============================================================
+            # GATE 2: MES Quote
+            # ============================================================
             quote = self.executor.get_mes_quote()
             if not quote:
                 scan_result["status"] = "no_quote"
                 scan_result["errors"].append("Could not get MES quote")
+                logger.warning(
+                    f"VALOR GATE 2 BLOCKED: No MES quote. "
+                    f"Tastytrade SDK={hasattr(self.executor, 'auth_method') and self.executor.auth_method or 'None'}. "
+                    f"Check Yahoo Finance MES=F and SPY fallback."
+                )
                 self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
                                        error_msg="Could not get MES quote")
                 return scan_result
@@ -247,20 +262,36 @@ class ValorTrader:
             current_price = quote.get("last", 0)
             bid_price = quote.get("bid", 0)
             ask_price = quote.get("ask", 0)
+            quote_source = quote.get("source", "unknown")
             scan_context["underlying_price"] = current_price
             scan_context["bid_price"] = bid_price
             scan_context["ask_price"] = ask_price
+            logger.debug(f"VALOR GATE 2 PASSED: MES quote={current_price:.2f} (source={quote_source})")
 
+            # ============================================================
+            # GATE 3: Price Validation
+            # ============================================================
             if current_price <= 0:
                 scan_result["status"] = "invalid_price"
+                logger.warning(f"VALOR GATE 3 BLOCKED: Invalid price {current_price} from source={quote_source}")
                 self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
                                        error_msg="Invalid price <= 0")
                 return scan_result
 
-            # Get GEX data from SPX (same price level as MES futures)
-            # SPX requires Tradier production keys (sandbox doesn't support index options)
+            # ============================================================
+            # GATE 4: GEX Data
+            # ============================================================
             gex_data = get_gex_data_for_valor("SPX")
             scan_context["gex_data"] = gex_data
+            gex_source = gex_data.get('data_source', 'unknown')
+            gex_flip = gex_data.get('flip_point', 0)
+            logger.info(
+                f"VALOR GATE 4: GEX data source={gex_source}, flip={gex_flip:.2f}, "
+                f"call_wall={gex_data.get('call_wall', 0):.2f}, "
+                f"put_wall={gex_data.get('put_wall', 0):.2f}, "
+                f"net_gex={gex_data.get('net_gex', 0):.2e}, "
+                f"has_n1={'n1_flip_point' in gex_data}"
+            )
 
             # Get account balance (use paper balance in paper mode)
             if self.config.mode == TradingMode.PAPER:
@@ -316,8 +347,14 @@ class ValorTrader:
             # with configurable max_consecutive_losses and pause_minutes
             # Proverbs monitor is kept in sync for dashboard visibility
 
-            # No max position limit - always look for signals
-            # Generate signal
+            # ============================================================
+            # GATE 5: Signal Generation
+            # ============================================================
+            logger.info(
+                f"VALOR GATE 5: Generating signal - price={current_price:.2f}, "
+                f"flip={gex_data.get('flip_point', 0):.2f}, VIX={vix:.1f}, ATR={atr:.2f}, "
+                f"is_overnight={is_overnight}, balance=${account_balance:,.0f}"
+            )
             signal = self.signal_generator.generate_signal(
                 current_price=current_price,
                 gex_data=gex_data,
@@ -331,8 +368,20 @@ class ValorTrader:
 
             if signal:
                 scan_result["signals_generated"] += 1
+                logger.info(
+                    f"VALOR GATE 5 PASSED: Signal generated - {signal.direction.value}, "
+                    f"confidence={signal.confidence:.2%}, win_prob={signal.win_probability:.2%}, "
+                    f"contracts={signal.contracts}, is_valid={signal.is_valid}"
+                )
 
+                # ============================================================
+                # GATE 6: Signal Validation
+                # ============================================================
                 if signal.is_valid:
+                    logger.info(
+                        f"VALOR GATE 6 PASSED: Signal valid - executing {signal.direction.value} "
+                        f"{signal.contracts} contracts at {signal.entry_price:.2f}"
+                    )
                     # Execute the signal with scan_id for ML tracking
                     success, position_id = self._execute_signal_with_id(signal, account_balance, scan_id)
                     if success:
@@ -342,14 +391,23 @@ class ValorTrader:
                         # Log signal
                         self.db.save_signal(signal, was_executed=True)
 
+                        logger.info(f"VALOR TRADE EXECUTED: {signal.direction.value} position {position_id}")
                         # Log scan activity with trade
                         self._log_scan_activity(scan_id, "TRADED", scan_result, scan_context,
                                                action=f"Opened {signal.direction.value} position")
                     else:
+                        logger.warning(f"VALOR GATE 7 BLOCKED: Execution failed for {signal.direction.value} signal")
                         self.db.save_signal(signal, was_executed=False, skip_reason="Execution failed")
                         self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                                skip_reason="Execution failed")
                 else:
+                    logger.warning(
+                        f"VALOR GATE 6 BLOCKED: Invalid signal - "
+                        f"confidence={signal.confidence:.2%} (need>=0.50), "
+                        f"win_prob={signal.win_probability:.2%} (need>=0.50), "
+                        f"entry={signal.entry_price:.2f}, stop={signal.stop_price:.2f}, "
+                        f"contracts={signal.contracts}"
+                    )
                     self.db.save_signal(signal, was_executed=False, skip_reason="Invalid signal")
                     self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                            skip_reason=f"Invalid signal: {signal.reasoning[:100] if signal.reasoning else 'No reason'}")
