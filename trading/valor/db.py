@@ -1332,6 +1332,34 @@ class ValorDatabase:
             logger.error(f"Failed to save win tracker: {e}")
             return False
 
+    def reset_win_tracker(self) -> BayesianWinTracker:
+        """Reset win tracker to fresh defaults (alpha=1, beta=1, 0 trades).
+
+        Inserts a new row with default priors so the tracker starts clean.
+        Old rows are kept for audit trail but get_win_tracker() only reads
+        the latest row (ORDER BY id DESC LIMIT 1).
+        """
+        tracker = BayesianWinTracker()  # Fresh defaults
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO valor_win_tracker (
+                        alpha, beta, total_trades,
+                        positive_gamma_wins, positive_gamma_losses,
+                        negative_gamma_wins, negative_gamma_losses
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    tracker.alpha, tracker.beta, tracker.total_trades,
+                    tracker.positive_gamma_wins, tracker.positive_gamma_losses,
+                    tracker.negative_gamma_wins, tracker.negative_gamma_losses
+                ))
+                conn.commit()
+                logger.info("Win tracker RESET to fresh defaults (alpha=1, beta=1, 0 trades)")
+        except Exception as e:
+            logger.error(f"Failed to reset win tracker: {e}")
+        return tracker
+
     # ========================================================================
     # Signals
     # ========================================================================
