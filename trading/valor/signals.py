@@ -1451,13 +1451,24 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
     We use SPX options data (also at ~5900 level) for accurate GEX levels.
     SPX requires Tradier PRODUCTION keys (sandbox doesn't support SPX).
 
-    POST-OPTIONS-CLOSE HANDLING (3-4 PM CT):
-    MES futures trade until 4 PM CT, but SPX options close at 3 PM CT.
-    After 3 PM, we switch to using n+1 (next day) GEX data:
-    - n1_flip_point becomes flip_point
-    - n1_call_wall becomes call_wall
-    - n1_put_wall becomes put_wall
-    This gives forward-looking support/resistance levels for the 3-4 PM window.
+    =========================================================================
+    DATA SOURCE RULES (DO NOT CHANGE WITHOUT UNDERSTANDING):
+    =========================================================================
+    MARKET HOURS (8 AM - 3 PM CT):
+      - PRIMARY: Tradier production API (real-time SPX options chain)
+      - FALLBACK: TradingVolatility API
+      - Returns: Current day's GEX levels
+
+    AFTER HOURS & PRE-MARKET (3 PM - 8 AM CT):
+      - PRIMARY: TradingVolatility API (returns FOLLOWING DAY's GEX levels)
+      - FALLBACK: Cache from TradingVolatility (NOT from Tradier market hours)
+      - There is NO Tradier data after hours. Do NOT use Tradier cache here.
+      - TradingVolatility updates their models after market close with the
+        next trading day's expected GEX levels (flip point, call wall, put wall,
+        net_gex, and all other available fields).
+      - Example: On Wednesday evening, VALOR should trade off Thursday's GEX.
+                 On Friday evening, VALOR should trade off Monday's GEX.
+    =========================================================================
 
     SPX = S&P 500 Index (~5900)
     MES = Micro E-mini S&P 500 futures (~5900, tracks SPX directly)
@@ -1468,15 +1479,6 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
     now = datetime.now(CENTRAL_TZ)
     hour = now.hour
 
-    # Determine if options market is closed
-    # SPX options: ~8:30 AM - 3:00 PM CT (regular trading hours)
-    # MES futures: 5:00 PM - 4:00 PM next day (nearly 24 hours)
-    #
-    # Use n+1 (next day) GEX data when options are closed:
-    # - 3 PM - 4 PM CT: Post-close window before maintenance
-    # - 5 PM - 8 AM CT: Overnight session (next day until options open)
-    is_options_closed = (hour >= 15) or (hour < 8)  # 3 PM - 8 AM
-
     # If in-memory cache is empty, try loading from database (survives restarts)
     if not _gex_cache and not _gex_cache_loaded_from_db:
         _gex_cache_loaded_from_db = True  # Only attempt once per session
@@ -1486,40 +1488,13 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
             _gex_cache_time = db_cache_time
             logger.info(f"GEX cache restored from database for overnight continuity")
 
-    # If options are closed and we have valid cached data, use n+1 levels
-    if is_options_closed and _gex_cache and _gex_cache_time:
-        # During overnight, cache can be up to 18 hours old (3 PM to 8 AM)
-        max_cache_age = 1200 if hour >= 15 or hour < 8 else 120  # 20 hours overnight, 2 hours otherwise
-        cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
-
-        if cache_age_minutes < max_cache_age:
-            # Use n+1 (next day) GEX levels for forward-looking support/resistance
-            n1_flip = _gex_cache.get('n1_flip_point') or _gex_cache.get('flip_point', 0)
-            n1_call = _gex_cache.get('n1_call_wall') or _gex_cache.get('call_wall', 0)
-            n1_put = _gex_cache.get('n1_put_wall') or _gex_cache.get('put_wall', 0)
-
-            session_type = "OVERNIGHT" if (hour >= 17 or hour < 8) else "POST_CLOSE"
-            logger.info(
-                f"VALOR using N+1 GEX data ({session_type}, options closed). "
-                f"Cache age: {cache_age_minutes:.0f} min. "
-                f"n1_flip={n1_flip:.2f}, n1_call={n1_call:.2f}, n1_put={n1_put:.2f}"
-            )
-
-            return {
-                'flip_point': n1_flip,
-                'call_wall': n1_call,
-                'put_wall': n1_put,
-                'net_gex': _gex_cache.get('net_gex', 0),  # Use last known regime
-                'gex_ratio': _gex_cache.get('gex_ratio', 1.0),
-                'using_n1_data': True,  # Flag for logging/debugging
-                'n1_flip_point': n1_flip,  # Include n+1 data for signal generator
-                'n1_call_wall': n1_call,
-                'n1_put_wall': n1_put,
-            }
-
     # =========================================================================
     # MARKET HOURS (8 AM - 3 PM CT): Use TRADIER for real-time GEX data
-    # OVERNIGHT (3 PM - 8 AM CT): Use TradingVolatility for n+1 GEX data
+    # AFTER HOURS (3 PM - 8 AM CT): Use TradingVolatility for FOLLOWING DAY GEX
+    #
+    # CRITICAL: After hours, TradingVolatility MUST be called first to get the
+    # following day's GEX levels. Do NOT short-circuit with Tradier market-hours
+    # cache — that is today's data, NOT the following day's.
     # =========================================================================
     is_market_hours = 8 <= hour < 15  # 8 AM - 3 PM CT
 
@@ -1628,7 +1603,11 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
 
     else:
         # =====================================================================
-        # OVERNIGHT: TradingVolatility FIRST (for n+1 GEX data)
+        # AFTER HOURS / PRE-MARKET (3 PM - 8 AM CT):
+        # TradingVolatility is the ONLY source for following day's GEX data.
+        # There is NO Tradier data after hours — do not use Tradier cache here.
+        # TradingVolatility returns the FOLLOWING DAY's expected GEX levels
+        # (flip point, call wall, put wall, net_gex) after market close.
         # =====================================================================
         try:
             from core_classes_and_engines import TradingVolatilityAPI
@@ -1649,7 +1628,7 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
                         put_wall = flip_point * 0.99
 
                     logger.info(
-                        f"VALOR GEX from TradingVolatility (overnight): flip={flip_point:.2f}, "
+                        f"VALOR GEX from TradingVolatility (following day): flip={flip_point:.2f}, "
                         f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
                     )
 
@@ -1659,8 +1638,8 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
                         'put_wall': put_wall,
                         'net_gex': net_gex,
                         'gex_ratio': 1.0,
-                        'data_source': 'trading_volatility_api',
-                        # Store n+1 data for overnight use
+                        'data_source': 'trading_volatility_overnight',
+                        # Following day's levels for overnight trading
                         'n1_flip_point': flip_point,
                         'n1_call_wall': call_wall,
                         'n1_put_wall': put_wall,
@@ -1680,9 +1659,43 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"TradingVolatilityAPI error: {e}")
 
-        # OVERNIGHT: No Tradier fallback - TradingVolatility is the only source
-        # If TradingVolatility fails, we use cached data (checked earlier)
-        # or skip trading (flip_point = 0)
+        # OVERNIGHT FALLBACK: If TradingVolatility failed, use cache but ONLY
+        # if it contains overnight data (from a previous TradingVolatility call).
+        # Do NOT fall back to Tradier market-hours cache — that is today's data,
+        # not the following day's.
+        if _gex_cache and _gex_cache_time:
+            cache_source = _gex_cache.get('data_source', '')
+            cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
+            has_overnight_data = 'n1_flip_point' in _gex_cache
+
+            if has_overnight_data and cache_age_minutes < 1200:
+                n1_flip = _gex_cache.get('n1_flip_point', 0)
+                n1_call = _gex_cache.get('n1_call_wall', 0)
+                n1_put = _gex_cache.get('n1_put_wall', 0)
+
+                if n1_flip > 0:
+                    logger.info(
+                        f"VALOR using cached overnight GEX (TradingVolatility failed). "
+                        f"Cache age: {cache_age_minutes:.0f} min, source: {cache_source}. "
+                        f"n1_flip={n1_flip:.2f}, n1_call={n1_call:.2f}, n1_put={n1_put:.2f}"
+                    )
+                    return {
+                        'flip_point': n1_flip,
+                        'call_wall': n1_call,
+                        'put_wall': n1_put,
+                        'net_gex': _gex_cache.get('net_gex', 0),
+                        'gex_ratio': _gex_cache.get('gex_ratio', 1.0),
+                        'using_n1_data': True,
+                        'data_source': 'overnight_cache_fallback',
+                        'n1_flip_point': n1_flip,
+                        'n1_call_wall': n1_call,
+                        'n1_put_wall': n1_put,
+                    }
+
+            logger.warning(
+                f"Overnight cache not usable: has_overnight_data={has_overnight_data}, "
+                f"cache_age={cache_age_minutes:.0f} min, source={cache_source}"
+            )
 
     # Try API endpoint as fallback (SPX endpoint)
     try:

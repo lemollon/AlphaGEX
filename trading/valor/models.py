@@ -32,6 +32,27 @@ PARAMETER_VERSION = "2.1"
 PARAMETER_VERSION_DATE = "2026-02-04T00:00:00"  # ISO format, Central Time
 PARAMETER_VERSION_DESCRIPTION = "Let winners run: no profit cap, trail at +0.75pts, max loss 5pts"
 
+# =============================================================================
+# GEX DATA SOURCE RULES (PERMANENT - DO NOT CHANGE)
+# =============================================================================
+# MARKET HOURS (8 AM - 3 PM CT):
+#   PRIMARY: Tradier production API (real-time SPX options chain)
+#   FALLBACK: TradingVolatility API
+#   Returns: Current day's GEX levels
+#
+# AFTER HOURS & PRE-MARKET (3 PM - 8 AM CT):
+#   PRIMARY: TradingVolatility API (returns FOLLOWING DAY's GEX levels)
+#   FALLBACK: Cache from TradingVolatility only (NOT Tradier market-hours data)
+#   There is NO Tradier options data after hours.
+#   TradingVolatility updates after market close with the next trading day's
+#   expected GEX levels (flip point, call wall, put wall, net_gex, etc.).
+#   Example: Wed evening → trade off Thursday's GEX.
+#            Fri evening → trade off Monday's GEX.
+#
+# NEVER short-circuit the overnight TradingVolatility call with stale
+# Tradier cache from market hours. That is TODAY's data, not tomorrow's.
+# =============================================================================
+
 # MES Contract Specifications
 MES_POINT_VALUE = 5.0  # $5 per index point
 MES_TICK_SIZE = 0.25   # Minimum price movement
