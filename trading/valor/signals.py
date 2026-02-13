@@ -560,7 +560,13 @@ class ValorSignalGenerator:
 
             # Check minimum probability threshold
             if signal.win_probability < self.config.min_win_probability:
-                logger.info(f"Signal rejected: win_prob {signal.win_probability:.2%} < min {self.config.min_win_probability:.2%}")
+                logger.warning(
+                    f"VALOR WIN_PROB GATE REJECTED: {signal.direction.value} signal killed - "
+                    f"win_prob={signal.win_probability:.4f} < min={self.config.min_win_probability:.2f}, "
+                    f"confidence={signal.confidence:.3f}, regime={gamma_regime.value}, "
+                    f"tracker=[alpha={self.win_tracker.alpha:.1f}, beta={self.win_tracker.beta:.1f}, "
+                    f"trades={self.win_tracker.total_trades}, cold_start={self.win_tracker.is_cold_start}]"
+                )
                 return None
 
             # Calculate position size
@@ -958,8 +964,10 @@ class ValorSignalGenerator:
                 ml_result = ml_advisor.predict(features)
                 if ml_result and 'win_probability' in ml_result:
                     ml_prob = ml_result['win_probability']
-                    logger.debug(
-                        f"ML win probability: {ml_prob:.2%} (confidence: {ml_result.get('confidence', 'N/A')})"
+                    logger.info(
+                        f"VALOR WIN_PROB [ML]: prob={ml_prob:.4f}, "
+                        f"confidence={ml_result.get('confidence', 'N/A')}, "
+                        f"regime={gamma_regime.value}, VIX={signal.vix:.1f} (gate=0.50)"
                     )
                     return round(ml_prob, 4)
 
@@ -994,14 +1002,37 @@ class ValorSignalGenerator:
         blended_prob = (bayesian_prob * bayesian_weight) + (clamped_confidence * confidence_weight)
 
         # VIX adjustment - higher VIX = more uncertainty = lower probability
+        vix_adj_label = "none"
         if signal.vix > 25:
             vix_penalty = (signal.vix - 25) * 0.01  # 1% penalty per VIX point above 25
+            vix_adj_label = f"-{vix_penalty:.3f}"
             blended_prob = max(0.3, blended_prob - vix_penalty)
         elif signal.vix < 15:
             # Low VIX = calmer markets = slight boost
+            vix_adj_label = "+0.020"
             blended_prob = min(0.85, blended_prob + 0.02)
 
-        return round(max(0.0, min(1.0, blended_prob)), 4)
+        pre_floor_prob = blended_prob
+
+        # Cold start floor: when too few trades, the Bayesian estimate is unreliable.
+        # Floor the probability so the bot can trade and collect data.
+        is_cold = self.win_tracker.is_cold_start
+        if is_cold and blended_prob < self.win_tracker.cold_start_floor:
+            blended_prob = self.win_tracker.cold_start_floor
+
+        final_prob = round(max(0.0, min(1.0, blended_prob)), 4)
+
+        # Diagnostic logging - always log so we can trace probability gate rejections
+        logger.info(
+            f"VALOR WIN_PROB [Bayesian]: regime={gamma_regime.value}, "
+            f"regime_prob={bayesian_prob:.3f}, bayes_wt={bayesian_weight:.2f}, "
+            f"raw_conf={signal.confidence:.3f}, clamped_conf={clamped_confidence:.3f}, conf_wt={confidence_weight:.2f}, "
+            f"blended={pre_floor_prob:.4f}, vix_adj={vix_adj_label}, "
+            f"cold_start={'YES' if is_cold else 'NO'} ({self.win_tracker.total_trades}/{self.win_tracker.cold_start_trades} trades), "
+            f"final={final_prob:.4f} (gate=0.50)"
+        )
+
+        return final_prob
 
     def _set_stop_levels(self, signal: FuturesSignal, atr: float, is_overnight: bool = False) -> Tuple[FuturesSignal, str, float]:
         """
