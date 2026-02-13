@@ -1307,19 +1307,21 @@ export default function GexChartsPage() {
                           <BarChart
                             data={sortedStrikes}
                             layout="vertical"
-                            margin={{ top: 5, right: 30, left: 60, bottom: 5 }}
+                            margin={{ top: 5, right: 60, left: 10, bottom: 5 }}
                           >
                             <XAxis
                               type="number"
                               tick={{ fill: '#9ca3af', fontSize: 10 }}
                               tickFormatter={(v) => formatNumber(v, 1)}
                               domain={[0, 'auto']}
+                              reversed
                             />
                             <YAxis
                               type="category"
                               dataKey="strike"
                               tick={{ fill: '#9ca3af', fontSize: 10 }}
                               width={50}
+                              orientation="right"
                             />
                             <Tooltip content={<CustomTooltip />} />
 
