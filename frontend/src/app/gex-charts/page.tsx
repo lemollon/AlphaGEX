@@ -1269,7 +1269,7 @@ export default function GexChartsPage() {
                             .map(s => ({
                               ...s,
                               // Negative absolute value — bars extend left from 0
-                              abs_net_gamma: -Math.abs(s.net_gamma),
+                              abs_net_gamma: Math.abs(s.net_gamma),
                               // For split view: negate put_gamma so it shows as negative bars
                               put_gamma_display: -(s.put_gamma || 0),
                             }))
@@ -1283,8 +1283,9 @@ export default function GexChartsPage() {
                             <XAxis
                               type="number"
                               tick={{ fill: '#9ca3af', fontSize: 10 }}
-                              tickFormatter={(v) => formatNumber(Math.abs(v), 1)}
-                              domain={['auto', 0]}
+                              tickFormatter={(v) => formatNumber(v, 1)}
+                              domain={[0, 'auto']}
+                              reversed
                             />
                             <YAxis
                               type="category"

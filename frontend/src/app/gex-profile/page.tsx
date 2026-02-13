@@ -339,8 +339,8 @@ export default function GexProfilePage() {
       .sort((a, b) => b.strike - a.strike)
       .map(s => ({
         ...s,
-        // Negative absolute value — bars extend left from 0, color encodes sign
-        abs_net_gamma: -Math.abs(s.net_gamma),
+        // Absolute value for bar length — XAxis reversed makes bars go left
+        abs_net_gamma: Math.abs(s.net_gamma),
         put_gamma_display: -(s.put_gamma || 0),
         gex_label: formatGex(s.net_gamma, 2),
       }))
@@ -640,9 +640,10 @@ export default function GexProfilePage() {
                           <XAxis
                             type="number"
                             tick={{ fill: '#6b7280', fontSize: 10 }}
-                            tickFormatter={v => formatGex(Math.abs(v), 1)}
+                            tickFormatter={v => formatGex(v, 1)}
                             axisLine={{ stroke: '#374151' }}
-                            domain={['auto', 0]}
+                            domain={[0, 'auto']}
+                            reversed
                           />
                           {/* Strike prices on left side */}
                           <YAxis type="category" dataKey="strike" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#374151' }} />
