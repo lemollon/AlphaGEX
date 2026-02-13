@@ -357,10 +357,13 @@ export default function GexProfilePage() {
   }, [intradayTicks, barsByLabel])
 
   // Strike data for Net GEX / Split views
+  // Sort by proximity to current price first, THEN slice top 40, THEN sort for display
   const sortedStrikes = useMemo(() => {
     if (!data?.gex_chart.strikes) return []
+    const price = data.header.price || 0
     return [...data.gex_chart.strikes]
       .filter(s => Math.abs(s.net_gamma) > 0.00001 || Math.abs(s.call_gamma) > 0.000001)
+      .sort((a, b) => Math.abs(a.strike - price) - Math.abs(b.strike - price))
       .slice(0, 40)
       .sort((a, b) => b.strike - a.strike)
       .map(s => ({
@@ -574,16 +577,28 @@ export default function GexProfilePage() {
                   // GEX bar shapes — horizontal rectangles at each strike price,
                   // extending from right edge leftward proportional to gamma magnitude.
                   // xref='paper' (0=left, 1=right), yref='y' (price axis)
-                  const maxGamma = sortedStrikes.length > 0
-                    ? Math.max(...sortedStrikes.map(s => s.abs_net_gamma), 0.001)
+                  // Filter to strikes within the visible price range to avoid Y-axis distortion
+                  const priceValues = hasCandleData
+                    ? [...candleHigh, ...candleLow]
+                    : spotPrices.filter((p): p is number => p !== null)
+                  const priceMin = priceValues.length > 0 ? Math.min(...priceValues) : 0
+                  const priceMax = priceValues.length > 0 ? Math.max(...priceValues) : 0
+                  const priceRange = priceMax - priceMin || 1
+                  const visibleStrikes = sortedStrikes.filter(s =>
+                    s.strike >= priceMin - priceRange * 1.5 &&
+                    s.strike <= priceMax + priceRange * 1.5
+                  )
+
+                  const maxGamma = visibleStrikes.length > 0
+                    ? Math.max(...visibleStrikes.map(s => s.abs_net_gamma), 0.001)
                     : 1
                   const barMaxWidth = 0.35 // max 35% of chart width from right edge
                   // Strike spacing for bar height
-                  const strikeSpacing = sortedStrikes.length > 1
-                    ? Math.abs(sortedStrikes[0].strike - sortedStrikes[1].strike) * 0.35
+                  const strikeSpacing = visibleStrikes.length > 1
+                    ? Math.abs(visibleStrikes[0].strike - visibleStrikes[1].strike) * 0.35
                     : 0.5
 
-                  const gexShapes: any[] = sortedStrikes.map(s => {
+                  const gexShapes: any[] = visibleStrikes.map(s => {
                     const pct = (s.abs_net_gamma / maxGamma) * barMaxWidth
                     const color = s.net_gamma >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)'
                     const borderColor = s.net_gamma >= 0 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)'
@@ -602,7 +617,7 @@ export default function GexProfilePage() {
                   })
 
                   // GEX value annotations on the bars
-                  const gexAnnotations: any[] = sortedStrikes
+                  const gexAnnotations: any[] = visibleStrikes
                     .filter(s => s.abs_net_gamma / maxGamma > 0.08) // only label visible bars
                     .map(s => {
                       const pct = (s.abs_net_gamma / maxGamma) * barMaxWidth
