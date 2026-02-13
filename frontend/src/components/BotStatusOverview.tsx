@@ -367,7 +367,7 @@ export default function BotStatusOverview() {
               <BotStatusCard
                 name="AGAPE-ETH"
                 icon={<TrendingUp className="w-5 h-5 text-purple-500" />}
-                href="/agape"
+                href="/futures-crypto"
                 status={agapeEthStatus?.data}
                 livePnL={{
                   today_pnl: agapeEthStatus?.data?.today_pnl || 0,
@@ -379,7 +379,7 @@ export default function BotStatusOverview() {
               <BotStatusCard
                 name="AGAPE-BTC"
                 icon={<TrendingUp className="w-5 h-5 text-orange-500" />}
-                href="/agape-btc"
+                href="/futures-crypto"
                 status={agapeBtcStatus?.data}
                 livePnL={{
                   today_pnl: agapeBtcStatus?.data?.today_pnl || 0,
@@ -391,7 +391,7 @@ export default function BotStatusOverview() {
               <BotStatusCard
                 name="AGAPE-XRP"
                 icon={<TrendingUp className="w-5 h-5 text-cyan-500" />}
-                href="/agape-xrp"
+                href="/futures-crypto"
                 status={agapeXrpStatus?.data}
                 livePnL={{
                   today_pnl: agapeXrpStatus?.data?.today_pnl || 0,
