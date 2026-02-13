@@ -115,7 +115,7 @@ export default function AgapeXrpPage() {
 
           {/* Header - Branded (matches FORTRESS/SAMSON pattern) */}
           <BotPageHeader
-            botName="AGAPE-XRP"
+            botName="AGAPE_XRP"
             isActive={status?.status === 'ACTIVE'}
             lastHeartbeat={status?.heartbeat?.last_scan_iso || status?.last_scan_iso || undefined}
             onRefresh={handleRefresh}
@@ -363,7 +363,7 @@ function PortfolioTab({
       </div>
 
       {/* Equity Curve */}
-      <BotCard title="Equity Curve" botName="AGAPE-XRP" icon={<TrendingUp className="w-5 h-5" />}
+      <BotCard title="Equity Curve" botName="AGAPE_XRP" icon={<TrendingUp className="w-5 h-5" />}
         headerRight={
           <div className="flex gap-1">
             {EQUITY_TIMEFRAMES.map((tf) => (
@@ -390,7 +390,7 @@ function PortfolioTab({
       </BotCard>
 
       {/* Open Positions */}
-      <BotCard title={`Open Positions (${openPositions.length})`} botName="AGAPE-XRP" icon={<Wallet className="w-5 h-5" />}>
+      <BotCard title={`Open Positions (${openPositions.length})`} botName="AGAPE_XRP" icon={<Wallet className="w-5 h-5" />}>
         {posLoading ? (
           <LoadingState />
         ) : openPositions.length === 0 ? (
@@ -462,7 +462,7 @@ function PortfolioTab({
 
       {/* Performance Stats */}
       {(perf?.total_trades > 0 || (paperAccount?.total_trades ?? 0) > 0) && (
-        <BotCard title="Performance" botName="AGAPE-XRP" icon={<BarChart3 className="w-5 h-5" />}>
+        <BotCard title="Performance" botName="AGAPE_XRP" icon={<BarChart3 className="w-5 h-5" />}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
               <span className="text-gray-500">Profit Factor</span>
@@ -528,7 +528,7 @@ function OverviewTab({
   return (
     <>
       {/* Aggressive Features Panel */}
-      <BotCard title="Aggressive Features" botName="AGAPE-XRP" icon={<Zap className="w-5 h-5" />}>
+      <BotCard title="Aggressive Features" botName="AGAPE_XRP" icon={<Zap className="w-5 h-5" />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div className="flex items-start gap-2">
             <Shield className={`w-4 h-4 ${brand.primaryText} mt-0.5 flex-shrink-0`} />
@@ -571,7 +571,7 @@ function OverviewTab({
       </BotCard>
 
       {/* Configuration */}
-      <BotCard title="Bot Configuration" botName="AGAPE-XRP" icon={<Settings className="w-5 h-5" />}>
+      <BotCard title="Bot Configuration" botName="AGAPE_XRP" icon={<Settings className="w-5 h-5" />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
             <span className="text-gray-500">Instrument</span>
@@ -645,7 +645,7 @@ function SnapshotTab({ data, loading, brand }: { data: any; loading: boolean; br
       {/* Price & Combined Signal */}
       <BotCard
         title={`${data.symbol} $${data.spot_price?.toFixed(4) || '---'}`}
-        botName="AGAPE-XRP"
+        botName="AGAPE_XRP"
         icon={<DollarSign className="w-5 h-5" />}
         headerRight={
           <span className={`px-3 py-1 rounded-full font-semibold text-sm ${signalColor(data.signals?.combined_signal)}`}>
@@ -676,7 +676,7 @@ function SnapshotTab({ data, loading, brand }: { data: any; loading: boolean; br
       {/* Crypto Microstructure Signals */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Funding Rate */}
-        <BotCard title="Funding Rate" subtitle="Replaces: Gamma Regime (POSITIVE/NEGATIVE)" botName="AGAPE-XRP">
+        <BotCard title="Funding Rate" subtitle="Replaces: Gamma Regime (POSITIVE/NEGATIVE)" botName="AGAPE_XRP">
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">Current Rate</span>
@@ -698,7 +698,7 @@ function SnapshotTab({ data, loading, brand }: { data: any; loading: boolean; br
         </BotCard>
 
         {/* Long/Short Ratio */}
-        <BotCard title="Long/Short Ratio" subtitle="Replaces: GEX Directional Bias" botName="AGAPE-XRP">
+        <BotCard title="Long/Short Ratio" subtitle="Replaces: GEX Directional Bias" botName="AGAPE_XRP">
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">Ratio</span>
@@ -720,7 +720,7 @@ function SnapshotTab({ data, loading, brand }: { data: any; loading: boolean; br
         </BotCard>
 
         {/* Liquidations */}
-        <BotCard title="Liquidation Clusters" subtitle="Replaces: Gamma Walls / Price Magnets" botName="AGAPE-XRP">
+        <BotCard title="Liquidation Clusters" subtitle="Replaces: Gamma Walls / Price Magnets" botName="AGAPE_XRP">
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">Nearest Long Liq</span>
@@ -753,7 +753,7 @@ function SnapshotTab({ data, loading, brand }: { data: any; loading: boolean; br
         </BotCard>
 
         {/* Crypto GEX */}
-        <BotCard title="Crypto GEX (Deribit)" subtitle="Direct equivalent of Net GEX" botName="AGAPE-XRP">
+        <BotCard title="Crypto GEX (Deribit)" subtitle="Direct equivalent of Net GEX" botName="AGAPE_XRP">
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">Net GEX</span>
@@ -800,7 +800,7 @@ function ActivityTab({ data, brand }: { data: any[]; brand: typeof BOT_BRANDS.AG
   }
 
   return (
-    <BotCard title={`Scan Activity (${scans.length})`} botName="AGAPE-XRP" icon={<Activity className="w-5 h-5" />}>
+    <BotCard title={`Scan Activity (${scans.length})`} botName="AGAPE_XRP" icon={<Activity className="w-5 h-5" />}>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-800/50">
@@ -874,7 +874,7 @@ function HistoryTab({ data, brand }: { data: any[]; brand: typeof BOT_BRANDS.AGA
   }
 
   return (
-    <BotCard title={`Trade History (${trades.length})`} botName="AGAPE-XRP" icon={<History className="w-5 h-5" />}>
+    <BotCard title={`Trade History (${trades.length})`} botName="AGAPE_XRP" icon={<History className="w-5 h-5" />}>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-800/50">
@@ -937,7 +937,7 @@ function ConfigTab({ status, mappingData, brand }: { status: any; mappingData: a
   return (
     <>
       {/* Configuration */}
-      <BotCard title="Bot Configuration" botName="AGAPE-XRP" icon={<Settings className="w-5 h-5" />}>
+      <BotCard title="Bot Configuration" botName="AGAPE_XRP" icon={<Settings className="w-5 h-5" />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
             <span className="text-gray-500">Instrument</span>
@@ -978,7 +978,7 @@ function ConfigTab({ status, mappingData, brand }: { status: any; mappingData: a
 
       {/* GEX Mapping */}
       {mappingData && (
-        <BotCard title={mappingData.title || 'GEX Mapping'} subtitle={mappingData.description} botName="AGAPE-XRP" icon={<Globe className="w-5 h-5" />}>
+        <BotCard title={mappingData.title || 'GEX Mapping'} subtitle={mappingData.description} botName="AGAPE_XRP" icon={<Globe className="w-5 h-5" />}>
           <div className="space-y-4">
             {mappingData.mappings?.map((m: any, i: number) => (
               <div key={i} className="border border-gray-700 rounded-lg p-4">
@@ -1004,7 +1004,7 @@ function ConfigTab({ status, mappingData, brand }: { status: any; mappingData: a
 
       {/* Trade Instrument */}
       {mappingData?.trade_instrument && (
-        <BotCard title="Trade Instrument" botName="AGAPE-XRP" icon={<Target className="w-5 h-5" />}>
+        <BotCard title="Trade Instrument" botName="AGAPE_XRP" icon={<Target className="w-5 h-5" />}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             {Object.entries(mappingData.trade_instrument).map(([key, val]: [string, any]) => (
               <div key={key}>

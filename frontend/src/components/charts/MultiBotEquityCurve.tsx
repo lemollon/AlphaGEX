@@ -98,6 +98,8 @@ export default function MultiBotEquityCurve({
     VALOR: true,
     AGAPE: true,
     AGAPE_SPOT: true,
+    AGAPE_BTC: true,
+    AGAPE_XRP: true,
     LAZARUS: false,
     CORNERSTONE: false,
   })
@@ -149,8 +151,18 @@ export default function MultiBotEquityCurve({
     fetcher,
     { refreshInterval: 300000 }
   )
+  const { data: agapeBtcData, isLoading: agapeBtcLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[9].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
+  const { data: agapeXrpData, isLoading: agapeXrpLoading } = useSWR<BotEquityData>(
+    `${LIVE_BOTS[10].endpoint}?days=${selectedDays}`,
+    fetcher,
+    { refreshInterval: 300000 }
+  )
 
-  const isLoading = fortressLoading || solomonLoading || gideonLoading || anchorLoading || samsonLoading || jubileeLoading || valorLoading || agapeLoading || agapeSpotLoading
+  const isLoading = fortressLoading || solomonLoading || gideonLoading || anchorLoading || samsonLoading || jubileeLoading || valorLoading || agapeLoading || agapeSpotLoading || agapeBtcLoading || agapeXrpLoading
 
   // Store all bot data
   const botDataMap: Record<BotName, BotEquityData | undefined> = {
@@ -163,6 +175,8 @@ export default function MultiBotEquityCurve({
     VALOR: valorData,
     AGAPE: agapeData,
     AGAPE_SPOT: agapeSpotData,
+    AGAPE_BTC: agapeBtcData,
+    AGAPE_XRP: agapeXrpData,
     LAZARUS: undefined,
     CORNERSTONE: undefined,
   }
@@ -224,6 +238,8 @@ export default function MultiBotEquityCurve({
       VALOR: null,
       AGAPE: null,
       AGAPE_SPOT: null,
+      AGAPE_BTC: null,
+      AGAPE_XRP: null,
       LAZARUS: null,
       CORNERSTONE: null,
     }
