@@ -1385,6 +1385,51 @@ class AutonomousTraderScheduler:
             logger.info("FORTRESS EOD will retry next trading day")
             logger.info(f"=" * 80)
 
+    def scheduled_fortress_friday_close_all(self):
+        """
+        FORTRESS Friday Close-All - runs at 2:55 PM CT on Fridays ONLY
+
+        Safety net to ensure NO positions are held over the weekend.
+        The regular 5-min cycle handles force-close via FRIDAY_WEEKEND_CLOSE
+        at 2:50 PM, but this is a dedicated backup that runs close_only mode
+        to catch any stragglers (pricing failures, partial closes, etc).
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"FORTRESS FRIDAY CLOSE-ALL triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.fortress_trader:
+            logger.warning("FORTRESS trader not available - skipping Friday close-all")
+            return
+
+        if now.weekday() != 4:
+            logger.info("Not Friday - skipping Friday close-all (should not happen)")
+            return
+
+        try:
+            # Run close-only cycle to force-close any remaining positions
+            result = self.fortress_trader.run_cycle(close_only=True)
+
+            closed = result.get('positions_closed', 0)
+            pnl = result.get('realized_pnl', 0)
+
+            if closed > 0:
+                logger.info(f"FORTRESS Friday close-all: Closed {closed} position(s), P&L: ${pnl:.2f}")
+            else:
+                logger.info("FORTRESS Friday close-all: No positions remaining (already flat)")
+
+            self._save_heartbeat('FORTRESS', 'FRIDAY_CLOSE_ALL', {
+                'closed': closed,
+                'realized_pnl': pnl
+            })
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in FORTRESS Friday close-all: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"=" * 80)
+
     def scheduled_solomon_eod_logic(self):
         """
         SOLOMON End-of-Day processing - runs daily at 3:10 PM CT
@@ -4709,6 +4754,26 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ FORTRESS EOD job scheduled (3:01 PM CT daily)")
+
+            # =================================================================
+            # FORTRESS FRIDAY CLOSE-ALL: Safety net to ensure NO positions survive weekend
+            # Runs at 2:55 PM CT on Fridays only. The regular 5-min cycle handles
+            # force-close at 2:50 PM, but this is a dedicated backup to catch any
+            # positions that slipped through (pricing failures, retries, etc).
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_fortress_friday_close_all,
+                trigger=CronTrigger(
+                    hour=14,       # 2:00 PM CT
+                    minute=55,     # 2:55 PM CT - 5 min before market close
+                    day_of_week='fri',
+                    timezone='America/Chicago'
+                ),
+                id='fortress_friday_close',
+                name='FORTRESS - Friday Close All (No Weekend Holds)',
+                replace_existing=True
+            )
+            logger.info("✅ FORTRESS Friday close-all job scheduled (2:55 PM CT Fridays)")
         else:
             logger.warning("⚠️ FORTRESS not available - aggressive IC trading disabled")
 
