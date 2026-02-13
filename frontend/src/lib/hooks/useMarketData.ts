@@ -951,6 +951,82 @@ const fetchers = {
     return response.data
   },
 
+  // AGAPE-BTC (Micro Bitcoin Futures)
+  agapeBtcStatus: async () => {
+    const response = await api.get('/api/agape-btc/status')
+    return response.data
+  },
+  agapeBtcPositions: async () => {
+    const response = await api.get('/api/agape-btc/positions')
+    return response.data
+  },
+  agapeBtcClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-btc/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeBtcEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-btc/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeBtcIntradayEquity: async () => {
+    const response = await api.get('/api/agape-btc/equity-curve/intraday')
+    return response.data
+  },
+  agapeBtcPerformance: async () => {
+    const response = await api.get('/api/agape-btc/performance')
+    return response.data
+  },
+  agapeBtcScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-btc/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeBtcSnapshot: async () => {
+    const response = await api.get('/api/agape-btc/snapshot')
+    return response.data
+  },
+  agapeBtcGexMapping: async () => {
+    const response = await api.get('/api/agape-btc/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-XRP (XRP Futures)
+  agapeXrpStatus: async () => {
+    const response = await api.get('/api/agape-xrp/status')
+    return response.data
+  },
+  agapeXrpPositions: async () => {
+    const response = await api.get('/api/agape-xrp/positions')
+    return response.data
+  },
+  agapeXrpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-xrp/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeXrpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-xrp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeXrpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-xrp/equity-curve/intraday')
+    return response.data
+  },
+  agapeXrpPerformance: async () => {
+    const response = await api.get('/api/agape-xrp/performance')
+    return response.data
+  },
+  agapeXrpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-xrp/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeXrpSnapshot: async () => {
+    const response = await api.get('/api/agape-xrp/snapshot')
+    return response.data
+  },
+  agapeXrpGexMapping: async () => {
+    const response = await api.get('/api/agape-xrp/gex-mapping')
+    return response.data
+  },
+
   // OMEGA Orchestrator
   omegaStatus: async () => {
     const response = await api.get('/api/omega/status')
@@ -1888,6 +1964,158 @@ export function useAGAPESnapshot(options?: SWRConfiguration) {
 
 export function useAGAPEGexMapping(options?: SWRConfiguration) {
   return useSWR('agape-gex-mapping', fetchers.agapeGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE-BTC (Micro Bitcoin Futures) HOOKS
+// =============================================================================
+
+export function useAGAPEBTCStatus(options?: SWRConfiguration) {
+  return useSWR('agape-btc-status', fetchers.agapeBtcStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBTCPositions(options?: SWRConfiguration) {
+  return useSWR('agape-btc-positions', fetchers.agapeBtcPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBTCClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-btc-closed-trades-${limit}`,
+    () => fetchers.agapeBtcClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEBTCEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-btc-equity-curve-${days}`,
+    () => fetchers.agapeBtcEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEBTCIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-btc-intraday-equity', fetchers.agapeBtcIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBTCPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-btc-performance', fetchers.agapeBtcPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBTCScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-btc-scan-activity-${limit}`,
+    () => fetchers.agapeBtcScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPEBTCSnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-btc-snapshot', fetchers.agapeBtcSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBTCGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-btc-gex-mapping', fetchers.agapeBtcGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE-XRP (XRP Futures) HOOKS
+// =============================================================================
+
+export function useAGAPEXRPStatus(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-status', fetchers.agapeXrpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXRPPositions(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-positions', fetchers.agapeXrpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXRPClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-xrp-closed-trades-${limit}`,
+    () => fetchers.agapeXrpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEXRPEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-xrp-equity-curve-${days}`,
+    () => fetchers.agapeXrpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEXRPIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-intraday-equity', fetchers.agapeXrpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXRPPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-performance', fetchers.agapeXrpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXRPScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-xrp-scan-activity-${limit}`,
+    () => fetchers.agapeXrpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPEXRPSnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-snapshot', fetchers.agapeXrpSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXRPGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-gex-mapping', fetchers.agapeXrpGexMapping, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,

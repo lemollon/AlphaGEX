@@ -148,6 +148,26 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
     reference: '1 Corinthians 13:8',
     why: 'AGAPE-SPOT extends the unconditional love of AGAPE to 24/7 spot trading across multiple coins. Like love that never fails and never ceases, this bot trades around the clock with unwavering patience through every market cycle.',
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-BTC → AGAPE-BTC (BTC Micro Futures - Unconditional Love, Bitcoin)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_BTC: {
+    displayName: 'AGAPE-BTC',
+    verse: '"And now these three remain: faith, hope and love. But the greatest of these is love."',
+    reference: '1 Corinthians 13:13',
+    why: 'AGAPE-BTC applies the same unconditional, disciplined love to Bitcoin futures. Like the greatest of virtues, it perseveres through volatility with steadfast devotion to the data-driven process.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-XRP → AGAPE-XRP (XRP Futures - Unconditional Love, XRP)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_XRP: {
+    displayName: 'AGAPE-XRP',
+    verse: '"Be completely humble and gentle; be patient, bearing with one another in love."',
+    reference: 'Ephesians 4:2',
+    why: 'AGAPE-XRP extends unconditional love to XRP futures trading. With humility and patience, it bears through each market cycle, finding opportunity where others see chaos.',
+  },
 }
 
 // =============================================================================
@@ -235,6 +255,8 @@ export const BOT_DISPLAY_NAMES = {
   VALOR: BOT_SCRIPTURES.HERACLES.displayName,
   AGAPE: BOT_SCRIPTURES.AGAPE.displayName,
   AGAPE_SPOT: BOT_SCRIPTURES.AGAPE_SPOT.displayName,
+  AGAPE_BTC: BOT_SCRIPTURES.AGAPE_BTC.displayName,
+  AGAPE_XRP: BOT_SCRIPTURES.AGAPE_XRP.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {
