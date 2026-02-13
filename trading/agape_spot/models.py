@@ -9,7 +9,7 @@ P&L = (exit - entry) * quantity (always long).
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 
 # ==============================================================================
@@ -642,4 +642,208 @@ class BayesianWinTracker:
                 "NEGATIVE": self.get_regime_probability(FundingRegime.NEGATIVE),
                 "NEUTRAL": self.get_regime_probability(FundingRegime.NEUTRAL),
             },
+        }
+
+
+# ==============================================================================
+# CapitalAllocator - Performance-based live-account capital allocation
+# ==============================================================================
+
+import logging as _logging
+
+_alloc_logger = _logging.getLogger(__name__)
+
+
+@dataclass
+class TickerPerformance:
+    """Snapshot of a ticker's historical performance used for ranking."""
+    ticker: str
+    total_trades: int = 0
+    wins: int = 0
+    total_pnl: float = 0.0
+    recent_pnl: float = 0.0       # last 24h realized P&L
+    avg_win: float = 0.0
+    avg_loss: float = 0.0
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
+    score: float = 0.0            # computed composite score
+    allocation_pct: float = 0.0   # assigned % of available balance
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ticker": self.ticker,
+            "total_trades": self.total_trades,
+            "wins": self.wins,
+            "total_pnl": round(self.total_pnl, 2),
+            "recent_pnl": round(self.recent_pnl, 2),
+            "avg_win": round(self.avg_win, 2),
+            "avg_loss": round(self.avg_loss, 2),
+            "win_rate": round(self.win_rate, 4),
+            "profit_factor": round(self.profit_factor, 2),
+            "score": round(self.score, 4),
+            "allocation_pct": round(self.allocation_pct, 4),
+        }
+
+
+class CapitalAllocator:
+    """Ranks tickers by historical performance and allocates live capital proportionally.
+
+    Used by the executor to decide how much of an account's available USD balance
+    to spend on a given ticker. Paper accounts are NOT affected — they always
+    trade at full config quantity.
+
+    Scoring formula (composite):
+      score = (0.35 * norm_pf) + (0.25 * norm_wr) + (0.25 * norm_recent) + (0.15 * norm_total)
+
+    Where:
+      - norm_pf     = profit_factor / max_pf  (capped at 1.0)
+      - norm_wr     = win_rate                 (already 0-1)
+      - norm_recent = recent_pnl normalised to [-1, 1] range
+      - norm_total  = total_pnl normalised to [-1, 1] range
+
+    Allocation:
+      - Each ticker gets a proportional share based on its score.
+      - A floor of 10% ensures no ticker gets starved entirely (can still enter).
+      - Tickers with zero trades get a cold-start share (equal split).
+
+    Refresh cadence: once per scan cycle (called from trader.py).
+    """
+
+    # Floor allocation % so every ticker can at least enter small positions
+    MIN_ALLOCATION_PCT = 0.10
+
+    # How many recent hours of P&L count as "recent" performance
+    RECENT_HOURS = 24
+
+    def __init__(self, tickers: List[str]):
+        self.tickers = tickers
+        self._rankings: Dict[str, TickerPerformance] = {}
+        # Equal split until first refresh
+        equal_share = 1.0 / max(len(tickers), 1)
+        for t in tickers:
+            self._rankings[t] = TickerPerformance(
+                ticker=t, allocation_pct=equal_share,
+            )
+
+    def refresh(self, perf_data: Dict[str, Dict[str, Any]]) -> None:
+        """Recalculate rankings from fresh performance data.
+
+        perf_data: {ticker: {total_trades, wins, total_pnl, recent_pnl,
+                             avg_win, avg_loss}} — provided by db query.
+        """
+        perfs: List[TickerPerformance] = []
+        for ticker in self.tickers:
+            d = perf_data.get(ticker, {})
+            total = d.get("total_trades", 0)
+            wins = d.get("wins", 0)
+            losses = total - wins
+            total_pnl = d.get("total_pnl", 0.0)
+            recent_pnl = d.get("recent_pnl", 0.0)
+            avg_win = d.get("avg_win", 0.0)
+            avg_loss = abs(d.get("avg_loss", 0.0))
+
+            win_rate = wins / total if total > 0 else 0.0
+            pf = (avg_win * wins) / (avg_loss * losses) if (losses > 0 and avg_loss > 0) else (
+                2.0 if wins > 0 else 0.0
+            )
+
+            perfs.append(TickerPerformance(
+                ticker=ticker,
+                total_trades=total,
+                wins=wins,
+                total_pnl=total_pnl,
+                recent_pnl=recent_pnl,
+                avg_win=avg_win,
+                avg_loss=avg_loss,
+                win_rate=win_rate,
+                profit_factor=min(pf, 10.0),  # cap to prevent single outlier domination
+            ))
+
+        # --- Compute composite scores ---
+        self._score_tickers(perfs)
+
+        # --- Assign allocation percentages ---
+        self._allocate(perfs)
+
+        # Store
+        self._rankings = {p.ticker: p for p in perfs}
+
+        _alloc_logger.info(
+            "AGAPE-SPOT ALLOCATOR: Rankings refreshed — %s",
+            " | ".join(
+                f"{p.ticker}: score={p.score:.3f} alloc={p.allocation_pct:.1%}"
+                for p in sorted(perfs, key=lambda x: x.score, reverse=True)
+            ),
+        )
+
+    def _score_tickers(self, perfs: List[TickerPerformance]) -> None:
+        """Compute composite score for each ticker."""
+        # Normalisation bounds
+        max_pf = max((p.profit_factor for p in perfs), default=1.0) or 1.0
+        pnl_values = [p.total_pnl for p in perfs]
+        recent_values = [p.recent_pnl for p in perfs]
+        pnl_range = max(abs(max(pnl_values, default=0)), abs(min(pnl_values, default=0)), 1.0)
+        recent_range = max(abs(max(recent_values, default=0)), abs(min(recent_values, default=0)), 1.0)
+
+        for p in perfs:
+            if p.total_trades == 0:
+                # Cold start: neutral score so it gets equal share
+                p.score = 0.5
+                continue
+
+            norm_pf = min(p.profit_factor / max_pf, 1.0)
+            norm_wr = p.win_rate
+            norm_total = (p.total_pnl / pnl_range + 1.0) / 2.0   # map [-1,1] -> [0,1]
+            norm_recent = (p.recent_pnl / recent_range + 1.0) / 2.0
+
+            p.score = (
+                0.35 * norm_pf
+                + 0.25 * norm_wr
+                + 0.25 * norm_recent
+                + 0.15 * norm_total
+            )
+
+    def _allocate(self, perfs: List[TickerPerformance]) -> None:
+        """Assign allocation percentages based on scores.
+
+        Scores are shifted so the minimum becomes MIN_ALLOCATION_PCT,
+        then normalised so they sum to 1.0.
+        """
+        n = len(perfs)
+        if n == 0:
+            return
+        if n == 1:
+            perfs[0].allocation_pct = 1.0
+            return
+
+        # Shift scores: ensure minimum floor
+        min_score = min(p.score for p in perfs)
+        shifted = []
+        for p in perfs:
+            # Give every ticker at least MIN_ALLOCATION_PCT worth of weight
+            shifted.append(max(p.score - min_score, 0.0) + self.MIN_ALLOCATION_PCT)
+
+        total_shifted = sum(shifted)
+        for p, s in zip(perfs, shifted):
+            p.allocation_pct = s / total_shifted
+
+    def get_allocation(self, ticker: str) -> float:
+        """Return the allocation fraction [0.0, 1.0] for a ticker.
+
+        This is the fraction of available USD balance to use for this ticker.
+        """
+        perf = self._rankings.get(ticker)
+        if not perf:
+            return 1.0 / max(len(self.tickers), 1)
+        return perf.allocation_pct
+
+    def get_rankings(self) -> List[TickerPerformance]:
+        """Return all tickers sorted by score (best first)."""
+        return sorted(self._rankings.values(), key=lambda p: p.score, reverse=True)
+
+    def to_dict(self) -> Dict[str, Any]:
+        ranked = self.get_rankings()
+        return {
+            "rankings": [p.to_dict() for p in ranked],
+            "total_tickers": len(ranked),
         }

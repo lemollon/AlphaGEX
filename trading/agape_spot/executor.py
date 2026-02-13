@@ -37,6 +37,7 @@ from trading.agape_spot.models import (
     AgapeSpotConfig,
     AgapeSpotSignal,
     AgapeSpotPosition,
+    CapitalAllocator,
     PositionStatus,
     SignalAction,
     TradingMode,
@@ -83,6 +84,9 @@ class AgapeSpotExecutor:
         # Coinbase product limits fetched at init (real minimums from API)
         # {ticker: {"base_min_size": float, "quote_min_size": float, "base_increment": float}}
         self._product_limits: Dict[str, Dict[str, float]] = {}
+
+        # Performance-based capital allocator (set by trader.py, refreshed each cycle)
+        self.capital_allocator: Optional[CapitalAllocator] = None
 
         # Always init Coinbase clients (needed for price data even in paper mode)
         if coinbase_available:
@@ -455,31 +459,43 @@ class AgapeSpotExecutor:
             quantity = round(signal.quantity, qty_decimals)
             client_order_id = str(uuid.uuid4())
 
-            # --- Balance-aware sizing: adjust qty to fit actual account balance ---
+            # --- Balance-aware sizing with performance-based allocation ---
+            #
+            # Live accounts size from actual balance, NOT from signal quantity.
+            # The allocator assigns each ticker a % of available USD based on
+            # its historical performance (win rate, profit factor, recent P&L).
+            # Paper account is unaffected — it uses signal.quantity directly.
             try:
                 usd_available = self._get_usd_balance_from_client(client)
                 if usd_available is not None and usd_available > 0:
                     # Reserve 5% for fees/slippage
                     usable_usd = usd_available * 0.95
-                    notional_wanted = quantity * signal.spot_price
-                    if notional_wanted > usable_usd:
-                        # Scale down to what the account can afford
-                        affordable_qty = usable_usd / signal.spot_price
-                        affordable_qty = round(affordable_qty, qty_decimals)
-                        logger.info(
-                            f"AGAPE-SPOT: BALANCE ADJUST [{account_label}] {signal.ticker} "
-                            f"qty {quantity} -> {affordable_qty} "
-                            f"(${notional_wanted:.2f} wanted, ${usable_usd:.2f} available)"
+
+                    # Ask allocator how much of the balance this ticker deserves
+                    alloc_pct = 1.0
+                    if self.capital_allocator:
+                        alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
+                    allocated_usd = usable_usd * alloc_pct
+
+                    # Size quantity from the allocated USD
+                    affordable_qty = allocated_usd / signal.spot_price
+                    affordable_qty = round(affordable_qty, qty_decimals)
+
+                    logger.info(
+                        f"AGAPE-SPOT: ALLOC SIZING [{account_label}] {signal.ticker} "
+                        f"balance=${usd_available:.2f}, usable=${usable_usd:.2f}, "
+                        f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                        f"qty={affordable_qty}"
+                    )
+                    if self.db:
+                        self.db.log(
+                            "INFO", "ALLOC_SIZED",
+                            f"[{account_label}] {signal.ticker}: "
+                            f"balance=${usd_available:.2f}, alloc={alloc_pct:.1%} "
+                            f"(${allocated_usd:.2f}), qty={affordable_qty}",
+                            ticker=signal.ticker,
                         )
-                        if self.db:
-                            self.db.log(
-                                "INFO", "BALANCE_ADJUSTED",
-                                f"[{account_label}] {signal.ticker}: qty {quantity} -> "
-                                f"{affordable_qty} (balance ${usd_available:.2f}, "
-                                f"usable ${usable_usd:.2f})",
-                                ticker=signal.ticker,
-                            )
-                        quantity = affordable_qty
+                    quantity = affordable_qty
                 elif usd_available is not None and usd_available <= 0:
                     logger.warning(
                         f"AGAPE-SPOT: NO USD BALANCE [{account_label}] {signal.ticker} "

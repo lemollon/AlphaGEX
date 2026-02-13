@@ -20,6 +20,7 @@ from trading.agape_spot.models import (
     AgapeSpotConfig,
     AgapeSpotSignal,
     AgapeSpotPosition,
+    CapitalAllocator,
     PositionStatus,
     SignalAction,
     TradingMode,
@@ -85,6 +86,14 @@ class AgapeSpotTrader:
         self.signals = AgapeSpotSignalGenerator(self.config, self._win_trackers)
         self.executor = AgapeSpotExecutor(self.config, self.db)
 
+        # Performance-based capital allocation for live accounts.
+        # Ranks tickers by win rate, profit factor, and recent P&L, then
+        # assigns each a proportional share of the available USD balance.
+        # Paper accounts are unaffected — they always trade full config qty.
+        self._capital_allocator = CapitalAllocator(self.config.live_tickers)
+        self.executor.capital_allocator = self._capital_allocator
+        self._refresh_allocator()  # initial ranking from DB
+
         self._cycle_count: int = 0
         self._enabled: bool = True
 
@@ -122,6 +131,18 @@ class AgapeSpotTrader:
         )
 
     # ==================================================================
+    # Capital allocator refresh
+    # ==================================================================
+
+    def _refresh_allocator(self) -> None:
+        """Query DB for per-ticker performance and update the capital allocator rankings."""
+        try:
+            perf_data = self.db.get_ticker_performance_stats(self.config.live_tickers)
+            self._capital_allocator.refresh(perf_data)
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT: Allocator refresh failed: {e}")
+
+    # ==================================================================
     # Top-level cycle -- iterates ALL tickers
     # ==================================================================
 
@@ -129,6 +150,10 @@ class AgapeSpotTrader:
         """Execute one trading cycle for ALL configured tickers."""
         self._cycle_count += 1
         now = datetime.now(CENTRAL_TZ)
+
+        # Refresh capital allocation rankings every cycle so live accounts
+        # always allocate based on the latest performance data.
+        self._refresh_allocator()
 
         results: Dict[str, Any] = {
             "cycle": self._cycle_count,
@@ -946,6 +971,7 @@ class AgapeSpotTrader:
             "win_trackers": {
                 t: tr.to_dict() for t, tr in self._win_trackers.items()
             },
+            "capital_allocator": self._capital_allocator.to_dict(),
             "per_ticker": per_ticker,
         }
 
