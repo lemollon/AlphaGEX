@@ -1374,72 +1374,41 @@ class JubileeICSignalGenerator:
         call_long: float,
     ) -> Optional[Dict[str, float]]:
         """
-        Get REAL option credits from Tradier production API (same as SAMSON).
+        Get REAL option credits from Tradier production API using BATCH call.
 
-        Fetches actual bid/ask quotes for SPX options to get accurate
-        credit values instead of using formula estimation.
+        Uses the executor's get_ic_quotes() which makes a single batch API call
+        for all 4 legs (comma-separated symbols). This is the same approach
+        that works reliably for the executor and Samson.
+
+        The old approach of 4 separate get_option_quote() calls failed because
+        Tradier returns empty for individual option symbol lookups.
         """
-        tradier = _get_tradier()
-        if not tradier:
-            logger.debug("JUBILEE IC: Tradier not available, cannot get real credits")
-            return None
-
         try:
-            from datetime import datetime as dt
-            exp_date = dt.strptime(expiration, '%Y-%m-%d')
-            exp_str = exp_date.strftime('%y%m%d')
+            from trading.jubilee.executor import get_ic_quotes
+            result = get_ic_quotes(
+                ticker=self.config.ticker,
+                expiration=expiration,
+                put_short=put_short,
+                put_long=put_long,
+                call_short=call_short,
+                call_long=call_long,
+                use_cache=False,
+            )
 
-            def build_symbol(strike: float, opt_type: str) -> str:
-                strike_str = f"{int(strike * 1000):08d}"
-                return f"SPXW{exp_str}{opt_type}{strike_str}"
-
-            put_short_sym = build_symbol(put_short, 'P')
-            put_long_sym = build_symbol(put_long, 'P')
-            call_short_sym = build_symbol(call_short, 'C')
-            call_long_sym = build_symbol(call_long, 'C')
-
-            # Get quotes for all four legs - Tradier is the sole pricing source.
-            # Use full retry count (4 attempts with exponential backoff).
-            put_short_quote = _tradier_call_with_retry(tradier.get_option_quote, put_short_sym)
-            put_long_quote = _tradier_call_with_retry(tradier.get_option_quote, put_long_sym)
-            call_short_quote = _tradier_call_with_retry(tradier.get_option_quote, call_short_sym)
-            call_long_quote = _tradier_call_with_retry(tradier.get_option_quote, call_long_sym)
-
-            if not all([put_short_quote, put_long_quote, call_short_quote, call_long_quote]):
-                logger.warning(f"JUBILEE IC: Missing option quotes for {expiration}")
+            if not result['success']:
+                logger.warning(f"JUBILEE IC: Batch quote fetch failed: {result.get('error', 'unknown')}")
                 return None
 
-            # Put spread: sell short put, buy long put → bid of short - ask of long
-            put_short_bid = float(put_short_quote.get('bid', 0) or 0)
-            put_long_ask = float(put_long_quote.get('ask', 0) or 0)
-            put_credit = put_short_bid - put_long_ask
-
-            # Call spread: sell short call, buy long call → bid of short - ask of long
-            call_short_bid = float(call_short_quote.get('bid', 0) or 0)
-            call_long_ask = float(call_long_quote.get('ask', 0) or 0)
-            call_credit = call_short_bid - call_long_ask
-
-            # Validate credits - try mid prices as fallback
-            if put_credit <= 0 or call_credit <= 0:
-                logger.warning(f"JUBILEE IC: Invalid credits - put=${put_credit:.2f}, call=${call_credit:.2f}, trying mid prices")
-                put_short_mid = (put_short_bid + float(put_short_quote.get('ask', 0) or 0)) / 2
-                put_long_mid = (float(put_long_quote.get('bid', 0) or 0) + put_long_ask) / 2
-                call_short_mid = (call_short_bid + float(call_short_quote.get('ask', 0) or 0)) / 2
-                call_long_mid = (float(call_long_quote.get('bid', 0) or 0) + call_long_ask) / 2
-
-                put_credit = max(0, put_short_mid - put_long_mid)
-                call_credit = max(0, call_short_mid - call_long_mid)
-
-            total = put_credit + call_credit
+            total = result['total_credit']
             width = self.config.spread_width
             max_profit = total * 100
             max_loss = (width - total) * 100
 
-            logger.info(f"JUBILEE IC: REAL QUOTES - Put spread ${put_credit:.2f}, Call spread ${call_credit:.2f}, Total ${total:.2f}")
+            logger.info(f"JUBILEE IC: REAL QUOTES (batch) - Put ${result['put_spread_credit']:.2f}, Call ${result['call_spread_credit']:.2f}, Total ${total:.2f}")
 
             return {
-                'put_credit': round(put_credit, 2),
-                'call_credit': round(call_credit, 2),
+                'put_credit': round(result['put_spread_credit'], 2),
+                'call_credit': round(result['call_spread_credit'], 2),
                 'total_credit': round(total, 2),
                 'max_profit': round(max_profit, 2),
                 'max_loss': round(max_loss, 2),
