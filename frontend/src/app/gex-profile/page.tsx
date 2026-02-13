@@ -197,13 +197,16 @@ export default function GexProfilePage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [chartView, setChartView] = useState<ChartView>('intraday')
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [nextCandleCountdown, setNextCandleCountdown] = useState('')
 
   // ── Fetch ───────────────────────────────────────────────────────
-  const fetchGexData = useCallback(async (sym: string) => {
+  const fetchGexData = useCallback(async (sym: string, clearFirst = false) => {
     try {
-      setLoading(true)
+      if (clearFirst) {
+        setData(null) // Only clear on symbol change — prevents blank flash on auto-refresh
+        setLoading(true)
+      }
       setError(null)
-      setData(null) // Clear stale data to prevent cross-symbol Y-axis distortion
       const res = await apiClient.getWatchtowerGexAnalysis(sym)
       const result = res.data
       if (result?.success) {
@@ -221,11 +224,13 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  const fetchIntradayTicks = useCallback(async (sym: string) => {
+  const fetchIntradayTicks = useCallback(async (sym: string, clearFirst = false) => {
     try {
+      if (clearFirst) {
+        setIntradayTicks([]) // Only clear on symbol change
+        setIntradayBars([])
+      }
       setIntradayLoading(true)
-      setIntradayTicks([]) // Clear stale symbol data
-      setIntradayBars([])
       const [ticksRes, barsRes] = await Promise.all([
         apiClient.getWatchtowerIntradayTicks(sym, 5),
         apiClient.getWatchtowerIntradayBars(sym, '5min'),
@@ -255,10 +260,10 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  // Initial load
+  // Initial load + symbol change (clear stale data)
   useEffect(() => {
-    fetchGexData(symbol)
-    fetchIntradayTicks(symbol)
+    fetchGexData(symbol, true)
+    fetchIntradayTicks(symbol, true)
   }, [symbol, fetchGexData, fetchIntradayTicks])
 
   // Auto-refresh during market hours
@@ -270,13 +275,30 @@ export default function GexProfilePage() {
       if (!isMarketOpen()) return
       tick++
       refreshBars(symbol) // Every 15s — near-live candlestick updates
-      if (tick % 2 === 0) { // Every 30s — full GEX + ticks refresh
-        fetchGexData(symbol)
-        fetchIntradayTicks(symbol)
+      if (tick % 2 === 0) { // Every 30s — full GEX + ticks refresh (no clear)
+        fetchGexData(symbol, false)
+        fetchIntradayTicks(symbol, false)
       }
     }, 15_000)
     return () => clearInterval(id)
   }, [autoRefresh, symbol, fetchGexData, fetchIntradayTicks, refreshBars])
+
+  // Live countdown to next 5-minute candle
+  useEffect(() => {
+    const calc = () => {
+      const now = new Date()
+      const min = now.getMinutes()
+      const sec = now.getSeconds()
+      const secsIntoBar = (min % 5) * 60 + sec
+      const secsLeft = 5 * 60 - secsIntoBar
+      const m = Math.floor(secsLeft / 60)
+      const s = secsLeft % 60
+      setNextCandleCountdown(`${m}:${s.toString().padStart(2, '0')}`)
+    }
+    calc()
+    const id = setInterval(calc, 1000)
+    return () => clearInterval(id)
+  }, [])
 
   const handleSymbolSearch = () => {
     const s = searchInput.trim().toUpperCase()
@@ -551,6 +573,11 @@ export default function GexProfilePage() {
                     ? `${symbol} Intraday 5m — Price + Net Gamma`
                     : `${symbol} ${chartView === 'net' ? 'Net' : 'Call vs Put'} GEX by Strike — ${data.expiration}`
                   }
+                  {chartView === 'intraday' && nextCandleCountdown && (
+                    <span className="ml-3 text-xs font-mono bg-gray-900 border border-gray-600 rounded px-2 py-0.5 text-cyan-400">
+                      Next candle: {nextCandleCountdown}
+                    </span>
+                  )}
                 </h3>
                 <div className="flex items-center gap-1 bg-gray-900 rounded-lg p-0.5 border border-gray-700">
                   {(['net', 'split', 'intraday'] as ChartView[]).map(view => (
@@ -660,7 +687,7 @@ export default function GexProfilePage() {
 
                   // Reference level lines (horizontal) — thick enough to see
                   const refLines: any[] = []
-                  const { gex_flip: flip, call_wall: cw, put_wall: pw } = data.levels
+                  const { gex_flip: flip, call_wall: cw, put_wall: pw, upper_1sd, lower_1sd, expected_move } = data.levels
                   if (flip) refLines.push({
                     type: 'line', xref: 'paper', yref: 'y',
                     x0: 0, x1: 1, y0: flip, y1: flip,
@@ -676,15 +703,36 @@ export default function GexProfilePage() {
                     x0: 0, x1: 1, y0: pw, y1: pw,
                     line: { color: '#a855f7', width: 2.5, dash: 'dot' },
                   })
+                  // ±1 Standard Deviation lines
+                  if (upper_1sd) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: upper_1sd, y1: upper_1sd,
+                    line: { color: '#f97316', width: 1.5, dash: 'dashdot' },
+                  })
+                  if (lower_1sd) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: lower_1sd, y1: lower_1sd,
+                    line: { color: '#f97316', width: 1.5, dash: 'dashdot' },
+                  })
+                  // Expected Move shaded band (between ±1SD)
+                  if (upper_1sd && lower_1sd) refLines.push({
+                    type: 'rect', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: lower_1sd, y1: upper_1sd,
+                    fillcolor: 'rgba(249,115,22,0.06)',
+                    line: { width: 0 },
+                    layer: 'below',
+                  })
 
                   // Compute Y-axis range: include price data + reference levels + padding
                   const yPoints = [...priceValues]
                   if (flip) yPoints.push(flip)
                   if (cw) yPoints.push(cw)
                   if (pw) yPoints.push(pw)
+                  if (upper_1sd) yPoints.push(upper_1sd)
+                  if (lower_1sd) yPoints.push(lower_1sd)
                   const yMin = yPoints.length > 0 ? Math.min(...yPoints) : 0
                   const yMax = yPoints.length > 0 ? Math.max(...yPoints) : 0
-                  const yPad = (yMax - yMin) * 0.15 || 2
+                  const yPad = (yMax - yMin) * 0.35 || 4
                   const yRange: [number, number] = [yMin - yPad, yMax + yPad]
 
                   // Reference level annotations (on right edge)
@@ -708,6 +756,22 @@ export default function GexProfilePage() {
                     text: `PUT WALL $${pw.toFixed(0)}`, showarrow: false,
                     font: { color: '#a855f7', size: 10 },
                     xanchor: 'left', yanchor: 'top',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (upper_1sd) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.99, y: upper_1sd,
+                    text: `+1σ $${upper_1sd.toFixed(0)}${expected_move ? ` (EM $${expected_move.toFixed(1)})` : ''}`,
+                    showarrow: false,
+                    font: { color: '#f97316', size: 9 },
+                    xanchor: 'right', yanchor: 'bottom',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (lower_1sd) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.99, y: lower_1sd,
+                    text: `-1σ $${lower_1sd.toFixed(0)}`,
+                    showarrow: false,
+                    font: { color: '#f97316', size: 9 },
+                    xanchor: 'right', yanchor: 'top',
                     bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
                   })
 
@@ -747,14 +811,16 @@ export default function GexProfilePage() {
                           data={traces}
                           layout={{
                             height: 550,
-                            paper_bgcolor: 'rgba(0,0,0,0)',
-                            plot_bgcolor: 'rgba(0,0,0,0)',
+                            paper_bgcolor: '#111827',
+                            plot_bgcolor: '#1a2332',
                             font: { color: '#9ca3af', family: 'Arial, sans-serif', size: 11 },
                             xaxis: {
                               type: 'date',
                               gridcolor: '#1f2937',
                               showgrid: true,
                               rangeslider: { visible: false },
+                              hoverformat: '%I:%M %p',  // 12h AM/PM in tooltip
+                              tickformat: '%I:%M %p',
                             },
                             yaxis: {
                               title: { text: 'Price', font: { size: 11, color: '#6b7280' } },
@@ -789,6 +855,8 @@ export default function GexProfilePage() {
                         <span className="text-yellow-400">╌╌ Flip</span>
                         <span className="text-cyan-400">┄┄ Call Wall</span>
                         <span className="text-purple-400">┄┄ Put Wall</span>
+                        <span className="text-orange-400">-·- ±1σ</span>
+                        <span className="text-orange-400/50">░ Expected Move</span>
                         <span className="text-gray-700">|</span>
                         <span className="text-gray-500">{intradayBars.length} bars today</span>
                       </div>
