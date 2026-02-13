@@ -13,14 +13,16 @@ Implements the 8-phase profitability proof framework:
   Phase 7: Monte Carlo stress test
   Phase 8: Final 25-stat scorecard
 
-Defaults match production run_backtest.py:
-  - SD-based strike selection (1.2x multiplier)
-  - $5 wide wings, 3 trading day DTE
+Defaults optimized by Phase 4+5 grid search:
+  - SD-based strike selection (1.2x multiplier) - Phase 5 confirmed
+  - $5 wide wings, 3 trading day DTE - Phase 5 confirmed
   - 15% risk per trade, $100K capital
-  - 50% profit target, VIX > 50 filter
+  - 25% profit target (Phase 4 winner: Sharpe=3.35, PF=6.11)
+  - 1.5x credit stop loss (Phase 4 winner)
+  - VIX > 50 filter
   - Slippage: $0.01/leg (entry via net_credit, exit via exit_debit)
   - Commission: $0.65/contract x 8 transactions (scales by contracts)
-  - Stop loss logic with intermediate-day MTM
+  - Unlimited re-entry (position closes → re-enter same day)
   - Economic event calendar filtering
   - Multiple exit strategy grid testing
 
@@ -227,9 +229,9 @@ class RealisticConfig:
     commission_per_contract: float = 0.65  # $0.65 per contract
     num_transactions: int = 8           # 4 open + 4 close
 
-    # Exit rules - matches production run_backtest.py
-    profit_target_pct: float = 50.0    # Take profit at 50% of credit (production)
-    stop_loss_multiplier: float = 0.0  # 0 = no stop loss (baseline)
+    # Exit rules - optimized by Phase 4 grid search (PT=25% SL=1.5x won)
+    profit_target_pct: float = 25.0    # Take profit at 25% of credit (Phase 4 winner: Sharpe=3.35, PF=6.11)
+    stop_loss_multiplier: float = 1.5  # Stop at 1.5x credit received (Phase 4 winner)
     time_exit_before_exp: bool = False  # Close EOD before expiration if profitable
 
     # Filters - matches production run_backtest.py
