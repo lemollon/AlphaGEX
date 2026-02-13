@@ -4511,3 +4511,355 @@ async def get_fortress_intraday_diagnostics():
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+# ============================================================================
+# BACKTEST SCORECARD ENDPOINTS
+# ============================================================================
+
+# Import scorecard module
+ScorecardModule = None
+try:
+    from backtest.fortress.scorecard import compute_scorecard, ScorecardResult
+    ScorecardModule = True
+    logger.info("FORTRESS scorecard module loaded")
+except ImportError as e:
+    logger.debug(f"Scorecard module not available: {e}")
+
+
+def _ensure_scorecard_table():
+    """Create the scorecard results table if it doesn't exist."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS fortress_backtest_scorecards (
+                id SERIAL PRIMARY KEY,
+                run_id TEXT UNIQUE NOT NULL,
+                run_timestamp TIMESTAMPTZ DEFAULT NOW(),
+                source TEXT DEFAULT 'live',
+
+                -- Verdict
+                total_checks INTEGER,
+                passed_checks INTEGER,
+                verdict TEXT,
+                verdict_detail TEXT,
+                recommended_size_pct INTEGER,
+
+                -- Category 1: Does It Make Money?
+                total_pnl REAL,
+                avg_pnl REAL,
+                median_pnl REAL,
+                win_rate REAL,
+                profit_factor REAL,
+                expected_value REAL,
+                annualized_return REAL,
+
+                -- Category 2: Is The Edge Real?
+                total_trades INTEGER,
+                t_statistic REAL,
+                p_value REAL,
+                sharpe_ratio REAL,
+                sortino_ratio REAL,
+                skewness REAL,
+                kurtosis REAL,
+
+                -- Category 3: Survive Bad Times?
+                max_drawdown_dollar REAL,
+                max_drawdown_pct REAL,
+                max_dd_duration_trades INTEGER,
+                max_consecutive_losses INTEGER,
+                largest_single_loss REAL,
+                calmar_ratio REAL,
+                var_95 REAL,
+                cvar_95 REAL,
+
+                -- Category 4: Robustness
+                worst_month TEXT,
+                worst_month_pnl REAL,
+                worst_month_pct REAL,
+
+                -- Extras
+                initial_capital REAL,
+                ending_equity REAL,
+                config_summary TEXT,
+
+                -- Full data as JSONB for detailed display
+                checks_json JSONB,
+                vix_regimes_json JSONB,
+                equity_curve_json JSONB
+            )
+        """)
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create scorecard table: {e}")
+        return False
+
+
+@router.get("/backtest/scorecard")
+async def get_fortress_scorecard():
+    """
+    Get the latest FORTRESS backtest scorecard.
+
+    Computes the 25-stat profitability scorecard from all closed
+    FORTRESS trades in the database.
+
+    Returns:
+        Full scorecard with checks, verdict, VIX regime breakdown,
+        and equity curve data.
+    """
+    if not ScorecardModule:
+        return {
+            "success": False,
+            "error": "Scorecard module not available",
+            "message": "Install numpy and scipy: pip install numpy scipy"
+        }
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital
+        starting_capital = 100000
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get all closed trades ordered by date
+        cursor.execute("""
+            SELECT
+                open_date,
+                realized_pnl,
+                COALESCE(vix_at_entry, 0) as vix_at_entry,
+                close_date,
+                status,
+                total_credit,
+                contracts,
+                spread_width,
+                underlying_price_at_entry
+            FROM fortress_positions
+            WHERE status IN ('closed', 'expired', 'partial_close')
+                AND realized_pnl IS NOT NULL
+            ORDER BY open_date ASC
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            return {
+                "success": True,
+                "data": {
+                    "verdict": "NO_DATA",
+                    "verdict_detail": "No closed trades found. FORTRESS needs trade history to compute scorecard.",
+                    "total_trades": 0,
+                    "passed_checks": 0,
+                    "total_checks": 0,
+                    "checks": [],
+                    "vix_regimes": [],
+                }
+            }
+
+        # Extract trade data
+        trade_pnls = [float(r[1]) for r in rows]
+        trade_dates = [str(r[0]) for r in rows]
+        trade_vix = [float(r[2]) for r in rows]
+
+        # Compute scorecard
+        import uuid
+        result = compute_scorecard(
+            trade_pnls=trade_pnls,
+            trade_dates=trade_dates,
+            trade_vix_values=trade_vix,
+            initial_capital=starting_capital,
+            config_summary=f"FORTRESS Live Trades | {len(rows)} closed positions | Capital: ${starting_capital:,.0f}",
+            run_id=f"live_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+        )
+
+        return {
+            "success": True,
+            "data": result.to_dict()
+        }
+
+    except Exception as e:
+        logger.error(f"Scorecard computation error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@router.post("/backtest/scorecard/save")
+async def save_fortress_scorecard():
+    """
+    Compute and persist the current scorecard to the database.
+
+    Stores the full scorecard result for historical tracking and comparison.
+    """
+    if not ScorecardModule:
+        return {"success": False, "error": "Scorecard module not available"}
+
+    _ensure_scorecard_table()
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital
+        starting_capital = 100000
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'fortress_starting_capital'")
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get all closed trades
+        cursor.execute("""
+            SELECT open_date, realized_pnl, COALESCE(vix_at_entry, 0)
+            FROM fortress_positions
+            WHERE status IN ('closed', 'expired', 'partial_close')
+                AND realized_pnl IS NOT NULL
+            ORDER BY open_date ASC
+        """)
+        rows = cursor.fetchall()
+
+        if not rows:
+            conn.close()
+            return {"success": False, "error": "No closed trades to compute scorecard"}
+
+        import uuid
+        import json
+
+        trade_pnls = [float(r[1]) for r in rows]
+        trade_dates = [str(r[0]) for r in rows]
+        trade_vix = [float(r[2]) for r in rows]
+
+        result = compute_scorecard(
+            trade_pnls=trade_pnls,
+            trade_dates=trade_dates,
+            trade_vix_values=trade_vix,
+            initial_capital=starting_capital,
+            config_summary=f"FORTRESS Live | {len(rows)} trades | ${starting_capital:,.0f}",
+            run_id=f"live_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}",
+        )
+
+        # Persist to database
+        cursor.execute("""
+            INSERT INTO fortress_backtest_scorecards (
+                run_id, source,
+                total_checks, passed_checks, verdict, verdict_detail, recommended_size_pct,
+                total_pnl, avg_pnl, median_pnl, win_rate, profit_factor, expected_value, annualized_return,
+                total_trades, t_statistic, p_value, sharpe_ratio, sortino_ratio, skewness, kurtosis,
+                max_drawdown_dollar, max_drawdown_pct, max_dd_duration_trades, max_consecutive_losses,
+                largest_single_loss, calmar_ratio, var_95, cvar_95,
+                worst_month, worst_month_pnl, worst_month_pct,
+                initial_capital, ending_equity, config_summary,
+                checks_json, vix_regimes_json
+            ) VALUES (
+                %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s
+            )
+        """, (
+            result.run_id, 'live',
+            result.total_checks, result.passed_checks, result.verdict, result.verdict_detail, result.recommended_size_pct,
+            result.total_pnl, result.avg_pnl, result.median_pnl, result.win_rate, result.profit_factor, result.expected_value, result.annualized_return,
+            result.total_trades, result.t_statistic, result.p_value, result.sharpe_ratio, result.sortino_ratio, result.skewness, result.kurtosis,
+            result.max_drawdown_dollar, result.max_drawdown_pct, result.max_dd_duration_trades, result.max_consecutive_losses,
+            result.largest_single_loss, result.calmar_ratio, result.var_95, result.cvar_95,
+            result.worst_month, result.worst_month_pnl, result.worst_month_pct,
+            result.initial_capital, result.ending_equity, result.config_summary,
+            json.dumps(result.checks), json.dumps(result.vix_regimes),
+        ))
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "run_id": result.run_id,
+                "verdict": result.verdict,
+                "passed_checks": result.passed_checks,
+                "total_checks": result.total_checks,
+                "message": f"Scorecard saved: {result.passed_checks}/{result.total_checks} passed - {result.verdict}"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Scorecard save error: {e}")
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
+@router.get("/backtest/scorecard/history")
+async def get_fortress_scorecard_history(limit: int = 10):
+    """
+    Get historical scorecard results for trend analysis.
+    """
+    _ensure_scorecard_table()
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                run_id, run_timestamp, source,
+                total_checks, passed_checks, verdict, verdict_detail, recommended_size_pct,
+                total_pnl, win_rate, profit_factor, sharpe_ratio, sortino_ratio,
+                max_drawdown_pct, max_consecutive_losses, calmar_ratio,
+                total_trades, annualized_return, initial_capital, ending_equity,
+                config_summary
+            FROM fortress_backtest_scorecards
+            ORDER BY run_timestamp DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        history = []
+        for r in rows:
+            history.append({
+                "run_id": r[0],
+                "run_timestamp": r[1].isoformat() if r[1] else None,
+                "source": r[2],
+                "total_checks": r[3],
+                "passed_checks": r[4],
+                "verdict": r[5],
+                "verdict_detail": r[6],
+                "recommended_size_pct": r[7],
+                "total_pnl": r[8],
+                "win_rate": r[9],
+                "profit_factor": r[10],
+                "sharpe_ratio": r[11],
+                "sortino_ratio": r[12],
+                "max_drawdown_pct": r[13],
+                "max_consecutive_losses": r[14],
+                "calmar_ratio": r[15],
+                "total_trades": r[16],
+                "annualized_return": r[17],
+                "initial_capital": r[18],
+                "ending_equity": r[19],
+                "config_summary": r[20],
+            })
+
+        return {"success": True, "data": {"scorecards": history, "count": len(history)}}
+
+    except Exception as e:
+        logger.error(f"Scorecard history error: {e}")
+        return {"success": False, "error": str(e)}
