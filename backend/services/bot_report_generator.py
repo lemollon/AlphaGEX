@@ -97,6 +97,20 @@ def _safe_get(d: Optional[Dict], *keys, default=None):
     return result if result is not None else default
 
 
+def _safe_float(val, default=0.0):
+    """Convert value to float, returning default for None/invalid values.
+
+    Needed because dict.get("key", 0) returns None when key exists
+    with a NULL value from the database, causing TypeErrors in arithmetic.
+    """
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 @contextmanager
 def _db_connection():
     """
@@ -565,7 +579,9 @@ def build_market_context(
         # Count regime occurrences
         from collections import Counter
         regime_counts = Counter(gex_regimes)
-        context["summary"]["dominant_regime"] = regime_counts.most_common(1)[0][0]
+        most_common = regime_counts.most_common(1)
+        if most_common:
+            context["summary"]["dominant_regime"] = most_common[0][0]
         context["summary"]["regime_changes"] = len(set(gex_regimes))
 
     return context
@@ -786,7 +802,7 @@ def analyze_trade_with_claude(
 
 def _fallback_trade_analysis(trade: Dict[str, Any], ticks: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Generate basic analysis without Claude."""
-    pnl = trade.get("realized_pnl", 0)
+    pnl = _safe_float(trade.get("realized_pnl"))
     won = pnl > 0
 
     return {
@@ -894,12 +910,12 @@ def generate_daily_summary_with_claude(
         client = anthropic.Anthropic(api_key=api_key)
 
         # Build trades summary
-        total_pnl = sum(t.get("realized_pnl", 0) for t in trades)
-        wins = sum(1 for t in trades if t.get("realized_pnl", 0) > 0)
+        total_pnl = sum(_safe_float(t.get("realized_pnl")) for t in trades)
+        wins = sum(1 for t in trades if _safe_float(t.get("realized_pnl")) > 0)
         win_rate = (wins / len(trades) * 100) if trades else 0
 
         trades_summary = "\n".join([
-            f"- {t.get('position_id')}: P&L ${t.get('realized_pnl', 0):.2f}, Reason: {t.get('close_reason', 'N/A')}"
+            f"- {t.get('position_id')}: P&L ${_safe_float(t.get('realized_pnl')):.2f}, Reason: {t.get('close_reason', 'N/A')}"
             for t in trades
         ])
 
@@ -969,13 +985,13 @@ def _fallback_daily_summary(
     trade_analyses: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
     """Generate basic daily summary without Claude."""
-    total_pnl = sum(t.get("realized_pnl", 0) for t in trades)
-    wins = sum(1 for t in trades if t.get("realized_pnl", 0) > 0)
+    total_pnl = sum(_safe_float(t.get("realized_pnl")) for t in trades)
+    wins = sum(1 for t in trades if _safe_float(t.get("realized_pnl")) > 0)
     losses = len(trades) - wins
     win_rate = (wins / len(trades) * 100) if trades else 0
 
     # Find best/worst trades
-    sorted_trades = sorted(trades, key=lambda x: x.get("realized_pnl", 0), reverse=True)
+    sorted_trades = sorted(trades, key=lambda x: _safe_float(x.get("realized_pnl")), reverse=True)
     best = sorted_trades[0] if sorted_trades else None
     worst = sorted_trades[-1] if sorted_trades else None
 
@@ -989,11 +1005,11 @@ def _fallback_daily_summary(
         ],
         "best_trade": {
             "position_id": best.get("position_id") if best else None,
-            "reason": f"Best P&L: ${best.get('realized_pnl', 0):.2f}" if best else None
+            "reason": f"Best P&L: ${_safe_float(best.get('realized_pnl')):.2f}" if best else None
         },
         "worst_trade": {
             "position_id": worst.get("position_id") if worst else None,
-            "reason": f"Worst P&L: ${worst.get('realized_pnl', 0):.2f}" if worst else None
+            "reason": f"Worst P&L: ${_safe_float(worst.get('realized_pnl')):.2f}" if worst else None
         },
         "_generated_by": "fallback",
         "_input_tokens": 0,
@@ -1045,7 +1061,11 @@ def generate_report_for_bot(
     # Step 3: Fetch intraday ticks from Yahoo
     intraday_ticks = {}
     if YAHOO_AVAILABLE and trades:
-        intraday_ticks = fetch_ticks_for_trades(trades, bot)
+        try:
+            intraday_ticks = fetch_ticks_for_trades(trades, bot)
+        except Exception as e:
+            logger.warning(f"Yahoo tick fetch failed for {bot}: {e} - continuing without ticks")
+            intraday_ticks = {}
 
     # Step 4: Build market context
     market_context = build_market_context(scans, report_date)
@@ -1064,8 +1084,8 @@ def generate_report_for_bot(
     )
 
     # Calculate metrics
-    total_pnl = sum(t.get("realized_pnl", 0) for t in trades)
-    win_count = sum(1 for t in trades if t.get("realized_pnl", 0) > 0)
+    total_pnl = sum(_safe_float(t.get("realized_pnl")) for t in trades)
+    win_count = sum(1 for t in trades if _safe_float(t.get("realized_pnl")) > 0)
     loss_count = len(trades) - win_count
 
     generation_time_ms = int((time.time() - start_time) * 1000)
