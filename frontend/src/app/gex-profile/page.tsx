@@ -635,16 +635,18 @@ export default function GexProfilePage() {
                   <>
                     <div className="h-[550px]">
                       <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={sortedStrikes} layout="vertical" margin={{ top: 5, right: 90, left: 60, bottom: 5 }}>
-                          {/* X-axis: absolute gamma magnitude — all bars extend right */}
+                        <BarChart data={sortedStrikes} layout="vertical" margin={{ top: 5, right: 60, left: 10, bottom: 5 }}>
+                          {/* X-axis: absolute gamma magnitude — bars extend right-to-left */}
                           <XAxis
                             type="number"
                             tick={{ fill: '#6b7280', fontSize: 10 }}
                             tickFormatter={v => formatGex(v, 1)}
                             axisLine={{ stroke: '#374151' }}
                             domain={[0, 'auto']}
+                            reversed
                           />
-                          <YAxis type="category" dataKey="strike" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#374151' }} />
+                          {/* Strike prices on right side — bars grow leftward from here */}
+                          <YAxis type="category" dataKey="strike" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#374151' }} orientation="right" />
                           <Tooltip content={<StrikeTooltip />} />
 
                           {/* Reference lines */}
