@@ -1,7 +1,7 @@
 """
 AGAPE-SPOT Models - Multi-ticker 24/7 Coinbase Spot trading.
 
-Supports: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+Supports: ETH-USD, BTC-USD, XRP-USD, SHIB-USD, DOGE-USD
 LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
 P&L = (exit - entry) * quantity (always long).
 """
@@ -28,6 +28,23 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "quantity_decimals": 4,
         "price_decimals": 2,
         # ETH exit params: wider trail for bigger moves
+        "no_loss_activation_pct": 1.5,
+        "no_loss_trail_distance_pct": 1.25,
+        "max_unrealized_loss_pct": 1.5,
+        "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
+        "max_hold_hours": 6,
+    },
+    "BTC-USD": {
+        "symbol": "BTC",
+        "display_name": "Bitcoin",
+        "starting_capital": 5000.0,
+        "default_quantity": 0.001,
+        "min_order": 0.00001,
+        "max_per_trade": 0.05,
+        "min_notional_usd": 2.0,
+        "quantity_decimals": 5,
+        "price_decimals": 2,
+        # BTC exit params: similar % to ETH, wider trail for bigger absolute moves
         "no_loss_activation_pct": 1.5,
         "no_loss_trail_distance_pct": 1.25,
         "max_unrealized_loss_pct": 1.5,
@@ -147,8 +164,9 @@ class AgapeSpotConfig:
 
     # Per-ticker live trading: tickers in this list execute real Coinbase orders.
     # Tickers NOT in this list run in paper mode regardless of global mode.
+    # ETH-USD and BTC-USD use COINBASE_DEDICATED_API_KEY (shared dedicated account).
     live_tickers: List[str] = field(
-        default_factory=lambda: ["XRP-USD", "SHIB-USD", "DOGE-USD"]
+        default_factory=lambda: ["ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"]
     )
 
     # Risk management (shared)
@@ -479,4 +497,155 @@ class AgapeSpotPosition:
             "exit_fee_usd": self.exit_fee_usd,
             "unrealized_pnl": self.unrealized_pnl,
             "high_water_mark": self.high_water_mark,
+        }
+
+
+# ==============================================================================
+# Funding Regime enum for Bayesian tracker
+# ==============================================================================
+
+class FundingRegime(Enum):
+    """Simplified funding regime for Bayesian tracking.
+
+    Groups the detailed funding regimes (EXTREME_POSITIVE, HEAVILY_POSITIVE, etc.)
+    into three buckets for meaningful win-rate statistics.
+    """
+    POSITIVE = "POSITIVE"
+    NEGATIVE = "NEGATIVE"
+    NEUTRAL = "NEUTRAL"
+
+    @classmethod
+    def from_funding_string(cls, regime_str: str) -> "FundingRegime":
+        """Map detailed funding regime strings to simplified buckets."""
+        if not regime_str:
+            return cls.NEUTRAL
+        upper = regime_str.upper()
+        if "POSITIVE" in upper:
+            return cls.POSITIVE
+        if "NEGATIVE" in upper:
+            return cls.NEGATIVE
+        return cls.NEUTRAL
+
+
+# ==============================================================================
+# BayesianWinTracker - Per-ticker crypto adaptation
+# ==============================================================================
+
+@dataclass
+class BayesianWinTracker:
+    """Tracks win probability using Bayesian updating for crypto spot trading.
+
+    Adapted from VALOR's gamma-regime tracker for crypto funding regimes.
+    Each ticker gets its own tracker instance for independent learning.
+
+    Phases:
+      - Cold start (< 10 trades): probability floored at 0.52 so the bot
+        can trade and collect data.
+      - Bayesian (10-49 trades): blends regime-specific win rate with signal
+        confidence. Bayesian weight ramps from 0.3 to 0.7.
+      - ML transition (>= 50 trades): signals that enough data exists for an
+        ML model (future use).
+
+    Recovery mechanism:
+      After a losing streak the regime probability drops below the 0.50 gate,
+      suppressing new entries in that regime.  Each subsequent win raises it
+      back: (wins+1)/(wins+losses+2).  The Laplace prior (+1/+2) ensures it
+      can never hit 0.0 or 1.0, always pulling toward 0.50.
+    """
+    ticker: str = "ETH-USD"
+
+    # Bayesian parameters
+    alpha: float = 1.0   # Wins + 1 (prior)
+    beta: float = 1.0    # Losses + 1 (prior)
+    total_trades: int = 0
+
+    # By funding regime tracking
+    positive_funding_wins: int = 0
+    positive_funding_losses: int = 0
+    negative_funding_wins: int = 0
+    negative_funding_losses: int = 0
+    neutral_funding_wins: int = 0
+    neutral_funding_losses: int = 0
+
+    # Cold start protection
+    cold_start_trades: int = 10
+    cold_start_floor: float = 0.52
+
+    # ML transition threshold
+    ml_transition_trades: int = 50
+
+    @property
+    def win_probability(self) -> float:
+        """Current overall Bayesian estimate of win probability."""
+        return self.alpha / (self.alpha + self.beta)
+
+    def update(self, won: bool, funding_regime: FundingRegime):
+        """Update estimates after a trade closes."""
+        self.total_trades += 1
+
+        if won:
+            self.alpha += 1
+            if funding_regime == FundingRegime.POSITIVE:
+                self.positive_funding_wins += 1
+            elif funding_regime == FundingRegime.NEGATIVE:
+                self.negative_funding_wins += 1
+            else:
+                self.neutral_funding_wins += 1
+        else:
+            self.beta += 1
+            if funding_regime == FundingRegime.POSITIVE:
+                self.positive_funding_losses += 1
+            elif funding_regime == FundingRegime.NEGATIVE:
+                self.negative_funding_losses += 1
+            else:
+                self.neutral_funding_losses += 1
+
+    def get_regime_probability(self, funding_regime: FundingRegime) -> float:
+        """Get win probability for a specific funding regime.
+
+        Uses Laplace smoothing: (wins + 1) / (wins + losses + 2).
+        """
+        if funding_regime == FundingRegime.POSITIVE:
+            wins = self.positive_funding_wins
+            losses = self.positive_funding_losses
+        elif funding_regime == FundingRegime.NEGATIVE:
+            wins = self.negative_funding_wins
+            losses = self.negative_funding_losses
+        else:
+            wins = self.neutral_funding_wins
+            losses = self.neutral_funding_losses
+
+        return (wins + 1) / (wins + losses + 2)
+
+    @property
+    def is_cold_start(self) -> bool:
+        """True when too few trades for reliable Bayesian estimate."""
+        return self.total_trades < self.cold_start_trades
+
+    @property
+    def should_use_ml(self) -> bool:
+        """Check if enough data for ML model."""
+        return self.total_trades >= self.ml_transition_trades
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ticker": self.ticker,
+            "alpha": self.alpha,
+            "beta": self.beta,
+            "total_trades": self.total_trades,
+            "win_probability": self.win_probability,
+            "is_cold_start": self.is_cold_start,
+            "cold_start_floor": self.cold_start_floor,
+            "positive_funding_wins": self.positive_funding_wins,
+            "positive_funding_losses": self.positive_funding_losses,
+            "negative_funding_wins": self.negative_funding_wins,
+            "negative_funding_losses": self.negative_funding_losses,
+            "neutral_funding_wins": self.neutral_funding_wins,
+            "neutral_funding_losses": self.neutral_funding_losses,
+            "should_use_ml": self.should_use_ml,
+            "regime_probabilities": {
+                "POSITIVE": self.get_regime_probability(FundingRegime.POSITIVE),
+                "NEGATIVE": self.get_regime_probability(FundingRegime.NEGATIVE),
+                "NEUTRAL": self.get_regime_probability(FundingRegime.NEUTRAL),
+            },
         }
