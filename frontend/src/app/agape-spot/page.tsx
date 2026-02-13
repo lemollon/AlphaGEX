@@ -26,7 +26,7 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 // TYPES
 // ==============================================================================
 
-type TickerId = 'ALL' | 'ETH-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD'
+type TickerId = 'ALL' | 'ETH-USD' | 'BTC-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD'
 
 interface TickerSummary {
   ticker: string
@@ -45,11 +45,12 @@ interface TickerSummary {
 
 const API = process.env.NEXT_PUBLIC_API_URL || ''
 
-const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD']
+const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD']
 
 const TICKER_META: Record<string, { symbol: string; label: string; colorClass: string; hexColor: string; bgActive: string; borderActive: string; textActive: string; bgCard: string; borderCard: string }> = {
   'ALL':      { symbol: 'ALL',  label: 'All Coins',  colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
   'ETH-USD':  { symbol: 'ETH',  label: 'Ethereum',   colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
+  'BTC-USD':  { symbol: 'BTC',  label: 'Bitcoin',    colorClass: 'amber',  hexColor: '#F59E0B', bgActive: 'bg-amber-600',  borderActive: 'border-amber-500',  textActive: 'text-amber-400',  bgCard: 'bg-amber-950/30',  borderCard: 'border-amber-700/40' },
   'XRP-USD':  { symbol: 'XRP',  label: 'Ripple',     colorClass: 'blue',   hexColor: '#3B82F6', bgActive: 'bg-blue-600',   borderActive: 'border-blue-500',   textActive: 'text-blue-400',   bgCard: 'bg-blue-950/30',   borderCard: 'border-blue-700/40' },
   'SHIB-USD': { symbol: 'SHIB', label: 'Shiba Inu',  colorClass: 'orange', hexColor: '#F97316', bgActive: 'bg-orange-600', borderActive: 'border-orange-500', textActive: 'text-orange-400', bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
   'DOGE-USD': { symbol: 'DOGE', label: 'Dogecoin',   colorClass: 'yellow', hexColor: '#EAB308', bgActive: 'bg-yellow-600', borderActive: 'border-yellow-500', textActive: 'text-yellow-400', bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40' },
@@ -64,7 +65,7 @@ const SECTION_TABS = [
 ]
 type SectionTabId = typeof SECTION_TABS[number]['id']
 
-const TOTAL_CAPITAL = 8000
+const TOTAL_CAPITAL = 13000
 
 const TIME_FRAMES = [
   { id: 'today', label: 'Today', days: 0 },
@@ -418,8 +419,8 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
       </div>
 
       {/* Per-coin summary cards (with sparklines) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {(['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => (
           <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
         ))}
       </div>
@@ -1171,7 +1172,7 @@ function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onCh
 
 function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> | undefined }) {
   if (!tickers) return null
-  const coins = ['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const
+  const coins = ['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const
   return (
     <div className="flex items-center gap-4 overflow-x-auto py-2 px-3 bg-gray-900/60 rounded-lg border border-gray-800/50">
       {coins.map(ticker => {
