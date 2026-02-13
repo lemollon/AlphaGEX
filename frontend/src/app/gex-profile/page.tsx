@@ -24,7 +24,7 @@ import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ReferenceLine, Cell, ComposedChart, Line, Area, CartesianGrid, Legend
+  ReferenceLine, Cell, ComposedChart, Line, Area, CartesianGrid, Legend, Customized
 } from 'recharts'
 import { apiClient } from '@/lib/api'
 
@@ -135,6 +135,15 @@ interface IntradayTick {
   samples: number
 }
 
+interface IntradayBar {
+  time: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
 type ChartView = 'net' | 'split' | 'intraday'
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -164,6 +173,49 @@ function formatDollar(num: number): string {
   return `$${num.toFixed(2)}`
 }
 
+/** Renders candlesticks via Recharts Customized — has access to axis scales */
+function CandlestickLayer({ xAxisMap, yAxisMap, data }: any) {
+  const xAxis = xAxisMap && Object.values(xAxisMap)[0] as any
+  const yAxis = yAxisMap?.price as any
+  if (!xAxis?.scale || !yAxis?.scale || !data) return null
+
+  const bandwidth = typeof xAxis.scale.bandwidth === 'function' ? xAxis.scale.bandwidth() : 12
+  const candleW = Math.max(bandwidth * 0.55, 3)
+
+  return (
+    <g className="candlestick-layer">
+      {data.map((d: any, i: number) => {
+        if (d.open == null || d.close == null || d.high == null || d.low == null) return null
+        const cx = (typeof xAxis.scale === 'function' ? xAxis.scale(d.label) : 0) + bandwidth / 2
+        const yHigh = yAxis.scale(d.high)
+        const yLow = yAxis.scale(d.low)
+        const yOpen = yAxis.scale(d.open)
+        const yClose = yAxis.scale(d.close)
+        if ([cx, yHigh, yLow, yOpen, yClose].some(v => v == null || isNaN(v))) return null
+
+        const bull = d.close >= d.open
+        const color = bull ? '#22c55e' : '#ef4444'
+
+        return (
+          <g key={`c-${i}`}>
+            <line x1={cx} y1={yHigh} x2={cx} y2={yLow} stroke={color} strokeWidth={1.2} />
+            <rect
+              x={cx - candleW / 2}
+              y={Math.min(yOpen, yClose)}
+              width={candleW}
+              height={Math.max(Math.abs(yClose - yOpen), 1)}
+              fill={bull ? 'transparent' : color}
+              stroke={color}
+              strokeWidth={1}
+              rx={0.5}
+            />
+          </g>
+        )
+      })}
+    </g>
+  )
+}
+
 function tickTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
@@ -178,6 +230,7 @@ export default function GexProfilePage() {
   const [searchInput, setSearchInput] = useState('')
   const [data, setData] = useState<GexAnalysisData | null>(null)
   const [intradayTicks, setIntradayTicks] = useState<IntradayTick[]>([])
+  const [intradayBars, setIntradayBars] = useState<IntradayBar[]>([])
   const [loading, setLoading] = useState(true)
   const [intradayLoading, setIntradayLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -210,9 +263,15 @@ export default function GexProfilePage() {
   const fetchIntradayTicks = useCallback(async (sym: string) => {
     try {
       setIntradayLoading(true)
-      const res = await apiClient.getWatchtowerIntradayTicks(sym, 5)
-      if (res.data?.success && res.data?.data?.ticks) {
-        setIntradayTicks(res.data.data.ticks)
+      const [ticksRes, barsRes] = await Promise.all([
+        apiClient.getWatchtowerIntradayTicks(sym, 5),
+        apiClient.getWatchtowerIntradayBars(sym, '5min'),
+      ])
+      if (ticksRes.data?.success && ticksRes.data?.data?.ticks) {
+        setIntradayTicks(ticksRes.data.data.ticks)
+      }
+      if (barsRes.data?.success && barsRes.data?.data?.bars) {
+        setIntradayBars(barsRes.data.data.bars)
       }
     } catch (err) {
       console.error('Intraday ticks error:', err)
@@ -297,7 +356,19 @@ export default function GexProfilePage() {
 
   // ── Prepared chart data ─────────────────────────────────────────
 
-  // Intraday chart data
+  // Build lookup of OHLC bars keyed by HH:MM label
+  const barsByLabel = useMemo(() => {
+    const map: Record<string, IntradayBar> = {}
+    for (const bar of intradayBars) {
+      if (!bar.time) continue
+      // Tradier timesales returns time like "2024-01-15T09:30:00"
+      const label = tickTime(bar.time)
+      map[label] = bar
+    }
+    return map
+  }, [intradayBars])
+
+  // Intraday chart data — merge gamma ticks with OHLC bars
   const intradayChartData = useMemo(() => {
     return intradayTicks
       .filter(t => t.spot_price !== null)
@@ -305,22 +376,30 @@ export default function GexProfilePage() {
         const fp = t.flip_point ?? 0
         const cw = t.call_wall ?? 0
         const pw = t.put_wall ?? 0
+        const label = t.time ? tickTime(t.time) : ''
+        const bar = barsByLabel[label]
         return {
           ...t,
-          label: t.time ? tickTime(t.time) : '',
+          label,
           net_gamma_display: t.net_gamma ?? 0,
           zone_base: pw,
           zone_red: fp > pw ? fp - pw : 0,
           zone_green: cw > fp ? cw - fp : 0,
           isLast: idx === arr.length - 1,
+          // OHLC from Tradier (null if no bar matched)
+          open: bar?.open ?? null,
+          high: bar?.high ?? null,
+          low: bar?.low ?? null,
+          close: bar?.close ?? null,
+          bar_volume: bar?.volume ?? null,
         }
       })
-  }, [intradayTicks])
+  }, [intradayTicks, barsByLabel])
 
-  // Price range for intraday chart
+  // Price range for intraday chart (include OHLC highs/lows)
   const intradayPriceRange = useMemo(() => {
     const all = intradayChartData.flatMap(t =>
-      [t.spot_price, t.flip_point, t.call_wall, t.put_wall]
+      [t.spot_price, t.flip_point, t.call_wall, t.put_wall, t.high, t.low]
         .filter((v): v is number => v !== null && v !== undefined && v > 0)
     )
     if (all.length === 0) return { min: 0, max: 0 }
@@ -329,6 +408,8 @@ export default function GexProfilePage() {
     const pad = (max - min) * 0.1 || 1
     return { min: min - pad, max: max + pad }
   }, [intradayChartData])
+
+  const hasCandles = intradayChartData.some(d => d.open !== null)
 
   // Strike data for Net GEX / Split views
   const sortedStrikes = useMemo(() => {
@@ -585,20 +666,25 @@ export default function GexProfilePage() {
                             ))}
                           </Bar>
 
-                          {/* Price line */}
-                          <Line
-                            yAxisId="price"
-                            type="monotone"
-                            dataKey="spot_price"
-                            stroke="#3b82f6"
-                            strokeWidth={2.5}
-                            dot={(props: any) => {
-                              const { cx, cy, payload } = props
-                              if (!payload?.isLast) return <circle key="h" r={0} />
-                              return <circle key="last" cx={cx} cy={cy} r={5} fill="#3b82f6" stroke="#1e3a5f" strokeWidth={2} />
-                            }}
-                            name="Price"
-                          />
+                          {/* Price: candlesticks when OHLC available, line fallback */}
+                          {!hasCandles && (
+                            <Line
+                              yAxisId="price"
+                              type="monotone"
+                              dataKey="spot_price"
+                              stroke="#3b82f6"
+                              strokeWidth={2.5}
+                              dot={(props: any) => {
+                                const { cx, cy, payload } = props
+                                if (!payload?.isLast) return <circle key="h" r={0} />
+                                return <circle key="last" cx={cx} cy={cy} r={5} fill="#3b82f6" stroke="#1e3a5f" strokeWidth={2} />
+                              }}
+                              name="Price"
+                            />
+                          )}
+                          {hasCandles && (
+                            <Customized component={(props: any) => <CandlestickLayer {...props} data={intradayChartData} />} />
+                          )}
 
                           {/* Key level lines */}
                           <Line yAxisId="price" type="stepAfter" dataKey="flip_point" stroke="#eab308" strokeWidth={1.5} strokeDasharray="5 3" dot={false} name="Flip Point" />
@@ -613,7 +699,10 @@ export default function GexProfilePage() {
                       <LegendItem color="bg-green-500" label="+ Gamma Bar" />
                       <LegendItem color="bg-red-500" label="- Gamma Bar" />
                       <span className="text-gray-700">|</span>
-                      <LegendItem color="bg-blue-500" label="Price" line />
+                      {hasCandles
+                        ? <><LegendItem color="bg-green-500" label="Bullish Candle" /><LegendItem color="bg-red-500" label="Bearish Candle" /></>
+                        : <LegendItem color="bg-blue-500" label="Price" line />
+                      }
                       <LegendItem color="bg-yellow-400" label="Flip" line dashed />
                       <LegendItem color="bg-cyan-400" label="Call Wall" line dashed />
                       <LegendItem color="bg-purple-400" label="Put Wall" line dashed />
@@ -931,7 +1020,23 @@ function IntradayTooltip({ active, payload, label: tipLabel }: any) {
     <div className="bg-gray-900 border border-gray-600 rounded-lg p-3 shadow-xl text-xs min-w-[240px]">
       <div className="font-bold text-white text-sm mb-2">{tipLabel}</div>
       <div className="space-y-1">
-        <TipRow label="Price" value={`$${sp.toFixed(2)}`} color="text-blue-400" bold />
+        {tick.open != null ? (
+          <>
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`font-bold ${tick.close >= tick.open ? 'text-green-400' : 'text-red-400'}`}>
+                {tick.close >= tick.open ? '▲' : '▼'} ${tick.close?.toFixed(2)}
+              </span>
+              <span className="text-gray-500 text-[10px]">
+                O:{tick.open?.toFixed(2)} H:{tick.high?.toFixed(2)} L:{tick.low?.toFixed(2)}
+              </span>
+            </div>
+            {tick.bar_volume != null && (
+              <TipRow label="Volume" value={tick.bar_volume.toLocaleString()} color="text-gray-400" />
+            )}
+          </>
+        ) : (
+          <TipRow label="Price" value={`$${sp.toFixed(2)}`} color="text-blue-400" bold />
+        )}
         <TipRow label="Zone" value={zone} color={zoneColor} bold />
         <TipRow
           label="Net Gamma"
