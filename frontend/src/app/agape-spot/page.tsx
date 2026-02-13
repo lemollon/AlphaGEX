@@ -26,7 +26,7 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 // TYPES
 // ==============================================================================
 
-type TickerId = 'ALL' | 'ETH-USD' | 'BTC-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD'
+type TickerId = 'ALL' | 'ETH-USD' | 'BTC-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD' | 'MSTU-USD'
 
 interface WinTrackerData {
   ticker: string
@@ -68,7 +68,7 @@ interface TickerSummary {
 
 const API = process.env.NEXT_PUBLIC_API_URL || ''
 
-const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD']
+const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD']
 
 const TICKER_META: Record<string, { symbol: string; label: string; colorClass: string; hexColor: string; bgActive: string; borderActive: string; textActive: string; bgCard: string; borderCard: string }> = {
   'ALL':      { symbol: 'ALL',  label: 'All Coins',  colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
@@ -77,6 +77,7 @@ const TICKER_META: Record<string, { symbol: string; label: string; colorClass: s
   'XRP-USD':  { symbol: 'XRP',  label: 'Ripple',     colorClass: 'blue',   hexColor: '#3B82F6', bgActive: 'bg-blue-600',   borderActive: 'border-blue-500',   textActive: 'text-blue-400',   bgCard: 'bg-blue-950/30',   borderCard: 'border-blue-700/40' },
   'SHIB-USD': { symbol: 'SHIB', label: 'Shiba Inu',  colorClass: 'orange', hexColor: '#F97316', bgActive: 'bg-orange-600', borderActive: 'border-orange-500', textActive: 'text-orange-400', bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
   'DOGE-USD': { symbol: 'DOGE', label: 'Dogecoin',   colorClass: 'yellow', hexColor: '#EAB308', bgActive: 'bg-yellow-600', borderActive: 'border-yellow-500', textActive: 'text-yellow-400', bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40' },
+  'MSTU-USD': { symbol: 'MSTU', label: '2X MSTR ETF', colorClass: 'purple', hexColor: '#A855F7', bgActive: 'bg-purple-600', borderActive: 'border-purple-500', textActive: 'text-purple-400', bgCard: 'bg-purple-950/30', borderCard: 'border-purple-700/40' },
 }
 
 const SECTION_TABS = [
@@ -88,7 +89,7 @@ const SECTION_TABS = [
 ]
 type SectionTabId = typeof SECTION_TABS[number]['id']
 
-const TOTAL_CAPITAL = 13000
+const TOTAL_CAPITAL = 14000
 
 const TIME_FRAMES = [
   { id: 'today', label: 'Today', days: 0 },
@@ -442,11 +443,14 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
       </div>
 
       {/* Per-coin summary cards (with sparklines) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD'] as const).map((ticker) => (
           <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
         ))}
       </div>
+
+      {/* Capital Allocation Rankings */}
+      <AllocationRankings allocator={summaryData?.capital_allocator} />
 
       {/* Combined Equity Curve */}
       <SectionCard
@@ -1350,7 +1354,7 @@ function BayesianTrackerDetail({ tracker, color }: { tracker: WinTrackerData; co
 
 function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> | undefined }) {
   if (!tickers) return null
-  const coins = ['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const
+  const coins = ['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD'] as const
   return (
     <div className="flex items-center gap-4 overflow-x-auto py-2 px-3 bg-gray-900/60 rounded-lg border border-gray-800/50">
       {coins.map(ticker => {
@@ -1369,6 +1373,104 @@ function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> 
         )
       })}
     </div>
+  )
+}
+
+// ==============================================================================
+// CAPITAL ALLOCATION RANKINGS
+// ==============================================================================
+
+interface AllocRanking {
+  ticker: string
+  score: number
+  allocation_pct: number
+  total_trades: number
+  wins: number
+  win_rate: number
+  profit_factor: number
+  total_pnl: number
+  recent_pnl: number
+}
+
+function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking[]; total_tickers: number } | null | undefined }) {
+  if (!allocator || !allocator.rankings || allocator.rankings.length === 0) return null
+
+  const rankings = allocator.rankings
+
+  return (
+    <SectionCard
+      title="Live Capital Allocation"
+      icon={<BarChart3 className="w-5 h-5 text-purple-400" />}
+    >
+      <p className="text-xs text-gray-500 mb-3">
+        Ranked by performance. Better performers get a bigger share of the live account balance.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800">
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">#</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Ticker</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Allocation</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Score</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Win Rate</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Profit Factor</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Total P&L</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">24h P&L</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Trades</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rankings.map((r, idx) => {
+              const meta = TICKER_META[r.ticker] || TICKER_META['ALL']
+              const barWidth = Math.max(r.allocation_pct * 100, 2)
+              return (
+                <tr key={r.ticker} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                  <td className="px-3 py-2.5 text-gray-400 font-mono">{idx + 1}</td>
+                  <td className="px-3 py-2.5">
+                    <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
+                    <span className="text-gray-500 text-xs ml-1.5">{meta.label}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <div className="w-16 h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${barWidth}%`, backgroundColor: meta.hexColor }}
+                        />
+                      </div>
+                      <span className="text-white font-mono text-xs w-10 text-right">
+                        {(r.allocation_pct * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-gray-300 font-mono text-xs">
+                    {r.score.toFixed(3)}
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-white font-mono text-xs">
+                    {r.total_trades > 0 ? `${(r.win_rate * 100).toFixed(0)}%` : '---'}
+                  </td>
+                  <td className="px-3 py-2.5 text-right font-mono text-xs">
+                    <span className={r.profit_factor >= 1.5 ? 'text-emerald-400' : r.profit_factor >= 1.0 ? 'text-yellow-400' : 'text-red-400'}>
+                      {r.total_trades > 0 ? r.profit_factor.toFixed(1) : '---'}
+                    </span>
+                  </td>
+                  <td className={`px-3 py-2.5 text-right font-mono text-xs ${r.total_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {r.total_trades > 0 ? `$${r.total_pnl.toFixed(2)}` : '---'}
+                  </td>
+                  <td className={`px-3 py-2.5 text-right font-mono text-xs ${r.recent_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {r.recent_pnl !== 0 ? `$${r.recent_pnl.toFixed(2)}` : '---'}
+                  </td>
+                  <td className="px-3 py-2.5 text-right text-gray-300 font-mono text-xs">
+                    {r.total_trades}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
   )
 }
 
