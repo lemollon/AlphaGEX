@@ -364,6 +364,36 @@ async def get_valor_win_tracker():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/api/valor/win-tracker/reset")
+async def reset_valor_win_tracker():
+    """
+    Reset VALOR Bayesian win tracker to fresh defaults.
+
+    Clears all accumulated win/loss history so the tracker starts clean
+    with prior alpha=1, beta=1, 0 trades. Old data is kept in DB for
+    audit trail. The in-memory tracker and signal generator are also
+    refreshed immediately.
+    """
+    try:
+        trader = _get_trader()
+        fresh_tracker = trader.db.reset_win_tracker()
+        # Update in-memory tracker so it takes effect immediately
+        trader.win_tracker = fresh_tracker
+        trader.signal_generator.win_tracker = fresh_tracker
+        logger.info("VALOR win tracker RESET via API")
+        return {
+            "status": "reset",
+            "win_tracker": fresh_tracker.to_dict(),
+            "message": "Win tracker reset to fresh defaults. Old buggy-era losses cleared.",
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting VALOR win tracker: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # Market Status
 # ============================================================================
