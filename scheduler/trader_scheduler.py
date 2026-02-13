@@ -191,6 +191,24 @@ except ImportError:
     AgapeSpotTrader = None
     print("Warning: AGAPE-SPOT not available. 24/7 spot ETH trading will be disabled.")
 
+# Import AGAPE-BTC (BTC Micro Futures with Crypto GEX)
+try:
+    from trading.agape_btc.trader import AgapeBtcTrader, create_agape_btc_trader
+    AGAPE_BTC_AVAILABLE = True
+except ImportError:
+    AGAPE_BTC_AVAILABLE = False
+    AgapeBtcTrader = None
+    print("Warning: AGAPE-BTC not available. BTC crypto trading will be disabled.")
+
+# Import AGAPE-XRP (XRP Futures with Crypto GEX)
+try:
+    from trading.agape_xrp.trader import AgapeXrpTrader, create_agape_xrp_trader
+    AGAPE_XRP_AVAILABLE = True
+except ImportError:
+    AGAPE_XRP_AVAILABLE = False
+    AgapeXrpTrader = None
+    print("Warning: AGAPE-XRP not available. XRP crypto trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -683,6 +701,30 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"AGAPE-SPOT initialization failed: {e}")
                 self.agape_spot_trader = None
+
+        # AGAPE-BTC - BTC Micro Futures with Crypto GEX signals
+        # CME /MBT trading with 5-minute scan interval
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_btc_trader = None
+        if AGAPE_BTC_AVAILABLE:
+            try:
+                self.agape_btc_trader = create_agape_btc_trader()
+                logger.info("✅ AGAPE-BTC initialized (BTC Micro Futures, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-BTC initialization failed: {e}")
+                self.agape_btc_trader = None
+
+        # AGAPE-XRP - XRP Futures with Crypto GEX signals
+        # CME /XRP trading with 5-minute scan interval
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_xrp_trader = None
+        if AGAPE_XRP_AVAILABLE:
+            try:
+                self.agape_xrp_trader = create_agape_xrp_trader()
+                logger.info("✅ AGAPE-XRP initialized (XRP Futures, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-XRP initialization failed: {e}")
+                self.agape_xrp_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -2428,6 +2470,110 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-SPOT scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_btc_logic(self):
+        """
+        AGAPE-BTC Micro Futures - runs every 5 minutes during CME crypto hours.
+
+        CME Micro Bitcoin futures trade Sun 5PM - Fri 4PM CT with daily 4-5PM break.
+        Uses Deribit GEX as primary signal, CoinGlass funding rate as secondary.
+        """
+        if not self.agape_btc_trader:
+            return
+
+        try:
+            result = self.agape_btc_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-BTC: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-BTC: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-BTC: Cycle error: {result['error']}")
+            else:
+                if self.agape_btc_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-BTC scan #{self.agape_btc_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BTC scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_btc_eod_logic(self):
+        """
+        AGAPE-BTC End-of-Day - runs at 3:45 PM CT (before CME 4PM close).
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-BTC EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_btc_trader:
+            return
+
+        try:
+            result = self.agape_btc_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-BTC EOD: Closed {closed} position(s)")
+
+            perf = self.agape_btc_trader.get_performance()
+            logger.info(f"AGAPE-BTC EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BTC EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_xrp_logic(self):
+        """
+        AGAPE-XRP Futures - runs every 5 minutes during CME crypto hours.
+
+        CME XRP futures trade Sun 5PM - Fri 4PM CT with daily 4-5PM break.
+        Uses Deribit GEX as primary signal, CoinGlass funding rate as secondary.
+        """
+        if not self.agape_xrp_trader:
+            return
+
+        try:
+            result = self.agape_xrp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-XRP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-XRP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-XRP: Cycle error: {result['error']}")
+            else:
+                if self.agape_xrp_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-XRP scan #{self.agape_xrp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-XRP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_xrp_eod_logic(self):
+        """
+        AGAPE-XRP End-of-Day - runs at 3:45 PM CT (before CME 4PM close).
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-XRP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_xrp_trader:
+            return
+
+        try:
+            result = self.agape_xrp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-XRP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_xrp_trader.get_performance()
+            logger.info(f"AGAPE-XRP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-XRP EOD: {str(e)}")
             logger.error(traceback.format_exc())
 
     def scheduled_jubilee_daily_logic(self):
@@ -5043,6 +5189,72 @@ class AutonomousTraderScheduler:
             logger.info("✅ AGAPE-SPOT job scheduled (every 1 min, 24/7)")
         else:
             logger.warning("⚠️ AGAPE-SPOT not available - 24/7 spot ETH trading disabled")
+
+        # =================================================================
+        # AGAPE-BTC JOB: BTC Micro Futures (/MBT) - every 5 minutes
+        # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
+        # =================================================================
+        if self.agape_btc_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_btc_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_btc_trading',
+                name='AGAPE-BTC - BTC Micro Futures (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BTC job scheduled (every 5 min, checks CME crypto hours internally)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_btc_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_btc_eod',
+                name='AGAPE-BTC - Force Close Before CME Maintenance',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BTC EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-BTC not available - BTC crypto trading disabled")
+
+        # =================================================================
+        # AGAPE-XRP JOB: XRP Futures (/XRP) - every 5 minutes
+        # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
+        # =================================================================
+        if self.agape_xrp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_xrp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_xrp_trading',
+                name='AGAPE-XRP - XRP Futures (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-XRP job scheduled (every 5 min, checks CME crypto hours internally)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_xrp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_xrp_eod',
+                name='AGAPE-XRP - Force Close Before CME Maintenance',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-XRP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-XRP not available - XRP crypto trading disabled")
 
         # =================================================================
         # JUBILEE JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT

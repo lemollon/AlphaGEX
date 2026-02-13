@@ -75,6 +75,8 @@ const navItems = [
   { href: '/valor', label: `${BOT_DISPLAY_NAMES.VALOR} (MES Futures)`, icon: Activity, category: 'Live Trading' },
   { href: '/agape', label: `${BOT_DISPLAY_NAMES.AGAPE} (ETH Futures)`, icon: TrendingUp, category: 'Live Trading' },
   { href: '/agape-spot', label: `${BOT_DISPLAY_NAMES.AGAPE_SPOT} (Crypto Spot 24/7)`, icon: Globe, category: 'Live Trading' },
+  { href: '/agape-btc', label: `${BOT_DISPLAY_NAMES.AGAPE_BTC} (BTC Futures)`, icon: TrendingUp, category: 'Live Trading' },
+  { href: '/agape-xrp', label: `${BOT_DISPLAY_NAMES.AGAPE_XRP} (XRP Futures)`, icon: TrendingUp, category: 'Live Trading' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Volatility' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Volatility' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Volatility' },
