@@ -16,8 +16,8 @@ Y = "\033[93m"  # yellow
 B = "\033[94m"  # blue
 W = "\033[0m"   # reset
 
-TICKERS = ["ETH-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"]
-SYMBOLS = ["ETH", "XRP", "SHIB", "DOGE"]
+TICKERS = ["ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"]
+SYMBOLS = ["ETH", "BTC", "XRP", "SHIB", "DOGE"]
 fails = 0
 
 

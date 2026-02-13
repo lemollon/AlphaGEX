@@ -153,7 +153,7 @@ class AgapeSpotConfig:
     """Configuration for AGAPE-SPOT bot.
 
     LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
-    MULTI-TICKER: Trades ETH-USD, XRP-USD, SHIB-USD, DOGE-USD.
+    MULTI-TICKER: Trades ETH-USD, BTC-USD, XRP-USD, SHIB-USD, DOGE-USD.
     """
 
     bot_name: str = "AGAPE-SPOT"
@@ -280,18 +280,12 @@ class AgapeSpotConfig:
     def load_from_db(cls, db) -> "AgapeSpotConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions_per_ticker"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions_per_ticker", "tickers", "live_tickers"}
         try:
             db_config = db.load_config()
             if db_config:
                 for key, value in db_config.items():
                     if key in code_controlled_keys:
-                        continue
-                    if key == "tickers":
-                        config.tickers = [t.strip() for t in str(value).split(",") if t.strip()]
-                        continue
-                    if key == "live_tickers":
-                        config.live_tickers = [t.strip() for t in str(value).split(",") if t.strip()]
                         continue
                     if hasattr(config, key):
                         attr_type = type(getattr(config, key))

@@ -303,6 +303,28 @@ class TestBTCUSDConfig:
         expected = {"ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"}
         assert set(config.live_tickers) == expected
 
+    def test_db_cannot_override_tickers(self):
+        """Stale DB config must not remove BTC-USD from tickers list."""
+        mock_db = MagicMock()
+        # Simulate old DB config that only has 4 tickers (no BTC-USD)
+        mock_db.load_config.return_value = {
+            "tickers": "ETH-USD,XRP-USD,SHIB-USD,DOGE-USD",
+            "live_tickers": "ETH-USD,XRP-USD,SHIB-USD,DOGE-USD",
+        }
+        config = AgapeSpotConfig.load_from_db(mock_db)
+        assert "BTC-USD" in config.tickers, "DB must not override tickers"
+        assert "BTC-USD" in config.live_tickers, "DB must not override live_tickers"
+        assert len(config.tickers) == 5
+
+    def test_db_cannot_override_live_tickers(self):
+        """DB should not be able to remove coins from live_tickers."""
+        mock_db = MagicMock()
+        mock_db.load_config.return_value = {
+            "live_tickers": "ETH-USD",
+        }
+        config = AgapeSpotConfig.load_from_db(mock_db)
+        assert set(config.live_tickers) == {"ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"}
+
 
 # ==========================================================================
 # SECTION 4: Win Probability Gate (signals.py)

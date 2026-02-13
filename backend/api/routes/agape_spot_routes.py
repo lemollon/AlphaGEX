@@ -1,7 +1,7 @@
 """
 AGAPE-SPOT API Routes - Multi-ticker, long-only 24/7 Coinbase Spot trading.
 
-Supports: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+Supports: ETH-USD, BTC-USD, XRP-USD, SHIB-USD, DOGE-USD
 LONG-ONLY: P&L = (current_price - entry_price) * quantity (always long).
 
 All endpoints accept an optional ``?ticker=`` query param to filter by a
@@ -92,7 +92,7 @@ def _format_ct(dt: Optional[datetime] = None) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S CT")
 
 
-_VALID_TICKERS = {"ETH-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"}
+_VALID_TICKERS = set(SPOT_TICKERS.keys()) if SPOT_TICKERS else {"ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD"}
 
 
 def _validate_ticker(ticker: Optional[str]) -> Optional[str]:

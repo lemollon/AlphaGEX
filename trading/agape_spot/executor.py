@@ -4,7 +4,7 @@ AGAPE-SPOT Executor - Multi-ticker, long-only spot trades via Coinbase Advanced 
 24/7 Coinbase spot trading. No CME futures, no market hours restrictions.
 LONG-ONLY: Coinbase spot doesn't support shorting for US retail.
 
-Supported tickers: ETH-USD, XRP-USD, SHIB-USD, DOGE-USD
+Supported tickers: ETH-USD, BTC-USD, XRP-USD, SHIB-USD, DOGE-USD
 Position sizing: Uses quantity directly (per-coin units).
   - P&L = (exit - entry) * quantity (always long)
 
