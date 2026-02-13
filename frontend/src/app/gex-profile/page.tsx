@@ -16,6 +16,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import {
   RefreshCw, Search, ArrowUpRight, BarChart3, Activity,
   AlertCircle, TrendingUp, TrendingDown, Minus, Clock, Info
@@ -27,6 +28,9 @@ import {
   ReferenceLine, Cell, ComposedChart, Line, Area, CartesianGrid, Legend, Customized
 } from 'recharts'
 import { apiClient } from '@/lib/api'
+
+// Plotly for the unified candlestick + GEX overlay chart (avoid SSR)
+const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -601,119 +605,208 @@ export default function GexProfilePage() {
                 </div>
               </div>
 
-              {/* ── INTRADAY 5M CHART ── */}
+              {/* ── INTRADAY 5M — Unified Candlestick + GEX Overlay (Plotly) ── */}
               {chartView === 'intraday' && (
-                intradayChartData.length === 0 ? (
+                intradayBars.length === 0 && intradayChartData.length === 0 ? (
                   <div className="text-center py-12 text-yellow-400">
                     <AlertCircle className="w-8 h-8 mx-auto mb-2" />
                     <p className="text-sm">
                       {intradayLoading
-                        ? 'Loading intraday ticks...'
+                        ? 'Loading intraday data...'
                         : 'No intraday data yet — ticks accumulate during market hours.'}
                     </p>
                   </div>
-                ) : (
-                  <>
-                    <div className="h-[500px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={intradayChartData} margin={{ top: 10, right: 60, left: 10, bottom: 5 }}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                ) : (() => {
+                  // ── Build Plotly data ──
+                  // Candlestick trace from Tradier OHLC bars
+                  const candleTimes = intradayBars.map(b => b.time)
+                  const candleOpen = intradayBars.map(b => b.open)
+                  const candleHigh = intradayBars.map(b => b.high)
+                  const candleLow = intradayBars.map(b => b.low)
+                  const candleClose = intradayBars.map(b => b.close)
 
-                          <XAxis
-                            dataKey="label"
-                            tick={{ fill: '#6b7280', fontSize: 10 }}
-                            interval="preserveStartEnd"
-                            axisLine={{ stroke: '#374151' }}
-                          />
+                  // If no candle data, use spot_price as a line trace
+                  const hasCandleData = intradayBars.length > 0
+                  const spotTimes = intradayChartData.map(d => d.time)
+                  const spotPrices = intradayChartData.map(d => d.spot_price)
 
-                          {/* Left Y — Net Gamma */}
-                          <YAxis
-                            yAxisId="gamma"
-                            orientation="left"
-                            tick={{ fill: '#6b7280', fontSize: 10 }}
-                            tickFormatter={v => formatGex(v, 1)}
-                            label={{ value: 'Net Gamma', angle: -90, position: 'insideLeft', fill: '#4b5563', fontSize: 10 }}
-                            axisLine={{ stroke: '#374151' }}
-                          />
+                  // GEX bar shapes — horizontal rectangles at each strike price,
+                  // extending from right edge leftward proportional to gamma magnitude.
+                  // xref='paper' (0=left, 1=right), yref='y' (price axis)
+                  const maxGamma = sortedStrikes.length > 0
+                    ? Math.max(...sortedStrikes.map(s => s.abs_net_gamma), 0.001)
+                    : 1
+                  const barMaxWidth = 0.35 // max 35% of chart width from right edge
+                  // Strike spacing for bar height
+                  const strikeSpacing = sortedStrikes.length > 1
+                    ? Math.abs(sortedStrikes[0].strike - sortedStrikes[1].strike) * 0.35
+                    : 0.5
 
-                          {/* Right Y — Price */}
-                          <YAxis
-                            yAxisId="price"
-                            orientation="right"
-                            domain={[intradayPriceRange.min, intradayPriceRange.max]}
-                            tick={{ fill: '#3b82f6', fontSize: 10 }}
-                            tickFormatter={v => `$${v.toFixed(0)}`}
-                            label={{ value: 'Price', angle: 90, position: 'insideRight', fill: '#3b82f6', fontSize: 10 }}
-                            axisLine={{ stroke: '#1e3a5f' }}
-                          />
+                  const gexShapes: any[] = sortedStrikes.map(s => {
+                    const pct = (s.abs_net_gamma / maxGamma) * barMaxWidth
+                    const color = s.net_gamma >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)'
+                    const borderColor = s.net_gamma >= 0 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)'
+                    return {
+                      type: 'rect',
+                      xref: 'paper',
+                      yref: 'y',
+                      x0: 1,
+                      x1: 1 - pct,
+                      y0: s.strike - strikeSpacing,
+                      y1: s.strike + strikeSpacing,
+                      fillcolor: color,
+                      line: { color: borderColor, width: 1 },
+                      layer: 'above',
+                    }
+                  })
 
-                          {/* Tooltip */}
-                          <Tooltip content={<IntradayTooltip />} />
-
-                          {/* Zone bands (stacked on price axis) */}
-                          <Area yAxisId="price" type="stepAfter" dataKey="zone_base" stackId="zones" fill="transparent" stroke="none" />
-                          <Area yAxisId="price" type="stepAfter" dataKey="zone_red" stackId="zones" fill="#ef4444" fillOpacity={0.06} stroke="none" />
-                          <Area yAxisId="price" type="stepAfter" dataKey="zone_green" stackId="zones" fill="#22c55e" fillOpacity={0.06} stroke="none" />
-
-                          {/* Net gamma bars */}
-                          <Bar yAxisId="gamma" dataKey="net_gamma_display" name="Net Gamma" barSize={14}>
-                            {intradayChartData.map((entry, i) => (
-                              <Cell
-                                key={`g-${i}`}
-                                fill={entry.net_gamma_display >= 0 ? '#22c55e' : '#ef4444'}
-                                fillOpacity={0.75}
-                              />
-                            ))}
-                          </Bar>
-
-                          {/* Price: candlesticks when OHLC available, line fallback */}
-                          {!hasCandles && (
-                            <Line
-                              yAxisId="price"
-                              type="monotone"
-                              dataKey="spot_price"
-                              stroke="#3b82f6"
-                              strokeWidth={2.5}
-                              dot={(props: any) => {
-                                const { cx, cy, payload } = props
-                                if (!payload?.isLast) return <circle key="h" r={0} />
-                                return <circle key="last" cx={cx} cy={cy} r={5} fill="#3b82f6" stroke="#1e3a5f" strokeWidth={2} />
-                              }}
-                              name="Price"
-                            />
-                          )}
-                          {hasCandles && (
-                            <Customized component={(props: any) => <CandlestickLayer {...props} data={intradayChartData} />} />
-                          )}
-
-                          {/* Key level lines */}
-                          <Line yAxisId="price" type="stepAfter" dataKey="flip_point" stroke="#eab308" strokeWidth={1.5} strokeDasharray="5 3" dot={false} name="Flip Point" />
-                          <Line yAxisId="price" type="stepAfter" dataKey="call_wall" stroke="#06b6d4" strokeWidth={1.5} strokeDasharray="3 3" dot={false} name="Call Wall" />
-                          <Line yAxisId="price" type="stepAfter" dataKey="put_wall" stroke="#a855f7" strokeWidth={1.5} strokeDasharray="3 3" dot={false} name="Put Wall" />
-                        </ComposedChart>
-                      </ResponsiveContainer>
-                    </div>
-
-                    {/* Legend */}
-                    <div className="flex flex-wrap gap-4 mt-3 text-xs">
-                      <LegendItem color="bg-green-500" label="+ Gamma Bar" />
-                      <LegendItem color="bg-red-500" label="- Gamma Bar" />
-                      <span className="text-gray-700">|</span>
-                      {hasCandles
-                        ? <><LegendItem color="bg-green-500" label="Bullish Candle" /><LegendItem color="bg-red-500" label="Bearish Candle" /></>
-                        : <LegendItem color="bg-blue-500" label="Price" line />
+                  // GEX value annotations on the bars
+                  const gexAnnotations: any[] = sortedStrikes
+                    .filter(s => s.abs_net_gamma / maxGamma > 0.08) // only label visible bars
+                    .map(s => {
+                      const pct = (s.abs_net_gamma / maxGamma) * barMaxWidth
+                      return {
+                        xref: 'paper',
+                        yref: 'y',
+                        x: 1 - pct - 0.005,
+                        y: s.strike,
+                        text: `${formatGex(s.net_gamma, 1)} [$${s.strike}]`,
+                        showarrow: false,
+                        font: {
+                          color: s.net_gamma >= 0 ? '#22c55e' : '#ef4444',
+                          size: 9,
+                          family: 'monospace',
+                        },
+                        xanchor: 'right',
+                        yanchor: 'middle',
                       }
-                      <LegendItem color="bg-yellow-400" label="Flip" line dashed />
-                      <LegendItem color="bg-cyan-400" label="Call Wall" line dashed />
-                      <LegendItem color="bg-purple-400" label="Put Wall" line dashed />
-                      <span className="text-gray-700">|</span>
-                      <LegendItem color="bg-green-500/20 border border-green-500/40" label="+ Zone" />
-                      <LegendItem color="bg-red-500/20 border border-red-500/40" label="- Zone" />
-                      <span className="text-gray-700">|</span>
-                      <span className="text-gray-500">{intradayTicks.length} ticks today</span>
-                    </div>
-                  </>
-                )
+                    })
+
+                  // Reference level lines (horizontal)
+                  const refLines: any[] = []
+                  const { gex_flip: flip, call_wall: cw, put_wall: pw } = data.levels
+                  if (flip) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: flip, y1: flip,
+                    line: { color: '#eab308', width: 1.5, dash: 'dash' },
+                  })
+                  if (cw) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: cw, y1: cw,
+                    line: { color: '#06b6d4', width: 1.5, dash: 'dot' },
+                  })
+                  if (pw) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: pw, y1: pw,
+                    line: { color: '#a855f7', width: 1.5, dash: 'dot' },
+                  })
+
+                  // Reference level annotations (on right edge)
+                  const refAnnotations: any[] = []
+                  if (flip) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.01, y: flip,
+                    text: `FLIP $${flip.toFixed(0)}`, showarrow: false,
+                    font: { color: '#eab308', size: 10 },
+                    xanchor: 'left', yanchor: 'bottom',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (cw) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.01, y: cw,
+                    text: `CALL WALL $${cw.toFixed(0)}`, showarrow: false,
+                    font: { color: '#06b6d4', size: 10 },
+                    xanchor: 'left', yanchor: 'bottom',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (pw) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.01, y: pw,
+                    text: `PUT WALL $${pw.toFixed(0)}`, showarrow: false,
+                    font: { color: '#a855f7', size: 10 },
+                    xanchor: 'left', yanchor: 'top',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+
+                  // Price trace
+                  const traces: any[] = []
+                  if (hasCandleData) {
+                    traces.push({
+                      x: candleTimes,
+                      open: candleOpen,
+                      high: candleHigh,
+                      low: candleLow,
+                      close: candleClose,
+                      type: 'candlestick',
+                      increasing: { line: { color: '#22c55e' }, fillcolor: 'rgba(34,197,94,0.3)' },
+                      decreasing: { line: { color: '#ef4444' }, fillcolor: 'rgba(239,68,68,0.8)' },
+                      name: 'Price',
+                      hoverinfo: 'x+text',
+                      text: intradayBars.map(b =>
+                        `O:${b.open.toFixed(2)} H:${b.high.toFixed(2)} L:${b.low.toFixed(2)} C:${b.close.toFixed(2)}<br>Vol:${b.volume.toLocaleString()}`
+                      ),
+                    })
+                  } else {
+                    traces.push({
+                      x: spotTimes,
+                      y: spotPrices,
+                      type: 'scatter',
+                      mode: 'lines',
+                      line: { color: '#3b82f6', width: 2.5 },
+                      name: 'Price',
+                    })
+                  }
+
+                  return (
+                    <>
+                      <div style={{ height: 550 }}>
+                        <Plot
+                          data={traces}
+                          layout={{
+                            height: 550,
+                            paper_bgcolor: 'rgba(0,0,0,0)',
+                            plot_bgcolor: 'rgba(0,0,0,0)',
+                            font: { color: '#9ca3af', family: 'Arial, sans-serif', size: 11 },
+                            xaxis: {
+                              type: 'date',
+                              gridcolor: '#1f2937',
+                              showgrid: true,
+                              rangeslider: { visible: false },
+                            },
+                            yaxis: {
+                              title: { text: 'Price', font: { size: 11, color: '#6b7280' } },
+                              gridcolor: '#1f2937',
+                              showgrid: true,
+                              side: 'right',
+                              tickformat: '$,.0f',
+                            },
+                            shapes: [...gexShapes, ...refLines],
+                            annotations: [...gexAnnotations, ...refAnnotations],
+                            margin: { t: 10, b: 40, l: 10, r: 60 },
+                            hovermode: 'x unified',
+                            showlegend: false,
+                          }}
+                          config={{ displayModeBar: false, responsive: true }}
+                          style={{ width: '100%', height: '100%' }}
+                        />
+                      </div>
+
+                      {/* Legend */}
+                      <div className="flex flex-wrap gap-4 mt-3 text-xs">
+                        {hasCandleData
+                          ? <><LegendItem color="bg-green-500" label="Bullish" /><LegendItem color="bg-red-500" label="Bearish" /></>
+                          : <LegendItem color="bg-blue-500" label="Price" line />
+                        }
+                        <span className="text-gray-700">|</span>
+                        <span className="text-green-400 font-semibold">■ +GEX Bar</span>
+                        <span className="text-red-400 font-semibold">■ -GEX Bar</span>
+                        <span className="text-gray-700">|</span>
+                        <span className="text-yellow-400">╌╌ Flip</span>
+                        <span className="text-cyan-400">┄┄ Call Wall</span>
+                        <span className="text-purple-400">┄┄ Put Wall</span>
+                        <span className="text-gray-700">|</span>
+                        <span className="text-gray-500">{intradayBars.length} bars today</span>
+                      </div>
+                    </>
+                  )
+                })()
               )}
 
               {/* ── NET GEX BY STRIKE ── */}
