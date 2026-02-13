@@ -535,54 +535,25 @@ class ValorSignalGenerator:
                 return None
 
             # ================================================================
-            # DIRECTION TRACKER - Only active during RTH
-            # Overnight: BYPASSED - let signals through, risk managed by
-            # no-loss trailing + SAR + emergency stop instead.
+            # DIRECTION TRACKER - REMOVED
+            # Risk is managed by no-loss trailing + SAR + emergency stop
+            # + 5-min loss streak pause. Direction tracker was starving
+            # the bot of trades during RTH. Confidence stays as-is.
             # ================================================================
-            if not is_overnight:
-                direction_tracker = get_direction_tracker()
-
-                # Check if this direction should be skipped (cooldown after loss, poor recent performance)
-                should_skip, skip_reason = direction_tracker.should_skip_direction(signal.direction.value)
-                if should_skip:
-                    logger.info(f"Signal SKIPPED by direction tracker: {skip_reason}")
-                    return None
-
-                # Apply confidence adjustment based on recent performance
-                confidence_adj = direction_tracker.get_confidence_adjustment(signal.direction.value)
-                if confidence_adj != 1.0:
-                    original_confidence = signal.confidence
-                    signal.confidence = min(0.95, max(0.50, signal.confidence * confidence_adj))
-                    logger.info(
-                        f"Direction tracker adjusted confidence: {original_confidence:.2%} -> {signal.confidence:.2%} "
-                        f"(multiplier: {confidence_adj:.2f}, floor=0.50)"
-                    )
-            else:
-                logger.info(
-                    f"VALOR OVERNIGHT: Direction tracker BYPASSED for {signal.direction.value} signal "
-                    f"(confidence={signal.confidence:.2%})"
-                )
 
             # Calculate win probability (uses ML if trained, otherwise Bayesian)
             signal.win_probability = self._calculate_win_probability(gamma_regime, signal, is_overnight)
 
-            # Check minimum probability threshold - BYPASSED overnight
-            # Overnight risk is managed by no-loss trailing + SAR + emergency stop,
-            # not by probability gates that starve the bot of trades.
-            if not is_overnight and signal.win_probability < self.config.min_win_probability:
-                logger.warning(
-                    f"VALOR WIN_PROB GATE REJECTED: {signal.direction.value} signal killed - "
-                    f"win_prob={signal.win_probability:.4f} < min={self.config.min_win_probability:.2f}, "
-                    f"confidence={signal.confidence:.3f}, regime={gamma_regime.value}, "
-                    f"tracker=[alpha={self.win_tracker.alpha:.1f}, beta={self.win_tracker.beta:.1f}, "
-                    f"trades={self.win_tracker.total_trades}, cold_start={self.win_tracker.is_cold_start}]"
-                )
-                return None
-            elif is_overnight:
-                logger.info(
-                    f"VALOR OVERNIGHT: Win probability gate BYPASSED - "
-                    f"win_prob={signal.win_probability:.4f} (gate={self.config.min_win_probability:.2f} not enforced)"
-                )
+            # Win probability gate - REMOVED
+            # Risk is managed by no-loss trailing + SAR + emergency stop
+            # + 5-min loss streak pause. Win_prob gate was starving the bot
+            # of trades during RTH when Bayesian tracker was poisoned.
+            # win_probability is still CALCULATED and LOGGED for analysis,
+            # it just doesn't block signals anymore.
+            logger.info(
+                f"VALOR win_prob={signal.win_probability:.4f} "
+                f"(informational only, not gating)"
+            )
 
             # Calculate position size
             signal.contracts = self.config.calculate_position_size(
