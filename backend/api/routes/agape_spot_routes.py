@@ -250,11 +250,17 @@ async def get_summary():
             if totals["total_trades"] else None
         )
 
+        # Capital allocator rankings (performance-based live allocation)
+        allocator_data = None
+        if hasattr(trader, '_capital_allocator'):
+            allocator_data = trader._capital_allocator.to_dict()
+
         return {
             "success": True,
             "data": {
                 "tickers": per_ticker,
                 "totals": totals,
+                "capital_allocator": allocator_data,
             },
             "active_tickers": list(tickers),
             "fetched_at": _format_ct(),
