@@ -664,7 +664,7 @@ export default function GexProfilePage() {
 
                   // Reference level lines (horizontal) — thick enough to see
                   const refLines: any[] = []
-                  const { gex_flip: flip, call_wall: cw, put_wall: pw } = data.levels
+                  const { gex_flip: flip, call_wall: cw, put_wall: pw, upper_1sd, lower_1sd, expected_move } = data.levels
                   if (flip) refLines.push({
                     type: 'line', xref: 'paper', yref: 'y',
                     x0: 0, x1: 1, y0: flip, y1: flip,
@@ -680,12 +680,33 @@ export default function GexProfilePage() {
                     x0: 0, x1: 1, y0: pw, y1: pw,
                     line: { color: '#a855f7', width: 2.5, dash: 'dot' },
                   })
+                  // ±1 Standard Deviation lines
+                  if (upper_1sd) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: upper_1sd, y1: upper_1sd,
+                    line: { color: '#f97316', width: 1.5, dash: 'dashdot' },
+                  })
+                  if (lower_1sd) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: lower_1sd, y1: lower_1sd,
+                    line: { color: '#f97316', width: 1.5, dash: 'dashdot' },
+                  })
+                  // Expected Move shaded band (between ±1SD)
+                  if (upper_1sd && lower_1sd) refLines.push({
+                    type: 'rect', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: lower_1sd, y1: upper_1sd,
+                    fillcolor: 'rgba(249,115,22,0.06)',
+                    line: { width: 0 },
+                    layer: 'below',
+                  })
 
                   // Compute Y-axis range: include price data + reference levels + padding
                   const yPoints = [...priceValues]
                   if (flip) yPoints.push(flip)
                   if (cw) yPoints.push(cw)
                   if (pw) yPoints.push(pw)
+                  if (upper_1sd) yPoints.push(upper_1sd)
+                  if (lower_1sd) yPoints.push(lower_1sd)
                   const yMin = yPoints.length > 0 ? Math.min(...yPoints) : 0
                   const yMax = yPoints.length > 0 ? Math.max(...yPoints) : 0
                   const yPad = (yMax - yMin) * 0.35 || 4
@@ -712,6 +733,22 @@ export default function GexProfilePage() {
                     text: `PUT WALL $${pw.toFixed(0)}`, showarrow: false,
                     font: { color: '#a855f7', size: 10 },
                     xanchor: 'left', yanchor: 'top',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (upper_1sd) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.99, y: upper_1sd,
+                    text: `+1σ $${upper_1sd.toFixed(0)}${expected_move ? ` (EM $${expected_move.toFixed(1)})` : ''}`,
+                    showarrow: false,
+                    font: { color: '#f97316', size: 9 },
+                    xanchor: 'right', yanchor: 'bottom',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (lower_1sd) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.99, y: lower_1sd,
+                    text: `-1σ $${lower_1sd.toFixed(0)}`,
+                    showarrow: false,
+                    font: { color: '#f97316', size: 9 },
+                    xanchor: 'right', yanchor: 'top',
                     bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
                   })
 
@@ -793,6 +830,8 @@ export default function GexProfilePage() {
                         <span className="text-yellow-400">╌╌ Flip</span>
                         <span className="text-cyan-400">┄┄ Call Wall</span>
                         <span className="text-purple-400">┄┄ Put Wall</span>
+                        <span className="text-orange-400">-·- ±1σ</span>
+                        <span className="text-orange-400/50">░ Expected Move</span>
                         <span className="text-gray-700">|</span>
                         <span className="text-gray-500">{intradayBars.length} bars today</span>
                       </div>
