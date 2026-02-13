@@ -4730,15 +4730,16 @@ class AutonomousTraderScheduler:
                     logger.info(f"BOT_REPORTS: Generating report for {bot_name.upper()}...")
 
                     # Generate the report (saves to archive internally)
+                    # Always produces a report even on 0-trade days
                     report = generate_report_for_bot(bot_name, now.date())
 
-                    if report:
-                        trade_count = report.get('trade_count', 0)
-                        total_pnl = report.get('total_pnl', 0)
+                    trade_count = report.get('trade_count', 0)
+                    total_pnl = report.get('total_pnl', 0)
+                    if trade_count > 0:
                         logger.info(f"BOT_REPORTS: {bot_name.upper()} report saved - {trade_count} trades, P&L: ${total_pnl:.2f}")
-                        reports_generated += 1
                     else:
-                        logger.info(f"BOT_REPORTS: {bot_name.upper()} - No trades today, skipping report")
+                        logger.info(f"BOT_REPORTS: {bot_name.upper()} report saved - no trades today (summary-only)")
+                    reports_generated += 1
 
                 except Exception as e:
                     logger.error(f"BOT_REPORTS: {bot_name.upper()} report failed: {e}")
