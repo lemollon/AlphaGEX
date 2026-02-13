@@ -339,6 +339,8 @@ export default function GexProfilePage() {
       .sort((a, b) => b.strike - a.strike)
       .map(s => ({
         ...s,
+        // Absolute value for bar length — color encodes sign (green +, red -)
+        abs_net_gamma: Math.abs(s.net_gamma),
         put_gamma_display: -(s.put_gamma || 0),
         gex_label: formatGex(s.net_gamma, 2),
       }))
@@ -634,7 +636,14 @@ export default function GexProfilePage() {
                     <div className="h-[550px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={sortedStrikes} layout="vertical" margin={{ top: 5, right: 90, left: 60, bottom: 5 }}>
-                          <XAxis type="number" tick={{ fill: '#6b7280', fontSize: 10 }} tickFormatter={v => formatGex(v, 1)} axisLine={{ stroke: '#374151' }} />
+                          {/* X-axis: absolute gamma magnitude — all bars extend right */}
+                          <XAxis
+                            type="number"
+                            tick={{ fill: '#6b7280', fontSize: 10 }}
+                            tickFormatter={v => formatGex(v, 1)}
+                            axisLine={{ stroke: '#374151' }}
+                            domain={[0, 'auto']}
+                          />
                           <YAxis type="category" dataKey="strike" tick={{ fill: '#9ca3af', fontSize: 10 }} width={50} axisLine={{ stroke: '#374151' }} />
                           <Tooltip content={<StrikeTooltip />} />
 
@@ -662,7 +671,8 @@ export default function GexProfilePage() {
                               label={{ value: '-1\u03C3', fill: '#ef4444', fontSize: 9, position: 'left' }} />
                           )}
 
-                          <Bar dataKey="net_gamma" name="Net Gamma">
+                          {/* Bars use absolute value — color encodes positive (green) vs negative (red) */}
+                          <Bar dataKey="abs_net_gamma" name="Net Gamma">
                             {sortedStrikes.map((entry, i) => (
                               <Cell
                                 key={`n-${i}`}
