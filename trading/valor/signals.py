@@ -507,12 +507,12 @@ class ValorSignalGenerator:
             if gamma_regime == GammaRegime.POSITIVE:
                 signal = self._generate_mean_reversion_signal(
                     current_price, flip_point, call_wall, put_wall,
-                    vix, atr, net_gex, gamma_regime
+                    vix, atr, net_gex, gamma_regime, is_overnight
                 )
             else:
                 signal = self._generate_momentum_signal(
                     current_price, flip_point, call_wall, put_wall,
-                    vix, atr, net_gex, gamma_regime
+                    vix, atr, net_gex, gamma_regime, is_overnight
                 )
 
             if signal is None:
@@ -549,10 +549,12 @@ class ValorSignalGenerator:
             confidence_adj = direction_tracker.get_confidence_adjustment(signal.direction.value)
             if confidence_adj != 1.0:
                 original_confidence = signal.confidence
-                signal.confidence = min(0.95, max(0.3, signal.confidence * confidence_adj))
+                # Floor at 0.50 so direction tracker penalty can't single-handedly
+                # kill signals via the Bayesian blend (confidence feeds into win_prob)
+                signal.confidence = min(0.95, max(0.50, signal.confidence * confidence_adj))
                 logger.info(
                     f"Direction tracker adjusted confidence: {original_confidence:.2%} -> {signal.confidence:.2%} "
-                    f"(multiplier: {confidence_adj:.2f})"
+                    f"(multiplier: {confidence_adj:.2f}, floor=0.50)"
                 )
 
             # Calculate win probability (uses ML if trained, otherwise Bayesian)
@@ -626,7 +628,8 @@ class ValorSignalGenerator:
         vix: float,
         atr: float,
         net_gex: float,
-        gamma_regime: GammaRegime
+        gamma_regime: GammaRegime,
+        is_overnight: bool = False
     ) -> Optional[FuturesSignal]:
         """
         Generate mean reversion signal for positive gamma.
@@ -644,14 +647,19 @@ class ValorSignalGenerator:
         distance_from_flip = current_price - flip_point
         distance_pct = (distance_from_flip / flip_point) * 100
 
-        # Need some distance from flip point to fade
-        min_distance_pct = self.config.flip_point_proximity_pct
+        # Overnight uses looser proximity threshold (smaller moves)
+        if is_overnight:
+            min_distance_pct = self.config.overnight_flip_proximity_pct
+        else:
+            min_distance_pct = self.config.flip_point_proximity_pct
 
-        # Signal strength based on distance
-        confidence = min(0.95, 0.5 + (abs(distance_pct) / 2))
+        # Signal strength based on distance (base 0.55 gives room for direction
+        # tracker penalty without killing the Bayesian probability blend)
+        confidence = min(0.95, 0.55 + (abs(distance_pct) / 2))
 
+        session = "OVERNIGHT" if is_overnight else "RTH"
         logger.info(
-            f"VALOR mean reversion check: price={current_price:.2f}, flip={flip_point:.2f}, "
+            f"VALOR mean reversion check [{session}]: price={current_price:.2f}, flip={flip_point:.2f}, "
             f"distance={distance_pct:+.2f}%, min_required={min_distance_pct}%, "
             f"signal={'YES' if abs(distance_pct) > min_distance_pct else 'NO (too close to flip)'}"
         )
@@ -705,7 +713,8 @@ class ValorSignalGenerator:
         vix: float,
         atr: float,
         net_gex: float,
-        gamma_regime: GammaRegime
+        gamma_regime: GammaRegime,
+        is_overnight: bool = False
     ) -> Optional[FuturesSignal]:
         """
         Generate momentum signal for negative gamma.
@@ -730,8 +739,12 @@ class ValorSignalGenerator:
 
         distance_from_flip = current_price - flip_point
 
-        # Breakout threshold for flip-based signals
-        breakout_threshold = atr * self.config.breakout_atr_threshold
+        # Overnight uses looser breakout threshold (smaller moves)
+        if is_overnight:
+            breakout_atr_mult = self.config.overnight_breakout_atr_mult
+        else:
+            breakout_atr_mult = self.config.breakout_atr_threshold
+        breakout_threshold = atr * breakout_atr_mult
 
         # Wall proximity threshold - within 1.5 ATR of wall is "near"
         wall_proximity_threshold = atr * 1.5
@@ -745,9 +758,10 @@ class ValorSignalGenerator:
         flip_to_put_range = max(1.0, flip_point - put_wall)    # Min 1 point
         total_range = call_to_flip_range + flip_to_put_range
 
+        session = "OVERNIGHT" if is_overnight else "RTH"
         logger.info(
-            f"VALOR momentum check: price={current_price:.2f}, flip={flip_point:.2f}, "
-            f"dist_from_flip={distance_from_flip:+.2f} pts, breakout_threshold={breakout_threshold:.2f}, "
+            f"VALOR momentum check [{session}]: price={current_price:.2f}, flip={flip_point:.2f}, "
+            f"dist_from_flip={distance_from_flip:+.2f} pts, breakout_threshold={breakout_threshold:.2f} ({breakout_atr_mult}×ATR), "
             f"dist_to_put={distance_to_put_wall:.2f}, dist_to_call={distance_to_call_wall:.2f}, "
             f"wall_proximity={wall_proximity_threshold:.2f} pts"
         )
@@ -855,10 +869,12 @@ class ValorSignalGenerator:
 
             if abs(distance_from_flip) >= near_flip_threshold:
                 # Price has some distance from flip - trade in that direction
+                # Base confidence 0.55 so direction tracker penalty (0.8×) can't
+                # push below 0.50 and kill the Bayesian blend
                 if distance_from_flip > 0:
                     # Price above flip - continue LONG momentum
                     direction = TradeDirection.LONG
-                    confidence = min(0.70, 0.50 + abs(distance_from_flip) / breakout_threshold * 0.2)
+                    confidence = min(0.70, 0.55 + abs(distance_from_flip) / breakout_threshold * 0.2)
                     reasoning = (
                         f"NEGATIVE GAMMA near-flip momentum: Price {current_price:.2f} is "
                         f"{distance_from_flip:.2f} pts above flip {flip_point:.2f}. "
@@ -867,7 +883,7 @@ class ValorSignalGenerator:
                 else:
                     # Price below flip - continue SHORT momentum
                     direction = TradeDirection.SHORT
-                    confidence = min(0.70, 0.50 + abs(distance_from_flip) / breakout_threshold * 0.2)
+                    confidence = min(0.70, 0.55 + abs(distance_from_flip) / breakout_threshold * 0.2)
                     reasoning = (
                         f"NEGATIVE GAMMA near-flip momentum: Price {current_price:.2f} is "
                         f"{abs(distance_from_flip):.2f} pts below flip {flip_point:.2f}. "

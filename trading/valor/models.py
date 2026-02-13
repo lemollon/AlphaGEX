@@ -344,6 +344,10 @@ class ValorConfig:
     # When use_no_loss_trailing is True, these affect the emergency stop only:
     overnight_emergency_stop: float = 8.0  # Tighter emergency stop overnight (low liquidity = gaps)
 
+    # Overnight signal generation thresholds (looser than RTH to account for smaller moves)
+    overnight_flip_proximity_pct: float = 0.15  # 0.15% from flip to fade (vs 0.5% RTH) - ~9 pts at SPX 6000
+    overnight_breakout_atr_mult: float = 0.3  # 0.3 ATR for breakout (vs 0.5 RTH) - overnight moves are smaller
+
     # Position sizing
     position_sizing_method: str = "FIXED_FRACTIONAL_ATR"  # Method for sizing
     atr_period: int = 14  # ATR calculation period
