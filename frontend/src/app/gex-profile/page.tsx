@@ -203,6 +203,7 @@ export default function GexProfilePage() {
     try {
       setLoading(true)
       setError(null)
+      setData(null) // Clear stale data to prevent cross-symbol Y-axis distortion
       const res = await apiClient.getWatchtowerGexAnalysis(sym)
       const result = res.data
       if (result?.success) {
@@ -223,6 +224,8 @@ export default function GexProfilePage() {
   const fetchIntradayTicks = useCallback(async (sym: string) => {
     try {
       setIntradayLoading(true)
+      setIntradayTicks([]) // Clear stale symbol data
+      setIntradayBars([])
       const [ticksRes, barsRes] = await Promise.all([
         apiClient.getWatchtowerIntradayTicks(sym, 5),
         apiClient.getWatchtowerIntradayBars(sym, '5min'),
@@ -240,6 +243,18 @@ export default function GexProfilePage() {
     }
   }, [])
 
+  // Lightweight bar-only refresh for near-live candlestick updates (no state clearing)
+  const refreshBars = useCallback(async (sym: string) => {
+    try {
+      const res = await apiClient.getWatchtowerIntradayBars(sym, '5min')
+      if (res.data?.success && res.data?.data?.bars) {
+        setIntradayBars(res.data.data.bars)
+      }
+    } catch (err) {
+      // Silent — don't disrupt the chart on a background poll failure
+    }
+  }, [])
+
   // Initial load
   useEffect(() => {
     fetchGexData(symbol)
@@ -247,16 +262,21 @@ export default function GexProfilePage() {
   }, [symbol, fetchGexData, fetchIntradayTicks])
 
   // Auto-refresh during market hours
+  // GEX data every 30s, candlestick bars every 15s for near-live updates
   useEffect(() => {
     if (!autoRefresh) return
+    let tick = 0
     const id = setInterval(() => {
-      if (isMarketOpen()) {
+      if (!isMarketOpen()) return
+      tick++
+      refreshBars(symbol) // Every 15s — near-live candlestick updates
+      if (tick % 2 === 0) { // Every 30s — full GEX + ticks refresh
         fetchGexData(symbol)
-        if (chartView === 'intraday') fetchIntradayTicks(symbol)
+        fetchIntradayTicks(symbol)
       }
-    }, 30_000)
+    }, 15_000)
     return () => clearInterval(id)
-  }, [autoRefresh, symbol, chartView, fetchGexData, fetchIntradayTicks])
+  }, [autoRefresh, symbol, fetchGexData, fetchIntradayTicks, refreshBars])
 
   const handleSymbolSearch = () => {
     const s = searchInput.trim().toUpperCase()
