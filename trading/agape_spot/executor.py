@@ -702,8 +702,8 @@ class AgapeSpotExecutor:
 
         account_label routes to the correct Coinbase client that owns this position.
         """
-        if account_label == "paper":
-            # Paper positions don't need a Coinbase sell
+        if account_label == "paper" or account_label.endswith("_fallback"):
+            # Paper and fallback positions were never placed on Coinbase
             return (False, None, None)
 
         client = self._get_client_for_account(ticker, account_label)
@@ -877,9 +877,11 @@ class AgapeSpotExecutor:
         """Close a long position (always sells).
 
         Routes to the correct Coinbase account using position.account_label.
+        Fallback positions (account_label ending with '_fallback') are always
+        closed as paper — they were never placed on Coinbase.
         """
         acct = getattr(position, "account_label", "default")
-        if acct == "paper":
+        if acct == "paper" or acct.endswith("_fallback"):
             return self._close_paper(position, current_price, reason)
         client = self._get_client_for_account(position.ticker, acct)
         if not client:

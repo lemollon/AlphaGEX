@@ -673,7 +673,11 @@ class AgapeSpotTrader:
         # ---- Execute LIVE sell on Coinbase for live tickers ----
         actual_close_price = current_price
         account_label = pos_dict.get("account_label", "default")
-        is_live_account = account_label != "paper" and self.config.is_live(ticker)
+        is_live_account = (
+            account_label != "paper"
+            and not account_label.endswith("_fallback")
+            and self.config.is_live(ticker)
+        )
 
         exec_details = None
         if is_live_account:

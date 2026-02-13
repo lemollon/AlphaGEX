@@ -404,6 +404,53 @@ async def get_diagnostics():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/cleanup-fallbacks")
+async def cleanup_fallback_positions():
+    """Close all open *_fallback positions as paper losses.
+
+    Fallback positions were created when live execution failed.  They exist
+    only in the database and have no corresponding Coinbase order, so they
+    can safely be closed at their entry price (realized P&L = $0).
+    """
+    if not get_connection:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE agape_spot_positions
+               SET status    = 'closed',
+                   close_time = NOW(),
+                   close_price = entry_price,
+                   realized_pnl = 0,
+                   close_reason = 'FALLBACK_CLEANUP'
+             WHERE status = 'open'
+               AND account_label LIKE '%%_fallback'
+            RETURNING position_id, ticker, account_label
+        """)
+        closed = cur.fetchall()
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return {
+            "success": True,
+            "closed_count": len(closed),
+            "closed_positions": [
+                {"position_id": r[0], "ticker": r[1], "account_label": r[2]}
+                for r in closed[:50]  # Show first 50
+            ],
+            "message": (
+                f"Closed {len(closed)} fallback positions (paper-only, "
+                f"no Coinbase orders affected)."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT fallback cleanup error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Positions
 # ---------------------------------------------------------------------------
