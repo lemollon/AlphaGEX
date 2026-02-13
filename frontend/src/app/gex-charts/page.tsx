@@ -896,20 +896,43 @@ export default function GexChartsPage() {
                       <>
                         <div className="h-[500px]">
                           {(() => {
-                            // Format tick data for the chart
+                            // Format tick data with zone bands for stacked areas
                             const chartData = intradayTicks
                               .filter(t => t.spot_price !== null)
-                              .map(t => ({
-                                ...t,
-                                label: t.time ? new Date(t.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
-                                net_gamma_display: t.net_gamma ?? 0,
-                              }))
+                              .map((t, idx, arr) => {
+                                const fp = t.flip_point ?? 0
+                                const cw = t.call_wall ?? 0
+                                const pw = t.put_wall ?? 0
+                                return {
+                                  ...t,
+                                  label: t.time ? new Date(t.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
+                                  net_gamma_display: t.net_gamma ?? 0,
+                                  // Stacked area zones: base (put_wall) + red band + green band
+                                  zone_base: pw,
+                                  zone_red: fp > pw ? fp - pw : 0,
+                                  zone_green: cw > fp ? cw - fp : 0,
+                                  // Is this the last data point?
+                                  isLast: idx === arr.length - 1,
+                                }
+                              })
 
-                            // Compute price range for right Y-axis
-                            const prices = chartData.map(t => t.spot_price!).filter(Boolean)
-                            const priceMin = Math.min(...prices)
-                            const priceMax = Math.max(...prices)
-                            const pricePad = (priceMax - priceMin) * 0.15 || 1
+                            // Compute price range — include all levels for full zone visibility
+                            const allPrices = chartData.flatMap(t => [
+                              t.spot_price, t.flip_point, t.call_wall, t.put_wall
+                            ].filter((v): v is number => v !== null && v !== undefined && v > 0))
+                            const priceMin = Math.min(...allPrices)
+                            const priceMax = Math.max(...allPrices)
+                            const pricePad = (priceMax - priceMin) * 0.1 || 1
+
+                            // Latest tick for position summary
+                            const latest = chartData[chartData.length - 1]
+                            const priceZone = latest ? (
+                              latest.spot_price && latest.call_wall && latest.spot_price > latest.call_wall ? 'ABOVE_CALL_WALL' :
+                              latest.spot_price && latest.flip_point && latest.spot_price > latest.flip_point ? 'POSITIVE_ZONE' :
+                              latest.spot_price && latest.put_wall && latest.spot_price < latest.put_wall ? 'BELOW_PUT_WALL' :
+                              latest.spot_price && latest.flip_point && latest.spot_price <= latest.flip_point ? 'NEGATIVE_ZONE' :
+                              'UNKNOWN'
+                            ) : 'UNKNOWN'
 
                             return (
                               <ResponsiveContainer width="100%" height="100%">
@@ -931,7 +954,7 @@ export default function GexChartsPage() {
                                     tickFormatter={(v) => formatNumber(v, 1)}
                                     label={{ value: 'Net Gamma', angle: -90, position: 'insideLeft', fill: '#6b7280', fontSize: 10 }}
                                   />
-                                  {/* Right Y-axis: Spot Price */}
+                                  {/* Right Y-axis: Spot Price — includes all levels */}
                                   <YAxis
                                     yAxisId="price"
                                     orientation="right"
@@ -945,8 +968,26 @@ export default function GexChartsPage() {
                                       if (!active || !payload || !payload.length) return null
                                       const tick = payload[0]?.payload
                                       if (!tick) return null
+
+                                      // Determine zone
+                                      const sp = tick.spot_price ?? 0
+                                      const fp = tick.flip_point ?? 0
+                                      const cw = tick.call_wall ?? 0
+                                      const pw = tick.put_wall ?? 0
+                                      let zone = 'Unknown'
+                                      let zoneColor = 'text-gray-400'
+                                      if (sp > cw && cw > 0) { zone = 'Above Call Wall'; zoneColor = 'text-cyan-400' }
+                                      else if (sp > fp && fp > 0) { zone = 'Positive Gamma Zone'; zoneColor = 'text-green-400' }
+                                      else if (sp < pw && pw > 0) { zone = 'Below Put Wall'; zoneColor = 'text-purple-400' }
+                                      else if (fp > 0) { zone = 'Negative Gamma Zone'; zoneColor = 'text-red-400' }
+
+                                      // Distance to nearest wall
+                                      const distToCall = cw > 0 ? ((cw - sp) / sp * 100).toFixed(2) : null
+                                      const distToPut = pw > 0 ? ((sp - pw) / sp * 100).toFixed(2) : null
+                                      const distToFlip = fp > 0 ? ((sp - fp) / sp * 100).toFixed(2) : null
+
                                       return (
-                                        <div className="bg-gray-900 border border-gray-600 rounded-lg p-3 shadow-xl text-xs min-w-[200px]">
+                                        <div className="bg-gray-900 border border-gray-600 rounded-lg p-3 shadow-xl text-xs min-w-[220px]">
                                           <div className="font-bold text-white text-sm mb-2">{tipLabel}</div>
                                           <div className="space-y-1">
                                             <div className="flex justify-between gap-4">
@@ -954,50 +995,78 @@ export default function GexChartsPage() {
                                               <span className="text-blue-400 font-mono font-bold">${tick.spot_price?.toFixed(2)}</span>
                                             </div>
                                             <div className="flex justify-between gap-4">
+                                              <span className="text-gray-400">Zone:</span>
+                                              <span className={`font-mono font-bold ${zoneColor}`}>{zone}</span>
+                                            </div>
+                                            <div className="flex justify-between gap-4">
                                               <span className="text-gray-400">Net Gamma:</span>
                                               <span className={`font-mono font-bold ${(tick.net_gamma ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                                                 {formatNumber(tick.net_gamma ?? 0, 2)}
                                               </span>
                                             </div>
-                                            <div className="flex justify-between gap-4">
-                                              <span className="text-gray-400">Regime:</span>
-                                              <span className={`font-mono ${
-                                                tick.gamma_regime === 'POSITIVE' ? 'text-green-400' :
-                                                tick.gamma_regime === 'NEGATIVE' ? 'text-red-400' : 'text-gray-400'
-                                              }`}>{tick.gamma_regime || 'N/A'}</span>
+                                            <div className="border-t border-gray-700 pt-1 mt-1 space-y-1">
+                                              {distToFlip !== null && (
+                                                <div className="flex justify-between gap-4">
+                                                  <span className="text-gray-400">vs Flip:</span>
+                                                  <span className="text-yellow-400 font-mono">
+                                                    {Number(distToFlip) >= 0 ? '+' : ''}{distToFlip}% (${fp.toFixed(0)})
+                                                  </span>
+                                                </div>
+                                              )}
+                                              {distToCall !== null && (
+                                                <div className="flex justify-between gap-4">
+                                                  <span className="text-gray-400">to Call Wall:</span>
+                                                  <span className="text-cyan-400 font-mono">+{distToCall}% (${cw.toFixed(0)})</span>
+                                                </div>
+                                              )}
+                                              {distToPut !== null && (
+                                                <div className="flex justify-between gap-4">
+                                                  <span className="text-gray-400">to Put Wall:</span>
+                                                  <span className="text-purple-400 font-mono">-{distToPut}% (${pw.toFixed(0)})</span>
+                                                </div>
+                                              )}
                                             </div>
-                                            {tick.flip_point && (
-                                              <div className="flex justify-between gap-4">
-                                                <span className="text-gray-400">Flip Point:</span>
-                                                <span className="text-yellow-400 font-mono">${tick.flip_point?.toFixed(2)}</span>
-                                              </div>
-                                            )}
-                                            {tick.vix && (
-                                              <div className="flex justify-between gap-4">
+                                            {tick.vix != null && (
+                                              <div className="flex justify-between gap-4 border-t border-gray-700 pt-1 mt-1">
                                                 <span className="text-gray-400">VIX:</span>
                                                 <span className="text-white font-mono">{tick.vix?.toFixed(2)}</span>
-                                              </div>
-                                            )}
-                                            {(tick.call_wall || tick.put_wall) && (
-                                              <div className="border-t border-gray-700 pt-1 mt-1">
-                                                {tick.call_wall && (
-                                                  <div className="flex justify-between gap-4">
-                                                    <span className="text-gray-400">Call Wall:</span>
-                                                    <span className="text-cyan-400 font-mono">${tick.call_wall?.toFixed(2)}</span>
-                                                  </div>
-                                                )}
-                                                {tick.put_wall && (
-                                                  <div className="flex justify-between gap-4">
-                                                    <span className="text-gray-400">Put Wall:</span>
-                                                    <span className="text-purple-400 font-mono">${tick.put_wall?.toFixed(2)}</span>
-                                                  </div>
-                                                )}
                                               </div>
                                             )}
                                           </div>
                                         </div>
                                       )
                                     }}
+                                  />
+
+                                  {/* === ZONE BANDS (stacked areas on price axis) === */}
+                                  {/* Base: transparent area up to put_wall level */}
+                                  <Area
+                                    yAxisId="price"
+                                    type="stepAfter"
+                                    dataKey="zone_base"
+                                    stackId="zones"
+                                    fill="transparent"
+                                    stroke="none"
+                                  />
+                                  {/* Red zone: put_wall → flip_point (negative gamma territory) */}
+                                  <Area
+                                    yAxisId="price"
+                                    type="stepAfter"
+                                    dataKey="zone_red"
+                                    stackId="zones"
+                                    fill="#ef4444"
+                                    fillOpacity={0.06}
+                                    stroke="none"
+                                  />
+                                  {/* Green zone: flip_point → call_wall (positive gamma territory) */}
+                                  <Area
+                                    yAxisId="price"
+                                    type="stepAfter"
+                                    dataKey="zone_green"
+                                    stackId="zones"
+                                    fill="#22c55e"
+                                    fillOpacity={0.06}
+                                    stroke="none"
                                   />
 
                                   {/* Net gamma bars — color coded green/red */}
@@ -1011,48 +1080,62 @@ export default function GexChartsPage() {
                                     ))}
                                   </Bar>
 
-                                  {/* Price line on right axis */}
+                                  {/* Price line — thicker, with dot on last point */}
                                   <Line
                                     yAxisId="price"
                                     type="monotone"
                                     dataKey="spot_price"
                                     stroke="#3b82f6"
-                                    strokeWidth={2}
-                                    dot={false}
+                                    strokeWidth={2.5}
+                                    dot={(props: any) => {
+                                      const { cx, cy, payload } = props
+                                      if (!payload?.isLast) return <circle key="hidden" r={0} />
+                                      return (
+                                        <circle
+                                          key="last-dot"
+                                          cx={cx}
+                                          cy={cy}
+                                          r={5}
+                                          fill="#3b82f6"
+                                          stroke="#1e3a5f"
+                                          strokeWidth={2}
+                                        />
+                                      )
+                                    }}
                                     name="Price"
                                   />
 
-                                  {/* Flip point line on right axis */}
+                                  {/* Flip point line */}
                                   <Line
                                     yAxisId="price"
                                     type="stepAfter"
                                     dataKey="flip_point"
                                     stroke="#eab308"
-                                    strokeWidth={1}
+                                    strokeWidth={1.5}
                                     strokeDasharray="5 3"
                                     dot={false}
                                     name="Flip Point"
                                   />
 
-                                  {/* Call wall reference */}
+                                  {/* Call wall */}
                                   <Line
                                     yAxisId="price"
                                     type="stepAfter"
                                     dataKey="call_wall"
                                     stroke="#06b6d4"
-                                    strokeWidth={1}
+                                    strokeWidth={1.5}
                                     strokeDasharray="3 3"
                                     dot={false}
                                     name="Call Wall"
                                   />
 
-                                  {/* Put wall reference */}
+                                  {/* Put wall */}
                                   <Line
                                     yAxisId="price"
                                     type="stepAfter"
                                     dataKey="put_wall"
                                     stroke="#a855f7"
-                                    strokeWidth={1}
+                                    strokeWidth={1.5}
                                     strokeDasharray="3 3"
                                     dot={false}
                                     name="Put Wall"
@@ -1063,15 +1146,89 @@ export default function GexChartsPage() {
                           })()}
                         </div>
 
+                        {/* Price Position Summary Strip */}
+                        {(() => {
+                          const latest = intradayTicks.filter(t => t.spot_price !== null).slice(-1)[0]
+                          if (!latest || !latest.spot_price) return null
+                          const sp = latest.spot_price
+                          const fp = latest.flip_point ?? 0
+                          const cw = latest.call_wall ?? 0
+                          const pw = latest.put_wall ?? 0
+                          const range = cw > pw ? cw - pw : 1
+                          // Clamp position to 0-100%
+                          const pricePosRaw = cw > pw ? ((sp - pw) / range) * 100 : 50
+                          const pricePos = Math.max(0, Math.min(100, pricePosRaw))
+                          const flipPos = cw > pw ? ((fp - pw) / range) * 100 : 50
+
+                          const aboveFlip = sp > fp
+                          const distToCallPct = cw > 0 ? ((cw - sp) / sp * 100).toFixed(1) : null
+                          const distToPutPct = pw > 0 ? ((sp - pw) / sp * 100).toFixed(1) : null
+
+                          return (
+                            <div className="mt-4 p-3 rounded-lg bg-gray-900/60 border border-gray-700">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-xs text-gray-400 font-medium">PRICE POSITION IN GEX STRUCTURE</span>
+                                <span className={`text-xs font-bold ${aboveFlip ? 'text-green-400' : 'text-red-400'}`}>
+                                  {aboveFlip ? 'POSITIVE GAMMA ZONE' : 'NEGATIVE GAMMA ZONE'}
+                                </span>
+                              </div>
+                              {/* Visual bar: Put Wall ← [price marker] → Call Wall */}
+                              <div className="relative h-6 rounded-full overflow-hidden bg-gray-800 border border-gray-700">
+                                {/* Red zone (put wall to flip) */}
+                                <div
+                                  className="absolute top-0 h-full bg-red-500/15"
+                                  style={{ left: '0%', width: `${Math.max(0, Math.min(100, flipPos))}%` }}
+                                />
+                                {/* Green zone (flip to call wall) */}
+                                <div
+                                  className="absolute top-0 h-full bg-green-500/15"
+                                  style={{ left: `${Math.max(0, Math.min(100, flipPos))}%`, width: `${Math.max(0, 100 - Math.min(100, flipPos))}%` }}
+                                />
+                                {/* Flip point marker */}
+                                <div
+                                  className="absolute top-0 h-full w-0.5 bg-yellow-400"
+                                  style={{ left: `${Math.max(0, Math.min(100, flipPos))}%` }}
+                                />
+                                {/* Price marker */}
+                                <div
+                                  className="absolute top-0.5 w-3 h-5 rounded-sm bg-blue-500 border border-blue-300"
+                                  style={{ left: `calc(${pricePos}% - 6px)` }}
+                                />
+                              </div>
+                              {/* Labels */}
+                              <div className="flex justify-between mt-1.5 text-[10px]">
+                                <span className="text-purple-400">
+                                  Put Wall ${pw.toFixed(0)}
+                                  {distToPutPct && <span className="text-gray-500 ml-1">({distToPutPct}% away)</span>}
+                                </span>
+                                <span className="text-yellow-400">Flip ${fp.toFixed(0)}</span>
+                                <span className="text-cyan-400">
+                                  {distToCallPct && <span className="text-gray-500 mr-1">({distToCallPct}% away)</span>}
+                                  Call Wall ${cw.toFixed(0)}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        })()}
+
                         {/* Intraday Legend */}
                         <div className="flex flex-wrap gap-4 mt-4 text-xs">
                           <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 bg-green-500/20 border border-green-500/40 rounded-sm"></div>
+                            <span className="text-gray-400">+ Gamma Zone</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 bg-red-500/20 border border-red-500/40 rounded-sm"></div>
+                            <span className="text-gray-400">- Gamma Zone</span>
+                          </div>
+                          <span className="text-gray-600">|</span>
+                          <div className="flex items-center gap-2">
                             <div className="w-3 h-3 bg-green-500 rounded-sm"></div>
-                            <span className="text-gray-400">Positive Gamma</span>
+                            <span className="text-gray-400">+ Gamma Bar</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
-                            <span className="text-gray-400">Negative Gamma</span>
+                            <span className="text-gray-400">- Gamma Bar</span>
                           </div>
                           <span className="text-gray-600">|</span>
                           <div className="flex items-center gap-2">
@@ -1080,7 +1237,7 @@ export default function GexChartsPage() {
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="w-6 h-0.5 bg-yellow-400" style={{ borderTop: '1px dashed #eab308' }}></div>
-                            <span className="text-gray-400">Flip Point</span>
+                            <span className="text-gray-400">Flip</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <div className="w-6 h-0.5 bg-cyan-400" style={{ borderTop: '1px dashed #06b6d4' }}></div>
