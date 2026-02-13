@@ -75,10 +75,15 @@ class AgapeSpotExecutor:
         self.config = config
         self.db = db
 
-        # Default client (shared across tickers without their own credentials)
+        # Account 1: Default client (COINBASE_API_KEY)
         self._client: Optional[object] = None
 
-        # Per-ticker clients keyed by ticker (e.g. "DOGE-USD" -> RESTClient)
+        # Account 2: Dedicated client (COINBASE_DEDICATED_API_KEY)
+        # Both accounts trade ALL live tickers independently.
+        self._dedicated_client: Optional[object] = None
+
+        # Per-ticker override clients (COINBASE_{SYMBOL}_API_KEY)
+        # Only used if a specific coin needs a different key than the two main accounts.
         self._ticker_clients: Dict[str, object] = {}
 
         # Coinbase product limits fetched at init (real minimums from API)
@@ -95,12 +100,14 @@ class AgapeSpotExecutor:
     def _init_coinbase(self):
         """Initialize Coinbase clients.
 
-        Priority order for each ticker:
-        1. Per-ticker key: COINBASE_{SYMBOL}_API_KEY / SECRET
-        2. Shared dedicated key: COINBASE_DEDICATED_API_KEY / SECRET
-        3. Default key: COINBASE_API_KEY / SECRET (fallback)
+        Two main accounts, both trade ALL live tickers:
+          1. Default:   COINBASE_API_KEY / SECRET
+          2. Dedicated: COINBASE_DEDICATED_API_KEY / SECRET
+
+        Optional per-ticker override:
+          COINBASE_{SYMBOL}_API_KEY / SECRET  (replaces default for one coin)
         """
-        # --- Default client ---
+        # --- Account 1: Default client (your account) ---
         api_key = os.getenv("COINBASE_API_KEY")
         api_secret = os.getenv("COINBASE_API_SECRET")
 
@@ -113,40 +120,40 @@ class AgapeSpotExecutor:
                     price = float(self._resp(product, "price", 0))
                     self._store_product_limits(verify_ticker, product)
                     logger.info(
-                        f"AGAPE-SPOT Executor: Default client connected. "
+                        f"AGAPE-SPOT Executor: Account 1 (default) connected. "
                         f"{verify_ticker} = ${price:,.2f}"
                     )
                 else:
-                    logger.warning("AGAPE-SPOT Executor: Default client connected but no product data")
+                    logger.warning("AGAPE-SPOT Executor: Account 1 connected but no product data")
             except Exception as e:
-                logger.error(f"AGAPE-SPOT Executor: Default client init failed: {e}")
+                logger.error(f"AGAPE-SPOT Executor: Account 1 init failed: {e}")
                 self._client = None
         else:
             logger.warning(
-                "AGAPE-SPOT Executor: No default COINBASE_API_KEY/SECRET set."
+                "AGAPE-SPOT Executor: No COINBASE_API_KEY/SECRET set (Account 1)."
             )
 
-        # --- Shared dedicated client (one Coinbase account for all live tickers) ---
-        shared_dedicated_client = None
+        # --- Account 2: Dedicated client (friend's account) ---
+        # Trades ALL live tickers, not just specific ones.
         ded_key = os.getenv("COINBASE_DEDICATED_API_KEY")
         ded_secret = os.getenv("COINBASE_DEDICATED_API_SECRET")
         if ded_key and ded_secret:
             try:
-                shared_dedicated_client = RESTClient(api_key=ded_key, api_secret=ded_secret)
+                self._dedicated_client = RESTClient(api_key=ded_key, api_secret=ded_secret)
                 verify_ticker = self.config.live_tickers[0] if self.config.live_tickers else "DOGE-USD"
-                product = shared_dedicated_client.get_product(verify_ticker)
+                product = self._dedicated_client.get_product(verify_ticker)
                 if product:
                     price = float(self._resp(product, "price", 0))
                     self._store_product_limits(verify_ticker, product)
                     logger.info(
-                        f"AGAPE-SPOT Executor: Shared dedicated client connected. "
+                        f"AGAPE-SPOT Executor: Account 2 (dedicated) connected. "
                         f"{verify_ticker} = ${price:,.2f}"
                     )
             except Exception as e:
-                logger.error(f"AGAPE-SPOT Executor: Shared dedicated client init failed: {e}")
-                shared_dedicated_client = None
+                logger.error(f"AGAPE-SPOT Executor: Account 2 init failed: {e}")
+                self._dedicated_client = None
 
-        # --- Per-ticker clients ---
+        # --- Optional per-ticker overrides ---
         for ticker in self.config.tickers:
             symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
             env_key = f"COINBASE_{symbol.upper()}_API_KEY"
@@ -155,7 +162,6 @@ class AgapeSpotExecutor:
             tk_api_secret = os.getenv(env_secret)
 
             if tk_api_key and tk_api_secret:
-                # Per-ticker key found -- use it
                 try:
                     client = RESTClient(api_key=tk_api_key, api_secret=tk_api_secret)
                     product = client.get_product(ticker)
@@ -163,69 +169,70 @@ class AgapeSpotExecutor:
                         price = float(self._resp(product, "price", 0))
                         self._store_product_limits(ticker, product)
                         logger.info(
-                            f"AGAPE-SPOT Executor: {symbol} dedicated client connected. "
+                            f"AGAPE-SPOT Executor: {symbol} per-ticker override connected. "
                             f"{ticker} = ${price:,.2f}"
                         )
                     self._ticker_clients[ticker] = client
                 except Exception as e:
                     logger.error(
-                        f"AGAPE-SPOT Executor: {symbol} dedicated client init failed: {e}"
+                        f"AGAPE-SPOT Executor: {symbol} per-ticker override failed: {e}"
                     )
-            elif shared_dedicated_client and ticker in self.config.live_tickers:
-                # No per-ticker key, but shared dedicated account covers all live tickers
-                self._ticker_clients[ticker] = shared_dedicated_client
-                logger.info(
-                    f"AGAPE-SPOT Executor: {symbol} using shared dedicated client"
-                )
 
-        if not self._client and not self._ticker_clients:
+        if not self._client and not self._dedicated_client:
             logger.error(
                 "AGAPE-SPOT Executor: No Coinbase clients initialized. "
-                "Set COINBASE_API_KEY/SECRET, COINBASE_DEDICATED_API_KEY/SECRET, "
-                "or per-ticker COINBASE_{SYMBOL}_API_KEY/SECRET."
+                "Set COINBASE_API_KEY/SECRET and/or COINBASE_DEDICATED_API_KEY/SECRET."
             )
 
     def _get_client(self, ticker: str) -> Optional[object]:
-        """Get the Coinbase client for a specific ticker.
+        """Get any available Coinbase client for a ticker.
 
-        Returns the per-ticker client if configured, otherwise the default client.
+        Priority: per-ticker override → default → dedicated.
+        Used for price lookups and other non-account-specific operations.
         """
-        return self._ticker_clients.get(ticker, self._client)
+        return (self._ticker_clients.get(ticker)
+                or self._client
+                or self._dedicated_client)
 
     def _get_client_for_account(self, ticker: str, account_label: str) -> Optional[object]:
         """Get the Coinbase client for a specific account label.
 
-        'default' → self._client, '{SYMBOL}' → self._ticker_clients[ticker].
-        'paper' → None (no Coinbase client needed).
+        'default'   → Account 1 (COINBASE_API_KEY)
+        'dedicated' → Account 2 (COINBASE_DEDICATED_API_KEY)
+        'paper'     → None
+
+        Also handles legacy labels (e.g. 'DOGE', 'XRP') from old positions
+        by routing them to the dedicated client.
         """
         if account_label == "paper":
             return None
         if account_label == "default":
             return self._client
-        # Dedicated account (label matches the ticker's symbol)
-        return self._ticker_clients.get(ticker)
+        if account_label == "dedicated":
+            return self._dedicated_client
+        # Legacy: old positions have symbol-based labels (e.g. "DOGE", "XRP")
+        # Route them to per-ticker override if exists, else dedicated client
+        if ticker in self._ticker_clients:
+            return self._ticker_clients[ticker]
+        return self._dedicated_client
 
     def get_all_accounts(self, ticker: str) -> list:
         """Return all (account_label, is_live) pairs available for a ticker.
 
-        For live tickers returns up to 3 entries:
-          ("default", True)  -- your Coinbase account
-          (symbol, True)     -- dedicated/shared-dedicated Coinbase account
-          ("paper", False)   -- paper tracking
+        Both accounts trade ALL live tickers:
+          ("default", True)    -- Account 1 (COINBASE_API_KEY)
+          ("dedicated", True)  -- Account 2 (COINBASE_DEDICATED_API_KEY)
+          ("paper", False)     -- paper tracking
 
         Each signal opens independent positions on EVERY returned account.
         """
         accounts = []
-        symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
 
         if self.config.is_live(ticker):
-            # Default Coinbase account (your account)
             if self._client is not None:
                 accounts.append(("default", True))
-            # Dedicated / shared-dedicated Coinbase account (friend's account)
-            if ticker in self._ticker_clients:
-                accounts.append((symbol, True))
-            # Paper account for parallel tracking
+            if self._dedicated_client is not None:
+                accounts.append(("dedicated", True))
             accounts.append(("paper", False))
         else:
             accounts.append(("paper", False))
@@ -235,7 +242,9 @@ class AgapeSpotExecutor:
     @property
     def has_any_client(self) -> bool:
         """True if at least one Coinbase client is connected."""
-        return self._client is not None or bool(self._ticker_clients)
+        return (self._client is not None
+                or self._dedicated_client is not None
+                or bool(self._ticker_clients))
 
     # =========================================================================
     # Helpers
@@ -488,12 +497,7 @@ class AgapeSpotExecutor:
         if client is None:
             client = self._get_client(signal.ticker)
         if account_label is None:
-            # Legacy path: determine from client
-            account_label = (
-                SPOT_TICKERS.get(signal.ticker, {}).get("symbol", "default")
-                if signal.ticker in self._ticker_clients
-                else "default"
-            )
+            account_label = "default"
         if not client:
             symbol = SPOT_TICKERS.get(signal.ticker, {}).get("symbol", signal.ticker.split("-")[0])
             logger.error(
@@ -816,8 +820,7 @@ class AgapeSpotExecutor:
 
             client_order_id = str(uuid.uuid4())
 
-            is_dedicated = ticker in self._ticker_clients
-            acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
+            acct_label = account_label.upper()
             logger.info(
                 f"AGAPE-SPOT: PLACING LIVE SELL {ticker} [{acct_label}] "
                 f"{position_id} qty={sell_qty} (~${notional_est:.2f}) ({reason})"
@@ -1010,8 +1013,7 @@ class AgapeSpotExecutor:
 
             client_order_id = str(uuid.uuid4())
 
-            is_dedicated = position.ticker in self._ticker_clients
-            acct_label = "DEDICATED" if is_dedicated else "DEFAULT"
+            acct_label = position.account_label.upper()
             logger.info(
                 f"AGAPE-SPOT: PLACING LIVE SELL {position.ticker} [{acct_label}] "
                 f"{position.position_id} qty={quantity} (~${notional_est:.2f}) ({reason})"
@@ -1151,8 +1153,11 @@ class AgapeSpotExecutor:
                         balances[currency.lower() + "_balance"] = available
 
                 balances["exchange"] = "coinbase"
-                is_dedicated = ticker and ticker in self._ticker_clients
-                balances["account_type"] = "dedicated" if is_dedicated else "default"
+                # Determine account type from which client was used
+                if ticker and self._dedicated_client and client is self._dedicated_client:
+                    balances["account_type"] = "dedicated"
+                else:
+                    balances["account_type"] = "default"
                 return balances
         except Exception as e:
             logger.error(f"AGAPE-SPOT Executor: Balance fetch failed: {e}")
@@ -1162,51 +1167,29 @@ class AgapeSpotExecutor:
         """Get balances from ALL Coinbase accounts (default + dedicated).
 
         Returns a dict keyed by account_label with balance details.
-        Deduplicates shared dedicated clients (one API call, all balances).
         """
         results: Dict[str, Any] = {}
 
-        # Default account
+        # Account 1: Default
         if self._client:
             bal = self.get_account_balance()
             if bal:
                 results["default"] = bal
 
-        # Dedicated / shared-dedicated accounts (deduplicate by client identity)
-        seen_clients: set = set()
-        all_dedicated_symbols: set = set()
-
-        for ticker in self._ticker_clients:
-            symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", ticker.split("-")[0])
-            all_dedicated_symbols.add(symbol)
-
-        for ticker, client in self._ticker_clients.items():
-            client_id = id(client)
-            if client_id in seen_clients:
-                continue
-            seen_clients.add(client_id)
-
+        # Account 2: Dedicated
+        if self._dedicated_client:
             try:
-                accounts = client.get_accounts()
-                acct_list = self._resp(accounts, "accounts", [])
-                balances: Dict[str, float] = {}
-                # Track all currencies this shared client trades + USD + USDC
-                tracked = {"USD", "USDC"} | all_dedicated_symbols
-                for acct in acct_list:
-                    currency = self._resp(acct, "currency", "")
-                    if currency in tracked:
-                        avail_bal = self._resp(acct, "available_balance", {})
-                        available = float(self._resp(avail_bal, "value", 0))
-                        balances[currency.lower() + "_balance"] = available
-                balances["exchange"] = "coinbase"
-                balances["account_type"] = "dedicated"
-                tickers_on_client = [
-                    t for t, c in self._ticker_clients.items() if id(c) == client_id
-                ]
-                balances["tickers"] = tickers_on_client
+                usd_bal = self._get_usd_balance_from_client(self._dedicated_client)
+                balances: Dict[str, Any] = {
+                    "exchange": "coinbase",
+                    "account_type": "dedicated",
+                    "tickers": list(self.config.live_tickers),
+                }
+                if usd_bal is not None:
+                    balances["usd_balance"] = usd_bal
                 results["dedicated"] = balances
             except Exception as e:
-                logger.error(f"AGAPE-SPOT Executor: Balance fetch failed: {e}")
+                logger.error(f"AGAPE-SPOT Executor: Dedicated balance fetch failed: {e}")
                 results["dedicated"] = {"error": str(e)}
 
         return results

@@ -1021,13 +1021,18 @@ class AgapeSpotTrader:
 
         is_live = self.config.is_live(ticker)
         coinbase_ok = self.executor._get_client(ticker) is not None
-        has_dedicated = ticker in self.executor._ticker_clients
+        has_dedicated = self.executor._dedicated_client is not None
+        accounts_active = []
+        if self.executor._client is not None:
+            accounts_active.append("default")
+        if has_dedicated:
+            accounts_active.append("dedicated")
         return {
             "bot_name": "AGAPE-SPOT",
             "status": "ACTIVE" if self._enabled else "DISABLED",
             "mode": "live" if is_live else "paper",
             "coinbase_connected": coinbase_ok,
-            "coinbase_account": "dedicated" if has_dedicated else "default",
+            "coinbase_accounts": accounts_active,
             "live_ready": is_live and coinbase_ok,
             "ticker": ticker,
             "display_name": ticker_config.get("display_name", ticker),
