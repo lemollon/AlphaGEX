@@ -67,6 +67,7 @@ const navItems = [
   { href: '/live-trading', label: 'Live Trading', icon: LayoutDashboard, category: 'Live Trading' },
   { href: '/jubilee', label: `${BOT_DISPLAY_NAMES.JUBILEE} (Box Spread + IC)`, icon: Flame, category: 'Live Trading' },
   { href: '/fortress', label: `${BOT_DISPLAY_NAMES.FORTRESS} (SPY Iron Condor)`, icon: Sword, category: 'Live Trading' },
+  { href: '/fortress/backtest', label: `${BOT_DISPLAY_NAMES.FORTRESS} Backtest Scorecard`, icon: BarChart3, category: 'AI & Testing' },
   { href: '/solomon', label: `${BOT_DISPLAY_NAMES.SOLOMON} (Directional Spreads)`, icon: Target, category: 'Live Trading' },
   { href: '/gideon', label: `${BOT_DISPLAY_NAMES.GIDEON} (Aggressive Directional)`, icon: Flame, category: 'Live Trading' },
   { href: '/anchor', label: `${BOT_DISPLAY_NAMES.ANCHOR} (SPX Iron Condor)`, icon: Shield, category: 'Live Trading' },
