@@ -268,17 +268,53 @@ class AgapeSpotExecutor:
 
         Used for balance-aware position sizing so each account trades
         within its actual available capital.
+
+        Handles pagination (Coinbase returns max 250 accounts per page)
+        and falls back to USDC if no USD fiat wallet is found.
         """
         if not client:
             return None
         try:
-            accounts = client.get_accounts()
-            acct_list = self._resp(accounts, "accounts", [])
-            for acct in acct_list:
-                currency = self._resp(acct, "currency", "")
-                if currency == "USD":
-                    avail_bal = self._resp(acct, "available_balance", {})
-                    return float(self._resp(avail_bal, "value", 0))
+            usd_balance = None
+            usdc_balance = None
+            cursor = None
+
+            # Paginate through all accounts (Coinbase caps at 250 per page)
+            for _ in range(10):  # safety limit
+                kwargs = {"limit": 250}
+                if cursor:
+                    kwargs["cursor"] = cursor
+
+                accounts = client.get_accounts(**kwargs)
+                acct_list = self._resp(accounts, "accounts", [])
+
+                for acct in acct_list:
+                    currency = self._resp(acct, "currency", "")
+                    if currency == "USD":
+                        avail_bal = self._resp(acct, "available_balance", {})
+                        usd_balance = float(self._resp(avail_bal, "value", 0))
+                    elif currency == "USDC" and usdc_balance is None:
+                        avail_bal = self._resp(acct, "available_balance", {})
+                        usdc_balance = float(self._resp(avail_bal, "value", 0))
+
+                if usd_balance is not None:
+                    return usd_balance
+
+                # Check for next page
+                next_cursor = self._resp(accounts, "cursor", None)
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+            # USD not found — fall back to USDC (stablecoin, ~$1 each)
+            if usdc_balance is not None and usdc_balance > 0:
+                logger.info(
+                    f"AGAPE-SPOT Executor: No USD wallet found, using "
+                    f"USDC balance ${usdc_balance:.2f}"
+                )
+                return usdc_balance
+
+            return usd_balance  # None if never found
         except Exception as e:
             logger.warning(f"AGAPE-SPOT Executor: USD balance lookup failed: {e}")
         return None
@@ -509,11 +545,30 @@ class AgapeSpotExecutor:
                             ticker=signal.ticker,
                         )
                     return None
+                else:
+                    # Balance lookup returned None — could not find USD wallet.
+                    # Do NOT fall through to signal quantity (paper-sized) as
+                    # that would try to buy $1000 with $199 and get rejected.
+                    logger.warning(
+                        f"AGAPE-SPOT: USD balance not found [{account_label}] "
+                        f"{signal.ticker} — skipping live order"
+                    )
+                    if self.db:
+                        self.db.log(
+                            "WARNING", "USD_WALLET_NOT_FOUND",
+                            f"[{account_label}] {signal.ticker}: "
+                            f"get_accounts() returned no USD wallet. "
+                            f"Cannot size order. Check API key permissions "
+                            f"or transfer USD to Advanced Trade.",
+                            ticker=signal.ticker,
+                        )
+                    return None
             except Exception as bal_err:
                 logger.warning(
                     f"AGAPE-SPOT: Balance check failed [{account_label}] "
-                    f"{signal.ticker}: {bal_err} — proceeding with signal qty"
+                    f"{signal.ticker}: {bal_err} — skipping live order"
                 )
+                return None
 
             notional_est = quantity * signal.spot_price
             min_notional = self.get_min_notional(signal.ticker)
