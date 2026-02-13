@@ -1587,7 +1587,10 @@ class JubileeICSignalGenerator:
             dte = 0
         else:
             days_until_friday = (4 - now.weekday()) % 7
-            if days_until_friday == 0 and now.hour >= 15:
+            # On Fridays, always trade NEXT Friday (7 DTE) for better premium.
+            # 0DTE Friday options have crushed premiums and poor risk/reward.
+            # 7 DTE weeklies give meaningful theta with room to manage.
+            if days_until_friday == 0:
                 days_until_friday = 7
             exp_date = now + timedelta(days=days_until_friday)
             expiration = exp_date.strftime('%Y-%m-%d')
