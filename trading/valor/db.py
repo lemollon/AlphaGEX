@@ -689,11 +689,12 @@ class ValorDatabase:
                 # Was it a winner that turned into a loser?
                 was_profitable_before_loss = (realized_pnl < 0 and mfe_points > 0.5)
 
-                # Determine if overnight session (5 PM - 4 AM CT)
+                # Determine if overnight session (3 PM - 8 AM CT)
+                # Options close at 3 PM CT, so any trade from 3 PM onward is overnight
                 is_overnight = False
                 if position.open_time:
                     hour = position.open_time.hour
-                    is_overnight = (hour >= 17 or hour < 4)
+                    is_overnight = (hour >= 15 or hour < 8)
 
                 # Generate loss analysis text
                 loss_analysis = None

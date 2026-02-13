@@ -335,8 +335,8 @@ class ValorConfig:
     # Key insight: Losing trades never go profitable (MFE=0.18), so reversing captures momentum
 
     # OVERNIGHT HYBRID STRATEGY - Different parameters for overnight vs RTH
-    # Overnight = 5 PM - 4 AM CT (lower liquidity, different price behavior)
-    # RTH = 4 AM - 5 PM CT (regular trading hours with better liquidity)
+    # Overnight = 3 PM - 8 AM CT (options close at 3 PM, no hedging = different behavior)
+    # RTH = 8 AM - 3 PM CT (regular trading hours with options hedging + better liquidity)
     # Backtest shows tighter stops/smaller targets work better overnight
     use_overnight_hybrid: bool = True  # Enable different params for overnight
     overnight_stop_points: float = 1.5  # Tighter stop for overnight (vs 2.5 RTH)

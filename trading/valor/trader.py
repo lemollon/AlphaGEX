@@ -1430,12 +1430,17 @@ class ValorTrader:
     # ========================================================================
 
     def _is_overnight_session(self) -> bool:
-        """Check if current time is overnight session (5 PM - 8 AM CT)"""
+        """Check if current time is overnight session (3 PM - 8 AM CT)
+
+        Options close at 3 PM CT. From 3 PM onward, there is no options hedging,
+        so price behavior changes. Futures maintenance break is 4-5 PM CT.
+        Overnight session = 3 PM to 8 AM CT (includes post-market + pre-market).
+        """
         now = datetime.now(CENTRAL_TZ)
         hour = now.hour
 
-        # Overnight: 5 PM (17:00) to 8 AM (08:00)
-        return hour >= 17 or hour < 8
+        # Overnight: 3 PM (15:00) to 8 AM (08:00)
+        return hour >= 15 or hour < 8
 
     def _get_vix(self) -> float:
         """
