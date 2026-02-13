@@ -401,16 +401,30 @@ class ValorTrader:
                         self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
                                                skip_reason="Execution failed")
                 else:
+                    # Identify which specific sub-condition(s) failed
+                    failures = []
+                    if signal.confidence < 0.50:
+                        failures.append(f"confidence={signal.confidence:.3f}<0.50")
+                    if signal.win_probability < 0.50:
+                        failures.append(f"win_prob={signal.win_probability:.4f}<0.50")
+                    if signal.entry_price <= 0:
+                        failures.append(f"entry={signal.entry_price:.2f}<=0")
+                    if signal.stop_price <= 0:
+                        failures.append(f"stop={signal.stop_price:.2f}<=0")
+                    if signal.contracts < 1:
+                        failures.append(f"contracts={signal.contracts}<1")
+                    failed_str = " | ".join(failures) if failures else "unknown"
+
                     logger.warning(
-                        f"VALOR GATE 6 BLOCKED: Invalid signal - "
-                        f"confidence={signal.confidence:.2%} (need>=0.50), "
-                        f"win_prob={signal.win_probability:.2%} (need>=0.50), "
+                        f"VALOR GATE 6 BLOCKED: {signal.direction.value} signal invalid - "
+                        f"FAILED: [{failed_str}] | "
+                        f"confidence={signal.confidence:.3f}, win_prob={signal.win_probability:.4f}, "
                         f"entry={signal.entry_price:.2f}, stop={signal.stop_price:.2f}, "
                         f"contracts={signal.contracts}"
                     )
-                    self.db.save_signal(signal, was_executed=False, skip_reason="Invalid signal")
+                    self.db.save_signal(signal, was_executed=False, skip_reason=f"Invalid: {failed_str}")
                     self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                           skip_reason=f"Invalid signal: {signal.reasoning[:100] if signal.reasoning else 'No reason'}")
+                                           skip_reason=f"Invalid signal: {failed_str}")
             else:
                 # No signal generated - signal generator returned None
                 # Detailed reason already logged at INFO level by signal generator
@@ -1430,12 +1444,17 @@ class ValorTrader:
     # ========================================================================
 
     def _is_overnight_session(self) -> bool:
-        """Check if current time is overnight session (5 PM - 8 AM CT)"""
+        """Check if current time is overnight session (3 PM - 8 AM CT)
+
+        Options close at 3 PM CT. From 3 PM onward, there is no options hedging,
+        so price behavior changes. Futures maintenance break is 4-5 PM CT.
+        Overnight session = 3 PM to 8 AM CT (includes post-market + pre-market).
+        """
         now = datetime.now(CENTRAL_TZ)
         hour = now.hour
 
-        # Overnight: 5 PM (17:00) to 8 AM (08:00)
-        return hour >= 17 or hour < 8
+        # Overnight: 3 PM (15:00) to 8 AM (08:00)
+        return hour >= 15 or hour < 8
 
     def _get_vix(self) -> float:
         """

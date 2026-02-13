@@ -335,14 +335,14 @@ class ValorConfig:
     # Key insight: Losing trades never go profitable (MFE=0.18), so reversing captures momentum
 
     # OVERNIGHT HYBRID STRATEGY - Different parameters for overnight vs RTH
-    # Overnight = 5 PM - 4 AM CT (lower liquidity, different price behavior)
-    # RTH = 4 AM - 5 PM CT (regular trading hours with better liquidity)
+    # Overnight = 3 PM - 8 AM CT (options close at 3 PM, no hedging = different behavior)
+    # RTH = 8 AM - 3 PM CT (regular trading hours with options hedging + better liquidity)
     # Backtest shows tighter stops/smaller targets work better overnight
     use_overnight_hybrid: bool = True  # Enable different params for overnight
-    overnight_stop_points: float = 1.5  # Tighter stop for overnight (vs 2.5 RTH)
-    overnight_target_points: float = 3.0  # Smaller target for overnight (vs 6.0 RTH)
+    overnight_stop_points: float = 1.25  # Tighter stop for choppy overnight (vs 2.5 RTH)
+    overnight_target_points: float = 2.0  # Take profits faster in overnight chop (vs 6.0 RTH)
     # When use_no_loss_trailing is True, these affect the emergency stop only:
-    overnight_emergency_stop: float = 10.0  # Tighter emergency stop overnight
+    overnight_emergency_stop: float = 8.0  # Tighter emergency stop overnight (low liquidity = gaps)
 
     # Position sizing
     position_sizing_method: str = "FIXED_FRACTIONAL_ATR"  # Method for sizing
@@ -568,6 +568,10 @@ class BayesianWinTracker:
     negative_gamma_wins: int = 0
     negative_gamma_losses: int = 0
 
+    # Cold start protection - floor probability until enough data to be meaningful
+    cold_start_trades: int = 10  # Below this, floor the blended probability
+    cold_start_floor: float = 0.52  # Floor value (just above 0.50 gate)
+
     # ML transition threshold
     ml_transition_trades: int = 50  # Switch to ML after 50 trades
 
@@ -606,6 +610,11 @@ class BayesianWinTracker:
         return (wins + 1) / (wins + losses + 2)
 
     @property
+    def is_cold_start(self) -> bool:
+        """True when too few trades for reliable Bayesian estimate"""
+        return self.total_trades < self.cold_start_trades
+
+    @property
     def should_use_ml(self) -> bool:
         """Check if enough data for ML model"""
         return self.total_trades >= self.ml_transition_trades
@@ -616,6 +625,8 @@ class BayesianWinTracker:
             'beta': self.beta,
             'total_trades': self.total_trades,
             'win_probability': self.win_probability,
+            'is_cold_start': self.is_cold_start,
+            'cold_start_floor': self.cold_start_floor,
             'positive_gamma_wins': self.positive_gamma_wins,
             'positive_gamma_losses': self.positive_gamma_losses,
             'negative_gamma_wins': self.negative_gamma_wins,
