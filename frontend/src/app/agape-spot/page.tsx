@@ -26,7 +26,29 @@ import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 // TYPES
 // ==============================================================================
 
-type TickerId = 'ALL' | 'ETH-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD'
+type TickerId = 'ALL' | 'ETH-USD' | 'BTC-USD' | 'XRP-USD' | 'SHIB-USD' | 'DOGE-USD'
+
+interface WinTrackerData {
+  ticker: string
+  alpha: number
+  beta: number
+  total_trades: number
+  win_probability: number
+  is_cold_start: boolean
+  cold_start_floor: number
+  positive_funding_wins: number
+  positive_funding_losses: number
+  negative_funding_wins: number
+  negative_funding_losses: number
+  neutral_funding_wins: number
+  neutral_funding_losses: number
+  should_use_ml: boolean
+  regime_probabilities: {
+    POSITIVE: number
+    NEGATIVE: number
+    NEUTRAL: number
+  }
+}
 
 interface TickerSummary {
   ticker: string
@@ -37,6 +59,7 @@ interface TickerSummary {
   win_rate: number | null
   total_trades: number
   unrealized_pnl: number
+  win_tracker?: WinTrackerData | null
 }
 
 // ==============================================================================
@@ -45,11 +68,12 @@ interface TickerSummary {
 
 const API = process.env.NEXT_PUBLIC_API_URL || ''
 
-const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD']
+const TICKERS: TickerId[] = ['ALL', 'ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD']
 
 const TICKER_META: Record<string, { symbol: string; label: string; colorClass: string; hexColor: string; bgActive: string; borderActive: string; textActive: string; bgCard: string; borderCard: string }> = {
   'ALL':      { symbol: 'ALL',  label: 'All Coins',  colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
   'ETH-USD':  { symbol: 'ETH',  label: 'Ethereum',   colorClass: 'cyan',   hexColor: '#06B6D4', bgActive: 'bg-cyan-600',   borderActive: 'border-cyan-500',   textActive: 'text-cyan-400',   bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
+  'BTC-USD':  { symbol: 'BTC',  label: 'Bitcoin',    colorClass: 'amber',  hexColor: '#F59E0B', bgActive: 'bg-amber-600',  borderActive: 'border-amber-500',  textActive: 'text-amber-400',  bgCard: 'bg-amber-950/30',  borderCard: 'border-amber-700/40' },
   'XRP-USD':  { symbol: 'XRP',  label: 'Ripple',     colorClass: 'blue',   hexColor: '#3B82F6', bgActive: 'bg-blue-600',   borderActive: 'border-blue-500',   textActive: 'text-blue-400',   bgCard: 'bg-blue-950/30',   borderCard: 'border-blue-700/40' },
   'SHIB-USD': { symbol: 'SHIB', label: 'Shiba Inu',  colorClass: 'orange', hexColor: '#F97316', bgActive: 'bg-orange-600', borderActive: 'border-orange-500', textActive: 'text-orange-400', bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
   'DOGE-USD': { symbol: 'DOGE', label: 'Dogecoin',   colorClass: 'yellow', hexColor: '#EAB308', bgActive: 'bg-yellow-600', borderActive: 'border-yellow-500', textActive: 'text-yellow-400', bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40' },
@@ -64,7 +88,7 @@ const SECTION_TABS = [
 ]
 type SectionTabId = typeof SECTION_TABS[number]['id']
 
-const TOTAL_CAPITAL = 8000
+const TOTAL_CAPITAL = 13000
 
 const TIME_FRAMES = [
   { id: 'today', label: 'Today', days: 0 },
@@ -418,8 +442,8 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
       </div>
 
       {/* Per-coin summary cards (with sparklines) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {(['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const).map((ticker) => (
           <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
         ))}
       </div>
@@ -642,6 +666,13 @@ function OverviewTab({ ticker }: { ticker: TickerId }) {
         <MetricCard label="Profit Factor" value={perf?.profit_factor != null ? String(perf.profit_factor) : '---'} color="text-white" />
         <MetricCard label="Mode" value={(status?.mode || 'paper').toUpperCase()} color={status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'} />
       </div>
+
+      {/* Bayesian Win Tracker */}
+      {status?.win_tracker && (
+        <SectionCard title="Bayesian Win Tracker" icon={<Eye className={`w-5 h-5 ${meta.textActive}`} />}>
+          <BayesianTrackerDetail tracker={status.win_tracker} color={meta.textActive} />
+        </SectionCard>
+      )}
 
       {/* Configuration */}
       <SectionCard title="Configuration" icon={<Activity className={`w-5 h-5 ${meta.textActive}`} />}>
@@ -1166,12 +1197,160 @@ function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onCh
 }
 
 // ==============================================================================
+// BAYESIAN WIN TRACKER COMPONENTS
+// ==============================================================================
+
+function BayesianTrackerCompact({ tracker, color }: { tracker: WinTrackerData; color: string }) {
+  const prob = (tracker.win_probability * 100).toFixed(0)
+  const probColor = tracker.win_probability >= 0.55
+    ? 'text-green-400'
+    : tracker.win_probability >= 0.45
+      ? 'text-yellow-400'
+      : 'text-red-400'
+
+  return (
+    <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-700/50">
+      <div className="flex items-center gap-2">
+        <span className="text-gray-500 text-xs">Bayesian</span>
+        {tracker.is_cold_start && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/40">
+            LEARNING
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-3 text-xs font-mono">
+        <span className={probColor}>{prob}%</span>
+        <span className="text-gray-600">|</span>
+        <RegimeDot label="+" prob={tracker.regime_probabilities.POSITIVE} />
+        <RegimeDot label="-" prob={tracker.regime_probabilities.NEGATIVE} />
+        <RegimeDot label="~" prob={tracker.regime_probabilities.NEUTRAL} />
+      </div>
+    </div>
+  )
+}
+
+function RegimeDot({ label, prob }: { label: string; prob: number }) {
+  const pct = (prob * 100).toFixed(0)
+  const c = prob >= 0.55 ? 'text-green-400' : prob >= 0.45 ? 'text-yellow-400' : 'text-red-400'
+  return (
+    <span className={c} title={`${label === '+' ? 'Positive' : label === '-' ? 'Negative' : 'Neutral'} funding: ${pct}%`}>
+      {label}{pct}
+    </span>
+  )
+}
+
+function BayesianTrackerDetail({ tracker, color }: { tracker: WinTrackerData; color: string }) {
+  const prob = tracker.win_probability
+  const regimes = [
+    { key: 'POSITIVE', label: 'Positive Funding', wins: tracker.positive_funding_wins, losses: tracker.positive_funding_losses, prob: tracker.regime_probabilities.POSITIVE, dotColor: 'bg-green-400' },
+    { key: 'NEGATIVE', label: 'Negative Funding', wins: tracker.negative_funding_wins, losses: tracker.negative_funding_losses, prob: tracker.regime_probabilities.NEGATIVE, dotColor: 'bg-red-400' },
+    { key: 'NEUTRAL', label: 'Neutral Funding', wins: tracker.neutral_funding_wins, losses: tracker.neutral_funding_losses, prob: tracker.regime_probabilities.NEUTRAL, dotColor: 'bg-yellow-400' },
+  ]
+
+  const probBarWidth = Math.max(5, Math.min(95, prob * 100))
+  const gatePosition = 50 // 0.50 gate threshold
+
+  return (
+    <div className="space-y-4">
+      {/* Overall probability with gate visualization */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-gray-400 text-sm">Overall Win Probability</span>
+          <div className="flex items-center gap-2">
+            {tracker.is_cold_start && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/40">
+                LEARNING ({tracker.total_trades}/10)
+              </span>
+            )}
+            {tracker.should_use_ml && (
+              <span className="px-2 py-0.5 rounded text-xs font-medium bg-purple-900/40 text-purple-400 border border-purple-700/40">
+                ML READY
+              </span>
+            )}
+            <span className={`text-lg font-bold font-mono ${prob >= 0.55 ? 'text-green-400' : prob >= 0.45 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {(prob * 100).toFixed(1)}%
+            </span>
+          </div>
+        </div>
+        {/* Probability bar with gate marker */}
+        <div className="relative h-3 bg-gray-800 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all ${prob >= 0.50 ? 'bg-green-500' : 'bg-red-500'}`}
+            style={{ width: `${probBarWidth}%` }}
+          />
+          {/* Gate line at 50% */}
+          <div
+            className="absolute top-0 h-full w-0.5 bg-white/60"
+            style={{ left: `${gatePosition}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-[10px] text-gray-600 mt-1">
+          <span>0%</span>
+          <span className="text-gray-500">50% gate</span>
+          <span>100%</span>
+        </div>
+      </div>
+
+      {/* Per-regime breakdown */}
+      <div>
+        <span className="text-gray-400 text-sm block mb-2">Regime Win Rates</span>
+        <div className="space-y-2">
+          {regimes.map((r) => {
+            const total = r.wins + r.losses
+            const barWidth = total > 0 ? Math.max(5, r.prob * 100) : 50
+            const regimeColor = r.prob >= 0.55 ? 'text-green-400' : r.prob >= 0.45 ? 'text-yellow-400' : 'text-red-400'
+            return (
+              <div key={r.key}>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${r.dotColor}`} />
+                    <span className="text-gray-400 text-xs">{r.label}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs font-mono">
+                    <span className="text-gray-500">{r.wins}W/{r.losses}L</span>
+                    <span className={regimeColor}>{(r.prob * 100).toFixed(0)}%</span>
+                  </div>
+                </div>
+                <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${r.prob >= 0.50 ? 'bg-green-500/60' : 'bg-red-500/60'}`}
+                    style={{ width: `${barWidth}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-3 text-xs">
+        <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+          <span className="text-gray-500 block">Trades Tracked</span>
+          <span className="text-white font-mono font-bold">{tracker.total_trades}</span>
+        </div>
+        <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+          <span className="text-gray-500 block">Alpha / Beta</span>
+          <span className="text-white font-mono font-bold">{tracker.alpha.toFixed(0)} / {tracker.beta.toFixed(0)}</span>
+        </div>
+        <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+          <span className="text-gray-500 block">Phase</span>
+          <span className={`font-mono font-bold ${tracker.is_cold_start ? 'text-yellow-400' : tracker.should_use_ml ? 'text-purple-400' : 'text-green-400'}`}>
+            {tracker.is_cold_start ? 'Cold Start' : tracker.should_use_ml ? 'ML Ready' : 'Bayesian'}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ==============================================================================
 // ENHANCEMENT: Live Price Ticker Strip
 // ==============================================================================
 
 function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> | undefined }) {
   if (!tickers) return null
-  const coins = ['ETH-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const
+  const coins = ['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD'] as const
   return (
     <div className="flex items-center gap-4 overflow-x-auto py-2 px-3 bg-gray-900/60 rounded-lg border border-gray-800/50">
       {coins.map(ticker => {
@@ -1247,6 +1426,10 @@ function CoinCard({ ticker, data }: { ticker: string; data: TickerSummary | unde
           </p>
         </div>
       </div>
+      {/* Bayesian Win Tracker */}
+      {data?.win_tracker && (
+        <BayesianTrackerCompact tracker={data.win_tracker} color={meta.textActive} />
+      )}
       {/* Sparkline: tiny intraday equity chart */}
       {sparkPoints.length > 1 && (
         <div className="h-10 mt-2 -mx-1">
