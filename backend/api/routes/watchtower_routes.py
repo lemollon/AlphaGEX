@@ -2313,12 +2313,16 @@ async def get_gex_analysis(
                 "message": "Cannot calculate GEX without valid spot price"
             }
 
-        # Process the options chain
-        # After hours: reuse existing snapshot to prevent engine state mutation
+        # When market is closed, use existing snapshot to prevent smoothing re-calculation
+        # on stale data (same safeguard as the /gamma endpoint for ARGUS)
         market_open = is_market_hours()
         if not market_open and engine.previous_snapshot:
             snapshot = engine.previous_snapshot
+            # Use the spot price and VIX from the snapshot for consistency
+            spot_price = snapshot.spot_price
+            vix = snapshot.vix
         else:
+            # Process the options chain (only during market hours or on first load)
             snapshot = engine.process_options_chain(
                 raw_data,
                 spot_price,

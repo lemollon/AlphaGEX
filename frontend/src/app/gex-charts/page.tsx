@@ -692,11 +692,17 @@ export default function GexChartsPage() {
             <button
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={`flex items-center gap-2 px-3 py-2 rounded text-sm ${
-                autoRefresh ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700'
+                autoRefresh
+                  ? (isMarketOpen()
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                    : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30')
+                  : 'bg-gray-800 text-gray-400 border border-gray-700'
               }`}
             >
               <Clock className="w-4 h-4" />
-              {autoRefresh ? 'Auto 30s' : 'Manual'}
+              {autoRefresh
+                ? (isMarketOpen() ? 'Auto 30s' : 'Market Closed')
+                : 'Manual'}
             </button>
 
             {/* Refresh Button */}
@@ -714,6 +720,9 @@ export default function GexChartsPage() {
           {lastUpdated && (
             <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
               <span>Last updated: {lastUpdated.toLocaleTimeString()}</span>
+              {!isMarketOpen() && (
+                <span className="text-yellow-400">Data as of last market close</span>
+              )}
               {data?.expiration && (
                 <span className="text-cyan-400">Viewing: {data.expiration}</span>
               )}
