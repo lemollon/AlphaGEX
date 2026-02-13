@@ -196,6 +196,17 @@ interface IntradayTick {
 // Common symbols for quick selection
 const COMMON_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'USO', 'TLT', 'DIA', 'AAPL', 'TSLA', 'NVDA', 'AMD']
 
+function isMarketOpen(): boolean {
+  const now = new Date()
+  const day = now.getDay()
+  if (day === 0 || day === 6) return false
+  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes()
+  const month = now.getUTCMonth()
+  const isDST = month >= 2 && month <= 9
+  const etMin = utcMin - (isDST ? 4 : 5) * 60
+  return etMin >= 570 && etMin < 975 // 9:30 AM – 4:15 PM ET
+}
+
 export default function GexChartsPage() {
   const paddingClass = useSidebarPadding()
   const [symbol, setSymbol] = useState('SPY')
