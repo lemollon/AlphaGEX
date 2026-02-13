@@ -1609,11 +1609,39 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
         # TradingVolatility returns the FOLLOWING DAY's expected GEX levels
         # (flip point, call wall, put wall, net_gex) after market close.
         # =====================================================================
+        logger.info(f"VALOR overnight GEX: Calling TradingVolatility for following day data (hour={hour})")
         try:
             from core_classes_and_engines import TradingVolatilityAPI
+            import time as _time
+
+            # CRITICAL FIX: TradingVolatilityAPI has an internal cache with dynamic TTL.
+            # During market hours, cache TTL is 5 minutes. After hours, TTL jumps to 4 hours.
+            # This means data cached at 2:50 PM (during market hours) is still considered
+            # "fresh" at 5 PM because the TTL recalculates to 4 hours at check time.
+            # We must clear stale market-hours data so a fresh API call is made to get
+            # the FOLLOWING DAY's GEX levels.
+            cache_key = f"gex/latest_{symbol}"
+            if cache_key in TradingVolatilityAPI._shared_response_cache:
+                _, cache_ts = TradingVolatilityAPI._shared_response_cache[cache_key]
+                cache_dt = datetime.fromtimestamp(cache_ts, tz=CENTRAL_TZ)
+                market_close_today = now.replace(hour=15, minute=0, second=0, microsecond=0)
+                if cache_dt < market_close_today:
+                    logger.info(
+                        f"VALOR: Clearing stale market-hours TradingVolatility cache "
+                        f"(cached at {cache_dt.strftime('%H:%M:%S')}, market closed at 3 PM). "
+                        f"Need fresh following-day data."
+                    )
+                    del TradingVolatilityAPI._shared_response_cache[cache_key]
+                else:
+                    cache_age_sec = _time.time() - cache_ts
+                    logger.info(
+                        f"VALOR: TradingVolatility cache is post-close data "
+                        f"(cached at {cache_dt.strftime('%H:%M:%S')}, age={cache_age_sec/60:.0f} min). Using it."
+                    )
 
             api = TradingVolatilityAPI()
             gex_result = api.get_net_gamma(symbol)
+            logger.info(f"VALOR overnight TradingVolatility response: {list(gex_result.keys()) if gex_result else 'None'}")
 
             if gex_result and 'error' not in gex_result:
                 flip_point = float(gex_result.get('flip_point', 0))
