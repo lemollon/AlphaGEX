@@ -268,17 +268,75 @@ class AgapeSpotExecutor:
 
         Used for balance-aware position sizing so each account trades
         within its actual available capital.
+
+        Paginates through ALL Coinbase accounts (API default is 49 per page,
+        but accounts with 200+ coins need multiple pages to reach USD).
+        Falls back to USDC if no USD fiat wallet is found.
         """
         if not client:
             return None
         try:
-            accounts = client.get_accounts()
-            acct_list = self._resp(accounts, "accounts", [])
-            for acct in acct_list:
-                currency = self._resp(acct, "currency", "")
-                if currency == "USD":
+            usd_balance = None
+            usdc_balance = None
+            cursor = None
+            total_scanned = 0
+            currencies_found = []
+
+            # Paginate through all accounts
+            for page in range(20):  # safety limit (20 × 250 = 5000 accounts max)
+                kwargs = {"limit": 250}
+                if cursor:
+                    kwargs["cursor"] = cursor
+
+                accounts = client.get_accounts(**kwargs)
+                acct_list = self._resp(accounts, "accounts", [])
+
+                if not acct_list:
+                    break
+
+                for acct in acct_list:
+                    currency = self._resp(acct, "currency", "")
                     avail_bal = self._resp(acct, "available_balance", {})
-                    return float(self._resp(avail_bal, "value", 0))
+                    val = float(self._resp(avail_bal, "value", 0))
+                    total_scanned += 1
+
+                    if currency == "USD":
+                        usd_balance = val
+                    elif currency == "USDC" and usdc_balance is None:
+                        usdc_balance = val
+
+                    # Track non-zero balances for debug logging
+                    if val > 0:
+                        currencies_found.append(f"{currency}=${val:.2f}")
+
+                if usd_balance is not None:
+                    logger.debug(
+                        f"AGAPE-SPOT Executor: Found USD=${usd_balance:.2f} "
+                        f"on page {page + 1} ({total_scanned} accounts scanned)"
+                    )
+                    return usd_balance
+
+                # Check for next page
+                next_cursor = self._resp(accounts, "cursor", None)
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+            # USD not found — fall back to USDC (stablecoin, ~$1 each)
+            if usdc_balance is not None and usdc_balance > 0:
+                logger.info(
+                    f"AGAPE-SPOT Executor: No USD wallet found after "
+                    f"{total_scanned} accounts, using USDC=${usdc_balance:.2f}"
+                )
+                return usdc_balance
+
+            # Nothing found — log what we DID find for debugging
+            logger.warning(
+                f"AGAPE-SPOT Executor: USD wallet NOT FOUND after scanning "
+                f"{total_scanned} accounts. Non-zero balances found: "
+                f"{currencies_found or 'NONE'}"
+            )
+            return usd_balance  # None
         except Exception as e:
             logger.warning(f"AGAPE-SPOT Executor: USD balance lookup failed: {e}")
         return None
@@ -461,59 +519,68 @@ class AgapeSpotExecutor:
 
             # --- Balance-aware sizing with performance-based allocation ---
             #
-            # Live accounts size from actual balance, NOT from signal quantity.
-            # The allocator assigns each ticker a % of available USD based on
-            # its historical performance (win rate, profit factor, recent P&L).
-            # Paper account is unaffected — it uses signal.quantity directly.
-            try:
-                usd_available = self._get_usd_balance_from_client(client)
-                if usd_available is not None and usd_available > 0:
-                    # Reserve 5% for fees/slippage
-                    usable_usd = usd_available * 0.95
+            # Live accounts ALWAYS size from the REAL Coinbase USD balance.
+            # No hardcoded fallbacks. If we can't read the balance, don't trade.
+            # The allocator ranks tickers by performance and assigns each a %
+            # of the available balance.
+            usd_available = self._get_usd_balance_from_client(client)
 
-                    # Ask allocator how much of the balance this ticker deserves
-                    alloc_pct = 1.0
-                    if self.capital_allocator:
-                        alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
-                    allocated_usd = usable_usd * alloc_pct
-
-                    # Size quantity from the allocated USD
-                    affordable_qty = allocated_usd / signal.spot_price
-                    affordable_qty = round(affordable_qty, qty_decimals)
-
-                    logger.info(
-                        f"AGAPE-SPOT: ALLOC SIZING [{account_label}] {signal.ticker} "
-                        f"balance=${usd_available:.2f}, usable=${usable_usd:.2f}, "
-                        f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
-                        f"qty={affordable_qty}"
-                    )
-                    if self.db:
-                        self.db.log(
-                            "INFO", "ALLOC_SIZED",
-                            f"[{account_label}] {signal.ticker}: "
-                            f"balance=${usd_available:.2f}, alloc={alloc_pct:.1%} "
-                            f"(${allocated_usd:.2f}), qty={affordable_qty}",
-                            ticker=signal.ticker,
-                        )
-                    quantity = affordable_qty
-                elif usd_available is not None and usd_available <= 0:
-                    logger.warning(
-                        f"AGAPE-SPOT: NO USD BALANCE [{account_label}] {signal.ticker} "
-                        f"— skipping live order"
-                    )
-                    if self.db:
-                        self.db.log(
-                            "WARNING", "NO_USD_BALANCE",
-                            f"[{account_label}] {signal.ticker}: $0 available, "
-                            f"cannot place order",
-                            ticker=signal.ticker,
-                        )
-                    return None
-            except Exception as bal_err:
-                logger.warning(
-                    f"AGAPE-SPOT: Balance check failed [{account_label}] "
-                    f"{signal.ticker}: {bal_err} — proceeding with signal qty"
+            if usd_available is None:
+                logger.error(
+                    f"AGAPE-SPOT: CANNOT READ USD BALANCE [{account_label}] "
+                    f"{signal.ticker} — skipping order. Check API key "
+                    f"permissions and Coinbase account."
                 )
+                if self.db:
+                    self.db.log(
+                        "ERROR", "BALANCE_LOOKUP_FAILED",
+                        f"[{account_label}] {signal.ticker}: "
+                        f"Could not read USD balance from Coinbase. "
+                        f"Cannot size order without real balance.",
+                        ticker=signal.ticker,
+                    )
+                return None
+
+            if usd_available <= 0:
+                logger.warning(
+                    f"AGAPE-SPOT: $0 USD [{account_label}] {signal.ticker} "
+                    f"— skipping order"
+                )
+                if self.db:
+                    self.db.log(
+                        "WARNING", "NO_USD_BALANCE",
+                        f"[{account_label}] {signal.ticker}: $0 available",
+                        ticker=signal.ticker,
+                    )
+                return None
+
+            # Size from real balance × allocator ranking
+            usable_usd = usd_available * 0.95  # Reserve 5% for fees/slippage
+
+            alloc_pct = 1.0
+            if self.capital_allocator:
+                alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
+            allocated_usd = usable_usd * alloc_pct
+
+            affordable_qty = allocated_usd / signal.spot_price
+            affordable_qty = round(affordable_qty, qty_decimals)
+
+            logger.info(
+                f"AGAPE-SPOT: SIZING [{account_label}] {signal.ticker} "
+                f"balance=${usd_available:.2f}, usable=${usable_usd:.2f}, "
+                f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                f"qty={affordable_qty}"
+            )
+            if self.db:
+                self.db.log(
+                    "INFO", "ALLOC_SIZED",
+                    f"[{account_label}] {signal.ticker}: "
+                    f"balance=${usd_available:.2f}, "
+                    f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                    f"qty={affordable_qty}",
+                    ticker=signal.ticker,
+                )
+            quantity = affordable_qty
 
             notional_est = quantity * signal.spot_price
             min_notional = self.get_min_notional(signal.ticker)
@@ -702,8 +769,8 @@ class AgapeSpotExecutor:
 
         account_label routes to the correct Coinbase client that owns this position.
         """
-        if account_label == "paper":
-            # Paper positions don't need a Coinbase sell
+        if account_label == "paper" or account_label.endswith("_fallback"):
+            # Paper and fallback positions were never placed on Coinbase
             return (False, None, None)
 
         client = self._get_client_for_account(ticker, account_label)
@@ -877,9 +944,11 @@ class AgapeSpotExecutor:
         """Close a long position (always sells).
 
         Routes to the correct Coinbase account using position.account_label.
+        Fallback positions (account_label ending with '_fallback') are always
+        closed as paper — they were never placed on Coinbase.
         """
         acct = getattr(position, "account_label", "default")
-        if acct == "paper":
+        if acct == "paper" or acct.endswith("_fallback"):
             return self._close_paper(position, current_price, reason)
         client = self._get_client_for_account(position.ticker, acct)
         if not client:

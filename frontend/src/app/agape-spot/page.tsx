@@ -751,6 +751,15 @@ function PositionsTab({ ticker }: { ticker: TickerId }) {
               <span className="px-2 py-1 rounded text-xs font-bold bg-green-900/50 text-green-400">
                 LONG
               </span>
+              {pos.account_label && (
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold ${
+                  pos.account_label === 'paper' || pos.account_label?.endsWith('_fallback')
+                    ? 'bg-yellow-900/50 text-yellow-400 border border-yellow-700/50'
+                    : 'bg-emerald-900/50 text-emerald-400 border border-emerald-700/50'
+                }`}>
+                  {pos.account_label?.endsWith('_fallback') ? 'PAPER' : pos.account_label === 'paper' ? 'PAPER' : 'LIVE'}
+                </span>
+              )}
               <span className="text-white font-mono font-semibold">
                 {pos.quantity ?? pos.eth_quantity ?? '---'} {TICKER_META[ticker].symbol} @ {fmtPrice(pos.entry_price)}
               </span>

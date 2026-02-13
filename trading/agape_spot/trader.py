@@ -320,23 +320,20 @@ class AgapeSpotTrader:
                     )
                 else:
                     if is_live:
-                        # Live failed — execute paper fallback for this account
+                        # Live order failed — log it but do NOT create fake
+                        # paper positions.  The parallel "paper" account already
+                        # tracks what-if performance.  Fallback positions just
+                        # pollute P&L, win rate, and never close properly.
                         logger.warning(
                             f"AGAPE-SPOT: LIVE execution failed for {ticker} "
-                            f"[{account_label}], falling back to PAPER"
+                            f"[{account_label}], skipping (no fallback)"
                         )
-                        fb_position = self.executor._execute_paper(
-                            signal, account_label=f"{account_label}_fallback",
+                        self.db.log(
+                            "WARNING", "LIVE_EXEC_FAILED",
+                            f"Live order failed for {ticker} [{account_label}]. "
+                            f"No fallback position created.",
+                            ticker=ticker,
                         )
-                        if fb_position:
-                            self.db.save_position(fb_position)
-                            traded_accounts.append(f"{account_label}_fb")
-                            self.db.log(
-                                "WARNING", "LIVE_EXEC_FAILED",
-                                f"Live failed for {ticker} [{account_label}], "
-                                f"paper fallback created.",
-                                ticker=ticker,
-                            )
 
             if traded_accounts:
                 result["new_trade"] = True
@@ -673,7 +670,11 @@ class AgapeSpotTrader:
         # ---- Execute LIVE sell on Coinbase for live tickers ----
         actual_close_price = current_price
         account_label = pos_dict.get("account_label", "default")
-        is_live_account = account_label != "paper" and self.config.is_live(ticker)
+        is_live_account = (
+            account_label != "paper"
+            and not account_label.endswith("_fallback")
+            and self.config.is_live(ticker)
+        )
 
         exec_details = None
         if is_live_account:
