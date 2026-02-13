@@ -1297,6 +1297,8 @@ export default function GexChartsPage() {
                             .sort((a, b) => b.strike - a.strike)
                             .map(s => ({
                               ...s,
+                              // Absolute value for bar length — color encodes sign
+                              abs_net_gamma: Math.abs(s.net_gamma),
                               // For split view: negate put_gamma so it shows as negative bars
                               put_gamma_display: -(s.put_gamma || 0),
                             }))
@@ -1311,6 +1313,7 @@ export default function GexChartsPage() {
                               type="number"
                               tick={{ fill: '#9ca3af', fontSize: 10 }}
                               tickFormatter={(v) => formatNumber(v, 1)}
+                              domain={[0, 'auto']}
                             />
                             <YAxis
                               type="category"
@@ -1368,9 +1371,9 @@ export default function GexChartsPage() {
                               />
                             )}
 
-                            {/* Net GEX view (ENH 1: color-coded) */}
+                            {/* Net GEX view — absolute bars, color = sign (green +, red -) */}
                             {chartView === 'net' && (
-                              <Bar dataKey="net_gamma" name="Net Gamma">
+                              <Bar dataKey="abs_net_gamma" name="Net Gamma">
                                 {sortedStrikes.map((entry, index) => (
                                   <Cell
                                     key={`cell-${index}`}
