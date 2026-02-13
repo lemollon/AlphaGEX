@@ -34,7 +34,10 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell, Legend } from 'recharts'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Cell, Legend,
+  LineChart, Line, CartesianGrid, Area, ComposedChart
+} from 'recharts'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -176,6 +179,20 @@ interface SymbolExpirations {
   }
 }
 
+// Intraday tick data from watchtower_snapshots
+interface IntradayTick {
+  time: string
+  spot_price: number | null
+  net_gamma: number | null
+  vix: number | null
+  expected_move: number | null
+  gamma_regime: string | null
+  flip_point: number | null
+  call_wall: number | null
+  put_wall: number | null
+  samples: number
+}
+
 // Common symbols for quick selection
 const COMMON_SYMBOLS = ['SPY', 'QQQ', 'IWM', 'GLD', 'SLV', 'USO', 'TLT', 'DIA', 'AAPL', 'TSLA', 'NVDA', 'AMD']
 
@@ -209,8 +226,12 @@ export default function GexChartsPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
 
-  // Chart view toggle: 'net' = single net gamma, 'split' = call vs put
-  const [chartView, setChartView] = useState<'net' | 'split'>('net')
+  // Chart view toggle: 'net' = single net gamma, 'split' = call vs put, 'intraday' = 5m price+gamma
+  const [chartView, setChartView] = useState<'net' | 'split' | 'intraday'>('net')
+
+  // Intraday tick data for stacked chart
+  const [intradayTicks, setIntradayTicks] = useState<IntradayTick[]>([])
+  const [intradayLoading, setIntradayLoading] = useState(false)
 
   // Expiration state
   const [expirations, setExpirations] = useState<SymbolExpirations | null>(null)
@@ -266,6 +287,21 @@ export default function GexChartsPage() {
     }
   }, [])
 
+  // Fetch intraday ticks for the stacked chart
+  const fetchIntradayTicks = useCallback(async (sym: string) => {
+    try {
+      setIntradayLoading(true)
+      const response = await apiClient.getWatchtowerIntradayTicks(sym, 5)
+      if (response.data?.success && response.data?.data?.ticks) {
+        setIntradayTicks(response.data.data.ticks)
+      }
+    } catch (err) {
+      console.error('Error fetching intraday ticks:', err)
+    } finally {
+      setIntradayLoading(false)
+    }
+  }, [])
+
   // Fetch expirations when symbol changes
   useEffect(() => {
     fetchExpirations(symbol)
@@ -280,6 +316,13 @@ export default function GexChartsPage() {
     }
   }, [symbol, selectedExpiration, fetchData])
 
+  // Fetch intraday ticks when switching to intraday view or symbol changes
+  useEffect(() => {
+    if (chartView === 'intraday') {
+      fetchIntradayTicks(symbol)
+    }
+  }, [chartView, symbol, fetchIntradayTicks])
+
   // Auto-refresh every 30 seconds during market hours only
   useEffect(() => {
     if (!autoRefresh) return
@@ -288,11 +331,14 @@ export default function GexChartsPage() {
       // Only poll when market is open — no point refreshing stale after-hours data
       if (isMarketOpen()) {
         fetchData(symbol, selectedExpiration)
+        if (chartView === 'intraday') {
+          fetchIntradayTicks(symbol)
+        }
       }
     }, 30000)
 
     return () => clearInterval(interval)
-  }, [symbol, selectedExpiration, autoRefresh, fetchData])
+  }, [symbol, selectedExpiration, autoRefresh, fetchData, chartView, fetchIntradayTicks])
 
   const handleSymbolChange = (newSymbol: string) => {
     setSymbol(newSymbol)
@@ -825,7 +871,10 @@ export default function GexChartsPage() {
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                       <BarChart3 className="w-4 h-4 text-cyan-400" />
-                      {symbol} {chartView === 'net' ? 'Net' : 'Call vs Put'} GEX for {data.expiration} Expiration, by Strike
+                      {chartView === 'intraday'
+                        ? `${symbol} Intraday 5m — Price + Net Gamma`
+                        : `${symbol} ${chartView === 'net' ? 'Net' : 'Call vs Put'} GEX for ${data.expiration} Expiration, by Strike`
+                      }
                     </h3>
                     {/* Chart View Toggle (ENH 7) */}
                     <div className="flex items-center gap-1 bg-gray-900 rounded-lg p-0.5 border border-gray-700">
@@ -849,10 +898,233 @@ export default function GexChartsPage() {
                       >
                         Call vs Put
                       </button>
+                      <button
+                        onClick={() => setChartView('intraday')}
+                        className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                          chartView === 'intraday'
+                            ? 'bg-cyan-500/20 text-cyan-400'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
+                      >
+                        Intraday 5m
+                      </button>
                     </div>
                   </div>
 
-                  {data.gex_chart.strikes.length === 0 ? (
+                  {/* Intraday 5m Stacked Chart */}
+                  {chartView === 'intraday' ? (
+                    intradayTicks.length === 0 ? (
+                      <div className="text-center py-8 text-yellow-400">
+                        <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+                        {intradayLoading
+                          ? 'Loading intraday ticks...'
+                          : 'No intraday data yet — ticks accumulate during market hours as GEX Charts is viewed.'
+                        }
+                      </div>
+                    ) : (
+                      <>
+                        <div className="h-[500px]">
+                          {(() => {
+                            // Format tick data for the chart
+                            const chartData = intradayTicks
+                              .filter(t => t.spot_price !== null)
+                              .map(t => ({
+                                ...t,
+                                label: t.time ? new Date(t.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
+                                net_gamma_display: t.net_gamma ?? 0,
+                              }))
+
+                            // Compute price range for right Y-axis
+                            const prices = chartData.map(t => t.spot_price!).filter(Boolean)
+                            const priceMin = Math.min(...prices)
+                            const priceMax = Math.max(...prices)
+                            const pricePad = (priceMax - priceMin) * 0.15 || 1
+
+                            return (
+                              <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart
+                                  data={chartData}
+                                  margin={{ top: 10, right: 60, left: 10, bottom: 5 }}
+                                >
+                                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                                  <XAxis
+                                    dataKey="label"
+                                    tick={{ fill: '#9ca3af', fontSize: 10 }}
+                                    interval="preserveStartEnd"
+                                  />
+                                  {/* Left Y-axis: Net Gamma */}
+                                  <YAxis
+                                    yAxisId="gamma"
+                                    orientation="left"
+                                    tick={{ fill: '#9ca3af', fontSize: 10 }}
+                                    tickFormatter={(v) => formatNumber(v, 1)}
+                                    label={{ value: 'Net Gamma', angle: -90, position: 'insideLeft', fill: '#6b7280', fontSize: 10 }}
+                                  />
+                                  {/* Right Y-axis: Spot Price */}
+                                  <YAxis
+                                    yAxisId="price"
+                                    orientation="right"
+                                    domain={[priceMin - pricePad, priceMax + pricePad]}
+                                    tick={{ fill: '#3b82f6', fontSize: 10 }}
+                                    tickFormatter={(v) => `$${v.toFixed(0)}`}
+                                    label={{ value: 'Price', angle: 90, position: 'insideRight', fill: '#3b82f6', fontSize: 10 }}
+                                  />
+                                  <Tooltip
+                                    content={({ active, payload, label: tipLabel }) => {
+                                      if (!active || !payload || !payload.length) return null
+                                      const tick = payload[0]?.payload
+                                      if (!tick) return null
+                                      return (
+                                        <div className="bg-gray-900 border border-gray-600 rounded-lg p-3 shadow-xl text-xs min-w-[200px]">
+                                          <div className="font-bold text-white text-sm mb-2">{tipLabel}</div>
+                                          <div className="space-y-1">
+                                            <div className="flex justify-between gap-4">
+                                              <span className="text-gray-400">Price:</span>
+                                              <span className="text-blue-400 font-mono font-bold">${tick.spot_price?.toFixed(2)}</span>
+                                            </div>
+                                            <div className="flex justify-between gap-4">
+                                              <span className="text-gray-400">Net Gamma:</span>
+                                              <span className={`font-mono font-bold ${(tick.net_gamma ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                                {formatNumber(tick.net_gamma ?? 0, 2)}
+                                              </span>
+                                            </div>
+                                            <div className="flex justify-between gap-4">
+                                              <span className="text-gray-400">Regime:</span>
+                                              <span className={`font-mono ${
+                                                tick.gamma_regime === 'POSITIVE' ? 'text-green-400' :
+                                                tick.gamma_regime === 'NEGATIVE' ? 'text-red-400' : 'text-gray-400'
+                                              }`}>{tick.gamma_regime || 'N/A'}</span>
+                                            </div>
+                                            {tick.flip_point && (
+                                              <div className="flex justify-between gap-4">
+                                                <span className="text-gray-400">Flip Point:</span>
+                                                <span className="text-yellow-400 font-mono">${tick.flip_point?.toFixed(2)}</span>
+                                              </div>
+                                            )}
+                                            {tick.vix && (
+                                              <div className="flex justify-between gap-4">
+                                                <span className="text-gray-400">VIX:</span>
+                                                <span className="text-white font-mono">{tick.vix?.toFixed(2)}</span>
+                                              </div>
+                                            )}
+                                            {(tick.call_wall || tick.put_wall) && (
+                                              <div className="border-t border-gray-700 pt-1 mt-1">
+                                                {tick.call_wall && (
+                                                  <div className="flex justify-between gap-4">
+                                                    <span className="text-gray-400">Call Wall:</span>
+                                                    <span className="text-cyan-400 font-mono">${tick.call_wall?.toFixed(2)}</span>
+                                                  </div>
+                                                )}
+                                                {tick.put_wall && (
+                                                  <div className="flex justify-between gap-4">
+                                                    <span className="text-gray-400">Put Wall:</span>
+                                                    <span className="text-purple-400 font-mono">${tick.put_wall?.toFixed(2)}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )
+                                    }}
+                                  />
+
+                                  {/* Net gamma bars — color coded green/red */}
+                                  <Bar yAxisId="gamma" dataKey="net_gamma_display" name="Net Gamma" barSize={12}>
+                                    {chartData.map((entry, index) => (
+                                      <Cell
+                                        key={`intra-${index}`}
+                                        fill={entry.net_gamma_display >= 0 ? '#22c55e' : '#ef4444'}
+                                        fillOpacity={0.7}
+                                      />
+                                    ))}
+                                  </Bar>
+
+                                  {/* Price line on right axis */}
+                                  <Line
+                                    yAxisId="price"
+                                    type="monotone"
+                                    dataKey="spot_price"
+                                    stroke="#3b82f6"
+                                    strokeWidth={2}
+                                    dot={false}
+                                    name="Price"
+                                  />
+
+                                  {/* Flip point line on right axis */}
+                                  <Line
+                                    yAxisId="price"
+                                    type="stepAfter"
+                                    dataKey="flip_point"
+                                    stroke="#eab308"
+                                    strokeWidth={1}
+                                    strokeDasharray="5 3"
+                                    dot={false}
+                                    name="Flip Point"
+                                  />
+
+                                  {/* Call wall reference */}
+                                  <Line
+                                    yAxisId="price"
+                                    type="stepAfter"
+                                    dataKey="call_wall"
+                                    stroke="#06b6d4"
+                                    strokeWidth={1}
+                                    strokeDasharray="3 3"
+                                    dot={false}
+                                    name="Call Wall"
+                                  />
+
+                                  {/* Put wall reference */}
+                                  <Line
+                                    yAxisId="price"
+                                    type="stepAfter"
+                                    dataKey="put_wall"
+                                    stroke="#a855f7"
+                                    strokeWidth={1}
+                                    strokeDasharray="3 3"
+                                    dot={false}
+                                    name="Put Wall"
+                                  />
+                                </ComposedChart>
+                              </ResponsiveContainer>
+                            )
+                          })()}
+                        </div>
+
+                        {/* Intraday Legend */}
+                        <div className="flex flex-wrap gap-4 mt-4 text-xs">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 bg-green-500 rounded-sm"></div>
+                            <span className="text-gray-400">Positive Gamma</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
+                            <span className="text-gray-400">Negative Gamma</span>
+                          </div>
+                          <span className="text-gray-600">|</span>
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-0.5 bg-blue-500"></div>
+                            <span className="text-gray-400">Price</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-0.5 bg-yellow-400" style={{ borderTop: '1px dashed #eab308' }}></div>
+                            <span className="text-gray-400">Flip Point</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-0.5 bg-cyan-400" style={{ borderTop: '1px dashed #06b6d4' }}></div>
+                            <span className="text-gray-400">Call Wall</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-0.5 bg-purple-400" style={{ borderTop: '1px dashed #a855f7' }}></div>
+                            <span className="text-gray-400">Put Wall</span>
+                          </div>
+                          <span className="text-gray-600">|</span>
+                          <span className="text-gray-500">{intradayTicks.length} ticks today</span>
+                        </div>
+                      </>
+                    )
+                  ) : data.gex_chart.strikes.length === 0 ? (
                     <div className="text-center py-8 text-yellow-400">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2" />
                       Real-time data not available outside of market hours (8:30am to 4:15pm ET)

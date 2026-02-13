@@ -2358,7 +2358,7 @@ async def get_gex_analysis(
             }
             gex_by_strike.append(strike_entry)
 
-        return {
+        response = {
             "success": True,
             "data": {
                 "symbol": symbol,
@@ -2418,6 +2418,29 @@ async def get_gex_analysis(
             }
         }
 
+        # Persist snapshot for intraday ticks (only during market hours)
+        if market_open:
+            try:
+                await persist_watchtower_snapshot_to_db(
+                    symbol=symbol,
+                    expiration_date=target_expiration,
+                    spot_price=spot_price,
+                    expected_move=snapshot.expected_move,
+                    vix=vix or 0,
+                    total_net_gamma=snapshot.total_net_gamma,
+                    gamma_regime=snapshot.gamma_regime,
+                    previous_regime=getattr(snapshot, 'previous_regime', None),
+                    regime_flipped=getattr(snapshot, 'regime_flipped', False),
+                    market_status=getattr(snapshot, 'market_status', 'open'),
+                    flip_point=flip_point,
+                    call_wall=call_wall,
+                    put_wall=put_wall
+                )
+            except Exception as persist_err:
+                logger.debug(f"GEX analysis snapshot persist skipped: {persist_err}")
+
+        return response
+
     except Exception as e:
         logger.error(f"Error getting GEX analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -2466,6 +2489,91 @@ async def get_gamma_history(
     except Exception as e:
         logger.error(f"Error getting gamma history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/intraday-ticks")
+async def get_intraday_ticks(
+    symbol: str = Query("SPY", description="Symbol to get ticks for"),
+    interval: int = Query(5, description="Interval in minutes to bucket ticks")
+):
+    """
+    Get intraday 5-minute ticks of key GEX metrics from watchtower_snapshots.
+
+    Returns time-series of: spot_price, total_net_gamma, gamma_regime, vix,
+    flip_point, call_wall, put_wall for the current trading day.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"ticks": [], "symbol": symbol, "interval": interval}}
+
+        cursor = conn.cursor()
+
+        # Get today's snapshots (bucket to nearest interval)
+        cursor.execute("""
+            SELECT
+                date_trunc('hour', snapshot_time) +
+                    (floor(extract(minute FROM snapshot_time) / %s) * %s || ' minutes')::interval
+                    AS tick_time,
+                AVG(spot_price) AS spot_price,
+                AVG(total_net_gamma) AS total_net_gamma,
+                AVG(vix) AS vix,
+                AVG(expected_move) AS expected_move,
+                MODE() WITHIN GROUP (ORDER BY gamma_regime) AS gamma_regime,
+                AVG(flip_point) AS flip_point,
+                AVG(call_wall) AS call_wall,
+                AVG(put_wall) AS put_wall,
+                COUNT(*) AS sample_count
+            FROM watchtower_snapshots
+            WHERE symbol = %s
+            AND snapshot_time::date = CURRENT_DATE
+            ORDER BY tick_time ASC
+        """, (interval, interval, symbol))
+
+        rows = cursor.fetchall()
+
+        ticks = []
+        for row in rows:
+            tick_time, spot, net_gamma, vix_val, em, regime, flip, cw, pw, count = row
+            ticks.append({
+                "time": tick_time.isoformat() if tick_time else None,
+                "spot_price": round(float(spot), 2) if spot else None,
+                "net_gamma": round(float(net_gamma), 2) if net_gamma else None,
+                "vix": round(float(vix_val), 2) if vix_val else None,
+                "expected_move": round(float(em), 4) if em else None,
+                "gamma_regime": regime,
+                "flip_point": round(float(flip), 2) if flip else None,
+                "call_wall": round(float(cw), 2) if cw else None,
+                "put_wall": round(float(pw), 2) if pw else None,
+                "samples": count
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "ticks": ticks,
+                "symbol": symbol,
+                "interval": interval,
+                "count": len(ticks)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting intraday ticks: {e}")
+        return {"success": True, "data": {"ticks": [], "symbol": symbol, "interval": interval}}
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 @router.get("/probability")
@@ -2788,7 +2896,10 @@ async def persist_watchtower_snapshot_to_db(
     gamma_regime: str,
     previous_regime: str = None,
     regime_flipped: bool = False,
-    market_status: str = "open"
+    market_status: str = "open",
+    flip_point: float = None,
+    call_wall: float = None,
+    put_wall: float = None
 ):
     """
     Persist WATCHTOWER snapshot to database for prior day comparisons.
@@ -2826,12 +2937,14 @@ async def persist_watchtower_snapshot_to_db(
                 symbol, expiration_date, snapshot_time,
                 spot_price, expected_move, vix,
                 total_net_gamma, gamma_regime, previous_regime,
-                regime_flipped, market_status
+                regime_flipped, market_status,
+                flip_point, call_wall, put_wall
             ) VALUES (
                 %s, %s, NOW(),
                 %s, %s, %s,
                 %s, %s, %s,
-                %s, %s
+                %s, %s,
+                %s, %s, %s
             )
         """, (
             symbol,
@@ -2843,7 +2956,10 @@ async def persist_watchtower_snapshot_to_db(
             gamma_regime,
             previous_regime,
             regime_flipped,
-            market_status
+            market_status,
+            flip_point,
+            call_wall,
+            put_wall
         ))
 
         conn.commit()
