@@ -2368,10 +2368,10 @@ async def get_gex_analysis(
         upper_1sd = round(spot_price + em, 2) if em else None
         lower_1sd = round(spot_price - em, 2) if em else None
 
-        # Build GEX chart data
+        # Build GEX chart data (include magnet/pin/danger flags for frontend)
         gex_by_strike = []
         for s in snapshot.strikes:
-            gex_by_strike.append({
+            strike_entry = {
                 'strike': s.strike,
                 'net_gamma': round(s.net_gamma, 4),
                 'call_gamma': round(s.call_gamma, 6),
@@ -2380,8 +2380,16 @@ async def get_gex_analysis(
                 'put_volume': s.put_volume,
                 'total_volume': s.volume,
                 'call_iv': round(s.call_iv * 100, 1) if s.call_iv else None,
-                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None
-            })
+                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None,
+                'call_oi': getattr(s, 'call_oi', 0),
+                'put_oi': getattr(s, 'put_oi', 0),
+                'is_magnet': getattr(s, 'is_magnet', False),
+                'magnet_rank': getattr(s, 'magnet_rank', None),
+                'is_pin': getattr(s, 'is_pin', False),
+                'is_danger': getattr(s, 'is_danger', False),
+                'danger_type': getattr(s, 'danger_type', None),
+            }
+            gex_by_strike.append(strike_entry)
 
         return {
             "success": True,
@@ -2399,8 +2407,13 @@ async def get_gex_analysis(
                     "gex_at_expiration": diagnostics['summary']['net_gex'],
                     "net_gex": diagnostics['summary']['net_gex'],
                     "rating": diagnostics['rating']['rating'],
-                    "gamma_form": snapshot.gamma_regime
+                    "gamma_form": snapshot.gamma_regime,
+                    "previous_regime": getattr(snapshot, 'previous_regime', None),
+                    "regime_flipped": getattr(snapshot, 'regime_flipped', False),
                 },
+
+                # Call structure classification details
+                "call_structure_details": diagnostics['call_structure'],
 
                 # Options Flow Diagnostics (6 cards)
                 "flow_diagnostics": {
