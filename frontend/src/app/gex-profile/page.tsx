@@ -19,13 +19,12 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import {
   RefreshCw, Search, ArrowUpRight, BarChart3, Activity,
-  AlertCircle, TrendingUp, TrendingDown, Minus, Clock, Info
+  AlertCircle, TrendingUp, Info
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  ReferenceLine, Cell, ComposedChart, Line, Area, CartesianGrid, Legend, Customized
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine
 } from 'recharts'
 import { apiClient } from '@/lib/api'
 
@@ -175,49 +174,6 @@ function formatGex(num: number, decimals = 2): string {
 
 function formatDollar(num: number): string {
   return `$${num.toFixed(2)}`
-}
-
-/** Renders candlesticks via Recharts Customized — has access to axis scales */
-function CandlestickLayer({ xAxisMap, yAxisMap, data }: any) {
-  const xAxis = xAxisMap && Object.values(xAxisMap)[0] as any
-  const yAxis = yAxisMap?.price as any
-  if (!xAxis?.scale || !yAxis?.scale || !data) return null
-
-  const bandwidth = typeof xAxis.scale.bandwidth === 'function' ? xAxis.scale.bandwidth() : 12
-  const candleW = Math.max(bandwidth * 0.55, 3)
-
-  return (
-    <g className="candlestick-layer">
-      {data.map((d: any, i: number) => {
-        if (d.open == null || d.close == null || d.high == null || d.low == null) return null
-        const cx = (typeof xAxis.scale === 'function' ? xAxis.scale(d.label) : 0) + bandwidth / 2
-        const yHigh = yAxis.scale(d.high)
-        const yLow = yAxis.scale(d.low)
-        const yOpen = yAxis.scale(d.open)
-        const yClose = yAxis.scale(d.close)
-        if ([cx, yHigh, yLow, yOpen, yClose].some(v => v == null || isNaN(v))) return null
-
-        const bull = d.close >= d.open
-        const color = bull ? '#22c55e' : '#ef4444'
-
-        return (
-          <g key={`c-${i}`}>
-            <line x1={cx} y1={yHigh} x2={cx} y2={yLow} stroke={color} strokeWidth={1.2} />
-            <rect
-              x={cx - candleW / 2}
-              y={Math.min(yOpen, yClose)}
-              width={candleW}
-              height={Math.max(Math.abs(yClose - yOpen), 1)}
-              fill={bull ? 'transparent' : color}
-              stroke={color}
-              strokeWidth={1}
-              rx={0.5}
-            />
-          </g>
-        )
-      })}
-    </g>
-  )
 }
 
 function tickTime(iso: string): string {
@@ -399,21 +355,6 @@ export default function GexProfilePage() {
         }
       })
   }, [intradayTicks, barsByLabel])
-
-  // Price range for intraday chart (include OHLC highs/lows)
-  const intradayPriceRange = useMemo(() => {
-    const all = intradayChartData.flatMap(t =>
-      [t.spot_price, t.flip_point, t.call_wall, t.put_wall, t.high, t.low]
-        .filter((v): v is number => v !== null && v !== undefined && v > 0)
-    )
-    if (all.length === 0) return { min: 0, max: 0 }
-    const min = Math.min(...all)
-    const max = Math.max(...all)
-    const pad = (max - min) * 0.1 || 1
-    return { min: min - pad, max: max + pad }
-  }, [intradayChartData])
-
-  const hasCandles = intradayChartData.some(d => d.open !== null)
 
   // Strike data for Net GEX / Split views
   const sortedStrikes = useMemo(() => {
@@ -1135,78 +1076,6 @@ function PriceGauge({ price, flipPoint, callWall, putWall }: {
         <span className="text-cyan-400">
           <span className="text-gray-600">({distToCall}% away)</span> Call Wall ${callWall.toFixed(0)}
         </span>
-      </div>
-    </div>
-  )
-}
-
-function IntradayTooltip({ active, payload, label: tipLabel }: any) {
-  if (!active || !payload || !payload.length) return null
-  const tick = payload[0]?.payload
-  if (!tick) return null
-
-  const sp = tick.spot_price ?? 0
-  const fp = tick.flip_point ?? 0
-  const cw = tick.call_wall ?? 0
-  const pw = tick.put_wall ?? 0
-
-  let zone = 'Unknown'
-  let zoneColor = 'text-gray-400'
-  if (sp > cw && cw > 0) { zone = 'Above Call Wall'; zoneColor = 'text-cyan-400' }
-  else if (sp > fp && fp > 0) { zone = 'Positive Gamma Zone'; zoneColor = 'text-green-400' }
-  else if (sp < pw && pw > 0) { zone = 'Below Put Wall'; zoneColor = 'text-purple-400' }
-  else if (fp > 0) { zone = 'Negative Gamma Zone'; zoneColor = 'text-red-400' }
-
-  const distFlip = fp > 0 ? ((sp - fp) / sp * 100).toFixed(2) : null
-  const distCall = cw > 0 ? ((cw - sp) / sp * 100).toFixed(2) : null
-  const distPut = pw > 0 ? ((sp - pw) / sp * 100).toFixed(2) : null
-
-  return (
-    <div className="bg-gray-900 border border-gray-600 rounded-lg p-3 shadow-xl text-xs min-w-[240px]">
-      <div className="font-bold text-white text-sm mb-2">{tipLabel}</div>
-      <div className="space-y-1">
-        {tick.open != null ? (
-          <>
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`font-bold ${tick.close >= tick.open ? 'text-green-400' : 'text-red-400'}`}>
-                {tick.close >= tick.open ? '▲' : '▼'} ${tick.close?.toFixed(2)}
-              </span>
-              <span className="text-gray-500 text-[10px]">
-                O:{tick.open?.toFixed(2)} H:{tick.high?.toFixed(2)} L:{tick.low?.toFixed(2)}
-              </span>
-            </div>
-            {tick.bar_volume != null && (
-              <TipRow label="Volume" value={tick.bar_volume.toLocaleString()} color="text-gray-400" />
-            )}
-          </>
-        ) : (
-          <TipRow label="Price" value={`$${sp.toFixed(2)}`} color="text-blue-400" bold />
-        )}
-        <TipRow label="Zone" value={zone} color={zoneColor} bold />
-        <TipRow
-          label="Net Gamma"
-          value={formatGex(tick.net_gamma ?? 0, 2)}
-          color={(tick.net_gamma ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}
-          bold
-        />
-
-        <div className="border-t border-gray-700 pt-1 mt-1 space-y-1">
-          {distFlip !== null && (
-            <TipRow label="vs Flip" value={`${Number(distFlip) >= 0 ? '+' : ''}${distFlip}% ($${fp.toFixed(0)})`} color="text-yellow-400" />
-          )}
-          {distCall !== null && (
-            <TipRow label="to Call Wall" value={`+${distCall}% ($${cw.toFixed(0)})`} color="text-cyan-400" />
-          )}
-          {distPut !== null && (
-            <TipRow label="to Put Wall" value={`-${distPut}% ($${pw.toFixed(0)})`} color="text-purple-400" />
-          )}
-        </div>
-
-        {tick.vix != null && (
-          <div className="border-t border-gray-700 pt-1 mt-1">
-            <TipRow label="VIX" value={tick.vix?.toFixed(2)} color="text-white" />
-          </div>
-        )}
       </div>
     </div>
   )
