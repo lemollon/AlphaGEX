@@ -134,22 +134,6 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
-  fortressScorecard: async () => {
-    try {
-      const response = await api.get('/api/fortress/backtest/scorecard')
-      return response.data
-    } catch {
-      return { success: false, data: null }
-    }
-  },
-  fortressScorecardHistory: async (limit: number = 10) => {
-    try {
-      const response = await api.get(`/api/fortress/backtest/scorecard/history?limit=${limit}`)
-      return response.data
-    } catch {
-      return { success: false, data: { scorecards: [] } }
-    }
-  },
   fortressStrategyPresets: async () => {
     try {
       const response = await apiClient.getFortressStrategyPresets()
@@ -1251,22 +1235,6 @@ export function useFortressConfig(options?: SWRConfiguration) {
     refreshInterval: 5 * 60 * 1000,
     ...options,
   })
-}
-
-export function useFortressScorecard(options?: SWRConfiguration) {
-  return useSWR('fortress-scorecard', fetchers.fortressScorecard, {
-    ...swrConfig,
-    refreshInterval: 5 * 60 * 1000,
-    ...options,
-  })
-}
-
-export function useFortressScorecardHistory(limit: number = 10, options?: SWRConfiguration) {
-  return useSWR(
-    `fortress-scorecard-history-${limit}`,
-    () => fetchers.fortressScorecardHistory(limit),
-    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
-  )
 }
 
 export function useFortressStrategyPresets(options?: SWRConfiguration) {
