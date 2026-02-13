@@ -292,7 +292,7 @@ export default function BotStatusOverview() {
             </div>
           </div>
 
-          {/* Live Trading Bots */}
+          {/* Live Trading */}
           <div className="mb-3">
             <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Live Trading</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -323,13 +323,6 @@ export default function BotStatusOverview() {
                 color="amber"
                 isLoading={anchorLoading}
               />
-            </div>
-          </div>
-
-          {/* Paper Trading Bots */}
-          <div className="mb-3">
-            <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Paper Trading</div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <BotStatusCard
                 name="GIDEON"
                 icon={<Flame className="w-5 h-5 text-cyan-500" />}
