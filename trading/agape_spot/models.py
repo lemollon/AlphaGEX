@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
+from zoneinfo import ZoneInfo
+
+_CT = ZoneInfo("America/Chicago")
 
 
 # ==============================================================================
@@ -150,6 +153,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "use_momentum_filter": True,        # Block entries during price downtrends
         "min_scans_between_trades": 10,     # 10 min spacing — lower liquidity than crypto
         "max_positions": 2,                 # Conservative — new ticker, let it prove itself
+        # Market hours: MSTU is a US stock ETF — only trades Mon-Fri during market hours
+        "market_hours_only": True,          # Skip scanning outside US equity market hours
+        "market_open_hour": 8,              # 8:30 AM CT (Central Time)
+        "market_open_minute": 30,
+        "market_close_hour": 15,            # 3:00 PM CT
+        "market_close_minute": 0,
     },
 }
 
@@ -297,6 +306,51 @@ class AgapeSpotConfig:
             "min_scans_between_trades": cfg.get("min_scans_between_trades", 0),
             "max_positions": cfg.get("max_positions", self.max_open_positions_per_ticker),
         }
+
+    def is_market_hours_ticker(self, ticker: str) -> bool:
+        """Return True if this ticker is restricted to US equity market hours."""
+        return self.get_ticker_config(ticker).get("market_hours_only", False)
+
+    def is_ticker_in_market_hours(self, ticker: str, now: Optional[datetime] = None) -> bool:
+        """Return True if *ticker* is currently in its tradeable window.
+
+        Crypto tickers (market_hours_only=False) always return True (24/7).
+        MSTU and other equity-based tickers return True only during Mon-Fri
+        market hours in Central Time.
+        """
+        cfg = self.get_ticker_config(ticker)
+        if not cfg.get("market_hours_only", False):
+            return True  # crypto — always tradeable
+
+        if now is None:
+            now = datetime.now(_CT)
+        elif now.tzinfo is None:
+            now = now.replace(tzinfo=_CT)
+        else:
+            now = now.astimezone(_CT)
+
+        # Weekend check: Monday=0 .. Sunday=6
+        if now.weekday() >= 5:
+            return False
+
+        # Market hours check
+        open_h = cfg.get("market_open_hour", 8)
+        open_m = cfg.get("market_open_minute", 30)
+        close_h = cfg.get("market_close_hour", 15)
+        close_m = cfg.get("market_close_minute", 0)
+
+        market_open = now.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+        market_close = now.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
+
+        return market_open <= now <= market_close
+
+    def get_active_tickers(self, now: Optional[datetime] = None) -> List[str]:
+        """Return list of tickers currently in their trading window.
+
+        Useful for the capital allocator to redistribute capital from
+        inactive tickers (e.g. MSTU on weekends) to active crypto tickers.
+        """
+        return [t for t in self.tickers if self.is_ticker_in_market_hours(t, now)]
 
     def get_trading_capital(self, ticker: str) -> float:
         """Get capital used for position sizing.
@@ -716,6 +770,7 @@ class TickerPerformance:
     profit_factor: float = 0.0
     score: float = 0.0            # computed composite score
     allocation_pct: float = 0.0   # assigned % of available balance
+    is_active: bool = True        # False when outside market hours (e.g. MSTU on weekends)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -730,6 +785,7 @@ class TickerPerformance:
             "profit_factor": round(self.profit_factor, 2),
             "score": round(self.score, 4),
             "allocation_pct": round(self.allocation_pct, 4),
+            "is_active": self.is_active,
         }
 
 
@@ -773,12 +829,23 @@ class CapitalAllocator:
                 ticker=t, allocation_pct=equal_share,
             )
 
-    def refresh(self, perf_data: Dict[str, Dict[str, Any]]) -> None:
+    def refresh(
+        self,
+        perf_data: Dict[str, Dict[str, Any]],
+        active_tickers: Optional[List[str]] = None,
+    ) -> None:
         """Recalculate rankings from fresh performance data.
 
         perf_data: {ticker: {total_trades, wins, total_pnl, recent_pnl,
                              avg_win, avg_loss}} — provided by db query.
+        active_tickers: subset of tickers currently in their trading window.
+                        If provided, inactive tickers get 0% allocation and
+                        their share is redistributed to active ones.
+                        Scores are still computed for all tickers (for UI).
         """
+        # Default: all tickers active
+        active_set = set(active_tickers) if active_tickers is not None else set(self.tickers)
+
         perfs: List[TickerPerformance] = []
         for ticker in self.tickers:
             d = perf_data.get(ticker, {})
@@ -805,27 +872,39 @@ class CapitalAllocator:
                 avg_loss=avg_loss,
                 win_rate=win_rate,
                 profit_factor=min(pf, 10.0),  # cap to prevent single outlier domination
+                is_active=(ticker in active_set),
             ))
 
-        # --- Compute composite scores ---
+        # --- Compute composite scores (for ALL tickers, active or not) ---
         self._score_tickers(perfs)
 
-        # --- Assign allocation percentages ---
+        # --- Assign allocation percentages (only active tickers get share) ---
         self._allocate(perfs)
 
         # Store
         self._rankings = {p.ticker: p for p in perfs}
 
+        inactive_str = ""
+        inactive = [p.ticker for p in perfs if not p.is_active]
+        if inactive:
+            inactive_str = f" | INACTIVE (market closed): {', '.join(inactive)}"
+
         _alloc_logger.info(
-            "AGAPE-SPOT ALLOCATOR: Rankings refreshed — %s",
+            "AGAPE-SPOT ALLOCATOR: Rankings refreshed — %s%s",
             " | ".join(
                 f"{p.ticker}: score={p.score:.3f} alloc={p.allocation_pct:.1%}"
                 for p in sorted(perfs, key=lambda x: x.score, reverse=True)
             ),
+            inactive_str,
         )
 
     def _score_tickers(self, perfs: List[TickerPerformance]) -> None:
-        """Compute composite score for each ticker."""
+        """Compute composite score for each ticker.
+
+        For inactive tickers (outside market hours), the 24h recent P&L
+        component is excluded and its weight redistributed to avoid
+        penalizing tickers that simply can't trade right now.
+        """
         # Normalisation bounds
         max_pf = max((p.profit_factor for p in perfs), default=1.0) or 1.0
         pnl_values = [p.total_pnl for p in perfs]
@@ -842,37 +921,64 @@ class CapitalAllocator:
             norm_pf = min(p.profit_factor / max_pf, 1.0)
             norm_wr = p.win_rate
             norm_total = (p.total_pnl / pnl_range + 1.0) / 2.0   # map [-1,1] -> [0,1]
-            norm_recent = (p.recent_pnl / recent_range + 1.0) / 2.0
 
-            p.score = (
-                0.35 * norm_pf
-                + 0.25 * norm_wr
-                + 0.25 * norm_recent
-                + 0.15 * norm_total
-            )
+            if p.is_active:
+                # Normal weighting: 35% PF + 25% WR + 25% recent + 15% total
+                norm_recent = (p.recent_pnl / recent_range + 1.0) / 2.0
+                p.score = (
+                    0.35 * norm_pf
+                    + 0.25 * norm_wr
+                    + 0.25 * norm_recent
+                    + 0.15 * norm_total
+                )
+            else:
+                # Inactive ticker: drop the 24h recent component (it's always $0
+                # on weekends) and redistribute weight to long-term metrics.
+                # Reweighted: 45% PF + 30% WR + 25% total
+                p.score = (
+                    0.45 * norm_pf
+                    + 0.30 * norm_wr
+                    + 0.25 * norm_total
+                )
 
     def _allocate(self, perfs: List[TickerPerformance]) -> None:
         """Assign allocation percentages based on scores.
 
         Scores are shifted so the minimum becomes MIN_ALLOCATION_PCT,
         then normalised so they sum to 1.0.
+
+        Inactive tickers (outside market hours) get 0% allocation and
+        their share is redistributed proportionally to active tickers.
         """
         n = len(perfs)
         if n == 0:
             return
         if n == 1:
-            perfs[0].allocation_pct = 1.0
+            perfs[0].allocation_pct = 1.0 if perfs[0].is_active else 0.0
             return
 
-        # Shift scores: ensure minimum floor
-        min_score = min(p.score for p in perfs)
+        active_perfs = [p for p in perfs if p.is_active]
+        inactive_perfs = [p for p in perfs if not p.is_active]
+
+        # Give inactive tickers 0% — their capital goes to active tickers
+        for p in inactive_perfs:
+            p.allocation_pct = 0.0
+
+        if not active_perfs:
+            # All tickers inactive (shouldn't happen, but handle gracefully)
+            equal_share = 1.0 / n
+            for p in perfs:
+                p.allocation_pct = equal_share
+            return
+
+        # Allocate among active tickers only
+        min_score = min(p.score for p in active_perfs)
         shifted = []
-        for p in perfs:
-            # Give every ticker at least MIN_ALLOCATION_PCT worth of weight
+        for p in active_perfs:
             shifted.append(max(p.score - min_score, 0.0) + self.MIN_ALLOCATION_PCT)
 
         total_shifted = sum(shifted)
-        for p, s in zip(perfs, shifted):
+        for p, s in zip(active_perfs, shifted):
             p.allocation_pct = s / total_shifted
 
     def get_allocation(self, ticker: str) -> float:

@@ -1826,6 +1826,7 @@ interface AllocRanking {
   profit_factor: number
   total_pnl: number
   recent_pnl: number
+  is_active: boolean
 }
 
 function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking[]; total_tickers: number } | null | undefined }) {
@@ -1861,11 +1862,14 @@ function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking
               const meta = TICKER_META[r.ticker] || TICKER_META['ALL']
               const barWidth = Math.max(r.allocation_pct * 100, 2)
               return (
-                <tr key={r.ticker} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <tr key={r.ticker} className={`border-b border-gray-800/50 hover:bg-gray-800/30 ${r.is_active === false ? 'opacity-50' : ''}`}>
                   <td className="px-3 py-2.5 text-gray-400 font-mono">{idx + 1}</td>
                   <td className="px-3 py-2.5">
                     <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
                     <span className="text-gray-500 text-xs ml-1.5">{meta.label}</span>
+                    {r.is_active === false && (
+                      <span className="ml-1.5 px-1.5 py-0.5 bg-gray-700 text-gray-400 text-[10px] rounded">CLOSED</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-2">
