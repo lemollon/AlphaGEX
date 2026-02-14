@@ -130,11 +130,12 @@ export default function ValorPage() {
       const result = await trainValorML(50)
       setTrainingResult(result)
       if (result.success) {
-        // Refresh ML status, feature importance, training stats, and approval status
+        // Refresh ML status, feature importance, training stats, approval status, and shadow
         refreshMLStatus()
         refreshFeatureImportance()
         refreshApprovalStatus()
         refreshTrainingStats()
+        refreshShadow()
       }
     } catch (error: any) {
       setTrainingResult({ success: false, error: error.message || 'Training failed' })
@@ -1117,27 +1118,97 @@ export default function ValorPage() {
                           </div>
                         )}
 
-                        {/* Core metrics */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                          <div>
-                            <span className="text-gray-400">Accuracy:</span>
-                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.accuracy || 0) * 100).toFixed(1)}%</span>
+                        {/* Core Metrics Grid */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                          {[
+                            { label: 'Accuracy', value: trainingResult.metrics?.accuracy, pct: true },
+                            { label: 'Precision', value: trainingResult.metrics?.precision, pct: true },
+                            { label: 'Recall', value: trainingResult.metrics?.recall, pct: true },
+                            { label: 'F1 Score', value: trainingResult.metrics?.f1_score, pct: true },
+                            { label: 'AUC-ROC', value: trainingResult.metrics?.auc_roc, pct: false },
+                            { label: 'Brier Score', value: trainingResult.metrics?.brier_score, pct: false, lower: true },
+                            { label: 'Win Rate', value: trainingResult.metrics?.win_rate_actual, pct: true },
+                            { label: 'Predicted WR', value: trainingResult.metrics?.win_rate_predicted, pct: true },
+                          ].map(({ label, value, pct, lower }) => (
+                            <div key={label} className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+                              <span className="text-gray-500 text-[10px] block">{label}</span>
+                              <span className={`font-mono font-bold text-sm ${
+                                value == null ? 'text-gray-600' :
+                                lower ? (value <= 0.25 ? 'text-green-400' : value <= 0.35 ? 'text-yellow-400' : 'text-red-400') :
+                                pct ? (value >= 0.6 ? 'text-green-400' : value >= 0.5 ? 'text-yellow-400' : 'text-red-400') :
+                                (value >= 0.65 ? 'text-green-400' : value >= 0.55 ? 'text-yellow-400' : 'text-red-400')
+                              }`}>
+                                {value != null ? (pct ? `${(value * 100).toFixed(1)}%` : value.toFixed(4)) : '\u2014'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Sample Breakdown */}
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+                            <span className="text-gray-500 text-[10px] block">Total Samples</span>
+                            <span className="font-mono font-bold text-sm text-white">{trainingResult.samples?.total ?? trainingResult.training_samples ?? '\u2014'}</span>
                           </div>
-                          <div>
-                            <span className="text-gray-400">Precision:</span>
-                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.precision || 0) * 100).toFixed(1)}%</span>
+                          <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+                            <span className="text-gray-500 text-[10px] block">Wins</span>
+                            <span className="font-mono font-bold text-sm text-green-400">{trainingResult.samples?.wins ?? '\u2014'}</span>
                           </div>
-                          <div>
-                            <span className="text-gray-400">Recall:</span>
-                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.recall || 0) * 100).toFixed(1)}%</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">F1 Score:</span>
-                            <span className="ml-2 text-white font-mono">{((trainingResult.metrics?.f1_score || 0) * 100).toFixed(1)}%</span>
+                          <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+                            <span className="text-gray-500 text-[10px] block">Losses</span>
+                            <span className="font-mono font-bold text-sm text-red-400">{trainingResult.samples?.losses ?? '\u2014'}</span>
                           </div>
                         </div>
-                        <div className="text-xs text-gray-400">
-                          Trained on {trainingResult.training_samples} samples - Model saved to database
+
+                        {/* Regime-Specific Accuracy */}
+                        {(trainingResult.metrics?.positive_gamma_accuracy != null || trainingResult.metrics?.negative_gamma_accuracy != null) && (
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+                              <span className="text-gray-500 text-[10px] block">Positive Gamma Acc</span>
+                              <span className={`font-mono font-bold text-sm ${
+                                trainingResult.metrics?.positive_gamma_accuracy >= 0.6 ? 'text-green-400' : 'text-yellow-400'
+                              }`}>
+                                {trainingResult.metrics?.positive_gamma_accuracy != null
+                                  ? `${(trainingResult.metrics.positive_gamma_accuracy * 100).toFixed(1)}%`
+                                  : '\u2014'}
+                              </span>
+                            </div>
+                            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+                              <span className="text-gray-500 text-[10px] block">Negative Gamma Acc</span>
+                              <span className={`font-mono font-bold text-sm ${
+                                trainingResult.metrics?.negative_gamma_accuracy >= 0.6 ? 'text-green-400' : 'text-yellow-400'
+                              }`}>
+                                {trainingResult.metrics?.negative_gamma_accuracy != null
+                                  ? `${(trainingResult.metrics.negative_gamma_accuracy * 100).toFixed(1)}%`
+                                  : '\u2014'}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Feature Importance */}
+                        {trainingResult.feature_importance?.length > 0 && (
+                          <div>
+                            <div className="text-xs text-gray-400 mb-2">Feature Importance</div>
+                            <div className="space-y-1">
+                              {trainingResult.feature_importance.slice(0, 8).map((f: any) => (
+                                <div key={f.feature} className="flex items-center gap-2 text-xs">
+                                  <span className="text-gray-400 w-44 truncate">{f.feature}</span>
+                                  <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                                    <div
+                                      className="h-full bg-cyan-500 rounded-full"
+                                      style={{ width: `${Math.min(f.importance * 100, 100)}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-gray-500 w-12 text-right font-mono">{(f.importance * 100).toFixed(1)}%</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="text-xs text-gray-500">
+                          Model saved to database &middot; v{trainingResult.model_version}
                         </div>
                       </div>
                     ) : (

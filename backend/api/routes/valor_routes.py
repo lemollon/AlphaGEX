@@ -963,6 +963,19 @@ async def train_valor_ml_model(
                 "recommendation": "APPROVE: First ML model shows promising results" if is_improvement else "REVIEW: Model accuracy is below 55% threshold"
             }
 
+        # Build feature importance list
+        feature_importance_list = []
+        if metrics.feature_importances:
+            total_imp = sum(metrics.feature_importances.values()) or 1
+            feature_importance_list = sorted(
+                [
+                    {"feature": k, "importance": round(v / total_imp, 4)}
+                    for k, v in metrics.feature_importances.items()
+                ],
+                key=lambda x: x["importance"],
+                reverse=True,
+            )
+
         return {
             "success": True,
             "message": f"VALOR ML trained on {metrics.total_samples} trades",
@@ -983,6 +996,7 @@ async def train_valor_ml_model(
                 "wins": metrics.wins,
                 "losses": metrics.losses
             },
+            "feature_importance": feature_importance_list,
             "comparison": comparison,
             "training_samples": metrics.total_samples,
             "model_version": metrics.model_version,
