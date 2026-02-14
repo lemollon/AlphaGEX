@@ -49,6 +49,7 @@ import {
   useValorMLStatus,
   useValorMLFeatureImportance,
   useValorMLApprovalStatus,
+  useValorMLShadowStatus,
   useValorABTestStatus,
   useValorABTestResults,
   trainValorML,
@@ -116,6 +117,7 @@ export default function ValorPage() {
   const { data: mlStatus, mutate: refreshMLStatus } = useValorMLStatus()
   const { data: featureImportance, mutate: refreshFeatureImportance } = useValorMLFeatureImportance()
   const { data: mlApprovalStatus, mutate: refreshApprovalStatus } = useValorMLApprovalStatus()
+  const { data: mlShadowData, mutate: refreshShadow } = useValorMLShadowStatus()
   const { data: abTestStatus, mutate: refreshABTestStatus } = useValorABTestStatus()
   const { data: abTestResults, mutate: refreshABTestResults } = useValorABTestResults()
   const { data: signalsData } = useValorSignals(50)
@@ -695,6 +697,156 @@ export default function ValorPage() {
                   </div>
                 )}
               </div>
+
+              {/* ML Shadow Advisor */}
+              {(() => {
+                const ml = mlShadowData?.data
+                const phase = ml?.phase ?? 'COLLECTING'
+                const comp = ml?.shadow_comparison
+
+                const phaseColors: Record<string, string> = {
+                  COLLECTING: 'bg-gray-700 text-gray-300',
+                  TRAINING: 'bg-blue-900/50 text-blue-400 border border-blue-700/40',
+                  SHADOW: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/40',
+                  ELIGIBLE: 'bg-green-900/40 text-green-400 border border-green-700/40',
+                  PROMOTED: 'bg-purple-900/40 text-purple-400 border border-purple-700/40',
+                }
+                const phaseLabels: Record<string, string> = {
+                  COLLECTING: 'Collecting Data',
+                  TRAINING: 'Model Trained',
+                  SHADOW: 'Shadow Running',
+                  ELIGIBLE: 'Ready to Promote',
+                  PROMOTED: 'Active (Live)',
+                }
+
+                return (
+                  <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
+                    <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                      <Eye className="h-5 w-5 text-yellow-400" />
+                      ML Shadow Advisor
+                    </h3>
+
+                    {/* Phase + model info */}
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <span className={`px-2.5 py-1 rounded text-xs font-bold ${phaseColors[phase] || phaseColors.COLLECTING}`}>
+                          {phaseLabels[phase] || phase}
+                        </span>
+                        {ml?.is_trained && (
+                          <span className="text-xs text-gray-500">
+                            v{ml.model_version} &middot; {ml.samples ?? 0} samples
+                          </span>
+                        )}
+                      </div>
+                      {ml?.training_date && (
+                        <span className="text-xs text-gray-600">
+                          Trained {new Date(ml.training_date).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Shadow comparison stats */}
+                    {comp && comp.resolved_predictions > 0 && (
+                      <>
+                        <div className="text-xs text-gray-400 mb-2">Shadow Comparison (ML vs Bayesian)</div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <span className="text-gray-500 text-[10px] block">ML Brier</span>
+                            <span className={`font-mono font-bold text-sm ${comp.ml_brier <= comp.bayesian_brier ? 'text-green-400' : 'text-red-400'}`}>
+                              {comp.ml_brier.toFixed(4)}
+                            </span>
+                          </div>
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <span className="text-gray-500 text-[10px] block">Bayes Brier</span>
+                            <span className="font-mono font-bold text-sm text-gray-300">{comp.bayesian_brier.toFixed(4)}</span>
+                          </div>
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <span className="text-gray-500 text-[10px] block">Improvement</span>
+                            <span className={`font-mono font-bold text-sm ${comp.brier_improvement_pct > 0 ? 'text-green-400' : comp.brier_improvement_pct < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                              {comp.brier_improvement_pct > 0 ? '+' : ''}{comp.brier_improvement_pct.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <span className="text-gray-500 text-[10px] block">Resolved</span>
+                            <span className="font-mono font-bold text-sm text-white">{comp.resolved_predictions}</span>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-3 mb-3">
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <span className="text-gray-500 text-[10px] block">ML Accuracy</span>
+                            <span className="font-mono font-bold text-sm text-white">{(comp.ml_accuracy * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <span className="text-gray-500 text-[10px] block">Bayes Accuracy</span>
+                            <span className="font-mono font-bold text-sm text-gray-300">{(comp.bayesian_accuracy * 100).toFixed(1)}%</span>
+                          </div>
+                          <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                            <span className="text-gray-500 text-[10px] block">Catastrophic Miss</span>
+                            <span className={`font-mono font-bold text-sm ${comp.catastrophic_miss_rate <= 0.10 ? 'text-green-400' : 'text-red-400'}`}>
+                              {(comp.catastrophic_miss_rate * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Promotion blockers */}
+                    {comp?.promotion_blockers && comp.promotion_blockers.length > 0 && phase !== 'PROMOTED' && (
+                      <div className="bg-gray-800/30 rounded-lg p-3 mb-3">
+                        <div className="text-xs text-gray-400 mb-1.5">Promotion Blockers</div>
+                        <ul className="space-y-1">
+                          {comp.promotion_blockers.map((b: string, i: number) => (
+                            <li key={i} className="text-xs text-yellow-400/80 flex items-start gap-1.5">
+                              <span className="text-yellow-500 mt-0.5">&#x2022;</span>
+                              {b}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        onClick={handleTrainML}
+                        disabled={isTraining}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-900/40 text-blue-400 border border-blue-700/40 hover:bg-blue-800/50 disabled:opacity-40 transition-colors"
+                      >
+                        {isTraining ? 'Training...' : ml?.is_trained ? 'Retrain Model' : 'Train Model'}
+                      </button>
+                      {phase !== 'PROMOTED' && ml?.is_trained && (
+                        <button
+                          onClick={handleApproveML}
+                          disabled={isApproving || phase !== 'ELIGIBLE'}
+                          title={phase !== 'ELIGIBLE' ? 'Not yet eligible - resolve promotion blockers first' : 'Promote ML to control live trading'}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-900/40 text-green-400 border border-green-700/40 hover:bg-green-800/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {isApproving ? 'Promoting...' : 'Promote ML'}
+                        </button>
+                      )}
+                      {phase === 'PROMOTED' && (
+                        <button
+                          onClick={handleRevokeML}
+                          disabled={isRevoking}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-900/40 text-red-400 border border-red-700/40 hover:bg-red-800/50 disabled:opacity-40 transition-colors"
+                        >
+                          {isRevoking ? 'Revoking...' : 'Revoke ML'}
+                        </button>
+                      )}
+                      {ml?.is_trained && phase !== 'PROMOTED' && (
+                        <button
+                          onClick={handleRejectML}
+                          disabled={isRejecting}
+                          title="Delete trained model and start fresh"
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 hover:text-red-400 disabled:opacity-40 transition-colors"
+                        >
+                          {isRejecting ? 'Discarding...' : 'Discard Model'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
 
               {/* ML Training Status */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
@@ -1329,7 +1481,8 @@ export default function ValorPage() {
                           <th className="px-4 py-3 text-left text-gray-400">Regime</th>
                           <th className="px-4 py-3 text-right text-gray-400">Price</th>
                           <th className="px-4 py-3 text-left text-gray-400">Signal</th>
-                          <th className="px-4 py-3 text-right text-gray-400">Win Prob</th>
+                          <th className="px-4 py-3 text-right text-gray-400">Bayes</th>
+                          <th className="px-4 py-3 text-right text-gray-400">ML</th>
                           <th className="px-4 py-3 text-left text-gray-400">Decision</th>
                         </tr>
                       </thead>
@@ -1372,8 +1525,23 @@ export default function ValorPage() {
                                 </span>
                               )}
                             </td>
-                            <td className="px-4 py-3 text-right">
-                              {scan.signal_win_probability ? `${(scan.signal_win_probability * 100).toFixed(0)}%` : '-'}
+                            <td className="px-4 py-3 text-right font-mono text-xs">
+                              {scan.bayesian_probability_at_scan != null
+                                ? <span className={scan.bayesian_probability_at_scan >= 0.55 ? 'text-green-400' : scan.bayesian_probability_at_scan >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
+                                    {(scan.bayesian_probability_at_scan * 100).toFixed(0)}%
+                                  </span>
+                                : scan.signal_win_probability
+                                  ? <span className="text-gray-400">{(scan.signal_win_probability * 100).toFixed(0)}%</span>
+                                  : <span className="text-gray-600">-</span>
+                              }
+                            </td>
+                            <td className="px-4 py-3 text-right font-mono text-xs">
+                              {scan.ml_probability != null
+                                ? <span className={scan.ml_probability >= 0.55 ? 'text-purple-400' : scan.ml_probability >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
+                                    {(scan.ml_probability * 100).toFixed(0)}%
+                                  </span>
+                                : <span className="text-gray-600">-</span>
+                              }
                             </td>
                             <td className="px-4 py-3 text-gray-400 truncate max-w-xs" title={scan.decision_summary}>
                               {scan.decision_summary || scan.skip_reason || '-'}

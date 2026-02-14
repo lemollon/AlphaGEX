@@ -489,6 +489,46 @@ class ValorDatabase:
                     except Exception:
                         pass  # Column might not exist or already be VARCHAR(50)
 
+                # --- ML Shadow prediction columns on scan_activity ---
+                for col, typedef in [
+                    ("ml_probability", "DECIMAL(5, 4)"),
+                    ("bayesian_probability_at_scan", "DECIMAL(5, 4)"),
+                ]:
+                    try:
+                        c.execute(f"""
+                            ALTER TABLE valor_scan_activity
+                            ADD COLUMN IF NOT EXISTS {col} {typedef}
+                        """)
+                    except Exception:
+                        pass
+
+                # --- ML Shadow prediction table ---
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS valor_ml_shadow (
+                        id SERIAL PRIMARY KEY,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        scan_id VARCHAR(50),
+                        position_id VARCHAR(50),
+                        gamma_regime VARCHAR(20),
+                        ml_probability DECIMAL(5, 4) NOT NULL,
+                        bayesian_probability DECIMAL(5, 4) NOT NULL,
+                        actual_outcome VARCHAR(10),
+                        resolved_at TIMESTAMP WITH TIME ZONE,
+                        UNIQUE(position_id)
+                    )
+                """)
+                c.execute("CREATE INDEX IF NOT EXISTS idx_valor_ml_shadow_pos ON valor_ml_shadow(position_id)")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_valor_ml_shadow_resolved ON valor_ml_shadow(resolved_at)")
+
+                # --- ML config key/value store ---
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS valor_ml_config (
+                        config_key VARCHAR(100) PRIMARY KEY,
+                        config_value TEXT,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+
                 conn.commit()
                 logger.info("VALOR database tables ensured")
 
@@ -2167,7 +2207,9 @@ class ValorDatabase:
         entry_price: float = 0,
         stop_price: float = 0,
         error_message: str = "",
-        skip_reason: str = ""
+        skip_reason: str = "",
+        ml_probability: float = None,
+        bayesian_probability_at_scan: float = None,
     ) -> bool:
         """
         Save scan activity for ML training data collection.
@@ -2202,11 +2244,12 @@ class ValorDatabase:
                         contracts_calculated, risk_amount, account_balance,
                         is_overnight_session, session_type, day_of_week, hour_of_day,
                         trade_executed, position_id, entry_price, stop_price,
-                        error_message, skip_reason
+                        error_message, skip_reason,
+                        ml_probability, bayesian_probability_at_scan
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (scan_id) DO NOTHING
                 """, (
@@ -2229,7 +2272,9 @@ class ValorDatabase:
                     _to_python(entry_price) if entry_price else None,
                     _to_python(stop_price) if stop_price else None,
                     error_message if error_message else None,
-                    skip_reason if skip_reason else None
+                    skip_reason if skip_reason else None,
+                    _to_python(ml_probability) if ml_probability is not None else None,
+                    _to_python(bayesian_probability_at_scan) if bayesian_probability_at_scan is not None else None,
                 ))
 
                 conn.commit()
@@ -2481,3 +2526,103 @@ class ValorDatabase:
             results['summary']['message'] = f"Error: {e}"
 
         return results
+
+    # ========================================================================
+    # ML Shadow Prediction Tracking
+    # ========================================================================
+
+    def log_shadow_prediction(
+        self,
+        scan_id: str,
+        position_id: str,
+        ml_prob: float,
+        bayesian_prob: float,
+        gamma_regime: str = "UNKNOWN",
+    ) -> bool:
+        """Log ML vs Bayesian shadow prediction for later comparison."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO valor_ml_shadow
+                        (scan_id, position_id, gamma_regime, ml_probability, bayesian_probability)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (position_id) DO UPDATE SET
+                        ml_probability = EXCLUDED.ml_probability,
+                        bayesian_probability = EXCLUDED.bayesian_probability,
+                        gamma_regime = EXCLUDED.gamma_regime
+                """, (scan_id, position_id, gamma_regime,
+                      _to_python(ml_prob), _to_python(bayesian_prob)))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.debug(f"Shadow prediction log failed: {e}")
+            return False
+
+    def resolve_shadow_prediction(self, position_id: str, won: bool) -> bool:
+        """Record the actual outcome for a shadow prediction."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE valor_ml_shadow
+                    SET actual_outcome = %s,
+                        resolved_at = NOW()
+                    WHERE position_id = %s AND actual_outcome IS NULL
+                """, ('WIN' if won else 'LOSS', position_id))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.debug(f"Shadow prediction resolve failed: {e}")
+            return False
+
+    def get_recent_shadow_predictions(self, limit: int = 50) -> List[Dict]:
+        """Get recent shadow predictions with optional outcomes."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT scan_id, position_id, gamma_regime,
+                           ml_probability, bayesian_probability,
+                           actual_outcome, created_at, resolved_at
+                    FROM valor_ml_shadow
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """, (limit,))
+                rows = c.fetchall()
+                cols = [d[0] for d in c.description]
+                return [dict(zip(cols, row)) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get shadow predictions: {e}")
+            return []
+
+    def get_ml_shadow_config(self, key: str) -> Optional[str]:
+        """Get ML config value from valor_ml_config table."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(
+                    "SELECT config_value FROM valor_ml_config WHERE config_key = %s",
+                    (key,)
+                )
+                row = c.fetchone()
+                return row[0] if row else None
+        except Exception:
+            return None
+
+    def set_ml_shadow_config(self, key: str, value: str) -> bool:
+        """Set ML config value in valor_ml_config table."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO valor_ml_config (config_key, config_value, updated_at)
+                    VALUES (%s, %s, NOW())
+                    ON CONFLICT (config_key) DO UPDATE SET
+                        config_value = EXCLUDED.config_value,
+                        updated_at = NOW()
+                """, (key, value))
+                conn.commit()
+                return True
+        except Exception:
+            return False

@@ -396,6 +396,23 @@ class ValorTrader:
                         self.db.save_signal(signal, was_executed=True)
 
                         logger.info(f"VALOR TRADE EXECUTED: {signal.direction.value} position {position_id}")
+
+                        # Log ML shadow prediction for Brier score comparison
+                        ml_prob = getattr(self.signal_generator, '_last_ml_prob', None)
+                        bayes_prob = getattr(self.signal_generator, '_last_bayesian_prob', None)
+                        if ml_prob is not None and bayes_prob is not None:
+                            try:
+                                regime_str = signal.gamma_regime.value if signal.gamma_regime else "UNKNOWN"
+                                self.db.log_shadow_prediction(
+                                    scan_id=scan_id,
+                                    position_id=position_id,
+                                    ml_prob=ml_prob,
+                                    bayesian_prob=bayes_prob,
+                                    gamma_regime=regime_str,
+                                )
+                            except Exception as e:
+                                logger.debug(f"VALOR shadow prediction log failed: {e}")
+
                         # Log scan activity with trade
                         self._log_scan_activity(scan_id, "TRADED", scan_result, scan_context,
                                                action=f"Opened {signal.direction.value} position")
@@ -594,6 +611,10 @@ class ValorTrader:
                 elif net_gex < 0:
                     gamma_regime = "NEGATIVE"
 
+            # Get shadow ML probabilities from signal generator
+            ml_prob = getattr(self.signal_generator, '_last_ml_prob', None)
+            bayes_prob = getattr(self.signal_generator, '_last_bayesian_prob', None)
+
             self.db.save_scan_activity(
                 scan_id=scan_id,
                 outcome=outcome,
@@ -636,7 +657,9 @@ class ValorTrader:
                 entry_price=signal.entry_price if signal else 0,
                 stop_price=signal.stop_price if signal else 0,
                 error_message=error_msg,
-                skip_reason=skip_reason
+                skip_reason=skip_reason,
+                ml_probability=ml_prob,
+                bayesian_probability_at_scan=bayes_prob,
             )
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
@@ -1076,6 +1099,12 @@ class ValorTrader:
                     won = realized_pnl > 0
                     self.win_tracker.update(won, position.gamma_regime)
                     self.db.save_win_tracker(self.win_tracker)
+
+                    # Resolve ML shadow prediction
+                    try:
+                        self.db.resolve_shadow_prediction(position.position_id, won)
+                    except Exception as e:
+                        logger.debug(f"VALOR shadow prediction resolve failed: {e}")
 
                     # Update loss streak tracking
                     if won:

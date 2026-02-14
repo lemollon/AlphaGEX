@@ -1241,13 +1241,11 @@ function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onCh
 // ==============================================================================
 
 function MLShadowPanel({ ticker }: { ticker: string }) {
-  const { data: mlData, mutate: refreshML } = useAgapeSpotMLStatus()
+  const { data: mlData, error: mlError, mutate: refreshML } = useAgapeSpotMLStatus()
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
 
   const ml = mlData?.data
-  if (!mlData?.success && !ml) return null // hide until ML module available
-
   const phase = ml?.phase ?? 'COLLECTING'
   const comp = ml?.shadow_comparison
 
@@ -1267,12 +1265,11 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
     PROMOTED: 'Active (Live)',
   }
 
-  async function mlAction(action: 'train' | 'promote' | 'revoke') {
+  async function mlAction(action: 'train' | 'promote' | 'revoke' | 'reject') {
     setActionLoading(action)
     setActionMessage(null)
     try {
-      const method = action === 'train' || action === 'promote' || action === 'revoke' ? 'POST' : 'GET'
-      const res = await fetch(`${API}/api/agape-spot/ml/${action}`, { method })
+      const res = await fetch(`${API}/api/agape-spot/ml/${action}`, { method: 'POST' })
       const json = await res.json()
       setActionMessage(json.message || (json.success ? 'Done' : 'Failed'))
       refreshML()
@@ -1281,6 +1278,24 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
     } finally {
       setActionLoading(null)
     }
+  }
+
+  // Show informational state if ML module not available yet
+  if (mlError || mlData?.data_unavailable) {
+    return (
+      <div className="text-sm text-gray-500">
+        ML shadow advisor module loading... Shadow predictions will appear once the backend ML module is available.
+      </div>
+    )
+  }
+
+  // Loading state
+  if (!mlData) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-gray-500">
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading ML status...
+      </div>
+    )
   }
 
   return (
@@ -1366,20 +1381,21 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
         </div>
       )}
 
-      {/* Action buttons */}
-      <div className="flex items-center gap-2">
+      {/* Action buttons - always visible */}
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={() => mlAction('train')}
           disabled={actionLoading !== null}
           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-900/40 text-blue-400 border border-blue-700/40 hover:bg-blue-800/50 disabled:opacity-40 transition-colors"
         >
-          {actionLoading === 'train' ? 'Training...' : 'Train Model'}
+          {actionLoading === 'train' ? 'Training...' : ml?.is_trained ? 'Retrain Model' : 'Train Model'}
         </button>
-        {phase === 'ELIGIBLE' && (
+        {phase !== 'PROMOTED' && ml?.is_trained && (
           <button
             onClick={() => mlAction('promote')}
-            disabled={actionLoading !== null}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-900/40 text-green-400 border border-green-700/40 hover:bg-green-800/50 disabled:opacity-40 transition-colors"
+            disabled={actionLoading !== null || phase !== 'ELIGIBLE'}
+            title={phase !== 'ELIGIBLE' ? 'Not yet eligible - resolve promotion blockers first' : 'Promote ML to control live trading'}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-900/40 text-green-400 border border-green-700/40 hover:bg-green-800/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {actionLoading === 'promote' ? 'Promoting...' : 'Promote ML'}
           </button>
@@ -1391,6 +1407,16 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
             className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-900/40 text-red-400 border border-red-700/40 hover:bg-red-800/50 disabled:opacity-40 transition-colors"
           >
             {actionLoading === 'revoke' ? 'Revoking...' : 'Revoke ML'}
+          </button>
+        )}
+        {ml?.is_trained && phase !== 'PROMOTED' && (
+          <button
+            onClick={() => mlAction('reject')}
+            disabled={actionLoading !== null}
+            title="Delete trained model and start fresh"
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-400 border border-gray-700 hover:bg-gray-700 hover:text-red-400 disabled:opacity-40 transition-colors"
+          >
+            {actionLoading === 'reject' ? 'Discarding...' : 'Discard Model'}
           </button>
         )}
       </div>

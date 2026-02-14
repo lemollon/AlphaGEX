@@ -423,6 +423,9 @@ class ValorSignalGenerator:
     def __init__(self, config: ValorConfig, win_tracker: BayesianWinTracker):
         self.config = config
         self.win_tracker = win_tracker
+        # ML shadow prediction results (set per scan in _calculate_win_probability)
+        self._last_ml_prob: Optional[float] = None
+        self._last_bayesian_prob: Optional[float] = None
 
     def generate_signal(
         self,
@@ -934,23 +937,35 @@ class ValorSignalGenerator:
         """
         Calculate win probability using ML (if approved and trained) or Bayesian fallback.
 
+        ML Shadow Mode:
+        - ML prediction always runs when model is trained (even if not approved)
+        - Both ML and Bayesian probs are stored in _last_ml_prob / _last_bayesian_prob
+        - Shadow predictions are logged for Brier score comparison
+        - ML only controls trading decisions when promoted (approved)
+
         ML Prediction (when trained AND approved):
         - Uses XGBoost model trained on historical trade outcomes
         - Features: VIX, ATR, gamma regime, distance to levels, time factors
-        - REQUIRES explicit approval via /api/valor/ml/approve
 
         Bayesian Fallback (before ML training or approval):
         - Starts with prior, updates based on regime-specific win rate
         - Blends with signal confidence
         """
-        # Try ML prediction first (if model is trained AND approved)
+        # Reset shadow tracking
+        self._last_ml_prob = None
+        self._last_bayesian_prob = None
+
+        # Always compute Bayesian probability
+        bayesian_prob = self._calculate_bayesian_probability(gamma_regime, signal)
+        self._last_bayesian_prob = bayesian_prob
+
+        # Try ML prediction (always run for shadow, even if not approved)
         ml_advisor = _get_ml_advisor()
         ml_approved = is_ml_approved()
 
-        if ml_advisor is not None and ml_advisor.model is not None and ml_approved:
+        if ml_advisor is not None and ml_advisor.model is not None:
             try:
                 # Build feature dict for ML prediction
-                # Must match FEATURE_COLS in ml.py exactly
                 distance_to_flip_pct = 0
                 if signal.flip_point and signal.flip_point > 0:
                     distance_to_flip_pct = ((signal.current_price - signal.flip_point) / signal.flip_point) * 100
@@ -965,40 +980,42 @@ class ValorSignalGenerator:
 
                 now = datetime.now(CENTRAL_TZ)
 
-                features = {
-                    'vix': signal.vix or 18.0,
-                    'atr': signal.atr or 5.0,
-                    'gamma_regime_encoded': 1 if gamma_regime == GammaRegime.POSITIVE else (
-                        -1 if gamma_regime == GammaRegime.NEGATIVE else 0
-                    ),
-                    'distance_to_flip_pct': distance_to_flip_pct,
-                    'distance_to_call_wall_pct': distance_to_call_wall_pct,
-                    'distance_to_put_wall_pct': distance_to_put_wall_pct,
-                    'day_of_week': now.weekday(),
-                    'hour_of_day': now.hour,
-                    'is_overnight': 1 if is_overnight else 0,
-                    'positive_gamma_win_rate': self.win_tracker.get_regime_probability(GammaRegime.POSITIVE),
-                    'negative_gamma_win_rate': self.win_tracker.get_regime_probability(GammaRegime.NEGATIVE),
-                    'signal_confidence': signal.confidence,
-                }
+                ml_prob, source = ml_advisor.predict(
+                    vix=signal.vix or 18.0,
+                    atr=signal.atr or 5.0,
+                    gamma_regime=gamma_regime.value,
+                    distance_to_flip_pct=distance_to_flip_pct,
+                    distance_to_call_wall_pct=distance_to_call_wall_pct,
+                    distance_to_put_wall_pct=distance_to_put_wall_pct,
+                    day_of_week=now.weekday(),
+                    hour_of_day=now.hour,
+                    is_overnight=is_overnight,
+                    positive_gamma_win_rate=self.win_tracker.get_regime_probability(GammaRegime.POSITIVE),
+                    negative_gamma_win_rate=self.win_tracker.get_regime_probability(GammaRegime.NEGATIVE),
+                    signal_confidence=signal.confidence,
+                )
 
-                ml_result = ml_advisor.predict(features)
-                if ml_result and 'win_probability' in ml_result:
-                    ml_prob = ml_result['win_probability']
-                    logger.info(
-                        f"VALOR WIN_PROB [ML]: prob={ml_prob:.4f}, "
-                        f"confidence={ml_result.get('confidence', 'N/A')}, "
-                        f"regime={gamma_regime.value}, VIX={signal.vix:.1f} (gate=0.50)"
-                    )
-                    return round(ml_prob, 4)
+                if source == "ML":
+                    self._last_ml_prob = round(ml_prob, 4)
+
+                    if ml_approved:
+                        logger.info(
+                            f"VALOR WIN_PROB [ML ACTIVE]: prob={ml_prob:.4f}, "
+                            f"regime={gamma_regime.value}, VIX={signal.vix:.1f} (gate=0.50)"
+                        )
+                        return round(ml_prob, 4)
+                    else:
+                        logger.info(
+                            f"VALOR WIN_PROB [ML SHADOW]: ml={ml_prob:.4f}, "
+                            f"bayesian={bayesian_prob:.4f}, regime={gamma_regime.value} "
+                            f"(using Bayesian - ML not approved)"
+                        )
 
             except Exception as e:
-                logger.warning(f"ML prediction failed, falling back to Bayesian: {e}")
-        elif ml_advisor is not None and ml_advisor.model is not None and not ml_approved:
-            logger.debug("ML model trained but not approved - using Bayesian fallback")
+                logger.warning(f"ML shadow prediction failed: {e}")
 
-        # Bayesian fallback (when ML not available or not approved)
-        return self._calculate_bayesian_probability(gamma_regime, signal)
+        # Return Bayesian probability (ML not trained, not approved, or failed)
+        return bayesian_prob
 
     def _calculate_bayesian_probability(
         self,

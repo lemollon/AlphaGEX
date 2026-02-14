@@ -1253,6 +1253,169 @@ async def get_valor_ml_approval_status():
 
 
 # ============================================================================
+# ML Shadow Mode Endpoints
+# ============================================================================
+
+@router.get("/api/valor/ml/shadow-status")
+async def get_valor_ml_shadow_status():
+    """
+    Get ML shadow advisor status: model trained, lifecycle phase, shadow comparison.
+
+    Lifecycle phases:
+    - COLLECTING: Not enough data to train
+    - TRAINING: Model trained, no shadow predictions yet
+    - SHADOW: Shadow predictions running, comparing to Bayesian
+    - ELIGIBLE: ML meets promotion criteria (150+ resolved, 5%+ Brier improvement)
+    - PROMOTED: ML approved and controlling trading decisions
+    """
+    try:
+        from trading.valor.ml import get_valor_ml_advisor
+        from trading.valor.signals import is_ml_approved
+
+        advisor = get_valor_ml_advisor()
+        status = advisor.get_status()
+        comparison = advisor.get_shadow_comparison()
+        ml_approved = is_ml_approved()
+
+        if ml_approved and advisor.is_trained:
+            phase = "PROMOTED"
+        elif comparison.is_eligible:
+            phase = "ELIGIBLE"
+        elif advisor.is_trained and comparison.total_predictions > 0:
+            phase = "SHADOW"
+        elif advisor.is_trained:
+            phase = "TRAINING"
+        else:
+            phase = "COLLECTING"
+
+        return {
+            "success": True,
+            "data": {
+                **status,
+                "phase": phase,
+                "is_promoted": ml_approved and advisor.is_trained,
+                "shadow_comparison": {
+                    "total_predictions": comparison.total_predictions,
+                    "resolved_predictions": comparison.resolved_predictions,
+                    "ml_brier": round(comparison.ml_brier, 4),
+                    "bayesian_brier": round(comparison.bayesian_brier, 4),
+                    "brier_improvement_pct": round(comparison.brier_improvement_pct, 1),
+                    "ml_accuracy": round(comparison.ml_accuracy, 3),
+                    "bayesian_accuracy": round(comparison.bayesian_accuracy, 3),
+                    "ml_catastrophic_misses": comparison.ml_catastrophic_misses,
+                    "catastrophic_miss_rate": round(comparison.catastrophic_miss_rate, 3),
+                    "is_eligible": comparison.is_eligible,
+                    "promotion_blockers": comparison.promotion_blockers,
+                },
+            },
+            "fetched_at": datetime.now().isoformat(),
+        }
+
+    except Exception as e:
+        logger.error(f"VALOR ML shadow status error: {e}")
+        return {
+            "success": False,
+            "data_unavailable": True,
+            "reason": str(e),
+        }
+
+
+@router.get("/api/valor/ml/shadow-comparison")
+async def get_valor_shadow_comparison():
+    """Compare ML vs Bayesian predictions on resolved shadow trades."""
+    try:
+        from trading.valor.ml import get_valor_ml_advisor
+
+        advisor = get_valor_ml_advisor()
+        comparison = advisor.get_shadow_comparison()
+
+        return {
+            "success": True,
+            "data": {
+                "total_predictions": comparison.total_predictions,
+                "resolved_predictions": comparison.resolved_predictions,
+                "ml_brier": round(comparison.ml_brier, 4),
+                "bayesian_brier": round(comparison.bayesian_brier, 4),
+                "brier_improvement_pct": round(comparison.brier_improvement_pct, 1),
+                "ml_accuracy": round(comparison.ml_accuracy, 3),
+                "bayesian_accuracy": round(comparison.bayesian_accuracy, 3),
+                "ml_catastrophic_misses": comparison.ml_catastrophic_misses,
+                "catastrophic_miss_rate": round(comparison.catastrophic_miss_rate, 3),
+                "is_eligible": comparison.is_eligible,
+                "promotion_blockers": comparison.promotion_blockers,
+            },
+            "fetched_at": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"VALOR shadow comparison error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/valor/ml/shadow-predictions")
+async def get_valor_shadow_predictions(
+    limit: int = Query(default=50, le=200, description="Number of predictions"),
+):
+    """Get recent ML shadow predictions with outcomes."""
+    try:
+        from trading.valor.db import ValorDatabase
+        db = ValorDatabase()
+        predictions = db.get_recent_shadow_predictions(limit=limit)
+
+        return {
+            "success": True,
+            "data": predictions,
+            "count": len(predictions),
+            "fetched_at": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"VALOR shadow predictions error: {e}")
+        return {"success": False, "data": [], "error": str(e)}
+
+
+@router.post("/api/valor/ml/promote")
+async def promote_valor_ml():
+    """
+    Promote ML advisor from shadow to active trading.
+
+    Only succeeds if ML meets all promotion criteria:
+    - 150+ resolved shadow predictions
+    - Brier score 5%+ better than Bayesian
+    - Catastrophic miss rate <= 10%
+    """
+    try:
+        from trading.valor.ml import get_valor_ml_advisor
+        from trading.valor.signals import approve_ml_model
+
+        advisor = get_valor_ml_advisor()
+
+        if not advisor.is_trained:
+            return {"success": False, "message": "ML model not trained yet"}
+
+        comparison = advisor.get_shadow_comparison()
+        if not comparison.is_eligible:
+            return {
+                "success": False,
+                "message": "ML not eligible for promotion",
+                "blockers": comparison.promotion_blockers,
+            }
+
+        approve_ml_model()
+
+        return {
+            "success": True,
+            "message": "ML advisor promoted to active trading",
+            "data": {
+                "brier_improvement": f"{comparison.brier_improvement_pct:.1f}%",
+                "resolved_predictions": comparison.resolved_predictions,
+                "ml_accuracy": round(comparison.ml_accuracy, 3),
+            },
+        }
+    except Exception as e:
+        logger.error(f"VALOR ML promote error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # A/B Test Endpoints
 # ============================================================================
 

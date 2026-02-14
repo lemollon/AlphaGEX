@@ -814,6 +814,10 @@ const fetchers = {
     const response = await api.get('/api/valor/ml/approval-status')
     return response.data
   },
+  valorMLShadowStatus: async () => {
+    const response = await api.get('/api/valor/ml/shadow-status')
+    return response.data
+  },
   valorMLApprove: async () => {
     try {
       const response = await api.post('/api/valor/ml/approve')
@@ -1815,6 +1819,15 @@ export async function revokeValorML() {
 
 export async function rejectValorML() {
   return fetchers.valorMLReject()
+}
+
+// ML Shadow Mode hooks
+export function useValorMLShadowStatus(options?: SWRConfiguration) {
+  return useSWR('valor-ml-shadow-status', fetchers.valorMLShadowStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
 }
 
 // A/B Test hooks and functions
