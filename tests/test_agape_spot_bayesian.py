@@ -754,6 +754,8 @@ class TestDatabaseRoundTrip:
             1,     # negative_funding_losses
             1,     # neutral_funding_wins
             0,     # neutral_funding_losses
+            0.0,   # ema_win
+            0.0,   # ema_loss
         )
 
         with patch.object(AgapeSpotDatabase, "__init__", lambda self, **kw: None):

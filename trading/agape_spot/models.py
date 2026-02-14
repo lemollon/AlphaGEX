@@ -671,6 +671,13 @@ class BayesianWinTracker:
     neutral_funding_wins: int = 0
     neutral_funding_losses: int = 0
 
+    # EWMA of trade magnitudes for dynamic choppy EV threshold.
+    # Updated on each trade close.  Halflife ~20 trades → alpha ≈ 0.034.
+    # ema_win/ema_loss of 0.0 means uninitialised (cold start).
+    ema_win: float = 0.0
+    ema_loss: float = 0.0
+    _ewma_alpha: float = field(default=0.034, repr=False)  # ln(2)/20
+
     # Cold start protection
     cold_start_trades: int = 10
     cold_start_floor: float = 0.52
@@ -703,6 +710,29 @@ class BayesianWinTracker:
                 self.negative_funding_losses += 1
             else:
                 self.neutral_funding_losses += 1
+
+    def update_ewma(self, realized_pnl: float) -> None:
+        """Update EWMA of trade magnitude after a trade closes.
+
+        Feeds |pnl| into ema_win or ema_loss depending on sign.
+        Halflife ~20 trades: recent trades dominate, old data fades.
+        First trade seeds the EMA instead of blending with zero.
+        """
+        a = self._ewma_alpha
+        mag = abs(realized_pnl)
+        if realized_pnl > 0:
+            self.ema_win = mag if self.ema_win == 0.0 else a * mag + (1 - a) * self.ema_win
+        else:
+            self.ema_loss = mag if self.ema_loss == 0.0 else a * mag + (1 - a) * self.ema_loss
+
+    @property
+    def ema_magnitude(self) -> float:
+        """Average of EWMA win and EWMA loss — represents current trade size.
+
+        Returns 0.0 when both sides are uninitialised (cold start).
+        """
+        parts = [v for v in (self.ema_win, self.ema_loss) if v > 0]
+        return sum(parts) / len(parts) if parts else 0.0
 
     def get_regime_probability(self, funding_regime: FundingRegime) -> float:
         """Get win probability for a specific funding regime.
