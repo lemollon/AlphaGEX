@@ -51,30 +51,30 @@ const COIN_META: Record<CoinId, {
   quantityLabel: string; startingCapital: number;
 }> = {
   'ALL': {
-    symbol: 'ALL', label: 'All Perpetuals', instrument: '', hexColor: '#8B5CF6',
-    bgActive: 'bg-violet-600', borderActive: 'border-violet-500', textActive: 'text-violet-400',
-    bgCard: 'bg-violet-950/30', borderCard: 'border-violet-700/40',
+    symbol: 'ALL', label: 'All Perpetuals', instrument: '', hexColor: '#06B6D4',
+    bgActive: 'bg-cyan-600', borderActive: 'border-cyan-500', textActive: 'text-cyan-400',
+    bgCard: 'bg-cyan-950/30', borderCard: 'border-cyan-700/40',
     apiPrefix: '', priceKey: '', priceField: '', priceDecimals: 2,
     quantityLabel: '', startingCapital: 50000,
   },
   'ETH': {
-    symbol: 'ETH', label: 'Ethereum', instrument: 'ETH-PERP', hexColor: '#818CF8',
-    bgActive: 'bg-indigo-600', borderActive: 'border-indigo-500', textActive: 'text-indigo-400',
-    bgCard: 'bg-indigo-950/30', borderCard: 'border-indigo-700/40',
+    symbol: 'ETH', label: 'Ethereum', instrument: 'ETH-PERP', hexColor: '#D946EF',
+    bgActive: 'bg-fuchsia-600', borderActive: 'border-fuchsia-500', textActive: 'text-fuchsia-400',
+    bgCard: 'bg-fuchsia-950/30', borderCard: 'border-fuchsia-700/40',
     apiPrefix: '/api/agape-eth-perp', priceKey: 'current_eth_price', priceField: 'eth_price', priceDecimals: 2,
     quantityLabel: 'ETH', startingCapital: 12500,
   },
   'BTC': {
-    symbol: 'BTC', label: 'Bitcoin', instrument: 'BTC-PERP', hexColor: '#FB923C',
+    symbol: 'BTC', label: 'Bitcoin', instrument: 'BTC-PERP', hexColor: '#F97316',
     bgActive: 'bg-orange-600', borderActive: 'border-orange-500', textActive: 'text-orange-400',
     bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40',
     apiPrefix: '/api/agape-btc-perp', priceKey: 'current_btc_price', priceField: 'btc_price', priceDecimals: 2,
     quantityLabel: 'BTC', startingCapital: 25000,
   },
   'XRP': {
-    symbol: 'XRP', label: 'Ripple', instrument: 'XRP-PERP', hexColor: '#22D3EE',
-    bgActive: 'bg-cyan-600', borderActive: 'border-cyan-500', textActive: 'text-cyan-400',
-    bgCard: 'bg-cyan-950/30', borderCard: 'border-cyan-700/40',
+    symbol: 'XRP', label: 'Ripple', instrument: 'XRP-PERP', hexColor: '#0EA5E9',
+    bgActive: 'bg-sky-600', borderActive: 'border-sky-500', textActive: 'text-sky-400',
+    bgCard: 'bg-sky-950/30', borderCard: 'border-sky-700/40',
     apiPrefix: '/api/agape-xrp-perp', priceKey: 'current_xrp_price', priceField: 'xrp_price', priceDecimals: 4,
     quantityLabel: 'XRP', startingCapital: 9000,
   },
@@ -296,7 +296,7 @@ export default function PerpetualsCryptoPage() {
         <Navigation />
         <div className="flex items-center justify-center h-screen bg-gray-950">
           <div className="text-center space-y-3">
-            <RefreshCw className="w-8 h-8 text-violet-400 animate-spin mx-auto" />
+            <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin mx-auto" />
             <p className="text-gray-400 text-sm">Loading Perpetuals Crypto...</p>
           </div>
         </div>
@@ -315,7 +315,7 @@ export default function PerpetualsCryptoPage() {
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl md:text-3xl font-bold text-white">
-                  AGAPE <span className="text-violet-400">Perpetual</span>
+                  AGAPE <span className="text-cyan-400">Perpetual</span>
                 </h1>
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-green-900/40 border border-green-500/40 rounded-full text-xs font-semibold text-green-400">
                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
@@ -434,7 +434,7 @@ function AllCoinsDashboard({ summaries }: { summaries: Record<ActiveCoinId, any>
         <MetricCard label="Total P&L" value={fmtUsd(totalPnl)} color={pnlColor(totalPnl)} />
         <MetricCard label="Return" value={fmtPct(totalReturn)} color={pnlColor(totalReturn)} />
         <MetricCard label="Unrealized" value={fmtUsd(totalUnrealized)} color={pnlColor(totalUnrealized)} />
-        <MetricCard label="Open Positions" value={String(totalPositions)} color="text-violet-400" />
+        <MetricCard label="Open Positions" value={String(totalPositions)} color="text-cyan-400" />
       </div>
 
       {/* Per-coin summary cards */}
@@ -708,7 +708,7 @@ function OverviewTab({ coin }: { coin: CoinId }) {
           </div>
           <div>
             <span className="text-gray-500">Market</span>
-            <p className="text-violet-400 font-mono">Perpetual 24/7</p>
+            <p className="text-cyan-400 font-mono">Perpetual 24/7</p>
           </div>
         </div>
       </SectionCard>
