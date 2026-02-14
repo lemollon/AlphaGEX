@@ -209,6 +209,51 @@ except ImportError:
     AgapeXrpTrader = None
     print("Warning: AGAPE-XRP not available. XRP crypto trading will be disabled.")
 
+# Import AGAPE-ETH-PERP (ETH Perpetual Contract)
+try:
+    from trading.agape_eth_perp.trader import AgapeEthPerpTrader, create_agape_eth_perp_trader
+    AGAPE_ETH_PERP_AVAILABLE = True
+except ImportError:
+    AGAPE_ETH_PERP_AVAILABLE = False
+    AgapeEthPerpTrader = None
+    print("Warning: AGAPE-ETH-PERP not available. ETH perpetual trading will be disabled.")
+
+# Import AGAPE-BTC-PERP (BTC Perpetual Contract)
+try:
+    from trading.agape_btc_perp.trader import AgapeBtcPerpTrader, create_agape_btc_perp_trader
+    AGAPE_BTC_PERP_AVAILABLE = True
+except ImportError:
+    AGAPE_BTC_PERP_AVAILABLE = False
+    AgapeBtcPerpTrader = None
+    print("Warning: AGAPE-BTC-PERP not available. BTC perpetual trading will be disabled.")
+
+# Import AGAPE-XRP-PERP (XRP Perpetual Contract)
+try:
+    from trading.agape_xrp_perp.trader import AgapeXrpPerpTrader, create_agape_xrp_perp_trader
+    AGAPE_XRP_PERP_AVAILABLE = True
+except ImportError:
+    AGAPE_XRP_PERP_AVAILABLE = False
+    AgapeXrpPerpTrader = None
+    print("Warning: AGAPE-XRP-PERP not available. XRP perpetual trading will be disabled.")
+
+# Import AGAPE-DOGE-PERP (DOGE Perpetual Contract)
+try:
+    from trading.agape_doge_perp.trader import AgapeDogePerpTrader, create_agape_doge_perp_trader
+    AGAPE_DOGE_PERP_AVAILABLE = True
+except ImportError:
+    AGAPE_DOGE_PERP_AVAILABLE = False
+    AgapeDogePerpTrader = None
+    print("Warning: AGAPE-DOGE-PERP not available. DOGE perpetual trading will be disabled.")
+
+# Import AGAPE-SHIB-PERP (SHIB Perpetual Contract)
+try:
+    from trading.agape_shib_perp.trader import AgapeShibPerpTrader, create_agape_shib_perp_trader
+    AGAPE_SHIB_PERP_AVAILABLE = True
+except ImportError:
+    AGAPE_SHIB_PERP_AVAILABLE = False
+    AgapeShibPerpTrader = None
+    print("Warning: AGAPE-SHIB-PERP not available. SHIB perpetual trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -725,6 +770,66 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"AGAPE-XRP initialization failed: {e}")
                 self.agape_xrp_trader = None
+
+        # AGAPE-ETH-PERP - ETH Perpetual Contract
+        # 24/7 perpetual contract trading with real exchange data
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_eth_perp_trader = None
+        if AGAPE_ETH_PERP_AVAILABLE:
+            try:
+                self.agape_eth_perp_trader = create_agape_eth_perp_trader()
+                logger.info("✅ AGAPE-ETH-PERP initialized (ETH Perpetual, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-ETH-PERP initialization failed: {e}")
+                self.agape_eth_perp_trader = None
+
+        # AGAPE-BTC-PERP - BTC Perpetual Contract
+        # 24/7 perpetual contract trading with real exchange data
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_btc_perp_trader = None
+        if AGAPE_BTC_PERP_AVAILABLE:
+            try:
+                self.agape_btc_perp_trader = create_agape_btc_perp_trader()
+                logger.info("✅ AGAPE-BTC-PERP initialized (BTC Perpetual, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-BTC-PERP initialization failed: {e}")
+                self.agape_btc_perp_trader = None
+
+        # AGAPE-XRP-PERP - XRP Perpetual Contract
+        # 24/7 perpetual contract trading with real exchange data
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_xrp_perp_trader = None
+        if AGAPE_XRP_PERP_AVAILABLE:
+            try:
+                self.agape_xrp_perp_trader = create_agape_xrp_perp_trader()
+                logger.info("✅ AGAPE-XRP-PERP initialized (XRP Perpetual, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-XRP-PERP initialization failed: {e}")
+                self.agape_xrp_perp_trader = None
+
+        # AGAPE-DOGE-PERP - DOGE Perpetual Contract
+        # 24/7 perpetual contract trading with real exchange data
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_doge_perp_trader = None
+        if AGAPE_DOGE_PERP_AVAILABLE:
+            try:
+                self.agape_doge_perp_trader = create_agape_doge_perp_trader()
+                logger.info("✅ AGAPE-DOGE-PERP initialized (DOGE Perpetual, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-DOGE-PERP initialization failed: {e}")
+                self.agape_doge_perp_trader = None
+
+        # AGAPE-SHIB-PERP - SHIB Perpetual Contract
+        # 24/7 perpetual contract trading with real exchange data
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_shib_perp_trader = None
+        if AGAPE_SHIB_PERP_AVAILABLE:
+            try:
+                self.agape_shib_perp_trader = create_agape_shib_perp_trader()
+                logger.info("✅ AGAPE-SHIB-PERP initialized (SHIB Perpetual, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-SHIB-PERP initialization failed: {e}")
+                self.agape_shib_perp_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -2574,6 +2679,251 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-XRP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    # =========================================================================
+    # PERPETUAL CONTRACT BOT SCHEDULED METHODS
+    # =========================================================================
+
+    def scheduled_agape_eth_perp_logic(self):
+        """
+        AGAPE-ETH-PERP - runs every 5 minutes, 24/7.
+        Perpetual contracts trade around the clock on crypto exchanges.
+        Uses real Deribit/CoinGlass/Coinbase data for signals.
+        """
+        if not self.agape_eth_perp_trader:
+            return
+
+        try:
+            result = self.agape_eth_perp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-ETH-PERP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-ETH-PERP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-ETH-PERP: Cycle error: {result['error']}")
+            else:
+                if self.agape_eth_perp_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-ETH-PERP scan #{self.agape_eth_perp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-ETH-PERP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_eth_perp_eod_logic(self):
+        """AGAPE-ETH-PERP End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-ETH-PERP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_eth_perp_trader:
+            return
+
+        try:
+            result = self.agape_eth_perp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-ETH-PERP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_eth_perp_trader.get_performance()
+            logger.info(f"AGAPE-ETH-PERP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-ETH-PERP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_btc_perp_logic(self):
+        """
+        AGAPE-BTC-PERP - runs every 5 minutes, 24/7.
+        Perpetual contracts trade around the clock on crypto exchanges.
+        """
+        if not self.agape_btc_perp_trader:
+            return
+
+        try:
+            result = self.agape_btc_perp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-BTC-PERP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-BTC-PERP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-BTC-PERP: Cycle error: {result['error']}")
+            else:
+                if self.agape_btc_perp_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-BTC-PERP scan #{self.agape_btc_perp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BTC-PERP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_btc_perp_eod_logic(self):
+        """AGAPE-BTC-PERP End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-BTC-PERP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_btc_perp_trader:
+            return
+
+        try:
+            result = self.agape_btc_perp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-BTC-PERP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_btc_perp_trader.get_performance()
+            logger.info(f"AGAPE-BTC-PERP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BTC-PERP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_xrp_perp_logic(self):
+        """
+        AGAPE-XRP-PERP - runs every 5 minutes, 24/7.
+        Perpetual contracts trade around the clock on crypto exchanges.
+        """
+        if not self.agape_xrp_perp_trader:
+            return
+
+        try:
+            result = self.agape_xrp_perp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-XRP-PERP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-XRP-PERP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-XRP-PERP: Cycle error: {result['error']}")
+            else:
+                if self.agape_xrp_perp_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-XRP-PERP scan #{self.agape_xrp_perp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-XRP-PERP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_xrp_perp_eod_logic(self):
+        """AGAPE-XRP-PERP End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-XRP-PERP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_xrp_perp_trader:
+            return
+
+        try:
+            result = self.agape_xrp_perp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-XRP-PERP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_xrp_perp_trader.get_performance()
+            logger.info(f"AGAPE-XRP-PERP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-XRP-PERP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_doge_perp_logic(self):
+        """
+        AGAPE-DOGE-PERP - runs every 5 minutes, 24/7.
+        Perpetual contracts trade around the clock on crypto exchanges.
+        """
+        if not self.agape_doge_perp_trader:
+            return
+
+        try:
+            result = self.agape_doge_perp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-DOGE-PERP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-DOGE-PERP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-DOGE-PERP: Cycle error: {result['error']}")
+            else:
+                if self.agape_doge_perp_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-DOGE-PERP scan #{self.agape_doge_perp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-DOGE-PERP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_doge_perp_eod_logic(self):
+        """AGAPE-DOGE-PERP End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-DOGE-PERP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_doge_perp_trader:
+            return
+
+        try:
+            result = self.agape_doge_perp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-DOGE-PERP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_doge_perp_trader.get_performance()
+            logger.info(f"AGAPE-DOGE-PERP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-DOGE-PERP EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_shib_perp_logic(self):
+        """
+        AGAPE-SHIB-PERP - runs every 5 minutes, 24/7.
+        Perpetual contracts trade around the clock on crypto exchanges.
+        """
+        if not self.agape_shib_perp_trader:
+            return
+
+        try:
+            result = self.agape_shib_perp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-SHIB-PERP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-SHIB-PERP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-SHIB-PERP: Cycle error: {result['error']}")
+            else:
+                if self.agape_shib_perp_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-SHIB-PERP scan #{self.agape_shib_perp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-SHIB-PERP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_shib_perp_eod_logic(self):
+        """AGAPE-SHIB-PERP End-of-Day - runs at 3:45 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-SHIB-PERP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_shib_perp_trader:
+            return
+
+        try:
+            result = self.agape_shib_perp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-SHIB-PERP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_shib_perp_trader.get_performance()
+            logger.info(f"AGAPE-SHIB-PERP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-SHIB-PERP EOD: {str(e)}")
             logger.error(traceback.format_exc())
 
     def scheduled_jubilee_daily_logic(self):
@@ -5256,6 +5606,168 @@ class AutonomousTraderScheduler:
             logger.info("✅ AGAPE-XRP EOD job scheduled (3:45 PM CT daily)")
         else:
             logger.warning("⚠️ AGAPE-XRP not available - XRP crypto trading disabled")
+
+        # =================================================================
+        # AGAPE-ETH-PERP JOB: ETH Perpetual Contract - every 5 minutes, 24/7
+        # Perpetual contracts trade around the clock on crypto exchanges
+        # Uses real Deribit/CoinGlass/Coinbase data
+        # =================================================================
+        if self.agape_eth_perp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_eth_perp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_eth_perp_trading',
+                name='AGAPE-ETH-PERP - ETH Perpetual (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-ETH-PERP job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_eth_perp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_eth_perp_eod',
+                name='AGAPE-ETH-PERP - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-ETH-PERP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-ETH-PERP not available - ETH perpetual trading disabled")
+
+        # =================================================================
+        # AGAPE-BTC-PERP JOB: BTC Perpetual Contract - every 5 minutes, 24/7
+        # =================================================================
+        if self.agape_btc_perp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_btc_perp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_btc_perp_trading',
+                name='AGAPE-BTC-PERP - BTC Perpetual (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BTC-PERP job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_btc_perp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_btc_perp_eod',
+                name='AGAPE-BTC-PERP - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BTC-PERP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-BTC-PERP not available - BTC perpetual trading disabled")
+
+        # =================================================================
+        # AGAPE-XRP-PERP JOB: XRP Perpetual Contract - every 5 minutes, 24/7
+        # =================================================================
+        if self.agape_xrp_perp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_xrp_perp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_xrp_perp_trading',
+                name='AGAPE-XRP-PERP - XRP Perpetual (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-XRP-PERP job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_xrp_perp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_xrp_perp_eod',
+                name='AGAPE-XRP-PERP - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-XRP-PERP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-XRP-PERP not available - XRP perpetual trading disabled")
+
+        # =================================================================
+        # AGAPE-DOGE-PERP JOB: DOGE Perpetual Contract - every 5 minutes, 24/7
+        # =================================================================
+        if self.agape_doge_perp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_doge_perp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_doge_perp_trading',
+                name='AGAPE-DOGE-PERP - DOGE Perpetual (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-DOGE-PERP job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_doge_perp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_doge_perp_eod',
+                name='AGAPE-DOGE-PERP - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-DOGE-PERP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-DOGE-PERP not available - DOGE perpetual trading disabled")
+
+        # =================================================================
+        # AGAPE-SHIB-PERP JOB: SHIB Perpetual Contract - every 5 minutes, 24/7
+        # =================================================================
+        if self.agape_shib_perp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_shib_perp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_shib_perp_trading',
+                name='AGAPE-SHIB-PERP - SHIB Perpetual (5-min intervals, 24/7)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-SHIB-PERP job scheduled (every 5 min, 24/7)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_shib_perp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_shib_perp_eod',
+                name='AGAPE-SHIB-PERP - Daily Summary',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-SHIB-PERP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-SHIB-PERP not available - SHIB perpetual trading disabled")
 
         # =================================================================
         # JUBILEE JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT
