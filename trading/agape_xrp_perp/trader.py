@@ -1,8 +1,13 @@
 """
-AGAPE-DOGE Trader - Main orchestrator for DOGE Perpetual contract trading.
+AGAPE-XRP-PERP Trader - Main orchestrator for XRP Perpetual Contract trading.
 
-Same logic as AGAPE-XRP trader but for DOGE-PERP perpetual contracts.
-Perpetual contracts: 24/7/365 trading, no expiration, quantity-based sizing.
+Key differences from AGAPE-XRP (Futures) trader:
+- get_market_status(): always returns open (24/7/365, no maintenance windows)
+- No CME schedule checks in _check_entry_conditions
+- P&L uses quantity * direction (no contract_size multiplier)
+- Status: bot_name="AGAPE_XRP_PERP", ticker="XRP", instrument="XRP-PERP", exchange="perpetual"
+- Singletons: _agape_xrp_perp_trader, get_agape_xrp_perp_trader(), create_agape_xrp_perp_trader()
+- xrp_price in snapshots and scans
 """
 
 import logging
@@ -11,49 +16,53 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
 
-from trading.agape_doge.models import (
-    AgapeDogeConfig, AgapeDogeSignal, AgapeDogePosition,
+from trading.agape_xrp_perp.models import (
+    AgapeXrpPerpConfig, AgapeXrpPerpSignal, AgapeXrpPerpPosition,
     PositionSide, PositionStatus, SignalAction, TradingMode,
 )
-from trading.agape_doge.db import AgapeDogeDatabase
-from trading.agape_doge.signals import (
-    AgapeDogeSignalGenerator, get_agape_doge_direction_tracker,
-    record_agape_doge_trade_outcome,
+from trading.agape_xrp_perp.db import AgapeXrpPerpDatabase
+from trading.agape_xrp_perp.signals import (
+    AgapeXrpPerpSignalGenerator, get_agape_xrp_perp_direction_tracker,
+    record_agape_xrp_perp_trade_outcome,
 )
-from trading.agape_doge.executor import AgapeDogeExecutor
+from trading.agape_xrp_perp.executor import AgapeXrpPerpExecutor
 
 logger = logging.getLogger(__name__)
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
-_agape_doge_trader: Optional["AgapeDogeTrader"] = None
+_agape_xrp_perp_trader: Optional["AgapeXrpPerpTrader"] = None
 
 
-def get_agape_doge_trader():
-    return _agape_doge_trader
+def get_agape_xrp_perp_trader():
+    return _agape_xrp_perp_trader
 
 
-def create_agape_doge_trader(config=None):
-    global _agape_doge_trader
-    _agape_doge_trader = AgapeDogeTrader(config)
-    return _agape_doge_trader
+def create_agape_xrp_perp_trader(config=None):
+    global _agape_xrp_perp_trader
+    _agape_xrp_perp_trader = AgapeXrpPerpTrader(config)
+    return _agape_xrp_perp_trader
 
 
-class AgapeDogeTrader:
-    """Main AGAPE-DOGE trading bot orchestrator."""
+class AgapeXrpPerpTrader:
+    """Main AGAPE-XRP-PERP trading bot orchestrator.
+
+    Trades XRP perpetual contracts 24/7/365 with no market closures.
+    Uses quantity-based sizing (float XRP) instead of integer contracts.
+    """
 
     def __init__(self, config=None):
-        self.db = AgapeDogeDatabase()
-        self.config = config or AgapeDogeConfig.load_from_db(self.db)
-        self.signals = AgapeDogeSignalGenerator(self.config)
-        self.executor = AgapeDogeExecutor(self.config, self.db)
+        self.db = AgapeXrpPerpDatabase()
+        self.config = config or AgapeXrpPerpConfig.load_from_db(self.db)
+        self.signals = AgapeXrpPerpSignalGenerator(self.config)
+        self.executor = AgapeXrpPerpExecutor(self.config, self.db)
         self._last_scan_time = None
         self._cycle_count = 0
         self._enabled = True
         self.consecutive_losses = 0
         self.loss_streak_pause_until = None
-        self._direction_tracker = get_agape_doge_direction_tracker(self.config)
-        self.db.log("INFO", "INIT", f"AGAPE-DOGE initialized AGGRESSIVE (mode={self.config.mode.value})")
-        logger.info(f"AGAPE-DOGE Trader: Initialized AGGRESSIVE (mode={self.config.mode.value})")
+        self._direction_tracker = get_agape_xrp_perp_direction_tracker(self.config)
+        self.db.log("INFO", "INIT", f"AGAPE-XRP-PERP initialized AGGRESSIVE (mode={self.config.mode.value})")
+        logger.info(f"AGAPE-XRP-PERP Trader: Initialized AGGRESSIVE (mode={self.config.mode.value})")
 
     def run_cycle(self, close_only=False):
         self._cycle_count += 1
@@ -66,7 +75,7 @@ class AgapeDogeTrader:
             market_data = self.signals.get_market_data()
             if market_data:
                 scan_ctx["market_data"] = market_data
-                scan_ctx["doge_price"] = market_data.get("spot_price")
+                scan_ctx["xrp_price"] = market_data.get("spot_price")
             prophet_data = self.signals.get_prophet_advice(market_data) if market_data else None
             if prophet_data:
                 scan_ctx["prophet_data"] = prophet_data
@@ -102,14 +111,14 @@ class AgapeDogeTrader:
                 result["outcome"] = f"TRADED_{signal.side.upper()}"
                 scan_ctx["position_id"] = position.position_id
                 self.db.log("INFO", "NEW_TRADE",
-                    f"{signal.side.upper()} {signal.quantity} DOGE-PERP @ ${position.entry_price:.6f}",
+                    f"{signal.side.upper()} {signal.quantity:.2f} XRP-PERP @ ${position.entry_price:.4f}",
                     details=signal.to_dict())
             else:
                 result["outcome"] = "EXECUTION_FAILED"
             self._log_scan(result, scan_ctx, signal=signal)
             return result
         except Exception as e:
-            logger.error(f"AGAPE-DOGE Trader: Cycle failed: {e}", exc_info=True)
+            logger.error(f"AGAPE-XRP-PERP Trader: Cycle failed: {e}", exc_info=True)
             result["outcome"] = "ERROR"
             result["error"] = str(e)
             self._log_scan(result, scan_ctx)
@@ -138,7 +147,7 @@ class AgapeDogeTrader:
                 else:
                     self._update_hwm(pos, current_price)
             except Exception as e:
-                logger.error(f"AGAPE-DOGE: Position mgmt error: {e}")
+                logger.error(f"AGAPE-XRP-PERP: Position mgmt error: {e}")
         return (len(open_positions), closed)
 
     def _manage_no_loss_trailing(self, pos, current_price, now):
@@ -165,20 +174,20 @@ class AgapeDogeTrader:
         if not trailing_active and max_profit_pct >= self.config.no_loss_activation_pct:
             trail_dist = entry * (self.config.no_loss_trail_distance_pct / 100)
             initial_stop = max(entry, hwm - trail_dist) if is_long else min(entry, hwm + trail_dist)
-            self.db._execute("UPDATE agape_doge_positions SET trailing_active = TRUE, current_stop = %s WHERE position_id = %s AND status = 'open'",
-                             (round(initial_stop, 6), pos["position_id"]))
+            self.db._execute("UPDATE agape_xrp_perp_positions SET trailing_active = TRUE, current_stop = %s WHERE position_id = %s AND status = 'open'",
+                             (round(initial_stop, 4), pos["position_id"]))
             trailing_active = True
             current_stop = initial_stop
         if trailing_active:
             trail_dist = entry * (self.config.no_loss_trail_distance_pct / 100)
             if is_long:
-                new_stop = round(hwm - trail_dist, 6)
+                new_stop = round(hwm - trail_dist, 4)
                 if new_stop > (current_stop or 0) and new_stop >= entry:
-                    self.db._execute("UPDATE agape_doge_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
+                    self.db._execute("UPDATE agape_xrp_perp_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
             else:
-                new_stop = round(hwm + trail_dist, 6)
+                new_stop = round(hwm + trail_dist, 4)
                 if current_stop and new_stop < current_stop and new_stop <= entry:
-                    self.db._execute("UPDATE agape_doge_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
+                    self.db._execute("UPDATE agape_xrp_perp_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
         open_time_str = pos.get("open_time")
         if open_time_str:
             try:
@@ -202,7 +211,7 @@ class AgapeDogeTrader:
         ep = self.config.no_loss_emergency_stop_pct
         sl = current_price * (1 - ep / 100) if rev_side == "long" else current_price * (1 + ep / 100)
         tp = current_price * (1 + ep / 100) if rev_side == "long" else current_price * (1 - ep / 100)
-        sig = AgapeDogeSignal(
+        sig = AgapeXrpPerpSignal(
             spot_price=current_price, timestamp=datetime.now(CENTRAL_TZ),
             action=SignalAction.LONG if rev_side == "long" else SignalAction.SHORT,
             confidence="HIGH", reasoning=f"SAR_REVERSAL from {pos['side'].upper()}",
@@ -237,9 +246,15 @@ class AgapeDogeTrader:
         return (False, "")
 
     def _close_position(self, pos, current_price, reason):
+        """Close a position with perpetual P&L calculation.
+
+        P&L = (current_price - entry_price) * quantity * direction
+        No contract_size multiplier for perpetuals.
+        """
         pid = pos["position_id"]
         direction = 1 if pos["side"] == "long" else -1
-        pnl = round((current_price - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * direction, 2)
+        quantity = pos.get("quantity", self.config.default_quantity)
+        pnl = round((current_price - pos["entry_price"]) * quantity * direction, 2)
         success = self.db.expire_position(pid, pnl, current_price) if reason == "MAX_HOLD_TIME" else self.db.close_position(pid, current_price, pnl, reason)
         if success:
             won = pnl > 0
@@ -250,7 +265,7 @@ class AgapeDogeTrader:
                 self.consecutive_losses += 1
                 if self.consecutive_losses >= self.config.max_consecutive_losses:
                     self.loss_streak_pause_until = datetime.now(CENTRAL_TZ) + timedelta(minutes=self.config.loss_streak_pause_minutes)
-            record_agape_doge_trade_outcome(pos["side"].upper(), won, self._cycle_count)
+            record_agape_xrp_perp_trade_outcome(pos["side"].upper(), won, self._cycle_count)
             self.db.log("INFO", "CLOSE", f"Closed {pid} P&L=${pnl:+.2f} ({reason})")
         return success
 
@@ -260,15 +275,24 @@ class AgapeDogeTrader:
             self.db.update_high_water_mark(pos["position_id"], current_price)
 
     def _check_entry_conditions(self, now):
+        """Check entry conditions for perpetual contracts.
+
+        Perpetuals trade 24/7/365 - only bot-level checks apply.
+        No CME schedule, no daily maintenance, no weekend closures.
+        """
         if not self._enabled:
             return "BOT_DISABLED"
+        # Check max open positions
+        open_count = self.db.get_position_count()
+        if open_count >= self.config.max_open_positions:
+            return "MAX_POSITIONS_REACHED"
         return None
 
     def _log_scan(self, result, ctx, signal=None):
         md = ctx.get("market_data", {})
         pd = ctx.get("prophet_data", {})
         self.db.log_scan({
-            "outcome": result.get("outcome"), "doge_price": md.get("spot_price"),
+            "outcome": result.get("outcome"), "xrp_price": md.get("spot_price"),
             "funding_rate": md.get("funding_rate"), "funding_regime": md.get("funding_regime"),
             "ls_ratio": md.get("ls_ratio"), "ls_bias": md.get("ls_bias"),
             "squeeze_risk": md.get("squeeze_risk"), "leverage_regime": md.get("leverage_regime"),
@@ -282,6 +306,11 @@ class AgapeDogeTrader:
         })
 
     def _save_equity_snapshot(self, market_data):
+        """Save equity snapshot with xrp_price.
+
+        P&L = (current_price - entry_price) * quantity * direction
+        No contract_size multiplier for perpetuals.
+        """
         try:
             open_pos = self.db.get_open_positions()
             cp = self.executor.get_current_price()
@@ -291,22 +320,24 @@ class AgapeDogeTrader:
             if cp and open_pos:
                 for p in open_pos:
                     d = 1 if p["side"] == "long" else -1
-                    unrealized += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                    quantity = p.get("quantity", self.config.default_quantity)
+                    unrealized += (cp - p["entry_price"]) * quantity * d
             closed = self.db.get_closed_trades(limit=10000)
             realized_cum = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
             equity = self.config.starting_capital + realized_cum + unrealized
             self.db.save_equity_snapshot(equity=round(equity, 2), unrealized_pnl=round(unrealized, 2),
                                           realized_cumulative=round(realized_cum, 2), open_positions=len(open_pos),
-                                          doge_price=cp, funding_rate=market_data.get("funding_rate") if market_data else None)
+                                          xrp_price=cp, funding_rate=market_data.get("funding_rate") if market_data else None)
         except Exception as e:
-            logger.warning(f"AGAPE-DOGE: Snapshot failed: {e}")
+            logger.warning(f"AGAPE-XRP-PERP: Snapshot failed: {e}")
 
     def get_market_status(self, now=None):
+        """Perpetual contracts trade 24/7/365. Always open."""
         return {
             "market_open": True,
             "status": "OPEN",
-            "reason": "Perpetual contracts trade 24/7/365",
-            "schedule": "24/7/365 - No maintenance windows",
+            "reason": "XRP perpetual contracts trade 24/7/365.",
+            "schedule": "24/7/365 - No closures, no maintenance windows",
         }
 
     def get_status(self):
@@ -317,7 +348,8 @@ class AgapeDogeTrader:
         if cp and open_pos:
             for p in open_pos:
                 d = 1 if p["side"] == "long" else -1
-                total_unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                quantity = p.get("quantity", self.config.default_quantity)
+                total_unr += (cp - p["entry_price"]) * quantity * d
         closed = self.db.get_closed_trades(limit=10000)
         realized = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
         total_pnl = realized + total_unr
@@ -326,14 +358,14 @@ class AgapeDogeTrader:
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0] if closed else []
         wr = round(len(wins) / len(closed) * 100, 1) if closed else None
         return {
-            "bot_name": "AGAPE_DOGE", "status": "ACTIVE" if self._enabled else "DISABLED",
-            "mode": self.config.mode.value, "ticker": "DOGE", "instrument": "DOGE-PERP",
+            "bot_name": "AGAPE_XRP_PERP", "status": "ACTIVE" if self._enabled else "DISABLED",
+            "mode": self.config.mode.value, "ticker": "XRP", "instrument": "XRP-PERP",
             "exchange": "perpetual", "cycle_count": self._cycle_count,
-            "open_positions": len(open_pos), "current_doge_price": cp,
+            "open_positions": len(open_pos), "current_xrp_price": cp,
             "total_unrealized_pnl": round(total_unr, 2),
             "starting_capital": self.config.starting_capital,
             "risk_per_trade_pct": self.config.risk_per_trade_pct,
-            "max_quantity": self.config.max_quantity, "cooldown_minutes": 0,
+            "default_quantity": self.config.default_quantity, "cooldown_minutes": 0,
             "require_oracle": self.config.require_oracle_approval,
             "market": self.get_market_status(now),
             "paper_account": {
@@ -353,6 +385,10 @@ class AgapeDogeTrader:
         }
 
     def get_performance(self):
+        """Get comprehensive performance metrics.
+
+        P&L uses quantity * direction (no contract_size multiplier).
+        """
         closed = self.db.get_closed_trades(limit=10000)
         open_pos = self.db.get_open_positions()
         cp = self.executor.get_current_price()
@@ -360,7 +396,8 @@ class AgapeDogeTrader:
         if cp and open_pos:
             for p in open_pos:
                 d = 1 if p["side"] == "long" else -1
-                unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                quantity = p.get("quantity", self.config.default_quantity)
+                unr += (cp - p["entry_price"]) * quantity * d
         if not closed:
             return {"total_trades": 0, "open_positions": len(open_pos), "win_rate": None,
                     "total_pnl": round(unr, 2), "realized_pnl": 0, "unrealized_pnl": round(unr, 2),
@@ -386,6 +423,10 @@ class AgapeDogeTrader:
         }
 
     def force_close_all(self, reason="MANUAL_CLOSE"):
+        """Force close all open positions.
+
+        P&L = (current_price - entry_price) * quantity * direction
+        """
         cp = self.executor.get_current_price()
         if not cp:
             return {"error": "No price", "closed": 0}
@@ -393,14 +434,15 @@ class AgapeDogeTrader:
         for pos in self.db.get_open_positions():
             if self._close_position(pos, cp, reason):
                 d = 1 if pos["side"] == "long" else -1
-                pnl = (cp - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * d
+                quantity = pos.get("quantity", self.config.default_quantity)
+                pnl = (cp - pos["entry_price"]) * quantity * d
                 results.append({"position_id": pos["position_id"], "pnl": round(pnl, 2)})
         return {"closed": len(results), "total_pnl": round(sum(r["pnl"] for r in results), 2), "details": results}
 
     def enable(self):
         self._enabled = True
-        self.db.log("INFO", "ENABLE", "AGAPE-DOGE enabled")
+        self.db.log("INFO", "ENABLE", "AGAPE-XRP-PERP enabled")
 
     def disable(self):
         self._enabled = False
-        self.db.log("INFO", "DISABLE", "AGAPE-DOGE disabled")
+        self.db.log("INFO", "DISABLE", "AGAPE-XRP-PERP disabled")

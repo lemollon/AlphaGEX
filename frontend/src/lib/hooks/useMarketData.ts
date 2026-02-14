@@ -1031,6 +1031,196 @@ const fetchers = {
     return response.data
   },
 
+  // AGAPE-ETH-PERP (ETH Perpetual)
+  agapeEthPerpStatus: async () => {
+    const response = await api.get('/api/agape-eth-perp/status')
+    return response.data
+  },
+  agapeEthPerpPositions: async () => {
+    const response = await api.get('/api/agape-eth-perp/positions')
+    return response.data
+  },
+  agapeEthPerpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-eth-perp/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeEthPerpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-eth-perp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeEthPerpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-eth-perp/equity-curve/intraday')
+    return response.data
+  },
+  agapeEthPerpPerformance: async () => {
+    const response = await api.get('/api/agape-eth-perp/performance')
+    return response.data
+  },
+  agapeEthPerpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-eth-perp/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeEthPerpSnapshot: async () => {
+    const response = await api.get('/api/agape-eth-perp/snapshot')
+    return response.data
+  },
+  agapeEthPerpGexMapping: async () => {
+    const response = await api.get('/api/agape-eth-perp/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-BTC-PERP (BTC Perpetual)
+  agapeBtcPerpStatus: async () => {
+    const response = await api.get('/api/agape-btc-perp/status')
+    return response.data
+  },
+  agapeBtcPerpPositions: async () => {
+    const response = await api.get('/api/agape-btc-perp/positions')
+    return response.data
+  },
+  agapeBtcPerpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-btc-perp/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeBtcPerpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-btc-perp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeBtcPerpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-btc-perp/equity-curve/intraday')
+    return response.data
+  },
+  agapeBtcPerpPerformance: async () => {
+    const response = await api.get('/api/agape-btc-perp/performance')
+    return response.data
+  },
+  agapeBtcPerpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-btc-perp/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeBtcPerpSnapshot: async () => {
+    const response = await api.get('/api/agape-btc-perp/snapshot')
+    return response.data
+  },
+  agapeBtcPerpGexMapping: async () => {
+    const response = await api.get('/api/agape-btc-perp/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-XRP-PERP (XRP Perpetual)
+  agapeXrpPerpStatus: async () => {
+    const response = await api.get('/api/agape-xrp-perp/status')
+    return response.data
+  },
+  agapeXrpPerpPositions: async () => {
+    const response = await api.get('/api/agape-xrp-perp/positions')
+    return response.data
+  },
+  agapeXrpPerpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-xrp-perp/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeXrpPerpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-xrp-perp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeXrpPerpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-xrp-perp/equity-curve/intraday')
+    return response.data
+  },
+  agapeXrpPerpPerformance: async () => {
+    const response = await api.get('/api/agape-xrp-perp/performance')
+    return response.data
+  },
+  agapeXrpPerpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-xrp-perp/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeXrpPerpSnapshot: async () => {
+    const response = await api.get('/api/agape-xrp-perp/snapshot')
+    return response.data
+  },
+  agapeXrpPerpGexMapping: async () => {
+    const response = await api.get('/api/agape-xrp-perp/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-DOGE-PERP (DOGE Perpetual)
+  agapeDogePerpStatus: async () => {
+    const response = await api.get('/api/agape-doge-perp/status')
+    return response.data
+  },
+  agapeDogePerpPositions: async () => {
+    const response = await api.get('/api/agape-doge-perp/positions')
+    return response.data
+  },
+  agapeDogePerpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-doge-perp/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeDogePerpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-doge-perp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeDogePerpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-doge-perp/equity-curve/intraday')
+    return response.data
+  },
+  agapeDogePerpPerformance: async () => {
+    const response = await api.get('/api/agape-doge-perp/performance')
+    return response.data
+  },
+  agapeDogePerpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-doge-perp/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeDogePerpSnapshot: async () => {
+    const response = await api.get('/api/agape-doge-perp/snapshot')
+    return response.data
+  },
+  agapeDogePerpGexMapping: async () => {
+    const response = await api.get('/api/agape-doge-perp/gex-mapping')
+    return response.data
+  },
+
+  // AGAPE-SHIB-PERP (SHIB Perpetual)
+  agapeShibPerpStatus: async () => {
+    const response = await api.get('/api/agape-shib-perp/status')
+    return response.data
+  },
+  agapeShibPerpPositions: async () => {
+    const response = await api.get('/api/agape-shib-perp/positions')
+    return response.data
+  },
+  agapeShibPerpClosedTrades: async (limit: number = 50) => {
+    const response = await api.get(`/api/agape-shib-perp/closed-trades?limit=${limit}`)
+    return response.data
+  },
+  agapeShibPerpEquityCurve: async (days: number = 30) => {
+    const response = await api.get(`/api/agape-shib-perp/equity-curve?days=${days}`)
+    return response.data
+  },
+  agapeShibPerpIntradayEquity: async () => {
+    const response = await api.get('/api/agape-shib-perp/equity-curve/intraday')
+    return response.data
+  },
+  agapeShibPerpPerformance: async () => {
+    const response = await api.get('/api/agape-shib-perp/performance')
+    return response.data
+  },
+  agapeShibPerpScanActivity: async (limit: number = 30) => {
+    const response = await api.get(`/api/agape-shib-perp/scan-activity?limit=${limit}`)
+    return response.data
+  },
+  agapeShibPerpSnapshot: async () => {
+    const response = await api.get('/api/agape-shib-perp/snapshot')
+    return response.data
+  },
+  agapeShibPerpGexMapping: async () => {
+    const response = await api.get('/api/agape-shib-perp/gex-mapping')
+    return response.data
+  },
+
   // OMEGA Orchestrator
   omegaStatus: async () => {
     const response = await api.get('/api/omega/status')
@@ -2129,6 +2319,386 @@ export function useAGAPEXRPSnapshot(options?: SWRConfiguration) {
 
 export function useAGAPEXRPGexMapping(options?: SWRConfiguration) {
   return useSWR('agape-xrp-gex-mapping', fetchers.agapeXrpGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE-ETH-PERP (ETH Perpetual) HOOKS
+// =============================================================================
+
+export function useAGAPEEthPerpStatus(options?: SWRConfiguration) {
+  return useSWR('agape-eth-perp-status', fetchers.agapeEthPerpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEEthPerpPositions(options?: SWRConfiguration) {
+  return useSWR('agape-eth-perp-positions', fetchers.agapeEthPerpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEEthPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-eth-perp-closed-trades-${limit}`,
+    () => fetchers.agapeEthPerpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEEthPerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-eth-perp-equity-curve-${days}`,
+    () => fetchers.agapeEthPerpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEEthPerpIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-eth-perp-intraday-equity', fetchers.agapeEthPerpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEEthPerpPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-eth-perp-performance', fetchers.agapeEthPerpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEEthPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-eth-perp-scan-activity-${limit}`,
+    () => fetchers.agapeEthPerpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPEEthPerpSnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-eth-perp-snapshot', fetchers.agapeEthPerpSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEEthPerpGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-eth-perp-gex-mapping', fetchers.agapeEthPerpGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE-BTC-PERP (BTC Perpetual) HOOKS
+// =============================================================================
+
+export function useAGAPEBtcPerpStatus(options?: SWRConfiguration) {
+  return useSWR('agape-btc-perp-status', fetchers.agapeBtcPerpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBtcPerpPositions(options?: SWRConfiguration) {
+  return useSWR('agape-btc-perp-positions', fetchers.agapeBtcPerpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBtcPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-btc-perp-closed-trades-${limit}`,
+    () => fetchers.agapeBtcPerpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEBtcPerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-btc-perp-equity-curve-${days}`,
+    () => fetchers.agapeBtcPerpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEBtcPerpIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-btc-perp-intraday-equity', fetchers.agapeBtcPerpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBtcPerpPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-btc-perp-performance', fetchers.agapeBtcPerpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBtcPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-btc-perp-scan-activity-${limit}`,
+    () => fetchers.agapeBtcPerpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPEBtcPerpSnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-btc-perp-snapshot', fetchers.agapeBtcPerpSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEBtcPerpGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-btc-perp-gex-mapping', fetchers.agapeBtcPerpGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE-XRP-PERP (XRP Perpetual) HOOKS
+// =============================================================================
+
+export function useAGAPEXrpPerpStatus(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-perp-status', fetchers.agapeXrpPerpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXrpPerpPositions(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-perp-positions', fetchers.agapeXrpPerpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXrpPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-xrp-perp-closed-trades-${limit}`,
+    () => fetchers.agapeXrpPerpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEXrpPerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-xrp-perp-equity-curve-${days}`,
+    () => fetchers.agapeXrpPerpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEXrpPerpIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-perp-intraday-equity', fetchers.agapeXrpPerpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXrpPerpPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-perp-performance', fetchers.agapeXrpPerpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXrpPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-xrp-perp-scan-activity-${limit}`,
+    () => fetchers.agapeXrpPerpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPEXrpPerpSnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-perp-snapshot', fetchers.agapeXrpPerpSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEXrpPerpGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-xrp-perp-gex-mapping', fetchers.agapeXrpPerpGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE-DOGE-PERP (DOGE Perpetual) HOOKS
+// =============================================================================
+
+export function useAGAPEDogePerpStatus(options?: SWRConfiguration) {
+  return useSWR('agape-doge-perp-status', fetchers.agapeDogePerpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEDogePerpPositions(options?: SWRConfiguration) {
+  return useSWR('agape-doge-perp-positions', fetchers.agapeDogePerpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEDogePerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-doge-perp-closed-trades-${limit}`,
+    () => fetchers.agapeDogePerpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEDogePerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-doge-perp-equity-curve-${days}`,
+    () => fetchers.agapeDogePerpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEDogePerpIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-doge-perp-intraday-equity', fetchers.agapeDogePerpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEDogePerpPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-doge-perp-performance', fetchers.agapeDogePerpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEDogePerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-doge-perp-scan-activity-${limit}`,
+    () => fetchers.agapeDogePerpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPEDogePerpSnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-doge-perp-snapshot', fetchers.agapeDogePerpSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEDogePerpGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-doge-perp-gex-mapping', fetchers.agapeDogePerpGexMapping, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+// =============================================================================
+// AGAPE-SHIB-PERP (SHIB Perpetual) HOOKS
+// =============================================================================
+
+export function useAGAPEShibPerpStatus(options?: SWRConfiguration) {
+  return useSWR('agape-shib-perp-status', fetchers.agapeShibPerpStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibPerpPositions(options?: SWRConfiguration) {
+  return useSWR('agape-shib-perp-positions', fetchers.agapeShibPerpPositions, {
+    ...swrConfig,
+    refreshInterval: 15 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibPerpClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-shib-perp-closed-trades-${limit}`,
+    () => fetchers.agapeShibPerpClosedTrades(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEShibPerpEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-shib-perp-equity-curve-${days}`,
+    () => fetchers.agapeShibPerpEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useAGAPEShibPerpIntradayEquity(options?: SWRConfiguration) {
+  return useSWR('agape-shib-perp-intraday-equity', fetchers.agapeShibPerpIntradayEquity, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibPerpPerformance(options?: SWRConfiguration) {
+  return useSWR('agape-shib-perp-performance', fetchers.agapeShibPerpPerformance, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibPerpScanActivity(limit: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `agape-shib-perp-scan-activity-${limit}`,
+    () => fetchers.agapeShibPerpScanActivity(limit),
+    { ...swrConfig, refreshInterval: 15 * 1000, ...options }
+  )
+}
+
+export function useAGAPEShibPerpSnapshot(options?: SWRConfiguration) {
+  return useSWR('agape-shib-perp-snapshot', fetchers.agapeShibPerpSnapshot, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useAGAPEShibPerpGexMapping(options?: SWRConfiguration) {
+  return useSWR('agape-shib-perp-gex-mapping', fetchers.agapeShibPerpGexMapping, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
     ...options,

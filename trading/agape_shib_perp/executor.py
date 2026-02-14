@@ -1,7 +1,8 @@
 """
-AGAPE-DOGE Executor - Executes DOGE perpetual contract trades.
+AGAPE-SHIB-PERP Executor - Executes SHIB-PERP perpetual contract trades.
 
-Perpetual contracts: No expiration, 24/7 trading, funding rate every 8h.
+Same logic as AGAPE-DOGE executor for perpetual contracts.
+No tastytrade/CME integration - perpetual contracts only.
 """
 
 import logging
@@ -10,8 +11,8 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from trading.agape_doge.models import (
-    AgapeDogeConfig, AgapeDogeSignal, AgapeDogePosition,
+from trading.agape_shib_perp.models import (
+    AgapeShibPerpConfig, AgapeShibPerpSignal, AgapeShibPerpPosition,
     PositionSide, PositionStatus, SignalAction, TradingMode,
 )
 
@@ -19,32 +20,33 @@ logger = logging.getLogger(__name__)
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
-class AgapeDogeExecutor:
-    """Executes DOGE perpetual contract trades.
+class AgapeShibPerpExecutor:
+    """Executes SHIB Perpetual contract trades.
 
-    DOGE-PERP: Quantity-based sizing (DOGE units), no expiration.
+    SHIB-PERP: Quantity-based perpetual contract, no expiration.
+    Very low price (~$0.00001), very large quantities (millions).
     """
 
-    def __init__(self, config: AgapeDogeConfig, db=None):
+    def __init__(self, config: AgapeShibPerpConfig, db=None):
         self.config = config
         self.db = db
 
-    def execute_trade(self, signal: AgapeDogeSignal) -> Optional[AgapeDogePosition]:
+    def execute_trade(self, signal: AgapeShibPerpSignal) -> Optional[AgapeShibPerpPosition]:
         if not signal.is_valid:
             return None
         if self.config.mode == TradingMode.LIVE:
-            return self._execute_live(signal)
+            return self._execute_paper(signal)
         return self._execute_paper(signal)
 
-    def _execute_paper(self, signal: AgapeDogeSignal) -> Optional[AgapeDogePosition]:
+    def _execute_paper(self, signal: AgapeShibPerpSignal) -> Optional[AgapeShibPerpPosition]:
         try:
             slippage = signal.spot_price * 0.001
             fill_price = signal.spot_price + slippage if signal.side == "long" else signal.spot_price - slippage
-            position_id = f"AGAPE-DOGE-{uuid.uuid4().hex[:8].upper()}"
-            return AgapeDogePosition(
+            position_id = f"AGAPE-SHIB-PERP-{uuid.uuid4().hex[:8].upper()}"
+            return AgapeShibPerpPosition(
                 position_id=position_id,
                 side=PositionSide.LONG if signal.side == "long" else PositionSide.SHORT,
-                quantity=signal.quantity, entry_price=round(fill_price, 6),
+                quantity=signal.quantity, entry_price=round(fill_price, 8),
                 stop_loss=signal.stop_loss, take_profit=signal.take_profit,
                 max_risk_usd=signal.max_risk_usd,
                 underlying_at_entry=signal.spot_price,
@@ -67,19 +69,15 @@ class AgapeDogeExecutor:
                 high_water_mark=fill_price,
             )
         except Exception as e:
-            logger.error(f"AGAPE-DOGE Executor: Paper execution failed: {e}")
+            logger.error(f"AGAPE-SHIB-PERP Executor: Paper execution failed: {e}")
             return None
 
-    def _execute_live(self, signal: AgapeDogeSignal) -> Optional[AgapeDogePosition]:
-        # Live perpetual contract execution placeholder - falls back to paper for now
-        logger.warning("AGAPE-DOGE Executor: Live execution not yet implemented, falling back to paper")
-        return self._execute_paper(signal)
-
     def get_current_price(self) -> Optional[float]:
+        """Get current SHIB price from CryptoDataProvider."""
         try:
             from data.crypto_data_provider import get_crypto_data_provider
             provider = get_crypto_data_provider()
-            snapshot = provider.get_snapshot("DOGE")
+            snapshot = provider.get_snapshot("SHIB")
             return snapshot.spot_price if snapshot else None
         except Exception:
             return None

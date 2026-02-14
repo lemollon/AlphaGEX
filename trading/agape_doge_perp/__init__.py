@@ -1,11 +1,11 @@
 """
-AGAPE-DOGE - DOGE Perpetual Contract Trading Bot
+AGAPE-DOGE-PERP - DOGE Perpetual Contract Trading Bot
 
 Named after the biblical Greek term for "unconditional love" (ἀγάπη),
-AGAPE-DOGE extends AGAPE's disciplined, data-driven crypto trading to
+AGAPE-DOGE-PERP extends AGAPE's disciplined, data-driven crypto trading to
 DOGE perpetual contracts.
 
-AGAPE-DOGE trades DOGE-PERP perpetual contracts 24/7,
+AGAPE-DOGE-PERP trades DOGE-PERP perpetual contracts 24/7,
 using crypto market microstructure signals as GEX equivalents.
 
 Key differences from futures (AGAPE-XRP, AGAPE-BTC):

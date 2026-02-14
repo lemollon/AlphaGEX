@@ -168,6 +168,56 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
     reference: 'Ephesians 4:2',
     why: 'AGAPE-XRP extends unconditional love to XRP futures trading. With humility and patience, it bears through each market cycle, finding opportunity where others see chaos.',
   },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-ETH-PERP → AGAPE-ETH-PERP (ETH Perpetual Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_ETH_PERP: {
+    displayName: 'AGAPE-ETH-PERP',
+    verse: '"Love is patient, love is kind. It always protects, always trusts, always hopes, always perseveres."',
+    reference: '1 Corinthians 13:4,7',
+    why: 'AGAPE-ETH-PERP trades ETH perpetual contracts with the same steadfast discipline—24/7 commitment that never sleeps, like love that always perseveres.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-BTC-PERP → AGAPE-BTC-PERP (BTC Perpetual Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_BTC_PERP: {
+    displayName: 'AGAPE-BTC-PERP',
+    verse: '"And now these three remain: faith, hope and love. But the greatest of these is love."',
+    reference: '1 Corinthians 13:13',
+    why: 'AGAPE-BTC-PERP applies unconditional devotion to Bitcoin perpetual contracts, trading around the clock with unwavering faith in the data-driven process.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-XRP-PERP → AGAPE-XRP-PERP (XRP Perpetual Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_XRP_PERP: {
+    displayName: 'AGAPE-XRP-PERP',
+    verse: '"Be completely humble and gentle; be patient, bearing with one another in love."',
+    reference: 'Ephesians 4:2',
+    why: 'AGAPE-XRP-PERP trades XRP perpetual contracts with patience and humility through every market cycle, 24 hours a day.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-DOGE-PERP → AGAPE-DOGE-PERP (DOGE Perpetual Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_DOGE_PERP: {
+    displayName: 'AGAPE-DOGE-PERP',
+    verse: '"Above all, love each other deeply, because love covers over a multitude of sins."',
+    reference: '1 Peter 4:8',
+    why: 'AGAPE-DOGE-PERP trades DOGE perpetual contracts—even meme coins deserve unconditional, disciplined love. Deep love covers the volatility of meme markets.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AGAPE-SHIB-PERP → AGAPE-SHIB-PERP (SHIB Perpetual Contract)
+  // ─────────────────────────────────────────────────────────────────────────────
+  AGAPE_SHIB_PERP: {
+    displayName: 'AGAPE-SHIB-PERP',
+    verse: '"Dear friends, let us love one another, for love comes from God."',
+    reference: '1 John 4:7',
+    why: 'AGAPE-SHIB-PERP trades SHIB perpetual contracts with divine patience. Even the smallest token receives the same unconditional love and disciplined approach.',
+  },
 }
 
 // =============================================================================
@@ -257,6 +307,11 @@ export const BOT_DISPLAY_NAMES = {
   AGAPE_SPOT: BOT_SCRIPTURES.AGAPE_SPOT.displayName,
   AGAPE_BTC: BOT_SCRIPTURES.AGAPE_BTC.displayName,
   AGAPE_XRP: BOT_SCRIPTURES.AGAPE_XRP.displayName,
+  AGAPE_ETH_PERP: BOT_SCRIPTURES.AGAPE_ETH_PERP.displayName,
+  AGAPE_BTC_PERP: BOT_SCRIPTURES.AGAPE_BTC_PERP.displayName,
+  AGAPE_XRP_PERP: BOT_SCRIPTURES.AGAPE_XRP_PERP.displayName,
+  AGAPE_DOGE_PERP: BOT_SCRIPTURES.AGAPE_DOGE_PERP.displayName,
+  AGAPE_SHIB_PERP: BOT_SCRIPTURES.AGAPE_SHIB_PERP.displayName,
 } as const
 
 export const ADVISOR_DISPLAY_NAMES = {

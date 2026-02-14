@@ -1,8 +1,11 @@
 """
-AGAPE-SHIB Database Layer - PostgreSQL persistence for the SHIB bot.
+AGAPE-BTC-PERP Database Layer - PostgreSQL persistence for the BTC perpetual bot.
 
-Mirrors AGAPE-DOGE db.py pattern with SHIB-specific table names.
-Perpetual contract: quantity-based (not contracts), 24/7 trading.
+Key differences from AGAPE-BTC (CME futures):
+  - quantity FLOAT instead of contracts INTEGER
+  - btc_price column in snapshots and scans
+  - Default starting_capital $25,000
+  - Table prefix: agape_btc_perp_
 """
 
 import json
@@ -19,17 +22,25 @@ get_connection = None
 try:
     from database_adapter import get_connection
 except ImportError:
-    logger.warning("AGAPE-SHIB DB: database_adapter not available")
+    logger.warning("AGAPE-BTC-PERP DB: database_adapter not available")
 
 
 def _now_ct() -> datetime:
     return datetime.now(CENTRAL_TZ)
 
 
-class AgapeShibDatabase:
-    """Database operations for AGAPE-SHIB bot."""
+class AgapeBtcPerpDatabase:
+    """Database operations for AGAPE-BTC-PERP bot.
 
-    def __init__(self, bot_name: str = "AGAPE_SHIB"):
+    Tables:
+      - agape_btc_perp_positions: Open and closed positions (quantity FLOAT)
+      - agape_btc_perp_equity_snapshots: Equity curve data points
+      - agape_btc_perp_scan_activity: Every scan cycle logged
+      - agape_btc_perp_activity_log: General activity/event log
+      - autonomous_config: Shared config table (bot_name='AGAPE_BTC_PERP')
+    """
+
+    def __init__(self, bot_name: str = "AGAPE_BTC_PERP"):
         self.bot_name = bot_name
         self._ensure_tables()
 
@@ -48,7 +59,7 @@ class AgapeShibDatabase:
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Execute failed: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Execute failed: {e}")
             conn.rollback()
             return False
         finally:
@@ -58,13 +69,14 @@ class AgapeShibDatabase:
     def _ensure_tables(self):
         conn = self._get_conn()
         if not conn:
-            logger.warning("AGAPE-SHIB DB: No database connection, skipping table creation")
+            logger.warning("AGAPE-BTC-PERP DB: No database connection, skipping table creation")
             return
         try:
             cursor = conn.cursor()
 
+            # Positions table - uses quantity FLOAT instead of contracts INTEGER
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_shib_positions (
+                CREATE TABLE IF NOT EXISTS agape_btc_perp_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(100) UNIQUE NOT NULL,
                     side VARCHAR(10) NOT NULL,
@@ -100,26 +112,28 @@ class AgapeShibDatabase:
                 )
             """)
 
+            # Equity snapshots with btc_price
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_shib_equity_snapshots (
+                CREATE TABLE IF NOT EXISTS agape_btc_perp_equity_snapshots (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     equity FLOAT NOT NULL,
                     unrealized_pnl FLOAT DEFAULT 0,
                     realized_pnl_cumulative FLOAT DEFAULT 0,
                     open_positions INTEGER DEFAULT 0,
-                    shib_price FLOAT,
+                    btc_price FLOAT,
                     funding_rate FLOAT,
                     note VARCHAR(200)
                 )
             """)
 
+            # Scan activity with btc_price
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_shib_scan_activity (
+                CREATE TABLE IF NOT EXISTS agape_btc_perp_scan_activity (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     outcome VARCHAR(50) NOT NULL,
-                    shib_price FLOAT,
+                    btc_price FLOAT,
                     funding_rate FLOAT,
                     funding_regime VARCHAR(50),
                     ls_ratio FLOAT,
@@ -140,8 +154,9 @@ class AgapeShibDatabase:
                 )
             """)
 
+            # Activity log
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_shib_activity_log (
+                CREATE TABLE IF NOT EXISTS agape_btc_perp_activity_log (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     level VARCHAR(20) DEFAULT 'INFO',
@@ -151,28 +166,34 @@ class AgapeShibDatabase:
                 )
             """)
 
+            # Add trailing columns for no-loss trailing strategy
             for col_sql in [
-                "ALTER TABLE agape_shib_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
-                "ALTER TABLE agape_shib_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
+                "ALTER TABLE agape_btc_perp_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE agape_btc_perp_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
             ]:
                 try:
                     cursor.execute(col_sql)
                 except Exception:
                     pass
 
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_shib_positions_status ON agape_shib_positions(status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_shib_positions_open_time ON agape_shib_positions(open_time DESC)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_shib_equity_snapshots_ts ON agape_shib_equity_snapshots(timestamp DESC)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_shib_scan_activity_ts ON agape_shib_scan_activity(timestamp DESC)")
+            # Indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_btc_perp_positions_status ON agape_btc_perp_positions(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_btc_perp_positions_open_time ON agape_btc_perp_positions(open_time DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_btc_perp_equity_snapshots_ts ON agape_btc_perp_equity_snapshots(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_btc_perp_scan_activity_ts ON agape_btc_perp_scan_activity(timestamp DESC)")
 
             conn.commit()
-            logger.info("AGAPE-SHIB DB: Tables ensured")
+            logger.info("AGAPE-BTC-PERP DB: Tables ensured")
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Table creation failed: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Table creation failed: {e}")
             conn.rollback()
         finally:
             cursor.close()
             conn.close()
+
+    # ------------------------------------------------------------------
+    # Config
+    # ------------------------------------------------------------------
 
     def load_config(self) -> Optional[Dict[str, str]]:
         conn = self._get_conn()
@@ -181,13 +202,16 @@ class AgapeShibDatabase:
         try:
             cursor = conn.cursor()
             prefix = f"{self.bot_name.lower()}_"
-            cursor.execute("SELECT key, value FROM autonomous_config WHERE key LIKE %s", (f"{prefix}%",))
+            cursor.execute(
+                "SELECT key, value FROM autonomous_config WHERE key LIKE %s",
+                (f"{prefix}%",),
+            )
             rows = cursor.fetchall()
             if rows:
                 return {row[0].replace(prefix, ""): row[1] for row in rows}
             return None
         except Exception as e:
-            logger.debug(f"AGAPE-SHIB DB: Config load failed: {e}")
+            logger.debug(f"AGAPE-BTC-PERP DB: Config load failed: {e}")
             return None
         finally:
             cursor.close()
@@ -197,7 +221,11 @@ class AgapeShibDatabase:
         config = self.load_config()
         if config and "starting_capital" in config:
             return float(config["starting_capital"])
-        return 1000.0
+        return 25000.0
+
+    # ------------------------------------------------------------------
+    # Positions
+    # ------------------------------------------------------------------
 
     def save_position(self, pos) -> bool:
         conn = self._get_conn()
@@ -206,7 +234,7 @@ class AgapeShibDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_shib_positions (
+                INSERT INTO agape_btc_perp_positions (
                     position_id, side, quantity, entry_price,
                     stop_loss, take_profit, max_risk_usd,
                     underlying_at_entry, funding_rate_at_entry,
@@ -236,9 +264,10 @@ class AgapeShibDatabase:
                 pos.entry_price,
             ))
             conn.commit()
+            logger.info(f"AGAPE-BTC-PERP DB: Saved position {pos.position_id}")
             return True
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Failed to save position: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to save position: {e}")
             conn.rollback()
             return False
         finally:
@@ -252,7 +281,7 @@ class AgapeShibDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE agape_shib_positions
+                UPDATE agape_btc_perp_positions
                 SET status = 'closed', close_time = NOW(), close_price = %s,
                     realized_pnl = %s, close_reason = %s
                 WHERE position_id = %s AND status = 'open'
@@ -260,7 +289,7 @@ class AgapeShibDatabase:
             conn.commit()
             return cursor.rowcount > 0
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Failed to close position: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to close position {position_id}: {e}")
             conn.rollback()
             return False
         finally:
@@ -274,14 +303,15 @@ class AgapeShibDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE agape_shib_positions
+                UPDATE agape_btc_perp_positions
                 SET status = 'expired', close_time = NOW(), close_price = %s,
                     realized_pnl = %s, close_reason = 'MAX_HOLD_TIME'
                 WHERE position_id = %s AND status = 'open'
             """, (close_price, realized_pnl, position_id))
             conn.commit()
             return cursor.rowcount > 0
-        except Exception:
+        except Exception as e:
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to expire position: {e}")
             conn.rollback()
             return False
         finally:
@@ -306,7 +336,7 @@ class AgapeShibDatabase:
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
                        COALESCE(trailing_active, FALSE), current_stop
-                FROM agape_shib_positions
+                FROM agape_btc_perp_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
             """)
@@ -314,7 +344,9 @@ class AgapeShibDatabase:
             positions = []
             for row in rows:
                 positions.append({
-                    "position_id": row[0], "side": row[1], "quantity": float(row[2]),
+                    "position_id": row[0],
+                    "side": row[1],
+                    "quantity": float(row[2]),
                     "entry_price": float(row[3]),
                     "stop_loss": float(row[4]) if row[4] else None,
                     "take_profit": float(row[5]) if row[5] else None,
@@ -331,8 +363,10 @@ class AgapeShibDatabase:
                     "oracle_win_probability": float(row[16]) if row[16] else None,
                     "oracle_confidence": float(row[17]) if row[17] else None,
                     "oracle_top_factors": json.loads(row[18]) if row[18] else [],
-                    "signal_action": row[19], "signal_confidence": row[20],
-                    "signal_reasoning": row[21], "status": row[22],
+                    "signal_action": row[19],
+                    "signal_confidence": row[20],
+                    "signal_reasoning": row[21],
+                    "status": row[22],
                     "open_time": row[23].isoformat() if row[23] else None,
                     "high_water_mark": float(row[24]) if row[24] and float(row[24]) > 0 else float(row[3]),
                     "trailing_active": bool(row[25]),
@@ -340,7 +374,7 @@ class AgapeShibDatabase:
                 })
             return positions
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Failed to get open positions: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to get open positions: {e}")
             return []
         finally:
             cursor.close()
@@ -359,28 +393,34 @@ class AgapeShibDatabase:
                        funding_regime_at_entry, squeeze_risk_at_entry,
                        oracle_advice, oracle_win_probability,
                        signal_action, signal_confidence
-                FROM agape_shib_positions
+                FROM agape_btc_perp_positions
                 WHERE status IN ('closed', 'expired', 'stopped')
-                ORDER BY close_time DESC LIMIT %s
+                ORDER BY close_time DESC
+                LIMIT %s
             """, (limit,))
-            return [
-                {
-                    "position_id": row[0], "side": row[1], "quantity": float(row[2]),
+            rows = cursor.fetchall()
+            trades = []
+            for row in rows:
+                trades.append({
+                    "position_id": row[0],
+                    "side": row[1],
+                    "quantity": float(row[2]),
                     "entry_price": float(row[3]),
                     "close_price": float(row[4]) if row[4] else None,
                     "realized_pnl": float(row[5]) if row[5] else 0,
                     "close_reason": row[6],
                     "open_time": row[7].isoformat() if row[7] else None,
                     "close_time": row[8].isoformat() if row[8] else None,
-                    "funding_regime_at_entry": row[9], "squeeze_risk_at_entry": row[10],
+                    "funding_regime_at_entry": row[9],
+                    "squeeze_risk_at_entry": row[10],
                     "oracle_advice": row[11],
                     "oracle_win_probability": float(row[12]) if row[12] else None,
-                    "signal_action": row[13], "signal_confidence": row[14],
-                }
-                for row in cursor.fetchall()
-            ]
+                    "signal_action": row[13],
+                    "signal_confidence": row[14],
+                })
+            return trades
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Failed to get closed trades: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to get closed trades: {e}")
             return []
         finally:
             cursor.close()
@@ -392,7 +432,7 @@ class AgapeShibDatabase:
             return 0
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM agape_shib_positions WHERE status = 'open'")
+            cursor.execute("SELECT COUNT(*) FROM agape_btc_perp_positions WHERE status = 'open'")
             return cursor.fetchone()[0]
         except Exception:
             return 0
@@ -406,7 +446,10 @@ class AgapeShibDatabase:
             return False
         try:
             cursor = conn.cursor()
-            cursor.execute("UPDATE agape_shib_positions SET high_water_mark = %s WHERE position_id = %s AND status = 'open'", (hwm, position_id))
+            cursor.execute("""
+                UPDATE agape_btc_perp_positions SET high_water_mark = %s
+                WHERE position_id = %s AND status = 'open'
+            """, (hwm, position_id))
             conn.commit()
             return True
         except Exception:
@@ -416,26 +459,39 @@ class AgapeShibDatabase:
             cursor.close()
             conn.close()
 
-    def save_equity_snapshot(self, equity, unrealized_pnl, realized_cumulative, open_positions, shib_price=None, funding_rate=None):
+    # ------------------------------------------------------------------
+    # Equity Snapshots
+    # ------------------------------------------------------------------
+
+    def save_equity_snapshot(self, equity: float, unrealized_pnl: float,
+                            realized_cumulative: float, open_positions: int,
+                            btc_price: Optional[float] = None,
+                            funding_rate: Optional[float] = None) -> bool:
         conn = self._get_conn()
         if not conn:
             return False
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_shib_equity_snapshots
-                (equity, unrealized_pnl, realized_pnl_cumulative, open_positions, shib_price, funding_rate)
+                INSERT INTO agape_btc_perp_equity_snapshots
+                (equity, unrealized_pnl, realized_pnl_cumulative,
+                 open_positions, btc_price, funding_rate)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (equity, unrealized_pnl, realized_cumulative, open_positions, shib_price, funding_rate))
+            """, (equity, unrealized_pnl, realized_cumulative,
+                  open_positions, btc_price, funding_rate))
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Failed to save equity snapshot: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to save equity snapshot: {e}")
             conn.rollback()
             return False
         finally:
             cursor.close()
             conn.close()
+
+    # ------------------------------------------------------------------
+    # Scan Activity
+    # ------------------------------------------------------------------
 
     def log_scan(self, scan_data: Dict) -> bool:
         conn = self._get_conn()
@@ -444,91 +500,131 @@ class AgapeShibDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_shib_scan_activity (
-                    outcome, shib_price, funding_rate, funding_regime,
+                INSERT INTO agape_btc_perp_scan_activity (
+                    outcome, btc_price, funding_rate, funding_regime,
                     ls_ratio, ls_bias, squeeze_risk, leverage_regime,
                     max_pain, crypto_gex, crypto_gex_regime,
                     combined_signal, combined_confidence,
                     oracle_advice, oracle_win_prob,
                     signal_action, signal_reasoning,
                     position_id, error_message
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
             """, (
-                scan_data.get("outcome"), scan_data.get("shib_price"),
-                scan_data.get("funding_rate"), scan_data.get("funding_regime"),
-                scan_data.get("ls_ratio"), scan_data.get("ls_bias"),
-                scan_data.get("squeeze_risk"), scan_data.get("leverage_regime"),
-                scan_data.get("max_pain"), scan_data.get("crypto_gex"),
-                scan_data.get("crypto_gex_regime"), scan_data.get("combined_signal"),
-                scan_data.get("combined_confidence"), scan_data.get("oracle_advice"),
-                scan_data.get("oracle_win_prob"), scan_data.get("signal_action"),
-                scan_data.get("signal_reasoning"), scan_data.get("position_id"),
+                scan_data.get("outcome", "UNKNOWN"),
+                scan_data.get("btc_price"),
+                scan_data.get("funding_rate"),
+                scan_data.get("funding_regime"),
+                scan_data.get("ls_ratio"),
+                scan_data.get("ls_bias"),
+                scan_data.get("squeeze_risk"),
+                scan_data.get("leverage_regime"),
+                scan_data.get("max_pain"),
+                scan_data.get("crypto_gex"),
+                scan_data.get("crypto_gex_regime"),
+                scan_data.get("combined_signal"),
+                scan_data.get("combined_confidence"),
+                scan_data.get("oracle_advice"),
+                scan_data.get("oracle_win_prob"),
+                scan_data.get("signal_action"),
+                scan_data.get("signal_reasoning"),
+                scan_data.get("position_id"),
                 scan_data.get("error_message"),
             ))
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"AGAPE-SHIB DB: Failed to log scan: {e}")
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to log scan: {e}")
             conn.rollback()
             return False
         finally:
             cursor.close()
             conn.close()
 
-    def log(self, level, action, message, details=None):
+    # ------------------------------------------------------------------
+    # Activity Log
+    # ------------------------------------------------------------------
+
+    def log(self, level: str, action: str, message: str, details: Optional[Dict] = None):
         conn = self._get_conn()
         if not conn:
             return
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_shib_activity_log (level, action, message, details)
+                INSERT INTO agape_btc_perp_activity_log (level, action, message, details)
                 VALUES (%s, %s, %s, %s)
             """, (level, action, message, json.dumps(details) if details else None))
             conn.commit()
-        except Exception:
+        except Exception as e:
+            logger.error(f"AGAPE-BTC-PERP DB: Log failed: {e}")
             conn.rollback()
         finally:
             cursor.close()
             conn.close()
 
-    def get_logs(self, limit=50):
-        conn = self._get_conn()
-        if not conn:
-            return []
-        try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT timestamp, level, action, message, details FROM agape_shib_activity_log ORDER BY timestamp DESC LIMIT %s", (limit,))
-            return [{"timestamp": r[0].isoformat() if r[0] else None, "level": r[1], "action": r[2], "message": r[3], "details": r[4]} for r in cursor.fetchall()]
-        except Exception:
-            return []
-        finally:
-            cursor.close()
-            conn.close()
-
-    def get_scan_activity(self, limit=50):
+    def get_logs(self, limit: int = 50) -> List[Dict]:
         conn = self._get_conn()
         if not conn:
             return []
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT timestamp, outcome, shib_price, funding_rate, funding_regime,
-                       ls_ratio, squeeze_risk, combined_signal, combined_confidence,
-                       oracle_advice, oracle_win_prob, signal_action, signal_reasoning, position_id
-                FROM agape_shib_scan_activity ORDER BY timestamp DESC LIMIT %s
+                SELECT timestamp, level, action, message, details
+                FROM agape_btc_perp_activity_log ORDER BY timestamp DESC LIMIT %s
             """, (limit,))
             return [
-                {"timestamp": r[0].isoformat() if r[0] else None, "outcome": r[1],
-                 "shib_price": float(r[2]) if r[2] else None,
-                 "funding_rate": float(r[3]) if r[3] else None,
-                 "funding_regime": r[4], "ls_ratio": float(r[5]) if r[5] else None,
-                 "squeeze_risk": r[6], "combined_signal": r[7], "combined_confidence": r[8],
-                 "oracle_advice": r[9], "oracle_win_prob": float(r[10]) if r[10] else None,
-                 "signal_action": r[11], "signal_reasoning": r[12], "position_id": r[13]}
-                for r in cursor.fetchall()
+                {
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "level": row[1], "action": row[2],
+                    "message": row[3], "details": row[4],
+                }
+                for row in cursor.fetchall()
             ]
-        except Exception:
+        except Exception as e:
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to get logs: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_scan_activity(self, limit: int = 50) -> List[Dict]:
+        conn = self._get_conn()
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT timestamp, outcome, btc_price, funding_rate,
+                       funding_regime, ls_ratio, squeeze_risk,
+                       combined_signal, combined_confidence,
+                       oracle_advice, oracle_win_prob,
+                       signal_action, signal_reasoning, position_id
+                FROM agape_btc_perp_scan_activity ORDER BY timestamp DESC LIMIT %s
+            """, (limit,))
+            return [
+                {
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "outcome": row[1],
+                    "btc_price": float(row[2]) if row[2] else None,
+                    "funding_rate": float(row[3]) if row[3] else None,
+                    "funding_regime": row[4],
+                    "ls_ratio": float(row[5]) if row[5] else None,
+                    "squeeze_risk": row[6],
+                    "combined_signal": row[7],
+                    "combined_confidence": row[8],
+                    "oracle_advice": row[9],
+                    "oracle_win_prob": float(row[10]) if row[10] else None,
+                    "signal_action": row[11],
+                    "signal_reasoning": row[12],
+                    "position_id": row[13],
+                }
+                for row in cursor.fetchall()
+            ]
+        except Exception as e:
+            logger.error(f"AGAPE-BTC-PERP DB: Failed to get scan activity: {e}")
             return []
         finally:
             cursor.close()

@@ -1,11 +1,11 @@
 """
-AGAPE-SHIB - SHIB Perpetual Contract Trading Bot
+AGAPE-SHIB-PERP - SHIB Perpetual Contract Trading Bot
 
 Named after the biblical Greek term for "unconditional love" (agape),
-AGAPE-SHIB extends AGAPE's disciplined, data-driven crypto trading to
+AGAPE-SHIB-PERP extends AGAPE's disciplined, data-driven crypto trading to
 SHIB perpetual contracts.
 
-AGAPE-SHIB trades SHIB-PERP perpetual contracts 24/7,
+AGAPE-SHIB-PERP trades SHIB-PERP perpetual contracts 24/7,
 using crypto market microstructure signals as GEX equivalents.
 
 Key differences from futures (AGAPE-XRP, AGAPE-BTC):

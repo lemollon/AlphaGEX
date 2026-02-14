@@ -1,8 +1,13 @@
 """
-AGAPE-SHIB Trader - Main orchestrator for SHIB Perpetual Contract trading.
+AGAPE-ETH-PERP Trader - Main orchestrator for ETH perpetual contract trading.
 
-Same logic as AGAPE-DOGE trader but for SHIB-PERP contracts.
-24/7/365 perpetual contract trading, quantity-based sizing.
+Key differences from AGAPE-XRP:
+    - get_market_status(): always returns open (24/7/365, no CME hours)
+    - No get_cme_market_status() - replaced with get_market_status()
+    - _check_entry_conditions: only checks _enabled (no market hours)
+    - P&L: (current_price - entry_price) * quantity * direction
+    - Status uses eth_price, instrument="ETH-PERP", exchange="perpetual"
+    - Equity snapshots use eth_price instead of xrp_price
 """
 
 import logging
@@ -11,49 +16,53 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
 
-from trading.agape_shib.models import (
-    AgapeShibConfig, AgapeShibSignal, AgapeShibPosition,
+from trading.agape_eth_perp.models import (
+    AgapeEthPerpConfig, AgapeEthPerpSignal, AgapeEthPerpPosition,
     PositionSide, PositionStatus, SignalAction, TradingMode,
 )
-from trading.agape_shib.db import AgapeShibDatabase
-from trading.agape_shib.signals import (
-    AgapeShibSignalGenerator, get_agape_shib_direction_tracker,
-    record_agape_shib_trade_outcome,
+from trading.agape_eth_perp.db import AgapeEthPerpDatabase
+from trading.agape_eth_perp.signals import (
+    AgapeEthPerpSignalGenerator, get_agape_eth_perp_direction_tracker,
+    record_agape_eth_perp_trade_outcome,
 )
-from trading.agape_shib.executor import AgapeShibExecutor
+from trading.agape_eth_perp.executor import AgapeEthPerpExecutor
 
 logger = logging.getLogger(__name__)
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
-_agape_shib_trader: Optional["AgapeShibTrader"] = None
+_agape_eth_perp_trader: Optional["AgapeEthPerpTrader"] = None
 
 
-def get_agape_shib_trader():
-    return _agape_shib_trader
+def get_agape_eth_perp_trader():
+    return _agape_eth_perp_trader
 
 
-def create_agape_shib_trader(config=None):
-    global _agape_shib_trader
-    _agape_shib_trader = AgapeShibTrader(config)
-    return _agape_shib_trader
+def create_agape_eth_perp_trader(config=None):
+    global _agape_eth_perp_trader
+    _agape_eth_perp_trader = AgapeEthPerpTrader(config)
+    return _agape_eth_perp_trader
 
 
-class AgapeShibTrader:
-    """Main AGAPE-SHIB trading bot orchestrator."""
+class AgapeEthPerpTrader:
+    """Main AGAPE-ETH-PERP trading bot orchestrator.
+
+    Trades ETH perpetual contracts 24/7/365 with no market hours restrictions.
+    Uses quantity (float ETH) instead of contracts (int).
+    """
 
     def __init__(self, config=None):
-        self.db = AgapeShibDatabase()
-        self.config = config or AgapeShibConfig.load_from_db(self.db)
-        self.signals = AgapeShibSignalGenerator(self.config)
-        self.executor = AgapeShibExecutor(self.config, self.db)
+        self.db = AgapeEthPerpDatabase()
+        self.config = config or AgapeEthPerpConfig.load_from_db(self.db)
+        self.signals = AgapeEthPerpSignalGenerator(self.config)
+        self.executor = AgapeEthPerpExecutor(self.config, self.db)
         self._last_scan_time = None
         self._cycle_count = 0
         self._enabled = True
         self.consecutive_losses = 0
         self.loss_streak_pause_until = None
-        self._direction_tracker = get_agape_shib_direction_tracker(self.config)
-        self.db.log("INFO", "INIT", f"AGAPE-SHIB initialized AGGRESSIVE (mode={self.config.mode.value})")
-        logger.info(f"AGAPE-SHIB Trader: Initialized AGGRESSIVE (mode={self.config.mode.value})")
+        self._direction_tracker = get_agape_eth_perp_direction_tracker(self.config)
+        self.db.log("INFO", "INIT", f"AGAPE-ETH-PERP initialized AGGRESSIVE (mode={self.config.mode.value})")
+        logger.info(f"AGAPE-ETH-PERP Trader: Initialized AGGRESSIVE (mode={self.config.mode.value})")
 
     def run_cycle(self, close_only=False):
         self._cycle_count += 1
@@ -66,7 +75,7 @@ class AgapeShibTrader:
             market_data = self.signals.get_market_data()
             if market_data:
                 scan_ctx["market_data"] = market_data
-                scan_ctx["shib_price"] = market_data.get("spot_price")
+                scan_ctx["eth_price"] = market_data.get("spot_price")
             prophet_data = self.signals.get_prophet_advice(market_data) if market_data else None
             if prophet_data:
                 scan_ctx["prophet_data"] = prophet_data
@@ -102,14 +111,14 @@ class AgapeShibTrader:
                 result["outcome"] = f"TRADED_{signal.side.upper()}"
                 scan_ctx["position_id"] = position.position_id
                 self.db.log("INFO", "NEW_TRADE",
-                    f"{signal.side.upper()} {signal.quantity:.0f}x SHIB-PERP @ ${position.entry_price:.8f}",
+                    f"{signal.side.upper()} {signal.quantity} ETH-PERP @ ${position.entry_price:.2f}",
                     details=signal.to_dict())
             else:
                 result["outcome"] = "EXECUTION_FAILED"
             self._log_scan(result, scan_ctx, signal=signal)
             return result
         except Exception as e:
-            logger.error(f"AGAPE-SHIB Trader: Cycle failed: {e}", exc_info=True)
+            logger.error(f"AGAPE-ETH-PERP Trader: Cycle failed: {e}", exc_info=True)
             result["outcome"] = "ERROR"
             result["error"] = str(e)
             self._log_scan(result, scan_ctx)
@@ -138,7 +147,7 @@ class AgapeShibTrader:
                 else:
                     self._update_hwm(pos, current_price)
             except Exception as e:
-                logger.error(f"AGAPE-SHIB: Position mgmt error: {e}")
+                logger.error(f"AGAPE-ETH-PERP: Position mgmt error: {e}")
         return (len(open_positions), closed)
 
     def _manage_no_loss_trailing(self, pos, current_price, now):
@@ -165,20 +174,20 @@ class AgapeShibTrader:
         if not trailing_active and max_profit_pct >= self.config.no_loss_activation_pct:
             trail_dist = entry * (self.config.no_loss_trail_distance_pct / 100)
             initial_stop = max(entry, hwm - trail_dist) if is_long else min(entry, hwm + trail_dist)
-            self.db._execute("UPDATE agape_shib_positions SET trailing_active = TRUE, current_stop = %s WHERE position_id = %s AND status = 'open'",
-                             (round(initial_stop, 8), pos["position_id"]))
+            self.db._execute("UPDATE agape_eth_perp_positions SET trailing_active = TRUE, current_stop = %s WHERE position_id = %s AND status = 'open'",
+                             (round(initial_stop, 2), pos["position_id"]))
             trailing_active = True
             current_stop = initial_stop
         if trailing_active:
             trail_dist = entry * (self.config.no_loss_trail_distance_pct / 100)
             if is_long:
-                new_stop = round(hwm - trail_dist, 8)
+                new_stop = round(hwm - trail_dist, 2)
                 if new_stop > (current_stop or 0) and new_stop >= entry:
-                    self.db._execute("UPDATE agape_shib_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
+                    self.db._execute("UPDATE agape_eth_perp_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
             else:
-                new_stop = round(hwm + trail_dist, 8)
+                new_stop = round(hwm + trail_dist, 2)
                 if current_stop and new_stop < current_stop and new_stop <= entry:
-                    self.db._execute("UPDATE agape_shib_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
+                    self.db._execute("UPDATE agape_eth_perp_positions SET current_stop = %s WHERE position_id = %s AND status = 'open'", (new_stop, pos["position_id"]))
         open_time_str = pos.get("open_time")
         if open_time_str:
             try:
@@ -202,7 +211,7 @@ class AgapeShibTrader:
         ep = self.config.no_loss_emergency_stop_pct
         sl = current_price * (1 - ep / 100) if rev_side == "long" else current_price * (1 + ep / 100)
         tp = current_price * (1 + ep / 100) if rev_side == "long" else current_price * (1 - ep / 100)
-        sig = AgapeShibSignal(
+        sig = AgapeEthPerpSignal(
             spot_price=current_price, timestamp=datetime.now(CENTRAL_TZ),
             action=SignalAction.LONG if rev_side == "long" else SignalAction.SHORT,
             confidence="HIGH", reasoning=f"SAR_REVERSAL from {pos['side'].upper()}",
@@ -237,9 +246,11 @@ class AgapeShibTrader:
         return (False, "")
 
     def _close_position(self, pos, current_price, reason):
+        """Close a position with P&L = (current_price - entry_price) * quantity * direction."""
         pid = pos["position_id"]
         direction = 1 if pos["side"] == "long" else -1
-        pnl = round((current_price - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * direction, 2)
+        quantity = pos.get("quantity", self.config.default_quantity)
+        pnl = round((current_price - pos["entry_price"]) * quantity * direction, 2)
         success = self.db.expire_position(pid, pnl, current_price) if reason == "MAX_HOLD_TIME" else self.db.close_position(pid, current_price, pnl, reason)
         if success:
             won = pnl > 0
@@ -250,7 +261,7 @@ class AgapeShibTrader:
                 self.consecutive_losses += 1
                 if self.consecutive_losses >= self.config.max_consecutive_losses:
                     self.loss_streak_pause_until = datetime.now(CENTRAL_TZ) + timedelta(minutes=self.config.loss_streak_pause_minutes)
-            record_agape_shib_trade_outcome(pos["side"].upper(), won, self._cycle_count)
+            record_agape_eth_perp_trade_outcome(pos["side"].upper(), won, self._cycle_count)
             self.db.log("INFO", "CLOSE", f"Closed {pid} P&L=${pnl:+.2f} ({reason})")
         return success
 
@@ -260,19 +271,26 @@ class AgapeShibTrader:
             self.db.update_high_water_mark(pos["position_id"], current_price)
 
     def _check_entry_conditions(self, now):
-        """Check entry conditions - perpetual contracts trade 24/7."""
+        """Check entry conditions. Perpetual contracts trade 24/7/365 - only check if bot is enabled."""
         if not self._enabled:
             return "BOT_DISABLED"
-        pos_count = self.db.get_position_count()
-        if pos_count >= self.config.max_open_positions:
-            return "MAX_POSITIONS_REACHED"
+        # No market hours check - perpetual contracts trade 24/7/365
         return None
+
+    def get_market_status(self, now=None):
+        """Perpetual contracts trade 24/7/365 - always returns open."""
+        return {
+            "market_open": True,
+            "status": "OPEN",
+            "reason": "Perpetual contracts trade 24/7/365",
+            "schedule": "24/7/365 - No maintenance windows",
+        }
 
     def _log_scan(self, result, ctx, signal=None):
         md = ctx.get("market_data", {})
         pd = ctx.get("prophet_data", {})
         self.db.log_scan({
-            "outcome": result.get("outcome"), "shib_price": md.get("spot_price"),
+            "outcome": result.get("outcome"), "eth_price": md.get("spot_price"),
             "funding_rate": md.get("funding_rate"), "funding_regime": md.get("funding_regime"),
             "ls_ratio": md.get("ls_ratio"), "ls_bias": md.get("ls_bias"),
             "squeeze_risk": md.get("squeeze_risk"), "leverage_regime": md.get("leverage_regime"),
@@ -286,6 +304,7 @@ class AgapeShibTrader:
         })
 
     def _save_equity_snapshot(self, market_data):
+        """Save equity snapshot with eth_price."""
         try:
             open_pos = self.db.get_open_positions()
             cp = self.executor.get_current_price()
@@ -295,24 +314,16 @@ class AgapeShibTrader:
             if cp and open_pos:
                 for p in open_pos:
                     d = 1 if p["side"] == "long" else -1
-                    unrealized += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                    quantity = p.get("quantity", self.config.default_quantity)
+                    unrealized += (cp - p["entry_price"]) * quantity * d
             closed = self.db.get_closed_trades(limit=10000)
             realized_cum = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
             equity = self.config.starting_capital + realized_cum + unrealized
             self.db.save_equity_snapshot(equity=round(equity, 2), unrealized_pnl=round(unrealized, 2),
                                           realized_cumulative=round(realized_cum, 2), open_positions=len(open_pos),
-                                          shib_price=cp, funding_rate=market_data.get("funding_rate") if market_data else None)
+                                          eth_price=cp, funding_rate=market_data.get("funding_rate") if market_data else None)
         except Exception as e:
-            logger.warning(f"AGAPE-SHIB: Snapshot failed: {e}")
-
-    def get_market_status(self, now=None):
-        """Perpetual contracts trade 24/7/365 - always open."""
-        return {
-            "market_open": True,
-            "status": "OPEN",
-            "reason": "SHIB perpetual contracts trade 24/7/365.",
-            "schedule": "24/7/365 - Perpetual contracts never close",
-        }
+            logger.warning(f"AGAPE-ETH-PERP: Snapshot failed: {e}")
 
     def get_status(self):
         now = datetime.now(CENTRAL_TZ)
@@ -322,7 +333,8 @@ class AgapeShibTrader:
         if cp and open_pos:
             for p in open_pos:
                 d = 1 if p["side"] == "long" else -1
-                total_unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                quantity = p.get("quantity", self.config.default_quantity)
+                total_unr += (cp - p["entry_price"]) * quantity * d
         closed = self.db.get_closed_trades(limit=10000)
         realized = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
         total_pnl = realized + total_unr
@@ -331,14 +343,17 @@ class AgapeShibTrader:
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0] if closed else []
         wr = round(len(wins) / len(closed) * 100, 1) if closed else None
         return {
-            "bot_name": "AGAPE_SHIB", "status": "ACTIVE" if self._enabled else "DISABLED",
-            "mode": self.config.mode.value, "ticker": "SHIB", "instrument": "SHIB-PERP",
+            "bot_name": "AGAPE_ETH_PERP", "status": "ACTIVE" if self._enabled else "DISABLED",
+            "mode": self.config.mode.value, "ticker": "ETH", "instrument": "ETH-PERP",
             "exchange": "perpetual", "cycle_count": self._cycle_count,
-            "open_positions": len(open_pos), "current_shib_price": cp,
+            "open_positions": len(open_pos), "current_eth_price": cp,
             "total_unrealized_pnl": round(total_unr, 2),
             "starting_capital": self.config.starting_capital,
             "risk_per_trade_pct": self.config.risk_per_trade_pct,
-            "max_quantity": self.config.max_quantity, "cooldown_minutes": 0,
+            "default_quantity": self.config.default_quantity,
+            "min_quantity": self.config.min_quantity,
+            "max_quantity": self.config.max_quantity,
+            "cooldown_minutes": 0,
             "require_oracle": self.config.require_oracle_approval,
             "market": self.get_market_status(now),
             "paper_account": {
@@ -365,7 +380,8 @@ class AgapeShibTrader:
         if cp and open_pos:
             for p in open_pos:
                 d = 1 if p["side"] == "long" else -1
-                unr += (cp - p["entry_price"]) * p.get("quantity", self.config.default_quantity) * d
+                quantity = p.get("quantity", self.config.default_quantity)
+                unr += (cp - p["entry_price"]) * quantity * d
         if not closed:
             return {"total_trades": 0, "open_positions": len(open_pos), "win_rate": None,
                     "total_pnl": round(unr, 2), "realized_pnl": 0, "unrealized_pnl": round(unr, 2),
@@ -398,14 +414,15 @@ class AgapeShibTrader:
         for pos in self.db.get_open_positions():
             if self._close_position(pos, cp, reason):
                 d = 1 if pos["side"] == "long" else -1
-                pnl = (cp - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * d
+                quantity = pos.get("quantity", self.config.default_quantity)
+                pnl = (cp - pos["entry_price"]) * quantity * d
                 results.append({"position_id": pos["position_id"], "pnl": round(pnl, 2)})
         return {"closed": len(results), "total_pnl": round(sum(r["pnl"] for r in results), 2), "details": results}
 
     def enable(self):
         self._enabled = True
-        self.db.log("INFO", "ENABLE", "AGAPE-SHIB enabled")
+        self.db.log("INFO", "ENABLE", "AGAPE-ETH-PERP enabled")
 
     def disable(self):
         self._enabled = False
-        self.db.log("INFO", "DISABLE", "AGAPE-SHIB disabled")
+        self.db.log("INFO", "DISABLE", "AGAPE-ETH-PERP disabled")

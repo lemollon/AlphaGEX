@@ -38,6 +38,11 @@ BOT_DISPLAY_NAMES: dict[str, str] = {
     "HERACLES":             "VALOR",         # MES Futures Scalping - Joshua 1:9
     "AGAPE":                "AGAPE",         # ETH Micro Futures - 1 Cor 13:4,7
     "AGAPE_SPOT":           "AGAPE-SPOT",    # 24/7 Crypto Spot - 1 Cor 13:8
+    "AGAPE_ETH_PERP":   "AGAPE-ETH-PERP",    # ETH Perpetual Contract
+    "AGAPE_BTC_PERP":   "AGAPE-BTC-PERP",     # BTC Perpetual Contract
+    "AGAPE_XRP_PERP":   "AGAPE-XRP-PERP",     # XRP Perpetual Contract
+    "AGAPE_DOGE_PERP":  "AGAPE-DOGE-PERP",    # DOGE Perpetual Contract
+    "AGAPE_SHIB_PERP":  "AGAPE-SHIB-PERP",    # SHIB Perpetual Contract
 }
 
 # Also accept the new names as keys (identity mapping)
@@ -73,7 +78,10 @@ DISPLAY_TO_INTERNAL: dict[str, str] = {v: k for k, v in BOT_DISPLAY_NAMES.items(
                                         if k == k.upper() and "_" not in k or k in (
                                             "AGAPE_SPOT", "ARES", "ATHENA", "TITAN",
                                             "PEGASUS", "ICARUS", "PHOENIX", "ATLAS",
-                                            "HERMES", "PROMETHEUS", "HERACLES", "AGAPE"
+                                            "HERMES", "PROMETHEUS", "HERACLES", "AGAPE",
+                                            "AGAPE_ETH_PERP", "AGAPE_BTC_PERP",
+                                            "AGAPE_XRP_PERP", "AGAPE_DOGE_PERP",
+                                            "AGAPE_SHIB_PERP"
                                         )}
 
 ADVISOR_DISPLAY_TO_INTERNAL: dict[str, str] = {v: k for k, v in ADVISOR_DISPLAY_NAMES.items()}

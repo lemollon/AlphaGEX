@@ -1,7 +1,11 @@
 """
-AGAPE-DOGE Signal Generator - Generates directional DOGE perpetual trade signals.
+AGAPE-BTC-PERP Signal Generator - Generates directional BTC-PERP trade signals.
 
-Same logic as AGAPE-XRP signals but for DOGE perpetual contract market microstructure.
+Same crypto microstructure logic as AGAPE-BTC but adapted for perpetual contracts:
+  - Uses CryptoDataProvider with ticker="BTC" for data
+  - _calculate_position_size returns (quantity, max_risk_usd) where quantity is float BTC
+  - No contract_size multiplier in sizing calculations
+  - Position size bounded by min_quantity / max_quantity config
 """
 
 import logging
@@ -10,9 +14,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from zoneinfo import ZoneInfo
 
-from trading.agape_doge.models import (
-    AgapeDogeConfig,
-    AgapeDogeSignal,
+from trading.agape_btc_perp.models import (
+    AgapeBtcPerpConfig,
+    AgapeBtcPerpSignal,
     SignalAction,
     PositionSide,
 )
@@ -21,26 +25,35 @@ logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
+# Graceful imports
 CryptoDataProvider = None
 get_crypto_data_provider = None
 try:
-    from data.crypto_data_provider import CryptoDataProvider, get_crypto_data_provider, CryptoMarketSnapshot
-    logger.info("AGAPE-DOGE Signals: CryptoDataProvider loaded")
+    from data.crypto_data_provider import (
+        CryptoDataProvider,
+        get_crypto_data_provider,
+        CryptoMarketSnapshot,
+    )
+    logger.info("AGAPE-BTC-PERP Signals: CryptoDataProvider loaded")
 except ImportError as e:
-    logger.warning(f"AGAPE-DOGE Signals: CryptoDataProvider not available: {e}")
+    logger.warning(f"AGAPE-BTC-PERP Signals: CryptoDataProvider not available: {e}")
 
 ProphetAdvisor = None
 MarketContext = None
 GEXRegime = None
 try:
     from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
-    logger.info("AGAPE-DOGE Signals: ProphetAdvisor loaded")
+    logger.info("AGAPE-BTC-PERP Signals: ProphetAdvisor loaded")
 except ImportError as e:
-    logger.warning(f"AGAPE-DOGE Signals: ProphetAdvisor not available: {e}")
+    logger.warning(f"AGAPE-BTC-PERP Signals: ProphetAdvisor not available: {e}")
 
 
-class AgapeDogeDirectionTracker:
-    def __init__(self, cooldown_scans=2, win_streak_caution=100, memory_size=10):
+# ============================================================================
+# DIRECTION TRACKER (same logic as AGAPE)
+# ============================================================================
+
+class AgapeBtcPerpDirectionTracker:
+    def __init__(self, cooldown_scans: int = 2, win_streak_caution: int = 100, memory_size: int = 10):
         self.cooldown_scans = cooldown_scans
         self.win_streak_caution = win_streak_caution
         self.memory_size = memory_size
@@ -54,10 +67,10 @@ class AgapeDogeDirectionTracker:
         self.last_direction = None
         self.last_result = None
 
-    def record_trade(self, direction, is_win, scan_number):
+    def record_trade(self, direction: str, is_win: bool, scan_number: int) -> None:
         self.current_scan = scan_number
-        d = direction.upper()
-        if d == "LONG":
+        dir_upper = direction.upper()
+        if dir_upper == "LONG":
             self.long_trades.append((is_win, scan_number))
             if len(self.long_trades) > self.memory_size:
                 self.long_trades.pop(0)
@@ -67,7 +80,7 @@ class AgapeDogeDirectionTracker:
             else:
                 self.long_consecutive_wins = 0
                 self.long_cooldown_until = scan_number + self.cooldown_scans
-        elif d == "SHORT":
+        elif dir_upper == "SHORT":
             self.short_trades.append((is_win, scan_number))
             if len(self.short_trades) > self.memory_size:
                 self.short_trades.pop(0)
@@ -77,38 +90,60 @@ class AgapeDogeDirectionTracker:
             else:
                 self.short_consecutive_wins = 0
                 self.short_cooldown_until = scan_number + self.cooldown_scans
-        self.last_direction = d
+        self.last_direction = dir_upper
         self.last_result = "WIN" if is_win else "LOSS"
 
-    def update_scan(self, scan_number):
+    def update_scan(self, scan_number: int) -> None:
         self.current_scan = scan_number
 
-    def should_skip_direction(self, direction):
-        d = direction.upper()
-        if d == "LONG" and self.current_scan < self.long_cooldown_until:
-            remaining = self.long_cooldown_until - self.current_scan
-            return True, f"LONG in cooldown ({remaining} scans remaining)"
-        if d == "SHORT" and self.current_scan < self.short_cooldown_until:
-            remaining = self.short_cooldown_until - self.current_scan
-            return True, f"SHORT in cooldown ({remaining} scans remaining)"
-        win_rate = self.get_recent_win_rate(d)
+    def is_direction_cooled_down(self, direction: str) -> bool:
+        dir_upper = direction.upper()
+        if dir_upper == "LONG":
+            return self.current_scan < self.long_cooldown_until
+        elif dir_upper == "SHORT":
+            return self.current_scan < self.short_cooldown_until
+        return False
+
+    def get_confidence_adjustment(self, direction: str) -> float:
+        dir_upper = direction.upper()
+        if dir_upper == "LONG" and self.long_consecutive_wins >= self.win_streak_caution:
+            return 0.8
+        if dir_upper == "SHORT" and self.short_consecutive_wins >= self.win_streak_caution:
+            return 0.8
+        if self.last_result == "LOSS" and self.last_direction:
+            opposite = "SHORT" if self.last_direction == "LONG" else "LONG"
+            if dir_upper == opposite:
+                return 1.15
+        return 1.0
+
+    def should_skip_direction(self, direction: str) -> Tuple[bool, str]:
+        dir_upper = direction.upper()
+        if self.is_direction_cooled_down(dir_upper):
+            remaining = (self.long_cooldown_until if dir_upper == "LONG"
+                        else self.short_cooldown_until) - self.current_scan
+            return True, f"{dir_upper} in cooldown ({remaining} scans remaining after loss)"
+        win_rate = self.get_recent_win_rate(dir_upper)
         if win_rate is not None and win_rate < 0.20:
-            return True, f"{d} has poor recent win rate ({win_rate:.0%})"
+            return True, f"{dir_upper} has poor recent win rate ({win_rate:.0%})"
         return False, ""
 
-    def get_recent_win_rate(self, direction):
-        trades = self.long_trades if direction.upper() == "LONG" else self.short_trades
+    def get_recent_win_rate(self, direction: str) -> Optional[float]:
+        dir_upper = direction.upper()
+        trades = self.long_trades if dir_upper == "LONG" else self.short_trades
         if len(trades) < 3:
             return None
-        return sum(1 for w, _ in trades if w) / len(trades)
+        wins = sum(1 for is_win, _ in trades if is_win)
+        return wins / len(trades)
 
-    def get_status(self):
+    def get_status(self) -> Dict[str, Any]:
         return {
             "current_scan": self.current_scan,
             "long_cooldown_until": self.long_cooldown_until,
             "short_cooldown_until": self.short_cooldown_until,
             "long_consecutive_wins": self.long_consecutive_wins,
             "short_consecutive_wins": self.short_consecutive_wins,
+            "long_recent_trades": len(self.long_trades),
+            "short_recent_trades": len(self.short_trades),
             "long_win_rate": self.get_recent_win_rate("LONG"),
             "short_win_rate": self.get_recent_win_rate("SHORT"),
             "last_direction": self.last_direction,
@@ -116,51 +151,61 @@ class AgapeDogeDirectionTracker:
         }
 
 
-_direction_tracker: Optional[AgapeDogeDirectionTracker] = None
+_direction_tracker: Optional[AgapeBtcPerpDirectionTracker] = None
 
 
-def get_agape_doge_direction_tracker(config=None):
+def get_agape_btc_perp_direction_tracker(config: Optional[AgapeBtcPerpConfig] = None) -> AgapeBtcPerpDirectionTracker:
     global _direction_tracker
     if _direction_tracker is None:
-        _direction_tracker = AgapeDogeDirectionTracker(
-            cooldown_scans=config.direction_cooldown_scans if config else 2,
-            win_streak_caution=config.direction_win_streak_caution if config else 100,
-            memory_size=config.direction_memory_size if config else 10,
+        cooldown = config.direction_cooldown_scans if config else 2
+        caution = config.direction_win_streak_caution if config else 100
+        memory = config.direction_memory_size if config else 10
+        _direction_tracker = AgapeBtcPerpDirectionTracker(
+            cooldown_scans=cooldown, win_streak_caution=caution, memory_size=memory,
         )
     return _direction_tracker
 
 
-def record_agape_doge_trade_outcome(direction, is_win, scan_number):
-    get_agape_doge_direction_tracker().record_trade(direction, is_win, scan_number)
+def record_agape_btc_perp_trade_outcome(direction: str, is_win: bool, scan_number: int) -> None:
+    tracker = get_agape_btc_perp_direction_tracker()
+    tracker.record_trade(direction, is_win, scan_number)
 
 
-class AgapeDogeSignalGenerator:
-    """Generates directional trade signals for DOGE-PERP based on crypto microstructure."""
+class AgapeBtcPerpSignalGenerator:
+    """Generates directional trade signals for BTC-PERP based on crypto microstructure.
 
-    def __init__(self, config: AgapeDogeConfig):
+    Key difference from AGAPE-BTC: _calculate_position_size returns (quantity, max_risk_usd)
+    where quantity is a float BTC amount, not an integer contract count.
+    """
+
+    def __init__(self, config: AgapeBtcPerpConfig):
         self.config = config
         self._crypto_provider = None
         self._oracle = None
+
         if get_crypto_data_provider:
             try:
                 self._crypto_provider = get_crypto_data_provider()
             except Exception as e:
-                logger.warning(f"AGAPE-DOGE Signals: Crypto provider init failed: {e}")
+                logger.warning(f"AGAPE-BTC-PERP Signals: Crypto provider init failed: {e}")
+
         if ProphetAdvisor:
             try:
                 self._oracle = ProphetAdvisor()
             except Exception as e:
-                logger.warning(f"AGAPE-DOGE Signals: Prophet init failed: {e}")
+                logger.warning(f"AGAPE-BTC-PERP Signals: Prophet init failed: {e}")
 
-    def get_market_data(self):
+    def get_market_data(self) -> Optional[Dict[str, Any]]:
         if not self._crypto_provider:
+            logger.error("AGAPE-BTC-PERP Signals: No crypto data provider")
             return None
         try:
             snapshot = self._crypto_provider.get_snapshot(self.config.ticker)
             if not snapshot or snapshot.spot_price <= 0:
                 return None
             return {
-                "symbol": snapshot.symbol, "spot_price": snapshot.spot_price,
+                "symbol": snapshot.symbol,
+                "spot_price": snapshot.spot_price,
                 "timestamp": snapshot.timestamp,
                 "funding_rate": snapshot.funding_rate.rate if snapshot.funding_rate else 0,
                 "funding_regime": snapshot.funding_regime,
@@ -180,54 +225,69 @@ class AgapeDogeSignalGenerator:
                 "combined_confidence": snapshot.combined_confidence,
             }
         except Exception as e:
-            logger.error(f"AGAPE-DOGE Signals: Market data fetch failed: {e}")
+            logger.error(f"AGAPE-BTC-PERP Signals: Market data fetch failed: {e}")
             return None
 
-    def get_prophet_advice(self, market_data):
+    def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
         if not self._oracle:
             return {"advice": "UNAVAILABLE", "win_probability": 0.5, "confidence": 0.0, "top_factors": ["oracle_unavailable"]}
         try:
             vix_proxy = self._funding_to_vix_proxy(market_data.get("funding_rate", 0))
+            crypto_gex_regime = market_data.get("crypto_gex_regime", "NEUTRAL")
             gex_regime_map = {"POSITIVE": GEXRegime.POSITIVE, "NEGATIVE": GEXRegime.NEGATIVE, "NEUTRAL": GEXRegime.NEUTRAL}
-            gex_regime = gex_regime_map.get(market_data.get("crypto_gex_regime", "NEUTRAL"), GEXRegime.NEUTRAL)
+            gex_regime = gex_regime_map.get(crypto_gex_regime, GEXRegime.NEUTRAL)
             context = MarketContext(
                 spot_price=market_data["spot_price"], vix=vix_proxy,
                 gex_net=market_data.get("crypto_gex", 0), gex_regime=gex_regime,
                 gex_flip_point=market_data.get("max_pain", market_data["spot_price"]),
                 day_of_week=datetime.now(CENTRAL_TZ).weekday(),
             )
-            rec = self._oracle.get_strategy_recommendation(context)
-            if rec:
+            recommendation = self._oracle.get_strategy_recommendation(context)
+            if recommendation:
+                advice = "TRADE" if recommendation.dir_suitability >= 0.5 else "SKIP"
                 return {
-                    "advice": "TRADE" if rec.dir_suitability >= 0.5 else "SKIP",
-                    "win_probability": rec.dir_suitability, "confidence": rec.confidence,
-                    "top_factors": [f"strategy={rec.recommended_strategy.value}", f"dir_suitability={rec.dir_suitability:.0%}"],
+                    "advice": advice, "win_probability": recommendation.dir_suitability,
+                    "confidence": recommendation.confidence,
+                    "top_factors": [
+                        f"strategy={recommendation.recommended_strategy.value}",
+                        f"vix_regime={recommendation.vix_regime.value}",
+                        f"dir_suitability={recommendation.dir_suitability:.0%}",
+                    ],
                 }
         except Exception as e:
-            logger.error(f"AGAPE-DOGE Signals: Prophet call failed: {e}")
+            logger.error(f"AGAPE-BTC-PERP Signals: Prophet call failed: {e}")
         return {"advice": "UNAVAILABLE", "win_probability": 0.5, "confidence": 0.0, "top_factors": ["oracle_error"]}
 
-    def generate_signal(self, prophet_data=None):
+    def generate_signal(self, prophet_data: Optional[Dict] = None) -> AgapeBtcPerpSignal:
         now = datetime.now(CENTRAL_TZ)
         market_data = self.get_market_data()
         if not market_data:
-            return AgapeDogeSignal(spot_price=0, timestamp=now, action=SignalAction.WAIT, reasoning="NO_MARKET_DATA")
+            return AgapeBtcPerpSignal(spot_price=0, timestamp=now, action=SignalAction.WAIT, reasoning="NO_MARKET_DATA")
+
         spot = market_data["spot_price"]
         if prophet_data is None:
             prophet_data = self.get_prophet_advice(market_data)
+
         oracle_advice = prophet_data.get("advice", "UNAVAILABLE")
         oracle_win_prob = prophet_data.get("win_probability", 0.5)
+
         if self.config.require_oracle_approval:
-            if oracle_advice not in ("TRADE_FULL", "TRADE_REDUCED", "ENTER", "TRADE", "UNAVAILABLE"):
-                return AgapeDogeSignal(
-                    spot_price=spot, timestamp=now, action=SignalAction.WAIT,
-                    reasoning=f"BLOCKED_ORACLE_{oracle_advice}", oracle_advice=oracle_advice,
+            oracle_approved = oracle_advice in ("TRADE_FULL", "TRADE_REDUCED", "ENTER", "TRADE")
+            if not oracle_approved and oracle_advice != "UNAVAILABLE":
+                return AgapeBtcPerpSignal(
+                    spot_price=spot, timestamp=now,
+                    funding_rate=market_data.get("funding_rate", 0),
+                    funding_regime=market_data.get("funding_regime", "UNKNOWN"),
+                    action=SignalAction.WAIT, reasoning=f"BLOCKED_ORACLE_{oracle_advice}",
+                    oracle_advice=oracle_advice, oracle_win_probability=oracle_win_prob,
                 )
+
         combined_signal = market_data.get("combined_signal", "WAIT")
         combined_confidence = market_data.get("combined_confidence", "LOW")
         action, side, reasoning = self._determine_action(combined_signal, combined_confidence, market_data)
+
         if action == SignalAction.WAIT:
-            return AgapeDogeSignal(
+            return AgapeBtcPerpSignal(
                 spot_price=spot, timestamp=now,
                 funding_rate=market_data.get("funding_rate", 0),
                 funding_regime=market_data.get("funding_regime", "UNKNOWN"),
@@ -240,13 +300,16 @@ class AgapeDogeSignalGenerator:
                 oracle_confidence=prophet_data.get("confidence", 0),
                 oracle_top_factors=prophet_data.get("top_factors", []),
             )
+
         quantity, max_risk = self._calculate_position_size(spot)
         stop_loss, take_profit = self._calculate_levels(spot, side, market_data)
-        return AgapeDogeSignal(
+
+        return AgapeBtcPerpSignal(
             spot_price=spot, timestamp=now,
             funding_rate=market_data.get("funding_rate", 0),
             funding_regime=market_data.get("funding_regime", "UNKNOWN"),
-            ls_ratio=market_data.get("ls_ratio", 1.0), ls_bias=market_data.get("ls_bias", "NEUTRAL"),
+            ls_ratio=market_data.get("ls_ratio", 1.0),
+            ls_bias=market_data.get("ls_bias", "NEUTRAL"),
             nearest_long_liq=market_data.get("nearest_long_liq"),
             nearest_short_liq=market_data.get("nearest_short_liq"),
             squeeze_risk=market_data.get("squeeze_risk", "LOW"),
@@ -263,24 +326,27 @@ class AgapeDogeSignalGenerator:
         )
 
     def _determine_action(self, combined_signal, confidence, market_data):
+        min_confidence = self.config.min_confidence
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
-        if confidence_rank.get(confidence, 0) < confidence_rank.get(self.config.min_confidence, 1):
+        if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 1):
             return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
-        tracker = get_agape_doge_direction_tracker(self.config)
+
+        direction_tracker = get_agape_btc_perp_direction_tracker(self.config)
+
         if combined_signal == "LONG":
-            skip, reason = tracker.should_skip_direction("LONG")
-            if skip:
-                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{reason}")
+            should_skip, skip_reason = direction_tracker.should_skip_direction("LONG")
+            if should_skip:
+                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
             return (SignalAction.LONG, "long", self._build_reasoning("LONG", market_data))
         elif combined_signal == "SHORT":
-            skip, reason = tracker.should_skip_direction("SHORT")
-            if skip:
-                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{reason}")
+            should_skip, skip_reason = direction_tracker.should_skip_direction("SHORT")
+            if should_skip:
+                return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
             return (SignalAction.SHORT, "short", self._build_reasoning("SHORT", market_data))
         elif combined_signal == "RANGE_BOUND":
-            return self._derive_range_bound_direction(market_data, tracker)
+            return self._derive_range_bound_direction(market_data, direction_tracker)
         elif combined_signal == "WAIT":
-            return self._derive_fallback_direction(market_data, tracker)
+            return self._derive_fallback_direction(market_data, direction_tracker)
         return (SignalAction.WAIT, None, f"NO_SIGNAL_{combined_signal}")
 
     def _derive_range_bound_direction(self, market_data, tracker):
@@ -303,11 +369,15 @@ class AgapeDogeSignalGenerator:
             elif max_pain < spot * 0.995:
                 score -= 0.5
         if score > 0:
-            skip, reason = tracker.should_skip_direction("LONG")
-            return (SignalAction.WAIT, None, f"RANGE_BLOCKED_{reason}") if skip else (SignalAction.LONG, "long", self._build_reasoning("RANGE_LONG", market_data))
+            should_skip, reason = tracker.should_skip_direction("LONG")
+            if should_skip:
+                return (SignalAction.WAIT, None, f"RANGE_BOUND_LONG_BLOCKED_{reason}")
+            return (SignalAction.LONG, "long", self._build_reasoning("RANGE_LONG", market_data))
         elif score < 0:
-            skip, reason = tracker.should_skip_direction("SHORT")
-            return (SignalAction.WAIT, None, f"RANGE_BLOCKED_{reason}") if skip else (SignalAction.SHORT, "short", self._build_reasoning("RANGE_SHORT", market_data))
+            should_skip, reason = tracker.should_skip_direction("SHORT")
+            if should_skip:
+                return (SignalAction.WAIT, None, f"RANGE_BOUND_SHORT_BLOCKED_{reason}")
+            return (SignalAction.SHORT, "short", self._build_reasoning("RANGE_SHORT", market_data))
         return (SignalAction.WAIT, None, "RANGE_BOUND_NO_BIAS")
 
     def _derive_fallback_direction(self, market_data, tracker):
@@ -316,64 +386,100 @@ class AgapeDogeSignalGenerator:
         ls_bias = market_data.get("ls_bias", "NEUTRAL")
         if squeeze_risk == "HIGH":
             if ls_bias == "SHORT_HEAVY":
-                skip, _ = tracker.should_skip_direction("LONG")
-                if not skip:
+                should_skip, reason = tracker.should_skip_direction("LONG")
+                if not should_skip:
                     return (SignalAction.LONG, "long", self._build_reasoning("SQUEEZE_LONG", market_data))
             elif ls_bias == "LONG_HEAVY":
-                skip, _ = tracker.should_skip_direction("SHORT")
-                if not skip:
+                should_skip, reason = tracker.should_skip_direction("SHORT")
+                if not should_skip:
                     return (SignalAction.SHORT, "short", self._build_reasoning("SQUEEZE_SHORT", market_data))
         if funding_regime in ("HEAVILY_NEGATIVE", "EXTREME_NEGATIVE"):
-            skip, _ = tracker.should_skip_direction("LONG")
-            if not skip:
+            should_skip, reason = tracker.should_skip_direction("LONG")
+            if not should_skip:
                 return (SignalAction.LONG, "long", self._build_reasoning("FUNDING_LONG", market_data))
         elif funding_regime in ("HEAVILY_POSITIVE", "EXTREME_POSITIVE"):
-            skip, _ = tracker.should_skip_direction("SHORT")
-            if not skip:
+            should_skip, reason = tracker.should_skip_direction("SHORT")
+            if not should_skip:
                 return (SignalAction.SHORT, "short", self._build_reasoning("FUNDING_SHORT", market_data))
         return (SignalAction.WAIT, None, "NO_FALLBACK_SIGNAL")
 
-    def _build_reasoning(self, direction, market_data):
-        parts = [direction, f"funding={market_data.get('funding_regime', 'UNKNOWN')}",
-                 f"ls_bias={market_data.get('ls_bias', 'NEUTRAL')}"]
+    def _build_reasoning(self, direction: str, market_data: Dict) -> str:
+        parts = [direction]
+        parts.append(f"funding={market_data.get('funding_regime', 'UNKNOWN')}")
+        parts.append(f"ls_bias={market_data.get('ls_bias', 'NEUTRAL')}")
         sq = market_data.get("squeeze_risk", "LOW")
         if sq in ("HIGH", "ELEVATED"):
             parts.append(f"squeeze={sq}")
         parts.append(f"crypto_gex={market_data.get('crypto_gex_regime', 'NEUTRAL')}")
-        mp, spot = market_data.get("max_pain"), market_data.get("spot_price", 0)
+        mp = market_data.get("max_pain")
+        spot = market_data.get("spot_price", 0)
         if mp and spot:
-            parts.append(f"max_pain_dist={((mp - spot) / spot) * 100:+.1f}%")
+            dist = ((mp - spot) / spot) * 100
+            parts.append(f"max_pain_dist={dist:+.1f}%")
         return " | ".join(parts)
 
-    def _calculate_position_size(self, spot_price):
+    def _calculate_position_size(self, spot_price: float) -> Tuple[float, float]:
+        """Calculate position size in BTC quantity (float).
+
+        Returns (quantity, max_risk_usd) where quantity is a float BTC amount,
+        bounded by config.min_quantity and config.max_quantity.
+        No contract_size multiplier - quantity IS the notional BTC amount.
+        """
         capital = self.config.starting_capital
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
-        stop_distance = spot_price * 0.02 * (self.config.stop_loss_pct / 100)
-        risk_per_unit = stop_distance
-        if risk_per_unit <= 0:
-            return (self.config.min_quantity, max_risk_usd)
-        quantity = max(self.config.min_quantity, min(max_risk_usd / risk_per_unit, self.config.max_quantity))
-        return (round(quantity, 2), round(quantity * risk_per_unit, 2))
+
+        # Risk per BTC based on a 2% stop distance
+        base_stop_pct = 0.02
+        stop_distance_usd = spot_price * base_stop_pct * (self.config.stop_loss_pct / 100)
+
+        # Each 1 BTC of quantity risks stop_distance_usd
+        if stop_distance_usd <= 0:
+            return (self.config.default_quantity, max_risk_usd)
+
+        quantity = max_risk_usd / stop_distance_usd
+
+        # Clamp to configured bounds
+        quantity = max(self.config.min_quantity, min(quantity, self.config.max_quantity))
+
+        actual_risk = quantity * stop_distance_usd
+        return (round(quantity, 5), round(actual_risk, 2))
 
     def _calculate_levels(self, spot, side, market_data):
-        stop_pct, target_pct = 0.02, 0.03
+        stop_pct = 0.02
+        target_pct = 0.03
         squeeze = market_data.get("squeeze_risk", "LOW")
         if squeeze == "HIGH":
-            stop_pct, target_pct = 0.025, 0.04
+            stop_pct = 0.025
+            target_pct = 0.04
         elif squeeze == "ELEVATED":
-            stop_pct, target_pct = 0.022, 0.035
-        near_long = market_data.get("nearest_long_liq")
-        near_short = market_data.get("nearest_short_liq")
+            stop_pct = 0.022
+            target_pct = 0.035
+        near_long_liq = market_data.get("nearest_long_liq")
+        near_short_liq = market_data.get("nearest_short_liq")
         if side == "long":
-            sl = max(near_long * 0.995, spot * (1 - stop_pct)) if near_long and near_long < spot else spot * (1 - stop_pct)
-            tp = near_short * 0.99 if near_short and near_short > spot else spot * (1 + target_pct)
+            if near_long_liq and near_long_liq < spot:
+                liq_stop = near_long_liq * 0.995
+                stop_loss = max(liq_stop, spot * (1 - stop_pct))
+            else:
+                stop_loss = spot * (1 - stop_pct)
+            if near_short_liq and near_short_liq > spot:
+                take_profit = near_short_liq * 0.99
+            else:
+                take_profit = spot * (1 + target_pct)
         else:
-            sl = min(near_short * 1.005, spot * (1 + stop_pct)) if near_short and near_short > spot else spot * (1 + stop_pct)
-            tp = near_long * 1.01 if near_long and near_long < spot else spot * (1 - target_pct)
-        return (round(sl, 6), round(tp, 6))
+            if near_short_liq and near_short_liq > spot:
+                liq_stop = near_short_liq * 1.005
+                stop_loss = min(liq_stop, spot * (1 + stop_pct))
+            else:
+                stop_loss = spot * (1 + stop_pct)
+            if near_long_liq and near_long_liq < spot:
+                take_profit = near_long_liq * 1.01
+            else:
+                take_profit = spot * (1 - target_pct)
+        return (round(stop_loss, 2), round(take_profit, 2))
 
     @staticmethod
-    def _funding_to_vix_proxy(funding_rate):
+    def _funding_to_vix_proxy(funding_rate: float) -> float:
         abs_fr = abs(funding_rate)
         if abs_fr < 0.005:
             return 15.0
@@ -383,4 +489,5 @@ class AgapeDogeSignalGenerator:
             return 25.0
         elif abs_fr < 0.03:
             return 30.0
-        return 35.0 + (abs_fr - 0.03) * 500
+        else:
+            return 35.0 + (abs_fr - 0.03) * 500

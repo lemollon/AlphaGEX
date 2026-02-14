@@ -1,7 +1,12 @@
 """
-AGAPE-DOGE Database Layer - PostgreSQL persistence for the DOGE Perpetual bot.
+AGAPE-ETH-PERP Database Layer - PostgreSQL persistence for the ETH Perpetual bot.
 
-Mirrors AGAPE-XRP db.py pattern with DOGE perpetual-specific table names.
+Key differences from AGAPE-XRP:
+    - Tables prefixed with agape_eth_perp_ instead of agape_xrp_
+    - quantity FLOAT instead of contracts INTEGER in positions table
+    - eth_price column instead of xrp_price in snapshots and scan_activity
+    - Default starting_capital: 12500.0
+    - Config prefix: agape_eth_perp_
 """
 
 import json
@@ -18,17 +23,17 @@ get_connection = None
 try:
     from database_adapter import get_connection
 except ImportError:
-    logger.warning("AGAPE-DOGE DB: database_adapter not available")
+    logger.warning("AGAPE-ETH-PERP DB: database_adapter not available")
 
 
 def _now_ct() -> datetime:
     return datetime.now(CENTRAL_TZ)
 
 
-class AgapeDogeDatabase:
-    """Database operations for AGAPE-DOGE bot."""
+class AgapeEthPerpDatabase:
+    """Database operations for AGAPE-ETH-PERP bot."""
 
-    def __init__(self, bot_name: str = "AGAPE_DOGE"):
+    def __init__(self, bot_name: str = "AGAPE_ETH_PERP"):
         self.bot_name = bot_name
         self._ensure_tables()
 
@@ -47,7 +52,7 @@ class AgapeDogeDatabase:
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Execute failed: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Execute failed: {e}")
             conn.rollback()
             return False
         finally:
@@ -57,13 +62,14 @@ class AgapeDogeDatabase:
     def _ensure_tables(self):
         conn = self._get_conn()
         if not conn:
-            logger.warning("AGAPE-DOGE DB: No database connection, skipping table creation")
+            logger.warning("AGAPE-ETH-PERP DB: No database connection, skipping table creation")
             return
         try:
             cursor = conn.cursor()
 
+            # Positions table - uses quantity FLOAT instead of contracts INTEGER
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_doge_positions (
+                CREATE TABLE IF NOT EXISTS agape_eth_perp_positions (
                     id SERIAL PRIMARY KEY,
                     position_id VARCHAR(100) UNIQUE NOT NULL,
                     side VARCHAR(10) NOT NULL,
@@ -99,26 +105,28 @@ class AgapeDogeDatabase:
                 )
             """)
 
+            # Equity snapshots - uses eth_price instead of xrp_price
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_doge_equity_snapshots (
+                CREATE TABLE IF NOT EXISTS agape_eth_perp_equity_snapshots (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     equity FLOAT NOT NULL,
                     unrealized_pnl FLOAT DEFAULT 0,
                     realized_pnl_cumulative FLOAT DEFAULT 0,
                     open_positions INTEGER DEFAULT 0,
-                    doge_price FLOAT,
+                    eth_price FLOAT,
                     funding_rate FLOAT,
                     note VARCHAR(200)
                 )
             """)
 
+            # Scan activity - uses eth_price instead of xrp_price
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_doge_scan_activity (
+                CREATE TABLE IF NOT EXISTS agape_eth_perp_scan_activity (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     outcome VARCHAR(50) NOT NULL,
-                    doge_price FLOAT,
+                    eth_price FLOAT,
                     funding_rate FLOAT,
                     funding_regime VARCHAR(50),
                     ls_ratio FLOAT,
@@ -139,8 +147,9 @@ class AgapeDogeDatabase:
                 )
             """)
 
+            # Activity log
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agape_doge_activity_log (
+                CREATE TABLE IF NOT EXISTS agape_eth_perp_activity_log (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                     level VARCHAR(20) DEFAULT 'INFO',
@@ -150,24 +159,26 @@ class AgapeDogeDatabase:
                 )
             """)
 
+            # Add trailing columns if not exist
             for col_sql in [
-                "ALTER TABLE agape_doge_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
-                "ALTER TABLE agape_doge_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
+                "ALTER TABLE agape_eth_perp_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE agape_eth_perp_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
             ]:
                 try:
                     cursor.execute(col_sql)
                 except Exception:
                     pass
 
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_doge_positions_status ON agape_doge_positions(status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_doge_positions_open_time ON agape_doge_positions(open_time DESC)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_doge_equity_snapshots_ts ON agape_doge_equity_snapshots(timestamp DESC)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_doge_scan_activity_ts ON agape_doge_scan_activity(timestamp DESC)")
+            # Indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_eth_perp_positions_status ON agape_eth_perp_positions(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_eth_perp_positions_open_time ON agape_eth_perp_positions(open_time DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_eth_perp_equity_snapshots_ts ON agape_eth_perp_equity_snapshots(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_eth_perp_scan_activity_ts ON agape_eth_perp_scan_activity(timestamp DESC)")
 
             conn.commit()
-            logger.info("AGAPE-DOGE DB: Tables ensured")
+            logger.info("AGAPE-ETH-PERP DB: Tables ensured")
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Table creation failed: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Table creation failed: {e}")
             conn.rollback()
         finally:
             cursor.close()
@@ -179,14 +190,14 @@ class AgapeDogeDatabase:
             return None
         try:
             cursor = conn.cursor()
-            prefix = f"{self.bot_name.lower()}_"
+            prefix = "agape_eth_perp_"
             cursor.execute("SELECT key, value FROM autonomous_config WHERE key LIKE %s", (f"{prefix}%",))
             rows = cursor.fetchall()
             if rows:
                 return {row[0].replace(prefix, ""): row[1] for row in rows}
             return None
         except Exception as e:
-            logger.debug(f"AGAPE-DOGE DB: Config load failed: {e}")
+            logger.debug(f"AGAPE-ETH-PERP DB: Config load failed: {e}")
             return None
         finally:
             cursor.close()
@@ -196,7 +207,7 @@ class AgapeDogeDatabase:
         config = self.load_config()
         if config and "starting_capital" in config:
             return float(config["starting_capital"])
-        return 1000.0
+        return 12500.0
 
     def save_position(self, pos) -> bool:
         conn = self._get_conn()
@@ -205,7 +216,7 @@ class AgapeDogeDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_doge_positions (
+                INSERT INTO agape_eth_perp_positions (
                     position_id, side, quantity, entry_price,
                     stop_loss, take_profit, max_risk_usd,
                     underlying_at_entry, funding_rate_at_entry,
@@ -237,7 +248,7 @@ class AgapeDogeDatabase:
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Failed to save position: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Failed to save position: {e}")
             conn.rollback()
             return False
         finally:
@@ -251,7 +262,7 @@ class AgapeDogeDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE agape_doge_positions
+                UPDATE agape_eth_perp_positions
                 SET status = 'closed', close_time = NOW(), close_price = %s,
                     realized_pnl = %s, close_reason = %s
                 WHERE position_id = %s AND status = 'open'
@@ -259,7 +270,7 @@ class AgapeDogeDatabase:
             conn.commit()
             return cursor.rowcount > 0
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Failed to close position: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Failed to close position: {e}")
             conn.rollback()
             return False
         finally:
@@ -273,7 +284,7 @@ class AgapeDogeDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                UPDATE agape_doge_positions
+                UPDATE agape_eth_perp_positions
                 SET status = 'expired', close_time = NOW(), close_price = %s,
                     realized_pnl = %s, close_reason = 'MAX_HOLD_TIME'
                 WHERE position_id = %s AND status = 'open'
@@ -305,7 +316,7 @@ class AgapeDogeDatabase:
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
                        COALESCE(trailing_active, FALSE), current_stop
-                FROM agape_doge_positions
+                FROM agape_eth_perp_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
             """)
@@ -339,7 +350,7 @@ class AgapeDogeDatabase:
                 })
             return positions
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Failed to get open positions: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Failed to get open positions: {e}")
             return []
         finally:
             cursor.close()
@@ -358,7 +369,7 @@ class AgapeDogeDatabase:
                        funding_regime_at_entry, squeeze_risk_at_entry,
                        oracle_advice, oracle_win_probability,
                        signal_action, signal_confidence
-                FROM agape_doge_positions
+                FROM agape_eth_perp_positions
                 WHERE status IN ('closed', 'expired', 'stopped')
                 ORDER BY close_time DESC LIMIT %s
             """, (limit,))
@@ -379,7 +390,7 @@ class AgapeDogeDatabase:
                 for row in cursor.fetchall()
             ]
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Failed to get closed trades: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Failed to get closed trades: {e}")
             return []
         finally:
             cursor.close()
@@ -391,7 +402,7 @@ class AgapeDogeDatabase:
             return 0
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM agape_doge_positions WHERE status = 'open'")
+            cursor.execute("SELECT COUNT(*) FROM agape_eth_perp_positions WHERE status = 'open'")
             return cursor.fetchone()[0]
         except Exception:
             return 0
@@ -405,7 +416,7 @@ class AgapeDogeDatabase:
             return False
         try:
             cursor = conn.cursor()
-            cursor.execute("UPDATE agape_doge_positions SET high_water_mark = %s WHERE position_id = %s AND status = 'open'", (hwm, position_id))
+            cursor.execute("UPDATE agape_eth_perp_positions SET high_water_mark = %s WHERE position_id = %s AND status = 'open'", (hwm, position_id))
             conn.commit()
             return True
         except Exception:
@@ -415,21 +426,21 @@ class AgapeDogeDatabase:
             cursor.close()
             conn.close()
 
-    def save_equity_snapshot(self, equity, unrealized_pnl, realized_cumulative, open_positions, doge_price=None, funding_rate=None):
+    def save_equity_snapshot(self, equity, unrealized_pnl, realized_cumulative, open_positions, eth_price=None, funding_rate=None):
         conn = self._get_conn()
         if not conn:
             return False
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_doge_equity_snapshots
-                (equity, unrealized_pnl, realized_pnl_cumulative, open_positions, doge_price, funding_rate)
+                INSERT INTO agape_eth_perp_equity_snapshots
+                (equity, unrealized_pnl, realized_pnl_cumulative, open_positions, eth_price, funding_rate)
                 VALUES (%s, %s, %s, %s, %s, %s)
-            """, (equity, unrealized_pnl, realized_cumulative, open_positions, doge_price, funding_rate))
+            """, (equity, unrealized_pnl, realized_cumulative, open_positions, eth_price, funding_rate))
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Failed to save equity snapshot: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Failed to save equity snapshot: {e}")
             conn.rollback()
             return False
         finally:
@@ -443,8 +454,8 @@ class AgapeDogeDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_doge_scan_activity (
-                    outcome, doge_price, funding_rate, funding_regime,
+                INSERT INTO agape_eth_perp_scan_activity (
+                    outcome, eth_price, funding_rate, funding_regime,
                     ls_ratio, ls_bias, squeeze_risk, leverage_regime,
                     max_pain, crypto_gex, crypto_gex_regime,
                     combined_signal, combined_confidence,
@@ -453,7 +464,7 @@ class AgapeDogeDatabase:
                     position_id, error_message
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                scan_data.get("outcome"), scan_data.get("doge_price"),
+                scan_data.get("outcome"), scan_data.get("eth_price"),
                 scan_data.get("funding_rate"), scan_data.get("funding_regime"),
                 scan_data.get("ls_ratio"), scan_data.get("ls_bias"),
                 scan_data.get("squeeze_risk"), scan_data.get("leverage_regime"),
@@ -467,7 +478,7 @@ class AgapeDogeDatabase:
             conn.commit()
             return True
         except Exception as e:
-            logger.error(f"AGAPE-DOGE DB: Failed to log scan: {e}")
+            logger.error(f"AGAPE-ETH-PERP DB: Failed to log scan: {e}")
             conn.rollback()
             return False
         finally:
@@ -481,7 +492,7 @@ class AgapeDogeDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agape_doge_activity_log (level, action, message, details)
+                INSERT INTO agape_eth_perp_activity_log (level, action, message, details)
                 VALUES (%s, %s, %s, %s)
             """, (level, action, message, json.dumps(details) if details else None))
             conn.commit()
@@ -497,7 +508,7 @@ class AgapeDogeDatabase:
             return []
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT timestamp, level, action, message, details FROM agape_doge_activity_log ORDER BY timestamp DESC LIMIT %s", (limit,))
+            cursor.execute("SELECT timestamp, level, action, message, details FROM agape_eth_perp_activity_log ORDER BY timestamp DESC LIMIT %s", (limit,))
             return [{"timestamp": r[0].isoformat() if r[0] else None, "level": r[1], "action": r[2], "message": r[3], "details": r[4]} for r in cursor.fetchall()]
         except Exception:
             return []
@@ -512,14 +523,14 @@ class AgapeDogeDatabase:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT timestamp, outcome, doge_price, funding_rate, funding_regime,
+                SELECT timestamp, outcome, eth_price, funding_rate, funding_regime,
                        ls_ratio, squeeze_risk, combined_signal, combined_confidence,
                        oracle_advice, oracle_win_prob, signal_action, signal_reasoning, position_id
-                FROM agape_doge_scan_activity ORDER BY timestamp DESC LIMIT %s
+                FROM agape_eth_perp_scan_activity ORDER BY timestamp DESC LIMIT %s
             """, (limit,))
             return [
                 {"timestamp": r[0].isoformat() if r[0] else None, "outcome": r[1],
-                 "doge_price": float(r[2]) if r[2] else None,
+                 "eth_price": float(r[2]) if r[2] else None,
                  "funding_rate": float(r[3]) if r[3] else None,
                  "funding_regime": r[4], "ls_ratio": float(r[5]) if r[5] else None,
                  "squeeze_risk": r[6], "combined_signal": r[7], "combined_confidence": r[8],

@@ -1,8 +1,11 @@
 """
-AGAPE-SHIB Signal Generator - Generates directional SHIB-PERP trade signals.
+AGAPE-XRP-PERP Signal Generator - Generates directional XRP perpetual trade signals.
 
-Same logic as AGAPE-DOGE signals but for SHIB market microstructure.
-Perpetual contract: quantity-based sizing, 24/7 trading.
+Same logic as AGAPE-XRP (Futures) signals but adapted for perpetual contracts:
+- Imports from trading.agape_xrp_perp.models
+- _calculate_position_size returns (quantity, max_risk_usd) where quantity is float XRP
+- CryptoDataProvider ticker "XRP"
+- Singletons: get_agape_xrp_perp_direction_tracker(), record_agape_xrp_perp_trade_outcome()
 """
 
 import logging
@@ -11,9 +14,9 @@ from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from zoneinfo import ZoneInfo
 
-from trading.agape_shib.models import (
-    AgapeShibConfig,
-    AgapeShibSignal,
+from trading.agape_xrp_perp.models import (
+    AgapeXrpPerpConfig,
+    AgapeXrpPerpSignal,
     SignalAction,
     PositionSide,
 )
@@ -26,21 +29,21 @@ CryptoDataProvider = None
 get_crypto_data_provider = None
 try:
     from data.crypto_data_provider import CryptoDataProvider, get_crypto_data_provider, CryptoMarketSnapshot
-    logger.info("AGAPE-SHIB Signals: CryptoDataProvider loaded")
+    logger.info("AGAPE-XRP-PERP Signals: CryptoDataProvider loaded")
 except ImportError as e:
-    logger.warning(f"AGAPE-SHIB Signals: CryptoDataProvider not available: {e}")
+    logger.warning(f"AGAPE-XRP-PERP Signals: CryptoDataProvider not available: {e}")
 
 ProphetAdvisor = None
 MarketContext = None
 GEXRegime = None
 try:
     from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
-    logger.info("AGAPE-SHIB Signals: ProphetAdvisor loaded")
+    logger.info("AGAPE-XRP-PERP Signals: ProphetAdvisor loaded")
 except ImportError as e:
-    logger.warning(f"AGAPE-SHIB Signals: ProphetAdvisor not available: {e}")
+    logger.warning(f"AGAPE-XRP-PERP Signals: ProphetAdvisor not available: {e}")
 
 
-class AgapeShibDirectionTracker:
+class AgapeXrpPerpDirectionTracker:
     def __init__(self, cooldown_scans=2, win_streak_caution=100, memory_size=10):
         self.cooldown_scans = cooldown_scans
         self.win_streak_caution = win_streak_caution
@@ -117,13 +120,13 @@ class AgapeShibDirectionTracker:
         }
 
 
-_direction_tracker: Optional[AgapeShibDirectionTracker] = None
+_direction_tracker: Optional[AgapeXrpPerpDirectionTracker] = None
 
 
-def get_agape_shib_direction_tracker(config=None):
+def get_agape_xrp_perp_direction_tracker(config=None):
     global _direction_tracker
     if _direction_tracker is None:
-        _direction_tracker = AgapeShibDirectionTracker(
+        _direction_tracker = AgapeXrpPerpDirectionTracker(
             cooldown_scans=config.direction_cooldown_scans if config else 2,
             win_streak_caution=config.direction_win_streak_caution if config else 100,
             memory_size=config.direction_memory_size if config else 10,
@@ -131,14 +134,14 @@ def get_agape_shib_direction_tracker(config=None):
     return _direction_tracker
 
 
-def record_agape_shib_trade_outcome(direction, is_win, scan_number):
-    get_agape_shib_direction_tracker().record_trade(direction, is_win, scan_number)
+def record_agape_xrp_perp_trade_outcome(direction, is_win, scan_number):
+    get_agape_xrp_perp_direction_tracker().record_trade(direction, is_win, scan_number)
 
 
-class AgapeShibSignalGenerator:
-    """Generates directional trade signals for SHIB-PERP based on crypto microstructure."""
+class AgapeXrpPerpSignalGenerator:
+    """Generates directional trade signals for XRP-PERP based on crypto microstructure."""
 
-    def __init__(self, config: AgapeShibConfig):
+    def __init__(self, config: AgapeXrpPerpConfig):
         self.config = config
         self._crypto_provider = None
         self._oracle = None
@@ -146,12 +149,12 @@ class AgapeShibSignalGenerator:
             try:
                 self._crypto_provider = get_crypto_data_provider()
             except Exception as e:
-                logger.warning(f"AGAPE-SHIB Signals: Crypto provider init failed: {e}")
+                logger.warning(f"AGAPE-XRP-PERP Signals: Crypto provider init failed: {e}")
         if ProphetAdvisor:
             try:
                 self._oracle = ProphetAdvisor()
             except Exception as e:
-                logger.warning(f"AGAPE-SHIB Signals: Prophet init failed: {e}")
+                logger.warning(f"AGAPE-XRP-PERP Signals: Prophet init failed: {e}")
 
     def get_market_data(self):
         if not self._crypto_provider:
@@ -181,7 +184,7 @@ class AgapeShibSignalGenerator:
                 "combined_confidence": snapshot.combined_confidence,
             }
         except Exception as e:
-            logger.error(f"AGAPE-SHIB Signals: Market data fetch failed: {e}")
+            logger.error(f"AGAPE-XRP-PERP Signals: Market data fetch failed: {e}")
             return None
 
     def get_prophet_advice(self, market_data):
@@ -205,14 +208,14 @@ class AgapeShibSignalGenerator:
                     "top_factors": [f"strategy={rec.recommended_strategy.value}", f"dir_suitability={rec.dir_suitability:.0%}"],
                 }
         except Exception as e:
-            logger.error(f"AGAPE-SHIB Signals: Prophet call failed: {e}")
+            logger.error(f"AGAPE-XRP-PERP Signals: Prophet call failed: {e}")
         return {"advice": "UNAVAILABLE", "win_probability": 0.5, "confidence": 0.0, "top_factors": ["oracle_error"]}
 
     def generate_signal(self, prophet_data=None):
         now = datetime.now(CENTRAL_TZ)
         market_data = self.get_market_data()
         if not market_data:
-            return AgapeShibSignal(spot_price=0, timestamp=now, action=SignalAction.WAIT, reasoning="NO_MARKET_DATA")
+            return AgapeXrpPerpSignal(spot_price=0, timestamp=now, action=SignalAction.WAIT, reasoning="NO_MARKET_DATA")
         spot = market_data["spot_price"]
         if prophet_data is None:
             prophet_data = self.get_prophet_advice(market_data)
@@ -220,7 +223,7 @@ class AgapeShibSignalGenerator:
         oracle_win_prob = prophet_data.get("win_probability", 0.5)
         if self.config.require_oracle_approval:
             if oracle_advice not in ("TRADE_FULL", "TRADE_REDUCED", "ENTER", "TRADE", "UNAVAILABLE"):
-                return AgapeShibSignal(
+                return AgapeXrpPerpSignal(
                     spot_price=spot, timestamp=now, action=SignalAction.WAIT,
                     reasoning=f"BLOCKED_ORACLE_{oracle_advice}", oracle_advice=oracle_advice,
                 )
@@ -228,7 +231,7 @@ class AgapeShibSignalGenerator:
         combined_confidence = market_data.get("combined_confidence", "LOW")
         action, side, reasoning = self._determine_action(combined_signal, combined_confidence, market_data)
         if action == SignalAction.WAIT:
-            return AgapeShibSignal(
+            return AgapeXrpPerpSignal(
                 spot_price=spot, timestamp=now,
                 funding_rate=market_data.get("funding_rate", 0),
                 funding_regime=market_data.get("funding_regime", "UNKNOWN"),
@@ -243,7 +246,7 @@ class AgapeShibSignalGenerator:
             )
         quantity, max_risk = self._calculate_position_size(spot)
         stop_loss, take_profit = self._calculate_levels(spot, side, market_data)
-        return AgapeShibSignal(
+        return AgapeXrpPerpSignal(
             spot_price=spot, timestamp=now,
             funding_rate=market_data.get("funding_rate", 0),
             funding_regime=market_data.get("funding_regime", "UNKNOWN"),
@@ -267,7 +270,7 @@ class AgapeShibSignalGenerator:
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
         if confidence_rank.get(confidence, 0) < confidence_rank.get(self.config.min_confidence, 1):
             return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
-        tracker = get_agape_shib_direction_tracker(self.config)
+        tracker = get_agape_xrp_perp_direction_tracker(self.config)
         if combined_signal == "LONG":
             skip, reason = tracker.should_skip_direction("LONG")
             if skip:
@@ -346,23 +349,30 @@ class AgapeShibSignalGenerator:
             parts.append(f"max_pain_dist={((mp - spot) / spot) * 100:+.1f}%")
         return " | ".join(parts)
 
-    def _calculate_position_size(self, spot_price):
-        """Calculate position size in SHIB quantity.
+    def _calculate_position_size(self, spot_price: float) -> Tuple[float, float]:
+        """Calculate position size as XRP quantity (float) and max risk in USD.
 
-        Perpetual: quantity-based sizing (not contracts).
-        P&L = (current - entry) * quantity * direction
+        Returns:
+            (quantity, max_risk_usd) where quantity is in XRP units (float).
         """
         capital = self.config.starting_capital
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
+
+        # Stop distance based on 2% of spot * stop_loss_pct scaling
         stop_distance = spot_price * 0.02 * (self.config.stop_loss_pct / 100)
+
         if stop_distance <= 0:
             return (self.config.default_quantity, max_risk_usd)
-        risk_per_unit = stop_distance
-        quantity = max_risk_usd / risk_per_unit
-        quantity = max(self.config.min_quantity, min(quantity, self.config.max_quantity))
-        quantity = round(quantity, 0)
-        actual_risk = quantity * stop_distance
-        return (quantity, round(actual_risk, 2))
+
+        # Risk per XRP unit = stop distance in USD (1 XRP = 1 unit, no multiplier)
+        risk_per_xrp = stop_distance
+
+        # Quantity = max_risk / risk_per_unit, clamped to min/max
+        raw_quantity = max_risk_usd / risk_per_xrp
+        quantity = max(self.config.min_quantity, min(round(raw_quantity, 2), self.config.max_quantity))
+
+        actual_risk = round(quantity * risk_per_xrp, 2)
+        return (quantity, actual_risk)
 
     def _calculate_levels(self, spot, side, market_data):
         stop_pct, target_pct = 0.02, 0.03
@@ -379,7 +389,7 @@ class AgapeShibSignalGenerator:
         else:
             sl = min(near_short * 1.005, spot * (1 + stop_pct)) if near_short and near_short > spot else spot * (1 + stop_pct)
             tp = near_long * 1.01 if near_long and near_long < spot else spot * (1 - target_pct)
-        return (round(sl, 8), round(tp, 8))
+        return (round(sl, 4), round(tp, 4))
 
     @staticmethod
     def _funding_to_vix_proxy(funding_rate):
