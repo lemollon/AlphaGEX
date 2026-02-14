@@ -247,6 +247,184 @@ class AgapeSpotExecutor:
                 or bool(self._ticker_clients))
 
     # =========================================================================
+    # Volatility: ATR + Chop Detection (from Coinbase candles)
+    # =========================================================================
+
+    def get_atr(
+        self, ticker: str, periods: int = 14, granularity: str = "FIVE_MINUTE",
+    ) -> Optional[float]:
+        """Calculate Average True Range from Coinbase candles.
+
+        ATR measures actual price volatility — how much a coin moves per
+        candle. Used to size stops to real market conditions instead of
+        fixed percentages that get whipsawed in choppy markets.
+
+        Args:
+            ticker: e.g. "ETH-USD"
+            periods: ATR lookback (default 14 candles)
+            granularity: Candle size. FIVE_MINUTE for scalping, ONE_HOUR for swing.
+
+        Returns:
+            ATR as a dollar value, or None if candles unavailable.
+        """
+        client = self._get_client(ticker)
+        if not client:
+            return None
+
+        try:
+            # Fetch enough candles for ATR calculation (periods + 1 for TR)
+            import time
+            now_ts = str(int(time.time()))
+            # granularity seconds: FIVE_MINUTE=300, FIFTEEN_MINUTE=900, ONE_HOUR=3600
+            gran_secs = {"ONE_MINUTE": 60, "FIVE_MINUTE": 300, "FIFTEEN_MINUTE": 900, "ONE_HOUR": 3600}
+            secs = gran_secs.get(granularity, 300)
+            start_ts = str(int(time.time()) - secs * (periods + 5))
+
+            candles_resp = client.get_candles(
+                product_id=ticker,
+                start=start_ts,
+                end=now_ts,
+                granularity=granularity,
+            )
+            candles = self._resp(candles_resp, "candles", [])
+            if not candles or len(candles) < periods:
+                logger.debug(
+                    f"AGAPE-SPOT ATR: Not enough candles for {ticker} "
+                    f"({len(candles) if candles else 0}/{periods})"
+                )
+                return None
+
+            # Candles: [{start, low, high, open, close, volume}, ...]
+            # Sort by timestamp ascending (Coinbase returns newest first)
+            candles = sorted(candles, key=lambda c: int(self._resp(c, "start", "0")))
+
+            # Calculate True Range for each candle
+            true_ranges = []
+            for i in range(1, len(candles)):
+                high = float(self._resp(candles[i], "high", 0))
+                low = float(self._resp(candles[i], "low", 0))
+                prev_close = float(self._resp(candles[i - 1], "close", 0))
+
+                if high <= 0 or low <= 0 or prev_close <= 0:
+                    continue
+
+                tr = max(
+                    high - low,
+                    abs(high - prev_close),
+                    abs(low - prev_close),
+                )
+                true_ranges.append(tr)
+
+            if len(true_ranges) < periods:
+                return None
+
+            # Simple moving average of last N true ranges
+            atr = sum(true_ranges[-periods:]) / periods
+            return atr
+
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT ATR: Failed for {ticker}: {e}")
+            return None
+
+    def get_volatility_context(
+        self, ticker: str, periods: int = 14,
+    ) -> Dict[str, Any]:
+        """Get ATR + chop index for a ticker.
+
+        Returns:
+            {
+                "atr": float,           # Average True Range ($)
+                "atr_pct": float,       # ATR as % of current price
+                "chop_index": float,    # 0-1, high = choppy
+                "is_choppy": bool,      # True if chop_index > 0.65
+                "regime": str,          # TRENDING / CHOPPY / UNKNOWN
+            }
+        """
+        result: Dict[str, Any] = {
+            "atr": None,
+            "atr_pct": None,
+            "chop_index": None,
+            "is_choppy": False,
+            "regime": "UNKNOWN",
+        }
+
+        client = self._get_client(ticker)
+        if not client:
+            return result
+
+        try:
+            import time
+            now_ts = str(int(time.time()))
+            # Use 5-min candles, 20 periods for chop calculation
+            lookback = max(periods + 5, 25)
+            start_ts = str(int(time.time()) - 300 * lookback)
+
+            candles_resp = client.get_candles(
+                product_id=ticker,
+                start=start_ts,
+                end=now_ts,
+                granularity="FIVE_MINUTE",
+            )
+            candles = self._resp(candles_resp, "candles", [])
+            if not candles or len(candles) < periods + 1:
+                return result
+
+            candles = sorted(candles, key=lambda c: int(self._resp(c, "start", "0")))
+
+            # Extract close prices and calculate TR
+            closes = []
+            true_ranges = []
+            for i, c in enumerate(candles):
+                close = float(self._resp(c, "close", 0))
+                high = float(self._resp(c, "high", 0))
+                low = float(self._resp(c, "low", 0))
+                if close <= 0:
+                    continue
+                closes.append(close)
+                if i > 0:
+                    prev_close = float(self._resp(candles[i - 1], "close", 0))
+                    if prev_close > 0 and high > 0 and low > 0:
+                        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+                        true_ranges.append(tr)
+
+            if len(true_ranges) < periods or len(closes) < periods + 1:
+                return result
+
+            # ATR = average of last N true ranges
+            atr = sum(true_ranges[-periods:]) / periods
+            current_price = closes[-1]
+            atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
+
+            result["atr"] = atr
+            result["atr_pct"] = round(atr_pct, 4)
+
+            # Kaufman Efficiency Ratio (chop detection)
+            # ER = abs(net_move) / sum(abs(individual_moves))
+            # ER near 1 = trending, ER near 0 = choppy
+            recent_closes = closes[-(periods + 1):]
+            net_move = abs(recent_closes[-1] - recent_closes[0])
+            path_length = sum(
+                abs(recent_closes[i] - recent_closes[i - 1])
+                for i in range(1, len(recent_closes))
+            )
+
+            if path_length > 0:
+                efficiency_ratio = net_move / path_length  # 0 = pure chop, 1 = pure trend
+                chop_index = 1.0 - efficiency_ratio  # Invert: 1 = pure chop, 0 = pure trend
+            else:
+                chop_index = 1.0  # No movement = max chop
+
+            result["chop_index"] = round(chop_index, 4)
+            result["is_choppy"] = chop_index > 0.65
+            result["regime"] = "CHOPPY" if chop_index > 0.65 else "TRENDING"
+
+            return result
+
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT volatility context: Failed for {ticker}: {e}")
+            return result
+
+    # =========================================================================
     # Helpers
     # =========================================================================
 
@@ -470,6 +648,9 @@ class AgapeSpotExecutor:
                 signal_action=signal.action.value,
                 signal_confidence=signal.confidence,
                 signal_reasoning=signal.reasoning,
+                atr_at_entry=signal.atr,
+                atr_pct_at_entry=signal.atr_pct,
+                chop_index_at_entry=signal.chop_index,
                 status=PositionStatus.OPEN,
                 open_time=now,
                 high_water_mark=round(fill_price, pd),
@@ -704,6 +885,9 @@ class AgapeSpotExecutor:
                     signal_action=signal.action.value,
                     signal_confidence=signal.confidence,
                     signal_reasoning=signal.reasoning,
+                    atr_at_entry=signal.atr,
+                    atr_pct_at_entry=signal.atr_pct,
+                    chop_index_at_entry=signal.chop_index,
                     status=PositionStatus.OPEN,
                     open_time=now,
                     high_water_mark=round(fill_price, pd),

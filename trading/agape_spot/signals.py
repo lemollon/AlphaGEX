@@ -38,6 +38,20 @@ try:
 except ImportError:
     pass
 
+# Bayesian Crypto Tracker for choppy-market edge detection
+BayesianCryptoTracker = None
+BayesianTradeOutcome = None
+get_bayesian_tracker = None
+try:
+    from quant.bayesian_crypto_tracker import (
+        BayesianCryptoTracker,
+        TradeOutcome as BayesianTradeOutcome,
+        get_tracker as get_bayesian_tracker,
+    )
+    logger.info("AGAPE-SPOT Signals: BayesianCryptoTracker loaded")
+except ImportError as e:
+    logger.warning(f"AGAPE-SPOT Signals: BayesianCryptoTracker not available: {e}")
+
 CryptoDataProvider = None
 get_crypto_data_provider = None
 try:
@@ -344,7 +358,12 @@ class AgapeSpotSignalGenerator:
             "top_factors": ["oracle_error"],
         }
 
-    def generate_signal(self, ticker: str, prophet_data: Optional[Dict] = None) -> AgapeSpotSignal:
+    def generate_signal(
+        self,
+        ticker: str,
+        prophet_data: Optional[Dict] = None,
+        vol_context: Optional[Dict] = None,
+    ) -> AgapeSpotSignal:
         """Generate a LONG-ONLY signal for the given ticker."""
         now = datetime.now(CENTRAL_TZ)
 
@@ -443,7 +462,12 @@ class AgapeSpotSignalGenerator:
                 oracle_top_factors=prophet_data.get("top_factors", []),
             )
 
-        stop_loss, take_profit = self._calculate_levels(spot, market_data, ticker)
+        stop_loss, take_profit = self._calculate_levels(
+            spot, market_data, ticker, vol_context=vol_context,
+        )
+
+        # Volatility context for the signal
+        vc = vol_context or {}
 
         return AgapeSpotSignal(
             ticker=ticker,
@@ -459,6 +483,10 @@ class AgapeSpotSignalGenerator:
             max_pain=market_data.get("max_pain"),
             crypto_gex=market_data.get("crypto_gex", 0),
             crypto_gex_regime=market_data.get("crypto_gex_regime", "NEUTRAL"),
+            atr=vc.get("atr"),
+            atr_pct=vc.get("atr_pct"),
+            chop_index=vc.get("chop_index"),
+            volatility_regime=vc.get("regime", "UNKNOWN"),
             action=SignalAction.LONG,
             confidence=combined_confidence,
             reasoning=reasoning,
@@ -509,8 +537,26 @@ class AgapeSpotSignalGenerator:
             if not mom_ok:
                 return (SignalAction.WAIT, mom_reason)
 
-        # Bayesian win probability gate: block when regime win rate is too low
+        # Bayesian Choppy-Market Gate: when no momentum, raise the win prob threshold
         funding_regime_str = market_data.get("funding_regime", "UNKNOWN")
+        is_choppy = self._detect_choppy_market(ticker, market_data)
+        if is_choppy and self.config.enable_bayesian_choppy and get_bayesian_tracker:
+            choppy_win_prob = self._get_bayesian_choppy_win_prob(ticker)
+            if choppy_win_prob < self.config.choppy_min_win_prob:
+                logger.info(
+                    f"AGAPE-SPOT CHOPPY GATE: {ticker} choppy market, "
+                    f"bayesian_edge={choppy_win_prob:.4f} < "
+                    f"gate={self.config.choppy_min_win_prob} — BLOCKED"
+                )
+                return (SignalAction.WAIT, f"CHOPPY_NO_EDGE_{choppy_win_prob:.3f}")
+            else:
+                logger.info(
+                    f"AGAPE-SPOT CHOPPY EDGE: {ticker} choppy market, "
+                    f"bayesian_edge={choppy_win_prob:.4f} >= "
+                    f"gate={self.config.choppy_min_win_prob} — TRADING EDGE"
+                )
+
+        # Bayesian win probability gate: block when regime win rate is too low
         win_prob = self._calculate_win_probability(ticker, funding_regime_str)
         if win_prob < self.MIN_WIN_PROBABILITY:
             win_tracker = self._win_trackers.get(ticker)
@@ -678,6 +724,61 @@ class AgapeSpotSignalGenerator:
             parts.append(f"max_pain_dist={dist:+.1f}%")
         return " | ".join(parts)
 
+    def _detect_choppy_market(self, ticker: str, market_data: Dict) -> bool:
+        """Detect choppy (no-momentum) market for a specific ticker.
+
+        Choppy = RANGE_BOUND signal + balanced funding + low squeeze.
+        This is where the small-gain grinding strategy can profit
+        IF the Bayesian tracker confirms an edge.
+        """
+        combined_signal = market_data.get("combined_signal", "WAIT")
+        funding_regime = market_data.get("funding_regime", "UNKNOWN")
+        squeeze_risk = market_data.get("squeeze_risk", "LOW")
+        ls_bias = market_data.get("ls_bias", "NEUTRAL")
+
+        choppy_regimes = [r.strip() for r in self.config.choppy_funding_regimes.split(",")]
+        max_squeeze = self.config.choppy_max_squeeze_risk
+        squeeze_rank = {"LOW": 1, "ELEVATED": 2, "HIGH": 3}
+        max_rank = squeeze_rank.get(max_squeeze, 2)
+        cur_rank = squeeze_rank.get(squeeze_risk, 3)
+
+        # Primary: RANGE_BOUND with acceptable squeeze
+        if combined_signal == "RANGE_BOUND" and cur_rank <= max_rank:
+            return True
+
+        # Secondary: balanced microstructure regardless of combined signal
+        if (
+            funding_regime in choppy_regimes
+            and cur_rank <= max_rank
+            and ls_bias in ("NEUTRAL", "BALANCED")
+        ):
+            return True
+
+        return False
+
+    def _get_bayesian_choppy_win_prob(self, ticker: str) -> float:
+        """Get Bayesian win probability for choppy conditions on this ticker.
+
+        Uses the BayesianCryptoTracker per-ticker strategy.
+        Falls back to 0.52 (allow trading) if unavailable or cold start.
+        """
+        if not get_bayesian_tracker:
+            return 0.52
+
+        strategy_name = f"agape_spot_choppy_{ticker.replace('-', '_').lower()}"
+        tracker = get_bayesian_tracker(
+            strategy_name=strategy_name,
+            starting_capital=self.config.get_starting_capital(ticker),
+        )
+
+        estimate = tracker.get_estimate()
+
+        # Cold start: allow trading to collect data
+        if estimate.total_trades < 5:
+            return 0.52
+
+        return estimate.mean
+
     def _calculate_win_probability(self, ticker: str, funding_regime_str: str) -> float:
         """Calculate Bayesian win probability for a ticker in its current funding regime.
 
@@ -782,16 +883,26 @@ class AgapeSpotSignalGenerator:
         actual_risk = quantity * risk_per_unit
         return (quantity, round(actual_risk, 2))
 
-    def _calculate_levels(self, spot: float, market_data: Dict, ticker: str = "ETH-USD") -> Tuple[float, float]:
-        """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above.
+    def _calculate_levels(
+        self,
+        spot: float,
+        market_data: Dict,
+        ticker: str = "ETH-USD",
+        vol_context: Optional[Dict] = None,
+    ) -> Tuple[float, float]:
+        """Calculate stop-loss and take-profit levels. LONG-ONLY.
 
-        Uses per-ticker exit params: altcoins get tighter stops and targets
-        for the quick-scalp strategy (small range, frequent trades).
+        ATR-ADAPTIVE: When ATR data is available, stops are sized to actual
+        volatility so normal market noise doesn't trigger them. Falls back
+        to the fixed per-ticker percentages when ATR is unavailable.
+
+        Stop = max(1.5 × ATR, fixed_pct_stop)  — at least as wide as 1.5 ATR
+        Target = max(2.5 × ATR, fixed_pct_target) — 2.5:1.5 ATR reward:risk
         """
         exit_params = self.config.get_exit_params(ticker)
         max_loss_pct = exit_params["max_unrealized_loss_pct"]
 
-        # Base stop/target from per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
+        # Base stop/target from per-ticker config (the floor)
         stop_pct = max_loss_pct / 100
         target_pct = stop_pct * 2  # 2:1 reward:risk
 
@@ -802,6 +913,24 @@ class AgapeSpotSignalGenerator:
         elif squeeze == "ELEVATED":
             stop_pct *= 1.1
             target_pct *= 1.17
+
+        # ATR-adaptive: widen stops to match actual volatility
+        vc = vol_context or {}
+        atr = vc.get("atr")
+        if atr and atr > 0 and spot > 0:
+            # Stop: 1.5 × ATR below entry (covers normal noise)
+            # In choppy markets, widen to 2.0 × ATR
+            atr_mult = 2.0 if vc.get("is_choppy") else 1.5
+            atr_stop_distance = atr * atr_mult
+            atr_stop_pct = atr_stop_distance / spot
+
+            # Target: proportional — keep 2:1 reward:risk vs ATR stop
+            atr_target_distance = atr_stop_distance * 2.0
+            atr_target_pct = atr_target_distance / spot
+
+            # Use the WIDER of ATR-based or fixed-pct (ATR is the floor)
+            stop_pct = max(stop_pct, atr_stop_pct)
+            target_pct = max(target_pct, atr_target_pct)
 
         near_long_liq = market_data.get("nearest_long_liq")
         near_short_liq = market_data.get("nearest_short_liq")
