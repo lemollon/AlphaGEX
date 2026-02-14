@@ -258,6 +258,14 @@ class AgapeSpotConfig:
     choppy_funding_regimes: str = "BALANCED,MILD_LONG_BIAS,MILD_SHORT_BIAS"
     choppy_max_squeeze_risk: str = "ELEVATED"
 
+    # Choppy EV threshold: percentage-based instead of flat dollar amount.
+    # Crypto funding sits in the choppy band 60-80% of the time, so a flat
+    # $0.50 threshold starves small-notional coins (SHIB, XRP, DOGE) of trades.
+    # Threshold = max(avg_trade_magnitude * choppy_ev_threshold_pct, choppy_ev_threshold_floor)
+    # where avg_trade_magnitude = (avg_win + |avg_loss|) / 2.
+    choppy_ev_threshold_pct: float = 0.10  # 10% of avg trade magnitude
+    choppy_ev_threshold_floor: float = 0.02  # Minimum $0.02 — never gate on dust
+
     def is_live(self, ticker: str) -> bool:
         """Return True if *ticker* should execute real Coinbase orders."""
         return ticker in self.live_tickers
