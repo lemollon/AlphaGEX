@@ -651,6 +651,7 @@ class AgapeSpotSignalGenerator:
         # showing $87 saved and 34% drawdown reduction vs no gate.
         funding_regime_str = market_data.get("funding_regime", "UNKNOWN")
         is_choppy = self._detect_choppy_market(ticker, market_data)
+        choppy_edge_confirmed = False
         if is_choppy and self.config.enable_bayesian_choppy:
             choppy_ev, choppy_has_ev = self._calculate_expected_value(ticker, oracle_win_prob)
             if choppy_has_ev:
@@ -663,6 +664,7 @@ class AgapeSpotSignalGenerator:
                     )
                     return (SignalAction.WAIT, f"CHOPPY_LOW_EV_{choppy_ev:.3f}")
                 else:
+                    choppy_edge_confirmed = True
                     logger.info(
                         f"AGAPE-SPOT CHOPPY EV: {ticker} choppy market, "
                         f"oracle_wp={oracle_win_prob:.4f}, "
@@ -678,52 +680,61 @@ class AgapeSpotSignalGenerator:
                     )
                     return (SignalAction.WAIT, f"CHOPPY_NO_EDGE_{oracle_win_prob:.3f}")
                 else:
+                    choppy_edge_confirmed = True
                     logger.info(
                         f"AGAPE-SPOT CHOPPY EDGE: {ticker} choppy market, "
                         f"oracle_wp={oracle_win_prob:.4f} >= "
                         f"gate={self.config.choppy_min_win_prob} — TRADING EDGE"
                     )
 
-        # Expected Value gate: supersedes raw win probability gate
-        # Bayesian still provides win_prob, but gating is now on EV = (p×W) - ((1-p)×L)
+        # Always run _calculate_win_probability for ML shadow prediction logging,
+        # but only gate on EV when the choppy gate didn't already confirm edge.
+        # Double-gating (choppy uses oracle_win_prob, main uses Bayesian) was
+        # blocking trades the backtest-validated choppy gate approved.
         win_prob = self._calculate_win_probability(ticker, funding_regime_str, market_data)
         ev, has_ev_data = self._calculate_expected_value(ticker, win_prob)
         self._last_ev = ev
 
-        if has_ev_data:
-            # Real EV data available — gate on expected value
-            if ev <= self.MIN_EXPECTED_VALUE:
-                logger.info(
-                    f"AGAPE-SPOT EV_GATE: {ticker} EV=${ev:.4f} <= ${self.MIN_EXPECTED_VALUE}, "
-                    f"win_prob={win_prob:.4f}, "
-                    f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
-                    f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f} "
-                    f"— BLOCKED (negative expected value)"
-                )
-                return (SignalAction.WAIT, f"EV_{ev:.3f}_NEGATIVE")
-            else:
-                logger.info(
-                    f"AGAPE-SPOT EV_GATE: {ticker} EV=${ev:.4f} — PASS "
-                    f"(win_prob={win_prob:.4f}, "
-                    f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
-                    f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f})"
-                )
-        else:
-            # Cold start — not enough trade history for EV, fall back to win prob
-            if win_prob < self.COLD_START_MIN_WIN_PROB:
-                win_tracker = self._win_trackers.get(ticker)
-                tracker_info = ""
-                if win_tracker:
-                    tracker_info = (
-                        f" [alpha={win_tracker.alpha:.1f}, beta={win_tracker.beta:.1f}, "
-                        f"trades={win_tracker.total_trades}]"
+        if not choppy_edge_confirmed:
+            if has_ev_data:
+                # Real EV data available — gate on expected value
+                if ev <= self.MIN_EXPECTED_VALUE:
+                    logger.info(
+                        f"AGAPE-SPOT EV_GATE: {ticker} EV=${ev:.4f} <= ${self.MIN_EXPECTED_VALUE}, "
+                        f"win_prob={win_prob:.4f}, "
+                        f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
+                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f} "
+                        f"— BLOCKED (negative expected value)"
                     )
-                logger.info(
-                    f"AGAPE-SPOT EV_GATE (cold start): {ticker} win_prob={win_prob:.4f} "
-                    f"< {self.COLD_START_MIN_WIN_PROB:.2f}, no EV data yet"
-                    f"{tracker_info} — BLOCKED"
-                )
-                return (SignalAction.WAIT, f"COLD_START_WIN_PROB_{win_prob:.3f}")
+                    return (SignalAction.WAIT, f"EV_{ev:.3f}_NEGATIVE")
+                else:
+                    logger.info(
+                        f"AGAPE-SPOT EV_GATE: {ticker} EV=${ev:.4f} — PASS "
+                        f"(win_prob={win_prob:.4f}, "
+                        f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
+                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f})"
+                    )
+            else:
+                # Cold start — not enough trade history for EV, fall back to win prob
+                if win_prob < self.COLD_START_MIN_WIN_PROB:
+                    win_tracker = self._win_trackers.get(ticker)
+                    tracker_info = ""
+                    if win_tracker:
+                        tracker_info = (
+                            f" [alpha={win_tracker.alpha:.1f}, beta={win_tracker.beta:.1f}, "
+                            f"trades={win_tracker.total_trades}]"
+                        )
+                    logger.info(
+                        f"AGAPE-SPOT EV_GATE (cold start): {ticker} win_prob={win_prob:.4f} "
+                        f"< {self.COLD_START_MIN_WIN_PROB:.2f}, no EV data yet"
+                        f"{tracker_info} — BLOCKED"
+                    )
+                    return (SignalAction.WAIT, f"COLD_START_WIN_PROB_{win_prob:.3f}")
+        else:
+            logger.info(
+                f"AGAPE-SPOT EV_GATE: {ticker} SKIPPED (choppy edge already confirmed), "
+                f"bayes_win_prob={win_prob:.4f}, ev=${ev:.4f}"
+            )
 
         tracker = get_spot_direction_tracker(ticker, self.config)
 
