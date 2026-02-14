@@ -36,24 +36,6 @@ from trading.agape_spot.signals import (
 )
 from trading.agape_spot.executor import AgapeSpotExecutor
 
-# Bayesian Crypto Tracker for choppy-market edge feedback
-_bayesian_tracker_mod = None
-try:
-    from quant.bayesian_crypto_tracker import (
-        TradeOutcome as BayesianTradeOutcome,
-        get_tracker as get_bayesian_tracker,
-    )
-    _bayesian_tracker_mod = True
-except ImportError:
-    pass
-
-_bayesian_db_mod = None
-try:
-    from quant.bayesian_crypto_db import BayesianCryptoDatabase
-    _bayesian_db_mod = True
-except ImportError:
-    pass
-
 logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -978,60 +960,6 @@ class AgapeSpotTrader:
                 self.db.resolve_shadow_prediction(position_id, won)
             except Exception as e:
                 logger.debug(f"AGAPE-SPOT: Shadow prediction resolve failed: {e}")
-
-            # Feed outcome to Bayesian Crypto Tracker for choppy-market edge detection
-            if _bayesian_tracker_mod and self.config.enable_bayesian_choppy:
-                try:
-                    now = datetime.now(CENTRAL_TZ)
-                    open_time_raw = pos_dict.get("open_time")
-                    if isinstance(open_time_raw, str):
-                        entry_time = datetime.fromisoformat(open_time_raw)
-                    elif isinstance(open_time_raw, datetime):
-                        entry_time = open_time_raw
-                    else:
-                        entry_time = now - timedelta(minutes=5)
-                    if entry_time.tzinfo is None:
-                        entry_time = entry_time.replace(tzinfo=CENTRAL_TZ)
-
-                    hold_minutes = (now - entry_time).total_seconds() / 60
-
-                    strategy_name = f"agape_spot_choppy_{ticker.replace('-', '_').lower()}"
-                    bt_outcome = BayesianTradeOutcome(
-                        trade_id=position_id,
-                        symbol=ticker,
-                        side="long",
-                        entry_price=entry_price,
-                        exit_price=actual_close_price,
-                        pnl=realized_pnl,
-                        contracts=1,
-                        entry_time=entry_time,
-                        exit_time=now,
-                        hold_duration_minutes=hold_minutes,
-                        funding_regime=funding_regime_str,
-                        volatility_state=pos_dict.get("volatility_regime", "NORMAL"),
-                        ls_bias=pos_dict.get("ls_bias_at_entry", "NEUTRAL"),
-                    )
-
-                    btracker = get_bayesian_tracker(
-                        strategy_name=strategy_name,
-                        starting_capital=self.config.get_starting_capital(ticker),
-                    )
-                    estimate = btracker.record_trade(bt_outcome)
-
-                    # Persist to DB
-                    if _bayesian_db_mod:
-                        bdb = BayesianCryptoDatabase()
-                        bdb.save_trade(strategy_name, bt_outcome)
-                        bdb.save_tracker_state(btracker)
-
-                    logger.info(
-                        f"AGAPE-SPOT BAYESIAN: {ticker} {position_id} "
-                        f"win={won} → win_rate={estimate.mean:.4f} "
-                        f"edge_prob={estimate.edge_probability:.4f} "
-                        f"verdict={estimate.verdict.value}"
-                    )
-                except Exception as e:
-                    logger.warning(f"AGAPE-SPOT BAYESIAN: Failed to record outcome: {e}")
 
             trade_mode = "LIVE" if self.config.is_live(ticker) else "PAPER"
             self.db.log(
