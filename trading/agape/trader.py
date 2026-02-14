@@ -35,6 +35,8 @@ from trading.agape.signals import (
 )
 from trading.agape.executor import AgapeExecutor
 
+logger = logging.getLogger(__name__)
+
 # Bayesian Crypto Tracker for choppy-market edge feedback
 _bayesian_tracker_mod = None
 try:
@@ -53,8 +55,6 @@ try:
     _bayesian_db_mod = True
 except ImportError:
     pass
-
-logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
