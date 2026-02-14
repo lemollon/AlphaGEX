@@ -738,10 +738,10 @@ function OverviewTab({ ticker }: { ticker: TickerId }) {
         <MetricCard label="Mode" value={(status?.mode || 'paper').toUpperCase()} color={status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'} />
       </div>
 
-      {/* Bayesian Win Tracker */}
+      {/* Expected Value & Win Tracker */}
       {status?.win_tracker && (
-        <SectionCard title="Bayesian Win Tracker" icon={<Eye className={`w-5 h-5 ${meta.textActive}`} />}>
-          <BayesianTrackerDetail tracker={status.win_tracker} color={meta.textActive} />
+        <SectionCard title="Expected Value Gate" icon={<Eye className={`w-5 h-5 ${meta.textActive}`} />}>
+          <BayesianTrackerDetail tracker={status.win_tracker} color={meta.textActive} ev={status.expected_value} />
         </SectionCard>
       )}
 
@@ -1740,7 +1740,7 @@ function RegimeDot({ label, prob }: { label: string; prob: number }) {
   )
 }
 
-function BayesianTrackerDetail({ tracker, color }: { tracker: WinTrackerData; color: string }) {
+function BayesianTrackerDetail({ tracker, color, ev }: { tracker: WinTrackerData; color: string; ev?: any }) {
   const prob = tracker.win_probability
   const regimes = [
     { key: 'POSITIVE', label: 'Positive Funding', wins: tracker.positive_funding_wins, losses: tracker.positive_funding_losses, prob: tracker.regime_probabilities.POSITIVE, dotColor: 'bg-green-400' },
@@ -1748,49 +1748,51 @@ function BayesianTrackerDetail({ tracker, color }: { tracker: WinTrackerData; co
     { key: 'NEUTRAL', label: 'Neutral Funding', wins: tracker.neutral_funding_wins, losses: tracker.neutral_funding_losses, prob: tracker.regime_probabilities.NEUTRAL, dotColor: 'bg-yellow-400' },
   ]
 
-  const probBarWidth = Math.max(5, Math.min(95, prob * 100))
-  const gatePosition = 50 // 0.50 gate threshold
+  const hasEv = ev?.has_data && ev?.ev_per_trade != null
+  const evValue = ev?.ev_per_trade ?? 0
+  const evPositive = evValue > 0
 
   return (
     <div className="space-y-4">
-      {/* Overall probability with gate visualization */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-gray-400 text-sm">Overall Win Probability</span>
+      {/* Expected Value — the primary gate */}
+      {hasEv ? (
+        <div className={`rounded-lg p-3 border ${evPositive ? 'bg-emerald-950/30 border-emerald-700/40' : 'bg-red-950/30 border-red-700/40'}`}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-gray-400 text-sm">Expected Value Per Trade</span>
+            <span className={`text-lg font-bold font-mono ${evPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+              ${evValue.toFixed(2)}
+            </span>
+          </div>
+          <div className="text-[11px] text-gray-400 mb-2">
+            EV = ({(prob * 100).toFixed(0)}% win × ${ev?.avg_win?.toFixed(2) ?? '?'} avg win) - ({((1 - prob) * 100).toFixed(0)}% loss × ${ev?.avg_loss?.toFixed(2) ?? '?'} avg loss)
+          </div>
           <div className="flex items-center gap-2">
-            {tracker.is_cold_start && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/40">
-                LEARNING ({tracker.total_trades}/10)
-              </span>
-            )}
-            {tracker.should_use_ml && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-purple-900/40 text-purple-400 border border-purple-700/40">
-                ML READY
-              </span>
-            )}
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${evPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+              {evPositive ? 'POSITIVE EV — TRADING' : 'NEGATIVE EV — BLOCKED'}
+            </span>
+            <span className="text-[10px] text-gray-500">
+              Gate: {ev?.gate === 'EV' ? 'Expected Value > $0' : 'Win Prob > 50% (cold start)'}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg p-3 border bg-yellow-950/20 border-yellow-700/30">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-gray-400 text-sm">Win Probability (Cold Start)</span>
             <span className={`text-lg font-bold font-mono ${prob >= 0.55 ? 'text-green-400' : prob >= 0.45 ? 'text-yellow-400' : 'text-red-400'}`}>
               {(prob * 100).toFixed(1)}%
             </span>
           </div>
+          <p className="text-[11px] text-gray-500">
+            Need 5+ trades to calculate Expected Value. Using win probability gate until then.
+          </p>
+          {tracker.is_cold_start && (
+            <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/40 inline-block mt-1">
+              LEARNING ({tracker.total_trades}/5 trades)
+            </span>
+          )}
         </div>
-        {/* Probability bar with gate marker */}
-        <div className="relative h-3 bg-gray-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${prob >= 0.50 ? 'bg-green-500' : 'bg-red-500'}`}
-            style={{ width: `${probBarWidth}%` }}
-          />
-          {/* Gate line at 50% */}
-          <div
-            className="absolute top-0 h-full w-0.5 bg-white/60"
-            style={{ left: `${gatePosition}%` }}
-          />
-        </div>
-        <div className="flex justify-between text-[10px] text-gray-600 mt-1">
-          <span>0%</span>
-          <span className="text-gray-500">50% gate</span>
-          <span>100%</span>
-        </div>
-      </div>
+      )}
 
       {/* Per-regime breakdown */}
       <div>

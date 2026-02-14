@@ -169,6 +169,8 @@ class AgapeSpotTrader:
             self._capital_allocator.refresh(
                 perf_data, active_tickers=active, alpha_data=alpha_data,
             )
+            # Feed perf stats (avg_win, avg_loss) to signal generator for EV gating
+            self.signals.update_perf_stats(perf_data)
         except Exception as e:
             logger.warning(f"AGAPE-SPOT: Allocator refresh failed: {e}")
 
@@ -679,13 +681,18 @@ class AgapeSpotTrader:
         profit_target_pct = exit_params["no_loss_profit_target_pct"]
         max_hold = exit_params["max_hold_hours"]
 
-        # Benchmark-aware: widen exits in strong uptrends to let winners run
+        # Dynamic trend-aware exits: scale hold time and trail with trend strength
+        # Stronger trends get wider exits so positions ride momentum
         trend_pct = self._get_trend_strength(ticker, current_price)
-        if self._is_strong_trend(ticker, trend_pct) and trend_pct > 0:
-            # Strong uptrend: widen trail by 50%, extend hold by 50%
-            trail_distance_pct *= 1.5
-            activation_pct *= 1.3  # higher activation so trail doesn't start too early
-            max_hold = int(max_hold * 1.5)
+        is_major = ticker in ("ETH-USD", "BTC-USD")
+        trend_threshold = self.TREND_THRESHOLD_MAJOR if is_major else self.TREND_THRESHOLD_ALT
+        if trend_pct > 0 and self._is_strong_trend(ticker, trend_pct):
+            # Scale factor: min 1.5x at threshold, up to 3.0x at 2× threshold
+            # e.g. BTC threshold=1.5%, at 3% trend → scale = 1 + min(3.0/1.5, 2.0) = 3.0
+            trend_scale = 1.0 + min(trend_pct / trend_threshold, 2.0)
+            trail_distance_pct *= min(trend_scale, 2.5)  # cap trail widening at 2.5x
+            activation_pct *= min(trend_scale * 0.8, 2.0)  # activation scales less aggressively
+            max_hold = int(max_hold * trend_scale)  # hold time scales fully with trend
 
         # ATR-adaptive: override fixed percentages when ATR data exists
         atr = pos.get("atr_at_entry")
@@ -1340,7 +1347,40 @@ class AgapeSpotTrader:
                 ),
             },
             "win_tracker": win_tracker.to_dict() if win_tracker else None,
+            "expected_value": self._get_ticker_ev(ticker, win_tracker),
             "positions": open_positions,
+        }
+
+    def _get_ticker_ev(self, ticker: str, win_tracker) -> Dict[str, Any]:
+        """Calculate expected value per trade for a ticker.
+
+        Used by the status endpoint to display EV on the dashboard.
+        """
+        perf = self.signals._perf_stats.get(ticker, {})
+        avg_win = perf.get("avg_win", 0.0)
+        avg_loss = abs(perf.get("avg_loss", 0.0))
+        total_trades = perf.get("total_trades", 0)
+        win_prob = win_tracker.win_probability if win_tracker else 0.5
+
+        if total_trades >= 5 and avg_win > 0 and avg_loss > 0:
+            ev = (win_prob * avg_win) - ((1.0 - win_prob) * avg_loss)
+            return {
+                "ev_per_trade": round(ev, 2),
+                "avg_win": round(avg_win, 2),
+                "avg_loss": round(avg_loss, 2),
+                "win_prob": round(win_prob, 4),
+                "has_data": True,
+                "gate": "EV",
+                "gate_status": "PASS" if ev > 0 else "BLOCKED",
+            }
+        return {
+            "ev_per_trade": None,
+            "avg_win": round(avg_win, 2) if avg_win > 0 else None,
+            "avg_loss": round(avg_loss, 2) if avg_loss > 0 else None,
+            "win_prob": round(win_prob, 4),
+            "has_data": False,
+            "gate": "COLD_START_WIN_PROB",
+            "gate_status": "PASS" if win_prob >= 0.50 else "BLOCKED",
         }
 
     # ==================================================================
