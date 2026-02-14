@@ -220,6 +220,10 @@ class AgapeSpotTrader:
                 prophet_data = self.signals.get_prophet_advice(market_data)
                 scan_context["prophet_data"] = prophet_data
 
+            # Step 2b: Get volatility context (ATR + chop detection)
+            vol_context = self.executor.get_volatility_context(ticker)
+            scan_context["volatility"] = vol_context
+
             # Step 3: Manage existing positions for this ticker
             managed, closed = self._manage_positions(ticker, market_data)
             result["positions_managed"] = managed
@@ -288,8 +292,17 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context)
                 return result
 
+            # Step 6c: Chop filter — skip entries in extremely choppy markets
+            # Choppy = price going nowhere despite lots of movement.
+            # Trading momentum in chop = guaranteed whipsaw.
+            chop_index = vol_context.get("chop_index")
+            if chop_index is not None and chop_index > 0.80:
+                result["outcome"] = f"CHOP_FILTER_{chop_index:.2f}"
+                self._log_scan(ticker, result, scan_context)
+                return result
+
             # Step 7: Generate signal for this ticker
-            signal = self._generate_signal(ticker, prophet_data)
+            signal = self._generate_signal(ticker, prophet_data, vol_context)
             result["signal"] = signal.to_dict() if signal else None
 
             if not signal or not signal.is_valid:
@@ -418,13 +431,22 @@ class AgapeSpotTrader:
             return self.signals.get_market_data()
 
     def _generate_signal(
-        self, ticker: str, prophet_data: Optional[Dict],
+        self,
+        ticker: str,
+        prophet_data: Optional[Dict],
+        vol_context: Optional[Dict] = None,
     ) -> Optional[AgapeSpotSignal]:
         """Generate a trading signal for *ticker*."""
         try:
-            return self.signals.generate_signal(ticker=ticker, prophet_data=prophet_data)
+            return self.signals.generate_signal(
+                ticker=ticker, prophet_data=prophet_data, vol_context=vol_context,
+            )
         except TypeError:
-            return self.signals.generate_signal(prophet_data=prophet_data)
+            # Fallback for older signal generator without vol_context
+            try:
+                return self.signals.generate_signal(ticker=ticker, prophet_data=prophet_data)
+            except TypeError:
+                return self.signals.generate_signal(prophet_data=prophet_data)
 
     # ==================================================================
     # Position management (LONG-ONLY)
@@ -485,8 +507,9 @@ class AgapeSpotTrader:
     ) -> bool:
         """No-loss trailing stop management. LONG-ONLY.
 
-        Uses PER-TICKER exit parameters so altcoins (XRP, SHIB, DOGE) can
-        use tight quick-scalp settings while ETH keeps wider parameters.
+        ATR-ADAPTIVE: When the position has atr_at_entry, stops and trail
+        distances are sized to actual volatility instead of fixed percentages.
+        This prevents normal market noise from stopping out positions early.
 
         profit_pct   = (current - entry) / entry * 100
         hwm          = highest price seen (only updates when price goes up)
@@ -496,7 +519,7 @@ class AgapeSpotTrader:
         entry_price = pos["entry_price"]
         position_id = pos["position_id"]
 
-        # Per-ticker exit params (altcoins: tight/fast, ETH: wide/patient)
+        # Per-ticker exit params (baseline)
         exit_params = self.config.get_exit_params(ticker)
         max_loss_pct = exit_params["max_unrealized_loss_pct"]
         emergency_pct = self.config.no_loss_emergency_stop_pct
@@ -504,6 +527,27 @@ class AgapeSpotTrader:
         trail_distance_pct = exit_params["no_loss_trail_distance_pct"]
         profit_target_pct = exit_params["no_loss_profit_target_pct"]
         max_hold = exit_params["max_hold_hours"]
+
+        # ATR-adaptive: override fixed percentages when ATR data exists
+        atr = pos.get("atr_at_entry")
+        if atr and atr > 0 and entry_price > 0:
+            atr_pct = (atr / entry_price) * 100  # ATR as % of entry price
+
+            # Stop: 1.5 × ATR (or 2.0 × ATR if entered in choppy market)
+            chop = pos.get("chop_index_at_entry")
+            atr_mult = 2.0 if (chop and chop > 0.65) else 1.5
+            atr_stop_pct = atr_pct * atr_mult
+
+            # Trail activation: 1.0 × ATR profit before starting trail
+            atr_activation_pct = atr_pct * 1.0
+
+            # Trail distance: 1.0 × ATR behind HWM
+            atr_trail_pct = atr_pct * 1.0
+
+            # Use the WIDER of ATR-based or config (never tighter than ATR)
+            max_loss_pct = max(max_loss_pct, atr_stop_pct)
+            activation_pct = max(activation_pct, atr_activation_pct)
+            trail_distance_pct = max(trail_distance_pct, atr_trail_pct)
 
         # Use per-ticker price decimals (SHIB=8, XRP/DOGE=4, ETH=2)
         pd = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
@@ -526,7 +570,7 @@ class AgapeSpotTrader:
         if -profit_pct >= max_loss_pct:
             stop_price = entry_price * (1 - max_loss_pct / 100)
             return self._close_position(
-                ticker, pos, stop_price, f"MAX_LOSS_{max_loss_pct}pct",
+                ticker, pos, stop_price, f"MAX_LOSS_{max_loss_pct:.2f}pct",
             )
 
         # ---- Emergency stop ----
@@ -546,7 +590,7 @@ class AgapeSpotTrader:
                     f"TRAIL_STOP_+{exit_pnl_pct:.1f}pct",
                 )
 
-        # ---- Profit target (altcoins: 1.0%, ETH: disabled) ----
+        # ---- Profit target (disabled for all tickers) ----
         if profit_target_pct > 0 and profit_pct >= profit_target_pct:
             return self._close_position(
                 ticker, pos, current_price,

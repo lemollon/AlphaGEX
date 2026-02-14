@@ -344,7 +344,12 @@ class AgapeSpotSignalGenerator:
             "top_factors": ["oracle_error"],
         }
 
-    def generate_signal(self, ticker: str, prophet_data: Optional[Dict] = None) -> AgapeSpotSignal:
+    def generate_signal(
+        self,
+        ticker: str,
+        prophet_data: Optional[Dict] = None,
+        vol_context: Optional[Dict] = None,
+    ) -> AgapeSpotSignal:
         """Generate a LONG-ONLY signal for the given ticker."""
         now = datetime.now(CENTRAL_TZ)
 
@@ -443,7 +448,12 @@ class AgapeSpotSignalGenerator:
                 oracle_top_factors=prophet_data.get("top_factors", []),
             )
 
-        stop_loss, take_profit = self._calculate_levels(spot, market_data, ticker)
+        stop_loss, take_profit = self._calculate_levels(
+            spot, market_data, ticker, vol_context=vol_context,
+        )
+
+        # Volatility context for the signal
+        vc = vol_context or {}
 
         return AgapeSpotSignal(
             ticker=ticker,
@@ -459,6 +469,10 @@ class AgapeSpotSignalGenerator:
             max_pain=market_data.get("max_pain"),
             crypto_gex=market_data.get("crypto_gex", 0),
             crypto_gex_regime=market_data.get("crypto_gex_regime", "NEUTRAL"),
+            atr=vc.get("atr"),
+            atr_pct=vc.get("atr_pct"),
+            chop_index=vc.get("chop_index"),
+            volatility_regime=vc.get("regime", "UNKNOWN"),
             action=SignalAction.LONG,
             confidence=combined_confidence,
             reasoning=reasoning,
@@ -782,16 +796,26 @@ class AgapeSpotSignalGenerator:
         actual_risk = quantity * risk_per_unit
         return (quantity, round(actual_risk, 2))
 
-    def _calculate_levels(self, spot: float, market_data: Dict, ticker: str = "ETH-USD") -> Tuple[float, float]:
-        """Calculate stop-loss and take-profit levels. LONG-ONLY: stop below, target above.
+    def _calculate_levels(
+        self,
+        spot: float,
+        market_data: Dict,
+        ticker: str = "ETH-USD",
+        vol_context: Optional[Dict] = None,
+    ) -> Tuple[float, float]:
+        """Calculate stop-loss and take-profit levels. LONG-ONLY.
 
-        Uses per-ticker exit params: altcoins get tighter stops and targets
-        for the quick-scalp strategy (small range, frequent trades).
+        ATR-ADAPTIVE: When ATR data is available, stops are sized to actual
+        volatility so normal market noise doesn't trigger them. Falls back
+        to the fixed per-ticker percentages when ATR is unavailable.
+
+        Stop = max(1.5 × ATR, fixed_pct_stop)  — at least as wide as 1.5 ATR
+        Target = max(2.5 × ATR, fixed_pct_target) — 2.5:1.5 ATR reward:risk
         """
         exit_params = self.config.get_exit_params(ticker)
         max_loss_pct = exit_params["max_unrealized_loss_pct"]
 
-        # Base stop/target from per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
+        # Base stop/target from per-ticker config (the floor)
         stop_pct = max_loss_pct / 100
         target_pct = stop_pct * 2  # 2:1 reward:risk
 
@@ -802,6 +826,24 @@ class AgapeSpotSignalGenerator:
         elif squeeze == "ELEVATED":
             stop_pct *= 1.1
             target_pct *= 1.17
+
+        # ATR-adaptive: widen stops to match actual volatility
+        vc = vol_context or {}
+        atr = vc.get("atr")
+        if atr and atr > 0 and spot > 0:
+            # Stop: 1.5 × ATR below entry (covers normal noise)
+            # In choppy markets, widen to 2.0 × ATR
+            atr_mult = 2.0 if vc.get("is_choppy") else 1.5
+            atr_stop_distance = atr * atr_mult
+            atr_stop_pct = atr_stop_distance / spot
+
+            # Target: proportional — keep 2:1 reward:risk vs ATR stop
+            atr_target_distance = atr_stop_distance * 2.0
+            atr_target_pct = atr_target_distance / spot
+
+            # Use the WIDER of ATR-based or fixed-pct (ATR is the floor)
+            stop_pct = max(stop_pct, atr_stop_pct)
+            target_pct = max(target_pct, atr_target_pct)
 
         near_long_liq = market_data.get("nearest_long_liq")
         near_short_liq = market_data.get("nearest_short_liq")

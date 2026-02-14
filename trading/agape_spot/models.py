@@ -362,6 +362,12 @@ class AgapeSpotSignal:
     oracle_confidence: float = 0.0
     oracle_top_factors: List[str] = field(default_factory=list)
 
+    # Volatility context (ATR + chop detection)
+    atr: Optional[float] = None           # Average True Range ($)
+    atr_pct: Optional[float] = None       # ATR as % of price
+    chop_index: Optional[float] = None    # 0=trending, 1=choppy
+    volatility_regime: str = "UNKNOWN"    # TRENDING / CHOPPY / UNKNOWN
+
     # Trade parameters - LONG ONLY
     entry_price: Optional[float] = None
     stop_loss: Optional[float] = None
@@ -402,6 +408,10 @@ class AgapeSpotSignal:
             "oracle_win_probability": self.oracle_win_probability,
             "oracle_confidence": self.oracle_confidence,
             "oracle_top_factors": self.oracle_top_factors,
+            "atr": self.atr,
+            "atr_pct": self.atr_pct,
+            "chop_index": self.chop_index,
+            "volatility_regime": self.volatility_regime,
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
@@ -445,6 +455,11 @@ class AgapeSpotPosition:
     signal_action: str
     signal_confidence: str
     signal_reasoning: str
+
+    # Volatility context at entry (for ATR-adaptive exits)
+    atr_at_entry: Optional[float] = None       # ATR in $ at time of entry
+    atr_pct_at_entry: Optional[float] = None   # ATR as % of entry price
+    chop_index_at_entry: Optional[float] = None
 
     # Status
     status: PositionStatus = PositionStatus.OPEN

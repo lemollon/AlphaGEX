@@ -267,6 +267,17 @@ class AgapeSpotDatabase:
                     ADD COLUMN IF NOT EXISTS {col} {typedef}
                 """)
 
+            # --- positions: ATR volatility context at entry ---
+            for col, typedef in [
+                ("atr_at_entry", "FLOAT"),
+                ("atr_pct_at_entry", "FLOAT"),
+                ("chop_index_at_entry", "FLOAT"),
+            ]:
+                cursor.execute(f"""
+                    ALTER TABLE agape_spot_positions
+                    ADD COLUMN IF NOT EXISTS {col} {typedef}
+                """)
+
             # ==========================================================
             # Indexes
             # ==========================================================
@@ -354,6 +365,10 @@ class AgapeSpotDatabase:
             entry_slippage_pct = getattr(pos, "entry_slippage_pct", None)
             entry_fee_usd = getattr(pos, "entry_fee_usd", None)
 
+            atr_at_entry = getattr(pos, "atr_at_entry", None)
+            atr_pct_at_entry = getattr(pos, "atr_pct_at_entry", None)
+            chop_index_at_entry = getattr(pos, "chop_index_at_entry", None)
+
             cursor.execute("""
                 INSERT INTO agape_spot_positions (
                     position_id, ticker, side, quantity, entry_price,
@@ -367,11 +382,13 @@ class AgapeSpotDatabase:
                     signal_action, signal_confidence, signal_reasoning,
                     status, open_time, high_water_mark,
                     account_label,
-                    coinbase_order_id, entry_slippage_pct, entry_fee_usd
+                    coinbase_order_id, entry_slippage_pct, entry_fee_usd,
+                    atr_at_entry, atr_pct_at_entry, chop_index_at_entry
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s
                 )
             """, (
                 pos.position_id, ticker, side, quantity, pos.entry_price,
@@ -388,6 +405,7 @@ class AgapeSpotDatabase:
                 pos.entry_price,
                 account_label,
                 coinbase_order_id, entry_slippage_pct, entry_fee_usd,
+                atr_at_entry, atr_pct_at_entry, chop_index_at_entry,
             ))
             conn.commit()
             logger.info(f"AGAPE-SPOT DB: Saved position {pos.position_id} ({ticker})")
