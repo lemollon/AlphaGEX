@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import useSWR from 'swr'
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -23,6 +23,10 @@ import {
   Zap,
   Target,
   Shield,
+  ChevronDown,
+  ChevronUp,
+  Info,
+  Wrench,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -414,7 +418,7 @@ export default function AgapeSpotPage() {
 // ==============================================================================
 
 function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
-  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('today')
+  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
   const isIntraday = eqTimeFrame === 'today'
   const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
 
@@ -1876,6 +1880,7 @@ function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> 
 function AlphaIntelligencePanel() {
   const { data } = useAgapeSpotAlpha()
   const alpha = data?.data
+  const [expandedTicker, setExpandedTicker] = useState<string | null>(null)
 
   if (!alpha) return null
 
@@ -1906,7 +1911,7 @@ function AlphaIntelligencePanel() {
         </div>
       }
     >
-      {/* Active Systems */}
+      {/* Active Systems — clear descriptions of what each does */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
           <div className="flex items-center gap-2 mb-1.5">
@@ -1914,8 +1919,11 @@ function AlphaIntelligencePanel() {
             <span className="text-xs font-semibold text-white">Alpha Tracker</span>
             <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
           </div>
-          <p className="text-[11px] text-gray-400">
-            {systems.alpha_tracker?.outperforming_tickers ?? 0}/{systems.alpha_tracker?.total_tickers ?? 0} tickers outperforming buy-and-hold
+          <p className="text-[11px] text-gray-400 mb-1">
+            {systems.alpha_tracker?.outperforming_tickers ?? 0}/{systems.alpha_tracker?.total_tickers ?? 0} tickers beating buy-and-hold
+          </p>
+          <p className="text-[10px] text-gray-500">
+            Compares active trading returns vs simply holding each coin since start
           </p>
         </div>
         <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
@@ -1924,18 +1932,24 @@ function AlphaIntelligencePanel() {
             <span className="text-xs font-semibold text-white">Adaptive Allocation</span>
             <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
           </div>
-          <p className="text-[11px] text-gray-400">
-            Alpha-weighted scoring (20% weight in capital allocator)
+          <p className="text-[11px] text-gray-400 mb-1">
+            Auto-shifts capital to outperformers
+          </p>
+          <p className="text-[10px] text-gray-500">
+            Underperformers get less capital. Alpha is 20% of the scoring formula.
           </p>
         </div>
         <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
           <div className="flex items-center gap-2 mb-1.5">
             <Shield className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs font-semibold text-white">Benchmark Signals</span>
+            <span className="text-xs font-semibold text-white">Trend-Aware Exits</span>
             <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
           </div>
-          <p className="text-[11px] text-gray-400">
-            {systems.benchmark_signals?.tickers_with_trend_boost ?? 0} tickers with trend-widened exits (1.5x trail)
+          <p className="text-[11px] text-gray-400 mb-1">
+            {systems.benchmark_signals?.tickers_with_trend_boost ?? 0} tickers with widened exits
+          </p>
+          <p className="text-[10px] text-gray-500">
+            When a coin trends {'>'}1.5% in 24h, trailing stop widens 1.5x and hold time extends 1.5x so positions ride momentum
           </p>
         </div>
       </div>
@@ -1974,7 +1988,7 @@ function AlphaIntelligencePanel() {
         </div>
       </div>
 
-      {/* Per-ticker alpha table */}
+      {/* Per-ticker alpha table with expandable insights */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1985,55 +1999,98 @@ function AlphaIntelligencePanel() {
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Alpha</th>
               <th className="text-center px-3 py-2 text-gray-500 font-medium">Status</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">24h Trend</th>
-              <th className="text-center px-3 py-2 text-gray-500 font-medium">Trend Boost</th>
+              <th className="text-center px-3 py-2 text-gray-500 font-medium">Exit Mode</th>
+              <th className="w-8"></th>
             </tr>
           </thead>
           <tbody>
             {tickers.map(([ticker, d]) => {
               const meta = TICKER_META[ticker] || TICKER_META['ALL']
+              const isExpanded = expandedTicker === ticker
               return (
-                <tr key={ticker} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="px-3 py-2">
-                    <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
-                    <span className="text-gray-500 text-xs ml-1.5">{d.total_trades} trades</span>
-                  </td>
-                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trading_return_pct)}`}>
-                    {d.trading_return_pct >= 0 ? '+' : ''}{d.trading_return_pct.toFixed(2)}%
-                  </td>
-                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.buyhold_return_pct)}`}>
-                    {d.buyhold_return_pct >= 0 ? '+' : ''}{d.buyhold_return_pct.toFixed(2)}%
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className={`font-mono text-xs font-bold ${d.alpha_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {d.alpha_pct >= 0 ? '+' : ''}{d.alpha_pct.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      d.status === 'OUTPERFORMING'
-                        ? 'bg-emerald-500/20 text-emerald-400'
-                        : d.status === 'UNDERPERFORMING'
-                          ? 'bg-red-500/20 text-red-400'
-                          : 'bg-gray-700 text-gray-400'
-                    }`}>
-                      {d.status}
-                    </span>
-                  </td>
-                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trend_24h_pct)}`}>
-                    {d.trend_24h_pct >= 0 ? '+' : ''}{d.trend_24h_pct.toFixed(1)}%
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {d.trend_boost_active ? (
-                      <span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 text-[10px] rounded font-bold">1.5x WIDE</span>
-                    ) : (
-                      <span className="text-gray-600 text-xs">---</span>
-                    )}
-                  </td>
-                </tr>
+                <React.Fragment key={ticker}>
+                  <tr
+                    className="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
+                    onClick={() => setExpandedTicker(isExpanded ? null : ticker)}
+                  >
+                    <td className="px-3 py-2">
+                      <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
+                      <span className="text-gray-500 text-xs ml-1.5">{d.total_trades} trades</span>
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trading_return_pct)}`}>
+                      {d.trading_return_pct >= 0 ? '+' : ''}{d.trading_return_pct.toFixed(2)}%
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.buyhold_return_pct)}`}>
+                      {d.buyhold_return_pct >= 0 ? '+' : ''}{d.buyhold_return_pct.toFixed(2)}%
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className={`font-mono text-xs font-bold ${d.alpha_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {d.alpha_pct >= 0 ? '+' : ''}{d.alpha_pct.toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        d.status === 'OUTPERFORMING'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : d.status === 'UNDERPERFORMING'
+                            ? 'bg-red-500/20 text-red-400'
+                            : 'bg-gray-700 text-gray-400'
+                      }`}>
+                        {d.status}
+                      </span>
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trend_24h_pct)}`}>
+                      {d.trend_24h_pct >= 0 ? '+' : ''}{d.trend_24h_pct.toFixed(1)}%
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {d.trend_boost_active ? (
+                        <span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 text-[10px] rounded font-bold"
+                          title="Strong 24h trend detected. Trailing stop widened 1.5x and hold time extended 1.5x to ride momentum."
+                        >RIDING TREND</span>
+                      ) : (
+                        <span className="text-gray-500 text-[10px]">Normal</span>
+                      )}
+                    </td>
+                    <td className="px-1 py-2 text-center">
+                      {isExpanded
+                        ? <ChevronUp className="w-3.5 h-3.5 text-gray-500" />
+                        : <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
+                      }
+                    </td>
+                  </tr>
+                  {/* Expandable insight row */}
+                  {isExpanded && (d.insight || d.system_action) && (
+                    <tr className="border-b border-gray-800/50">
+                      <td colSpan={8} className="px-3 py-0">
+                        <div className="py-3 space-y-2">
+                          {d.insight && (
+                            <div className="flex items-start gap-2">
+                              <Info className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wide">Why</span>
+                                <p className="text-xs text-gray-300 leading-relaxed">{d.insight}</p>
+                              </div>
+                            </div>
+                          )}
+                          {d.system_action && (
+                            <div className="flex items-start gap-2">
+                              <Wrench className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="text-[10px] text-purple-400 font-bold uppercase tracking-wide">Auto-Response</span>
+                                <p className="text-xs text-gray-300 leading-relaxed">{d.system_action}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               )
             })}
           </tbody>
         </table>
+        <p className="text-[10px] text-gray-600 mt-2 px-3">Click any row to see why it&apos;s performing that way and what the system is doing about it.</p>
       </div>
     </SectionCard>
   )

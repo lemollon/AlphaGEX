@@ -1562,6 +1562,106 @@ class AgapeSpotTrader:
     # Alpha Intelligence (for API endpoint)
     # ==================================================================
 
+    def _generate_alpha_insight(
+        self,
+        ticker: str,
+        status: str,
+        alpha_pct: float,
+        trading_return_pct: float,
+        buyhold_return_pct: float,
+        trend_pct: float,
+        trend_boost: bool,
+        win_rate: float,
+        total_trades: int,
+    ) -> tuple:
+        """Generate human-readable insight and system action for a ticker.
+
+        Returns (insight, system_action) tuple:
+        - insight: WHY the ticker is in its current state
+        - system_action: WHAT the system is automatically doing about it
+        """
+        symbol = ticker.replace("-USD", "")
+        wr_pct = round(win_rate * 100) if win_rate <= 1.0 else round(win_rate)
+
+        # --- Build the WHY insight ---
+        if total_trades == 0:
+            insight = f"No trades yet for {symbol}. Waiting for entry signals."
+            system_action = "Equal capital allocation until trade history is established."
+            return insight, system_action
+
+        if status == "OUTPERFORMING":
+            if trend_boost:
+                insight = (
+                    f"{symbol} trading is beating buy-and-hold by {abs(alpha_pct):.1f}%. "
+                    f"Active trading returned {trading_return_pct:+.1f}% vs holding at {buyhold_return_pct:+.1f}%. "
+                    f"Strong 24h trend ({trend_pct:+.1f}%) detected."
+                )
+            else:
+                insight = (
+                    f"{symbol} trading is beating buy-and-hold by {abs(alpha_pct):.1f}%. "
+                    f"Active trading returned {trading_return_pct:+.1f}% vs holding at {buyhold_return_pct:+.1f}%. "
+                    f"Win rate: {wr_pct}% across {total_trades} trades."
+                )
+            system_action = (
+                "Rewarding with increased capital allocation (alpha adds 20% to score). "
+            )
+            if trend_boost:
+                system_action += (
+                    "Trend boost ON: trailing stop widened 1.5x and hold time extended 1.5x to ride momentum."
+                )
+            return insight, system_action
+
+        if status == "UNDERPERFORMING":
+            gap = abs(alpha_pct)
+            if buyhold_return_pct > 0 and trading_return_pct > 0:
+                # Both positive but holding won
+                insight = (
+                    f"{symbol} price rose {buyhold_return_pct:+.1f}% but trading only captured {trading_return_pct:+.1f}%. "
+                    f"Holding would have earned {gap:.1f}% more. "
+                    f"Win rate: {wr_pct}% across {total_trades} trades."
+                )
+            elif buyhold_return_pct > 0 and trading_return_pct <= 0:
+                # Price went up but trading lost money
+                insight = (
+                    f"{symbol} price rose {buyhold_return_pct:+.1f}% but trading lost {trading_return_pct:+.1f}%. "
+                    f"Exits may be too tight, cutting winners short. "
+                    f"Win rate: {wr_pct}% across {total_trades} trades."
+                )
+            elif buyhold_return_pct <= 0 and trading_return_pct < buyhold_return_pct:
+                # Price dropped and trading lost more than holding
+                insight = (
+                    f"{symbol} dropped {buyhold_return_pct:+.1f}% but trading lost more at {trading_return_pct:+.1f}%. "
+                    f"Trades entered at bad times or stopped out poorly. "
+                    f"Win rate: {wr_pct}% across {total_trades} trades."
+                )
+            else:
+                insight = (
+                    f"{symbol} is {gap:.1f}% behind buy-and-hold. "
+                    f"Trading: {trading_return_pct:+.1f}% vs Hold: {buyhold_return_pct:+.1f}%. "
+                    f"Win rate: {wr_pct}% across {total_trades} trades."
+                )
+
+            system_action = (
+                f"Reducing capital allocation (negative alpha penalises score by 20%). "
+                f"Capital shifted to better-performing tickers."
+            )
+            if trend_boost:
+                system_action += (
+                    " Trend boost ON: widening exits 1.5x to let current positions recover."
+                )
+            return insight, system_action
+
+        # PARITY
+        insight = (
+            f"{symbol} is tracking close to buy-and-hold ({alpha_pct:+.1f}% difference). "
+            f"Trading: {trading_return_pct:+.1f}% vs Hold: {buyhold_return_pct:+.1f}%. "
+            f"Win rate: {wr_pct}% across {total_trades} trades."
+        )
+        system_action = "Neutral allocation — performing in line with the market."
+        if trend_boost:
+            system_action += " Trend boost ON: exits widened 1.5x for strong momentum."
+        return insight, system_action
+
     def get_alpha_intelligence(self) -> Dict[str, Any]:
         """Return full alpha intelligence dashboard data.
 
@@ -1591,18 +1691,32 @@ class AgapeSpotTrader:
             ticker_alpha = alpha_data.get(ticker, 0.0)
             trend_pct = self._get_trend_strength(ticker, current_price) if current_price else 0.0
 
+            status = "OUTPERFORMING" if ticker_alpha > 0.5 else (
+                "UNDERPERFORMING" if ticker_alpha < -0.5 else "PARITY"
+            )
+            trend_boost = self._is_strong_trend(ticker, trend_pct) and trend_pct > 0
+            win_rate = d.get("win_rate", 0.0)
+            total_trades = d.get("total_trades", 0)
+
+            # Generate human-readable insight + system action
+            insight, system_action = self._generate_alpha_insight(
+                ticker, status, ticker_alpha, trading_return_pct,
+                buyhold_return_pct, trend_pct, trend_boost, win_rate,
+                total_trades,
+            )
+
             per_ticker[ticker] = {
                 "trading_return_pct": round(trading_return_pct, 2),
                 "buyhold_return_pct": round(buyhold_return_pct, 2),
                 "alpha_pct": round(ticker_alpha, 2),
-                "status": "OUTPERFORMING" if ticker_alpha > 0.5 else (
-                    "UNDERPERFORMING" if ticker_alpha < -0.5 else "PARITY"
-                ),
+                "status": status,
                 "base_price": round(base_price, 2) if base_price else None,
                 "current_price": round(current_price, 2) if current_price else None,
-                "total_trades": d.get("total_trades", 0),
+                "total_trades": total_trades,
                 "trend_24h_pct": round(trend_pct, 2),
-                "trend_boost_active": self._is_strong_trend(ticker, trend_pct) and trend_pct > 0,
+                "trend_boost_active": trend_boost,
+                "insight": insight,
+                "system_action": system_action,
             }
 
         # Combined metrics (sum across all tickers)
