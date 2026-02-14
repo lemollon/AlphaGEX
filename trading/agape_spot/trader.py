@@ -153,10 +153,16 @@ class AgapeSpotTrader:
     # ==================================================================
 
     def _refresh_allocator(self) -> None:
-        """Query DB for per-ticker performance and update the capital allocator rankings."""
+        """Query DB for per-ticker performance and update the capital allocator rankings.
+
+        Passes active tickers (those currently in market hours) so the allocator
+        can redistribute inactive tickers' capital (e.g. MSTU on weekends) to
+        crypto tickers that trade 24/7.
+        """
         try:
             perf_data = self.db.get_ticker_performance_stats(self.config.live_tickers)
-            self._capital_allocator.refresh(perf_data)
+            active = self.config.get_active_tickers()
+            self._capital_allocator.refresh(perf_data, active_tickers=active)
         except Exception as e:
             logger.warning(f"AGAPE-SPOT: Allocator refresh failed: {e}")
 
@@ -941,10 +947,12 @@ class AgapeSpotTrader:
     def _check_entry_conditions(
         self, ticker: str, now: datetime,
     ) -> Optional[str]:
-        """24/7 bot -- minimal entry checks."""
+        """24/7 for crypto, market-hours-only for equity tickers (MSTU)."""
         if not self._enabled:
             return "BOT_DISABLED"
-        # No market hours restriction -- 24/7/365
+        # Market hours restriction for equity-based tickers (e.g. MSTU)
+        if not self.config.is_ticker_in_market_hours(ticker, now):
+            return "OUTSIDE_MARKET_HOURS"
         return None
 
     # ==================================================================

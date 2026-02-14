@@ -276,7 +276,7 @@ export default function AgapeSpotPage() {
     <>
       <Navigation />
       <main className={`min-h-screen bg-gray-950 text-white px-4 pb-6 md:px-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
-        <div className="max-w-7xl mx-auto space-y-5">
+        <div className="max-w-7xl mx-auto space-y-5 overflow-hidden">
 
           {/* ================================================================ */}
           {/* PAGE HEADER                                                      */}
@@ -449,7 +449,7 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
       </div>
 
       {/* Per-coin summary cards (with sparklines) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD'] as const).map((ticker) => (
           <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
         ))}
@@ -1826,6 +1826,7 @@ interface AllocRanking {
   profit_factor: number
   total_pnl: number
   recent_pnl: number
+  is_active: boolean
 }
 
 function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking[]; total_tickers: number } | null | undefined }) {
@@ -1861,11 +1862,14 @@ function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking
               const meta = TICKER_META[r.ticker] || TICKER_META['ALL']
               const barWidth = Math.max(r.allocation_pct * 100, 2)
               return (
-                <tr key={r.ticker} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <tr key={r.ticker} className={`border-b border-gray-800/50 hover:bg-gray-800/30 ${r.is_active === false ? 'opacity-50' : ''}`}>
                   <td className="px-3 py-2.5 text-gray-400 font-mono">{idx + 1}</td>
                   <td className="px-3 py-2.5">
                     <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
                     <span className="text-gray-500 text-xs ml-1.5">{meta.label}</span>
+                    {r.is_active === false && (
+                      <span className="ml-1.5 px-1.5 py-0.5 bg-gray-700 text-gray-400 text-[10px] rounded">CLOSED</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <div className="flex items-center justify-end gap-2">
@@ -1926,13 +1930,13 @@ function CoinCard({ ticker, data }: { ticker: string; data: TickerSummary | unde
   const returnPct = data?.return_pct ?? 0
 
   return (
-    <div className={`rounded-xl border p-4 ${meta.bgCard} ${meta.borderCard} transition-colors`}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className={`font-bold text-lg ${meta.textActive}`}>{meta.symbol}</span>
-          <span className="text-gray-500 text-xs">{meta.label}</span>
+    <div className={`rounded-xl border p-4 min-w-0 overflow-hidden ${meta.bgCard} ${meta.borderCard} transition-colors`}>
+      <div className="flex items-center justify-between mb-3 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`font-bold text-lg ${meta.textActive} shrink-0`}>{meta.symbol}</span>
+          <span className="text-gray-500 text-xs truncate">{meta.label}</span>
         </div>
-        <span className="text-white font-mono text-sm">{fmtPrice(data?.current_price)}</span>
+        <span className="text-white font-mono text-sm shrink-0 ml-2">{fmtPrice(data?.current_price)}</span>
       </div>
       <div className="grid grid-cols-2 gap-y-2 text-sm">
         <div>
