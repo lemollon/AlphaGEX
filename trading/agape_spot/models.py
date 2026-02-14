@@ -241,6 +241,14 @@ class AgapeSpotConfig:
     direction_win_streak_caution: int = 100
     direction_memory_size: int = 10
 
+    # Bayesian Choppy-Market Mode
+    # When market is range-bound with no momentum, require Bayesian edge confirmation.
+    enable_bayesian_choppy: bool = True
+    choppy_min_win_prob: float = 0.52      # Bayesian gate for choppy markets
+    choppy_position_size_mult: float = 0.5 # Half-size in choppy conditions
+    choppy_funding_regimes: str = "BALANCED,MILD_LONG_BIAS,MILD_SHORT_BIAS"
+    choppy_max_squeeze_risk: str = "ELEVATED"
+
     def is_live(self, ticker: str) -> bool:
         """Return True if *ticker* should execute real Coinbase orders."""
         return ticker in self.live_tickers

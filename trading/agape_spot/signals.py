@@ -38,6 +38,20 @@ try:
 except ImportError:
     pass
 
+# Bayesian Crypto Tracker for choppy-market edge detection
+BayesianCryptoTracker = None
+BayesianTradeOutcome = None
+get_bayesian_tracker = None
+try:
+    from quant.bayesian_crypto_tracker import (
+        BayesianCryptoTracker,
+        TradeOutcome as BayesianTradeOutcome,
+        get_tracker as get_bayesian_tracker,
+    )
+    logger.info("AGAPE-SPOT Signals: BayesianCryptoTracker loaded")
+except ImportError as e:
+    logger.warning(f"AGAPE-SPOT Signals: BayesianCryptoTracker not available: {e}")
+
 CryptoDataProvider = None
 get_crypto_data_provider = None
 try:
@@ -523,8 +537,26 @@ class AgapeSpotSignalGenerator:
             if not mom_ok:
                 return (SignalAction.WAIT, mom_reason)
 
-        # Bayesian win probability gate: block when regime win rate is too low
+        # Bayesian Choppy-Market Gate: when no momentum, raise the win prob threshold
         funding_regime_str = market_data.get("funding_regime", "UNKNOWN")
+        is_choppy = self._detect_choppy_market(ticker, market_data)
+        if is_choppy and self.config.enable_bayesian_choppy and get_bayesian_tracker:
+            choppy_win_prob = self._get_bayesian_choppy_win_prob(ticker)
+            if choppy_win_prob < self.config.choppy_min_win_prob:
+                logger.info(
+                    f"AGAPE-SPOT CHOPPY GATE: {ticker} choppy market, "
+                    f"bayesian_edge={choppy_win_prob:.4f} < "
+                    f"gate={self.config.choppy_min_win_prob} — BLOCKED"
+                )
+                return (SignalAction.WAIT, f"CHOPPY_NO_EDGE_{choppy_win_prob:.3f}")
+            else:
+                logger.info(
+                    f"AGAPE-SPOT CHOPPY EDGE: {ticker} choppy market, "
+                    f"bayesian_edge={choppy_win_prob:.4f} >= "
+                    f"gate={self.config.choppy_min_win_prob} — TRADING EDGE"
+                )
+
+        # Bayesian win probability gate: block when regime win rate is too low
         win_prob = self._calculate_win_probability(ticker, funding_regime_str)
         if win_prob < self.MIN_WIN_PROBABILITY:
             win_tracker = self._win_trackers.get(ticker)
@@ -691,6 +723,61 @@ class AgapeSpotSignalGenerator:
             dist = ((mp - spot) / spot) * 100
             parts.append(f"max_pain_dist={dist:+.1f}%")
         return " | ".join(parts)
+
+    def _detect_choppy_market(self, ticker: str, market_data: Dict) -> bool:
+        """Detect choppy (no-momentum) market for a specific ticker.
+
+        Choppy = RANGE_BOUND signal + balanced funding + low squeeze.
+        This is where the small-gain grinding strategy can profit
+        IF the Bayesian tracker confirms an edge.
+        """
+        combined_signal = market_data.get("combined_signal", "WAIT")
+        funding_regime = market_data.get("funding_regime", "UNKNOWN")
+        squeeze_risk = market_data.get("squeeze_risk", "LOW")
+        ls_bias = market_data.get("ls_bias", "NEUTRAL")
+
+        choppy_regimes = [r.strip() for r in self.config.choppy_funding_regimes.split(",")]
+        max_squeeze = self.config.choppy_max_squeeze_risk
+        squeeze_rank = {"LOW": 1, "ELEVATED": 2, "HIGH": 3}
+        max_rank = squeeze_rank.get(max_squeeze, 2)
+        cur_rank = squeeze_rank.get(squeeze_risk, 3)
+
+        # Primary: RANGE_BOUND with acceptable squeeze
+        if combined_signal == "RANGE_BOUND" and cur_rank <= max_rank:
+            return True
+
+        # Secondary: balanced microstructure regardless of combined signal
+        if (
+            funding_regime in choppy_regimes
+            and cur_rank <= max_rank
+            and ls_bias in ("NEUTRAL", "BALANCED")
+        ):
+            return True
+
+        return False
+
+    def _get_bayesian_choppy_win_prob(self, ticker: str) -> float:
+        """Get Bayesian win probability for choppy conditions on this ticker.
+
+        Uses the BayesianCryptoTracker per-ticker strategy.
+        Falls back to 0.52 (allow trading) if unavailable or cold start.
+        """
+        if not get_bayesian_tracker:
+            return 0.52
+
+        strategy_name = f"agape_spot_choppy_{ticker.replace('-', '_').lower()}"
+        tracker = get_bayesian_tracker(
+            strategy_name=strategy_name,
+            starting_capital=self.config.get_starting_capital(ticker),
+        )
+
+        estimate = tracker.get_estimate()
+
+        # Cold start: allow trading to collect data
+        if estimate.total_trades < 5:
+            return 0.52
+
+        return estimate.mean
 
     def _calculate_win_probability(self, ticker: str, funding_regime_str: str) -> float:
         """Calculate Bayesian win probability for a ticker in its current funding regime.

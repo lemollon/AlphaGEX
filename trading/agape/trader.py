@@ -35,6 +35,25 @@ from trading.agape.signals import (
 )
 from trading.agape.executor import AgapeExecutor
 
+# Bayesian Crypto Tracker for choppy-market edge feedback
+_bayesian_tracker_mod = None
+try:
+    from quant.bayesian_crypto_tracker import (
+        TradeOutcome as BayesianTradeOutcome,
+        get_tracker as get_bayesian_tracker,
+    )
+    _bayesian_tracker_mod = True
+    logger.info("AGAPE Trader: BayesianCryptoTracker loaded")
+except ImportError:
+    pass
+
+_bayesian_db_mod = None
+try:
+    from quant.bayesian_crypto_db import BayesianCryptoDatabase
+    _bayesian_db_mod = True
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -647,6 +666,60 @@ class AgapeTrader:
                 is_win=won,
                 scan_number=self._cycle_count,
             )
+
+            # Feed outcome to Bayesian Crypto Tracker for choppy-market edge detection
+            if _bayesian_tracker_mod and self.config.enable_bayesian_choppy:
+                try:
+                    now = datetime.now(CENTRAL_TZ)
+                    open_time_raw = pos_dict.get("open_time")
+                    if isinstance(open_time_raw, str):
+                        entry_time = datetime.fromisoformat(open_time_raw)
+                    elif isinstance(open_time_raw, datetime):
+                        entry_time = open_time_raw
+                    else:
+                        entry_time = now - timedelta(minutes=5)
+                    if entry_time.tzinfo is None:
+                        entry_time = entry_time.replace(tzinfo=CENTRAL_TZ)
+
+                    hold_minutes = (now - entry_time).total_seconds() / 60
+
+                    bt_outcome = BayesianTradeOutcome(
+                        trade_id=position_id,
+                        symbol=self.config.ticker,
+                        side=side,
+                        entry_price=entry_price,
+                        exit_price=current_price,
+                        pnl=realized_pnl,
+                        contracts=contracts,
+                        entry_time=entry_time,
+                        exit_time=now,
+                        hold_duration_minutes=hold_minutes,
+                        funding_regime=pos_dict.get("funding_regime_at_entry", "UNKNOWN"),
+                        leverage_regime=pos_dict.get("leverage_regime", "UNKNOWN"),
+                        volatility_state=pos_dict.get("volatility_regime", "NORMAL"),
+                        ls_bias=pos_dict.get("ls_ratio_at_entry", "NEUTRAL"),
+                    )
+
+                    tracker = get_bayesian_tracker(
+                        strategy_name="agape_choppy",
+                        starting_capital=self.config.starting_capital,
+                    )
+                    estimate = tracker.record_trade(bt_outcome)
+
+                    # Persist to DB if available
+                    if _bayesian_db_mod:
+                        bdb = BayesianCryptoDatabase()
+                        bdb.save_trade("agape_choppy", bt_outcome)
+                        bdb.save_tracker_state(tracker)
+
+                    logger.info(
+                        f"AGAPE BAYESIAN: Recorded {position_id} "
+                        f"win={won} → win_rate={estimate.mean:.4f} "
+                        f"edge_prob={estimate.edge_probability:.4f} "
+                        f"verdict={estimate.verdict.value}"
+                    )
+                except Exception as e:
+                    logger.warning(f"AGAPE BAYESIAN: Failed to record outcome: {e}")
 
             self.db.log(
                 "INFO", "CLOSE_POSITION",

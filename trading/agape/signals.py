@@ -55,6 +55,20 @@ try:
 except ImportError as e:
     logger.warning(f"AGAPE Signals: ProphetAdvisor not available: {e}")
 
+# Bayesian Crypto Tracker for edge detection in choppy markets
+BayesianCryptoTracker = None
+TradeOutcome = None
+get_bayesian_tracker = None
+try:
+    from quant.bayesian_crypto_tracker import (
+        BayesianCryptoTracker,
+        TradeOutcome,
+        get_tracker as get_bayesian_tracker,
+    )
+    logger.info("AGAPE Signals: BayesianCryptoTracker loaded")
+except ImportError as e:
+    logger.warning(f"AGAPE Signals: BayesianCryptoTracker not available: {e}")
+
 
 # ============================================================================
 # DIRECTION TRACKER - Makes bot nimble at detecting direction changes
@@ -514,6 +528,23 @@ class AgapeSignalGenerator:
             )
             return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
 
+        # Bayesian Choppy-Market Gate: when no momentum, only trade with confirmed edge
+        if self.config.enable_bayesian_choppy:
+            is_choppy, choppy_reason = self._detect_choppy_market(market_data)
+            if is_choppy:
+                win_prob = self._get_bayesian_choppy_win_prob(market_data)
+                if win_prob < self.config.choppy_min_win_prob:
+                    logger.info(
+                        f"AGAPE CHOPPY GATE: {choppy_reason}, "
+                        f"bayesian_win_prob={win_prob:.4f} < gate={self.config.choppy_min_win_prob} — BLOCKED"
+                    )
+                    return (SignalAction.WAIT, None, f"CHOPPY_NO_EDGE_{win_prob:.3f}")
+                else:
+                    logger.info(
+                        f"AGAPE CHOPPY EDGE: {choppy_reason}, "
+                        f"bayesian_win_prob={win_prob:.4f} >= gate={self.config.choppy_min_win_prob} — TRADING"
+                    )
+
         # Direction Tracker: skip directions on cooldown after losses
         direction_tracker = get_agape_direction_tracker(self.config)
 
@@ -757,6 +788,63 @@ class AgapeSignalGenerator:
                 take_profit = spot * (1 - target_pct)
 
         return (round(stop_loss, 2), round(take_profit, 2))
+
+    def _detect_choppy_market(self, market_data: Dict) -> Tuple[bool, str]:
+        """Detect choppy (no-momentum) market conditions from crypto microstructure.
+
+        Choppy = range-bound + balanced funding + low squeeze risk.
+        This is where the small-gain grinding strategy works best.
+
+        Returns (is_choppy: bool, reason: str).
+        """
+        combined_signal = market_data.get("combined_signal", "WAIT")
+        funding_regime = market_data.get("funding_regime", "UNKNOWN")
+        squeeze_risk = market_data.get("squeeze_risk", "LOW")
+        ls_bias = market_data.get("ls_bias", "NEUTRAL")
+
+        # Parse config for choppy funding regimes
+        choppy_regimes = [r.strip() for r in self.config.choppy_funding_regimes.split(",")]
+        max_squeeze = self.config.choppy_max_squeeze_risk
+        squeeze_ok = {"LOW": 1, "ELEVATED": 2, "HIGH": 3}
+        max_squeeze_rank = squeeze_ok.get(max_squeeze, 2)
+        current_squeeze_rank = squeeze_ok.get(squeeze_risk, 3)
+
+        # Primary check: RANGE_BOUND signal with low squeeze
+        if combined_signal == "RANGE_BOUND" and current_squeeze_rank <= max_squeeze_rank:
+            return (True, f"RANGE_BOUND+{funding_regime}+squeeze={squeeze_risk}")
+
+        # Secondary check: WAIT or LONG/SHORT but with balanced microstructure
+        if (
+            funding_regime in choppy_regimes
+            and current_squeeze_rank <= max_squeeze_rank
+            and ls_bias in ("NEUTRAL", "BALANCED")
+        ):
+            return (True, f"BALANCED_MICRO+{funding_regime}+ls={ls_bias}")
+
+        return (False, "")
+
+    def _get_bayesian_choppy_win_prob(self, market_data: Dict) -> float:
+        """Get Bayesian win probability for the current choppy market conditions.
+
+        Uses the BayesianCryptoTracker to assess if we have a confirmed
+        edge in these conditions. Falls back to 0.52 (allow trading)
+        if tracker is not available.
+        """
+        if not get_bayesian_tracker:
+            return 0.52  # Tracker unavailable, allow trading
+
+        tracker = get_bayesian_tracker(
+            strategy_name="agape_choppy",
+            starting_capital=self.config.starting_capital,
+        )
+
+        estimate = tracker.get_estimate()
+
+        # Cold start: if fewer than 5 trades, allow trading to collect data
+        if estimate.total_trades < 5:
+            return 0.52
+
+        return estimate.mean
 
     @staticmethod
     def _funding_to_vix_proxy(funding_rate: float) -> float:

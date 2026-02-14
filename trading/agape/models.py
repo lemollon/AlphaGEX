@@ -121,6 +121,15 @@ class AgapeConfig:
     direction_win_streak_caution: int = 100 # Effectively disabled
     direction_memory_size: int = 10         # Track last 10 trades per direction
 
+    # Bayesian Choppy-Market Mode
+    # When market has no momentum (range-bound, balanced funding, low squeeze),
+    # use Bayesian edge detection to only trade when historical win rate is confirmed.
+    enable_bayesian_choppy: bool = True
+    choppy_min_win_prob: float = 0.52      # Gate: only trade choppy if Bayesian win_prob >= this
+    choppy_position_size_mult: float = 0.5 # Half-size positions in choppy markets (risk reduction)
+    choppy_funding_regimes: str = "BALANCED,MILD_LONG_BIAS,MILD_SHORT_BIAS"  # Regimes considered "choppy"
+    choppy_max_squeeze_risk: str = "ELEVATED"  # Max squeeze risk for choppy classification
+
     @classmethod
     def load_from_db(cls, db) -> "AgapeConfig":
         """Load config from database, falling back to defaults."""
