@@ -51,6 +51,11 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   AGAPE_SPOT: 8000,
   AGAPE_BTC: 5000,
   AGAPE_XRP: 5000,
+  AGAPE_ETH_PERP: 12500,
+  AGAPE_BTC_PERP: 25000,
+  AGAPE_XRP_PERP: 9000,
+  AGAPE_DOGE_PERP: 2500,
+  AGAPE_SHIB_PERP: 1000,
 }
 
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
