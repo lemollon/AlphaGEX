@@ -651,6 +651,63 @@ async def get_equity_curve(
         current_equity = equity_curve[-1]["equity"] if equity_curve else starting_capital
         total_pnl = equity_curve[-1]["cumulative_pnl"] if equity_curve else 0.0
 
+        # ---- BTC & ETH buy-and-hold benchmark overlay (combined view only) ----
+        benchmarks = {}
+        if is_combined and equity_curve:
+            try:
+                first_date = equity_curve[0]["date"]
+                last_date = equity_curve[-1]["date"]
+
+                for bench_ticker, bench_label in [("BTC-USD", "btc"), ("ETH-USD", "eth")]:
+                    cursor.execute("""
+                        SELECT
+                            (timestamp AT TIME ZONE 'America/Chicago')::date AS snap_date,
+                            AVG(eth_price) AS avg_price
+                        FROM agape_spot_equity_snapshots
+                        WHERE ticker = %s
+                          AND eth_price IS NOT NULL
+                          AND eth_price > 0
+                          AND (timestamp AT TIME ZONE 'America/Chicago')::date >= %s
+                          AND (timestamp AT TIME ZONE 'America/Chicago')::date <= %s
+                        GROUP BY snap_date
+                        ORDER BY snap_date ASC
+                    """, (bench_ticker, first_date, last_date))
+                    price_rows = cursor.fetchall()
+
+                    if price_rows and len(price_rows) >= 2:
+                        base_price = float(price_rows[0][1])
+                        price_map = {str(r[0]): float(r[1]) for r in price_rows}
+                        benchmarks[bench_label] = {
+                            "base_price": round(base_price, 2),
+                            "prices": price_map,
+                        }
+
+                # Merge benchmark values into each equity curve point
+                for pt in equity_curve:
+                    d = pt["date"]
+                    for label, bdata in benchmarks.items():
+                        bp = bdata["base_price"]
+                        price = bdata["prices"].get(d)
+                        if price and bp > 0:
+                            # Buy-and-hold equity = starting_capital * (current_price / base_price)
+                            pt[f"{label}_equity"] = round(starting_capital * (price / bp), 2)
+                        else:
+                            # Forward-fill: use previous point's value
+                            pt[f"{label}_equity"] = None
+
+                # Forward-fill None values
+                for label in benchmarks:
+                    key = f"{label}_equity"
+                    last_val = starting_capital
+                    for pt in equity_curve:
+                        if pt[key] is not None:
+                            last_val = pt[key]
+                        else:
+                            pt[key] = last_val
+
+            except Exception as bench_err:
+                logger.warning(f"AGAPE-SPOT: Benchmark overlay failed (non-fatal): {bench_err}")
+
         return {
             "success": True,
             "data": {
@@ -659,6 +716,7 @@ async def get_equity_curve(
                 "current_equity": round(current_equity, 2),
                 "total_pnl": round(total_pnl, 2),
                 "total_return_pct": round(total_pnl / starting_capital * 100, 2),
+                "has_benchmarks": bool(benchmarks),
             },
             "ticker": display_ticker,
             "points": len(equity_curve),

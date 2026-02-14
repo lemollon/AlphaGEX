@@ -4,7 +4,7 @@ import { useState, useMemo } from 'react'
 import useSWR from 'swr'
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, Area, AreaChart,
+  CartesianGrid, Area, AreaChart, Line, ComposedChart,
 } from 'recharts'
 import {
   TrendingUp,
@@ -477,9 +477,26 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
           <EmptyBox message={isIntraday ? "No intraday snapshots yet. The bot saves equity every 5 minutes." : "No equity data yet. Trades will populate this chart."} />
         ) : (
           <>
+            {/* Legend for benchmark lines (historical only) */}
+            {!isIntraday && equityData?.data?.has_benchmarks && (
+              <div className="flex items-center gap-4 mb-2 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 bg-cyan-400 rounded" />
+                  <span className="text-gray-400">AGAPE-SPOT</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 rounded" style={{ backgroundColor: '#F7931A' }} />
+                  <span className="text-gray-400">BTC Buy & Hold</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-4 h-0.5 rounded" style={{ backgroundColor: '#627EEA' }} />
+                  <span className="text-gray-400">ETH Buy & Hold</span>
+                </div>
+              </div>
+            )}
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={equityPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <ComposedChart data={equityPoints} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="eqFillAll" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#06B6D4" stopOpacity={0.3} />
@@ -505,9 +522,39 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
                   <Tooltip
                     contentStyle={{ backgroundColor: '#111827', border: '1px solid #374151', borderRadius: '8px' }}
                     labelStyle={{ color: '#9ca3af' }}
-                    formatter={(value: number) => [`$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Equity']}
+                    formatter={(value: number, name: string) => {
+                      const label = name === 'equity' ? 'AGAPE-SPOT' : name === 'btc_equity' ? 'BTC Hold' : name === 'eth_equity' ? 'ETH Hold' : name
+                      return [`$${value?.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, label]
+                    }}
                     labelFormatter={(label: string) => isIntraday ? `Time: ${label}` : label}
                   />
+                  {/* BTC benchmark (behind) */}
+                  {!isIntraday && equityData?.data?.has_benchmarks && (
+                    <Line
+                      type="monotone"
+                      dataKey="btc_equity"
+                      stroke="#F7931A"
+                      strokeWidth={1.5}
+                      strokeDasharray="6 3"
+                      dot={false}
+                      activeDot={{ r: 3, strokeWidth: 1 }}
+                      connectNulls
+                    />
+                  )}
+                  {/* ETH benchmark (behind) */}
+                  {!isIntraday && equityData?.data?.has_benchmarks && (
+                    <Line
+                      type="monotone"
+                      dataKey="eth_equity"
+                      stroke="#627EEA"
+                      strokeWidth={1.5}
+                      strokeDasharray="6 3"
+                      dot={false}
+                      activeDot={{ r: 3, strokeWidth: 1 }}
+                      connectNulls
+                    />
+                  )}
+                  {/* Bot equity (on top) */}
                   <Area
                     type="monotone"
                     dataKey="equity"
@@ -522,7 +569,7 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
                     }}
                     activeDot={{ r: 5, strokeWidth: 2 }}
                   />
-                </AreaChart>
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
             <DrawdownChart points={drawdownPoints} isIntraday={isIntraday} />
