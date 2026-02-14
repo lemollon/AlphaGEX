@@ -30,12 +30,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,  # Coinbase $1 min + safety buffer
         "quantity_decimals": 4,
         "price_decimals": 2,
-        # ETH exit params: wider trail for bigger moves
+        # ETH exit params: wider trail, longer hold to capture full trends
         "no_loss_activation_pct": 1.5,
         "no_loss_trail_distance_pct": 1.25,
         "max_unrealized_loss_pct": 1.5,
         "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
-        "max_hold_hours": 6,
+        "max_hold_hours": 8,  # Was 6h — ETH trends run 8-12h, don't exit mid-trend
     },
     "BTC-USD": {
         "symbol": "BTC",
@@ -47,12 +47,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 5,
         "price_decimals": 2,
-        # BTC exit params: similar % to ETH, wider trail for bigger absolute moves
+        # BTC exit params: wider trail, longer hold to capture full trends
         "no_loss_activation_pct": 1.5,
         "no_loss_trail_distance_pct": 1.25,
         "max_unrealized_loss_pct": 1.5,
         "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
-        "max_hold_hours": 6,
+        "max_hold_hours": 8,  # Was 6h — BTC trends run 8-12h, don't exit mid-trend
     },
     "XRP-USD": {
         "symbol": "XRP",
@@ -65,12 +65,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # XRP exit params: let winners run (removed 1.0% profit cap that was capping gains)
-        "no_loss_activation_pct": 0.3,
-        "no_loss_trail_distance_pct": 0.25,
-        "max_unrealized_loss_pct": 0.5,   # Was 0.75% — cut losers faster (avg loss was ~1.5x avg win)
-        "no_loss_profit_target_pct": 0.0,  # Was 1.0% — disabled, let trail manage exits like DOGE
-        "max_hold_hours": 2,
+        # XRP exit params: widened to stop noise-exits that give alpha to buy-and-hold
+        "no_loss_activation_pct": 0.8,    # Was 0.3% — way too tight, trail activated on noise
+        "no_loss_trail_distance_pct": 0.75, # Was 0.25% — XRP moves 0.25% every few min, this is noise
+        "max_unrealized_loss_pct": 1.0,   # Was 0.5% — too tight, normal pullback triggers stop
+        "no_loss_profit_target_pct": 0.0,  # Disabled — let trail manage exits
+        "max_hold_hours": 4,              # Was 2h — too short to capture multi-hour trends
         # Signal quality gates — XRP has no Deribit options data, need actual funding signal
         "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
         "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
@@ -90,12 +90,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 8,
-        # SHIB exit params: meme coin — tighter stops, no profit cap
-        "no_loss_activation_pct": 0.3,
-        "no_loss_trail_distance_pct": 0.2,  # Was 0.25% — tighter trail for meme coin
-        "max_unrealized_loss_pct": 0.5,     # Was 0.75% — cut losers faster
-        "no_loss_profit_target_pct": 0.0,   # Was 1.0% — disabled, let trail manage exits
-        "max_hold_hours": 2,
+        # SHIB exit params: widened — meme coin has big swings, 0.2% trail was pure noise
+        "no_loss_activation_pct": 0.8,      # Was 0.3% — activated on noise
+        "no_loss_trail_distance_pct": 0.60, # Was 0.2% — SHIB swings 0.5%+ per candle, 0.2% is noise
+        "max_unrealized_loss_pct": 1.0,     # Was 0.5% — normal SHIB volatility triggered this
+        "no_loss_profit_target_pct": 0.0,   # Disabled — let trail manage exits
+        "max_hold_hours": 4,                # Was 2h — need time to capture real moves
         # Signal quality gates — SHIB has no Deribit data, meme coin needs real signal
         "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
         "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
@@ -115,12 +115,12 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # DOGE exit params: 7.43 PF with 40% WR — trailing stop working well, don't change exits
-        "no_loss_activation_pct": 0.3,
-        "no_loss_trail_distance_pct": 0.25,
-        "max_unrealized_loss_pct": 0.75,
-        "no_loss_profit_target_pct": 0.0,  # Was 1.0% — disabled, let trail manage (this IS why PF is high)
-        "max_hold_hours": 2,
+        # DOGE exit params: widened to match altcoin reality — 0.25% trail was noise-level
+        "no_loss_activation_pct": 0.8,     # Was 0.3% — trail activated on noise
+        "no_loss_trail_distance_pct": 0.75, # Was 0.25% — DOGE swings 0.3%+ constantly
+        "max_unrealized_loss_pct": 1.0,    # Was 0.75% — normal volatility triggered this
+        "no_loss_profit_target_pct": 0.0,  # Disabled — let trail manage
+        "max_hold_hours": 4,              # Was 2h — need to capture multi-hour trends
         # Signal quality gates — DOGE trending well, keep base_long but add ETH leader + momentum
         "require_funding_data": False,      # DOGE works without funding data (trending market)
         "allow_base_long": True,            # Keep catchall — DOGE profits from it
@@ -145,7 +145,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "no_loss_trail_distance_pct": 0.75, # Trail 0.75% behind HWM
         "max_unrealized_loss_pct": 1.5,     # 2x leverage can gap — give room
         "no_loss_profit_target_pct": 0.0,   # Disabled — let trail manage
-        "max_hold_hours": 4,                # Leveraged ETFs have daily decay, don't hold overnight
+        "max_hold_hours": 6,                # Was 4h — MSTU trends with BTC, needs room to run
         # Signal quality gates — stock/ETF on Coinbase, no crypto funding data
         "require_funding_data": False,      # Not a crypto asset — no Deribit funding
         "allow_base_long": True,            # Allow entry on momentum alone
@@ -242,7 +242,7 @@ class AgapeSpotConfig:
     loss_streak_pause_minutes: int = 5
 
     # Daily loss limit (portfolio circuit breaker)
-    daily_loss_limit_usd: float = 50.0  # Pause ALL tickers if daily realized P&L < -$50
+    daily_loss_limit_usd: float = 200.0  # Was $50 — too tight for $14K portfolio (0.35%), now 1.4%
     daily_loss_limit_enabled: bool = True
 
     # Direction Tracker
@@ -815,8 +815,8 @@ class CapitalAllocator:
     Refresh cadence: once per scan cycle (called from trader.py).
     """
 
-    # Floor allocation % so every ticker can at least enter small positions
-    MIN_ALLOCATION_PCT = 0.10
+    # Floor allocation % — low floor lets winners take 30%+ of capital
+    MIN_ALLOCATION_PCT = 0.05  # Was 0.10 — too generous to underperformers
 
     # How many recent hours of P&L count as "recent" performance
     RECENT_HOURS = 24

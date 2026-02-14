@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import useSWR from 'swr'
 import {
   XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -23,6 +23,10 @@ import {
   Zap,
   Target,
   Shield,
+  ChevronDown,
+  ChevronUp,
+  Info,
+  Wrench,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -414,7 +418,7 @@ export default function AgapeSpotPage() {
 // ==============================================================================
 
 function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
-  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('today')
+  const [eqTimeFrame, setEqTimeFrame] = useState<TimeFrameId>('30d')
   const isIntraday = eqTimeFrame === 'today'
   const eqDays = TIME_FRAMES.find(tf => tf.id === eqTimeFrame)?.days ?? 30
 
@@ -734,10 +738,10 @@ function OverviewTab({ ticker }: { ticker: TickerId }) {
         <MetricCard label="Mode" value={(status?.mode || 'paper').toUpperCase()} color={status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'} />
       </div>
 
-      {/* Bayesian Win Tracker */}
+      {/* Expected Value & Win Tracker */}
       {status?.win_tracker && (
-        <SectionCard title="Bayesian Win Tracker" icon={<Eye className={`w-5 h-5 ${meta.textActive}`} />}>
-          <BayesianTrackerDetail tracker={status.win_tracker} color={meta.textActive} />
+        <SectionCard title="Expected Value Gate" icon={<Eye className={`w-5 h-5 ${meta.textActive}`} />}>
+          <BayesianTrackerDetail tracker={status.win_tracker} color={meta.textActive} ev={status.expected_value} />
         </SectionCard>
       )}
 
@@ -1736,7 +1740,7 @@ function RegimeDot({ label, prob }: { label: string; prob: number }) {
   )
 }
 
-function BayesianTrackerDetail({ tracker, color }: { tracker: WinTrackerData; color: string }) {
+function BayesianTrackerDetail({ tracker, color, ev }: { tracker: WinTrackerData; color: string; ev?: any }) {
   const prob = tracker.win_probability
   const regimes = [
     { key: 'POSITIVE', label: 'Positive Funding', wins: tracker.positive_funding_wins, losses: tracker.positive_funding_losses, prob: tracker.regime_probabilities.POSITIVE, dotColor: 'bg-green-400' },
@@ -1744,49 +1748,51 @@ function BayesianTrackerDetail({ tracker, color }: { tracker: WinTrackerData; co
     { key: 'NEUTRAL', label: 'Neutral Funding', wins: tracker.neutral_funding_wins, losses: tracker.neutral_funding_losses, prob: tracker.regime_probabilities.NEUTRAL, dotColor: 'bg-yellow-400' },
   ]
 
-  const probBarWidth = Math.max(5, Math.min(95, prob * 100))
-  const gatePosition = 50 // 0.50 gate threshold
+  const hasEv = ev?.has_data && ev?.ev_per_trade != null
+  const evValue = ev?.ev_per_trade ?? 0
+  const evPositive = evValue > 0
 
   return (
     <div className="space-y-4">
-      {/* Overall probability with gate visualization */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-gray-400 text-sm">Overall Win Probability</span>
+      {/* Expected Value — the primary gate */}
+      {hasEv ? (
+        <div className={`rounded-lg p-3 border ${evPositive ? 'bg-emerald-950/30 border-emerald-700/40' : 'bg-red-950/30 border-red-700/40'}`}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-gray-400 text-sm">Expected Value Per Trade</span>
+            <span className={`text-lg font-bold font-mono ${evPositive ? 'text-emerald-400' : 'text-red-400'}`}>
+              ${evValue.toFixed(2)}
+            </span>
+          </div>
+          <div className="text-[11px] text-gray-400 mb-2">
+            EV = ({(prob * 100).toFixed(0)}% win × ${ev?.avg_win?.toFixed(2) ?? '?'} avg win) - ({((1 - prob) * 100).toFixed(0)}% loss × ${ev?.avg_loss?.toFixed(2) ?? '?'} avg loss)
+          </div>
           <div className="flex items-center gap-2">
-            {tracker.is_cold_start && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/40">
-                LEARNING ({tracker.total_trades}/10)
-              </span>
-            )}
-            {tracker.should_use_ml && (
-              <span className="px-2 py-0.5 rounded text-xs font-medium bg-purple-900/40 text-purple-400 border border-purple-700/40">
-                ML READY
-              </span>
-            )}
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${evPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+              {evPositive ? 'POSITIVE EV — TRADING' : 'NEGATIVE EV — BLOCKED'}
+            </span>
+            <span className="text-[10px] text-gray-500">
+              Gate: {ev?.gate === 'EV' ? 'Expected Value > $0' : 'Win Prob > 50% (cold start)'}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg p-3 border bg-yellow-950/20 border-yellow-700/30">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-gray-400 text-sm">Win Probability (Cold Start)</span>
             <span className={`text-lg font-bold font-mono ${prob >= 0.55 ? 'text-green-400' : prob >= 0.45 ? 'text-yellow-400' : 'text-red-400'}`}>
               {(prob * 100).toFixed(1)}%
             </span>
           </div>
+          <p className="text-[11px] text-gray-500">
+            Need 5+ trades to calculate Expected Value. Using win probability gate until then.
+          </p>
+          {tracker.is_cold_start && (
+            <span className="px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-700/40 inline-block mt-1">
+              LEARNING ({tracker.total_trades}/5 trades)
+            </span>
+          )}
         </div>
-        {/* Probability bar with gate marker */}
-        <div className="relative h-3 bg-gray-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all ${prob >= 0.50 ? 'bg-green-500' : 'bg-red-500'}`}
-            style={{ width: `${probBarWidth}%` }}
-          />
-          {/* Gate line at 50% */}
-          <div
-            className="absolute top-0 h-full w-0.5 bg-white/60"
-            style={{ left: `${gatePosition}%` }}
-          />
-        </div>
-        <div className="flex justify-between text-[10px] text-gray-600 mt-1">
-          <span>0%</span>
-          <span className="text-gray-500">50% gate</span>
-          <span>100%</span>
-        </div>
-      </div>
+      )}
 
       {/* Per-regime breakdown */}
       <div>
@@ -1876,6 +1882,7 @@ function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> 
 function AlphaIntelligencePanel() {
   const { data } = useAgapeSpotAlpha()
   const alpha = data?.data
+  const [expandedTicker, setExpandedTicker] = useState<string | null>(null)
 
   if (!alpha) return null
 
@@ -1906,7 +1913,7 @@ function AlphaIntelligencePanel() {
         </div>
       }
     >
-      {/* Active Systems */}
+      {/* Active Systems — clear descriptions of what each does */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
           <div className="flex items-center gap-2 mb-1.5">
@@ -1914,8 +1921,11 @@ function AlphaIntelligencePanel() {
             <span className="text-xs font-semibold text-white">Alpha Tracker</span>
             <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
           </div>
-          <p className="text-[11px] text-gray-400">
-            {systems.alpha_tracker?.outperforming_tickers ?? 0}/{systems.alpha_tracker?.total_tickers ?? 0} tickers outperforming buy-and-hold
+          <p className="text-[11px] text-gray-400 mb-1">
+            {systems.alpha_tracker?.outperforming_tickers ?? 0}/{systems.alpha_tracker?.total_tickers ?? 0} tickers beating buy-and-hold
+          </p>
+          <p className="text-[10px] text-gray-500">
+            Compares active trading returns vs simply holding each coin since start
           </p>
         </div>
         <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
@@ -1924,18 +1934,24 @@ function AlphaIntelligencePanel() {
             <span className="text-xs font-semibold text-white">Adaptive Allocation</span>
             <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
           </div>
-          <p className="text-[11px] text-gray-400">
-            Alpha-weighted scoring (20% weight in capital allocator)
+          <p className="text-[11px] text-gray-400 mb-1">
+            Auto-shifts capital to outperformers
+          </p>
+          <p className="text-[10px] text-gray-500">
+            Underperformers get less capital. Alpha is 20% of the scoring formula.
           </p>
         </div>
         <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
           <div className="flex items-center gap-2 mb-1.5">
             <Shield className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs font-semibold text-white">Benchmark Signals</span>
+            <span className="text-xs font-semibold text-white">Trend-Aware Exits</span>
             <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
           </div>
-          <p className="text-[11px] text-gray-400">
-            {systems.benchmark_signals?.tickers_with_trend_boost ?? 0} tickers with trend-widened exits (1.5x trail)
+          <p className="text-[11px] text-gray-400 mb-1">
+            {systems.benchmark_signals?.tickers_with_trend_boost ?? 0} tickers with widened exits
+          </p>
+          <p className="text-[10px] text-gray-500">
+            When a coin trends {'>'}1.5% in 24h, trailing stop widens 1.5x and hold time extends 1.5x so positions ride momentum
           </p>
         </div>
       </div>
@@ -1974,7 +1990,92 @@ function AlphaIntelligencePanel() {
         </div>
       </div>
 
-      {/* Per-ticker alpha table */}
+      {/* Strategy Edge — WHY active trading beats (or loses to) buy-and-hold */}
+      {alpha.strategy_edge && (
+        <div className={`rounded-lg p-4 mb-4 border ${
+          alpha.strategy_edge.verdict === 'WINNING'
+            ? 'bg-emerald-950/30 border-emerald-700/40'
+            : alpha.strategy_edge.verdict === 'TRAILING'
+              ? 'bg-red-950/30 border-red-700/40'
+              : 'bg-amber-950/30 border-amber-700/40'
+        }`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`text-sm font-bold ${
+              alpha.strategy_edge.verdict === 'WINNING' ? 'text-emerald-400'
+                : alpha.strategy_edge.verdict === 'TRAILING' ? 'text-red-400'
+                  : 'text-amber-400'
+            }`}>
+              {alpha.strategy_edge.headline}
+            </span>
+            <span className={`ml-auto px-2 py-0.5 rounded text-[10px] font-bold ${
+              alpha.strategy_edge.verdict === 'WINNING'
+                ? 'bg-emerald-500/20 text-emerald-400'
+                : alpha.strategy_edge.verdict === 'TRAILING'
+                  ? 'bg-red-500/20 text-red-400'
+                  : 'bg-amber-500/20 text-amber-400'
+            }`}>
+              {alpha.strategy_edge.verdict}
+            </span>
+          </div>
+          <p className="text-xs text-gray-300 mb-3">{alpha.strategy_edge.summary}</p>
+
+          {/* Key stats row */}
+          {alpha.strategy_edge.stats && (
+            <div className="flex flex-wrap gap-3 mb-3 text-[11px]">
+              <span className="text-gray-400">
+                <span className="text-white font-mono font-bold">{alpha.strategy_edge.stats.total_trades}</span> trades
+              </span>
+              <span className="text-gray-400">
+                <span className="text-white font-mono font-bold">{alpha.strategy_edge.stats.overall_win_rate}%</span> win rate
+              </span>
+              <span className="text-gray-400">
+                avg win <span className="text-emerald-400 font-mono font-bold">${alpha.strategy_edge.stats.avg_win}</span>
+              </span>
+              <span className="text-gray-400">
+                avg loss <span className="text-red-400 font-mono font-bold">${alpha.strategy_edge.stats.avg_loss}</span>
+              </span>
+            </div>
+          )}
+
+          {/* Edge Sources */}
+          {alpha.strategy_edge.edge_sources?.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wide mb-1.5">What&apos;s Creating Alpha</div>
+              <div className="space-y-1.5">
+                {alpha.strategy_edge.edge_sources.map((e: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-xs text-white font-semibold">{e.name}: </span>
+                      <span className="text-xs text-gray-400">{e.detail}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Headwinds */}
+          {alpha.strategy_edge.headwinds?.length > 0 && (
+            <div>
+              <div className="text-[10px] text-red-400 font-bold uppercase tracking-wide mb-1.5">Headwinds</div>
+              <div className="space-y-1.5">
+                {alpha.strategy_edge.headwinds.map((h: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-xs text-white font-semibold">{h.name}: </span>
+                      <span className="text-xs text-gray-400">{h.detail}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Per-ticker alpha table with expandable insights */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -1985,55 +2086,98 @@ function AlphaIntelligencePanel() {
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Alpha</th>
               <th className="text-center px-3 py-2 text-gray-500 font-medium">Status</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">24h Trend</th>
-              <th className="text-center px-3 py-2 text-gray-500 font-medium">Trend Boost</th>
+              <th className="text-center px-3 py-2 text-gray-500 font-medium">Exit Mode</th>
+              <th className="w-8"></th>
             </tr>
           </thead>
           <tbody>
             {tickers.map(([ticker, d]) => {
               const meta = TICKER_META[ticker] || TICKER_META['ALL']
+              const isExpanded = expandedTicker === ticker
               return (
-                <tr key={ticker} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                  <td className="px-3 py-2">
-                    <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
-                    <span className="text-gray-500 text-xs ml-1.5">{d.total_trades} trades</span>
-                  </td>
-                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trading_return_pct)}`}>
-                    {d.trading_return_pct >= 0 ? '+' : ''}{d.trading_return_pct.toFixed(2)}%
-                  </td>
-                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.buyhold_return_pct)}`}>
-                    {d.buyhold_return_pct >= 0 ? '+' : ''}{d.buyhold_return_pct.toFixed(2)}%
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <span className={`font-mono text-xs font-bold ${d.alpha_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {d.alpha_pct >= 0 ? '+' : ''}{d.alpha_pct.toFixed(2)}%
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                      d.status === 'OUTPERFORMING'
-                        ? 'bg-emerald-500/20 text-emerald-400'
-                        : d.status === 'UNDERPERFORMING'
-                          ? 'bg-red-500/20 text-red-400'
-                          : 'bg-gray-700 text-gray-400'
-                    }`}>
-                      {d.status}
-                    </span>
-                  </td>
-                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trend_24h_pct)}`}>
-                    {d.trend_24h_pct >= 0 ? '+' : ''}{d.trend_24h_pct.toFixed(1)}%
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    {d.trend_boost_active ? (
-                      <span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 text-[10px] rounded font-bold">1.5x WIDE</span>
-                    ) : (
-                      <span className="text-gray-600 text-xs">---</span>
-                    )}
-                  </td>
-                </tr>
+                <React.Fragment key={ticker}>
+                  <tr
+                    className="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer"
+                    onClick={() => setExpandedTicker(isExpanded ? null : ticker)}
+                  >
+                    <td className="px-3 py-2">
+                      <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
+                      <span className="text-gray-500 text-xs ml-1.5">{d.total_trades} trades</span>
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trading_return_pct)}`}>
+                      {d.trading_return_pct >= 0 ? '+' : ''}{d.trading_return_pct.toFixed(2)}%
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.buyhold_return_pct)}`}>
+                      {d.buyhold_return_pct >= 0 ? '+' : ''}{d.buyhold_return_pct.toFixed(2)}%
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span className={`font-mono text-xs font-bold ${d.alpha_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {d.alpha_pct >= 0 ? '+' : ''}{d.alpha_pct.toFixed(2)}%
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        d.status === 'OUTPERFORMING'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : d.status === 'UNDERPERFORMING'
+                            ? 'bg-red-500/20 text-red-400'
+                            : 'bg-gray-700 text-gray-400'
+                      }`}>
+                        {d.status}
+                      </span>
+                    </td>
+                    <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trend_24h_pct)}`}>
+                      {d.trend_24h_pct >= 0 ? '+' : ''}{d.trend_24h_pct.toFixed(1)}%
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      {d.trend_boost_active ? (
+                        <span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 text-[10px] rounded font-bold"
+                          title="Strong 24h trend detected. Trailing stop widened 1.5x and hold time extended 1.5x to ride momentum."
+                        >RIDING TREND</span>
+                      ) : (
+                        <span className="text-gray-500 text-[10px]">Normal</span>
+                      )}
+                    </td>
+                    <td className="px-1 py-2 text-center">
+                      {isExpanded
+                        ? <ChevronUp className="w-3.5 h-3.5 text-gray-500" />
+                        : <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
+                      }
+                    </td>
+                  </tr>
+                  {/* Expandable insight row */}
+                  {isExpanded && (d.insight || d.system_action) && (
+                    <tr className="border-b border-gray-800/50">
+                      <td colSpan={8} className="px-3 py-0">
+                        <div className="py-3 space-y-2">
+                          {d.insight && (
+                            <div className="flex items-start gap-2">
+                              <Info className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wide">Why</span>
+                                <p className="text-xs text-gray-300 leading-relaxed">{d.insight}</p>
+                              </div>
+                            </div>
+                          )}
+                          {d.system_action && (
+                            <div className="flex items-start gap-2">
+                              <Wrench className="w-3.5 h-3.5 text-purple-400 mt-0.5 shrink-0" />
+                              <div>
+                                <span className="text-[10px] text-purple-400 font-bold uppercase tracking-wide">Auto-Response</span>
+                                <p className="text-xs text-gray-300 leading-relaxed">{d.system_action}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               )
             })}
           </tbody>
         </table>
+        <p className="text-[10px] text-gray-600 mt-2 px-3">Click any row to see why it&apos;s performing that way and what the system is doing about it.</p>
       </div>
     </SectionCard>
   )
