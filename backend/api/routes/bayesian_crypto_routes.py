@@ -20,7 +20,7 @@ Endpoints:
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from zoneinfo import ZoneInfo
@@ -665,7 +665,3 @@ def _reality_check(metrics, estimate) -> Dict:
             else "Edge not yet confirmed. Keep tracking to determine if your strategy has genuine alpha."
         ),
     }
-
-
-# Needed for type hints in helper functions
-from typing import Dict
