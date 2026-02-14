@@ -38,19 +38,6 @@ try:
 except ImportError:
     pass
 
-# Bayesian Crypto Tracker for choppy-market edge detection
-BayesianCryptoTracker = None
-BayesianTradeOutcome = None
-get_bayesian_tracker = None
-try:
-    from quant.bayesian_crypto_tracker import (
-        BayesianCryptoTracker,
-        TradeOutcome as BayesianTradeOutcome,
-        get_tracker as get_bayesian_tracker,
-    )
-    logger.info("AGAPE-SPOT Signals: BayesianCryptoTracker loaded")
-except ImportError as e:
-    logger.warning(f"AGAPE-SPOT Signals: BayesianCryptoTracker not available: {e}")
 
 CryptoDataProvider = None
 get_crypto_data_provider = None
@@ -921,29 +908,6 @@ class AgapeSpotSignalGenerator:
 
         return False
 
-    def _get_bayesian_choppy_win_prob(self, ticker: str) -> float:
-        """Get Bayesian win probability for choppy conditions on this ticker.
-
-        Uses the BayesianCryptoTracker per-ticker strategy.
-        Falls back to 0.52 (allow trading) if unavailable or cold start.
-        """
-        if not get_bayesian_tracker:
-            return 0.52
-
-        strategy_name = f"agape_spot_choppy_{ticker.replace('-', '_').lower()}"
-        tracker = get_bayesian_tracker(
-            strategy_name=strategy_name,
-            starting_capital=self.config.get_starting_capital(ticker),
-        )
-
-        estimate = tracker.get_estimate()
-
-        # Cold start: allow trading to collect data
-        if estimate.total_trades < 5:
-            return 0.52
-
-        return estimate.mean
-
     def _calculate_win_probability(
         self, ticker: str, funding_regime_str: str, market_data: Optional[Dict] = None,
     ) -> float:
@@ -1028,7 +992,7 @@ class AgapeSpotSignalGenerator:
             f"blended={blended_prob:.4f}, "
             f"cold_start={'YES' if is_cold else 'NO'} "
             f"({win_tracker.total_trades}/{win_tracker.cold_start_trades} trades), "
-            f"final={final_prob:.4f} (gate={self.MIN_WIN_PROBABILITY:.2f}){ml_info}"
+            f"final={final_prob:.4f} (gate={self.COLD_START_MIN_WIN_PROB:.2f}){ml_info}"
         )
 
         return final_prob

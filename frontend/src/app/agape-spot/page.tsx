@@ -1230,6 +1230,8 @@ function LogsTab({ ticker }: { ticker: TickerId }) {
                 <td className="px-3 py-2">
                   <span className={`text-xs px-2 py-0.5 rounded ${
                     scan.outcome?.includes('TRADED') ? 'bg-cyan-900/50 text-cyan-300' :
+                    scan.outcome?.includes('CHOPPY') ? 'bg-amber-900/50 text-amber-300' :
+                    scan.outcome?.includes('EV_') ? 'bg-orange-900/50 text-orange-300' :
                     scan.outcome?.includes('ERROR') ? 'bg-red-900/50 text-red-300' :
                     scan.outcome?.includes('SKIP') ? 'bg-gray-800 text-gray-500' :
                     'bg-gray-800 text-gray-500'
@@ -1791,6 +1793,35 @@ function BayesianTrackerDetail({ tracker, color, ev }: { tracker: WinTrackerData
               LEARNING ({tracker.total_trades}/5 trades)
             </span>
           )}
+        </div>
+      )}
+
+      {/* Choppy EWMA Gate */}
+      {ev?.choppy_gate && (
+        <div className={`rounded-lg p-3 border ${ev.choppy_gate.active ? 'bg-amber-950/20 border-amber-700/30' : 'bg-gray-800/30 border-gray-700/30'}`}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-gray-400 text-sm">Choppy Market Gate (EWMA)</span>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${ev.choppy_gate.active ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-700 text-gray-500'}`}>
+              {ev.choppy_gate.active ? 'ACTIVE' : 'DISABLED'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs mt-2">
+            <div className="bg-gray-800/50 rounded p-2">
+              <span className="text-gray-500 block">EWMA Threshold</span>
+              <span className="text-amber-400 font-mono font-bold">${ev.choppy_gate.threshold?.toFixed(4) ?? '---'}</span>
+            </div>
+            <div className="bg-gray-800/50 rounded p-2">
+              <span className="text-gray-500 block">EWMA Magnitude</span>
+              <span className="text-white font-mono font-bold">{ev.choppy_gate.ema_magnitude != null ? `$${ev.choppy_gate.ema_magnitude.toFixed(4)}` : 'Cold Start'}</span>
+            </div>
+          </div>
+          {ev.choppy_gate.ema_win != null && (
+            <div className="flex items-center gap-3 mt-2 text-[11px] text-gray-500">
+              <span>Avg Win: <span className="text-green-400 font-mono">${ev.choppy_gate.ema_win.toFixed(3)}</span></span>
+              <span>Avg Loss: <span className="text-red-400 font-mono">${ev.choppy_gate.ema_loss?.toFixed(3) ?? '?'}</span></span>
+            </div>
+          )}
+          <p className="text-[10px] text-gray-600 mt-1">Blocks choppy trades when EV &lt; {((ev.choppy_gate.threshold ?? 0) > 0) ? `$${ev.choppy_gate.threshold?.toFixed(4)}` : 'threshold'} (10% of EWMA magnitude)</p>
         </div>
       )}
 
