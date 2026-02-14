@@ -366,6 +366,27 @@ class AgapeSpotTrader:
                             ticker=ticker,
                         )
 
+            # Log ML shadow prediction when a trade is opened
+            if traded_accounts and hasattr(self.signals, '_last_ml_prob'):
+                ml_prob = self.signals._last_ml_prob
+                bayes_prob = self.signals._last_bayesian_prob
+                if ml_prob is not None and bayes_prob is not None:
+                    funding_regime = signal.funding_regime if signal else "UNKNOWN"
+                    # Use the first traded account's position_id
+                    shadow_pos_id = signal.position_id if hasattr(signal, 'position_id') else None
+                    if not shadow_pos_id and traded_accounts:
+                        shadow_pos_id = f"spot_{ticker}_{self._cycle_count}"
+                    try:
+                        self.db.log_shadow_prediction(
+                            ticker=ticker,
+                            position_id=shadow_pos_id,
+                            ml_prob=ml_prob,
+                            bayesian_prob=bayes_prob,
+                            funding_regime=str(funding_regime),
+                        )
+                    except Exception as e:
+                        logger.debug(f"AGAPE-SPOT: Shadow prediction log failed: {e}")
+
             if traded_accounts:
                 result["new_trade"] = True
                 self._last_trade_scan[ticker] = self._cycle_count
@@ -824,6 +845,12 @@ class AgapeSpotTrader:
                 scan_number=self._cycle_count,
             )
 
+            # Resolve ML shadow prediction with actual outcome
+            try:
+                self.db.resolve_shadow_prediction(position_id, won)
+            except Exception as e:
+                logger.debug(f"AGAPE-SPOT: Shadow prediction resolve failed: {e}")
+
             # Feed outcome to Bayesian Crypto Tracker for choppy-market edge detection
             if _bayesian_tracker_mod and self.config.enable_bayesian_choppy:
                 try:
@@ -975,6 +1002,11 @@ class AgapeSpotTrader:
         """Log scan activity with ticker information."""
         market = context.get("market_data", {})
         prophet = context.get("prophet_data", {})
+
+        # Include ML shadow prediction data if available
+        ml_prob = getattr(self.signals, '_last_ml_prob', None)
+        bayesian_prob = getattr(self.signals, '_last_bayesian_prob', None)
+
         self.db.log_scan({
             "ticker": ticker,
             "outcome": result.get("outcome", "UNKNOWN"),
@@ -996,6 +1028,8 @@ class AgapeSpotTrader:
             "signal_reasoning": signal.reasoning if signal else None,
             "position_id": context.get("position_id"),
             "error_message": result.get("error"),
+            "ml_probability": ml_prob,
+            "bayesian_probability": bayesian_prob,
         })
 
     # ==================================================================

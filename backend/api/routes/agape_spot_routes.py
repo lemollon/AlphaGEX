@@ -1757,6 +1757,294 @@ async def get_execution_quality(
             conn.close()
 
 
+# ---------------------------------------------------------------------------
+# ML Shadow Advisor
+# ---------------------------------------------------------------------------
+
+ML_ADVISOR_AVAILABLE = False
+get_agape_spot_ml_advisor = None
+try:
+    from trading.agape_spot.ml import get_agape_spot_ml_advisor
+    ML_ADVISOR_AVAILABLE = True
+except ImportError:
+    pass
+
+
+@router.get("/ml/status")
+async def get_ml_status():
+    """Get ML shadow advisor status: model trained, metrics, lifecycle phase."""
+    if not ML_ADVISOR_AVAILABLE:
+        return {
+            "success": False,
+            "data_unavailable": True,
+            "reason": "ML advisor module not available",
+        }
+
+    try:
+        advisor = get_agape_spot_ml_advisor()
+        status = advisor.get_status()
+
+        # Determine lifecycle phase
+        comparison = advisor.get_shadow_comparison()
+
+        # Check if promoted
+        is_promoted = False
+        try:
+            from trading.agape_spot.db import AgapeSpotDatabase
+            db = AgapeSpotDatabase()
+            is_promoted = db.get_ml_config('ml_promoted') == 'true'
+        except Exception:
+            pass
+
+        if is_promoted:
+            phase = "PROMOTED"
+        elif comparison.is_eligible:
+            phase = "ELIGIBLE"
+        elif advisor.is_trained and comparison.total_predictions > 0:
+            phase = "SHADOW"
+        elif advisor.is_trained:
+            phase = "TRAINING"
+        else:
+            phase = "COLLECTING"
+
+        return {
+            "success": True,
+            "data": {
+                **status,
+                "phase": phase,
+                "is_promoted": is_promoted,
+                "shadow_comparison": {
+                    "total_predictions": comparison.total_predictions,
+                    "resolved_predictions": comparison.resolved_predictions,
+                    "ml_brier": round(comparison.ml_brier, 4),
+                    "bayesian_brier": round(comparison.bayesian_brier, 4),
+                    "brier_improvement_pct": round(comparison.brier_improvement_pct, 1),
+                    "ml_accuracy": round(comparison.ml_accuracy, 3),
+                    "bayesian_accuracy": round(comparison.bayesian_accuracy, 3),
+                    "catastrophic_miss_rate": round(comparison.catastrophic_miss_rate, 3),
+                    "is_eligible": comparison.is_eligible,
+                    "promotion_blockers": comparison.promotion_blockers,
+                },
+            },
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT ML status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ml/train")
+async def train_ml_model():
+    """Trigger ML model training on closed trade data.
+
+    Requires at least 50 closed trades with scan activity matches.
+    Model is saved to PostgreSQL for persistence across deploys.
+    """
+    if not ML_ADVISOR_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML advisor not available")
+
+    try:
+        advisor = get_agape_spot_ml_advisor()
+        metrics = advisor.train()
+        if not metrics:
+            return {
+                "success": False,
+                "message": "Training returned no metrics",
+            }
+
+        return {
+            "success": True,
+            "data": {
+                "accuracy": round(metrics.accuracy, 4),
+                "precision": round(metrics.precision, 4),
+                "recall": round(metrics.recall, 4),
+                "f1_score": round(metrics.f1_score, 4),
+                "auc_roc": round(metrics.auc_roc, 4),
+                "brier_score": round(metrics.brier_score, 4),
+                "total_samples": metrics.total_samples,
+                "wins": metrics.wins,
+                "losses": metrics.losses,
+                "win_rate_actual": round(metrics.win_rate_actual, 4),
+                "positive_funding_accuracy": (
+                    round(metrics.positive_funding_accuracy, 4)
+                    if metrics.positive_funding_accuracy is not None else None
+                ),
+                "negative_funding_accuracy": (
+                    round(metrics.negative_funding_accuracy, 4)
+                    if metrics.negative_funding_accuracy is not None else None
+                ),
+                "training_date": metrics.training_date,
+            },
+            "message": f"Model trained on {metrics.total_samples} trades",
+            "fetched_at": _format_ct(),
+        }
+    except ValueError as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT ML train error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ml/shadow-comparison")
+async def get_shadow_comparison():
+    """Compare ML vs Bayesian predictions on resolved shadow trades.
+
+    Shows Brier scores, accuracy, catastrophic miss rate, and
+    whether ML is eligible for promotion.
+    """
+    if not ML_ADVISOR_AVAILABLE:
+        return {
+            "success": False,
+            "data_unavailable": True,
+            "reason": "ML advisor not available",
+        }
+
+    try:
+        advisor = get_agape_spot_ml_advisor()
+        comparison = advisor.get_shadow_comparison()
+
+        return {
+            "success": True,
+            "data": {
+                "total_predictions": comparison.total_predictions,
+                "resolved_predictions": comparison.resolved_predictions,
+                "ml_brier": round(comparison.ml_brier, 4),
+                "bayesian_brier": round(comparison.bayesian_brier, 4),
+                "brier_improvement_pct": round(comparison.brier_improvement_pct, 1),
+                "ml_accuracy": round(comparison.ml_accuracy, 3),
+                "bayesian_accuracy": round(comparison.bayesian_accuracy, 3),
+                "ml_catastrophic_misses": comparison.ml_catastrophic_misses,
+                "catastrophic_miss_rate": round(comparison.catastrophic_miss_rate, 3),
+                "is_eligible": comparison.is_eligible,
+                "promotion_blockers": comparison.promotion_blockers,
+            },
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT shadow comparison error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ml/predictions")
+async def get_ml_predictions(
+    limit: int = Query(default=50, le=200, description="Number of predictions"),
+):
+    """Get recent ML shadow predictions with outcomes."""
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "data": [], "message": "AGAPE-SPOT not available"}
+
+    try:
+        predictions = trader.db.get_recent_shadow_predictions(limit=limit)
+        return {
+            "success": True,
+            "data": predictions,
+            "count": len(predictions),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT ML predictions error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ml/feature-importance")
+async def get_feature_importance():
+    """Get ML model feature importance rankings."""
+    if not ML_ADVISOR_AVAILABLE:
+        return {
+            "success": False,
+            "data_unavailable": True,
+            "reason": "ML advisor not available",
+        }
+
+    try:
+        advisor = get_agape_spot_ml_advisor()
+        importance = advisor.get_feature_importance()
+        return {
+            "success": True,
+            "data": importance,
+            "count": len(importance),
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT feature importance error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ml/promote")
+async def promote_ml():
+    """Promote ML advisor from shadow to active trading.
+
+    Only succeeds if ML meets all promotion criteria:
+    - 150+ resolved shadow predictions
+    - Brier score 5%+ better than Bayesian
+    - Catastrophic miss rate <= 10%
+    """
+    if not ML_ADVISOR_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML advisor not available")
+
+    try:
+        advisor = get_agape_spot_ml_advisor()
+
+        if not advisor.is_trained:
+            return {
+                "success": False,
+                "message": "ML model not trained yet. Train first.",
+            }
+
+        comparison = advisor.get_shadow_comparison()
+        if not comparison.is_eligible:
+            return {
+                "success": False,
+                "message": "ML not eligible for promotion",
+                "blockers": comparison.promotion_blockers,
+            }
+
+        from trading.agape_spot.db import AgapeSpotDatabase
+        db = AgapeSpotDatabase()
+        db.set_ml_config('ml_promoted', 'true')
+        db.set_ml_config('ml_promoted_at', datetime.now(CENTRAL_TZ).isoformat())
+
+        return {
+            "success": True,
+            "message": "ML advisor promoted to active trading",
+            "data": {
+                "brier_improvement": f"{comparison.brier_improvement_pct:.1f}%",
+                "resolved_predictions": comparison.resolved_predictions,
+                "ml_accuracy": round(comparison.ml_accuracy, 3),
+            },
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT ML promote error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ml/revoke")
+async def revoke_ml():
+    """Revoke ML promotion - return to Bayesian-only trading."""
+    try:
+        from trading.agape_spot.db import AgapeSpotDatabase
+        db = AgapeSpotDatabase()
+        db.set_ml_config('ml_promoted', 'false')
+        db.set_ml_config('ml_revoked_at', datetime.now(CENTRAL_TZ).isoformat())
+
+        return {
+            "success": True,
+            "message": "ML advisor revoked. Trading reverted to Bayesian.",
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT ML revoke error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Bot Control (continued)
+# ---------------------------------------------------------------------------
+
 @router.post("/force-close")
 async def force_close_positions(
     ticker: Optional[str] = Query(default=None, description="Close positions for this ticker only"),

@@ -206,6 +206,30 @@ class AgapeSpotDatabase:
                 )
             """)
 
+            # ----- agape_spot_ml_shadow -----
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agape_spot_ml_shadow (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    ticker VARCHAR(20) NOT NULL,
+                    position_id VARCHAR(100),
+                    ml_probability FLOAT NOT NULL,
+                    bayesian_probability FLOAT NOT NULL,
+                    funding_regime VARCHAR(50),
+                    actual_outcome INTEGER,
+                    resolved_at TIMESTAMP WITH TIME ZONE
+                )
+            """)
+
+            # ----- agape_spot_ml_config -----
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agape_spot_ml_config (
+                    key VARCHAR(100) PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+
             # ==========================================================
             # MIGRATIONS for existing tables
             # ==========================================================
@@ -278,6 +302,16 @@ class AgapeSpotDatabase:
                     ADD COLUMN IF NOT EXISTS {col} {typedef}
                 """)
 
+            # --- scan_activity: ML shadow prediction columns ---
+            for col, typedef in [
+                ("ml_probability", "FLOAT"),
+                ("bayesian_probability", "FLOAT"),
+            ]:
+                cursor.execute(f"""
+                    ALTER TABLE agape_spot_scan_activity
+                    ADD COLUMN IF NOT EXISTS {col} {typedef}
+                """)
+
             # ==========================================================
             # Indexes
             # ==========================================================
@@ -292,6 +326,9 @@ class AgapeSpotDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_scan_activity_ticker ON agape_spot_scan_activity(ticker)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_activity_log_ticker ON agape_spot_activity_log(ticker)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_win_tracker_ticker ON agape_spot_win_tracker(ticker)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_ml_shadow_ts ON agape_spot_ml_shadow(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_ml_shadow_pos ON agape_spot_ml_shadow(position_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agape_spot_ml_shadow_outcome ON agape_spot_ml_shadow(actual_outcome)")
 
             conn.commit()
             logger.info("AGAPE-SPOT DB: Tables ensured (multi-ticker)")
@@ -821,10 +858,12 @@ class AgapeSpotDatabase:
                     combined_signal, combined_confidence,
                     oracle_advice, oracle_win_prob,
                     signal_action, signal_reasoning,
-                    position_id, error_message
+                    position_id, error_message,
+                    ml_probability, bayesian_probability
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s
                 )
             """, (
                 scan_data.get("ticker", "ETH-USD"),
@@ -847,11 +886,138 @@ class AgapeSpotDatabase:
                 scan_data.get("signal_reasoning"),
                 scan_data.get("position_id"),
                 scan_data.get("error_message"),
+                scan_data.get("ml_probability"),
+                scan_data.get("bayesian_probability"),
             ))
             conn.commit()
             return True
         except Exception as e:
             logger.error(f"AGAPE-SPOT DB: Failed to log scan: {e}")
+            conn.rollback()
+            return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # ML Shadow predictions
+    # ------------------------------------------------------------------
+
+    def log_shadow_prediction(
+        self, ticker: str, position_id: Optional[str],
+        ml_prob: float, bayesian_prob: float, funding_regime: str,
+    ) -> bool:
+        """Log a shadow ML prediction alongside the Bayesian prediction."""
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO agape_spot_ml_shadow
+                    (ticker, position_id, ml_probability, bayesian_probability, funding_regime)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (ticker, position_id, ml_prob, bayesian_prob, funding_regime))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Failed to log shadow prediction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    def resolve_shadow_prediction(self, position_id: str, won: bool) -> bool:
+        """Resolve a shadow prediction with the actual trade outcome."""
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE agape_spot_ml_shadow
+                SET actual_outcome = %s, resolved_at = NOW()
+                WHERE position_id = %s AND actual_outcome IS NULL
+            """, (1 if won else 0, position_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Failed to resolve shadow prediction: {e}")
+            conn.rollback()
+            return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_recent_shadow_predictions(self, limit: int = 50) -> List[Dict]:
+        """Get recent shadow predictions for the UI."""
+        conn = self._get_conn()
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT timestamp, ticker, ml_probability, bayesian_probability,
+                       funding_regime, actual_outcome, position_id
+                FROM agape_spot_ml_shadow
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+            return [
+                {
+                    "timestamp": str(r[0]),
+                    "ticker": r[1],
+                    "ml_probability": float(r[2]) if r[2] else None,
+                    "bayesian_probability": float(r[3]) if r[3] else None,
+                    "funding_regime": r[4],
+                    "actual_outcome": "WIN" if r[5] == 1 else ("LOSS" if r[5] == 0 else None),
+                    "position_id": r[6],
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Failed to get shadow predictions: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_ml_config(self, key: str) -> Optional[str]:
+        """Get ML config value."""
+        conn = self._get_conn()
+        if not conn:
+            return None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT value FROM agape_spot_ml_config WHERE key = %s", (key,)
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except Exception:
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def set_ml_config(self, key: str, value: str) -> bool:
+        """Set ML config value."""
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO agape_spot_ml_config (key, value, updated_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            """, (key, value))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Failed to set ML config {key}: {e}")
             conn.rollback()
             return False
         finally:
@@ -927,7 +1093,8 @@ class AgapeSpotDatabase:
                        funding_regime, ls_ratio, squeeze_risk,
                        combined_signal, combined_confidence,
                        oracle_advice, oracle_win_prob,
-                       signal_action, signal_reasoning, position_id
+                       signal_action, signal_reasoning, position_id,
+                       ml_probability, bayesian_probability
                 FROM agape_spot_scan_activity
             """
             params: list = []
@@ -955,6 +1122,8 @@ class AgapeSpotDatabase:
                     "signal_action": row[12],
                     "signal_reasoning": row[13],
                     "position_id": row[14],
+                    "ml_probability": float(row[15]) if row[15] else None,
+                    "bayesian_probability": float(row[16]) if row[16] else None,
                 }
                 for row in cursor.fetchall()
             ]

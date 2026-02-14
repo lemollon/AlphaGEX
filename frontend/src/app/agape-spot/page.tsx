@@ -164,6 +164,10 @@ function useAgapeSpotScanActivity(ticker?: string, limit: number = 30) {
   return useSWR(`/api/agape-spot/scan-activity?${params.toString()}`, fetcher, { refreshInterval: 15_000 })
 }
 
+function useAgapeSpotMLStatus() {
+  return useSWR('/api/agape-spot/ml/status', fetcher, { refreshInterval: 30_000 })
+}
+
 // ==============================================================================
 // HELPERS
 // ==============================================================================
@@ -678,6 +682,11 @@ function OverviewTab({ ticker }: { ticker: TickerId }) {
         </SectionCard>
       )}
 
+      {/* ML Shadow Advisor */}
+      <SectionCard title="ML Shadow Advisor" icon={<BarChart3 className={`w-5 h-5 ${meta.textActive}`} />}>
+        <MLShadowPanel ticker={ticker} />
+      </SectionCard>
+
       {/* Configuration */}
       <SectionCard title="Configuration" icon={<Activity className={`w-5 h-5 ${meta.textActive}`} />}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -1112,6 +1121,8 @@ function LogsTab({ ticker }: { ticker: TickerId }) {
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Time</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Price</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Signal</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Bayes</th>
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">ML</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Prophet</th>
               <th className="text-left px-3 py-2 text-gray-500 font-medium">Outcome</th>
             </tr>
@@ -1135,6 +1146,22 @@ function LogsTab({ ticker }: { ticker: TickerId }) {
                     {scan.combined_signal || '---'}
                     {scan.combined_confidence ? ` (${scan.combined_confidence})` : ''}
                   </span>
+                </td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  {scan.bayesian_probability != null
+                    ? <span className={scan.bayesian_probability >= 0.55 ? 'text-green-400' : scan.bayesian_probability >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
+                        {(scan.bayesian_probability * 100).toFixed(0)}%
+                      </span>
+                    : <span className="text-gray-600">---</span>
+                  }
+                </td>
+                <td className="px-3 py-2 font-mono text-xs">
+                  {scan.ml_probability != null
+                    ? <span className={scan.ml_probability >= 0.55 ? 'text-purple-400' : scan.ml_probability >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
+                        {(scan.ml_probability * 100).toFixed(0)}%
+                      </span>
+                    : <span className="text-gray-600">---</span>
+                  }
                 </td>
                 <td className="px-3 py-2 text-xs text-gray-400">{scan.oracle_advice || '---'}</td>
                 <td className="px-3 py-2">
@@ -1205,6 +1232,175 @@ function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onCh
           {tf.label}
         </button>
       ))}
+    </div>
+  )
+}
+
+// ==============================================================================
+// ML SHADOW PANEL
+// ==============================================================================
+
+function MLShadowPanel({ ticker }: { ticker: string }) {
+  const { data: mlData, mutate: refreshML } = useAgapeSpotMLStatus()
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+
+  const ml = mlData?.data
+  if (!mlData?.success && !ml) return null // hide until ML module available
+
+  const phase = ml?.phase ?? 'COLLECTING'
+  const comp = ml?.shadow_comparison
+
+  const phaseColors: Record<string, string> = {
+    COLLECTING: 'bg-gray-700 text-gray-300',
+    TRAINING: 'bg-blue-900/50 text-blue-400 border border-blue-700/40',
+    SHADOW: 'bg-yellow-900/40 text-yellow-400 border border-yellow-700/40',
+    ELIGIBLE: 'bg-green-900/40 text-green-400 border border-green-700/40',
+    PROMOTED: 'bg-purple-900/40 text-purple-400 border border-purple-700/40',
+  }
+
+  const phaseLabels: Record<string, string> = {
+    COLLECTING: 'Collecting Data',
+    TRAINING: 'Model Trained',
+    SHADOW: 'Shadow Running',
+    ELIGIBLE: 'Ready to Promote',
+    PROMOTED: 'Active (Live)',
+  }
+
+  async function mlAction(action: 'train' | 'promote' | 'revoke') {
+    setActionLoading(action)
+    setActionMessage(null)
+    try {
+      const method = action === 'train' || action === 'promote' || action === 'revoke' ? 'POST' : 'GET'
+      const res = await fetch(`${API}/api/agape-spot/ml/${action}`, { method })
+      const json = await res.json()
+      setActionMessage(json.message || (json.success ? 'Done' : 'Failed'))
+      refreshML()
+    } catch (e: any) {
+      setActionMessage(`Error: ${e.message}`)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Phase badge + model info */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className={`px-2.5 py-1 rounded text-xs font-bold ${phaseColors[phase] || phaseColors.COLLECTING}`}>
+            {phaseLabels[phase] || phase}
+          </span>
+          {ml?.is_trained && (
+            <span className="text-xs text-gray-500">
+              v{ml.model_version} &middot; {ml.samples ?? 0} samples
+            </span>
+          )}
+        </div>
+        {ml?.training_date && (
+          <span className="text-xs text-gray-600">
+            Trained {new Date(ml.training_date).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+
+      {/* Shadow comparison stats */}
+      {comp && comp.resolved_predictions > 0 && (
+        <div>
+          <div className="text-xs text-gray-400 mb-2">Shadow Comparison (ML vs Bayesian)</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+              <span className="text-gray-500 text-[10px] block">ML Brier</span>
+              <span className={`font-mono font-bold text-sm ${comp.ml_brier <= comp.bayesian_brier ? 'text-green-400' : 'text-red-400'}`}>
+                {comp.ml_brier.toFixed(4)}
+              </span>
+            </div>
+            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+              <span className="text-gray-500 text-[10px] block">Bayes Brier</span>
+              <span className="font-mono font-bold text-sm text-gray-300">{comp.bayesian_brier.toFixed(4)}</span>
+            </div>
+            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+              <span className="text-gray-500 text-[10px] block">Improvement</span>
+              <span className={`font-mono font-bold text-sm ${comp.brier_improvement_pct > 0 ? 'text-green-400' : comp.brier_improvement_pct < 0 ? 'text-red-400' : 'text-gray-400'}`}>
+                {comp.brier_improvement_pct > 0 ? '+' : ''}{comp.brier_improvement_pct.toFixed(1)}%
+              </span>
+            </div>
+            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+              <span className="text-gray-500 text-[10px] block">Resolved</span>
+              <span className="font-mono font-bold text-sm text-white">{comp.resolved_predictions}</span>
+            </div>
+          </div>
+
+          {/* Accuracy + Catastrophic miss rate */}
+          <div className="grid grid-cols-3 gap-3 mt-2">
+            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+              <span className="text-gray-500 text-[10px] block">ML Accuracy</span>
+              <span className="font-mono font-bold text-sm text-white">{(comp.ml_accuracy * 100).toFixed(1)}%</span>
+            </div>
+            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+              <span className="text-gray-500 text-[10px] block">Bayes Accuracy</span>
+              <span className="font-mono font-bold text-sm text-gray-300">{(comp.bayesian_accuracy * 100).toFixed(1)}%</span>
+            </div>
+            <div className="bg-gray-800/50 rounded-lg p-2.5 text-center">
+              <span className="text-gray-500 text-[10px] block">Catastrophic Miss</span>
+              <span className={`font-mono font-bold text-sm ${comp.catastrophic_miss_rate <= 0.10 ? 'text-green-400' : 'text-red-400'}`}>
+                {(comp.catastrophic_miss_rate * 100).toFixed(1)}%
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Promotion blockers */}
+      {comp?.promotion_blockers && comp.promotion_blockers.length > 0 && phase !== 'PROMOTED' && (
+        <div className="bg-gray-800/30 rounded-lg p-3">
+          <div className="text-xs text-gray-400 mb-1.5">Promotion Blockers</div>
+          <ul className="space-y-1">
+            {comp.promotion_blockers.map((b: string, i: number) => (
+              <li key={i} className="text-xs text-yellow-400/80 flex items-start gap-1.5">
+                <span className="text-yellow-500 mt-0.5">&#x2022;</span>
+                {b}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => mlAction('train')}
+          disabled={actionLoading !== null}
+          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-900/40 text-blue-400 border border-blue-700/40 hover:bg-blue-800/50 disabled:opacity-40 transition-colors"
+        >
+          {actionLoading === 'train' ? 'Training...' : 'Train Model'}
+        </button>
+        {phase === 'ELIGIBLE' && (
+          <button
+            onClick={() => mlAction('promote')}
+            disabled={actionLoading !== null}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-green-900/40 text-green-400 border border-green-700/40 hover:bg-green-800/50 disabled:opacity-40 transition-colors"
+          >
+            {actionLoading === 'promote' ? 'Promoting...' : 'Promote ML'}
+          </button>
+        )}
+        {phase === 'PROMOTED' && (
+          <button
+            onClick={() => mlAction('revoke')}
+            disabled={actionLoading !== null}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-900/40 text-red-400 border border-red-700/40 hover:bg-red-800/50 disabled:opacity-40 transition-colors"
+          >
+            {actionLoading === 'revoke' ? 'Revoking...' : 'Revoke ML'}
+          </button>
+        )}
+      </div>
+
+      {/* Action feedback */}
+      {actionMessage && (
+        <div className="text-xs text-gray-400 bg-gray-800/40 rounded px-3 py-2">
+          {actionMessage}
+        </div>
+      )}
     </div>
   )
 }

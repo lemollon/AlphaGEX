@@ -73,6 +73,29 @@ try:
 except ImportError as e:
     logger.warning(f"AGAPE-SPOT Signals: ProphetAdvisor not available: {e}")
 
+# ML Shadow Advisor for shadow mode predictions
+_ml_advisor = None
+_ml_load_attempted = False
+
+
+def _get_ml_advisor():
+    """Lazy-load the ML advisor singleton."""
+    global _ml_advisor, _ml_load_attempted
+    if _ml_load_attempted:
+        return _ml_advisor
+    _ml_load_attempted = True
+    try:
+        from trading.agape_spot.ml import get_agape_spot_ml_advisor
+        _ml_advisor = get_agape_spot_ml_advisor()
+        if _ml_advisor.is_trained:
+            logger.info("AGAPE-SPOT Signals: ML advisor loaded (trained)")
+        else:
+            logger.info("AGAPE-SPOT Signals: ML advisor loaded (not yet trained)")
+    except Exception as e:
+        logger.warning(f"AGAPE-SPOT Signals: ML advisor not available: {e}")
+        _ml_advisor = None
+    return _ml_advisor
+
 
 # Per-ticker direction tracker instances
 _spot_direction_trackers: Dict[str, Any] = {}
@@ -136,6 +159,10 @@ class AgapeSpotSignalGenerator:
         self._price_history: Dict[str, deque] = {}
         for ticker in config.tickers:
             self._price_history[ticker] = deque(maxlen=self.MOMENTUM_WINDOW)
+
+        # ML shadow prediction results (set per scan in _calculate_win_probability)
+        self._last_ml_prob: Optional[float] = None
+        self._last_bayesian_prob: Optional[float] = None
 
         # Cached ETH leader signal (refreshed each cycle, shared across tickers)
         self._eth_leader_signal: Optional[str] = None
@@ -557,7 +584,7 @@ class AgapeSpotSignalGenerator:
                 )
 
         # Bayesian win probability gate: block when regime win rate is too low
-        win_prob = self._calculate_win_probability(ticker, funding_regime_str)
+        win_prob = self._calculate_win_probability(ticker, funding_regime_str, market_data)
         if win_prob < self.MIN_WIN_PROBABILITY:
             win_tracker = self._win_trackers.get(ticker)
             tracker_info = ""
@@ -779,11 +806,16 @@ class AgapeSpotSignalGenerator:
 
         return estimate.mean
 
-    def _calculate_win_probability(self, ticker: str, funding_regime_str: str) -> float:
-        """Calculate Bayesian win probability for a ticker in its current funding regime.
+    def _calculate_win_probability(
+        self, ticker: str, funding_regime_str: str, market_data: Optional[Dict] = None,
+    ) -> float:
+        """Calculate win probability for a ticker in its current funding regime.
 
         Blends regime-specific Bayesian estimate with a base rate.
         Cold start floor ensures the bot can trade and collect data early on.
+
+        ML Shadow Mode: if an ML model is trained, runs a parallel prediction
+        and logs both for later comparison. If ML is promoted, uses ML probability.
 
         Returns a probability in [0.0, 1.0].
         """
@@ -804,18 +836,74 @@ class AgapeSpotSignalGenerator:
         if is_cold and blended_prob < win_tracker.cold_start_floor:
             blended_prob = win_tracker.cold_start_floor
 
-        final_prob = round(max(0.0, min(1.0, blended_prob)), 4)
+        bayesian_final = round(max(0.0, min(1.0, blended_prob)), 4)
+
+        # --- ML Shadow Prediction ---
+        ml_prob = None
+        ml_source = None
+        ml_advisor = _get_ml_advisor()
+        if ml_advisor and ml_advisor.is_trained and market_data:
+            try:
+                from datetime import datetime as _dt
+                now = _dt.now(CENTRAL_TZ)
+                features = {
+                    'funding_rate': market_data.get('funding_rate', 0.0),
+                    'funding_regime': funding_regime_str,
+                    'ls_ratio': market_data.get('ls_ratio', 1.0),
+                    'ls_bias': market_data.get('ls_bias', 'NEUTRAL'),
+                    'squeeze_risk': market_data.get('squeeze_risk', 'LOW'),
+                    'crypto_gex': market_data.get('crypto_gex', 0.0),
+                    'oracle_win_prob': market_data.get('oracle_win_prob', 0.5),
+                    'day_of_week': now.weekday(),
+                    'hour_of_day': now.hour,
+                    'positive_funding_win_rate': win_tracker.get_regime_probability(FundingRegime.POSITIVE),
+                    'negative_funding_win_rate': win_tracker.get_regime_probability(FundingRegime.NEGATIVE),
+                    'chop_index': market_data.get('chop_index', 0.5),
+                }
+                result = ml_advisor.predict(features)
+                if result:
+                    ml_prob = round(result['win_probability'], 4)
+                    ml_source = result['source']
+            except Exception as e:
+                logger.debug(f"AGAPE-SPOT ML shadow prediction failed: {e}")
+
+        # Store last shadow predictions on self for scan logging
+        self._last_ml_prob = ml_prob
+        self._last_bayesian_prob = bayesian_final
+
+        # Check if ML is promoted — if so, use ML probability for gating
+        is_promoted = self._is_ml_promoted()
+        if is_promoted and ml_prob is not None:
+            final_prob = ml_prob
+            prob_source = "ML"
+        else:
+            final_prob = bayesian_final
+            prob_source = "BAYESIAN"
+
+        ml_info = ""
+        if ml_prob is not None:
+            ml_info = f", ml_prob={ml_prob:.4f} ({'ACTIVE' if is_promoted else 'shadow'})"
 
         logger.info(
-            f"AGAPE-SPOT WIN_PROB: {ticker} regime={funding_regime.value}, "
+            f"AGAPE-SPOT WIN_PROB [{prob_source}]: {ticker} regime={funding_regime.value}, "
             f"regime_prob={bayesian_prob:.3f}, bayes_wt={bayesian_weight:.2f}, "
             f"blended={blended_prob:.4f}, "
             f"cold_start={'YES' if is_cold else 'NO'} "
             f"({win_tracker.total_trades}/{win_tracker.cold_start_trades} trades), "
-            f"final={final_prob:.4f} (gate={self.MIN_WIN_PROBABILITY:.2f})"
+            f"final={final_prob:.4f} (gate={self.MIN_WIN_PROBABILITY:.2f}){ml_info}"
         )
 
         return final_prob
+
+    def _is_ml_promoted(self) -> bool:
+        """Check if ML has been promoted to active trading."""
+        try:
+            from trading.agape_spot.db import AgapeSpotDatabase
+            db = AgapeSpotDatabase()
+            val = db.get_ml_config('ml_promoted')
+            return val == 'true'
+        except Exception:
+            return False
 
     def _calculate_position_size(self, ticker: str, spot_price: float) -> Tuple[float, float]:
         """Calculate position size using per-ticker config from SPOT_TICKERS.
