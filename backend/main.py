@@ -82,6 +82,7 @@ from backend.api.routes import (
     agape_routes,  # AGAPE - ETH Micro Futures (/MET) bot using crypto microstructure signals
     agape_spot_routes,  # AGAPE-SPOT - 24/7 Coinbase Spot ETH-USD trading
     omega_routes,  # OMEGA - Central Trading Decision Orchestrator (4-layer pipeline + gap implementations)
+    bayesian_crypto_routes,  # Bayesian Crypto Performance Tracker - statistical edge detection for crypto strategies
 )
 
 # ============================================================================
@@ -337,6 +338,7 @@ app.include_router(valor_routes.router)
 app.include_router(agape_routes.router)
 app.include_router(agape_spot_routes.router)
 app.include_router(omega_routes.router)
+app.include_router(bayesian_crypto_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, agape-spot, omega")
 
 # Initialize existing AlphaGEX components (singleton pattern)
