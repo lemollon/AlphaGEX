@@ -1208,6 +1208,37 @@ async def get_performance(
 
 
 # ---------------------------------------------------------------------------
+# Alpha Intelligence
+# ---------------------------------------------------------------------------
+
+@router.get("/alpha")
+async def get_alpha_intelligence():
+    """Alpha Intelligence dashboard — three active systems.
+
+    1. **Alpha Tracker**: Per-ticker rolling alpha (trading return vs buy-and-hold).
+    2. **Adaptive Allocation**: Alpha-weighted capital scoring (20% weight in allocator).
+    3. **Benchmark-Aware Signals**: Trend-adjusted exits that widen in strong uptrends.
+
+    Returns per-ticker alpha breakdowns, combined alpha vs BTC/ETH, and
+    system status for all three modules.
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "data": {}, "message": "AGAPE-SPOT not available"}
+
+    try:
+        data = trader.get_alpha_intelligence()
+        return {
+            "success": True,
+            "data": data,
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT alpha intelligence error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Logs & Scan Activity
 # ---------------------------------------------------------------------------
 

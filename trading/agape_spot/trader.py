@@ -149,7 +149,7 @@ class AgapeSpotTrader:
         )
 
     # ==================================================================
-    # Capital allocator refresh
+    # Capital allocator refresh + alpha computation
     # ==================================================================
 
     def _refresh_allocator(self) -> None:
@@ -158,13 +158,58 @@ class AgapeSpotTrader:
         Passes active tickers (those currently in market hours) so the allocator
         can redistribute inactive tickers' capital (e.g. MSTU on weekends) to
         crypto tickers that trade 24/7.
+
+        Also computes per-ticker alpha (active trading return vs buy-and-hold)
+        and passes it to the allocator for alpha-aware scoring.
         """
         try:
             perf_data = self.db.get_ticker_performance_stats(self.config.live_tickers)
             active = self.config.get_active_tickers()
-            self._capital_allocator.refresh(perf_data, active_tickers=active)
+            alpha_data = self._compute_alpha_data(perf_data)
+            self._capital_allocator.refresh(
+                perf_data, active_tickers=active, alpha_data=alpha_data,
+            )
         except Exception as e:
             logger.warning(f"AGAPE-SPOT: Allocator refresh failed: {e}")
+
+    def _compute_alpha_data(
+        self, perf_data: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, float]:
+        """Compute per-ticker alpha: trading return minus buy-and-hold return.
+
+        alpha_pct = trading_return_pct - buyhold_return_pct
+
+        Positive alpha means active trading is outperforming just holding.
+        Negative alpha means you would have been better off just holding.
+        """
+        alpha: Dict[str, float] = {}
+        try:
+            # Get the earliest recorded price for each ticker
+            base_prices = self.db.get_buyhold_base_prices(self.config.live_tickers)
+
+            for ticker in self.config.live_tickers:
+                d = perf_data.get(ticker, {})
+                starting_capital = self.config.get_starting_capital(ticker)
+
+                # Trading return
+                total_pnl = d.get("total_pnl", 0.0)
+                trading_return_pct = (total_pnl / starting_capital * 100) if starting_capital else 0.0
+
+                # Buy-and-hold return
+                base_price = base_prices.get(ticker)
+                current_price = self._get_current_price(ticker, None)
+
+                if base_price and base_price > 0 and current_price and current_price > 0:
+                    buyhold_return_pct = ((current_price / base_price) - 1.0) * 100
+                else:
+                    buyhold_return_pct = 0.0
+
+                alpha[ticker] = round(trading_return_pct - buyhold_return_pct, 2)
+
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT: Alpha computation failed: {e}")
+
+        return alpha
 
     # ==================================================================
     # Top-level cycle -- iterates ALL tickers
@@ -540,6 +585,64 @@ class AgapeSpotTrader:
         return (len(open_positions), closed)
 
     # ------------------------------------------------------------------
+    # Benchmark-aware trend detection
+    # ------------------------------------------------------------------
+
+    # Per-ticker trend strength cache: {ticker: (trend_pct, updated_at)}
+    _trend_cache: Dict[str, tuple] = {}
+
+    # Trend thresholds: if 24h price change exceeds these, we're in a strong trend
+    TREND_THRESHOLD_MAJOR = 1.5   # BTC/ETH: 1.5% in 24h = strong trend
+    TREND_THRESHOLD_ALT = 2.5     # Altcoins: 2.5% in 24h = strong trend
+
+    def _get_trend_strength(self, ticker: str, current_price: float) -> float:
+        """Calculate 24h price change percentage for trend detection.
+
+        Uses the signal generator's price history and equity snapshots.
+        Returns the percentage change (positive = uptrend, negative = downtrend).
+        Cached for 5 minutes to avoid repeated DB queries.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        # Check cache
+        cached = self._trend_cache.get(ticker)
+        if cached:
+            trend_pct, updated_at = cached
+            if (now - updated_at).total_seconds() < 300:  # 5-min cache
+                return trend_pct
+
+        trend_pct = 0.0
+        try:
+            # Try to get price from 24h ago via equity snapshots
+            conn = self.db._get_conn()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT eth_price FROM agape_spot_equity_snapshots
+                    WHERE ticker = %s
+                      AND eth_price IS NOT NULL AND eth_price > 0
+                      AND timestamp < NOW() - INTERVAL '20 hours'
+                    ORDER BY timestamp DESC LIMIT 1
+                """, (ticker,))
+                row = cursor.fetchone()
+                cursor.close()
+                conn.close()
+                if row and row[0] and float(row[0]) > 0:
+                    old_price = float(row[0])
+                    trend_pct = ((current_price / old_price) - 1.0) * 100
+        except Exception:
+            pass
+
+        self._trend_cache[ticker] = (trend_pct, now)
+        return trend_pct
+
+    def _is_strong_trend(self, ticker: str, trend_pct: float) -> bool:
+        """Check if the trend is strong enough to warrant wider exits."""
+        is_major = ticker in ("ETH-USD", "BTC-USD")
+        threshold = self.TREND_THRESHOLD_MAJOR if is_major else self.TREND_THRESHOLD_ALT
+        return abs(trend_pct) >= threshold
+
+    # ------------------------------------------------------------------
     # No-loss trailing (LONG-ONLY -- simplified)
     # ------------------------------------------------------------------
 
@@ -555,6 +658,9 @@ class AgapeSpotTrader:
         ATR-ADAPTIVE: When the position has atr_at_entry, stops and trail
         distances are sized to actual volatility instead of fixed percentages.
         This prevents normal market noise from stopping out positions early.
+
+        BENCHMARK-AWARE: In strong uptrends, trail distance and max hold time
+        are widened so positions ride the trend instead of exiting too early.
 
         profit_pct   = (current - entry) / entry * 100
         hwm          = highest price seen (only updates when price goes up)
@@ -572,6 +678,14 @@ class AgapeSpotTrader:
         trail_distance_pct = exit_params["no_loss_trail_distance_pct"]
         profit_target_pct = exit_params["no_loss_profit_target_pct"]
         max_hold = exit_params["max_hold_hours"]
+
+        # Benchmark-aware: widen exits in strong uptrends to let winners run
+        trend_pct = self._get_trend_strength(ticker, current_price)
+        if self._is_strong_trend(ticker, trend_pct) and trend_pct > 0:
+            # Strong uptrend: widen trail by 50%, extend hold by 50%
+            trail_distance_pct *= 1.5
+            activation_pct *= 1.3  # higher activation so trail doesn't start too early
+            max_hold = int(max_hold * 1.5)
 
         # ATR-adaptive: override fixed percentages when ATR data exists
         atr = pos.get("atr_at_entry")
@@ -1442,6 +1556,112 @@ class AgapeSpotTrader:
             "closed": total_closed,
             "total_pnl": round(total_pnl, 2),
             "tickers": all_results,
+        }
+
+    # ==================================================================
+    # Alpha Intelligence (for API endpoint)
+    # ==================================================================
+
+    def get_alpha_intelligence(self) -> Dict[str, Any]:
+        """Return full alpha intelligence dashboard data.
+
+        Includes per-ticker alpha, combined alpha vs BTC/ETH, and system
+        status for all three intelligence modules:
+        1. Alpha Tracker - rolling alpha calculation
+        2. Adaptive Allocation - alpha-weighted capital scoring
+        3. Benchmark-Aware Signals - trend-adjusted exits
+        """
+        perf_data = self.db.get_ticker_performance_stats(self.config.tickers)
+        alpha_data = self._compute_alpha_data(perf_data)
+        base_prices = self.db.get_buyhold_base_prices(self.config.tickers)
+
+        per_ticker: Dict[str, Any] = {}
+        for ticker in self.config.tickers:
+            d = perf_data.get(ticker, {})
+            starting_capital = self.config.get_starting_capital(ticker)
+            total_pnl = d.get("total_pnl", 0.0)
+            trading_return_pct = (total_pnl / starting_capital * 100) if starting_capital else 0.0
+
+            base_price = base_prices.get(ticker)
+            current_price = self._get_current_price(ticker, None)
+            buyhold_return_pct = 0.0
+            if base_price and base_price > 0 and current_price and current_price > 0:
+                buyhold_return_pct = ((current_price / base_price) - 1.0) * 100
+
+            ticker_alpha = alpha_data.get(ticker, 0.0)
+            trend_pct = self._get_trend_strength(ticker, current_price) if current_price else 0.0
+
+            per_ticker[ticker] = {
+                "trading_return_pct": round(trading_return_pct, 2),
+                "buyhold_return_pct": round(buyhold_return_pct, 2),
+                "alpha_pct": round(ticker_alpha, 2),
+                "status": "OUTPERFORMING" if ticker_alpha > 0.5 else (
+                    "UNDERPERFORMING" if ticker_alpha < -0.5 else "PARITY"
+                ),
+                "base_price": round(base_price, 2) if base_price else None,
+                "current_price": round(current_price, 2) if current_price else None,
+                "total_trades": d.get("total_trades", 0),
+                "trend_24h_pct": round(trend_pct, 2),
+                "trend_boost_active": self._is_strong_trend(ticker, trend_pct) and trend_pct > 0,
+            }
+
+        # Combined metrics (sum across all tickers)
+        total_starting = sum(
+            self.config.get_starting_capital(t) for t in self.config.tickers
+        )
+        total_trading_pnl = sum(
+            perf_data.get(t, {}).get("total_pnl", 0.0) for t in self.config.tickers
+        )
+        combined_trading_return = (total_trading_pnl / total_starting * 100) if total_starting else 0.0
+
+        # BTC and ETH buy-and-hold from combined perspective
+        btc_base = base_prices.get("BTC-USD")
+        btc_current = self._get_current_price("BTC-USD", None)
+        btc_buyhold = ((btc_current / btc_base) - 1.0) * 100 if (btc_base and btc_base > 0 and btc_current) else 0.0
+
+        eth_base = base_prices.get("ETH-USD")
+        eth_current = self._get_current_price("ETH-USD", None)
+        eth_buyhold = ((eth_current / eth_base) - 1.0) * 100 if (eth_base and eth_base > 0 and eth_current) else 0.0
+
+        # Count active systems
+        trend_boost_count = sum(
+            1 for t in per_ticker.values() if t.get("trend_boost_active")
+        )
+        outperforming_count = sum(
+            1 for t in per_ticker.values() if t.get("status") == "OUTPERFORMING"
+        )
+
+        return {
+            "systems": {
+                "alpha_tracker": {
+                    "active": True,
+                    "description": "Rolling alpha vs buy-and-hold per ticker",
+                    "outperforming_tickers": outperforming_count,
+                    "total_tickers": len(self.config.tickers),
+                },
+                "adaptive_allocation": {
+                    "active": True,
+                    "description": "Alpha-weighted capital scoring (20% weight)",
+                    "effect": "Tickers with positive alpha get more capital",
+                },
+                "benchmark_signals": {
+                    "active": True,
+                    "description": "Trend-aware exits widen in strong uptrends",
+                    "tickers_with_trend_boost": trend_boost_count,
+                    "trail_multiplier": "1.5x in strong trends",
+                    "hold_multiplier": "1.5x in strong trends",
+                },
+            },
+            "per_ticker": per_ticker,
+            "combined": {
+                "trading_return_pct": round(combined_trading_return, 2),
+                "btc_buyhold_pct": round(btc_buyhold, 2),
+                "eth_buyhold_pct": round(eth_buyhold, 2),
+                "alpha_vs_btc": round(combined_trading_return - btc_buyhold, 2),
+                "alpha_vs_eth": round(combined_trading_return - eth_buyhold, 2),
+                "total_starting_capital": total_starting,
+                "total_trading_pnl": round(total_trading_pnl, 2),
+            },
         }
 
     def enable(self):

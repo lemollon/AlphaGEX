@@ -771,6 +771,7 @@ class TickerPerformance:
     score: float = 0.0            # computed composite score
     allocation_pct: float = 0.0   # assigned % of available balance
     is_active: bool = True        # False when outside market hours (e.g. MSTU on weekends)
+    alpha_pct: float = 0.0        # active trading return minus buy-and-hold return
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -786,6 +787,7 @@ class TickerPerformance:
             "score": round(self.score, 4),
             "allocation_pct": round(self.allocation_pct, 4),
             "is_active": self.is_active,
+            "alpha_pct": round(self.alpha_pct, 2),
         }
 
 
@@ -833,6 +835,7 @@ class CapitalAllocator:
         self,
         perf_data: Dict[str, Dict[str, Any]],
         active_tickers: Optional[List[str]] = None,
+        alpha_data: Optional[Dict[str, float]] = None,
     ) -> None:
         """Recalculate rankings from fresh performance data.
 
@@ -842,9 +845,14 @@ class CapitalAllocator:
                         If provided, inactive tickers get 0% allocation and
                         their share is redistributed to active ones.
                         Scores are still computed for all tickers (for UI).
+        alpha_data: {ticker: alpha_pct} — active trading return minus buy-and-hold
+                    return per ticker.  Positive = outperforming, negative =
+                    underperforming.  Used as a scoring component so tickers
+                    with positive alpha get more capital.
         """
         # Default: all tickers active
         active_set = set(active_tickers) if active_tickers is not None else set(self.tickers)
+        alpha = alpha_data or {}
 
         perfs: List[TickerPerformance] = []
         for ticker in self.tickers:
@@ -873,6 +881,7 @@ class CapitalAllocator:
                 win_rate=win_rate,
                 profit_factor=min(pf, 10.0),  # cap to prevent single outlier domination
                 is_active=(ticker in active_set),
+                alpha_pct=alpha.get(ticker, 0.0),
             ))
 
         # --- Compute composite scores (for ALL tickers, active or not) ---
@@ -901,6 +910,10 @@ class CapitalAllocator:
     def _score_tickers(self, perfs: List[TickerPerformance]) -> None:
         """Compute composite score for each ticker.
 
+        Includes alpha (active trading vs buy-and-hold) as a scoring
+        component.  Tickers that outperform their own buy-and-hold get
+        a boost; underperformers get penalised.
+
         For inactive tickers (outside market hours), the 24h recent P&L
         component is excluded and its weight redistributed to avoid
         penalizing tickers that simply can't trade right now.
@@ -912,6 +925,11 @@ class CapitalAllocator:
         pnl_range = max(abs(max(pnl_values, default=0)), abs(min(pnl_values, default=0)), 1.0)
         recent_range = max(abs(max(recent_values, default=0)), abs(min(recent_values, default=0)), 1.0)
 
+        # Alpha normalisation: map alpha_pct to [0, 1] range
+        # alpha_pct can be negative (underperforming) or positive (outperforming)
+        alpha_values = [p.alpha_pct for p in perfs if p.total_trades > 0]
+        alpha_range = max(abs(max(alpha_values, default=0)), abs(min(alpha_values, default=0)), 1.0)
+
         for p in perfs:
             if p.total_trades == 0:
                 # Cold start: neutral score so it gets equal share
@@ -921,24 +939,27 @@ class CapitalAllocator:
             norm_pf = min(p.profit_factor / max_pf, 1.0)
             norm_wr = p.win_rate
             norm_total = (p.total_pnl / pnl_range + 1.0) / 2.0   # map [-1,1] -> [0,1]
+            norm_alpha = (p.alpha_pct / alpha_range + 1.0) / 2.0  # map [-1,1] -> [0,1]
 
             if p.is_active:
-                # Normal weighting: 35% PF + 25% WR + 25% recent + 15% total
+                # Weighting: 25% PF + 20% WR + 20% recent + 15% total + 20% alpha
                 norm_recent = (p.recent_pnl / recent_range + 1.0) / 2.0
                 p.score = (
-                    0.35 * norm_pf
-                    + 0.25 * norm_wr
-                    + 0.25 * norm_recent
+                    0.25 * norm_pf
+                    + 0.20 * norm_wr
+                    + 0.20 * norm_recent
                     + 0.15 * norm_total
+                    + 0.20 * norm_alpha
                 )
             else:
                 # Inactive ticker: drop the 24h recent component (it's always $0
                 # on weekends) and redistribute weight to long-term metrics.
-                # Reweighted: 45% PF + 30% WR + 25% total
+                # Reweighted: 30% PF + 25% WR + 20% total + 25% alpha
                 p.score = (
-                    0.45 * norm_pf
-                    + 0.30 * norm_wr
-                    + 0.25 * norm_total
+                    0.30 * norm_pf
+                    + 0.25 * norm_wr
+                    + 0.20 * norm_total
+                    + 0.25 * norm_alpha
                 )
 
     def _allocate(self, perfs: List[TickerPerformance]) -> None:

@@ -20,6 +20,9 @@ import {
   Calendar,
   CheckCircle,
   AlertTriangle,
+  Zap,
+  Target,
+  Shield,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -168,6 +171,10 @@ function useAgapeSpotScanActivity(ticker?: string, limit: number = 30) {
 
 function useAgapeSpotMLStatus() {
   return useSWR('/api/agape-spot/ml/status', fetcher, { refreshInterval: 30_000 })
+}
+
+function useAgapeSpotAlpha() {
+  return useSWR('/api/agape-spot/alpha', fetcher, { refreshInterval: 30_000 })
 }
 
 // ==============================================================================
@@ -454,6 +461,9 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
           <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
         ))}
       </div>
+
+      {/* Alpha Intelligence Panel */}
+      <AlphaIntelligencePanel />
 
       {/* Capital Allocation Rankings */}
       <AllocationRankings allocator={summaryData?.capital_allocator} />
@@ -1860,6 +1870,176 @@ function PriceTickerStrip({ tickers }: { tickers: Record<string, TickerSummary> 
 }
 
 // ==============================================================================
+// ALPHA INTELLIGENCE PANEL
+// ==============================================================================
+
+function AlphaIntelligencePanel() {
+  const { data } = useAgapeSpotAlpha()
+  const alpha = data?.data
+
+  if (!alpha) return null
+
+  const systems = alpha.systems || {}
+  const combined = alpha.combined || {}
+  const perTicker = alpha.per_ticker || {}
+
+  const tickers = Object.entries(perTicker) as [string, any][]
+
+  // Sort by alpha descending
+  tickers.sort((a, b) => (b[1].alpha_pct ?? 0) - (a[1].alpha_pct ?? 0))
+
+  const alphaVsBtc = combined.alpha_vs_btc ?? 0
+  const alphaVsEth = combined.alpha_vs_eth ?? 0
+
+  return (
+    <SectionCard
+      title="Alpha Intelligence"
+      icon={<Zap className="w-5 h-5 text-amber-400" />}
+      headerRight={
+        <div className="flex items-center gap-2">
+          <span className={`text-xs font-mono font-bold ${alphaVsBtc >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            vs BTC: {alphaVsBtc >= 0 ? '+' : ''}{alphaVsBtc.toFixed(1)}%
+          </span>
+          <span className={`text-xs font-mono font-bold ${alphaVsEth >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            vs ETH: {alphaVsEth >= 0 ? '+' : ''}{alphaVsEth.toFixed(1)}%
+          </span>
+        </div>
+      }
+    >
+      {/* Active Systems */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Target className="w-4 h-4 text-amber-400" />
+            <span className="text-xs font-semibold text-white">Alpha Tracker</span>
+            <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            {systems.alpha_tracker?.outperforming_tickers ?? 0}/{systems.alpha_tracker?.total_tickers ?? 0} tickers outperforming buy-and-hold
+          </p>
+        </div>
+        <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+          <div className="flex items-center gap-2 mb-1.5">
+            <BarChart3 className="w-4 h-4 text-purple-400" />
+            <span className="text-xs font-semibold text-white">Adaptive Allocation</span>
+            <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            Alpha-weighted scoring (20% weight in capital allocator)
+          </p>
+        </div>
+        <div className="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Shield className="w-4 h-4 text-cyan-400" />
+            <span className="text-xs font-semibold text-white">Benchmark Signals</span>
+            <span className="ml-auto px-1.5 py-0.5 bg-emerald-500/20 text-emerald-400 text-[10px] rounded font-bold">ACTIVE</span>
+          </div>
+          <p className="text-[11px] text-gray-400">
+            {systems.benchmark_signals?.tickers_with_trend_boost ?? 0} tickers with trend-widened exits (1.5x trail)
+          </p>
+        </div>
+      </div>
+
+      {/* Combined performance row */}
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-4">
+        <div className="bg-gray-900/50 rounded p-2 text-center">
+          <div className="text-[10px] text-gray-500 uppercase">Trading Return</div>
+          <div className={`text-sm font-mono font-bold ${pnlColor(combined.trading_return_pct ?? 0)}`}>
+            {(combined.trading_return_pct ?? 0).toFixed(1)}%
+          </div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2 text-center">
+          <div className="text-[10px] text-gray-500 uppercase">BTC Hold</div>
+          <div className={`text-sm font-mono font-bold ${pnlColor(combined.btc_buyhold_pct ?? 0)}`}>
+            {(combined.btc_buyhold_pct ?? 0).toFixed(1)}%
+          </div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2 text-center">
+          <div className="text-[10px] text-gray-500 uppercase">ETH Hold</div>
+          <div className={`text-sm font-mono font-bold ${pnlColor(combined.eth_buyhold_pct ?? 0)}`}>
+            {(combined.eth_buyhold_pct ?? 0).toFixed(1)}%
+          </div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2 text-center border border-amber-500/30">
+          <div className="text-[10px] text-amber-400 uppercase">Alpha vs BTC</div>
+          <div className={`text-sm font-mono font-bold ${alphaVsBtc >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {alphaVsBtc >= 0 ? '+' : ''}{alphaVsBtc.toFixed(2)}%
+          </div>
+        </div>
+        <div className="bg-gray-900/50 rounded p-2 text-center border border-amber-500/30">
+          <div className="text-[10px] text-amber-400 uppercase">Alpha vs ETH</div>
+          <div className={`text-sm font-mono font-bold ${alphaVsEth >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+            {alphaVsEth >= 0 ? '+' : ''}{alphaVsEth.toFixed(2)}%
+          </div>
+        </div>
+      </div>
+
+      {/* Per-ticker alpha table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800">
+              <th className="text-left px-3 py-2 text-gray-500 font-medium">Ticker</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Trading</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Buy & Hold</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Alpha</th>
+              <th className="text-center px-3 py-2 text-gray-500 font-medium">Status</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">24h Trend</th>
+              <th className="text-center px-3 py-2 text-gray-500 font-medium">Trend Boost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tickers.map(([ticker, d]) => {
+              const meta = TICKER_META[ticker] || TICKER_META['ALL']
+              return (
+                <tr key={ticker} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                  <td className="px-3 py-2">
+                    <span className={`font-bold ${meta.textActive}`}>{meta.symbol}</span>
+                    <span className="text-gray-500 text-xs ml-1.5">{d.total_trades} trades</span>
+                  </td>
+                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trading_return_pct)}`}>
+                    {d.trading_return_pct >= 0 ? '+' : ''}{d.trading_return_pct.toFixed(2)}%
+                  </td>
+                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.buyhold_return_pct)}`}>
+                    {d.buyhold_return_pct >= 0 ? '+' : ''}{d.buyhold_return_pct.toFixed(2)}%
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    <span className={`font-mono text-xs font-bold ${d.alpha_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {d.alpha_pct >= 0 ? '+' : ''}{d.alpha_pct.toFixed(2)}%
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      d.status === 'OUTPERFORMING'
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : d.status === 'UNDERPERFORMING'
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-gray-700 text-gray-400'
+                    }`}>
+                      {d.status}
+                    </span>
+                  </td>
+                  <td className={`px-3 py-2 text-right font-mono text-xs ${pnlColor(d.trend_24h_pct)}`}>
+                    {d.trend_24h_pct >= 0 ? '+' : ''}{d.trend_24h_pct.toFixed(1)}%
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {d.trend_boost_active ? (
+                      <span className="px-2 py-0.5 bg-cyan-500/20 text-cyan-400 text-[10px] rounded font-bold">1.5x WIDE</span>
+                    ) : (
+                      <span className="text-gray-600 text-xs">---</span>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </SectionCard>
+  )
+}
+
+// ==============================================================================
 // CAPITAL ALLOCATION RANKINGS
 // ==============================================================================
 
@@ -1874,6 +2054,7 @@ interface AllocRanking {
   total_pnl: number
   recent_pnl: number
   is_active: boolean
+  alpha_pct: number
 }
 
 function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking[]; total_tickers: number } | null | undefined }) {
@@ -1901,6 +2082,7 @@ function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Profit Factor</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Total P&L</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">24h P&L</th>
+              <th className="text-right px-3 py-2 text-gray-500 font-medium">Alpha</th>
               <th className="text-right px-3 py-2 text-gray-500 font-medium">Trades</th>
             </tr>
           </thead>
@@ -1947,6 +2129,9 @@ function AllocationRankings({ allocator }: { allocator: { rankings: AllocRanking
                   </td>
                   <td className={`px-3 py-2.5 text-right font-mono text-xs ${r.recent_pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                     {r.recent_pnl !== 0 ? `$${r.recent_pnl.toFixed(2)}` : '---'}
+                  </td>
+                  <td className={`px-3 py-2.5 text-right font-mono text-xs font-bold ${(r.alpha_pct ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {r.total_trades > 0 ? `${(r.alpha_pct ?? 0) >= 0 ? '+' : ''}${(r.alpha_pct ?? 0).toFixed(1)}%` : '---'}
                   </td>
                   <td className="px-3 py-2.5 text-right text-gray-300 font-mono text-xs">
                     {r.total_trades}
