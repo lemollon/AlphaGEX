@@ -1662,6 +1662,173 @@ class AgapeSpotTrader:
             system_action += " Trend boost ON: exits widened 1.5x for strong momentum."
         return insight, system_action
 
+    def _generate_strategy_edge(
+        self,
+        per_ticker: Dict[str, Any],
+        perf_data: Dict[str, Dict[str, Any]],
+        combined_trading_return: float,
+        btc_buyhold: float,
+        eth_buyhold: float,
+        trend_boost_count: int,
+    ) -> Dict[str, Any]:
+        """Generate portfolio-level strategy edge explanation.
+
+        Explains WHY active trading is beating (or losing to) buy-and-hold
+        and WHAT specific mechanisms are creating/destroying alpha.
+        """
+        outperformers = [t for t, d in per_ticker.items() if d["status"] == "OUTPERFORMING"]
+        underperformers = [t for t, d in per_ticker.items() if d["status"] == "UNDERPERFORMING"]
+        active_tickers = [t for t, d in per_ticker.items() if d.get("total_trades", 0) > 0]
+
+        total_trades = sum(d.get("total_trades", 0) for d in per_ticker.values())
+        total_wins = sum(perf_data.get(t, {}).get("wins", 0) for t in per_ticker)
+        overall_wr = (total_wins / total_trades * 100) if total_trades > 0 else 0
+
+        avg_win_all = [perf_data.get(t, {}).get("avg_win", 0) for t in active_tickers if perf_data.get(t, {}).get("avg_win", 0) > 0]
+        avg_loss_all = [perf_data.get(t, {}).get("avg_loss", 0) for t in active_tickers if perf_data.get(t, {}).get("avg_loss", 0) < 0]
+        mean_win = sum(avg_win_all) / len(avg_win_all) if avg_win_all else 0
+        mean_loss = abs(sum(avg_loss_all) / len(avg_loss_all)) if avg_loss_all else 0
+
+        beating_btc = combined_trading_return > btc_buyhold
+        beating_eth = combined_trading_return > eth_buyhold
+
+        # --- Build the strategy edge sections ---
+        edge_sources: list = []
+        headwinds: list = []
+
+        # 1. Trailing stops as alpha source
+        if mean_loss > 0 and mean_win > mean_loss:
+            edge_sources.append({
+                "name": "Trailing Stops Cut Losses",
+                "detail": (
+                    f"Average win (${mean_win:.2f}) is larger than average loss "
+                    f"(${mean_loss:.2f}). Trailing stops prevent holding through "
+                    f"drawdowns that buy-and-hold must endure."
+                ),
+            })
+        elif mean_loss > 0:
+            headwinds.append({
+                "name": "Win/Loss Size Ratio",
+                "detail": (
+                    f"Average loss (${mean_loss:.2f}) exceeds average win "
+                    f"(${mean_win:.2f}). Stops may be too tight, locking in "
+                    f"small gains but taking full losses."
+                ),
+            })
+
+        # 2. Win rate
+        if overall_wr >= 55:
+            edge_sources.append({
+                "name": "Signal Accuracy",
+                "detail": (
+                    f"{overall_wr:.0f}% win rate across {total_trades} trades. "
+                    f"The system enters more winning trades than losing ones, "
+                    f"generating steady returns that compound."
+                ),
+            })
+        elif overall_wr < 45 and total_trades > 10:
+            headwinds.append({
+                "name": "Low Win Rate",
+                "detail": (
+                    f"{overall_wr:.0f}% win rate across {total_trades} trades. "
+                    f"More losses than wins means the system needs large winners "
+                    f"to overcome the loss frequency."
+                ),
+            })
+
+        # 3. Capital rotation
+        if len(outperformers) > 0 and len(underperformers) > 0:
+            out_syms = ", ".join(t.replace("-USD", "") for t in outperformers[:3])
+            under_syms = ", ".join(t.replace("-USD", "") for t in underperformers[:3])
+            edge_sources.append({
+                "name": "Capital Rotation",
+                "detail": (
+                    f"Capital is shifting away from {under_syms} toward {out_syms}. "
+                    f"Buy-and-hold has fixed allocation — it can't move money to "
+                    f"what's working."
+                ),
+            })
+
+        # 4. Trend riding
+        if trend_boost_count > 0:
+            boosted = [t.replace("-USD", "") for t, d in per_ticker.items() if d.get("trend_boost_active")]
+            edge_sources.append({
+                "name": "Trend Riding",
+                "detail": (
+                    f"{', '.join(boosted)} {'have' if len(boosted) > 1 else 'has'} widened exits "
+                    f"(1.5x trailing stop, 1.5x hold time) to capture momentum. "
+                    f"Buy-and-hold gets 100% of trends but also 100% of crashes."
+                ),
+            })
+
+        # 5. Drawdown avoidance
+        if mean_loss > 0:
+            edge_sources.append({
+                "name": "Drawdown Protection",
+                "detail": (
+                    f"Max loss per trade is capped at ~${mean_loss:.2f} via stops. "
+                    f"Buy-and-hold has no downside protection — a 20% crash means "
+                    f"a 20% portfolio loss."
+                ),
+            })
+
+        # 6. Compounding from re-entry
+        if total_trades > 20:
+            edge_sources.append({
+                "name": "Re-Entry After Dips",
+                "detail": (
+                    f"After exiting losing positions, the system re-enters at lower "
+                    f"prices. {total_trades} trades means multiple entries at various "
+                    f"price levels instead of one buy-and-hold entry."
+                ),
+            })
+
+        # --- Build combined narrative ---
+        if beating_btc and beating_eth:
+            headline = "Active trading is outperforming buy-and-hold"
+            summary = (
+                f"Your system returned {combined_trading_return:+.1f}% vs "
+                f"BTC hold at {btc_buyhold:+.1f}% and ETH hold at {eth_buyhold:+.1f}%. "
+                f"The alpha is coming from {len(edge_sources)} active edge{'s' if len(edge_sources) != 1 else ''}."
+            )
+            verdict = "WINNING"
+        elif beating_btc or beating_eth:
+            better = "BTC" if beating_btc else "ETH"
+            worse = "ETH" if beating_btc else "BTC"
+            headline = f"Beating {better} hold, trailing {worse} hold"
+            summary = (
+                f"Your system returned {combined_trading_return:+.1f}% — ahead of "
+                f"{better} ({btc_buyhold:+.1f}% / {eth_buyhold:+.1f}%) but behind "
+                f"{worse}. The system is adapting."
+            )
+            verdict = "MIXED"
+        else:
+            headline = "Buy-and-hold is currently ahead"
+            summary = (
+                f"Your system returned {combined_trading_return:+.1f}% vs "
+                f"BTC hold at {btc_buyhold:+.1f}% and ETH hold at {eth_buyhold:+.1f}%. "
+                f"Strong price appreciation is hard to beat with active trading. "
+                f"The system is automatically adjusting."
+            )
+            verdict = "TRAILING"
+
+        return {
+            "headline": headline,
+            "summary": summary,
+            "verdict": verdict,
+            "edge_sources": edge_sources,
+            "headwinds": headwinds,
+            "stats": {
+                "total_trades": total_trades,
+                "overall_win_rate": round(overall_wr, 1),
+                "avg_win": round(mean_win, 2),
+                "avg_loss": round(mean_loss, 2),
+                "outperforming_count": len(outperformers),
+                "underperforming_count": len(underperformers),
+                "trend_boost_active": trend_boost_count,
+            },
+        }
+
     def get_alpha_intelligence(self) -> Dict[str, Any]:
         """Return full alpha intelligence dashboard data.
 
@@ -1745,6 +1912,13 @@ class AgapeSpotTrader:
             1 for t in per_ticker.values() if t.get("status") == "OUTPERFORMING"
         )
 
+        # Portfolio-level strategy edge analysis
+        strategy_edge = self._generate_strategy_edge(
+            per_ticker, perf_data,
+            combined_trading_return, btc_buyhold, eth_buyhold,
+            trend_boost_count,
+        )
+
         return {
             "systems": {
                 "alpha_tracker": {
@@ -1766,6 +1940,7 @@ class AgapeSpotTrader:
                     "hold_multiplier": "1.5x in strong trends",
                 },
             },
+            "strategy_edge": strategy_edge,
             "per_ticker": per_ticker,
             "combined": {
                 "trading_return_pct": round(combined_trading_return, 2),

@@ -1988,6 +1988,91 @@ function AlphaIntelligencePanel() {
         </div>
       </div>
 
+      {/* Strategy Edge — WHY active trading beats (or loses to) buy-and-hold */}
+      {alpha.strategy_edge && (
+        <div className={`rounded-lg p-4 mb-4 border ${
+          alpha.strategy_edge.verdict === 'WINNING'
+            ? 'bg-emerald-950/30 border-emerald-700/40'
+            : alpha.strategy_edge.verdict === 'TRAILING'
+              ? 'bg-red-950/30 border-red-700/40'
+              : 'bg-amber-950/30 border-amber-700/40'
+        }`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`text-sm font-bold ${
+              alpha.strategy_edge.verdict === 'WINNING' ? 'text-emerald-400'
+                : alpha.strategy_edge.verdict === 'TRAILING' ? 'text-red-400'
+                  : 'text-amber-400'
+            }`}>
+              {alpha.strategy_edge.headline}
+            </span>
+            <span className={`ml-auto px-2 py-0.5 rounded text-[10px] font-bold ${
+              alpha.strategy_edge.verdict === 'WINNING'
+                ? 'bg-emerald-500/20 text-emerald-400'
+                : alpha.strategy_edge.verdict === 'TRAILING'
+                  ? 'bg-red-500/20 text-red-400'
+                  : 'bg-amber-500/20 text-amber-400'
+            }`}>
+              {alpha.strategy_edge.verdict}
+            </span>
+          </div>
+          <p className="text-xs text-gray-300 mb-3">{alpha.strategy_edge.summary}</p>
+
+          {/* Key stats row */}
+          {alpha.strategy_edge.stats && (
+            <div className="flex flex-wrap gap-3 mb-3 text-[11px]">
+              <span className="text-gray-400">
+                <span className="text-white font-mono font-bold">{alpha.strategy_edge.stats.total_trades}</span> trades
+              </span>
+              <span className="text-gray-400">
+                <span className="text-white font-mono font-bold">{alpha.strategy_edge.stats.overall_win_rate}%</span> win rate
+              </span>
+              <span className="text-gray-400">
+                avg win <span className="text-emerald-400 font-mono font-bold">${alpha.strategy_edge.stats.avg_win}</span>
+              </span>
+              <span className="text-gray-400">
+                avg loss <span className="text-red-400 font-mono font-bold">${alpha.strategy_edge.stats.avg_loss}</span>
+              </span>
+            </div>
+          )}
+
+          {/* Edge Sources */}
+          {alpha.strategy_edge.edge_sources?.length > 0 && (
+            <div className="mb-2">
+              <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wide mb-1.5">What&apos;s Creating Alpha</div>
+              <div className="space-y-1.5">
+                {alpha.strategy_edge.edge_sources.map((e: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-xs text-white font-semibold">{e.name}: </span>
+                      <span className="text-xs text-gray-400">{e.detail}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Headwinds */}
+          {alpha.strategy_edge.headwinds?.length > 0 && (
+            <div>
+              <div className="text-[10px] text-red-400 font-bold uppercase tracking-wide mb-1.5">Headwinds</div>
+              <div className="space-y-1.5">
+                {alpha.strategy_edge.headwinds.map((h: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-500 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="text-xs text-white font-semibold">{h.name}: </span>
+                      <span className="text-xs text-gray-400">{h.detail}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Per-ticker alpha table with expandable insights */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
