@@ -147,16 +147,9 @@ async def get_today_report(
                 "message": "Report retrieved from archive"
             }
 
-    # Generate new report
+    # Generate new report (always produces a report, even on 0-trade days)
     try:
         report = generate_report_for_bot(bot_lower, today)
-        if report is None:
-            return {
-                "success": True,
-                "data": None,
-                "cached": False,
-                "message": f"No trades for {bot.upper()} today - no report generated"
-            }
         return {
             "success": True,
             "data": report,
@@ -312,18 +305,10 @@ async def generate_report(
         import time
         start = time.time()
 
+        # Always produces a report, even on 0-trade days
         report = generate_report_for_bot(bot_lower, report_date)
 
         elapsed = int((time.time() - start) * 1000)
-
-        if report is None:
-            return {
-                "success": True,
-                "data": None,
-                "generated": False,
-                "generation_time_ms": elapsed,
-                "message": f"No trades for {bot.upper()} on {report_date} - no report generated"
-            }
 
         return {
             "success": True,

@@ -2313,12 +2313,16 @@ async def get_gex_analysis(
                 "message": "Cannot calculate GEX without valid spot price"
             }
 
-        # Process the options chain
-        # After hours: reuse existing snapshot to prevent engine state mutation
+        # When market is closed, use existing snapshot to prevent smoothing re-calculation
+        # on stale data (same safeguard as the /gamma endpoint for ARGUS)
         market_open = is_market_hours()
         if not market_open and engine.previous_snapshot:
             snapshot = engine.previous_snapshot
+            # Use the spot price and VIX from the snapshot for consistency
+            spot_price = snapshot.spot_price
+            vix = snapshot.vix
         else:
+            # Process the options chain (only during market hours or on first load)
             snapshot = engine.process_options_chain(
                 raw_data,
                 spot_price,
@@ -2368,10 +2372,10 @@ async def get_gex_analysis(
         upper_1sd = round(spot_price + em, 2) if em else None
         lower_1sd = round(spot_price - em, 2) if em else None
 
-        # Build GEX chart data
+        # Build GEX chart data (include magnet/pin/danger flags for frontend)
         gex_by_strike = []
         for s in snapshot.strikes:
-            gex_by_strike.append({
+            strike_entry = {
                 'strike': s.strike,
                 'net_gamma': round(s.net_gamma, 4),
                 'call_gamma': round(s.call_gamma, 6),
@@ -2380,10 +2384,18 @@ async def get_gex_analysis(
                 'put_volume': s.put_volume,
                 'total_volume': s.volume,
                 'call_iv': round(s.call_iv * 100, 1) if s.call_iv else None,
-                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None
-            })
+                'put_iv': round(s.put_iv * 100, 1) if s.put_iv else None,
+                'call_oi': getattr(s, 'call_oi', 0),
+                'put_oi': getattr(s, 'put_oi', 0),
+                'is_magnet': getattr(s, 'is_magnet', False),
+                'magnet_rank': getattr(s, 'magnet_rank', None),
+                'is_pin': getattr(s, 'is_pin', False),
+                'is_danger': getattr(s, 'is_danger', False),
+                'danger_type': getattr(s, 'danger_type', None),
+            }
+            gex_by_strike.append(strike_entry)
 
-        return {
+        response = {
             "success": True,
             "data": {
                 "symbol": symbol,
@@ -2399,8 +2411,13 @@ async def get_gex_analysis(
                     "gex_at_expiration": diagnostics['summary']['net_gex'],
                     "net_gex": diagnostics['summary']['net_gex'],
                     "rating": diagnostics['rating']['rating'],
-                    "gamma_form": snapshot.gamma_regime
+                    "gamma_form": snapshot.gamma_regime,
+                    "previous_regime": getattr(snapshot, 'previous_regime', None),
+                    "regime_flipped": getattr(snapshot, 'regime_flipped', False),
                 },
+
+                # Call structure classification details
+                "call_structure_details": diagnostics['call_structure'],
 
                 # Options Flow Diagnostics (6 cards)
                 "flow_diagnostics": {
@@ -2437,6 +2454,29 @@ async def get_gex_analysis(
                 "summary": diagnostics['summary']
             }
         }
+
+        # Persist snapshot for intraday ticks (only during market hours)
+        if market_open:
+            try:
+                await persist_watchtower_snapshot_to_db(
+                    symbol=symbol,
+                    expiration_date=target_expiration,
+                    spot_price=spot_price,
+                    expected_move=snapshot.expected_move,
+                    vix=vix or 0,
+                    total_net_gamma=snapshot.total_net_gamma,
+                    gamma_regime=snapshot.gamma_regime,
+                    previous_regime=getattr(snapshot, 'previous_regime', None),
+                    regime_flipped=getattr(snapshot, 'regime_flipped', False),
+                    market_status=getattr(snapshot, 'market_status', 'open'),
+                    flip_point=flip_point,
+                    call_wall=call_wall,
+                    put_wall=put_wall
+                )
+            except Exception as persist_err:
+                logger.debug(f"GEX analysis snapshot persist skipped: {persist_err}")
+
+        return response
 
     except Exception as e:
         logger.error(f"Error getting GEX analysis: {e}")
@@ -2486,6 +2526,163 @@ async def get_gamma_history(
     except Exception as e:
         logger.error(f"Error getting gamma history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/intraday-ticks")
+async def get_intraday_ticks(
+    symbol: str = Query("SPY", description="Symbol to get ticks for"),
+    interval: int = Query(5, description="Interval in minutes to bucket ticks")
+):
+    """
+    Get intraday 5-minute ticks of key GEX metrics from watchtower_snapshots.
+
+    Returns time-series of: spot_price, total_net_gamma, gamma_regime, vix,
+    flip_point, call_wall, put_wall for the current trading day.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"ticks": [], "symbol": symbol, "interval": interval}}
+
+        cursor = conn.cursor()
+
+        # Get today's snapshots (bucket to nearest interval)
+        cursor.execute("""
+            SELECT
+                date_trunc('hour', snapshot_time) +
+                    (floor(extract(minute FROM snapshot_time) / %s) * %s || ' minutes')::interval
+                    AS tick_time,
+                AVG(spot_price) AS spot_price,
+                AVG(total_net_gamma) AS total_net_gamma,
+                AVG(vix) AS vix,
+                AVG(expected_move) AS expected_move,
+                MODE() WITHIN GROUP (ORDER BY gamma_regime) AS gamma_regime,
+                AVG(flip_point) AS flip_point,
+                AVG(call_wall) AS call_wall,
+                AVG(put_wall) AS put_wall,
+                COUNT(*) AS sample_count
+            FROM watchtower_snapshots
+            WHERE symbol = %s
+            AND snapshot_time::date = CURRENT_DATE
+            ORDER BY tick_time ASC
+        """, (interval, interval, symbol))
+
+        rows = cursor.fetchall()
+
+        ticks = []
+        for row in rows:
+            tick_time, spot, net_gamma, vix_val, em, regime, flip, cw, pw, count = row
+            ticks.append({
+                "time": tick_time.isoformat() if tick_time else None,
+                "spot_price": round(float(spot), 2) if spot else None,
+                "net_gamma": round(float(net_gamma), 2) if net_gamma else None,
+                "vix": round(float(vix_val), 2) if vix_val else None,
+                "expected_move": round(float(em), 4) if em else None,
+                "gamma_regime": regime,
+                "flip_point": round(float(flip), 2) if flip else None,
+                "call_wall": round(float(cw), 2) if cw else None,
+                "put_wall": round(float(pw), 2) if pw else None,
+                "samples": count
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "ticks": ticks,
+                "symbol": symbol,
+                "interval": interval,
+                "count": len(ticks)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting intraday ticks: {e}")
+        return {"success": True, "data": {"ticks": [], "symbol": symbol, "interval": interval}}
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+
+@router.get("/intraday-bars")
+async def get_intraday_bars(
+    symbol: str = Query("SPY", description="Symbol to get bars for"),
+    interval: str = Query("5min", description="Bar interval: 1min, 5min, 15min")
+):
+    """
+    Get intraday OHLCV bars from Tradier timesales API.
+
+    Returns 5-minute candlestick data for the current trading day.
+    Used by the GEX Profile chart to overlay price candles on gamma data.
+    """
+    cache_key = f"intraday_bars_{symbol}_{interval}"
+    cached = get_cached(cache_key, ttl=30)
+    if cached:
+        return cached
+
+    tradier = get_tradier()
+    if not tradier:
+        result = {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval, "error": "Tradier not available"}}
+        return result
+
+    try:
+        # Tradier timesales endpoint returns intraday OHLCV bars
+        now = get_central_time()
+        params = {
+            'symbol': symbol,
+            'interval': interval,
+            'start': now.strftime('%Y-%m-%d 08:30'),
+            'end': now.strftime('%Y-%m-%d 15:15'),
+            'session_filter': 'open'
+        }
+
+        response = tradier._make_request('GET', 'markets/timesales', params=params)
+        series = response.get('series', {})
+
+        if not series or series == 'null':
+            result = {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval}}
+            set_cached(cache_key, result)
+            return result
+
+        raw_data = series.get('data', [])
+        if isinstance(raw_data, dict):
+            raw_data = [raw_data]
+
+        bars = []
+        for bar in raw_data:
+            bars.append({
+                "time": bar.get('time', ''),
+                "open": round(float(bar.get('open', 0)), 2),
+                "high": round(float(bar.get('high', 0)), 2),
+                "low": round(float(bar.get('low', 0)), 2),
+                "close": round(float(bar.get('close', 0)), 2),
+                "volume": int(bar.get('volume', 0))
+            })
+
+        result = {
+            "success": True,
+            "data": {
+                "bars": bars,
+                "symbol": symbol,
+                "interval": interval,
+                "count": len(bars)
+            }
+        }
+        set_cached(cache_key, result)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error getting intraday bars from Tradier: {e}")
+        return {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval, "error": str(e)}}
 
 
 @router.get("/probability")
@@ -2808,7 +3005,10 @@ async def persist_watchtower_snapshot_to_db(
     gamma_regime: str,
     previous_regime: str = None,
     regime_flipped: bool = False,
-    market_status: str = "open"
+    market_status: str = "open",
+    flip_point: float = None,
+    call_wall: float = None,
+    put_wall: float = None
 ):
     """
     Persist WATCHTOWER snapshot to database for prior day comparisons.
@@ -2846,12 +3046,14 @@ async def persist_watchtower_snapshot_to_db(
                 symbol, expiration_date, snapshot_time,
                 spot_price, expected_move, vix,
                 total_net_gamma, gamma_regime, previous_regime,
-                regime_flipped, market_status
+                regime_flipped, market_status,
+                flip_point, call_wall, put_wall
             ) VALUES (
                 %s, %s, NOW(),
                 %s, %s, %s,
                 %s, %s, %s,
-                %s, %s
+                %s, %s,
+                %s, %s, %s
             )
         """, (
             symbol,
@@ -2863,7 +3065,10 @@ async def persist_watchtower_snapshot_to_db(
             gamma_regime,
             previous_regime,
             regime_flipped,
-            market_status
+            market_status,
+            flip_point,
+            call_wall,
+            put_wall
         ))
 
         conn.commit()

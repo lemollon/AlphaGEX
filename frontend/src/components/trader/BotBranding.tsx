@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'AGAPE' | 'AGAPE_SPOT'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP'
 
 export interface BotBrand {
   name: BotName
@@ -444,6 +444,78 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#06B6D4',
     hexLight: '#22D3EE',
     hexDark: '#0891B2',
+  },
+  AGAPE_BTC: {
+    name: 'AGAPE_BTC',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_BTC,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_BTC} BTC Micro Futures`,
+    description: 'BTC Micro Futures with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (/MBT)',
+    // Primary - Orange (Bitcoin's classic color)
+    primaryColor: 'orange',
+    primaryBg: 'bg-orange-600',
+    primaryBorder: 'border-orange-500',
+    primaryText: 'text-orange-400',
+    // Light variants
+    lightBg: 'bg-orange-900/20',
+    lightText: 'text-orange-300',
+    lightBorder: 'border-orange-700/50',
+    // Chart colors
+    chartLine: 'stroke-orange-400',
+    chartFill: 'fill-orange-500/20',
+    chartPositive: 'text-orange-400',
+    chartNegative: 'text-orange-600',
+    // Position cards
+    positionBorder: 'border-orange-600/50',
+    positionBg: 'bg-orange-950/30',
+    positionAccent: 'bg-orange-500',
+    // Badges
+    badgeBg: 'bg-orange-900/50',
+    badgeText: 'text-orange-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-orange-500',
+    gradientTo: 'to-orange-900',
+    // Hex for Recharts
+    hexPrimary: '#F97316',
+    hexLight: '#FB923C',
+    hexDark: '#EA580C',
+  },
+  AGAPE_XRP: {
+    name: 'AGAPE_XRP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_XRP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_XRP} XRP Futures`,
+    description: 'XRP Futures with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (/XRP)',
+    // Primary - Sky blue (XRP's brand color)
+    primaryColor: 'sky',
+    primaryBg: 'bg-sky-600',
+    primaryBorder: 'border-sky-500',
+    primaryText: 'text-sky-400',
+    // Light variants
+    lightBg: 'bg-sky-900/20',
+    lightText: 'text-sky-300',
+    lightBorder: 'border-sky-700/50',
+    // Chart colors
+    chartLine: 'stroke-sky-400',
+    chartFill: 'fill-sky-500/20',
+    chartPositive: 'text-sky-400',
+    chartNegative: 'text-sky-600',
+    // Position cards
+    positionBorder: 'border-sky-600/50',
+    positionBg: 'bg-sky-950/30',
+    positionAccent: 'bg-sky-500',
+    // Badges
+    badgeBg: 'bg-sky-900/50',
+    badgeText: 'text-sky-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-sky-500',
+    gradientTo: 'to-sky-900',
+    // Hex for Recharts
+    hexPrimary: '#0EA5E9',
+    hexLight: '#38BDF8',
+    hexDark: '#0284C7',
   },
 }
 

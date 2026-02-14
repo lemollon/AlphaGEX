@@ -99,6 +99,8 @@ class StrikeData:
     call_ask_size: int = 0   # Contracts waiting at call ask (sellers)
     put_bid_size: int = 0    # Contracts waiting at put bid (buyers)
     put_ask_size: int = 0    # Contracts waiting at put ask (sellers)
+    call_oi: int = 0     # Call open interest for GEX calculation
+    put_oi: int = 0      # Put open interest for GEX calculation
     call_iv: float = 0.0
     put_iv: float = 0.0
     is_magnet: bool = False
@@ -610,19 +612,32 @@ class WatchtowerEngine:
 
         return False, None
 
-    def classify_gamma_regime(self, total_net_gamma: float) -> str:
+    def classify_gamma_regime(self, total_net_gamma: float, spot_price: float = 0) -> str:
         """
         Classify overall gamma regime based on total net gamma.
+
+        Args:
+            total_net_gamma: Sum of net gamma across strikes (gamma × OI × 100 units)
+            spot_price: Current spot price. When provided, converts gamma-exposure
+                        units to GEX-dollar units (× spot²) before comparing thresholds.
 
         Returns:
             POSITIVE, NEGATIVE, or NEUTRAL
         """
-        # Threshold for neutral zone (can be tuned)
+        # Convert to GEX-dollar units if spot_price is available
+        # total_net_gamma is in gamma × OI × 100 units from calculate_net_gamma
+        # GEX-dollar = gamma × OI × 100 × spot² — matches market_regime_classifier scale
+        if spot_price > 0:
+            gex_value = total_net_gamma * (spot_price ** 2)
+        else:
+            gex_value = total_net_gamma
+
+        # Threshold for neutral zone in GEX-dollar units
         neutral_threshold = 1e9  # $1B
 
-        if total_net_gamma > neutral_threshold:
+        if gex_value > neutral_threshold:
             return GammaRegime.POSITIVE.value
-        elif total_net_gamma < -neutral_threshold:
+        elif gex_value < -neutral_threshold:
             return GammaRegime.NEGATIVE.value
         else:
             return GammaRegime.NEUTRAL.value
@@ -1870,6 +1885,8 @@ class WatchtowerEngine:
                 volume=strike_info.get('volume', 0),
                 call_volume=strike_info.get('call_volume', 0),  # Separate for GEX flow
                 put_volume=strike_info.get('put_volume', 0),    # Separate for GEX flow
+                call_oi=strike_info.get('call_oi', 0),          # Open interest for GEX calculation
+                put_oi=strike_info.get('put_oi', 0),            # Open interest for GEX calculation
                 # Bid/ask size for order flow pressure analysis
                 call_bid_size=strike_info.get('call_bid_size', 0),
                 call_ask_size=strike_info.get('call_ask_size', 0),
@@ -1915,7 +1932,7 @@ class WatchtowerEngine:
             'flip_point': flip_point,
             'magnets': top_magnets,
             'vix': vix,
-            'gamma_regime': self.classify_gamma_regime(total_net_gamma),
+            'gamma_regime': self.classify_gamma_regime(total_net_gamma, spot_price),
             'expected_move': expected_move,
             'spot_price': spot_price
         }
@@ -1938,7 +1955,7 @@ class WatchtowerEngine:
                 s.probability = round((s.probability / total_prob) * 100, 1)
 
         # Classify overall regime
-        gamma_regime = self.classify_gamma_regime(total_net_gamma)
+        gamma_regime = self.classify_gamma_regime(total_net_gamma, spot_price)
         previous_regime = self.previous_snapshot.gamma_regime if self.previous_snapshot else None
         regime_flipped = previous_regime is not None and gamma_regime != previous_regime
 
@@ -2331,10 +2348,28 @@ class WatchtowerEngine:
         )
 
         # ==================== OVERALL RATING ====================
+        # Compute gamma-based signals for hybrid rating
+        net_gex_value = self._estimate_net_gex(strikes, spot_price)
+
+        # Determine price vs flip point
+        price_above_flip = None
+        if strikes:
+            sorted_strikes = sorted(strikes, key=lambda s: s.strike)
+            for i in range(len(sorted_strikes) - 1):
+                curr = sorted_strikes[i]
+                nxt = sorted_strikes[i + 1]
+                if curr.net_gamma * nxt.net_gamma < 0:
+                    ratio = abs(curr.net_gamma) / (abs(curr.net_gamma) + abs(nxt.net_gamma))
+                    flip = curr.strike + ratio * (nxt.strike - curr.strike)
+                    price_above_flip = spot_price > flip
+                    break
+
         rating = self._calculate_flow_rating(
             volume_pressure=volume_pressure,
             call_share=call_share,
-            skew_ratio=skew_measures.get('skew_ratio', 1.0)
+            skew_ratio=skew_measures.get('skew_ratio', 1.0),
+            net_gex=net_gex_value,
+            price_above_flip=price_above_flip
         )
 
         return {
@@ -2398,7 +2433,7 @@ class WatchtowerEngine:
                 'total_call_oi': total_call_oi,
                 'total_put_oi': total_put_oi,
                 'put_call_ratio': round(total_put_volume / total_call_volume, 3) if total_call_volume > 0 else 0,
-                'net_gex': self._estimate_net_gex(strikes, spot_price)
+                'net_gex': net_gex_value
             }
         }
 
@@ -2420,28 +2455,37 @@ class WatchtowerEngine:
         - Speculation: Call buying dominates (bid > ask), far-OTM focus
         """
         # Call bid vs ask imbalance
-        if total_call_bid_size + total_call_ask_size > 0:
+        has_bid_ask_data = (total_call_bid_size + total_call_ask_size) > 0
+        if has_bid_ask_data:
             call_buying_pressure = (total_call_bid_size - total_call_ask_size) / (total_call_bid_size + total_call_ask_size)
         else:
             call_buying_pressure = 0.0
 
         # Determine structure
-        if total_put_volume > total_call_volume * 1.3:
+        if total_call_volume == 0 and total_put_volume == 0:
+            # No volume data at all (e.g., outside market hours)
+            structure = "Data Unavailable"
+            structure_description = "No volume data — market may be closed"
+        elif total_put_volume > total_call_volume * 1.3:
             # Puts dominate - likely hedging activity
             structure = "Hedging / Protective"
             structure_description = "Put activity exceeds calls, suggesting portfolio protection"
-        elif call_buying_pressure < -0.2 and near_atm_call_volume > far_otm_call_volume:
+        elif has_bid_ask_data and call_buying_pressure < -0.2 and near_atm_call_volume > far_otm_call_volume:
             # Sellers dominating near ATM - covered call writing
             structure = "Hedging / Overwrite"
             structure_description = "Call selling near ATM suggests covered call activity"
-        elif call_buying_pressure > 0.2 and far_otm_call_volume > near_atm_call_volume * 0.5:
+        elif has_bid_ask_data and call_buying_pressure > 0.2 and far_otm_call_volume > near_atm_call_volume * 0.5:
             # Buyers dominating far OTM - speculation
             structure = "Speculation / Directional"
             structure_description = "Aggressive call buying in far OTM strikes"
-        elif call_buying_pressure > 0.1:
+        elif has_bid_ask_data and call_buying_pressure > 0.1:
             # Moderate buying pressure
             structure = "Bullish / Accumulation"
             structure_description = "Net call buying suggests bullish positioning"
+        elif not has_bid_ask_data and total_call_volume > total_put_volume * 1.3:
+            # No bid/ask data but volume available — use volume-based classification
+            structure = "Bullish / Call Dominant"
+            structure_description = "Call volume exceeds put volume (bid/ask data unavailable)"
         else:
             # Balanced or neutral
             structure = "Balanced / Mixed"
@@ -2526,20 +2570,24 @@ class WatchtowerEngine:
         self,
         volume_pressure: float,
         call_share: float,
-        skew_ratio: float
+        skew_ratio: float,
+        net_gex: float = 0.0,
+        price_above_flip: Optional[bool] = None
     ) -> Dict:
         """
-        Calculate overall flow rating (BULLISH / BEARISH / NEUTRAL).
+        Calculate overall rating (BULLISH / BEARISH / NEUTRAL).
 
-        Combines:
+        Combines flow-based AND gamma-based signals:
         - Volume pressure direction
         - Call vs put share
         - IV skew bias
+        - Net GEX direction (positive = bullish dealer positioning)
+        - Price vs GEX flip point (above = positive gamma territory)
         """
         bullish_score = 0
         bearish_score = 0
 
-        # Volume pressure
+        # Volume pressure (flow-based)
         if volume_pressure > 0.2:
             bullish_score += 2
         elif volume_pressure > 0.05:
@@ -2549,7 +2597,7 @@ class WatchtowerEngine:
         elif volume_pressure < -0.05:
             bearish_score += 1
 
-        # Call share
+        # Call share (flow-based)
         if call_share > 60:
             bullish_score += 1
         elif call_share < 40:
@@ -2559,6 +2607,18 @@ class WatchtowerEngine:
         if skew_ratio < 0.95:
             bullish_score += 1
         elif skew_ratio > 1.05:
+            bearish_score += 1
+
+        # Net GEX direction (gamma-based) — positive GEX = dealers long gamma = supportive
+        if net_gex > 0.5:
+            bullish_score += 1
+        elif net_gex < -0.5:
+            bearish_score += 1
+
+        # Price vs GEX flip (gamma-based) — above flip = positive gamma territory
+        if price_above_flip is True:
+            bullish_score += 1
+        elif price_above_flip is False:
             bearish_score += 1
 
         # Determine rating

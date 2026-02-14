@@ -191,6 +191,24 @@ except ImportError:
     AgapeSpotTrader = None
     print("Warning: AGAPE-SPOT not available. 24/7 spot ETH trading will be disabled.")
 
+# Import AGAPE-BTC (BTC Micro Futures with Crypto GEX)
+try:
+    from trading.agape_btc.trader import AgapeBtcTrader, create_agape_btc_trader
+    AGAPE_BTC_AVAILABLE = True
+except ImportError:
+    AGAPE_BTC_AVAILABLE = False
+    AgapeBtcTrader = None
+    print("Warning: AGAPE-BTC not available. BTC crypto trading will be disabled.")
+
+# Import AGAPE-XRP (XRP Futures with Crypto GEX)
+try:
+    from trading.agape_xrp.trader import AgapeXrpTrader, create_agape_xrp_trader
+    AGAPE_XRP_AVAILABLE = True
+except ImportError:
+    AGAPE_XRP_AVAILABLE = False
+    AgapeXrpTrader = None
+    print("Warning: AGAPE-XRP not available. XRP crypto trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -532,13 +550,13 @@ class AutonomousTraderScheduler:
 
         # FORTRESS V2 - SPY Iron Condors (10% monthly target)
         # Capital: Uses AlphaGEX internal capital allocation
-        # PAPER mode: Internal paper trading only (no Tradier orders)
+        # LIVE mode: Executes trades on Tradier SANDBOX accounts (3 accounts)
         self.fortress_trader = None
         if FORTRESS_AVAILABLE:
             try:
-                config = FortressConfig(mode=FortressTradingMode.PAPER)
+                config = FortressConfig(mode=FortressTradingMode.LIVE)
                 self.fortress_trader = FortressTrader(config=config)
-                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, PAPER mode - internal tracking only)")
+                logger.info(f"✅ FORTRESS V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
             except Exception as e:
                 logger.warning(f"FORTRESS V2 initialization failed: {e}")
                 self.fortress_trader = None
@@ -683,6 +701,30 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"AGAPE-SPOT initialization failed: {e}")
                 self.agape_spot_trader = None
+
+        # AGAPE-BTC - BTC Micro Futures with Crypto GEX signals
+        # CME /MBT trading with 5-minute scan interval
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_btc_trader = None
+        if AGAPE_BTC_AVAILABLE:
+            try:
+                self.agape_btc_trader = create_agape_btc_trader()
+                logger.info("✅ AGAPE-BTC initialized (BTC Micro Futures, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-BTC initialization failed: {e}")
+                self.agape_btc_trader = None
+
+        # AGAPE-XRP - XRP Futures with Crypto GEX signals
+        # CME /XRP trading with 5-minute scan interval
+        # PAPER mode: Simulated trades with $5k starting capital
+        self.agape_xrp_trader = None
+        if AGAPE_XRP_AVAILABLE:
+            try:
+                self.agape_xrp_trader = create_agape_xrp_trader()
+                logger.info("✅ AGAPE-XRP initialized (XRP Futures, PAPER mode - $5k starting capital)")
+            except Exception as e:
+                logger.warning(f"AGAPE-XRP initialization failed: {e}")
+                self.agape_xrp_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -1383,6 +1425,51 @@ class AutonomousTraderScheduler:
             logger.error(error_msg)
             logger.error(traceback.format_exc())
             logger.info("FORTRESS EOD will retry next trading day")
+            logger.info(f"=" * 80)
+
+    def scheduled_fortress_friday_close_all(self):
+        """
+        FORTRESS Friday Close-All - runs at 2:55 PM CT on Fridays ONLY
+
+        Safety net to ensure NO positions are held over the weekend.
+        The regular 5-min cycle handles force-close via FRIDAY_WEEKEND_CLOSE
+        at 2:50 PM, but this is a dedicated backup that runs close_only mode
+        to catch any stragglers (pricing failures, partial closes, etc).
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"FORTRESS FRIDAY CLOSE-ALL triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.fortress_trader:
+            logger.warning("FORTRESS trader not available - skipping Friday close-all")
+            return
+
+        if now.weekday() != 4:
+            logger.info("Not Friday - skipping Friday close-all (should not happen)")
+            return
+
+        try:
+            # Run close-only cycle to force-close any remaining positions
+            result = self.fortress_trader.run_cycle(close_only=True)
+
+            closed = result.get('positions_closed', 0)
+            pnl = result.get('realized_pnl', 0)
+
+            if closed > 0:
+                logger.info(f"FORTRESS Friday close-all: Closed {closed} position(s), P&L: ${pnl:.2f}")
+            else:
+                logger.info("FORTRESS Friday close-all: No positions remaining (already flat)")
+
+            self._save_heartbeat('FORTRESS', 'FRIDAY_CLOSE_ALL', {
+                'closed': closed,
+                'realized_pnl': pnl
+            })
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in FORTRESS Friday close-all: {str(e)}")
+            logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
     def scheduled_solomon_eod_logic(self):
@@ -2383,6 +2470,110 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in AGAPE-SPOT scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_btc_logic(self):
+        """
+        AGAPE-BTC Micro Futures - runs every 5 minutes during CME crypto hours.
+
+        CME Micro Bitcoin futures trade Sun 5PM - Fri 4PM CT with daily 4-5PM break.
+        Uses Deribit GEX as primary signal, CoinGlass funding rate as secondary.
+        """
+        if not self.agape_btc_trader:
+            return
+
+        try:
+            result = self.agape_btc_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-BTC: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-BTC: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-BTC: Cycle error: {result['error']}")
+            else:
+                if self.agape_btc_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-BTC scan #{self.agape_btc_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BTC scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_btc_eod_logic(self):
+        """
+        AGAPE-BTC End-of-Day - runs at 3:45 PM CT (before CME 4PM close).
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-BTC EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_btc_trader:
+            return
+
+        try:
+            result = self.agape_btc_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-BTC EOD: Closed {closed} position(s)")
+
+            perf = self.agape_btc_trader.get_performance()
+            logger.info(f"AGAPE-BTC EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-BTC EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_xrp_logic(self):
+        """
+        AGAPE-XRP Futures - runs every 5 minutes during CME crypto hours.
+
+        CME XRP futures trade Sun 5PM - Fri 4PM CT with daily 4-5PM break.
+        Uses Deribit GEX as primary signal, CoinGlass funding rate as secondary.
+        """
+        if not self.agape_xrp_trader:
+            return
+
+        try:
+            result = self.agape_xrp_trader.run_cycle()
+            outcome = result.get("outcome", "UNKNOWN")
+
+            if result.get("new_trade"):
+                logger.info(f"AGAPE-XRP: New trade! {outcome}")
+            elif result.get("positions_closed", 0) > 0:
+                logger.info(f"AGAPE-XRP: Closed {result['positions_closed']} position(s)")
+            elif result.get("error"):
+                logger.error(f"AGAPE-XRP: Cycle error: {result['error']}")
+            else:
+                if self.agape_xrp_trader._cycle_count % 12 == 0:
+                    logger.debug(f"AGAPE-XRP scan #{self.agape_xrp_trader._cycle_count}: {outcome}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-XRP scan: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_agape_xrp_eod_logic(self):
+        """
+        AGAPE-XRP End-of-Day - runs at 3:45 PM CT (before CME 4PM close).
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"AGAPE-XRP EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.agape_xrp_trader:
+            return
+
+        try:
+            result = self.agape_xrp_trader.run_cycle(close_only=True)
+            closed = result.get("positions_closed", 0)
+            if closed > 0:
+                logger.info(f"AGAPE-XRP EOD: Closed {closed} position(s)")
+
+            perf = self.agape_xrp_trader.get_performance()
+            logger.info(f"AGAPE-XRP EOD Summary: Trades={perf.get('total_trades', 0)}, "
+                        f"Win Rate={perf.get('win_rate', 0)}%, P&L=${perf.get('total_pnl', 0):,.2f}")
+
+        except Exception as e:
+            logger.error(f"ERROR in AGAPE-XRP EOD: {str(e)}")
             logger.error(traceback.format_exc())
 
     def scheduled_jubilee_daily_logic(self):
@@ -4539,15 +4730,16 @@ class AutonomousTraderScheduler:
                     logger.info(f"BOT_REPORTS: Generating report for {bot_name.upper()}...")
 
                     # Generate the report (saves to archive internally)
+                    # Always produces a report even on 0-trade days
                     report = generate_report_for_bot(bot_name, now.date())
 
-                    if report:
-                        trade_count = report.get('trade_count', 0)
-                        total_pnl = report.get('total_pnl', 0)
+                    trade_count = report.get('trade_count', 0)
+                    total_pnl = report.get('total_pnl', 0)
+                    if trade_count > 0:
                         logger.info(f"BOT_REPORTS: {bot_name.upper()} report saved - {trade_count} trades, P&L: ${total_pnl:.2f}")
-                        reports_generated += 1
                     else:
-                        logger.info(f"BOT_REPORTS: {bot_name.upper()} - No trades today, skipping report")
+                        logger.info(f"BOT_REPORTS: {bot_name.upper()} report saved - no trades today (summary-only)")
+                    reports_generated += 1
 
                 except Exception as e:
                     logger.error(f"BOT_REPORTS: {bot_name.upper()} report failed: {e}")
@@ -4709,6 +4901,26 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ FORTRESS EOD job scheduled (3:01 PM CT daily)")
+
+            # =================================================================
+            # FORTRESS FRIDAY CLOSE-ALL: Safety net to ensure NO positions survive weekend
+            # Runs at 2:55 PM CT on Fridays only. The regular 5-min cycle handles
+            # force-close at 2:50 PM, but this is a dedicated backup to catch any
+            # positions that slipped through (pricing failures, retries, etc).
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_fortress_friday_close_all,
+                trigger=CronTrigger(
+                    hour=14,       # 2:00 PM CT
+                    minute=55,     # 2:55 PM CT - 5 min before market close
+                    day_of_week='fri',
+                    timezone='America/Chicago'
+                ),
+                id='fortress_friday_close',
+                name='FORTRESS - Friday Close All (No Weekend Holds)',
+                replace_existing=True
+            )
+            logger.info("✅ FORTRESS Friday close-all job scheduled (2:55 PM CT Fridays)")
         else:
             logger.warning("⚠️ FORTRESS not available - aggressive IC trading disabled")
 
@@ -4978,6 +5190,72 @@ class AutonomousTraderScheduler:
             logger.info("✅ AGAPE-SPOT job scheduled (every 1 min, 24/7)")
         else:
             logger.warning("⚠️ AGAPE-SPOT not available - 24/7 spot ETH trading disabled")
+
+        # =================================================================
+        # AGAPE-BTC JOB: BTC Micro Futures (/MBT) - every 5 minutes
+        # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
+        # =================================================================
+        if self.agape_btc_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_btc_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_btc_trading',
+                name='AGAPE-BTC - BTC Micro Futures (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BTC job scheduled (every 5 min, checks CME crypto hours internally)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_btc_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_btc_eod',
+                name='AGAPE-BTC - Force Close Before CME Maintenance',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-BTC EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-BTC not available - BTC crypto trading disabled")
+
+        # =================================================================
+        # AGAPE-XRP JOB: XRP Futures (/XRP) - every 5 minutes
+        # Crypto trades nearly 24/7 (CME: Sun 5PM - Fri 4PM CT)
+        # =================================================================
+        if self.agape_xrp_trader:
+            self.scheduler.add_job(
+                self.scheduled_agape_xrp_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='agape_xrp_trading',
+                name='AGAPE-XRP - XRP Futures (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-XRP job scheduled (every 5 min, checks CME crypto hours internally)")
+
+            self.scheduler.add_job(
+                self.scheduled_agape_xrp_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=45,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='agape_xrp_eod',
+                name='AGAPE-XRP - Force Close Before CME Maintenance',
+                replace_existing=True
+            )
+            logger.info("✅ AGAPE-XRP EOD job scheduled (3:45 PM CT daily)")
+        else:
+            logger.warning("⚠️ AGAPE-XRP not available - XRP crypto trading disabled")
 
         # =================================================================
         # JUBILEE JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT

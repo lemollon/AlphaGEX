@@ -33,7 +33,10 @@ import {
   useANCHORLivePnL,
   useGideonLivePnL,
   useSamsonLivePnL,
-  useJUBILEELivePnL
+  useJUBILEELivePnL,
+  useAGAPEStatus,
+  useAGAPEBTCStatus,
+  useAGAPEXRPStatus,
 } from '@/lib/hooks/useMarketData'
 
 // PERFORMANCE FIX: Move colorClasses outside component (was recreated every render)
@@ -164,6 +167,11 @@ export default function BotStatusOverview() {
   const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useSamsonStatus()
   const { data: jubileeStatus, isLoading: jubileeLoading, mutate: refreshJubilee } = useJUBILEEStatus()
 
+  // Crypto futures bots
+  const { data: agapeEthStatus, isLoading: agapeEthLoading, mutate: refreshAgapeEth } = useAGAPEStatus()
+  const { data: agapeBtcStatus, isLoading: agapeBtcLoading, mutate: refreshAgapeBtc } = useAGAPEBTCStatus()
+  const { data: agapeXrpStatus, isLoading: agapeXrpLoading, mutate: refreshAgapeXrp } = useAGAPEXRPStatus()
+
   const { data: aresLivePnL } = useFortressLivePnL()
   const { data: solomonLivePnL } = useSolomonLivePnL()
   const { data: anchorLivePnL } = useANCHORLivePnL()
@@ -179,7 +187,10 @@ export default function BotStatusOverview() {
     refreshIcarus()
     refreshTitan()
     refreshJubilee()
-  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshJubilee])
+    refreshAgapeEth()
+    refreshAgapeBtc()
+    refreshAgapeXrp()
+  }, [refreshAres, refreshAthena, refreshAnchor, refreshIcarus, refreshTitan, refreshJubilee, refreshAgapeEth, refreshAgapeBtc, refreshAgapeXrp])
 
   // PERFORMANCE FIX: useMemo for calculated P&L values (was recalculating every render)
   const { totalTodayPnL, totalUnrealizedPnL, paperTodayPnL } = useMemo(() => ({
@@ -205,11 +216,17 @@ export default function BotStatusOverview() {
     const paper = [
       icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
       titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE',
-      jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled
+      jubileeStatus?.box_spread?.enabled || jubileeStatus?.ic_trading?.enabled,
     ].filter(Boolean).length
 
-    return { activeLiveBots: live, activePaperBots: paper, totalActiveBots: live + paper }
-  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, jubileeStatus])
+    const crypto = [
+      agapeEthStatus?.data?.status === 'ACTIVE',
+      agapeBtcStatus?.data?.status === 'ACTIVE',
+      agapeXrpStatus?.data?.status === 'ACTIVE',
+    ].filter(Boolean).length
+
+    return { activeLiveBots: live, activePaperBots: paper, activeCryptoBots: crypto, totalActiveBots: live + paper + crypto }
+  }, [aresStatus, solomonStatus, anchorStatus, icarusStatus, titanStatus, jubileeStatus, agapeEthStatus, agapeBtcStatus, agapeXrpStatus])
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">
@@ -226,7 +243,7 @@ export default function BotStatusOverview() {
             <div className="flex items-center gap-3 text-xs text-text-muted">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 bg-success rounded-full animate-pulse" />
-                {totalActiveBots}/6 active
+                {totalActiveBots}/9 active
               </span>
               <span className={totalTodayPnL >= 0 ? 'text-success' : 'text-danger'}>
                 Live: {totalTodayPnL >= 0 ? '+' : ''}${totalTodayPnL.toFixed(0)}
@@ -275,7 +292,7 @@ export default function BotStatusOverview() {
             </div>
           </div>
 
-          {/* Live Trading Bots */}
+          {/* Live Trading */}
           <div className="mb-3">
             <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Live Trading</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -306,13 +323,6 @@ export default function BotStatusOverview() {
                 color="amber"
                 isLoading={anchorLoading}
               />
-            </div>
-          </div>
-
-          {/* Paper Trading Bots */}
-          <div>
-            <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Paper Trading</div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <BotStatusCard
                 name="GIDEON"
                 icon={<Flame className="w-5 h-5 text-cyan-500" />}
@@ -346,6 +356,49 @@ export default function BotStatusOverview() {
                 }}
                 color="orange"
                 isLoading={jubileeLoading}
+              />
+            </div>
+          </div>
+
+          {/* Futures Crypto */}
+          <div>
+            <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Futures Crypto</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <BotStatusCard
+                name="AGAPE-ETH"
+                icon={<TrendingUp className="w-5 h-5 text-purple-500" />}
+                href="/futures-crypto"
+                status={agapeEthStatus?.data}
+                livePnL={{
+                  today_pnl: agapeEthStatus?.data?.today_pnl || 0,
+                  total_unrealized_pnl: agapeEthStatus?.data?.total_unrealized_pnl || 0
+                }}
+                color="purple"
+                isLoading={agapeEthLoading}
+              />
+              <BotStatusCard
+                name="AGAPE-BTC"
+                icon={<TrendingUp className="w-5 h-5 text-orange-500" />}
+                href="/futures-crypto"
+                status={agapeBtcStatus?.data}
+                livePnL={{
+                  today_pnl: agapeBtcStatus?.data?.today_pnl || 0,
+                  total_unrealized_pnl: agapeBtcStatus?.data?.total_unrealized_pnl || 0
+                }}
+                color="orange"
+                isLoading={agapeBtcLoading}
+              />
+              <BotStatusCard
+                name="AGAPE-XRP"
+                icon={<TrendingUp className="w-5 h-5 text-cyan-500" />}
+                href="/futures-crypto"
+                status={agapeXrpStatus?.data}
+                livePnL={{
+                  today_pnl: agapeXrpStatus?.data?.today_pnl || 0,
+                  total_unrealized_pnl: agapeXrpStatus?.data?.total_unrealized_pnl || 0
+                }}
+                color="cyan"
+                isLoading={agapeXrpLoading}
               />
             </div>
           </div>

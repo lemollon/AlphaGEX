@@ -661,6 +661,14 @@ class FortressTrader(MathOptimizerMixin):
             if not MARKET_CALENDAR.is_trading_day(today_str):
                 return False, "Market holiday"
 
+        # FRIDAY: Stop new entries at 1:00 PM CT so existing positions have time
+        # to hit profit targets before the 2:50 PM Friday force-close.
+        # Position management (_manage_positions) still runs — this only blocks NEW entries.
+        if now.weekday() == 4:  # Friday
+            friday_entry_cutoff = now.replace(hour=13, minute=0, second=0)
+            if now >= friday_entry_cutoff:
+                return False, "Friday 1:00 PM CT cutoff - no new entries before weekend close"
+
         # Trading window
         start_parts = self.config.entry_start.split(':')
         end_parts = self.config.entry_end.split(':')
@@ -1331,6 +1339,13 @@ class FortressTrader(MathOptimizerMixin):
         """
         # Get force exit time (handles early close days)
         force_time = self._get_force_exit_time(now, today)
+
+        # FRIDAY WEEKEND CLOSE: Force close ALL positions before weekend regardless of expiration.
+        # We don't want to hold any positions over the weekend.
+        is_friday = now.weekday() == 4  # Monday=0, Friday=4
+        if is_friday and now >= force_time:
+            logger.info(f"FORTRESS: Friday close - force closing {pos.position_id} before weekend (exp: {pos.expiration})")
+            return True, "FRIDAY_WEEKEND_CLOSE"
 
         # FORCE_EXIT: On expiration day, close at force exit time (10 min before market close)
         if pos.expiration == today and now >= force_time:
