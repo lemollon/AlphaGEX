@@ -1135,6 +1135,43 @@ class AgapeSpotDatabase:
             conn.close()
 
     # ------------------------------------------------------------------
+    # Buy-and-hold base prices (for alpha calculation)
+    # ------------------------------------------------------------------
+
+    def get_buyhold_base_prices(self, tickers: list) -> Dict[str, Optional[float]]:
+        """Get the earliest recorded spot price per ticker from equity snapshots.
+
+        Returns {ticker: first_price_float_or_None}.
+        Used by the alpha tracker to compute buy-and-hold return from the
+        same starting date as the first equity snapshot for each ticker.
+        """
+        result: Dict[str, Optional[float]] = {t: None for t in tickers}
+        conn = self._get_conn()
+        if not conn:
+            return result
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT DISTINCT ON (ticker)
+                       ticker, eth_price
+                FROM agape_spot_equity_snapshots
+                WHERE ticker = ANY(%s)
+                  AND eth_price IS NOT NULL AND eth_price > 0
+                ORDER BY ticker, timestamp ASC
+            """, (tickers,))
+            for row in cursor.fetchall():
+                t, price = row[0], row[1]
+                if t in result and price:
+                    result[t] = float(price)
+            return result
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Buy-hold base prices query failed: {e}")
+            return result
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ------------------------------------------------------------------
     # Performance stats for CapitalAllocator (per-ticker ranking)
     # ------------------------------------------------------------------
 
