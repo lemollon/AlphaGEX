@@ -426,6 +426,56 @@ class AgapeSpotSignalGenerator:
         ev = (win_prob * avg_win) - ((1.0 - win_prob) * avg_loss)
         return round(ev, 4), True
 
+    def _get_choppy_ev_threshold(
+        self, ticker: str, vol_context: Optional[Dict] = None,
+    ) -> float:
+        """Dynamic per-ticker choppy EV threshold.
+
+        Priority chain:
+          1. EWMA magnitude (from BayesianWinTracker) — adapts in real-time
+             as trade sizes shift with volatility regimes.
+          2. ATR-based estimate — forward-looking, uses current volatility
+             when EWMA has no data (cold start or stale ticker).
+          3. All-time avg from perf_stats — slow anchor, last resort before
+             the floor.
+          4. Floor ($0.02) — absolute minimum.
+
+        threshold = max(magnitude * choppy_ev_threshold_pct, floor)
+        """
+        pct = self.config.choppy_ev_threshold_pct
+        floor = self.config.choppy_ev_threshold_floor
+
+        # --- Priority 1: EWMA (real-time, recent trades weighted) ---
+        tracker = self._win_trackers.get(ticker)
+        if tracker and tracker.ema_magnitude > 0:
+            return max(tracker.ema_magnitude * pct, floor)
+
+        # --- Priority 2: ATR-based forward-looking estimate ---
+        vc = vol_context or {}
+        atr = vc.get("atr")
+        spot = vc.get("spot_price", 0)
+        if atr and atr > 0 and spot and spot > 0:
+            # Estimate trade magnitude from current vol:
+            #   position_value × atr_pct ≈ typical P&L swing
+            #   position_value = capital × risk_pct (crypto spot, no multiplier)
+            capital = self.config.get_trading_capital(ticker)
+            risk_pct = self.config.risk_per_trade_pct / 100.0
+            atr_pct = atr / spot
+            atr_magnitude = capital * risk_pct * atr_pct  # $ per trade
+            return max(atr_magnitude * pct, floor)
+
+        # --- Priority 3: All-time perf_stats (slow-moving fallback) ---
+        stats = self._perf_stats.get(ticker, {})
+        avg_win = stats.get("avg_win", 0.0)
+        avg_loss = abs(stats.get("avg_loss", 0.0))
+        total_trades = stats.get("total_trades", 0)
+        if total_trades >= 5 and avg_win > 0 and avg_loss > 0:
+            avg_magnitude = (avg_win + avg_loss) / 2.0
+            return max(avg_magnitude * pct, floor)
+
+        # --- Priority 4: Floor ---
+        return floor
+
     def generate_signal(
         self,
         ticker: str,
@@ -479,7 +529,8 @@ class AgapeSpotSignalGenerator:
         combined_confidence = market_data.get("combined_confidence", "LOW")
 
         action, reasoning = self._determine_action(
-            ticker, combined_signal, combined_confidence, market_data
+            ticker, combined_signal, combined_confidence, market_data,
+            vol_context=vol_context,
         )
 
         if action == SignalAction.WAIT:
@@ -570,7 +621,8 @@ class AgapeSpotSignalGenerator:
         )
 
     def _determine_action(
-        self, ticker: str, combined_signal: str, confidence: str, market_data: Dict
+        self, ticker: str, combined_signal: str, confidence: str, market_data: Dict,
+        vol_context: Optional[Dict] = None,
     ) -> Tuple[SignalAction, str]:
         """Translate combined signal into LONG or WAIT (never SHORT).
 
@@ -612,19 +664,19 @@ class AgapeSpotSignalGenerator:
             choppy_win_prob = self._get_bayesian_choppy_win_prob(ticker)
             choppy_ev, choppy_has_ev = self._calculate_expected_value(ticker, choppy_win_prob)
             if choppy_has_ev:
-                # EV-based choppy gate: in choppy markets, need stronger positive EV
-                # (normal markets allow EV > 0, choppy requires EV > $0.50 per trade)
-                choppy_ev_threshold = 0.50
+                # EV-based choppy gate: scale threshold to each coin's trade magnitude
+                # so small-notional coins (SHIB, XRP) aren't starved of trades
+                choppy_ev_threshold = self._get_choppy_ev_threshold(ticker, vol_context)
                 if choppy_ev < choppy_ev_threshold:
                     logger.info(
                         f"AGAPE-SPOT CHOPPY EV: {ticker} choppy market, "
-                        f"EV=${choppy_ev:.4f} < ${choppy_ev_threshold} — BLOCKED"
+                        f"EV=${choppy_ev:.4f} < ${choppy_ev_threshold:.4f} — BLOCKED"
                     )
                     return (SignalAction.WAIT, f"CHOPPY_LOW_EV_{choppy_ev:.3f}")
                 else:
                     logger.info(
                         f"AGAPE-SPOT CHOPPY EV: {ticker} choppy market, "
-                        f"EV=${choppy_ev:.4f} >= ${choppy_ev_threshold} — EDGE CONFIRMED"
+                        f"EV=${choppy_ev:.4f} >= ${choppy_ev_threshold:.4f} — EDGE CONFIRMED"
                     )
             else:
                 # Cold start fallback: use raw win probability for choppy detection

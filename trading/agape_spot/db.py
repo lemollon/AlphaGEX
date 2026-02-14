@@ -312,6 +312,16 @@ class AgapeSpotDatabase:
                     ADD COLUMN IF NOT EXISTS {col} {typedef}
                 """)
 
+            # --- win_tracker: EWMA columns for dynamic choppy EV threshold ---
+            for col, typedef in [
+                ("ema_win", "FLOAT DEFAULT 0.0"),
+                ("ema_loss", "FLOAT DEFAULT 0.0"),
+            ]:
+                cursor.execute(f"""
+                    ALTER TABLE agape_spot_win_tracker
+                    ADD COLUMN IF NOT EXISTS {col} {typedef}
+                """)
+
             # ==========================================================
             # Indexes
             # ==========================================================
@@ -1263,7 +1273,8 @@ class AgapeSpotDatabase:
                 SELECT alpha, beta, total_trades,
                        positive_funding_wins, positive_funding_losses,
                        negative_funding_wins, negative_funding_losses,
-                       neutral_funding_wins, neutral_funding_losses
+                       neutral_funding_wins, neutral_funding_losses,
+                       COALESCE(ema_win, 0.0), COALESCE(ema_loss, 0.0)
                 FROM agape_spot_win_tracker
                 WHERE ticker = %s
                 ORDER BY id DESC LIMIT 1
@@ -1281,6 +1292,8 @@ class AgapeSpotDatabase:
                     negative_funding_losses=int(row[6]),
                     neutral_funding_wins=int(row[7]),
                     neutral_funding_losses=int(row[8]),
+                    ema_win=float(row[9]),
+                    ema_loss=float(row[10]),
                 )
             return BayesianWinTracker(ticker=ticker)
         except Exception as e:
@@ -1302,8 +1315,9 @@ class AgapeSpotDatabase:
                     ticker, alpha, beta, total_trades,
                     positive_funding_wins, positive_funding_losses,
                     negative_funding_wins, negative_funding_losses,
-                    neutral_funding_wins, neutral_funding_losses
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    neutral_funding_wins, neutral_funding_losses,
+                    ema_win, ema_loss
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 tracker.ticker,
                 tracker.alpha,
@@ -1315,6 +1329,8 @@ class AgapeSpotDatabase:
                 tracker.negative_funding_losses,
                 tracker.neutral_funding_wins,
                 tracker.neutral_funding_losses,
+                tracker.ema_win,
+                tracker.ema_loss,
             ))
             conn.commit()
             logger.info(

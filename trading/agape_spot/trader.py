@@ -940,6 +940,7 @@ class AgapeSpotTrader:
             tracker = self._win_trackers.get(ticker)
             if tracker:
                 tracker.update(won, funding_regime)
+                tracker.update_ewma(realized_pnl)
                 self.db.save_win_tracker(tracker)
 
             # Per-ticker loss streak tracking
