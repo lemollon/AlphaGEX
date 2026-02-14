@@ -345,14 +345,13 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context)
                 return result
 
-            # Step 6c: Chop filter — skip entries in extremely choppy markets
-            # Choppy = price going nowhere despite lots of movement.
-            # Trading momentum in chop = guaranteed whipsaw.
-            chop_index = vol_context.get("chop_index")
-            if chop_index is not None and chop_index > 0.80:
-                result["outcome"] = f"CHOP_FILTER_{chop_index:.2f}"
-                self._log_scan(ticker, result, scan_context)
-                return result
+            # Chop detection is handled by the signal-level choppy EV gate
+            # (signals.py _detect_choppy_market + _get_choppy_ev_threshold).
+            # The old trader-level chop_index > 0.80 filter was a blunt
+            # instrument that blocked ~80% of crypto scans because 5-min
+            # Kaufman ER is almost always choppy.  The signal-level gate
+            # checks whether we have EDGE in chop, not just whether chop
+            # exists — validated by backtest ($87 saved, 34% DD reduction).
 
             # Step 7: Generate signal for this ticker
             signal = self._generate_signal(ticker, prophet_data, vol_context)
