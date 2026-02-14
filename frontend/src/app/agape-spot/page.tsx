@@ -18,6 +18,8 @@ import {
   Layers,
   ArrowRight,
   Calendar,
+  CheckCircle,
+  AlertTriangle,
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
@@ -447,7 +449,7 @@ function AllCoinsDashboard({ summaryData }: { summaryData: any }) {
       </div>
 
       {/* Per-coin summary cards (with sparklines) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-4">
         {(['ETH-USD', 'BTC-USD', 'XRP-USD', 'SHIB-USD', 'DOGE-USD', 'MSTU-USD'] as const).map((ticker) => (
           <CoinCard key={ticker} ticker={ticker} data={tickers[ticker]} />
         ))}
@@ -1243,7 +1245,7 @@ function TimeFrameSelector({ selected, onChange }: { selected: TimeFrameId; onCh
 function MLShadowPanel({ ticker }: { ticker: string }) {
   const { data: mlData, error: mlError, mutate: refreshML } = useAgapeSpotMLStatus()
   const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [trainingResult, setTrainingResult] = useState<any>(null)
 
   const ml = mlData?.data
   const phase = ml?.phase ?? 'COLLECTING'
@@ -1267,14 +1269,19 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
 
   async function mlAction(action: 'train' | 'promote' | 'revoke' | 'reject') {
     setActionLoading(action)
-    setActionMessage(null)
+    if (action !== 'train') setTrainingResult(null)
     try {
       const res = await fetch(`${API}/api/agape-spot/ml/${action}`, { method: 'POST' })
       const json = await res.json()
-      setActionMessage(json.message || (json.success ? 'Done' : 'Failed'))
+      if (action === 'train') {
+        setTrainingResult(json)
+      }
+      if (action === 'reject') setTrainingResult(null)
       refreshML()
     } catch (e: any) {
-      setActionMessage(`Error: ${e.message}`)
+      if (action === 'train') {
+        setTrainingResult({ success: false, error: e.message })
+      }
     } finally {
       setActionLoading(null)
     }
@@ -1318,6 +1325,211 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
           </span>
         )}
       </div>
+
+      {/* Training Results (shown after training) */}
+      {trainingResult && (
+        <div className={`p-4 rounded-lg border ${
+          trainingResult.success
+            ? 'bg-green-900/20 border-green-500/50'
+            : 'bg-red-900/20 border-red-500/50'
+        }`}>
+          {trainingResult.success ? (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-green-400 font-semibold text-sm">
+                  <CheckCircle className="h-4 w-4" />
+                  Model Trained Successfully
+                </div>
+                <button onClick={() => setTrainingResult(null)} className="text-gray-500 hover:text-white text-xs">Dismiss</button>
+              </div>
+
+              {/* Comparison / Recommendation */}
+              {trainingResult.comparison && (
+                <div className={`p-3 rounded-lg border ${
+                  trainingResult.comparison.is_improvement
+                    ? 'bg-green-900/30 border-green-600/50'
+                    : trainingResult.comparison.regressions?.length > 0
+                      ? 'bg-yellow-900/30 border-yellow-600/50'
+                      : 'bg-blue-900/30 border-blue-600/50'
+                }`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {trainingResult.comparison.is_improvement ? (
+                      <TrendingUp className="h-4 w-4 text-green-400" />
+                    ) : trainingResult.comparison.regressions?.length > 0 ? (
+                      <AlertTriangle className="h-4 w-4 text-yellow-400" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-blue-400" />
+                    )}
+                    <span className={`font-medium text-sm ${
+                      trainingResult.comparison.is_improvement ? 'text-green-400' :
+                      trainingResult.comparison.regressions?.length > 0 ? 'text-yellow-400' : 'text-blue-400'
+                    }`}>
+                      {trainingResult.comparison.recommendation}
+                    </span>
+                  </div>
+                  {trainingResult.comparison.improvement_reasons?.length > 0 && (
+                    <ul className="text-xs text-gray-300 space-y-1 ml-6">
+                      {trainingResult.comparison.improvement_reasons.map((r: string, i: number) => (
+                        <li key={i} className="flex items-center gap-1.5">
+                          <CheckCircle className="h-3 w-3 text-green-500 shrink-0" />{r}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {trainingResult.comparison.regressions?.length > 0 && (
+                    <ul className="text-xs text-yellow-300 space-y-1 ml-6 mt-1">
+                      {trainingResult.comparison.regressions.map((r: string, i: number) => (
+                        <li key={i} className="flex items-center gap-1.5">
+                          <AlertTriangle className="h-3 w-3 text-yellow-500 shrink-0" />{r}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {/* Previous vs New comparison table */}
+                  {trainingResult.comparison.previous && (
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                      <div className="text-gray-500">Metric</div>
+                      <div className="text-gray-500">Previous</div>
+                      <div className="text-gray-500">New</div>
+                      <div className="text-gray-400">Accuracy</div>
+                      <div className="text-gray-300">{(trainingResult.comparison.previous.accuracy * 100).toFixed(1)}%</div>
+                      <div className={trainingResult.comparison.changes?.accuracy > 0 ? 'text-green-400' : trainingResult.comparison.changes?.accuracy < 0 ? 'text-red-400' : 'text-white'}>
+                        {((trainingResult.metrics?.accuracy || 0) * 100).toFixed(1)}%
+                        {trainingResult.comparison.changes?.accuracy !== 0 && (
+                          <span className="ml-1">({trainingResult.comparison.changes?.accuracy > 0 ? '+' : ''}{(trainingResult.comparison.changes?.accuracy * 100).toFixed(1)}%)</span>
+                        )}
+                      </div>
+                      <div className="text-gray-400">AUC-ROC</div>
+                      <div className="text-gray-300">{trainingResult.comparison.previous.auc_roc.toFixed(3)}</div>
+                      <div className={trainingResult.comparison.changes?.auc_roc > 0 ? 'text-green-400' : trainingResult.comparison.changes?.auc_roc < 0 ? 'text-red-400' : 'text-white'}>
+                        {(trainingResult.metrics?.auc_roc || 0).toFixed(3)}
+                        {trainingResult.comparison.changes?.auc_roc !== 0 && (
+                          <span className="ml-1">({trainingResult.comparison.changes?.auc_roc > 0 ? '+' : ''}{trainingResult.comparison.changes?.auc_roc.toFixed(3)})</span>
+                        )}
+                      </div>
+                      <div className="text-gray-400">Brier</div>
+                      <div className="text-gray-300">{trainingResult.comparison.previous.brier_score.toFixed(4)}</div>
+                      <div className={trainingResult.comparison.changes?.brier_score < 0 ? 'text-green-400' : trainingResult.comparison.changes?.brier_score > 0 ? 'text-red-400' : 'text-white'}>
+                        {(trainingResult.metrics?.brier_score || 0).toFixed(4)}
+                        {trainingResult.comparison.changes?.brier_score !== 0 && (
+                          <span className="ml-1">({trainingResult.comparison.changes?.brier_score < 0 ? '' : '+'}{trainingResult.comparison.changes?.brier_score.toFixed(4)})</span>
+                        )}
+                      </div>
+                      <div className="text-gray-400">Samples</div>
+                      <div className="text-gray-300">{trainingResult.comparison.previous.training_samples}</div>
+                      <div className="text-white">
+                        {trainingResult.training_samples}
+                        {trainingResult.comparison.changes?.samples_added > 0 && (
+                          <span className="ml-1 text-green-400">(+{trainingResult.comparison.changes?.samples_added})</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Core Metrics Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {[
+                  { label: 'Accuracy', value: trainingResult.metrics?.accuracy, pct: true },
+                  { label: 'Precision', value: trainingResult.metrics?.precision, pct: true },
+                  { label: 'Recall', value: trainingResult.metrics?.recall, pct: true },
+                  { label: 'F1 Score', value: trainingResult.metrics?.f1_score, pct: true },
+                  { label: 'AUC-ROC', value: trainingResult.metrics?.auc_roc, pct: false },
+                  { label: 'Brier Score', value: trainingResult.metrics?.brier_score, pct: false, lower: true },
+                  { label: 'Win Rate', value: trainingResult.metrics?.win_rate_actual, pct: true },
+                  { label: 'Predicted WR', value: trainingResult.metrics?.win_rate_predicted, pct: true },
+                ].map(({ label, value, pct, lower }) => (
+                  <div key={label} className="bg-gray-800/50 rounded-lg p-2 text-center">
+                    <span className="text-gray-500 text-[10px] block">{label}</span>
+                    <span className={`font-mono font-bold text-sm ${
+                      value == null ? 'text-gray-600' :
+                      lower ? (value <= 0.25 ? 'text-green-400' : value <= 0.35 ? 'text-yellow-400' : 'text-red-400') :
+                      pct ? (value >= 0.6 ? 'text-green-400' : value >= 0.5 ? 'text-yellow-400' : 'text-red-400') :
+                      (value >= 0.65 ? 'text-green-400' : value >= 0.55 ? 'text-yellow-400' : 'text-red-400')
+                    }`}>
+                      {value != null ? (pct ? `${(value * 100).toFixed(1)}%` : value.toFixed(4)) : '—'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sample Breakdown */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                  <span className="text-gray-500 text-[10px] block">Total Samples</span>
+                  <span className="font-mono font-bold text-sm text-white">{trainingResult.samples?.total ?? trainingResult.training_samples ?? '—'}</span>
+                </div>
+                <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                  <span className="text-gray-500 text-[10px] block">Wins</span>
+                  <span className="font-mono font-bold text-sm text-green-400">{trainingResult.samples?.wins ?? '—'}</span>
+                </div>
+                <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                  <span className="text-gray-500 text-[10px] block">Losses</span>
+                  <span className="font-mono font-bold text-sm text-red-400">{trainingResult.samples?.losses ?? '—'}</span>
+                </div>
+              </div>
+
+              {/* Regime-Specific Accuracy */}
+              {(trainingResult.metrics?.positive_funding_accuracy != null || trainingResult.metrics?.negative_funding_accuracy != null) && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                    <span className="text-gray-500 text-[10px] block">Positive Funding Acc</span>
+                    <span className={`font-mono font-bold text-sm ${
+                      trainingResult.metrics?.positive_funding_accuracy >= 0.6 ? 'text-green-400' : 'text-yellow-400'
+                    }`}>
+                      {trainingResult.metrics?.positive_funding_accuracy != null
+                        ? `${(trainingResult.metrics.positive_funding_accuracy * 100).toFixed(1)}%`
+                        : '—'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-800/50 rounded-lg p-2 text-center">
+                    <span className="text-gray-500 text-[10px] block">Negative Funding Acc</span>
+                    <span className={`font-mono font-bold text-sm ${
+                      trainingResult.metrics?.negative_funding_accuracy >= 0.6 ? 'text-green-400' : 'text-yellow-400'
+                    }`}>
+                      {trainingResult.metrics?.negative_funding_accuracy != null
+                        ? `${(trainingResult.metrics.negative_funding_accuracy * 100).toFixed(1)}%`
+                        : '—'}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Feature Importance */}
+              {trainingResult.feature_importance?.length > 0 && (
+                <div>
+                  <div className="text-xs text-gray-400 mb-2">Feature Importance</div>
+                  <div className="space-y-1">
+                    {trainingResult.feature_importance.slice(0, 8).map((f: any) => (
+                      <div key={f.feature} className="flex items-center gap-2 text-xs">
+                        <span className="text-gray-400 w-40 truncate">{f.feature}</span>
+                        <div className="flex-1 bg-gray-800 rounded-full h-2 overflow-hidden">
+                          <div
+                            className="h-full bg-cyan-500 rounded-full"
+                            style={{ width: `${Math.min(f.importance * 100, 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-gray-500 w-12 text-right font-mono">{(f.importance * 100).toFixed(1)}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-xs text-gray-500">
+                Model saved to database &middot; v{trainingResult.model_version}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-red-400 text-sm">
+              <AlertTriangle className="h-4 w-4" />
+              Training Failed: {trainingResult.error || trainingResult.message}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Shadow comparison stats */}
       {comp && comp.resolved_predictions > 0 && (
@@ -1420,13 +1632,6 @@ function MLShadowPanel({ ticker }: { ticker: string }) {
           </button>
         )}
       </div>
-
-      {/* Action feedback */}
-      {actionMessage && (
-        <div className="text-xs text-gray-400 bg-gray-800/40 rounded px-3 py-2">
-          {actionMessage}
-        </div>
-      )}
     </div>
   )
 }
@@ -1875,7 +2080,7 @@ function PnlHeatmap({ days }: { days: { date: string; pnl: number | null; trades
       title="Daily P&L Map"
       icon={<Calendar className="w-5 h-5 text-gray-400" />}
     >
-      <div className="flex gap-[3px] flex-wrap">
+      <div className="flex gap-[3px] flex-wrap overflow-x-auto max-w-full">
         {days.map((d, i) => (
           <div
             key={i}

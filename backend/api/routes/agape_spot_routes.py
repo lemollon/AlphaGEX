@@ -1839,12 +1839,29 @@ async def train_ml_model():
 
     Requires at least 50 closed trades with scan activity matches.
     Model is saved to PostgreSQL for persistence across deploys.
+    Returns comprehensive metrics including comparison with previous model.
     """
     if not ML_ADVISOR_AVAILABLE:
         raise HTTPException(status_code=503, detail="ML advisor not available")
 
     try:
         advisor = get_agape_spot_ml_advisor()
+
+        # Capture previous model metrics for comparison
+        previous_metrics = None
+        if advisor.model is not None and advisor.training_metrics:
+            prev = advisor.training_metrics
+            previous_metrics = {
+                "accuracy": round(prev.accuracy, 4),
+                "precision": round(prev.precision, 4),
+                "recall": round(prev.recall, 4),
+                "f1_score": round(prev.f1_score, 4),
+                "auc_roc": round(prev.auc_roc, 4),
+                "brier_score": round(prev.brier_score, 4),
+                "training_samples": prev.total_samples,
+                "training_date": prev.training_date,
+            }
+
         metrics = advisor.train()
         if not metrics:
             return {
@@ -1852,19 +1869,97 @@ async def train_ml_model():
                 "message": "Training returned no metrics",
             }
 
+        # Build feature importance list sorted by importance
+        feature_importance_list = []
+        if metrics.feature_importances:
+            total_imp = sum(metrics.feature_importances.values()) or 1
+            feature_importance_list = sorted(
+                [
+                    {"feature": k, "importance": round(v / total_imp, 4)}
+                    for k, v in metrics.feature_importances.items()
+                ],
+                key=lambda x: x["importance"],
+                reverse=True,
+            )
+
+        # Build comparison analysis
+        comparison = None
+        if previous_metrics:
+            acc_change = metrics.accuracy - previous_metrics["accuracy"]
+            auc_change = metrics.auc_roc - previous_metrics["auc_roc"]
+            precision_change = metrics.precision - previous_metrics["precision"]
+            brier_change = metrics.brier_score - previous_metrics["brier_score"]
+            sample_change = metrics.total_samples - previous_metrics["training_samples"]
+
+            improvement_reasons = []
+            regressions = []
+
+            if acc_change > 0.01:
+                improvement_reasons.append(f"Accuracy improved by {acc_change*100:.1f}%")
+            if auc_change > 0.01:
+                improvement_reasons.append(f"AUC-ROC improved by {auc_change:.3f}")
+            if precision_change > 0.01:
+                improvement_reasons.append(f"Precision improved by {precision_change*100:.1f}%")
+            if brier_change < -0.01:
+                improvement_reasons.append(f"Brier score improved by {abs(brier_change):.4f}")
+            if sample_change > 10:
+                improvement_reasons.append(f"Trained on {sample_change} more samples")
+
+            if acc_change < -0.02:
+                regressions.append(f"Accuracy dropped by {abs(acc_change)*100:.1f}%")
+            if auc_change < -0.02:
+                regressions.append(f"AUC-ROC dropped by {abs(auc_change):.3f}")
+            if brier_change > 0.02:
+                regressions.append(f"Brier score worsened by {brier_change:.4f}")
+
+            is_improvement = len(improvement_reasons) > 0 and len(regressions) == 0
+
+            comparison = {
+                "previous": previous_metrics,
+                "changes": {
+                    "accuracy": round(acc_change, 4),
+                    "auc_roc": round(auc_change, 4),
+                    "precision": round(precision_change, 4),
+                    "brier_score": round(brier_change, 4),
+                    "samples_added": sample_change,
+                },
+                "is_improvement": is_improvement,
+                "improvement_reasons": improvement_reasons,
+                "regressions": regressions,
+                "recommendation": (
+                    "APPROVE: New model shows improvement" if is_improvement else
+                    "REVIEW: Check if regressions are acceptable" if regressions else
+                    "APPROVE: Model retrained with more data"
+                ),
+            }
+        else:
+            is_improvement = metrics.accuracy > 0.55
+            comparison = {
+                "previous": None,
+                "is_improvement": is_improvement,
+                "improvement_reasons": [
+                    f"First ML model trained with {metrics.total_samples} samples",
+                    f"Accuracy: {metrics.accuracy*100:.1f}%" + (" (above 55% threshold)" if metrics.accuracy > 0.55 else ""),
+                    f"AUC-ROC: {metrics.auc_roc:.3f}" + (" (good discrimination)" if metrics.auc_roc > 0.6 else ""),
+                ],
+                "regressions": [],
+                "recommendation": (
+                    "APPROVE: First ML model shows promising results" if is_improvement
+                    else "REVIEW: Model accuracy is below 55% threshold"
+                ),
+            }
+
         return {
             "success": True,
-            "data": {
+            "metrics": {
                 "accuracy": round(metrics.accuracy, 4),
                 "precision": round(metrics.precision, 4),
                 "recall": round(metrics.recall, 4),
                 "f1_score": round(metrics.f1_score, 4),
                 "auc_roc": round(metrics.auc_roc, 4),
                 "brier_score": round(metrics.brier_score, 4),
-                "total_samples": metrics.total_samples,
-                "wins": metrics.wins,
-                "losses": metrics.losses,
                 "win_rate_actual": round(metrics.win_rate_actual, 4),
+                "win_rate_predicted": round(metrics.win_rate_predicted, 4),
                 "positive_funding_accuracy": (
                     round(metrics.positive_funding_accuracy, 4)
                     if metrics.positive_funding_accuracy is not None else None
@@ -1873,14 +1968,24 @@ async def train_ml_model():
                     round(metrics.negative_funding_accuracy, 4)
                     if metrics.negative_funding_accuracy is not None else None
                 ),
-                "training_date": metrics.training_date,
             },
+            "samples": {
+                "total": metrics.total_samples,
+                "wins": metrics.wins,
+                "losses": metrics.losses,
+            },
+            "feature_importance": feature_importance_list,
+            "comparison": comparison,
+            "training_samples": metrics.total_samples,
+            "model_version": metrics.model_version,
+            "training_date": metrics.training_date,
             "message": f"Model trained on {metrics.total_samples} trades",
             "fetched_at": _format_ct(),
         }
     except ValueError as e:
         return {
             "success": False,
+            "error": str(e),
             "message": str(e),
             "fetched_at": _format_ct(),
         }
