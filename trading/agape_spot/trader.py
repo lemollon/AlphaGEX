@@ -1363,6 +1363,17 @@ class AgapeSpotTrader:
         total_trades = perf.get("total_trades", 0)
         win_prob = win_tracker.win_probability if win_tracker else 0.5
 
+        # Choppy EWMA gate info
+        ema_mag = win_tracker.ema_magnitude if win_tracker else 0.0
+        choppy_threshold = self.signals._get_choppy_ev_threshold(ticker)
+        choppy_gate = {
+            "active": self.config.enable_bayesian_choppy,
+            "ema_magnitude": round(ema_mag, 4) if ema_mag > 0 else None,
+            "threshold": round(choppy_threshold, 4),
+            "ema_win": round(win_tracker.ema_win, 4) if win_tracker and win_tracker.ema_win > 0 else None,
+            "ema_loss": round(win_tracker.ema_loss, 4) if win_tracker and win_tracker.ema_loss > 0 else None,
+        }
+
         if total_trades >= 5 and avg_win > 0 and avg_loss > 0:
             ev = (win_prob * avg_win) - ((1.0 - win_prob) * avg_loss)
             return {
@@ -1373,6 +1384,7 @@ class AgapeSpotTrader:
                 "has_data": True,
                 "gate": "EV",
                 "gate_status": "PASS" if ev > 0 else "BLOCKED",
+                "choppy_gate": choppy_gate,
             }
         return {
             "ev_per_trade": None,
@@ -1382,6 +1394,7 @@ class AgapeSpotTrader:
             "has_data": False,
             "gate": "COLD_START_WIN_PROB",
             "gate_status": "PASS" if win_prob >= 0.50 else "BLOCKED",
+            "choppy_gate": choppy_gate,
         }
 
     # ==================================================================
