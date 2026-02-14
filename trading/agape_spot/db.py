@@ -1192,6 +1192,11 @@ class AgapeSpotDatabase:
                           avg_win, avg_loss}} for ALL provided tickers.
         Missing tickers get zeroed-out entries so the allocator always
         has data for every configured coin.
+
+        avg_win/avg_loss use a 14-day rolling window so the EV gate
+        reflects current strategy quality, not early learning-period
+        losses.  All-time stats (total_trades, wins, total_pnl) are
+        still computed over the full history for the capital allocator.
         """
         result: Dict[str, Dict[str, Any]] = {
             t: {
@@ -1212,9 +1217,7 @@ class AgapeSpotDatabase:
                     ticker,
                     COUNT(*) AS total_trades,
                     COUNT(*) FILTER (WHERE realized_pnl > 0) AS wins,
-                    COALESCE(SUM(realized_pnl), 0) AS total_pnl,
-                    COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl > 0), 0) AS avg_win,
-                    COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl <= 0), 0) AS avg_loss
+                    COALESCE(SUM(realized_pnl), 0) AS total_pnl
                 FROM agape_spot_positions
                 WHERE status IN ('closed', 'expired', 'stopped')
                   AND account_label != 'paper'
@@ -1226,8 +1229,26 @@ class AgapeSpotDatabase:
                     result[t]["total_trades"] = int(row[1])
                     result[t]["wins"] = int(row[2])
                     result[t]["total_pnl"] = float(row[3])
-                    result[t]["avg_win"] = float(row[4])
-                    result[t]["avg_loss"] = float(row[5])
+
+            # Rolling 14-day avg_win / avg_loss for EV gating.
+            # Recent performance reflects current strategy quality better
+            # than all-time averages which include early learning-period losses.
+            cursor.execute("""
+                SELECT
+                    ticker,
+                    COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl > 0), 0) AS avg_win,
+                    COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl <= 0), 0) AS avg_loss
+                FROM agape_spot_positions
+                WHERE status IN ('closed', 'expired', 'stopped')
+                  AND account_label != 'paper'
+                  AND close_time > NOW() - INTERVAL '14 days'
+                GROUP BY ticker
+            """)
+            for row in cursor.fetchall():
+                t = row[0]
+                if t in result:
+                    result[t]["avg_win"] = float(row[1])
+                    result[t]["avg_loss"] = float(row[2])
 
             # Recent P&L (last 24h)
             cursor.execute("""
