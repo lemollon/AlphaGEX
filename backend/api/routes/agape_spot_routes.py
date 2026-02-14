@@ -1638,6 +1638,82 @@ async def diagnostic():
             except Exception:
                 pass
 
+            # Scan outcome breakdown (last 2 hours) — shows exactly what gate is blocking
+            try:
+                cursor.execute("""
+                    SELECT outcome, ticker, COUNT(*) AS cnt
+                    FROM agape_spot_scan_activity
+                    WHERE scan_time > NOW() - INTERVAL '2 hours'
+                    GROUP BY outcome, ticker
+                    ORDER BY cnt DESC
+                    LIMIT 50
+                """)
+                rows = cursor.fetchall()
+                outcome_breakdown = []
+                for row in rows:
+                    outcome_breakdown.append({
+                        "outcome": row[0],
+                        "ticker": row[1],
+                        "count": row[2],
+                    })
+                result["recent_scan_outcomes"] = outcome_breakdown
+
+                # Most recent scan per ticker
+                cursor.execute("""
+                    SELECT DISTINCT ON (ticker)
+                        ticker, outcome, combined_signal, funding_regime,
+                        oracle_win_prob, oracle_advice,
+                        ml_probability, bayesian_probability,
+                        scan_time
+                    FROM agape_spot_scan_activity
+                    ORDER BY ticker, scan_time DESC
+                """)
+                latest = []
+                for row in cursor.fetchall():
+                    latest.append({
+                        "ticker": row[0],
+                        "outcome": row[1],
+                        "combined_signal": row[2],
+                        "funding_regime": row[3],
+                        "oracle_win_prob": float(row[4]) if row[4] else None,
+                        "oracle_advice": row[5],
+                        "ml_probability": float(row[6]) if row[6] else None,
+                        "bayesian_probability": float(row[7]) if row[7] else None,
+                        "scan_time": row[8].isoformat() if row[8] else None,
+                    })
+                result["latest_scan_per_ticker"] = latest
+            except Exception as e:
+                result["scan_outcome_error"] = str(e)
+
+            # EV gate data: current avg_win / avg_loss per ticker (14-day rolling)
+            try:
+                cursor.execute("""
+                    SELECT
+                        ticker,
+                        COUNT(*) AS trades_14d,
+                        COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl > 0), 0) AS avg_win,
+                        COALESCE(AVG(realized_pnl) FILTER (WHERE realized_pnl <= 0), 0) AS avg_loss
+                    FROM agape_spot_positions
+                    WHERE status IN ('closed', 'expired', 'stopped')
+                      AND account_label != 'paper'
+                      AND close_time > NOW() - INTERVAL '14 days'
+                    GROUP BY ticker
+                """)
+                ev_data = []
+                for row in cursor.fetchall():
+                    avg_w = float(row[2])
+                    avg_l = abs(float(row[3]))
+                    ev_data.append({
+                        "ticker": row[0],
+                        "trades_14d": row[1],
+                        "avg_win": round(avg_w, 4),
+                        "avg_loss": round(avg_l, 4),
+                        "ev_at_50pct": round(0.5 * avg_w - 0.5 * avg_l, 4) if avg_w > 0 and avg_l > 0 else None,
+                    })
+                result["ev_gate_data"] = ev_data
+            except Exception as e:
+                result["ev_gate_error"] = str(e)
+
             cursor.close()
         except Exception as e:
             result["trader_error"] = f"Table check failed: {e}"
