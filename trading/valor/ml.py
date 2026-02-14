@@ -99,6 +99,26 @@ class ValorTrainingMetrics:
     model_version: str
 
 
+@dataclass
+class ShadowComparison:
+    """Side-by-side comparison of ML vs Bayesian shadow predictions."""
+    total_predictions: int = 0
+    resolved_predictions: int = 0
+    ml_brier: float = 1.0
+    bayesian_brier: float = 1.0
+    brier_improvement_pct: float = 0.0
+    ml_accuracy: float = 0.0
+    bayesian_accuracy: float = 0.0
+    ml_catastrophic_misses: int = 0
+    catastrophic_miss_rate: float = 0.0
+    is_eligible: bool = False
+    promotion_blockers: List[str] = None
+
+    def __post_init__(self):
+        if self.promotion_blockers is None:
+            self.promotion_blockers = []
+
+
 class ValorMLAdvisor:
     """
     ML Advisor for VALOR MES Futures Scalping.
@@ -725,12 +745,100 @@ class ValorMLAdvisor:
         return {
             'is_trained': self.is_trained,
             'model_version': self.model_version,
+            'model_name': self.MODEL_NAME,
             'training_date': self.training_metrics.training_date if self.training_metrics else None,
             'accuracy': self.training_metrics.accuracy if self.training_metrics else None,
             'auc_roc': self.training_metrics.auc_roc if self.training_metrics else None,
+            'brier_score': self.training_metrics.brier_score if self.training_metrics else None,
             'samples': self.training_metrics.total_samples if self.training_metrics else 0,
             'win_rate': self.training_metrics.win_rate_actual if self.training_metrics else None,
         }
+
+    def get_shadow_comparison(self) -> ShadowComparison:
+        """Compare ML vs Bayesian predictions on resolved shadow trades."""
+        if not DB_AVAILABLE:
+            return ShadowComparison()
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get total and resolved counts
+            cursor.execute("SELECT COUNT(*) FROM valor_ml_shadow")
+            total = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM valor_ml_shadow WHERE actual_outcome IS NOT NULL"
+            )
+            resolved = cursor.fetchone()[0]
+
+            if resolved < 5:
+                blockers = [f"Need 150 resolved predictions (have {resolved})"]
+                conn.close()
+                return ShadowComparison(
+                    total_predictions=total,
+                    resolved_predictions=resolved,
+                    promotion_blockers=blockers,
+                )
+
+            # Fetch resolved predictions
+            cursor.execute("""
+                SELECT ml_probability, bayesian_probability, actual_outcome
+                FROM valor_ml_shadow
+                WHERE actual_outcome IS NOT NULL
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+
+            ml_probs = [float(r[0]) for r in rows]
+            bay_probs = [float(r[1]) for r in rows]
+            outcomes = [1.0 if r[2] == 'WIN' else 0.0 for r in rows]
+
+            # Brier scores (lower is better)
+            ml_brier = sum((p - o) ** 2 for p, o in zip(ml_probs, outcomes)) / len(outcomes)
+            bay_brier = sum((p - o) ** 2 for p, o in zip(bay_probs, outcomes)) / len(outcomes)
+            improvement = ((bay_brier - ml_brier) / bay_brier * 100) if bay_brier > 0 else 0
+
+            # Accuracy (threshold at 0.5)
+            ml_acc = sum(
+                1 for p, o in zip(ml_probs, outcomes) if (p >= 0.5) == (o == 1.0)
+            ) / len(outcomes)
+            bay_acc = sum(
+                1 for p, o in zip(bay_probs, outcomes) if (p >= 0.5) == (o == 1.0)
+            ) / len(outcomes)
+
+            # Catastrophic misses: ML predicted >= 0.7 but trade lost
+            ml_cat = sum(
+                1 for p, o in zip(ml_probs, outcomes) if p >= 0.7 and o == 0.0
+            )
+            cat_rate = ml_cat / len(outcomes)
+
+            # Promotion eligibility
+            blockers = []
+            if resolved < 150:
+                blockers.append(f"Need 150 resolved predictions (have {resolved})")
+            if improvement < 5.0:
+                blockers.append(f"Need 5%+ Brier improvement (have {improvement:.1f}%)")
+            if cat_rate > 0.10:
+                blockers.append(f"Catastrophic miss rate {cat_rate*100:.1f}% exceeds 10% limit")
+
+            return ShadowComparison(
+                total_predictions=total,
+                resolved_predictions=resolved,
+                ml_brier=ml_brier,
+                bayesian_brier=bay_brier,
+                brier_improvement_pct=improvement,
+                ml_accuracy=ml_acc,
+                bayesian_accuracy=bay_acc,
+                ml_catastrophic_misses=ml_cat,
+                catastrophic_miss_rate=cat_rate,
+                is_eligible=len(blockers) == 0,
+                promotion_blockers=blockers,
+            )
+
+        except Exception as e:
+            logger.error(f"Shadow comparison failed: {e}")
+            return ShadowComparison()
 
 
 # Singleton instance

@@ -2041,6 +2041,48 @@ async def revoke_ml():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/ml/reject")
+async def reject_ml():
+    """Discard the trained ML model and start fresh.
+
+    Clears the model from memory and database. Shadow predictions
+    already recorded are kept for audit purposes.
+    """
+    if not ML_ADVISOR_AVAILABLE:
+        raise HTTPException(status_code=503, detail="ML advisor not available")
+
+    try:
+        advisor = get_agape_spot_ml_advisor()
+
+        # Clear model from memory
+        advisor.model = None
+        advisor.calibrated_model = None
+        advisor.training_metrics = None
+        advisor.is_trained = False
+        advisor.model_version = 0
+
+        # Clear model from database
+        try:
+            from quant.model_persistence import delete_model_from_db
+            delete_model_from_db(advisor.MODEL_NAME)
+        except Exception:
+            pass  # Model may not be persisted yet
+
+        # Clear promotion status
+        from trading.agape_spot.db import AgapeSpotDatabase
+        db = AgapeSpotDatabase()
+        db.set_ml_config('ml_promoted', 'false')
+        db.set_ml_config('ml_rejected_at', datetime.now(CENTRAL_TZ).isoformat())
+
+        return {
+            "success": True,
+            "message": "ML model discarded. Reverted to Bayesian-only. Train again when ready.",
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-SPOT ML reject error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # Bot Control (continued)
 # ---------------------------------------------------------------------------
