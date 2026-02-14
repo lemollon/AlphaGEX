@@ -646,52 +646,65 @@ class AgapeSpotSignalGenerator:
             if not mom_ok:
                 return (SignalAction.WAIT, mom_reason)
 
-        # Choppy-Market EV & Main EV gates: LOG-ONLY mode.
-        # These gates log EV decisions for analysis but do NOT block trades.
-        # Reason: crypto scalping has small edges (win_prob~50%, avg_win~avg_loss).
-        # The EV gates were calibrated for clear statistical edges and were
-        # blocking 100% of trades.  Collect data first, then calibrate thresholds.
+        # Backtest Strategy B: Flat $0.50 choppy gate (highest P&L in replay).
+        # Non-choppy: block only if EV clearly negative (EV <= $0)
+        # Choppy: block if EV < $0.50 (filters low-quality range-bound trades)
+        # Cold start (no EV data): pass all — gate activates once data accumulates
+        CHOPPY_EV_THRESHOLD = 0.50  # Backtest-validated flat threshold
         funding_regime_str = market_data.get("funding_regime", "UNKNOWN")
         is_choppy = self._detect_choppy_market(ticker, market_data)
-        if is_choppy and self.config.enable_bayesian_choppy:
-            choppy_ev, choppy_has_ev = self._calculate_expected_value(ticker, oracle_win_prob)
-            if choppy_has_ev:
-                choppy_ev_threshold = self._get_choppy_ev_threshold(ticker, vol_context)
-                verdict = "WOULD_PASS" if choppy_ev >= choppy_ev_threshold else "WOULD_BLOCK"
-                logger.info(
-                    f"AGAPE-SPOT CHOPPY EV [LOG-ONLY]: {ticker} choppy market, "
-                    f"oracle_wp={oracle_win_prob:.4f}, "
-                    f"EV=${choppy_ev:.4f} vs threshold=${choppy_ev_threshold:.4f} — {verdict}"
-                )
-            else:
-                verdict = "WOULD_PASS" if oracle_win_prob >= self.config.choppy_min_win_prob else "WOULD_BLOCK"
-                logger.info(
-                    f"AGAPE-SPOT CHOPPY GATE [LOG-ONLY]: {ticker} choppy market, "
-                    f"oracle_wp={oracle_win_prob:.4f} vs "
-                    f"gate={self.config.choppy_min_win_prob} — {verdict}"
-                )
 
-        # Run _calculate_win_probability for ML shadow predictions and logging
+        # Always compute Bayesian win_prob for logging and ML shadow predictions
         win_prob = self._calculate_win_probability(ticker, funding_regime_str, market_data)
-        ev, has_ev_data = self._calculate_expected_value(ticker, win_prob)
+
+        # EV uses oracle_win_prob (matches backtest replay methodology)
+        ev, has_ev_data = self._calculate_expected_value(ticker, oracle_win_prob)
         self._last_ev = ev
 
-        if has_ev_data:
-            verdict = "WOULD_PASS" if ev > self.MIN_EXPECTED_VALUE else "WOULD_BLOCK"
-            logger.info(
-                f"AGAPE-SPOT EV_GATE [LOG-ONLY]: {ticker} EV=${ev:.4f}, "
-                f"win_prob={win_prob:.4f}, "
-                f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
-                f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f} "
-                f"— {verdict}"
-            )
+        if is_choppy and self.config.enable_bayesian_choppy:
+            if has_ev_data:
+                if ev < CHOPPY_EV_THRESHOLD:
+                    logger.info(
+                        f"AGAPE-SPOT CHOPPY GATE: {ticker} EV=${ev:.4f} "
+                        f"< ${CHOPPY_EV_THRESHOLD} (oracle_wp={oracle_win_prob:.4f}, "
+                        f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
+                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f}) "
+                        f"— BLOCKED"
+                    )
+                    return (SignalAction.WAIT, f"CHOPPY_LOW_EV_{ev:.3f}")
+                else:
+                    logger.info(
+                        f"AGAPE-SPOT CHOPPY GATE: {ticker} EV=${ev:.4f} "
+                        f">= ${CHOPPY_EV_THRESHOLD} — PASS"
+                    )
+            else:
+                # Cold start: no EV data yet, let trades through to build history
+                logger.info(
+                    f"AGAPE-SPOT CHOPPY GATE: {ticker} cold start (no EV data), "
+                    f"oracle_wp={oracle_win_prob:.4f}, bayes_wp={win_prob:.4f} — PASS"
+                )
         else:
-            verdict = "WOULD_PASS" if win_prob >= self.COLD_START_MIN_WIN_PROB else "WOULD_BLOCK"
-            logger.info(
-                f"AGAPE-SPOT EV_GATE [LOG-ONLY]: {ticker} cold_start, "
-                f"win_prob={win_prob:.4f} vs {self.COLD_START_MIN_WIN_PROB:.2f} "
-                f"— {verdict}"
-            )
+            # Non-choppy: block only clearly negative EV
+            if has_ev_data:
+                if ev <= self.MIN_EXPECTED_VALUE:
+                    logger.info(
+                        f"AGAPE-SPOT EV_GATE: {ticker} EV=${ev:.4f} <= $0, "
+                        f"oracle_wp={oracle_win_prob:.4f}, "
+                        f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
+                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f} "
+                        f"— BLOCKED"
+                    )
+                    return (SignalAction.WAIT, f"EV_{ev:.3f}_NEGATIVE")
+                else:
+                    logger.info(
+                        f"AGAPE-SPOT EV_GATE: {ticker} EV=${ev:.4f} > $0 — PASS"
+                    )
+            else:
+                # Cold start: no EV data yet, let trades through
+                logger.info(
+                    f"AGAPE-SPOT EV_GATE: {ticker} cold start, "
+                    f"oracle_wp={oracle_win_prob:.4f}, bayes_wp={win_prob:.4f} — PASS"
+                )
 
         tracker = get_spot_direction_tracker(ticker, self.config)
 
