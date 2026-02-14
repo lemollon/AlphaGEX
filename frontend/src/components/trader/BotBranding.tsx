@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
 
 export interface BotBrand {
   name: BotName
@@ -516,6 +516,186 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#0EA5E9',
     hexLight: '#38BDF8',
     hexDark: '#0284C7',
+  },
+  AGAPE_ETH_PERP: {
+    name: 'AGAPE_ETH_PERP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_ETH_PERP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_ETH_PERP} ETH Perpetual`,
+    description: 'ETH Perpetual Contracts with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (ETH-PERP)',
+    // Primary - Indigo (ETH brand)
+    primaryColor: 'indigo',
+    primaryBg: 'bg-indigo-600',
+    primaryBorder: 'border-indigo-500',
+    primaryText: 'text-indigo-400',
+    // Light variants
+    lightBg: 'bg-indigo-900/20',
+    lightText: 'text-indigo-300',
+    lightBorder: 'border-indigo-700/50',
+    // Chart colors
+    chartLine: 'stroke-indigo-400',
+    chartFill: 'fill-indigo-500/20',
+    chartPositive: 'text-indigo-400',
+    chartNegative: 'text-indigo-600',
+    // Position cards
+    positionBorder: 'border-indigo-600/50',
+    positionBg: 'bg-indigo-950/30',
+    positionAccent: 'bg-indigo-500',
+    // Badges
+    badgeBg: 'bg-indigo-900/50',
+    badgeText: 'text-indigo-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-indigo-500',
+    gradientTo: 'to-indigo-900',
+    // Hex for Recharts
+    hexPrimary: '#6366F1',
+    hexLight: '#818CF8',
+    hexDark: '#4F46E5',
+  },
+  AGAPE_BTC_PERP: {
+    name: 'AGAPE_BTC_PERP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_BTC_PERP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_BTC_PERP} BTC Perpetual`,
+    description: 'BTC Perpetual Contracts with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (BTC-PERP)',
+    // Primary - Orange (BTC brand)
+    primaryColor: 'orange',
+    primaryBg: 'bg-orange-600',
+    primaryBorder: 'border-orange-500',
+    primaryText: 'text-orange-400',
+    // Light variants
+    lightBg: 'bg-orange-900/20',
+    lightText: 'text-orange-300',
+    lightBorder: 'border-orange-700/50',
+    // Chart colors
+    chartLine: 'stroke-orange-400',
+    chartFill: 'fill-orange-500/20',
+    chartPositive: 'text-orange-400',
+    chartNegative: 'text-orange-600',
+    // Position cards
+    positionBorder: 'border-orange-600/50',
+    positionBg: 'bg-orange-950/30',
+    positionAccent: 'bg-orange-500',
+    // Badges
+    badgeBg: 'bg-orange-900/50',
+    badgeText: 'text-orange-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-orange-500',
+    gradientTo: 'to-orange-900',
+    // Hex for Recharts
+    hexPrimary: '#F97316',
+    hexLight: '#FB923C',
+    hexDark: '#EA580C',
+  },
+  AGAPE_XRP_PERP: {
+    name: 'AGAPE_XRP_PERP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_XRP_PERP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_XRP_PERP} XRP Perpetual`,
+    description: 'XRP Perpetual Contracts with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (XRP-PERP)',
+    // Primary - Cyan (XRP brand)
+    primaryColor: 'cyan',
+    primaryBg: 'bg-cyan-600',
+    primaryBorder: 'border-cyan-500',
+    primaryText: 'text-cyan-400',
+    // Light variants
+    lightBg: 'bg-cyan-900/20',
+    lightText: 'text-cyan-300',
+    lightBorder: 'border-cyan-700/50',
+    // Chart colors
+    chartLine: 'stroke-cyan-400',
+    chartFill: 'fill-cyan-500/20',
+    chartPositive: 'text-cyan-400',
+    chartNegative: 'text-cyan-600',
+    // Position cards
+    positionBorder: 'border-cyan-600/50',
+    positionBg: 'bg-cyan-950/30',
+    positionAccent: 'bg-cyan-500',
+    // Badges
+    badgeBg: 'bg-cyan-900/50',
+    badgeText: 'text-cyan-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-cyan-500',
+    gradientTo: 'to-cyan-900',
+    // Hex for Recharts
+    hexPrimary: '#06B6D4',
+    hexLight: '#22D3EE',
+    hexDark: '#0891B2',
+  },
+  AGAPE_DOGE_PERP: {
+    name: 'AGAPE_DOGE_PERP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_DOGE_PERP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_DOGE_PERP} DOGE Perpetual`,
+    description: 'DOGE Perpetual Contracts with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (DOGE-PERP)',
+    // Primary - Yellow (DOGE brand)
+    primaryColor: 'yellow',
+    primaryBg: 'bg-yellow-600',
+    primaryBorder: 'border-yellow-500',
+    primaryText: 'text-yellow-400',
+    // Light variants
+    lightBg: 'bg-yellow-900/20',
+    lightText: 'text-yellow-300',
+    lightBorder: 'border-yellow-700/50',
+    // Chart colors
+    chartLine: 'stroke-yellow-400',
+    chartFill: 'fill-yellow-500/20',
+    chartPositive: 'text-yellow-400',
+    chartNegative: 'text-yellow-600',
+    // Position cards
+    positionBorder: 'border-yellow-600/50',
+    positionBg: 'bg-yellow-950/30',
+    positionAccent: 'bg-yellow-500',
+    // Badges
+    badgeBg: 'bg-yellow-900/50',
+    badgeText: 'text-yellow-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-yellow-500',
+    gradientTo: 'to-yellow-900',
+    // Hex for Recharts
+    hexPrimary: '#EAB308',
+    hexLight: '#FDE047',
+    hexDark: '#CA8A04',
+  },
+  AGAPE_SHIB_PERP: {
+    name: 'AGAPE_SHIB_PERP',
+    displayName: BOT_DISPLAY_NAMES.AGAPE_SHIB_PERP,
+    fullName: `${BOT_DISPLAY_NAMES.AGAPE_SHIB_PERP} SHIB Perpetual`,
+    description: 'SHIB Perpetual Contracts with Crypto Microstructure Signals',
+    strategy: 'Crypto GEX-Equivalent Directional Trading (SHIB-PERP)',
+    // Primary - Rose (SHIB brand)
+    primaryColor: 'rose',
+    primaryBg: 'bg-rose-600',
+    primaryBorder: 'border-rose-500',
+    primaryText: 'text-rose-400',
+    // Light variants
+    lightBg: 'bg-rose-900/20',
+    lightText: 'text-rose-300',
+    lightBorder: 'border-rose-700/50',
+    // Chart colors
+    chartLine: 'stroke-rose-400',
+    chartFill: 'fill-rose-500/20',
+    chartPositive: 'text-rose-400',
+    chartNegative: 'text-rose-600',
+    // Position cards
+    positionBorder: 'border-rose-600/50',
+    positionBg: 'bg-rose-950/30',
+    positionAccent: 'bg-rose-500',
+    // Badges
+    badgeBg: 'bg-rose-900/50',
+    badgeText: 'text-rose-300',
+    // Gradient
+    icon: TrendingUp,
+    gradientFrom: 'from-rose-500',
+    gradientTo: 'to-rose-900',
+    // Hex for Recharts
+    hexPrimary: '#F43F5E',
+    hexLight: '#FDA4AF',
+    hexDark: '#E11D48',
   },
 }
 

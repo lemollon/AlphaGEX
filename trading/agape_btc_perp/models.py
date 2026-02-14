@@ -1,0 +1,332 @@
+"""
+AGAPE-BTC-PERP Models - Data structures for the BTC Perpetual Contract bot.
+
+Key differences from AGAPE-BTC (CME futures):
+  - Exchange.PERPETUAL instead of Exchange.TASTYTRADE_CME
+  - Uses quantity (float BTC) instead of contracts (int)
+  - P&L = (current - entry) * quantity * direction (no contract_size multiplier)
+  - 24/7/365 trading, no expiration
+  - Starting capital: $25,000
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Optional, List, Dict, Any
+
+
+class TradingMode(Enum):
+    PAPER = "paper"
+    LIVE = "live"
+
+
+class Exchange(Enum):
+    PERPETUAL = "perpetual"
+
+
+class PositionSide(Enum):
+    LONG = "long"
+    SHORT = "short"
+
+
+class PositionStatus(Enum):
+    OPEN = "open"
+    CLOSED = "closed"
+    EXPIRED = "expired"
+    STOPPED = "stopped"
+
+
+class SignalAction(Enum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+    RANGE_BOUND = "RANGE_BOUND"
+    WAIT = "WAIT"
+    CLOSE = "CLOSE"
+
+
+@dataclass
+class AgapeBtcPerpConfig:
+    """Configuration for AGAPE-BTC-PERP bot - loaded from autonomous_config table.
+
+    BTC Perpetual Contract trading with no expiration, 24/7/365.
+    Uses quantity-based sizing (float BTC) instead of integer contracts.
+
+    AGGRESSIVE MODE (matching AGAPE/VALOR aggressiveness):
+    - No-loss trailing to let winners run
+    - SAR to reverse losing positions
+    - Prophet advisory only (not blocking)
+    """
+
+    # Identity
+    bot_name: str = "AGAPE_BTC_PERP"
+    ticker: str = "BTC"
+    instrument: str = "BTC-PERP"
+
+    # Trading mode
+    mode: TradingMode = TradingMode.PAPER
+    exchange: Exchange = Exchange.PERPETUAL
+
+    # Risk management
+    starting_capital: float = 25000.0
+    risk_per_trade_pct: float = 5.0
+    max_open_positions: int = 3
+
+    # Position sizing - BTC-PERP quantity-based (float BTC, not integer contracts)
+    default_quantity: float = 0.001
+    min_quantity: float = 0.00001
+    max_quantity: float = 1.0
+    tick_size: float = 0.01
+
+    # Entry/exit rules
+    profit_target_pct: float = 50.0
+    stop_loss_pct: float = 100.0
+    trailing_stop_pct: float = 0.0
+    max_hold_hours: int = 24
+
+    # No-Loss Trailing Strategy (ported from VALOR)
+    use_no_loss_trailing: bool = True
+    no_loss_activation_pct: float = 1.5
+    no_loss_trail_distance_pct: float = 1.25
+    no_loss_emergency_stop_pct: float = 5.0
+    max_unrealized_loss_pct: float = 3.0
+    no_loss_profit_target_pct: float = 0.0
+
+    # Stop-and-Reverse (SAR) Strategy
+    use_sar: bool = True
+    sar_trigger_pct: float = 1.5
+    sar_mfe_threshold_pct: float = 0.3
+
+    # Timing - 24/7/365 perpetual, no market hours restrictions
+    # These fields exist for config compatibility but are not enforced
+    entry_start: str = "00:00"
+    entry_end: str = "23:59"
+    force_exit: str = ""
+
+    # Signal thresholds - AGGRESSIVE
+    min_confidence: str = "LOW"
+    min_funding_rate_signal: float = 0.001
+    min_ls_ratio_extreme: float = 1.1
+    min_liquidation_proximity_pct: float = 5.0
+
+    # Prophet integration - ADVISORY ONLY
+    require_oracle_approval: bool = False
+    min_oracle_win_probability: float = 0.35
+
+    # Cooldown - AGGRESSIVE
+    cooldown_minutes: int = 0
+
+    # Loss streak protection
+    max_consecutive_losses: int = 3
+    loss_streak_pause_minutes: int = 5
+
+    # Direction Tracker settings
+    direction_cooldown_scans: int = 2
+    direction_win_streak_caution: int = 100
+    direction_memory_size: int = 10
+
+    @classmethod
+    def load_from_db(cls, db) -> "AgapeBtcPerpConfig":
+        """Load config from database, falling back to defaults."""
+        config = cls()
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        try:
+            db_config = db.load_config()
+            if db_config:
+                for key, value in db_config.items():
+                    if key in code_controlled_keys:
+                        continue
+                    if hasattr(config, key):
+                        attr_type = type(getattr(config, key))
+                        if attr_type == float:
+                            setattr(config, key, float(value))
+                        elif attr_type == int:
+                            setattr(config, key, int(value))
+                        elif attr_type == bool:
+                            setattr(config, key, str(value).lower() in ("true", "1", "yes"))
+                        elif attr_type == str:
+                            setattr(config, key, str(value))
+                        elif attr_type == TradingMode:
+                            setattr(config, key, TradingMode(value))
+                        elif attr_type == Exchange:
+                            setattr(config, key, Exchange(value))
+        except Exception:
+            pass
+        return config
+
+
+@dataclass
+class AgapeBtcPerpSignal:
+    """Trading signal generated by AGAPE-BTC-PERP signal engine.
+
+    Uses quantity (float BTC) instead of contracts (int).
+    """
+    spot_price: float
+    timestamp: datetime
+
+    # Crypto microstructure
+    funding_rate: float = 0.0
+    funding_regime: str = "UNKNOWN"
+    ls_ratio: float = 1.0
+    ls_bias: str = "NEUTRAL"
+    nearest_long_liq: Optional[float] = None
+    nearest_short_liq: Optional[float] = None
+    squeeze_risk: str = "LOW"
+    leverage_regime: str = "UNKNOWN"
+    max_pain: Optional[float] = None
+
+    # Crypto GEX
+    crypto_gex: float = 0.0
+    crypto_gex_regime: str = "NEUTRAL"
+
+    # Signal decision
+    action: SignalAction = SignalAction.WAIT
+    confidence: str = "LOW"
+    reasoning: str = ""
+    source: str = "agape_btc_perp"
+
+    # Prophet context
+    oracle_advice: str = "UNKNOWN"
+    oracle_win_probability: float = 0.0
+    oracle_confidence: float = 0.0
+    oracle_top_factors: List[str] = field(default_factory=list)
+
+    # Trade parameters - uses quantity (float) not contracts (int)
+    side: Optional[str] = None
+    entry_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    quantity: float = 0.0
+    max_risk_usd: float = 0.0
+
+    @property
+    def is_valid(self) -> bool:
+        return (
+            self.action in (SignalAction.LONG, SignalAction.SHORT)
+            and self.confidence in ("HIGH", "MEDIUM", "LOW")
+            and self.quantity > 0
+            and self.entry_price is not None
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "spot_price": self.spot_price,
+            "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "funding_rate": self.funding_rate,
+            "funding_regime": self.funding_regime,
+            "ls_ratio": self.ls_ratio,
+            "ls_bias": self.ls_bias,
+            "nearest_long_liq": self.nearest_long_liq,
+            "nearest_short_liq": self.nearest_short_liq,
+            "squeeze_risk": self.squeeze_risk,
+            "leverage_regime": self.leverage_regime,
+            "max_pain": self.max_pain,
+            "crypto_gex": self.crypto_gex,
+            "crypto_gex_regime": self.crypto_gex_regime,
+            "action": self.action.value,
+            "confidence": self.confidence,
+            "reasoning": self.reasoning,
+            "oracle_advice": self.oracle_advice,
+            "oracle_win_probability": self.oracle_win_probability,
+            "oracle_confidence": self.oracle_confidence,
+            "oracle_top_factors": self.oracle_top_factors,
+            "side": self.side,
+            "entry_price": self.entry_price,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "quantity": self.quantity,
+            "max_risk_usd": self.max_risk_usd,
+        }
+
+
+@dataclass
+class AgapeBtcPerpPosition:
+    """An open or closed AGAPE-BTC-PERP perpetual position.
+
+    P&L = (current_price - entry_price) * quantity * direction
+    No contract_size multiplier - quantity IS the BTC amount.
+    """
+    position_id: str
+    side: PositionSide
+    quantity: float
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    max_risk_usd: float
+
+    # Market context at entry
+    underlying_at_entry: float
+    funding_rate_at_entry: float
+    funding_regime_at_entry: str
+    ls_ratio_at_entry: float
+    squeeze_risk_at_entry: str
+    max_pain_at_entry: Optional[float]
+    crypto_gex_at_entry: float
+    crypto_gex_regime_at_entry: str
+
+    # Prophet context
+    oracle_advice: str
+    oracle_win_probability: float
+    oracle_confidence: float
+    oracle_top_factors: List[str]
+
+    # Signal reasoning
+    signal_action: str
+    signal_confidence: str
+    signal_reasoning: str
+
+    # Status
+    status: PositionStatus = PositionStatus.OPEN
+    open_time: Optional[datetime] = None
+    close_time: Optional[datetime] = None
+    close_price: Optional[float] = None
+    close_reason: Optional[str] = None
+    realized_pnl: Optional[float] = None
+
+    # Tracking
+    unrealized_pnl: float = 0.0
+    high_water_mark: float = 0.0
+    last_update: Optional[datetime] = None
+
+    def calculate_pnl(self, current_price: float) -> float:
+        """Calculate P&L for current price.
+
+        BTC-PERP: P&L = (current - entry) * quantity * direction
+        No contract_size multiplier - quantity is the raw BTC amount.
+        """
+        direction = 1 if self.side == PositionSide.LONG else -1
+        pnl = (current_price - self.entry_price) * self.quantity * direction
+        return round(pnl, 2)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "position_id": self.position_id,
+            "side": self.side.value,
+            "quantity": self.quantity,
+            "entry_price": self.entry_price,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+            "max_risk_usd": self.max_risk_usd,
+            "underlying_at_entry": self.underlying_at_entry,
+            "funding_rate_at_entry": self.funding_rate_at_entry,
+            "funding_regime_at_entry": self.funding_regime_at_entry,
+            "ls_ratio_at_entry": self.ls_ratio_at_entry,
+            "squeeze_risk_at_entry": self.squeeze_risk_at_entry,
+            "max_pain_at_entry": self.max_pain_at_entry,
+            "crypto_gex_at_entry": self.crypto_gex_at_entry,
+            "crypto_gex_regime_at_entry": self.crypto_gex_regime_at_entry,
+            "oracle_advice": self.oracle_advice,
+            "oracle_win_probability": self.oracle_win_probability,
+            "oracle_confidence": self.oracle_confidence,
+            "oracle_top_factors": self.oracle_top_factors,
+            "signal_action": self.signal_action,
+            "signal_confidence": self.signal_confidence,
+            "signal_reasoning": self.signal_reasoning,
+            "status": self.status.value,
+            "open_time": self.open_time.isoformat() if self.open_time else None,
+            "close_time": self.close_time.isoformat() if self.close_time else None,
+            "close_price": self.close_price,
+            "close_reason": self.close_reason,
+            "realized_pnl": self.realized_pnl,
+            "unrealized_pnl": self.unrealized_pnl,
+            "high_water_mark": self.high_water_mark,
+        }
