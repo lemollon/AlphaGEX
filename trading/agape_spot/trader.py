@@ -487,7 +487,8 @@ class AgapeSpotTrader:
             scan_context["volatility"] = vol_context
 
             # Step 3: Manage existing positions for this ticker
-            managed, closed = self._manage_positions(ticker, market_data)
+            # vol_context contains RSI(14) on 1-min candles for exit signals
+            managed, closed = self._manage_positions(ticker, market_data, vol_context=vol_context)
             result["positions_managed"] = managed
             result["positions_closed"] = closed
 
@@ -779,6 +780,7 @@ class AgapeSpotTrader:
 
     def _manage_positions(
         self, ticker: str, market_data: Optional[Dict],
+        vol_context: Optional[Dict] = None,
     ) -> tuple:
         """Manage open positions for a specific ticker. Long-only."""
         open_positions = self._get_open_positions_for_ticker(ticker)
@@ -851,6 +853,7 @@ class AgapeSpotTrader:
                 if self.config.use_no_loss_trailing:
                     did_close = self._manage_no_loss_trailing(
                         ticker, pos_dict, current_price, now,
+                        vol_context=vol_context,
                     )
                 else:
                     should_close, reason = self._check_exit_conditions(
@@ -920,6 +923,7 @@ class AgapeSpotTrader:
                 if self.config.use_no_loss_trailing:
                     did_close = self._manage_no_loss_trailing(
                         ticker, pos_dict, current_price, now,
+                        vol_context=vol_context,
                     )
                 else:
                     should_close, reason = self._check_exit_conditions(
@@ -1010,6 +1014,7 @@ class AgapeSpotTrader:
         pos: Dict,
         current_price: float,
         now: datetime,
+        vol_context: Optional[Dict] = None,
     ) -> bool:
         """No-loss trailing stop management. LONG-ONLY.
 
@@ -1019,6 +1024,11 @@ class AgapeSpotTrader:
 
         BENCHMARK-AWARE: In strong uptrends, trail distance and max hold time
         are widened so positions ride the trend instead of exiting too early.
+
+        RSI EXIT: When RSI(14) on 1-min candles crosses above 70 (overbought)
+        and the position is in profit, take profit. The trailing stop may not
+        fire fast enough when price spikes then reverses — RSI catches the
+        overbought condition at the top of the range.
 
         profit_pct   = (current - entry) / entry * 100
         hwm          = highest price seen (only updates when price goes up)
@@ -1115,6 +1125,27 @@ class AgapeSpotTrader:
                     ticker, pos, current_stop,
                     f"TRAIL_STOP_+{exit_pnl_pct:.1f}pct",
                 )
+
+        # ---- RSI overbought take profit (1-min RSI > 70 while in profit) ----
+        # When RSI spikes above 70, the coin is overbought at the top of the
+        # range. Take profit now — the trailing stop may lag behind a spike
+        # that reverses quickly.  Only fires when position is in profit.
+        rsi = (vol_context or {}).get("rsi") if vol_context else None
+        if (
+            rsi is not None
+            and self.config.enable_rsi_choppy_override
+            and rsi > self.config.rsi_overbought_threshold
+            and profit_pct > 0
+        ):
+            logger.info(
+                f"AGAPE-SPOT RSI EXIT: {ticker} RSI={rsi:.1f} > "
+                f"{self.config.rsi_overbought_threshold} while +{profit_pct:.1f}% "
+                f"— taking profit"
+            )
+            return self._close_position(
+                ticker, pos, current_price,
+                f"RSI_OVERBOUGHT_{rsi:.0f}_+{profit_pct:.1f}pct",
+            )
 
         # ---- Profit target (disabled for all tickers) ----
         if profit_target_pct > 0 and profit_pct >= profit_target_pct:

@@ -423,36 +423,92 @@ class AgapeSpotExecutor:
             result["regime"] = "CHOPPY" if chop_index > 0.65 else "TRENDING"
             result["spot_price"] = current_price
 
-            # RSI(14) on 5-min candles — standard Wilder smoothing.
-            # Computed from the same closes already fetched for ATR/chop.
-            if len(closes) >= periods + 1:
-                gains = []
-                losses = []
-                for i in range(1, len(closes)):
-                    delta = closes[i] - closes[i - 1]
-                    gains.append(max(delta, 0))
-                    losses.append(max(-delta, 0))
-
-                # Wilder smoothed: first avg is SMA, then EMA
-                if len(gains) >= periods:
-                    avg_gain = sum(gains[:periods]) / periods
-                    avg_loss = sum(losses[:periods]) / periods
-                    for j in range(periods, len(gains)):
-                        avg_gain = (avg_gain * (periods - 1) + gains[j]) / periods
-                        avg_loss = (avg_loss * (periods - 1) + losses[j]) / periods
-
-                    if avg_loss > 0:
-                        rs = avg_gain / avg_loss
-                        rsi = 100 - (100 / (1 + rs))
-                    else:
-                        rsi = 100.0  # No losses = max RSI
-                    result["rsi"] = round(rsi, 2)
+            # RSI(14) on 1-MINUTE candles for fast scalping entries/exits.
+            # Separate API call from the 5-min ATR/chop candles because
+            # 1-min RSI is more responsive for mean-reversion timing.
+            result["rsi"] = self.get_rsi(ticker, periods=periods)
 
             return result
 
         except Exception as e:
             logger.debug(f"AGAPE-SPOT volatility context: Failed for {ticker}: {e}")
             return result
+
+    def get_rsi(
+        self, ticker: str, periods: int = 14,
+    ) -> Optional[float]:
+        """Calculate RSI on 1-MINUTE candles (Wilder smoothing).
+
+        Uses 1-min granularity for fast mean-reversion timing:
+        - RSI < 30 = oversold → biggest buying opportunity in range-bound markets
+        - RSI > 70 = overbought → take profit exit signal
+
+        Separate from the 5-min candles used for ATR/chop because 1-min RSI
+        is more responsive to short-term price swings in crypto scalping.
+
+        Returns:
+            RSI value (0-100), or None if candles unavailable.
+        """
+        client = self._get_client(ticker)
+        if not client:
+            return None
+
+        try:
+            import time
+            now_ts = str(int(time.time()))
+            # 1-min candles: need periods + 5 buffer candles
+            lookback = periods + 10
+            start_ts = str(int(time.time()) - 60 * lookback)
+
+            candles_resp = client.get_candles(
+                product_id=ticker,
+                start=start_ts,
+                end=now_ts,
+                granularity="ONE_MINUTE",
+            )
+            candles = self._resp(candles_resp, "candles", [])
+            if not candles or len(candles) < periods + 1:
+                return None
+
+            candles = sorted(candles, key=lambda c: int(self._resp(c, "start", "0")))
+
+            closes = []
+            for c in candles:
+                close = float(self._resp(c, "close", 0))
+                if close > 0:
+                    closes.append(close)
+
+            if len(closes) < periods + 1:
+                return None
+
+            # Wilder smoothed RSI: SMA seed then EMA
+            gains = []
+            losses = []
+            for i in range(1, len(closes)):
+                delta = closes[i] - closes[i - 1]
+                gains.append(max(delta, 0))
+                losses.append(max(-delta, 0))
+
+            if len(gains) < periods:
+                return None
+
+            avg_gain = sum(gains[:periods]) / periods
+            avg_loss = sum(losses[:periods]) / periods
+            for j in range(periods, len(gains)):
+                avg_gain = (avg_gain * (periods - 1) + gains[j]) / periods
+                avg_loss = (avg_loss * (periods - 1) + losses[j]) / periods
+
+            if avg_loss > 0:
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+            else:
+                rsi = 100.0
+
+            return round(rsi, 2)
+
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT RSI: Failed for {ticker}: {e}")
+            return None
 
     # =========================================================================
     # Helpers
