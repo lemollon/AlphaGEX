@@ -396,21 +396,43 @@ class AgapeBtcPerpTrader:
         elif side == "short" and current_price < hwm:
             self.db.update_high_water_mark(pos_dict["position_id"], current_price)
 
+    def _get_available_balance(self, open_pos=None):
+        """Calculate current account balance (starting capital + realized + unrealized)."""
+        try:
+            closed = self.db.get_closed_trades(limit=10000)
+            realized = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
+            if open_pos is None:
+                open_pos = self.db.get_open_positions()
+            unrealized = 0.0
+            cp = self.executor.get_current_price()
+            if cp and open_pos:
+                for p in open_pos:
+                    d = 1 if p["side"] == "long" else -1
+                    qty = p.get("quantity", self.config.default_quantity)
+                    unrealized += (cp - p["entry_price"]) * qty * d
+            return self.config.starting_capital + realized + unrealized
+        except Exception:
+            return self.config.starting_capital
+
     def _check_entry_conditions(self, now):
         """Check entry conditions for perpetual contract.
 
         BTC-PERP trades 24/7/365 - no market hours restrictions.
-        Only checks: bot enabled, max positions.
+        Checks: bot enabled, max positions, sufficient capital.
         """
         if not self._enabled:
             return "BOT_DISABLED"
 
-        # Check max open positions
-        position_count = self.db.get_position_count()
-        if position_count >= self.config.max_open_positions:
-            return f"MAX_POSITIONS_{position_count}/{self.config.max_open_positions}"
+        open_pos = self.db.get_open_positions()
+        if len(open_pos) >= self.config.max_open_positions:
+            return f"MAX_POSITIONS_{len(open_pos)}/{self.config.max_open_positions}"
 
-        # 24/7/365 - no market hours check needed for perpetual contracts
+        balance = self._get_available_balance(open_pos)
+        min_required = self.config.starting_capital * (self.config.risk_per_trade_pct / 100)
+        if balance <= min_required:
+            logger.warning(f"AGAPE-BTC-PERP: Insufficient capital ${balance:.2f} (need ${min_required:.2f})")
+            return f"INSUFFICIENT_CAPITAL_${balance:.2f}"
+
         return None
 
     def _log_scan(self, result, context, signal=None):
