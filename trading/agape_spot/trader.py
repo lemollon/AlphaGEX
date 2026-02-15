@@ -196,6 +196,91 @@ class AgapeSpotTrader:
         return alpha
 
     # ==================================================================
+    # Exchange reconciliation — detect DB vs Coinbase drift
+    # ==================================================================
+
+    def _reconcile_exchange(self) -> None:
+        """Compare DB open positions against actual Coinbase holdings.
+
+        Runs periodically (every 10 cycles) to detect orphaned coins
+        (DB says closed but Coinbase still has holdings) and ghost
+        positions (DB says open but Coinbase has no coins).
+
+        Logs mismatches loudly so the user can take manual action.
+        """
+        try:
+            # Gather DB open positions grouped by ticker + account
+            all_open = self.db.get_open_positions()
+            db_qty_by_ticker: Dict[str, float] = {}
+            for pos in all_open:
+                ticker = pos.get("ticker", "ETH-USD")
+                qty = float(pos.get("quantity", 0))
+                db_qty_by_ticker[ticker] = db_qty_by_ticker.get(ticker, 0) + qty
+
+            # Query actual Coinbase balances from all accounts
+            exchange_balances = self.executor.get_all_account_balances()
+            if not exchange_balances:
+                return
+
+            # Aggregate Coinbase holdings across all accounts
+            coinbase_qty_by_ticker: Dict[str, float] = {}
+            for acct_label, acct_data in exchange_balances.items():
+                if isinstance(acct_data, dict) and "error" not in acct_data:
+                    for ticker in self.config.tickers:
+                        symbol = SPOT_TICKERS.get(ticker, {}).get("symbol", "")
+                        bal_key = symbol.lower() + "_balance"
+                        bal = float(acct_data.get(bal_key, 0))
+                        if bal > 0:
+                            coinbase_qty_by_ticker[ticker] = (
+                                coinbase_qty_by_ticker.get(ticker, 0) + bal
+                            )
+
+            # Compare and log mismatches
+            all_tickers = set(list(db_qty_by_ticker.keys()) + list(coinbase_qty_by_ticker.keys()))
+            mismatches = []
+
+            for ticker in all_tickers:
+                db_qty = db_qty_by_ticker.get(ticker, 0)
+                cb_qty = coinbase_qty_by_ticker.get(ticker, 0)
+
+                # Skip tiny differences (dust from rounding)
+                min_notional = SPOT_TICKERS.get(ticker, {}).get("min_notional_usd", 2.0)
+                price = self.executor.get_current_price(ticker) or 0
+                diff_usd = abs(db_qty - cb_qty) * price if price else 0
+
+                if diff_usd < min_notional:
+                    continue
+
+                if cb_qty > 0 and db_qty == 0:
+                    mismatches.append(
+                        f"ORPHANED COINS: {ticker} has {cb_qty:.6f} on Coinbase "
+                        f"(~${cb_qty * price:.2f}) but 0 open positions in DB"
+                    )
+                elif db_qty > 0 and cb_qty == 0:
+                    mismatches.append(
+                        f"GHOST POSITIONS: {ticker} has {db_qty:.6f} in DB "
+                        f"but 0 on Coinbase — sells may have succeeded but DB not updated"
+                    )
+                elif abs(db_qty - cb_qty) / max(db_qty, cb_qty, 0.0001) > 0.1:
+                    mismatches.append(
+                        f"QTY MISMATCH: {ticker} DB={db_qty:.6f} vs "
+                        f"Coinbase={cb_qty:.6f} (diff ~${diff_usd:.2f})"
+                    )
+
+            if mismatches:
+                msg = "RECONCILIATION DRIFT DETECTED:\n" + "\n".join(mismatches)
+                logger.warning(f"AGAPE-SPOT: {msg}")
+                self.db.log(
+                    "WARNING", "RECONCILIATION_DRIFT", msg,
+                    details={"db_qty": db_qty_by_ticker, "coinbase_qty": coinbase_qty_by_ticker},
+                )
+            else:
+                logger.debug("AGAPE-SPOT: Reconciliation OK — DB matches Coinbase")
+
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT: Reconciliation check failed: {e}", exc_info=True)
+
+    # ==================================================================
     # Top-level cycle -- iterates ALL tickers
     # ==================================================================
 
@@ -207,6 +292,10 @@ class AgapeSpotTrader:
         # Refresh capital allocation rankings every cycle so live accounts
         # always allocate based on the latest performance data.
         self._refresh_allocator()
+
+        # Run exchange reconciliation every 10 cycles (~50 min at 5-min intervals)
+        if self._cycle_count % 10 == 0:
+            self._reconcile_exchange()
 
         results: Dict[str, Any] = {
             "cycle": self._cycle_count,
@@ -910,20 +999,42 @@ class AgapeSpotTrader:
                 # Sell succeeded but fill lookup failed — use current_price
                 pass
             else:
-                # Sell failed — still close DB position to avoid stale state,
-                # but warn loudly so the user can check their Coinbase account.
-                logger.warning(
-                    f"AGAPE-SPOT: LIVE SELL FAILED for {ticker} {position_id}. "
-                    f"DB position will be closed but coins may still be in "
-                    f"Coinbase account. Manual check recommended."
-                )
-                self.db.log(
-                    "WARNING", "LIVE_SELL_FAILED",
-                    f"Coinbase sell failed for {ticker} {position_id} "
-                    f"(qty={quantity}). Position closed in DB at "
-                    f"${current_price}. Coins may still be in account.",
-                    ticker=ticker,
-                )
+                # Sell FAILED — keep position OPEN so we retry next cycle.
+                # Increment fail counter; after 3 failures, force-close DB
+                # position to prevent infinite retries (coins stay on Coinbase
+                # as orphans, but slots free up).
+                fail_count = self.db.increment_sell_fail_count(position_id)
+                max_sell_retries = 3
+
+                if fail_count >= max_sell_retries:
+                    logger.error(
+                        f"AGAPE-SPOT: SELL FAILED {fail_count}x for {ticker} "
+                        f"{position_id} — force-closing DB position. "
+                        f"Coins may still be in Coinbase. Manual check required."
+                    )
+                    self.db.log(
+                        "ERROR", "SELL_FAILED_FORCE_CLOSE",
+                        f"Coinbase sell failed {fail_count}x for {ticker} "
+                        f"{position_id} (qty={quantity}). Force-closing DB "
+                        f"position at ${current_price}. MANUAL CHECK REQUIRED: "
+                        f"coins may still be in Coinbase account.",
+                        ticker=ticker,
+                    )
+                    # Fall through to close the DB position below
+                else:
+                    logger.warning(
+                        f"AGAPE-SPOT: LIVE SELL FAILED for {ticker} "
+                        f"{position_id} (attempt {fail_count}/{max_sell_retries}). "
+                        f"Keeping position OPEN for retry next cycle."
+                    )
+                    self.db.log(
+                        "WARNING", "LIVE_SELL_RETRY",
+                        f"Coinbase sell failed for {ticker} {position_id} "
+                        f"(qty={quantity}, attempt {fail_count}/{max_sell_retries}). "
+                        f"Position stays open — will retry next scan.",
+                        ticker=ticker,
+                    )
+                    return False  # Position stays open, retry next cycle
 
         # Long-only P&L -- no direction multiplier
         realized_pnl = round((actual_close_price - entry_price) * quantity, 2)

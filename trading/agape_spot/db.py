@@ -131,6 +131,15 @@ class AgapeSpotDatabase:
                 )
             """)
 
+            # Add sell_fail_count column for retry tracking (safe re-run)
+            cursor.execute("""
+                DO $$ BEGIN
+                    ALTER TABLE agape_spot_positions
+                        ADD COLUMN IF NOT EXISTS sell_fail_count INTEGER DEFAULT 0;
+                EXCEPTION WHEN others THEN NULL;
+                END $$;
+            """)
+
             # ----- agape_spot_equity_snapshots -----
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS agape_spot_equity_snapshots (
@@ -521,6 +530,30 @@ class AgapeSpotDatabase:
             logger.error(f"AGAPE-SPOT DB: Failed to expire position: {e}")
             conn.rollback()
             return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    def increment_sell_fail_count(self, position_id: str) -> int:
+        """Increment sell_fail_count for a position and return the new count."""
+        conn = self._get_conn()
+        if not conn:
+            return -1
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE agape_spot_positions
+                SET sell_fail_count = COALESCE(sell_fail_count, 0) + 1
+                WHERE position_id = %s AND status = 'open'
+                RETURNING sell_fail_count
+            """, (position_id,))
+            row = cursor.fetchone()
+            conn.commit()
+            return row[0] if row else -1
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Failed to increment sell_fail_count: {e}")
+            conn.rollback()
+            return -1
         finally:
             cursor.close()
             conn.close()
