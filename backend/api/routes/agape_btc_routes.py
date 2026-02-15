@@ -866,6 +866,37 @@ async def get_gex_mapping():
 
 
 # ------------------------------------------------------------------
+# Margin Status
+# ------------------------------------------------------------------
+
+@router.get("/margin-status")
+async def get_margin_status():
+    """Get current margin utilization and health for AGAPE-BTC.
+
+    Returns:
+    - Account equity vs margin used
+    - Margin ratio (equity / maintenance margin)
+    - Margin health status (HEALTHY / WARNING / MARGIN_CALL / LIQUIDATION)
+    - Per-position margin breakdown with liquidation prices
+    - CME /MBT margin requirements ($1,320 initial, $1,200 maintenance per contract)
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "message": "AGAPE-BTC not available"}
+
+    try:
+        margin = trader.get_margin_status()
+        return {
+            "success": True,
+            "data": margin,
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-BTC margin status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ------------------------------------------------------------------
 # Bot Control
 # ------------------------------------------------------------------
 

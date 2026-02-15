@@ -66,6 +66,13 @@ class AgapeXrpConfig:
     tick_size: float = 0.0001          # Minimum price increment
     tick_value: float = 0.25           # Dollar value per tick
 
+    # Margin requirements (CME /XRP Micro Futures)
+    initial_margin_per_contract: float = 150.0      # CME initial margin per contract
+    maintenance_margin_per_contract: float = 120.0   # CME maintenance margin per contract
+    max_margin_usage_pct: float = 80.0               # Max % of equity used as margin
+    margin_call_threshold_pct: float = 120.0         # Warn when equity < 120% of maintenance
+    auto_liquidation_threshold_pct: float = 100.0    # Force close when equity <= 100% of maintenance
+
     # Entry/exit rules
     profit_target_pct: float = 50.0
     stop_loss_pct: float = 100.0
@@ -183,6 +190,12 @@ class AgapeXrpSignal:
     contracts: int = 0
     max_risk_usd: float = 0.0
 
+    # Margin info
+    margin_required: float = 0.0
+    margin_available: float = 0.0
+    leverage_at_entry: float = 0.0
+    liquidation_price: Optional[float] = None
+
     @property
     def is_valid(self) -> bool:
         return (
@@ -220,6 +233,10 @@ class AgapeXrpSignal:
             "take_profit": self.take_profit,
             "contracts": self.contracts,
             "max_risk_usd": self.max_risk_usd,
+            "margin_required": self.margin_required,
+            "margin_available": self.margin_available,
+            "leverage_at_entry": self.leverage_at_entry,
+            "liquidation_price": self.liquidation_price,
         }
 
 
@@ -268,6 +285,11 @@ class AgapeXrpPosition:
     high_water_mark: float = 0.0
     last_update: Optional[datetime] = None
 
+    # Margin tracking
+    margin_required: float = 0.0
+    liquidation_price: Optional[float] = None
+    leverage_at_entry: float = 0.0
+
     def calculate_pnl(self, current_price: float) -> float:
         """Calculate P&L for current price.
 
@@ -310,4 +332,7 @@ class AgapeXrpPosition:
             "realized_pnl": self.realized_pnl,
             "unrealized_pnl": self.unrealized_pnl,
             "high_water_mark": self.high_water_mark,
+            "margin_required": self.margin_required,
+            "liquidation_price": self.liquidation_price,
+            "leverage_at_entry": self.leverage_at_entry,
         }

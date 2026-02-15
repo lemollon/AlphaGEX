@@ -98,6 +98,9 @@ class AgapeXrpExecutor:
                 status=PositionStatus.OPEN,
                 open_time=datetime.now(CENTRAL_TZ),
                 high_water_mark=fill_price,
+                margin_required=signal.margin_required,
+                liquidation_price=signal.liquidation_price,
+                leverage_at_entry=signal.leverage_at_entry,
             )
         except Exception as e:
             logger.error(f"AGAPE-XRP Executor: Paper execution failed: {e}")
