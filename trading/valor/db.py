@@ -330,13 +330,13 @@ class ValorDatabase:
                         id SERIAL PRIMARY KEY,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                        starting_capital DECIMAL(12, 2) NOT NULL DEFAULT 100000.00,
-                        current_balance DECIMAL(12, 2) NOT NULL DEFAULT 100000.00,
+                        starting_capital DECIMAL(12, 2) NOT NULL DEFAULT 500000.00,
+                        current_balance DECIMAL(12, 2) NOT NULL DEFAULT 500000.00,
                         cumulative_pnl DECIMAL(12, 2) DEFAULT 0.00,
                         total_trades INTEGER DEFAULT 0,
                         margin_used DECIMAL(12, 2) DEFAULT 0.00,
-                        margin_available DECIMAL(12, 2) DEFAULT 100000.00,
-                        high_water_mark DECIMAL(12, 2) DEFAULT 100000.00,
+                        margin_available DECIMAL(12, 2) DEFAULT 500000.00,
+                        high_water_mark DECIMAL(12, 2) DEFAULT 500000.00,
                         max_drawdown DECIMAL(12, 2) DEFAULT 0.00,
                         is_active BOOLEAN DEFAULT TRUE
                     )
@@ -1760,7 +1760,7 @@ class ValorDatabase:
     # Paper Trading Account
     # ========================================================================
 
-    def initialize_paper_account(self, starting_capital: float = 100000.0) -> bool:
+    def initialize_paper_account(self, starting_capital: float = 500000.0) -> bool:
         """
         Initialize paper trading account with starting capital.
 
@@ -1914,7 +1914,7 @@ class ValorDatabase:
             logger.error(f"Failed to update paper balance: {e}")
             return False, {}
 
-    def reset_paper_account(self, starting_capital: float = 100000.0, full_reset: bool = True) -> bool:
+    def reset_paper_account(self, starting_capital: float = 500000.0, full_reset: bool = True) -> bool:
         """
         Reset paper trading account (for fresh start).
 
@@ -2219,40 +2219,67 @@ class ValorDatabase:
 
         return result
 
-    def get_paper_equity_curve(self, days: int = 30) -> List[Dict]:
+    def get_paper_equity_curve(self, days: int = 30, ticker: Optional[str] = None) -> List[Dict]:
         """
         Get paper trading equity curve using closed trades for cumulative P&L.
 
         This calculates equity as: starting_capital + cumulative_realized_pnl + unrealized_pnl
+        When ticker is specified, uses that instrument's $100K starting capital.
+        When ticker is None (ALL), uses total account starting capital.
         """
         data = []
         try:
             with db_connection() as conn:
                 c = conn.cursor()
 
-                # Get starting capital
-                account = self.get_paper_account()
-                starting_capital = account.get('starting_capital', 100000.0) if account else 100000.0
+                # Per-ticker capital: use FUTURES_TICKERS config for filtered view
+                if ticker:
+                    ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+                    starting_capital = ticker_cfg.get('starting_capital', 100000.0)
+                else:
+                    account = self.get_paper_account()
+                    starting_capital = account.get('starting_capital', 500000.0) if account else 500000.0
 
                 # Get daily cumulative P&L from closed trades
-                c.execute("""
-                    WITH daily_pnl AS (
+                if ticker:
+                    c.execute("""
+                        WITH daily_pnl AS (
+                            SELECT
+                                DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                                SUM(realized_pnl) as daily_realized_pnl,
+                                COUNT(*) as trades
+                            FROM valor_closed_trades
+                            WHERE close_time >= NOW() - INTERVAL '%s days'
+                              AND ticker = %s
+                            GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                            ORDER BY trade_date
+                        )
                         SELECT
-                            DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
-                            SUM(realized_pnl) as daily_realized_pnl,
-                            COUNT(*) as trades
-                        FROM valor_closed_trades
-                        WHERE close_time >= NOW() - INTERVAL '%s days'
-                        GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
-                        ORDER BY trade_date
-                    )
-                    SELECT
-                        trade_date,
-                        daily_realized_pnl,
-                        trades,
-                        SUM(daily_realized_pnl) OVER (ORDER BY trade_date) as cumulative_pnl
-                    FROM daily_pnl
-                """, (days,))
+                            trade_date,
+                            daily_realized_pnl,
+                            trades,
+                            SUM(daily_realized_pnl) OVER (ORDER BY trade_date) as cumulative_pnl
+                        FROM daily_pnl
+                    """, (days, ticker))
+                else:
+                    c.execute("""
+                        WITH daily_pnl AS (
+                            SELECT
+                                DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                                SUM(realized_pnl) as daily_realized_pnl,
+                                COUNT(*) as trades
+                            FROM valor_closed_trades
+                            WHERE close_time >= NOW() - INTERVAL '%s days'
+                            GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                            ORDER BY trade_date
+                        )
+                        SELECT
+                            trade_date,
+                            daily_realized_pnl,
+                            trades,
+                            SUM(daily_realized_pnl) OVER (ORDER BY trade_date) as cumulative_pnl
+                        FROM daily_pnl
+                    """, (days,))
 
                 rows = c.fetchall()
 
@@ -2266,7 +2293,6 @@ class ValorDatabase:
                         'cumulative_pnl': float(cumulative_pnl or 0),
                         'equity': equity,
                         'trades': trades,
-                        # BUG FIX: Protect against division by zero
                         'return_pct': (float(cumulative_pnl or 0) / starting_capital) * 100 if starting_capital and starting_capital > 0 else 0.0
                     })
 
