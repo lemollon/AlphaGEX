@@ -95,7 +95,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "spy_derive_multiplier": None,  # Cannot derive from SPY
 
         # Capital & risk
-        "starting_capital": 25000.0,
+        "starting_capital": 100000.0,
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
         "max_open_positions": 10,
@@ -144,7 +144,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "spy_derive_multiplier": None,
 
         # Capital & risk
-        "starting_capital": 25000.0,
+        "starting_capital": 100000.0,
         "risk_per_trade_pct": 1.0,
         "max_contracts": 2,
         "max_open_positions": 5,
@@ -193,7 +193,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "spy_derive_multiplier": None,
 
         # Capital & risk
-        "starting_capital": 25000.0,
+        "starting_capital": 100000.0,
         "risk_per_trade_pct": 0.5,   # Lower risk - NG is extremely volatile
         "max_contracts": 1,
         "max_open_positions": 3,
@@ -242,7 +242,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "spy_derive_multiplier": None,
 
         # Capital & risk
-        "starting_capital": 15000.0,
+        "starting_capital": 100000.0,
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
         "max_open_positions": 10,
@@ -291,7 +291,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "spy_derive_multiplier": 10.0,  # SPY * 10 ≈ MES
 
         # Capital & risk
-        "starting_capital": 25000.0,
+        "starting_capital": 100000.0,
         "risk_per_trade_pct": 1.0,
         "max_contracts": 5,
         "max_open_positions": 100,
@@ -604,7 +604,7 @@ class ValorConfig:
     tickers: List[str] = field(default_factory=lambda: list(DEFAULT_VALOR_TICKERS))
 
     # Risk limits (shared defaults, overridden per-ticker by FUTURES_TICKERS)
-    capital: float = 100000.0  # Paper trading capital ($100k starting)
+    capital: float = 500000.0  # Paper trading capital ($100k per instrument × 5)
     risk_per_trade_pct: float = 1.0  # Risk 1% per trade
     max_contracts: int = 5  # Maximum contracts per trade
     max_open_positions: int = 100  # Effectively unlimited positions per user request

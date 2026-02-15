@@ -106,6 +106,10 @@ async def get_valor_ticker_stats():
     try:
         trader = _get_trader()
         stats = trader.get_ticker_stats()
+        # Enrich with per-ticker starting capital from FUTURES_TICKERS config
+        for ticker_sym, ticker_data in stats.items():
+            cfg = (FUTURES_TICKERS or {}).get(ticker_sym, {})
+            ticker_data["starting_capital"] = cfg.get("starting_capital", 100000.0)
         return {
             "ticker_stats": stats,
             "timestamp": datetime.now().isoformat()
@@ -539,13 +543,13 @@ async def get_valor_paper_account():
 
 @router.post("/api/valor/paper-account/initialize")
 async def initialize_valor_paper_account(
-    starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for paper trading")
+    starting_capital: float = Query(500000.0, ge=1000, le=10000000, description="Starting capital for paper trading ($100K per instrument × 5)")
 ):
     """
     Initialize VALOR paper trading account.
 
     Creates a new paper trading account with the specified starting capital.
-    Default is $100,000.
+    Default is $500,000 ($100K per instrument × 5 instruments).
     """
     try:
         trader = _get_trader()
@@ -574,7 +578,7 @@ async def initialize_valor_paper_account(
 
 @router.post("/api/valor/paper-account/reset")
 async def reset_valor_paper_account(
-    starting_capital: float = Query(100000.0, ge=1000, le=10000000, description="Starting capital for new account"),
+    starting_capital: float = Query(500000.0, ge=1000, le=10000000, description="Starting capital for new account ($100K per instrument × 5)"),
     full_reset: bool = Query(True, description="If true, also clears closed_trades, positions, equity snapshots for clean slate")
 ):
     """
@@ -1650,7 +1654,7 @@ async def get_valor_paper_equity_curve(
         # If no trades yet, return starting point
         if not curve:
             paper_account = trader.get_paper_account()
-            starting_capital = paper_account.get('starting_capital', 100000.0) if paper_account else 100000.0
+            starting_capital = paper_account.get('starting_capital', 500000.0) if paper_account else 500000.0
             curve = [{
                 'date': datetime.now().date().isoformat(),
                 'daily_pnl': 0.0,

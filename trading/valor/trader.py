@@ -2021,7 +2021,7 @@ class ValorTrader:
 
         # Add paper account info if available
         if paper_account:
-            starting_cap = paper_account.get('starting_capital', 100000) or 100000  # Ensure non-zero
+            starting_cap = paper_account.get('starting_capital', 500000) or 500000  # Ensure non-zero
             cumulative_pnl = paper_account.get('cumulative_pnl', 0)
             status_dict["paper_account"] = {
                 "starting_capital": paper_account.get('starting_capital', 0),
@@ -2041,14 +2041,14 @@ class ValorTrader:
     def get_equity_curve(self, days: int = 30, ticker: Optional[str] = None) -> List[Dict]:
         """Get equity curve data, optionally filtered by ticker"""
         if self.config.mode == TradingMode.PAPER:
-            return self.db.get_paper_equity_curve(days)
+            return self.db.get_paper_equity_curve(days, ticker=ticker)
         return self.db.get_equity_curve(days, ticker=ticker)
 
     def get_paper_account(self) -> Optional[Dict]:
         """Get paper trading account status"""
         return self.db.get_paper_account()
 
-    def reset_paper_account(self, starting_capital: float = 100000.0) -> bool:
+    def reset_paper_account(self, starting_capital: float = 500000.0) -> bool:
         """Reset paper trading account with new starting capital"""
         return self.db.reset_paper_account(starting_capital)
 
