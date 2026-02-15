@@ -534,11 +534,42 @@ class AgapeSpotTrader:
             return (0, 0)
 
         current_price = self._get_current_price(ticker, market_data)
-        if not current_price:
-            return (len(open_positions), 0)
-
         closed = 0
         now = datetime.now(CENTRAL_TZ)
+
+        # BUG FIX: When price is unavailable, still expire stale positions.
+        # Previously, no-price → early return → positions pile up forever
+        # (93 open BTC positions observed). Now we force-expire positions
+        # past 2× max_hold_hours even without a price.
+        if not current_price:
+            exit_params = self.config.get_exit_params(ticker)
+            max_hold = exit_params["max_hold_hours"]
+            stale_threshold = max_hold * 2  # 2× max hold = definitely stale
+
+            for pos_dict in open_positions:
+                try:
+                    open_time_raw = pos_dict.get("open_time")
+                    if open_time_raw:
+                        if isinstance(open_time_raw, str):
+                            open_time = datetime.fromisoformat(open_time_raw)
+                        else:
+                            open_time = open_time_raw
+                        if open_time.tzinfo is None:
+                            open_time = open_time.replace(tzinfo=CENTRAL_TZ)
+                        hold_hours = (now - open_time).total_seconds() / 3600
+                        if hold_hours >= stale_threshold:
+                            # Force expire at entry price (0 P&L) to unblock slots
+                            entry = pos_dict["entry_price"]
+                            self._close_position(
+                                ticker, pos_dict, entry,
+                                f"STALE_NO_PRICE_{hold_hours:.0f}h",
+                            )
+                            closed += 1
+                except Exception as e:
+                    logger.error(
+                        f"AGAPE-SPOT: Stale position cleanup error ({ticker}): {e}"
+                    )
+            return (len(open_positions), closed)
 
         for pos_dict in open_positions:
             try:
