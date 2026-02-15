@@ -47,12 +47,16 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 5,
         "price_decimals": 2,
-        # BTC exit params: wider trail, longer hold to capture full trends
+        # BTC exit params: tighter than ETH — backtest shows BTC net negative (-$89)
+        # Faster exits reduce drawdown on a ticker that doesn't have edge yet
         "no_loss_activation_pct": 1.5,
         "no_loss_trail_distance_pct": 1.25,
         "max_unrealized_loss_pct": 1.5,
         "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
-        "max_hold_hours": 8,  # Was 6h — BTC trends run 8-12h, don't exit mid-trend
+        "max_hold_hours": 4,  # Was 8h — BTC lost money in backtest, don't hold losers long
+        # Position cap: BTC has negative EV in backtest, limit exposure until profitable
+        "max_positions": 2,
+        "min_scans_between_trades": 5,  # 5 min between entries — prevent burst stacking
     },
     "XRP-USD": {
         "symbol": "XRP",

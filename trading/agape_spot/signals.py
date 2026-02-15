@@ -646,11 +646,11 @@ class AgapeSpotSignalGenerator:
             if not mom_ok:
                 return (SignalAction.WAIT, mom_reason)
 
-        # Backtest Strategy B: Flat $0.50 choppy gate (highest P&L in replay).
-        # Non-choppy: block only if EV clearly negative (EV <= $0)
-        # Choppy: block if EV < $0.50 (filters low-quality range-bound trades)
-        # Cold start (no EV data): pass all — gate activates once data accumulates
-        CHOPPY_EV_THRESHOLD = 0.50  # Backtest-validated flat threshold
+        # Backtest Strategy C: EWMA Dynamic choppy gate (best overall).
+        # C beat flat $0.50 (B): +$3.87 P&L, +412 trades, lowest drawdown ($253).
+        # C beat no gate (A): +$87.66 P&L, -284 trades, +0.086 $/trade.
+        # C beat flat $0.10 (D): +$89.94 P&L, better profit factor (1.45 vs 1.23).
+        # Threshold adapts per-ticker via EWMA of recent trade magnitudes.
         funding_regime_str = market_data.get("funding_regime", "UNKNOWN")
         is_choppy = self._detect_choppy_market(ticker, market_data)
 
@@ -661,12 +661,15 @@ class AgapeSpotSignalGenerator:
         ev, has_ev_data = self._calculate_expected_value(ticker, oracle_win_prob)
         self._last_ev = ev
 
+        # Dynamic EWMA threshold: adapts to each ticker's trade magnitude
+        choppy_ev_threshold = self._get_choppy_ev_threshold(ticker, vol_context)
+
         if is_choppy and self.config.enable_bayesian_choppy:
             if has_ev_data:
-                if ev < CHOPPY_EV_THRESHOLD:
+                if ev < choppy_ev_threshold:
                     logger.info(
-                        f"AGAPE-SPOT CHOPPY GATE: {ticker} EV=${ev:.4f} "
-                        f"< ${CHOPPY_EV_THRESHOLD} (oracle_wp={oracle_win_prob:.4f}, "
+                        f"AGAPE-SPOT CHOPPY GATE [EWMA]: {ticker} EV=${ev:.4f} "
+                        f"< ${choppy_ev_threshold:.4f} (oracle_wp={oracle_win_prob:.4f}, "
                         f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
                         f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f}) "
                         f"— BLOCKED"
@@ -674,8 +677,8 @@ class AgapeSpotSignalGenerator:
                     return (SignalAction.WAIT, f"CHOPPY_LOW_EV_{ev:.3f}")
                 else:
                     logger.info(
-                        f"AGAPE-SPOT CHOPPY GATE: {ticker} EV=${ev:.4f} "
-                        f">= ${CHOPPY_EV_THRESHOLD} — PASS"
+                        f"AGAPE-SPOT CHOPPY GATE [EWMA]: {ticker} EV=${ev:.4f} "
+                        f">= ${choppy_ev_threshold:.4f} — PASS"
                     )
             else:
                 # Cold start: no EV data yet, let trades through to build history
