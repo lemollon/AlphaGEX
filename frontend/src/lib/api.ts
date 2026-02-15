@@ -1277,6 +1277,28 @@ export const apiClient = {
   getOmegaAuditLog: (params?: { bot_name?: string; action?: string; limit?: number }) =>
     api.get('/api/omega/audit-log', { params }),
   getOmegaMLSystems: () => api.get('/api/omega/ml-systems'),
+
+  // ==================== MARGIN MANAGEMENT ====================
+  getMarginHealth: () => api.get('/api/margin/health'),
+  getMarginBotStatus: (botName: string) => api.get(`/api/margin/bot/${botName}/status`),
+  getMarginBotPositions: (botName: string) => api.get(`/api/margin/bot/${botName}/positions`),
+  postMarginPreTradeCheck: (botName: string, data: { symbol: string; side: string; quantity: number; entry_price: number; leverage?: number }) =>
+    api.post(`/api/margin/bot/${botName}/pre-trade-check`, data),
+  postMarginSimulatePrice: (botName: string, data: { price_change_pct: number }) =>
+    api.post(`/api/margin/bot/${botName}/simulate/price`, data),
+  postMarginSimulateAdd: (botName: string, data: { quantity: number; price: number; side?: string }) =>
+    api.post(`/api/margin/bot/${botName}/simulate/add`, data),
+  postMarginSimulateLeverage: (botName: string, data: { new_leverage: number }) =>
+    api.post(`/api/margin/bot/${botName}/simulate/leverage`, data),
+  getMarginAlerts: (params?: { bot_name?: string; limit?: number }) =>
+    api.get('/api/margin/alerts', { params }),
+  getMarginHistory: (botName: string, hours?: number) =>
+    api.get(`/api/margin/history/${botName}`, { params: { hours: hours || 24 } }),
+  getMarginDailyReport: () => api.get('/api/margin/daily-report'),
+  getMarginConfig: (botName: string) => api.get(`/api/margin/config/${botName}`),
+  updateMarginConfig: (botName: string, data: Record<string, any>) =>
+    api.put(`/api/margin/config/${botName}`, data),
+  getMarginBots: () => api.get('/api/margin/bots'),
 }
 
 // WebSocket connection
