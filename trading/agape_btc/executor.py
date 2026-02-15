@@ -122,6 +122,9 @@ class AgapeBtcExecutor:
                 status=PositionStatus.OPEN,
                 open_time=now,
                 high_water_mark=fill_price,
+                margin_required=signal.margin_required,
+                liquidation_price=signal.liquidation_price,
+                leverage_at_entry=signal.leverage_at_entry,
             )
 
             logger.info(

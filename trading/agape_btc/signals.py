@@ -296,6 +296,14 @@ class AgapeBtcSignalGenerator:
 
         contracts, max_risk = self._calculate_position_size(spot)
         stop_loss, take_profit = self._calculate_levels(spot, side, market_data)
+        margin_info = self._calculate_margin_info(contracts, spot, side)
+
+        # Reject trade if margin insufficient
+        if margin_info["margin_required"] > margin_info["margin_available"] + margin_info["margin_required"]:
+            return AgapeBtcSignal(
+                spot_price=spot, timestamp=now, action=SignalAction.WAIT,
+                reasoning=f"MARGIN_INSUFFICIENT_need=${margin_info['margin_required']:.0f}",
+            )
 
         return AgapeBtcSignal(
             spot_price=spot, timestamp=now,
@@ -316,6 +324,10 @@ class AgapeBtcSignalGenerator:
             oracle_top_factors=prophet_data.get("top_factors", []),
             side=side, entry_price=spot, stop_loss=stop_loss,
             take_profit=take_profit, contracts=contracts, max_risk_usd=max_risk,
+            margin_required=margin_info["margin_required"],
+            margin_available=margin_info["margin_available"],
+            leverage_at_entry=margin_info["leverage_at_entry"],
+            liquidation_price=margin_info["liquidation_price"],
         )
 
     def _determine_action(self, combined_signal, confidence, market_data):
@@ -411,18 +423,55 @@ class AgapeBtcSignalGenerator:
             parts.append(f"max_pain_dist={dist:+.1f}%")
         return " | ".join(parts)
 
-    def _calculate_position_size(self, spot_price: float) -> Tuple[int, float]:
-        capital = self.config.starting_capital
-        max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
+    def _calculate_position_size(self, spot_price: float, account_equity: float = None) -> Tuple[int, float]:
+        if account_equity is None:
+            account_equity = self.config.starting_capital
+        max_risk_usd = account_equity * (self.config.risk_per_trade_pct / 100)
         base_stop_pct = 0.02
         stop_distance = spot_price * base_stop_pct * (self.config.stop_loss_pct / 100)
         risk_per_contract = stop_distance * self.config.contract_size
         if risk_per_contract <= 0:
             return (1, max_risk_usd)
-        contracts = int(max_risk_usd / risk_per_contract)
-        contracts = max(1, min(contracts, self.config.max_contracts))
+        contracts_by_risk = int(max_risk_usd / risk_per_contract)
+        # Margin constraint: can't use more than max_margin_usage_pct of equity
+        margin_budget = account_equity * (self.config.max_margin_usage_pct / 100)
+        if self.config.initial_margin_per_contract > 0:
+            contracts_by_margin = max(1, int(margin_budget / self.config.initial_margin_per_contract))
+        else:
+            contracts_by_margin = self.config.max_contracts
+        contracts = max(1, min(contracts_by_risk, contracts_by_margin, self.config.max_contracts))
         actual_risk = contracts * risk_per_contract
         return (contracts, round(actual_risk, 2))
+
+    def _calculate_margin_info(self, contracts: int, spot_price: float, side: str, account_equity: float = None) -> Dict:
+        """Calculate margin requirement and liquidation price for a trade."""
+        if account_equity is None:
+            account_equity = self.config.starting_capital
+        margin_required = contracts * self.config.initial_margin_per_contract
+        maintenance_total = contracts * self.config.maintenance_margin_per_contract
+        notional = contracts * spot_price * self.config.contract_size
+        leverage = round(notional / account_equity, 2) if account_equity > 0 else 0
+        # Liquidation price: where equity drops to maintenance margin
+        equity_buffer = account_equity - maintenance_total
+        denominator = self.config.contract_size * contracts
+        if denominator > 0 and equity_buffer > 0:
+            if side == "long":
+                liq_price = round(spot_price - (equity_buffer / denominator), 2)
+            else:
+                liq_price = round(spot_price + (equity_buffer / denominator), 2)
+            if liq_price <= 0:
+                liq_price = None
+        else:
+            liq_price = None
+        margin_available = account_equity - margin_required
+        return {
+            "margin_required": round(margin_required, 2),
+            "margin_available": round(max(0, margin_available), 2),
+            "leverage_at_entry": leverage,
+            "liquidation_price": liq_price,
+            "notional_value": round(notional, 2),
+            "maintenance_margin": round(maintenance_total, 2),
+        }
 
     def _calculate_levels(self, spot, side, market_data):
         stop_pct = 0.02

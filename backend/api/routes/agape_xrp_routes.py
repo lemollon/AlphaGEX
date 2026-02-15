@@ -139,15 +139,34 @@ async def get_positions():
                 pnl = (current_price - pos["entry_price"]) * contract_size * direction * pos.get("contracts", 1)
                 pos["unrealized_pnl"] = round(pnl, 2)
                 pos["current_price"] = current_price
+                # Calculate distance to liquidation
+                liq = pos.get("liquidation_price")
+                if liq and current_price:
+                    if pos["side"] == "long":
+                        pos["liquidation_distance_pct"] = round((current_price - liq) / current_price * 100, 2)
+                    else:
+                        pos["liquidation_distance_pct"] = round((liq - current_price) / current_price * 100, 2)
+                else:
+                    pos["liquidation_distance_pct"] = None
             else:
                 pos["unrealized_pnl"] = 0
                 pos["current_price"] = None
+                pos["liquidation_distance_pct"] = None
+
+        # Get margin summary
+        margin_data = None
+        if trader:
+            try:
+                margin_data = trader.get_margin_status(positions, current_price)
+            except Exception:
+                pass
 
         return {
             "success": True,
             "data": positions,
             "count": len(positions),
             "current_xrp_price": current_price,
+            "margin": margin_data,
             "fetched_at": _format_ct(),
         }
     except Exception as e:
@@ -863,6 +882,37 @@ async def get_gex_mapping():
             },
         },
     }
+
+
+# ------------------------------------------------------------------
+# Margin Status
+# ------------------------------------------------------------------
+
+@router.get("/margin-status")
+async def get_margin_status():
+    """Get current margin utilization and health for AGAPE-XRP.
+
+    Returns:
+    - Account equity vs margin used
+    - Margin ratio (equity / maintenance margin)
+    - Margin health status (HEALTHY / WARNING / MARGIN_CALL / LIQUIDATION)
+    - Per-position margin breakdown with liquidation prices
+    - CME /XRP margin requirements ($150 initial, $120 maintenance per contract)
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "message": "AGAPE-XRP not available"}
+
+    try:
+        margin = trader.get_margin_status()
+        return {
+            "success": True,
+            "data": margin,
+            "fetched_at": _format_ct(),
+        }
+    except Exception as e:
+        logger.error(f"AGAPE-XRP margin status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ------------------------------------------------------------------

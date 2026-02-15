@@ -86,6 +86,9 @@ class AgapeBtcTrader:
             managed, closed = self._manage_positions(market_data)
             result["positions_managed"] = managed
             result["positions_closed"] = closed
+            # Margin monitoring: force close if margin ratio breached
+            margin_closed = self._check_margin_health(market_data)
+            result["positions_closed"] += margin_closed
             self._save_equity_snapshot(market_data)
             if close_only:
                 result["outcome"] = "CLOSE_ONLY"
@@ -359,6 +362,91 @@ class AgapeBtcTrader:
         elif side == "short" and current_price < hwm:
             self.db.update_high_water_mark(pos_dict["position_id"], current_price)
 
+    def _check_margin_health(self, market_data):
+        """Monitor margin and force-close positions if margin ratio breached."""
+        open_pos = self.db.get_open_positions()
+        if not open_pos:
+            return 0
+        cp = self.executor.get_current_price()
+        if not cp and market_data:
+            cp = market_data.get("spot_price")
+        if not cp:
+            return 0
+        margin_status = self.get_margin_status(open_pos, cp)
+        if margin_status["margin_ratio"] is None:
+            return 0
+        if margin_status["margin_ratio"] <= (self.config.auto_liquidation_threshold_pct / 100):
+            self.db.log("WARN", "MARGIN_LIQUIDATION",
+                f"Margin ratio {margin_status['margin_ratio']:.1%} <= {self.config.auto_liquidation_threshold_pct}% threshold. "
+                f"Force closing oldest position.")
+            oldest = sorted(open_pos, key=lambda p: p.get("open_time", ""))
+            if oldest:
+                self._close_position(oldest[0], cp, "MARGIN_LIQUIDATION")
+                return 1
+        elif margin_status["margin_ratio"] <= (self.config.margin_call_threshold_pct / 100):
+            self.db.log("WARN", "MARGIN_WARNING",
+                f"Margin warning: ratio {margin_status['margin_ratio']:.1%} approaching liquidation.")
+        return 0
+
+    def get_margin_status(self, open_positions=None, current_price=None):
+        """Calculate current margin utilization across all open positions."""
+        if open_positions is None:
+            open_positions = self.db.get_open_positions()
+        if current_price is None:
+            current_price = self.executor.get_current_price()
+        closed = self.db.get_closed_trades(limit=10000)
+        realized = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
+        unrealized = 0.0
+        total_margin_used = 0.0
+        total_maintenance = 0.0
+        position_margins = []
+        for p in open_positions:
+            contracts = p.get("contracts", 1)
+            margin_used = contracts * self.config.initial_margin_per_contract
+            maintenance = contracts * self.config.maintenance_margin_per_contract
+            total_margin_used += margin_used
+            total_maintenance += maintenance
+            if current_price:
+                direction = 1 if p["side"] == "long" else -1
+                pnl = (current_price - p["entry_price"]) * self.config.contract_size * direction * contracts
+                unrealized += pnl
+            position_margins.append({
+                "position_id": p["position_id"],
+                "margin_used": round(margin_used, 2),
+                "maintenance": round(maintenance, 2),
+                "liquidation_price": p.get("liquidation_price"),
+            })
+        equity = self.config.starting_capital + realized + unrealized
+        margin_available = equity - total_margin_used
+        margin_ratio = (equity / total_maintenance) if total_maintenance > 0 else None
+        if margin_ratio is not None:
+            if margin_ratio <= (self.config.auto_liquidation_threshold_pct / 100):
+                health = "LIQUIDATION"
+            elif margin_ratio <= (self.config.margin_call_threshold_pct / 100):
+                health = "MARGIN_CALL"
+            elif margin_ratio <= 1.5:
+                health = "WARNING"
+            else:
+                health = "HEALTHY"
+        else:
+            health = "NO_POSITIONS"
+        return {
+            "account_equity": round(equity, 2),
+            "margin_used": round(total_margin_used, 2),
+            "margin_available": round(max(0, margin_available), 2),
+            "maintenance_margin": round(total_maintenance, 2),
+            "margin_ratio": round(margin_ratio, 4) if margin_ratio else None,
+            "margin_ratio_pct": round(margin_ratio * 100, 1) if margin_ratio else None,
+            "margin_health": health,
+            "open_positions": len(open_positions),
+            "max_margin_usage_pct": self.config.max_margin_usage_pct,
+            "initial_margin_per_contract": self.config.initial_margin_per_contract,
+            "maintenance_margin_per_contract": self.config.maintenance_margin_per_contract,
+            "margin_call_threshold_pct": self.config.margin_call_threshold_pct,
+            "auto_liquidation_threshold_pct": self.config.auto_liquidation_threshold_pct,
+            "position_margins": position_margins,
+        }
+
     def _check_entry_conditions(self, now):
         if not self._enabled:
             return "BOT_DISABLED"
@@ -415,12 +503,16 @@ class AgapeBtcTrader:
             closed = self.db.get_closed_trades(limit=10000)
             realized_cum = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
             equity = self.config.starting_capital + realized_cum + unrealized
+            margin_status = self.get_margin_status(open_positions, current_price)
             self.db.save_equity_snapshot(
                 equity=round(equity, 2), unrealized_pnl=round(unrealized, 2),
                 realized_cumulative=round(realized_cum, 2),
                 open_positions=len(open_positions),
                 btc_price=current_price,
                 funding_rate=market_data.get("funding_rate") if market_data else None,
+                margin_used=margin_status["margin_used"],
+                margin_available=margin_status["margin_available"],
+                margin_ratio=margin_status["margin_ratio"],
             )
         except Exception as e:
             logger.warning(f"AGAPE-BTC Trader: Snapshot save failed: {e}")
@@ -483,6 +575,7 @@ class AgapeBtcTrader:
                 "total_trades": len(closed_trades) if closed_trades else 0,
                 "win_rate": win_rate,
             },
+            "margin": self.get_margin_status(open_positions, current_price),
             "aggressive_features": {
                 "use_no_loss_trailing": self.config.use_no_loss_trailing,
                 "use_sar": self.config.use_sar,

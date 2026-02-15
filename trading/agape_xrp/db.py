@@ -153,6 +153,12 @@ class AgapeXrpDatabase:
             for col_sql in [
                 "ALTER TABLE agape_xrp_positions ADD COLUMN IF NOT EXISTS trailing_active BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE agape_xrp_positions ADD COLUMN IF NOT EXISTS current_stop FLOAT",
+                "ALTER TABLE agape_xrp_positions ADD COLUMN IF NOT EXISTS margin_required FLOAT DEFAULT 0",
+                "ALTER TABLE agape_xrp_positions ADD COLUMN IF NOT EXISTS liquidation_price FLOAT",
+                "ALTER TABLE agape_xrp_positions ADD COLUMN IF NOT EXISTS leverage_at_entry FLOAT DEFAULT 0",
+                "ALTER TABLE agape_xrp_equity_snapshots ADD COLUMN IF NOT EXISTS margin_used FLOAT DEFAULT 0",
+                "ALTER TABLE agape_xrp_equity_snapshots ADD COLUMN IF NOT EXISTS margin_available FLOAT DEFAULT 0",
+                "ALTER TABLE agape_xrp_equity_snapshots ADD COLUMN IF NOT EXISTS margin_ratio FLOAT",
             ]:
                 try:
                     cursor.execute(col_sql)
@@ -215,11 +221,12 @@ class AgapeXrpDatabase:
                     oracle_advice, oracle_win_probability, oracle_confidence,
                     oracle_top_factors,
                     signal_action, signal_confidence, signal_reasoning,
-                    status, open_time, high_water_mark
+                    status, open_time, high_water_mark,
+                    margin_required, liquidation_price, leverage_at_entry
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s
+                    %s, %s, %s, %s, %s, %s, %s, %s
                 )
             """, (
                 pos.position_id, pos.side.value, pos.contracts, pos.entry_price,
@@ -233,6 +240,9 @@ class AgapeXrpDatabase:
                 pos.signal_action, pos.signal_confidence, pos.signal_reasoning,
                 pos.status.value, pos.open_time or _now_ct(),
                 pos.entry_price,
+                getattr(pos, 'margin_required', 0),
+                getattr(pos, 'liquidation_price', None),
+                getattr(pos, 'leverage_at_entry', 0),
             ))
             conn.commit()
             return True
@@ -304,7 +314,9 @@ class AgapeXrpDatabase:
                        oracle_top_factors,
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
-                       COALESCE(trailing_active, FALSE), current_stop
+                       COALESCE(trailing_active, FALSE), current_stop,
+                       COALESCE(margin_required, 0), liquidation_price,
+                       COALESCE(leverage_at_entry, 0)
                 FROM agape_xrp_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
@@ -336,6 +348,9 @@ class AgapeXrpDatabase:
                     "high_water_mark": float(row[24]) if row[24] and float(row[24]) > 0 else float(row[3]),
                     "trailing_active": bool(row[25]),
                     "current_stop": float(row[26]) if row[26] else None,
+                    "margin_required": float(row[27]) if row[27] else 0,
+                    "liquidation_price": float(row[28]) if row[28] else None,
+                    "leverage_at_entry": float(row[29]) if row[29] else 0,
                 })
             return positions
         except Exception as e:
@@ -415,7 +430,8 @@ class AgapeXrpDatabase:
             cursor.close()
             conn.close()
 
-    def save_equity_snapshot(self, equity, unrealized_pnl, realized_cumulative, open_positions, xrp_price=None, funding_rate=None):
+    def save_equity_snapshot(self, equity, unrealized_pnl, realized_cumulative, open_positions,
+                             xrp_price=None, funding_rate=None, margin_used=0, margin_available=0, margin_ratio=None):
         conn = self._get_conn()
         if not conn:
             return False
@@ -423,9 +439,11 @@ class AgapeXrpDatabase:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO agape_xrp_equity_snapshots
-                (equity, unrealized_pnl, realized_pnl_cumulative, open_positions, xrp_price, funding_rate)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (equity, unrealized_pnl, realized_cumulative, open_positions, xrp_price, funding_rate))
+                (equity, unrealized_pnl, realized_pnl_cumulative, open_positions, xrp_price, funding_rate,
+                 margin_used, margin_available, margin_ratio)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (equity, unrealized_pnl, realized_cumulative, open_positions, xrp_price, funding_rate,
+                  margin_used, margin_available, margin_ratio))
             conn.commit()
             return True
         except Exception as e:
