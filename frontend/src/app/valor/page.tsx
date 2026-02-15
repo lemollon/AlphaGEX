@@ -90,6 +90,33 @@ const VALOR_TABS = [
 type ValorTabId = typeof VALOR_TABS[number]['id']
 
 // ==============================================================================
+// TICKER METADATA (matches AGAPE-SPOT TICKER_META pattern)
+// ==============================================================================
+
+const VALOR_TICKERS = ['ALL', 'MNQ', 'CL', 'NG', 'RTY', 'MES'] as const
+type ValorTickerId = typeof VALOR_TICKERS[number]
+
+const TICKER_META: Record<string, {
+  symbol: string
+  label: string
+  hexColor: string
+  bgActive: string
+  textActive: string
+  bgCard: string
+  borderCard: string
+}> = {
+  'ALL': { symbol: 'ALL',  label: 'All Instruments', hexColor: '#6366f1', bgActive: 'bg-indigo-600',  textActive: 'text-indigo-400',  bgCard: 'bg-indigo-950/30', borderCard: 'border-indigo-700/40' },
+  'MNQ': { symbol: 'MNQ',  label: 'Micro Nasdaq',    hexColor: '#06B6D4', bgActive: 'bg-cyan-600',    textActive: 'text-cyan-400',    bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
+  'CL':  { symbol: 'CL',   label: 'Crude Oil',       hexColor: '#F59E0B', bgActive: 'bg-amber-600',   textActive: 'text-amber-400',   bgCard: 'bg-amber-950/30',  borderCard: 'border-amber-700/40' },
+  'NG':  { symbol: 'NG',   label: 'Natural Gas',     hexColor: '#22C55E', bgActive: 'bg-green-600',   textActive: 'text-green-400',   bgCard: 'bg-green-950/30',  borderCard: 'border-green-700/40' },
+  'RTY': { symbol: 'RTY',  label: 'Micro Russell',   hexColor: '#F97316', bgActive: 'bg-orange-600',  textActive: 'text-orange-400',  bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
+  'MES': { symbol: 'MES',  label: 'Micro S&P 500',   hexColor: '#A855F7', bgActive: 'bg-purple-600',  textActive: 'text-purple-400',  bgCard: 'bg-purple-950/30', borderCard: 'border-purple-700/40' },
+}
+
+// Helper: get metadata for a ticker (with fallback)
+const getTickerMeta = (ticker: string) => TICKER_META[ticker] || TICKER_META['MES']
+
+// ==============================================================================
 // MAIN COMPONENT
 // ==============================================================================
 
@@ -311,42 +338,99 @@ export default function ValorPage() {
             scanIntervalMinutes={1}
           />
 
-          {/* Ticker Selector */}
-          <div className="flex items-center gap-2 overflow-x-auto pb-1">
-            <span className="text-gray-400 text-sm font-medium whitespace-nowrap">Instrument:</span>
-            <button
-              onClick={() => setSelectedTicker(undefined)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-                !selectedTicker
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
-              }`}
-            >
-              ALL
-            </button>
-            {(tickersData?.active_tickers || status?.tickers || ['MNQ', 'CL', 'NG', 'RTY']).map((ticker: string) => {
-              const tickerInfo = tickersData?.tickers?.[ticker]
-              const color = tickerInfo?.color || '#6366f1'
-              const isActive = selectedTicker === ticker
+          {/* Ticker Selector (matches AGAPE-SPOT pattern) */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {(tickersData?.active_tickers
+              ? ['ALL', ...tickersData.active_tickers]
+              : VALOR_TICKERS as unknown as string[]
+            ).map((ticker: string) => {
+              const meta = getTickerMeta(ticker)
+              const isActive = ticker === 'ALL' ? !selectedTicker : selectedTicker === ticker
+              const tickerApiInfo = tickersData?.tickers?.[ticker]
               return (
                 <button
                   key={ticker}
-                  onClick={() => setSelectedTicker(ticker)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                  onClick={() => setSelectedTicker(ticker === 'ALL' ? undefined : ticker)}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all whitespace-nowrap ${
                     isActive
-                      ? 'text-white shadow-lg'
-                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
+                      ? `${meta.bgActive} border-transparent text-white shadow-lg`
+                      : 'bg-gray-900 border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-white hover:border-gray-600'
                   }`}
-                  style={isActive ? { backgroundColor: color, boxShadow: `0 4px 14px ${color}40` } : {}}
+                  title={meta.label}
                 >
-                  {tickerInfo?.icon || ''} {ticker}
-                  {tickerInfo?.display_name && (
-                    <span className="text-xs opacity-70 ml-1">({tickerInfo.display_name.split(' ').slice(1).join(' ')})</span>
+                  <span className="font-bold">{meta.symbol}</span>
+                  <span className={`text-xs ${isActive ? 'text-white/70' : 'text-gray-500'}`}>
+                    {meta.label}
+                  </span>
+                  {ticker !== 'ALL' && tickerApiInfo?.point_value != null && (
+                    <span className={`text-[10px] font-mono ${isActive ? 'text-white/50' : 'text-gray-600'}`}>
+                      ${tickerApiInfo.point_value}/pt
+                    </span>
                   )}
                 </button>
               )
             })}
           </div>
+
+          {/* Per-Ticker Stats Summary (ALL view only) */}
+          {!selectedTicker && tickerStatsData?.ticker_stats && Object.keys(tickerStatsData.ticker_stats).length > 0 && (
+            <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-800 flex items-center gap-2">
+                <PieChart className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-sm font-semibold text-gray-200">Per-Instrument Performance</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-900/50">
+                    <tr>
+                      <th className="px-4 py-2.5 text-left text-gray-400 font-medium">Ticker</th>
+                      <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Trades</th>
+                      <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Win Rate</th>
+                      <th className="px-4 py-2.5 text-right text-gray-400 font-medium">P&L</th>
+                      <th className="px-4 py-2.5 text-center text-gray-400 font-medium">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800/60">
+                    {Object.entries(tickerStatsData.ticker_stats).map(([tk, stats]: [string, any]) => {
+                      const meta = getTickerMeta(tk)
+                      const pnl = stats?.total_pnl ?? 0
+                      const winRate = stats?.win_rate ?? 0
+                      const trades = stats?.total_trades ?? 0
+                      return (
+                        <tr
+                          key={tk}
+                          className="hover:bg-gray-800/30 cursor-pointer"
+                          onClick={() => setSelectedTicker(tk)}
+                        >
+                          <td className="px-4 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: meta.hexColor }} />
+                              <span className="font-bold text-white">{meta.symbol}</span>
+                              <span className="text-xs text-gray-500">{meta.label}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-2.5 text-right font-mono text-gray-300">{trades}</td>
+                          <td className="px-4 py-2.5 text-right font-mono">
+                            <span className={winRate >= 50 ? 'text-green-400' : winRate > 0 ? 'text-red-400' : 'text-gray-500'}>
+                              {trades > 0 ? `${winRate.toFixed(1)}%` : '—'}
+                            </span>
+                          </td>
+                          <td className={`px-4 py-2.5 text-right font-mono font-semibold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {trades > 0 ? `$${pnl.toFixed(2)}` : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 text-center">
+                            <span className={`inline-block w-2.5 h-2.5 rounded-full ${
+                              trades === 0 ? 'bg-gray-600' : pnl >= 0 ? 'bg-green-500' : 'bg-red-500'
+                            }`} />
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Paper Trading Info Banner */}
           <div className={`bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4`}>
@@ -540,7 +624,10 @@ export default function ValorPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {positions.map((position: any) => (
+                    {positions.map((position: any) => {
+                      const posTicker = position.ticker || 'MES'
+                      const posMeta = getTickerMeta(posTicker)
+                      return (
                       <div key={position.position_id} className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
@@ -555,7 +642,13 @@ export default function ValorPage() {
                               }
                             </div>
                             <div>
-                              <div className="font-semibold">{position.symbol}</div>
+                              <div className="font-semibold flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: posMeta.hexColor + '20', color: posMeta.hexColor }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: posMeta.hexColor }} />
+                                  {posTicker}
+                                </span>
+                                {position.symbol}
+                              </div>
                               <div className="text-sm text-gray-400">
                                 {position.contracts} contracts @ {position.entry_price?.toFixed(2)}
                               </div>
@@ -576,7 +669,8 @@ export default function ValorPage() {
                           <div>ID: <span className="text-white font-mono text-xs">{position.position_id?.slice(0, 8)}</span></div>
                         </div>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -1692,6 +1786,7 @@ export default function ValorPage() {
                       <thead className="bg-gray-900">
                         <tr>
                           <th className="px-4 py-3 text-left text-sm text-gray-400">Time</th>
+                          <th className="px-4 py-3 text-left text-sm text-gray-400">Ticker</th>
                           <th className="px-4 py-3 text-left text-sm text-gray-400">Direction</th>
                           <th className="px-4 py-3 text-left text-sm text-gray-400">Regime</th>
                           <th className="px-4 py-3 text-right text-sm text-gray-400">Entry</th>
@@ -1701,10 +1796,19 @@ export default function ValorPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-800">
-                        {closedTrades.map((trade: any) => (
+                        {closedTrades.map((trade: any) => {
+                          const tradeTicker = trade.ticker || 'MES'
+                          const tradeMeta = getTickerMeta(tradeTicker)
+                          return (
                           <tr key={trade.position_id} className="hover:bg-gray-900/50">
                             <td className="px-4 py-3 text-sm">
                               {new Date(trade.close_time).toLocaleString()}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: tradeMeta.hexColor + '20', color: tradeMeta.hexColor }}>
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tradeMeta.hexColor }} />
+                                {tradeTicker}
+                              </span>
                             </td>
                             <td className="px-4 py-3">
                               <span className={`px-2 py-1 rounded text-xs ${
@@ -1729,7 +1833,8 @@ export default function ValorPage() {
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-400">{trade.close_reason}</td>
                           </tr>
-                        ))}
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
