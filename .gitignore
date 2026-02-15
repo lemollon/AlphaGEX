@@ -35,6 +35,9 @@ frontend/.next/
 *.pem
 *.key
 
+# Claude AI assistant memory (contains credentials)
+.claude/database-connection.md
+
 # OS
 .DS_Store
 Thumbs.db
