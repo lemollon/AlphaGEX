@@ -574,17 +574,73 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context, signal=signal)
                 return result
 
-            # Step 8: Execute trade on ALL eligible accounts
+            # Step 8: Execute trade — live first, then paper mirrors live fill.
+            #
+            # ONE AGENT, ONE RESULT: Paper must use the exact same fill price
+            # and quantity as the live order so all accounts track identical
+            # performance.  Paper-only tickers (no live accounts) still get
+            # simulated fills via _execute_paper().
             traded_accounts = []
-            for account_label, is_live in eligible_accounts:
+            live_accounts = [(a, l) for a, l in eligible_accounts if l]
+            paper_accounts = [(a, l) for a, l in eligible_accounts if not l]
+
+            # Track the first successful live fill to mirror on paper
+            live_fill_price = None
+            live_fill_qty = None
+
+            # Execute LIVE accounts first
+            for account_label, is_live in live_accounts:
                 position = self.executor.execute_trade_on_account(
                     signal, account_label, is_live,
                 )
                 if position:
                     self.db.save_position(position)
                     traded_accounts.append(account_label)
+                    # Capture first live fill for paper mirroring
+                    if live_fill_price is None:
+                        live_fill_price = position.entry_price
+                        live_fill_qty = position.quantity
 
-                    mode_str = "LIVE" if is_live else "PAPER"
+                    actual_qty = position.quantity
+                    notional = actual_qty * position.entry_price
+                    self.db.log(
+                        "INFO", "NEW_TRADE",
+                        f"[LIVE:{account_label}] LONG {ticker} "
+                        f"{actual_qty} @ ${position.entry_price:.2f} "
+                        f"(${notional:.2f})",
+                        details=signal.to_dict(),
+                        ticker=ticker,
+                    )
+                else:
+                    logger.warning(
+                        f"AGAPE-SPOT: LIVE execution failed for {ticker} "
+                        f"[{account_label}], skipping (no fallback)"
+                    )
+                    self.db.log(
+                        "WARNING", "LIVE_EXEC_FAILED",
+                        f"Live order failed for {ticker} [{account_label}]. "
+                        f"No fallback position created.",
+                        ticker=ticker,
+                    )
+
+            # Execute PAPER accounts — mirror the live fill when available
+            for account_label, is_live in paper_accounts:
+                if live_fill_price is not None and live_fill_qty is not None:
+                    # Mirror: use exact live fill price and quantity
+                    position = self.executor.execute_paper_mirror(
+                        signal, live_fill_price, live_fill_qty,
+                        account_label=account_label,
+                    )
+                else:
+                    # Paper-only ticker (no live accounts) — simulated fill
+                    position = self.executor.execute_trade_on_account(
+                        signal, account_label, is_live,
+                    )
+
+                if position:
+                    self.db.save_position(position)
+                    traded_accounts.append(account_label)
+                    mode_str = "PAPER_MIRROR" if live_fill_price else "PAPER"
                     actual_qty = position.quantity
                     notional = actual_qty * position.entry_price
                     self.db.log(
@@ -595,22 +651,6 @@ class AgapeSpotTrader:
                         details=signal.to_dict(),
                         ticker=ticker,
                     )
-                else:
-                    if is_live:
-                        # Live order failed — log it but do NOT create fake
-                        # paper positions.  The parallel "paper" account already
-                        # tracks what-if performance.  Fallback positions just
-                        # pollute P&L, win rate, and never close properly.
-                        logger.warning(
-                            f"AGAPE-SPOT: LIVE execution failed for {ticker} "
-                            f"[{account_label}], skipping (no fallback)"
-                        )
-                        self.db.log(
-                            "WARNING", "LIVE_EXEC_FAILED",
-                            f"Live order failed for {ticker} [{account_label}]. "
-                            f"No fallback position created.",
-                            ticker=ticker,
-                        )
 
             # Log ML shadow prediction when a trade is opened
             if traded_accounts and hasattr(self.signals, '_last_ml_prob'):
@@ -783,7 +823,99 @@ class AgapeSpotTrader:
                     )
             return (len(open_positions), closed)
 
-        for pos_dict in open_positions:
+        # ONE AGENT: Live positions drive exits.  When a live position
+        # closes, its paper sibling closes at the same price so all
+        # accounts record identical performance.
+        #
+        # Paper-only tickers (no live accounts) still manage paper
+        # positions independently.
+        is_live_ticker = self.config.is_live(ticker)
+
+        # Separate live vs paper positions
+        live_positions = [
+            p for p in open_positions
+            if p.get("account_label", "default") != "paper"
+            and not p.get("account_label", "").endswith("_fallback")
+        ]
+        paper_positions = [
+            p for p in open_positions
+            if p.get("account_label") == "paper"
+        ]
+
+        # Track which paper positions were already closed by live mirror
+        paper_closed_ids = set()
+
+        # Step 1: Manage LIVE positions first
+        for pos_dict in live_positions:
+            try:
+                if self.config.use_no_loss_trailing:
+                    did_close = self._manage_no_loss_trailing(
+                        ticker, pos_dict, current_price, now,
+                    )
+                else:
+                    should_close, reason = self._check_exit_conditions(
+                        pos_dict, current_price, now, ticker=ticker,
+                    )
+                    did_close = False
+                    if should_close:
+                        did_close = self._close_position(
+                            ticker, pos_dict, current_price, reason,
+                        )
+
+                if did_close:
+                    closed += 1
+                    # Mirror close to paper sibling:
+                    # Match by entry_price (mirror positions) or open_time
+                    # (legacy positions opened within 5 seconds of each other).
+                    live_open = pos_dict.get("open_time")
+                    live_entry = pos_dict.get("entry_price")
+                    paper_close_price = pos_dict.get(
+                        "_actual_close_price", current_price,
+                    )
+                    best_match = None
+                    for pp in paper_positions:
+                        if pp["position_id"] in paper_closed_ids:
+                            continue
+                        pp_entry = pp.get("entry_price")
+                        # Exact entry match = mirror position (preferred)
+                        if pp_entry == live_entry:
+                            best_match = pp
+                            break
+                        # Fuzzy time match for legacy pre-mirror positions
+                        if live_open and pp.get("open_time"):
+                            try:
+                                lo = live_open if not isinstance(live_open, str) else datetime.fromisoformat(live_open)
+                                po = pp["open_time"] if not isinstance(pp["open_time"], str) else datetime.fromisoformat(pp["open_time"])
+                                if abs((lo - po).total_seconds()) < 5:
+                                    best_match = pp
+                            except (ValueError, TypeError):
+                                pass
+                    if best_match:
+                        self._close_position(
+                            ticker, best_match, paper_close_price, reason,
+                        )
+                        paper_closed_ids.add(best_match["position_id"])
+                        closed += 1
+                else:
+                    self._update_hwm(pos_dict, current_price)
+            except Exception as e:
+                logger.error(
+                    f"AGAPE-SPOT: Position management error ({ticker}): {e}"
+                )
+
+        # Step 2: Manage PAPER positions that were NOT closed by a live mirror
+        for pos_dict in paper_positions:
+            if pos_dict["position_id"] in paper_closed_ids:
+                continue  # Already closed by live mirror above
+
+            # If this is a live ticker, paper is driven by live —
+            # only update HWM, don't independently trigger exits.
+            # The live position's exit will drive paper's exit.
+            if is_live_ticker and live_positions:
+                self._update_hwm(pos_dict, current_price)
+                continue
+
+            # Paper-only ticker: manage independently (no live sibling)
             try:
                 if self.config.use_no_loss_trailing:
                     did_close = self._manage_no_loss_trailing(
@@ -1169,6 +1301,10 @@ class AgapeSpotTrader:
                         ticker=ticker,
                     )
                     return False  # Position stays open, retry next cycle
+
+        # Stash actual close price on pos_dict so the mirror logic in
+        # _manage_positions can read it for paper sibling closes.
+        pos_dict["_actual_close_price"] = actual_close_price
 
         # Long-only P&L -- no direction multiplier
         realized_pnl = round((actual_close_price - entry_price) * quantity, 2)

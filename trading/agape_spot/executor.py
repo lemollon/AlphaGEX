@@ -613,7 +613,12 @@ class AgapeSpotExecutor:
         return position
 
     def _execute_paper(self, signal: AgapeSpotSignal, account_label: str = "paper") -> Optional[AgapeSpotPosition]:
-        """Simulate a long-only spot buy with slippage."""
+        """Simulate a long-only spot buy with slippage.
+
+        Only used for paper-only tickers (no live accounts).
+        When live accounts exist, use execute_paper_mirror() instead
+        so paper tracks the exact same fill price and quantity.
+        """
         try:
             slippage = signal.spot_price * 0.001  # 0.1%
             fill_price = signal.spot_price + slippage  # Buying = pay more
@@ -666,6 +671,70 @@ class AgapeSpotExecutor:
 
         except Exception as e:
             logger.error(f"AGAPE-SPOT Executor: Paper execution failed: {e}")
+            return None
+
+    def execute_paper_mirror(
+        self,
+        signal: AgapeSpotSignal,
+        live_fill_price: float,
+        live_quantity: float,
+        account_label: str = "paper",
+    ) -> Optional[AgapeSpotPosition]:
+        """Create a paper position that mirrors a live fill exactly.
+
+        Uses the SAME fill price and quantity as the live order so paper
+        tracks identical performance to live — one trading agent, one result.
+        """
+        try:
+            ticker_symbol = SPOT_TICKERS.get(signal.ticker, {}).get(
+                "symbol", signal.ticker.split("-")[0],
+            )
+            position_id = f"SPOT-{ticker_symbol}-PPR-{uuid.uuid4().hex[:8].upper()}"
+            now = datetime.now(CENTRAL_TZ)
+            pd = self._price_decimals(signal.ticker)
+
+            position = AgapeSpotPosition(
+                position_id=position_id,
+                ticker=signal.ticker,
+                quantity=live_quantity,
+                entry_price=round(live_fill_price, pd),
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                max_risk_usd=signal.max_risk_usd,
+                underlying_at_entry=signal.spot_price,
+                funding_rate_at_entry=signal.funding_rate,
+                funding_regime_at_entry=signal.funding_regime,
+                ls_ratio_at_entry=signal.ls_ratio,
+                squeeze_risk_at_entry=signal.squeeze_risk,
+                max_pain_at_entry=signal.max_pain,
+                crypto_gex_at_entry=signal.crypto_gex,
+                crypto_gex_regime_at_entry=signal.crypto_gex_regime,
+                oracle_advice=signal.oracle_advice,
+                oracle_win_probability=signal.oracle_win_probability,
+                oracle_confidence=signal.oracle_confidence,
+                oracle_top_factors=signal.oracle_top_factors,
+                signal_action=signal.action.value,
+                signal_confidence=signal.confidence,
+                signal_reasoning=signal.reasoning,
+                atr_at_entry=signal.atr,
+                atr_pct_at_entry=signal.atr_pct,
+                chop_index_at_entry=signal.chop_index,
+                status=PositionStatus.OPEN,
+                open_time=now,
+                high_water_mark=round(live_fill_price, pd),
+                account_label=account_label,
+            )
+
+            notional = live_quantity * live_fill_price
+            logger.info(
+                f"AGAPE-SPOT: PAPER MIRROR [{account_label}] {signal.ticker} "
+                f"{live_quantity:.4f} (${notional:.2f}) @ ${live_fill_price:.{pd}f} "
+                f"(mirroring live fill)"
+            )
+            return position
+
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT Executor: Paper mirror failed: {e}")
             return None
 
     def _execute_live(
