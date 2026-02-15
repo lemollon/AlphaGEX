@@ -638,6 +638,7 @@ class AgapeSpotSignalGenerator:
             atr_pct=vc.get("atr_pct"),
             chop_index=vc.get("chop_index"),
             volatility_regime=vc.get("regime", "UNKNOWN"),
+            rsi=vc.get("rsi"),
             action=SignalAction.LONG,
             confidence=combined_confidence,
             reasoning=reasoning,
@@ -708,14 +709,41 @@ class AgapeSpotSignalGenerator:
         # Dynamic EWMA threshold: adapts to each ticker's trade magnitude
         choppy_ev_threshold = self._get_choppy_ev_threshold(ticker, vol_context)
 
+        # RSI oversold override: when market is choppy but RSI < 30,
+        # this is a high-conviction mean-reversion entry at the bottom of
+        # the range.  Trailing stop catches the bounce.  Use relaxed gate
+        # (EV > 0) instead of the strict choppy_ev_threshold.
+        rsi = (vol_context or {}).get("rsi")
+        rsi_override = (
+            is_choppy
+            and self.config.enable_rsi_choppy_override
+            and rsi is not None
+            and rsi < self.config.rsi_oversold_threshold
+        )
+
         if is_choppy and self.config.enable_bayesian_choppy:
-            if has_ev_data:
+            if rsi_override:
+                # RSI oversold in choppy market: relax to EV > 0 gate
+                if has_ev_data and ev <= self.MIN_EXPECTED_VALUE:
+                    logger.info(
+                        f"AGAPE-SPOT RSI OVERRIDE: {ticker} RSI={rsi:.1f} oversold "
+                        f"but EV=${ev:.4f} <= $0 — BLOCKED (negative EV)"
+                    )
+                    return (SignalAction.WAIT, f"RSI_OVERSOLD_BUT_NEG_EV_{ev:.3f}")
+                else:
+                    logger.info(
+                        f"AGAPE-SPOT RSI OVERRIDE: {ticker} RSI={rsi:.1f} < "
+                        f"{self.config.rsi_oversold_threshold} in choppy market, "
+                        f"EV=${ev:.4f} > $0 — PASS (mean-reversion entry)"
+                    )
+            elif has_ev_data:
                 if ev < choppy_ev_threshold:
                     logger.info(
                         f"AGAPE-SPOT CHOPPY GATE [EWMA]: {ticker} EV=${ev:.4f} "
                         f"< ${choppy_ev_threshold:.4f} (oracle_wp={oracle_win_prob:.4f}, "
                         f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
-                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f}) "
+                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f}"
+                        f"{f', RSI={rsi:.1f}' if rsi is not None else ''}) "
                         f"— BLOCKED"
                     )
                     return (SignalAction.WAIT, f"CHOPPY_LOW_EV_{ev:.3f}")

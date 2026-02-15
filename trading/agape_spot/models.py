@@ -271,6 +271,15 @@ class AgapeSpotConfig:
     choppy_ev_threshold_pct: float = 0.10  # 10% of avg trade magnitude
     choppy_ev_threshold_floor: float = 0.02  # Minimum $0.02 — never gate on dust
 
+    # RSI oversold entry in choppy markets:
+    # When market is range-bound and RSI drops below threshold, this is a
+    # high-conviction mean-reversion entry.  Instead of requiring the elevated
+    # choppy EV threshold, use the relaxed EV > 0 gate.  Trailing stop
+    # catches the bounce back to mean.
+    enable_rsi_choppy_override: bool = True
+    rsi_oversold_threshold: float = 30.0   # RSI below this = oversold entry
+    rsi_lookback_periods: int = 14         # Standard RSI lookback
+
     def is_live(self, ticker: str) -> bool:
         """Return True if *ticker* should execute real Coinbase orders."""
         return ticker in self.live_tickers
@@ -438,11 +447,12 @@ class AgapeSpotSignal:
     oracle_confidence: float = 0.0
     oracle_top_factors: List[str] = field(default_factory=list)
 
-    # Volatility context (ATR + chop detection)
+    # Volatility context (ATR + chop detection + RSI)
     atr: Optional[float] = None           # Average True Range ($)
     atr_pct: Optional[float] = None       # ATR as % of price
     chop_index: Optional[float] = None    # 0=trending, 1=choppy
     volatility_regime: str = "UNKNOWN"    # TRENDING / CHOPPY / UNKNOWN
+    rsi: Optional[float] = None           # RSI(14) on 5-min candles, 0-100
 
     # Trade parameters - LONG ONLY
     entry_price: Optional[float] = None
@@ -488,6 +498,7 @@ class AgapeSpotSignal:
             "atr_pct": self.atr_pct,
             "chop_index": self.chop_index,
             "volatility_regime": self.volatility_regime,
+            "rsi": self.rsi,
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,

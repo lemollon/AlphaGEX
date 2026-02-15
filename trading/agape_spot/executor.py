@@ -329,7 +329,7 @@ class AgapeSpotExecutor:
     def get_volatility_context(
         self, ticker: str, periods: int = 14,
     ) -> Dict[str, Any]:
-        """Get ATR + chop index for a ticker.
+        """Get ATR + chop index + RSI for a ticker.
 
         Returns:
             {
@@ -338,6 +338,8 @@ class AgapeSpotExecutor:
                 "chop_index": float,    # 0-1, high = choppy
                 "is_choppy": bool,      # True if chop_index > 0.65
                 "regime": str,          # TRENDING / CHOPPY / UNKNOWN
+                "rsi": float,           # RSI(14) on 5-min candles, 0-100
+                "spot_price": float,    # Current price (latest close)
             }
         """
         result: Dict[str, Any] = {
@@ -346,6 +348,8 @@ class AgapeSpotExecutor:
             "chop_index": None,
             "is_choppy": False,
             "regime": "UNKNOWN",
+            "rsi": None,
+            "spot_price": None,
         }
 
         client = self._get_client(ticker)
@@ -417,6 +421,32 @@ class AgapeSpotExecutor:
             result["chop_index"] = round(chop_index, 4)
             result["is_choppy"] = chop_index > 0.65
             result["regime"] = "CHOPPY" if chop_index > 0.65 else "TRENDING"
+            result["spot_price"] = current_price
+
+            # RSI(14) on 5-min candles — standard Wilder smoothing.
+            # Computed from the same closes already fetched for ATR/chop.
+            if len(closes) >= periods + 1:
+                gains = []
+                losses = []
+                for i in range(1, len(closes)):
+                    delta = closes[i] - closes[i - 1]
+                    gains.append(max(delta, 0))
+                    losses.append(max(-delta, 0))
+
+                # Wilder smoothed: first avg is SMA, then EMA
+                if len(gains) >= periods:
+                    avg_gain = sum(gains[:periods]) / periods
+                    avg_loss = sum(losses[:periods]) / periods
+                    for j in range(periods, len(gains)):
+                        avg_gain = (avg_gain * (periods - 1) + gains[j]) / periods
+                        avg_loss = (avg_loss * (periods - 1) + losses[j]) / periods
+
+                    if avg_loss > 0:
+                        rs = avg_gain / avg_loss
+                        rsi = 100 - (100 / (1 + rs))
+                    else:
+                        rsi = 100.0  # No losses = max RSI
+                    result["rsi"] = round(rsi, 2)
 
             return result
 
