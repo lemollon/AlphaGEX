@@ -588,7 +588,12 @@ class AgapeSpotSignalGenerator:
             )
 
         # Spot-native position sizing (per-ticker)
-        quantity, max_risk = self._calculate_position_size(ticker, spot)
+        # RSI < 30 = biggest buying: boost position size by rsi_oversold_size_mult
+        vc = vol_context or {}
+        rsi_for_sizing = vc.get("rsi")
+        quantity, max_risk = self._calculate_position_size(
+            ticker, spot, rsi=rsi_for_sizing,
+        )
 
         # If sizing returned 0 (below min notional), emit WAIT instead of LONG
         if quantity <= 0:
@@ -1088,7 +1093,9 @@ class AgapeSpotSignalGenerator:
         except Exception:
             return False
 
-    def _calculate_position_size(self, ticker: str, spot_price: float) -> Tuple[float, float]:
+    def _calculate_position_size(
+        self, ticker: str, spot_price: float, rsi: Optional[float] = None,
+    ) -> Tuple[float, float]:
         """Calculate position size using per-ticker config from SPOT_TICKERS.
 
         SPOT-NATIVE: Risk-based sizing with capital-based cap.
@@ -1098,6 +1105,10 @@ class AgapeSpotSignalGenerator:
         quantity = min(risk_based_qty, capital_based_qty, max_per_trade)
         Capped at max_per_trade, floored at min_order.
         Rounded to quantity_decimals for the ticker.
+
+        RSI boost: When RSI < oversold threshold (30), position size is
+        multiplied by rsi_oversold_size_mult (1.5x). This is the "biggest
+        buying" at the bottom of a range-bound market.
         """
         ticker_config = SPOT_TICKERS.get(ticker, SPOT_TICKERS.get("ETH-USD", {}))
         # Use trading capital (live_capital for LIVE tickers, starting_capital for PAPER)
@@ -1108,6 +1119,21 @@ class AgapeSpotSignalGenerator:
         default_quantity = ticker_config.get("default_quantity", 0.1)
 
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
+
+        # RSI oversold boost: biggest buying at the bottom of the range
+        rsi_boost = 1.0
+        if (
+            rsi is not None
+            and self.config.enable_rsi_choppy_override
+            and rsi < self.config.rsi_oversold_threshold
+        ):
+            rsi_boost = self.config.rsi_oversold_size_mult
+            max_risk_usd *= rsi_boost
+            logger.info(
+                f"AGAPE-SPOT SIZING: {ticker} RSI={rsi:.1f} < "
+                f"{self.config.rsi_oversold_threshold} — boosting size "
+                f"{rsi_boost:.1f}x (risk ${max_risk_usd:.2f})"
+            )
 
         # Risk per unit based on per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
         exit_params = self.config.get_exit_params(ticker)
