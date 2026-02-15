@@ -130,6 +130,70 @@ class AgapeSpotTrader:
             f"prophet_required={self.config.require_prophet_approval})"
         )
 
+        # One-time cleanup: close any legacy fallback positions that were
+        # created before the fallback-creation code was removed. These
+        # positions were never placed on Coinbase, have 0% win rate and
+        # $0 P&L, and block position slots without providing any value.
+        self._cleanup_fallback_positions()
+
+    # ==================================================================
+    # Legacy fallback position cleanup (one-time at init)
+    # ==================================================================
+
+    def _cleanup_fallback_positions(self) -> None:
+        """Close any remaining open positions with '_fallback' account labels.
+
+        These were created by old code that auto-created paper positions
+        when live Coinbase orders failed. That fallback logic was removed
+        because fallback positions:
+        - Never execute real Coinbase sells (sell_spot returns False)
+        - Accumulate with 0% win rate and $0 P&L
+        - Pollute statistics and capacity counts
+        - The parallel 'paper' account already tracks what-if performance
+
+        This runs once at init to clean up any remaining orphans.
+        """
+        try:
+            all_open = self.db.get_open_positions()
+            fallback_positions = [
+                p for p in all_open
+                if p.get("account_label", "").endswith("_fallback")
+            ]
+
+            if not fallback_positions:
+                return
+
+            logger.info(
+                f"AGAPE-SPOT: Cleaning up {len(fallback_positions)} legacy "
+                f"fallback positions"
+            )
+
+            for pos in fallback_positions:
+                position_id = pos["position_id"]
+                entry_price = pos["entry_price"]
+                ticker = pos.get("ticker", "ETH-USD")
+                account_label = pos.get("account_label", "unknown_fallback")
+
+                # Close at entry price (0 P&L) since these were never real trades
+                success = self.db.close_position(
+                    position_id, entry_price, 0.0,
+                    "LEGACY_FALLBACK_CLEANUP",
+                )
+                if success:
+                    logger.info(
+                        f"AGAPE-SPOT: Cleaned up fallback position "
+                        f"{position_id} ({ticker} [{account_label}])"
+                    )
+
+            self.db.log(
+                "INFO", "FALLBACK_CLEANUP",
+                f"Closed {len(fallback_positions)} legacy fallback positions "
+                f"at entry price ($0 P&L). These were never real Coinbase trades.",
+            )
+
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT: Fallback cleanup failed: {e}", exc_info=True)
+
     # ==================================================================
     # Capital allocator refresh + alpha computation
     # ==================================================================
@@ -469,7 +533,10 @@ class AgapeSpotTrader:
             # Uses per-ticker max_positions from entry filters (XRP/SHIB: 2, DOGE: 3, ETH: 5)
             max_positions = entry_filters.get("max_positions", self.config.max_open_positions_per_ticker)
             accounts = self.executor.get_all_accounts(ticker)
-            all_open = self._get_open_positions_for_ticker(ticker)
+            all_open = [
+                p for p in self._get_open_positions_for_ticker(ticker)
+                if not p.get("account_label", "").endswith("_fallback")
+            ]
 
             # Filter to accounts that still have capacity
             eligible_accounts = []
@@ -724,7 +791,7 @@ class AgapeSpotTrader:
                     )
                 else:
                     should_close, reason = self._check_exit_conditions(
-                        pos_dict, current_price, now,
+                        pos_dict, current_price, now, ticker=ticker,
                     )
                     did_close = False
                     if should_close:
@@ -849,7 +916,11 @@ class AgapeSpotTrader:
             trend_scale = 1.0 + min(trend_pct / trend_threshold, 2.0)
             trail_distance_pct *= min(trend_scale, 2.5)  # cap trail widening at 2.5x
             activation_pct *= min(trend_scale * 0.8, 2.0)  # activation scales less aggressively
-            max_hold = int(max_hold * trend_scale)  # hold time scales fully with trend
+            # NOTE: max_hold is NOT scaled with trend. Trail widening already
+            # extends holds naturally in strong trends. Scaling max_hold on top
+            # of that was double-dipping — BTC (4h config) was being pushed to
+            # 12h during mild uptrends, defeating the purpose of the tight config.
+            # max_hold is a safety ceiling, not a trend-riding parameter.
 
         # ATR-adaptive: override fixed percentages when ATR data exists
         atr = pos.get("atr_at_entry")
@@ -984,6 +1055,7 @@ class AgapeSpotTrader:
 
     def _check_exit_conditions(
         self, pos: Dict, current_price: float, now: datetime,
+        ticker: str = None,
     ) -> tuple:
         """Check basic stop / target / time exits. LONG-ONLY."""
         stop_loss = pos.get("stop_loss")
@@ -996,7 +1068,13 @@ class AgapeSpotTrader:
         if take_profit and current_price >= take_profit:
             return (True, "TAKE_PROFIT")
 
-        # Max hold time
+        # Max hold time — use per-ticker config, not global default.
+        # BTC has max_hold_hours=4, global default is 6. Using the global
+        # meant BTC positions held 6h instead of 4h.
+        max_hold = self.config.max_hold_hours  # fallback to global
+        if ticker:
+            max_hold = self.config.get_exit_params(ticker)["max_hold_hours"]
+
         open_time_str = pos.get("open_time")
         if open_time_str:
             try:
@@ -1007,7 +1085,7 @@ class AgapeSpotTrader:
                 if open_time.tzinfo is None:
                     open_time = open_time.replace(tzinfo=CENTRAL_TZ)
                 hold_hours = (now - open_time).total_seconds() / 3600
-                if hold_hours >= self.config.max_hold_hours:
+                if hold_hours >= max_hold:
                     return (True, "MAX_HOLD_TIME")
             except (ValueError, TypeError):
                 pass
