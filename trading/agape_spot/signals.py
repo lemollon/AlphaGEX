@@ -329,6 +329,25 @@ class AgapeSpotSignalGenerator:
 
         return (True, "")
 
+    def get_momentum_pct(self, ticker: str) -> Optional[float]:
+        """Get the current momentum percentage for a ticker.
+
+        Returns the percentage price change over the momentum window
+        (~10 min at 1-min scans), or None if insufficient data.
+        Used by range_bound/fallback scoring to boost LONG conviction
+        when prices are actually rising.
+        """
+        history = self._price_history.get(ticker)
+        if not history or len(history) < 3:
+            return None
+
+        oldest_price = history[0]
+        if oldest_price <= 0:
+            return None
+
+        current_price = history[-1]
+        return ((current_price - oldest_price) / oldest_price) * 100
+
     def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
         if not self._prophet:
             return {
@@ -772,6 +791,21 @@ class AgapeSpotSignalGenerator:
             elif max_pain < spot * 0.995:
                 score -= 0.5
 
+        # Momentum scoring: use actual price trend over last ~10 min.
+        # Fills the gap where combined_signal is RANGE_BOUND but price
+        # is actually rising — without this, BALANCED funding + no
+        # extreme LS/max_pain = score 0 = WAIT, even on +18% days.
+        momentum_pct = self.get_momentum_pct(ticker)
+        if momentum_pct is not None:
+            if momentum_pct > 0.5:
+                score += 0.8   # Strong uptrend — flip even mild bearish factors
+            elif momentum_pct > 0.2:
+                score += 0.5   # Moderate uptrend
+            elif momentum_pct > 0.0:
+                score += 0.3   # Slight uptrend — gives majors same bias as altcoins
+            # Negative momentum: already blocked by momentum filter at -0.2%,
+            # but if between -0.2% and 0%, no boost (score unchanged).
+
         if score > 0:
             should_skip, reason = tracker.should_skip_direction("LONG")
             if should_skip:
@@ -842,6 +876,16 @@ class AgapeSpotSignalGenerator:
                 should_skip, _ = tracker.should_skip_direction("LONG")
                 if not should_skip:
                     return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
+
+        # Momentum fallback: if no microstructure signal fires but price is
+        # clearly rising, take the long.  This handles the case where
+        # combined_signal is WAIT (low confidence data) but the actual
+        # price trend is bullish.
+        momentum_pct = self.get_momentum_pct(ticker)
+        if momentum_pct is not None and momentum_pct > 0.3:
+            should_skip, _ = tracker.should_skip_direction("LONG")
+            if not should_skip:
+                return (SignalAction.LONG, self._build_reasoning("MOMENTUM_LONG", market_data))
 
         return (SignalAction.WAIT, "NO_FALLBACK_SIGNAL")
 
