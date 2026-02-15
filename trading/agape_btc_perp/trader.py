@@ -73,6 +73,7 @@ class AgapeBtcPerpTrader:
         self._enabled: bool = True
         self.consecutive_losses: int = 0
         self.loss_streak_pause_until: Optional[datetime] = None
+        self._liquidated: bool = False
         self._direction_tracker = get_agape_btc_perp_direction_tracker(self.config)
         self.db.log("INFO", "INIT", f"AGAPE-BTC-PERP trader initialized AGGRESSIVE (mode={self.config.mode.value})")
         logger.info(f"AGAPE-BTC-PERP Trader: Initialized AGGRESSIVE (mode={self.config.mode.value})")
@@ -162,6 +163,20 @@ class AgapeBtcPerpTrader:
             current_price = market_data.get("spot_price")
         if not current_price:
             return (len(open_positions), 0)
+        # Margin liquidation check - like a real exchange
+        equity = self._get_available_balance(open_positions)
+        maintenance_margin = self.config.starting_capital * 0.05
+        if equity <= maintenance_margin:
+            logger.warning(f"AGAPE-BTC-PERP: MARGIN LIQUIDATION - equity ${equity:.2f} <= maintenance ${maintenance_margin:.2f}")
+            liq_closed = 0
+            for pos in open_positions:
+                if self._close_position(pos, current_price, "MARGIN_LIQUIDATION"):
+                    liq_closed += 1
+            self._enabled = False
+            self._liquidated = True
+            self.db.log("CRITICAL", "MARGIN_LIQUIDATION",
+                f"Account liquidated at equity ${equity:.2f}. {liq_closed} positions closed. Bot disabled.")
+            return (len(open_positions), liq_closed)
         closed = 0
         now = datetime.now(CENTRAL_TZ)
         for pos_dict in open_positions:
@@ -520,15 +535,16 @@ class AgapeBtcPerpTrader:
         closed_trades = self.db.get_closed_trades(limit=10000)
         realized_pnl = sum(t.get("realized_pnl", 0) for t in closed_trades) if closed_trades else 0.0
         total_pnl = realized_pnl + total_unrealized
-        current_balance = self.config.starting_capital + total_pnl
-        return_pct = (total_pnl / self.config.starting_capital * 100) if self.config.starting_capital else 0
+        current_balance = max(0.0, self.config.starting_capital + total_pnl)
+        return_pct = max(-100.0, (total_pnl / self.config.starting_capital * 100)) if self.config.starting_capital else 0
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0] if closed_trades else []
         win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None
 
         market_status = self.get_market_status(now)
+        status = "LIQUIDATED" if self._liquidated else ("ACTIVE" if self._enabled else "DISABLED")
 
         return {
-            "bot_name": "AGAPE_BTC_PERP", "status": "ACTIVE" if self._enabled else "DISABLED",
+            "bot_name": "AGAPE_BTC_PERP", "status": status,
             "mode": self.config.mode.value, "ticker": self.config.ticker,
             "instrument": self.config.instrument, "exchange": "perpetual",
             "cycle_count": self._cycle_count, "open_positions": len(open_positions),
@@ -576,13 +592,14 @@ class AgapeBtcPerpTrader:
                 unrealized_pnl += pnl
 
         if not closed_trades:
+            ret_pct = max(-100.0, unrealized_pnl / self.config.starting_capital * 100) if self.config.starting_capital else 0
             return {
                 "total_trades": 0, "open_positions": len(open_positions),
                 "win_rate": None, "total_pnl": round(unrealized_pnl, 2),
                 "realized_pnl": 0, "unrealized_pnl": round(unrealized_pnl, 2),
                 "avg_win": 0, "avg_loss": 0, "best_trade": 0, "worst_trade": 0,
                 "profit_factor": 0,
-                "return_pct": round(unrealized_pnl / self.config.starting_capital * 100, 2),
+                "return_pct": round(ret_pct, 2),
             }
 
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0]
@@ -591,6 +608,7 @@ class AgapeBtcPerpTrader:
         total_pnl = realized_pnl + unrealized_pnl
         total_wins = sum(t.get("realized_pnl", 0) for t in wins) if wins else 0
         total_losses = abs(sum(t.get("realized_pnl", 0) for t in losses)) if losses else 0
+        ret_pct = max(-100.0, total_pnl / self.config.starting_capital * 100) if self.config.starting_capital else 0
 
         return {
             "total_trades": len(closed_trades), "open_positions": len(open_positions),
@@ -603,7 +621,7 @@ class AgapeBtcPerpTrader:
             "best_trade": max((t.get("realized_pnl", 0) for t in closed_trades), default=0),
             "worst_trade": min((t.get("realized_pnl", 0) for t in closed_trades), default=0),
             "profit_factor": round(total_wins / total_losses, 2) if total_losses > 0 else float("inf"),
-            "return_pct": round(total_pnl / self.config.starting_capital * 100, 2),
+            "return_pct": round(ret_pct, 2),
         }
 
     def force_close_all(self, reason="MANUAL_CLOSE"):
