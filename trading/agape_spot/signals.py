@@ -323,8 +323,9 @@ class AgapeSpotSignalGenerator:
 
         momentum_pct = ((current_price - oldest_price) / oldest_price) * 100
 
-        # Block entry if price dropped >0.2% over the lookback window
-        if momentum_pct < -0.2:
+        # Block entry if price dropped >0.5% over the lookback window.
+        # Crypto moves fast — 0.2% dips are normal noise, not reversals.
+        if momentum_pct < -0.5:
             return (False, f"MOMENTUM_DOWN_{momentum_pct:+.2f}pct")
 
         return (True, "")
@@ -761,19 +762,23 @@ class AgapeSpotSignalGenerator:
     ) -> Tuple[SignalAction, str]:
         """Derive direction from range-bound market. LONG or WAIT only.
 
-        For altcoins (XRP, SHIB, DOGE): a small long bias (+0.3) is added
-        because RANGE_BOUND HIGH is the dominant signal and the old neutral
-        threshold caused 0 trades for days.  Crypto is long-only so a mild
-        bullish lean in ranging markets is appropriate.
+        LONG-ONLY system: all tickers get a +0.3 base long bias because
+        we can only buy, never short. A single bearish microstructure
+        factor should not prevent trading when the overall signal is
+        RANGE_BOUND (not SHORT).
+
+        Only blocks entry when TWO or more bearish factors align
+        (e.g., heavy positive funding AND max pain below spot).
         """
         funding_rate = market_data.get("funding_rate", 0)
         ls_ratio = market_data.get("ls_ratio", 1.0)
         max_pain = market_data.get("max_pain")
         spot = market_data.get("spot_price", 0)
 
-        # Altcoins get a small long bias — RANGE_BOUND with no extreme signals
-        # was producing RANGE_BOUND_NO_BIAS 100% of the time, blocking all trades.
-        score = 0.3 if self._is_altcoin(ticker) else 0.0
+        # All tickers get long bias — this is a LONG-ONLY system.
+        # RANGE_BOUND means "no strong direction" — lean long and let
+        # the EV gate + stops manage risk.
+        score = 0.3
 
         if funding_rate < -self.config.min_funding_rate_signal:
             score += 1.0
@@ -792,19 +797,15 @@ class AgapeSpotSignalGenerator:
                 score -= 0.5
 
         # Momentum scoring: use actual price trend over last ~10 min.
-        # Fills the gap where combined_signal is RANGE_BOUND but price
-        # is actually rising — without this, BALANCED funding + no
-        # extreme LS/max_pain = score 0 = WAIT, even on +18% days.
         momentum_pct = self.get_momentum_pct(ticker)
         if momentum_pct is not None:
             if momentum_pct > 0.5:
-                score += 0.8   # Strong uptrend — flip even mild bearish factors
+                score += 1.0   # Strong uptrend — overrides any single bearish factor
             elif momentum_pct > 0.2:
-                score += 0.5   # Moderate uptrend
+                score += 0.7   # Moderate uptrend
             elif momentum_pct > 0.0:
-                score += 0.3   # Slight uptrend — gives majors same bias as altcoins
-            # Negative momentum: already blocked by momentum filter at -0.2%,
-            # but if between -0.2% and 0%, no boost (score unchanged).
+                score += 0.4   # Slight uptrend
+            # Between -0.2% and 0%: no boost, no penalty
 
         if score > 0:
             should_skip, reason = tracker.should_skip_direction("LONG")
@@ -812,7 +813,7 @@ class AgapeSpotSignalGenerator:
                 return (SignalAction.WAIT, f"RANGE_BOUND_LONG_BLOCKED_{reason}")
             return (SignalAction.LONG, self._build_reasoning("RANGE_LONG", market_data))
 
-        # Bearish or neutral score -> WAIT (long-only)
+        # Only reaches here when 2+ bearish factors overwhelm the bias
         if score < 0:
             return (SignalAction.WAIT, "RANGE_BOUND_BEARISH_LONG_ONLY")
 
@@ -882,7 +883,7 @@ class AgapeSpotSignalGenerator:
         # combined_signal is WAIT (low confidence data) but the actual
         # price trend is bullish.
         momentum_pct = self.get_momentum_pct(ticker)
-        if momentum_pct is not None and momentum_pct > 0.3:
+        if momentum_pct is not None and momentum_pct > 0.1:
             should_skip, _ = tracker.should_skip_direction("LONG")
             if not should_skip:
                 return (SignalAction.LONG, self._build_reasoning("MOMENTUM_LONG", market_data))
