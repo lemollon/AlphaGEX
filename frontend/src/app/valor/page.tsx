@@ -60,6 +60,8 @@ import {
   disableValorABTest,
   useValorSignals,
   useUnifiedBotSummary,
+  useValorTickers,
+  useValorTickerStats,
 } from '@/lib/hooks/useMarketData'
 
 // ==============================================================================
@@ -95,6 +97,7 @@ export default function ValorPage() {
   const sidebarPadding = useSidebarPadding()
   const [activeTab, setActiveTab] = useState<ValorTabId>('portfolio')
   const [equityTimeframe, setEquityTimeframe] = useState('intraday')
+  const [selectedTicker, setSelectedTicker] = useState<string | undefined>(undefined)  // undefined = ALL
   const [isTraining, setIsTraining] = useState(false)
   const [trainingResult, setTrainingResult] = useState<any>(null)
   const [isApproving, setIsApproving] = useState(false)
@@ -106,11 +109,13 @@ export default function ValorPage() {
   const selectedTimeframe = EQUITY_TIMEFRAMES.find(t => t.id === equityTimeframe) || EQUITY_TIMEFRAMES[0]
   const isIntraday = equityTimeframe === 'intraday'
 
-  // Data hooks
-  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus()
-  const { data: closedTradesData } = useValorClosedTrades(1000)
-  const { data: equityCurveData } = useValorEquityCurve(selectedTimeframe.days || 30)
+  // Data hooks (per-ticker filtering)
+  const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus(selectedTicker)
+  const { data: closedTradesData } = useValorClosedTrades(1000, selectedTicker)
+  const { data: equityCurveData } = useValorEquityCurve(selectedTimeframe.days || 30, selectedTicker)
   const { data: intradayEquityData } = useValorIntradayEquity()
+  const { data: tickersData } = useValorTickers()
+  const { data: tickerStatsData } = useValorTickerStats()
   const { data: scanActivityData, mutate: mutateScanActivity } = useValorScanActivity(1000)
   const { data: mlTrainingData } = useValorMLTrainingData()
   const { data: mlTrainingDataStats, mutate: refreshTrainingStats } = useValorMLTrainingDataStats()
@@ -306,14 +311,53 @@ export default function ValorPage() {
             scanIntervalMinutes={1}
           />
 
+          {/* Ticker Selector */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            <span className="text-gray-400 text-sm font-medium whitespace-nowrap">Instrument:</span>
+            <button
+              onClick={() => setSelectedTicker(undefined)}
+              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                !selectedTicker
+                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
+              }`}
+            >
+              ALL
+            </button>
+            {(tickersData?.active_tickers || status?.tickers || ['MNQ', 'CL', 'NG', 'RTY']).map((ticker: string) => {
+              const tickerInfo = tickersData?.tickers?.[ticker]
+              const color = tickerInfo?.color || '#6366f1'
+              const isActive = selectedTicker === ticker
+              return (
+                <button
+                  key={ticker}
+                  onClick={() => setSelectedTicker(ticker)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
+                    isActive
+                      ? 'text-white shadow-lg'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-300'
+                  }`}
+                  style={isActive ? { backgroundColor: color, boxShadow: `0 4px 14px ${color}40` } : {}}
+                >
+                  {tickerInfo?.icon || ''} {ticker}
+                  {tickerInfo?.display_name && (
+                    <span className="text-xs opacity-70 ml-1">({tickerInfo.display_name.split(' ').slice(1).join(' ')})</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
           {/* Paper Trading Info Banner */}
           <div className={`bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4`}>
             <div className="flex items-start gap-3">
               <Wallet className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
               <div className="flex-1">
-                <h3 className="text-yellow-400 font-semibold">Paper Trading Mode - MES Futures Scalping</h3>
+                <h3 className="text-yellow-400 font-semibold">
+                  Paper Trading Mode - {selectedTicker ? `${selectedTicker} Futures` : 'Multi-Instrument Futures'} Scalping
+                </h3>
                 <p className="text-gray-300 text-sm mt-1">
-                  VALOR is paper trading MES futures with $100k simulated capital. Uses GEX signals for mean reversion (positive gamma) and momentum (negative gamma).
+                  VALOR is paper trading {selectedTicker || 'MNQ, CL, NG, RTY'} futures with simulated capital. Uses GEX signals for mean reversion (positive gamma) and momentum (negative gamma).
                 </p>
                 <p className="text-gray-400 text-xs mt-2">
                   24/5 trading: Sun 5pm - Fri 4pm CT with 4-5pm daily maintenance break.

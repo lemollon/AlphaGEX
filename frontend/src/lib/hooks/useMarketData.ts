@@ -747,24 +747,38 @@ const fetchers = {
   // VALOR MES Futures Scalping Bot
   // Note: Fetchers throw errors instead of returning fallback values
   // This allows SWR to properly handle retries and error states
-  valorStatus: async () => {
-    const response = await api.get('/api/valor/status')
+  valorStatus: async (ticker?: string) => {
+    const params = ticker ? `?ticker=${ticker}` : ''
+    const response = await api.get(`/api/valor/status${params}`)
     return response.data
   },
-  valorPositions: async () => {
-    const response = await api.get('/api/valor/positions')
+  valorPositions: async (ticker?: string) => {
+    const params = ticker ? `?ticker=${ticker}` : ''
+    const response = await api.get(`/api/valor/positions${params}`)
     return response.data
   },
-  valorClosedTrades: async (limit: number = 50) => {
-    const response = await api.get(`/api/valor/closed-trades?limit=${limit}`)
+  valorClosedTrades: async (limit: number = 50, ticker?: string) => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (ticker) params.append('ticker', ticker)
+    const response = await api.get(`/api/valor/closed-trades?${params}`)
     return response.data
   },
-  valorEquityCurve: async (days: number = 30) => {
-    const response = await api.get(`/api/valor/paper-equity-curve?days=${days}`)
+  valorEquityCurve: async (days: number = 30, ticker?: string) => {
+    const params = new URLSearchParams({ days: String(days) })
+    if (ticker) params.append('ticker', ticker)
+    const response = await api.get(`/api/valor/paper-equity-curve?${params}`)
     return response.data
   },
   valorIntradayEquity: async () => {
     const response = await api.get('/api/valor/equity-curve/intraday')
+    return response.data
+  },
+  valorTickers: async () => {
+    const response = await api.get('/api/valor/tickers')
+    return response.data
+  },
+  valorTickerStats: async () => {
+    const response = await api.get('/api/valor/ticker-stats')
     return response.data
   },
   valorConfig: async () => {
@@ -1875,40 +1889,64 @@ export function useScanActivitySamson(limit: number = 50, date?: string, options
 // VALOR MES FUTURES SCALPING HOOKS
 // =============================================================================
 
-export function useValorStatus(options?: SWRConfiguration) {
-  return useSWR('valor-status', fetchers.valorStatus, {
-    ...swrConfig,
-    refreshInterval: 15 * 1000,  // 15 seconds for real-time position updates
-    dedupingInterval: 5000,      // Allow refreshes within 5 seconds
-    keepPreviousData: false,     // Don't show stale data - show loading state instead
-    ...options,
-  })
-}
-
-export function useValorPositions(options?: SWRConfiguration) {
-  return useSWR('valor-positions', fetchers.valorPositions, {
-    ...swrConfig,
-    dedupingInterval: 5000,
-    keepPreviousData: false,
-    refreshInterval: 30 * 1000,
-    ...options,
-  })
-}
-
-export function useValorClosedTrades(limit: number = 50, options?: SWRConfiguration) {
+export function useValorStatus(ticker?: string, options?: SWRConfiguration) {
   return useSWR(
-    `valor-closed-trades-${limit}`,
-    () => fetchers.valorClosedTrades(limit),
+    `valor-status-${ticker || 'all'}`,
+    () => fetchers.valorStatus(ticker),
+    {
+      ...swrConfig,
+      refreshInterval: 15 * 1000,
+      dedupingInterval: 5000,
+      keepPreviousData: false,
+      ...options,
+    }
+  )
+}
+
+export function useValorPositions(ticker?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `valor-positions-${ticker || 'all'}`,
+    () => fetchers.valorPositions(ticker),
+    {
+      ...swrConfig,
+      dedupingInterval: 5000,
+      keepPreviousData: false,
+      refreshInterval: 30 * 1000,
+      ...options,
+    }
+  )
+}
+
+export function useValorClosedTrades(limit: number = 50, ticker?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `valor-closed-trades-${limit}-${ticker || 'all'}`,
+    () => fetchers.valorClosedTrades(limit, ticker),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }
 
-export function useValorEquityCurve(days: number = 30, options?: SWRConfiguration) {
+export function useValorEquityCurve(days: number = 30, ticker?: string, options?: SWRConfiguration) {
   return useSWR(
-    `valor-equity-curve-${days}`,
-    () => fetchers.valorEquityCurve(days),
+    `valor-equity-curve-${days}-${ticker || 'all'}`,
+    () => fetchers.valorEquityCurve(days, ticker),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
+}
+
+export function useValorTickers(options?: SWRConfiguration) {
+  return useSWR('valor-tickers', fetchers.valorTickers, {
+    ...swrConfig,
+    refreshInterval: 300 * 1000,  // 5 minutes - tickers don't change often
+    ...options,
+  })
+}
+
+export function useValorTickerStats(options?: SWRConfiguration) {
+  return useSWR('valor-ticker-stats', fetchers.valorTickerStats, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
 }
 
 export function useValorIntradayEquity(options?: SWRConfiguration) {

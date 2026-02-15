@@ -27,7 +27,8 @@ from zoneinfo import ZoneInfo
 
 from .models import (
     FuturesSignal, TradeDirection, GammaRegime, SignalSource,
-    ValorConfig, BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ
+    ValorConfig, BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ,
+    FUTURES_TICKERS, get_ticker_point_value
 )
 
 # ML Advisor - loaded lazily to avoid circular imports
@@ -426,6 +427,8 @@ class ValorSignalGenerator:
         # ML shadow prediction results (set per scan in _calculate_win_probability)
         self._last_ml_prob: Optional[float] = None
         self._last_bayesian_prob: Optional[float] = None
+        # Current ticker being processed (set per generate_signal call)
+        self._current_ticker: str = "MES"
 
     def generate_signal(
         self,
@@ -434,25 +437,30 @@ class ValorSignalGenerator:
         vix: float,
         atr: float,
         account_balance: float,
-        is_overnight: bool = False
+        is_overnight: bool = False,
+        ticker: str = "MES"
     ) -> Optional[FuturesSignal]:
         """
         Generate a trading signal based on current market conditions.
 
         Args:
-            current_price: Current MES price
+            current_price: Current futures price
             gex_data: GEX analysis data (flip_point, call_wall, put_wall, net_gex)
             vix: Current VIX level
             atr: Current ATR in points
             account_balance: Current account balance
             is_overnight: Whether this is overnight session (use n+1 GEX)
+            ticker: Instrument key (MNQ, CL, NG, RTY, MES)
 
         Returns:
             FuturesSignal if conditions met, None otherwise
         """
         try:
+            # Set current ticker for sub-methods that construct FuturesSignal
+            self._current_ticker = ticker
+
             # Extract GEX data with fallbacks for invalid/missing values
-            # GEX data is already scaled to MES levels by get_gex_data_for_valor()
+            # GEX data is already scaled to instrument levels by get_gex_data_for_valor()
             # Use 'or' to handle None values (key exists but value is None)
             flip_point = gex_data.get('flip_point') or 0
             call_wall = gex_data.get('call_wall') or 0
@@ -558,9 +566,9 @@ class ValorSignalGenerator:
                 f"(informational only, not gating)"
             )
 
-            # Calculate position size
-            signal.contracts = self.config.calculate_position_size(
-                account_balance, atr, current_price
+            # Calculate position size (per-ticker risk params)
+            signal.contracts = self.config.calculate_position_size_for_ticker(
+                ticker, account_balance, atr, current_price
             )
 
             # Set stop and breakeven prices (with overnight hybrid and A/B test support)
@@ -688,6 +696,7 @@ class ValorSignalGenerator:
             return None
 
         return FuturesSignal(
+            ticker=self._current_ticker,
             direction=direction,
             confidence=confidence,
             source=source,
@@ -913,6 +922,7 @@ class ValorSignalGenerator:
                 return None
 
         return FuturesSignal(
+            ticker=self._current_ticker,
             direction=direction,
             confidence=confidence,
             source=source,
@@ -1303,6 +1313,7 @@ class ValorSignalGenerator:
         if distance_to_call_pct < wall_threshold:
             # Near call wall - expect rejection, SHORT
             return FuturesSignal(
+                ticker=self._current_ticker,
                 direction=TradeDirection.SHORT,
                 confidence=0.65,
                 source=SignalSource.GEX_WALL_BOUNCE,
@@ -1321,6 +1332,7 @@ class ValorSignalGenerator:
         elif distance_to_put_pct < wall_threshold:
             # Near put wall - expect bounce, LONG
             return FuturesSignal(
+                ticker=self._current_ticker,
                 direction=TradeDirection.LONG,
                 confidence=0.65,
                 source=SignalSource.GEX_WALL_BOUNCE,
@@ -1376,6 +1388,7 @@ class ValorSignalGenerator:
                 vix=vix,
                 atr=atr,
                 entry_price=current_price,
+                ticker=self._current_ticker,
                 reasoning=f"FLIP POINT CROSS: Price crossed above flip {flip_point:.2f}. Bullish signal."
             )
 
@@ -1393,6 +1406,7 @@ class ValorSignalGenerator:
                 vix=vix,
                 atr=atr,
                 entry_price=current_price,
+                ticker=self._current_ticker,
                 reasoning=f"FLIP POINT CROSS: Price crossed below flip {flip_point:.2f}. Bearish signal."
             )
 

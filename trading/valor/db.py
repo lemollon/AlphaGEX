@@ -23,7 +23,8 @@ from database_adapter import get_connection
 from .models import (
     FuturesPosition, TradeDirection, GammaRegime, PositionStatus,
     SignalSource, ValorConfig, TradingMode, DailySummary,
-    BayesianWinTracker, FuturesSignal, CENTRAL_TZ, MES_POINT_VALUE
+    BayesianWinTracker, FuturesSignal, CENTRAL_TZ, MES_POINT_VALUE,
+    FUTURES_TICKERS, get_ticker_point_value
 )
 
 logger = logging.getLogger(__name__)
@@ -529,8 +530,57 @@ class ValorDatabase:
                     )
                 """)
 
+                # ================================================================
+                # MULTI-TICKER MIGRATION: Add ticker column to all tables
+                # This allows VALOR to track positions/trades per instrument
+                # (MNQ, CL, NG, RTY, MES) in a single set of tables.
+                # ================================================================
+                ticker_tables = [
+                    'valor_positions',
+                    'valor_closed_trades',
+                    'valor_signals',
+                    'valor_equity_snapshots',
+                    'valor_scan_activity',
+                    'valor_logs',
+                    'valor_daily_perf',
+                    'valor_win_tracker',
+                ]
+                for table in ticker_tables:
+                    try:
+                        c.execute(f"""
+                            ALTER TABLE {table}
+                            ADD COLUMN IF NOT EXISTS ticker VARCHAR(20) DEFAULT 'MES'
+                        """)
+                    except Exception:
+                        pass  # Column may already exist
+
+                # Indexes for per-ticker queries
+                try:
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker ON valor_positions(ticker)")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_positions_ticker_status ON valor_positions(ticker, status)")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_closed_trades_ticker ON valor_closed_trades(ticker)")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker ON valor_equity_snapshots(ticker)")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_equity_snapshots_ticker_time ON valor_equity_snapshots(ticker, snapshot_time DESC)")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_scan_activity_ticker ON valor_scan_activity(ticker)")
+                    c.execute("CREATE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker ON valor_daily_perf(ticker)")
+                except Exception:
+                    pass  # Indexes may already exist
+
+                # Drop the unique constraint on trade_date for daily_perf
+                # (now unique per ticker+date, not just date)
+                try:
+                    c.execute("""
+                        ALTER TABLE valor_daily_perf DROP CONSTRAINT IF EXISTS valor_daily_perf_trade_date_key
+                    """)
+                    c.execute("""
+                        CREATE UNIQUE INDEX IF NOT EXISTS idx_valor_daily_perf_ticker_date
+                        ON valor_daily_perf(ticker, trade_date)
+                    """)
+                except Exception:
+                    pass
+
                 conn.commit()
-                logger.info("VALOR database tables ensured")
+                logger.info("VALOR database tables ensured (multi-ticker)")
 
         except Exception as e:
             logger.error(f"Failed to ensure VALOR tables: {e}")
@@ -551,7 +601,7 @@ class ValorDatabase:
 
                 c.execute("""
                     INSERT INTO valor_positions (
-                        position_id, symbol, direction, contracts,
+                        position_id, ticker, symbol, direction, contracts,
                         entry_price, entry_value, initial_stop, current_stop,
                         breakeven_price, trailing_active, gamma_regime, gex_value,
                         flip_point, call_wall, put_wall, vix_at_entry, atr_at_entry,
@@ -560,7 +610,7 @@ class ValorDatabase:
                         close_reason, realized_pnl, high_water_mark, max_adverse_excursion,
                         high_price_since_entry, low_price_since_entry, stop_type, stop_points_used
                     ) VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT (position_id) DO UPDATE SET
@@ -576,6 +626,7 @@ class ValorDatabase:
                         updated_at = NOW()
                 """, (
                     position.position_id,
+                    position.ticker,
                     position.symbol,
                     position.direction.value,
                     position.contracts,
@@ -619,16 +670,22 @@ class ValorDatabase:
             logger.error(f"Failed to save position {position.position_id}: {e}")
             return False
 
-    def get_open_positions(self) -> List[FuturesPosition]:
-        """Get all open positions"""
+    def get_open_positions(self, ticker: Optional[str] = None) -> List[FuturesPosition]:
+        """Get open positions, optionally filtered by ticker."""
         positions = []
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                c.execute("""
-                    SELECT * FROM valor_positions WHERE status = 'open'
-                    ORDER BY open_time DESC
-                """)
+                if ticker:
+                    c.execute("""
+                        SELECT * FROM valor_positions WHERE status = 'open' AND ticker = %s
+                        ORDER BY open_time DESC
+                    """, (ticker,))
+                else:
+                    c.execute("""
+                        SELECT * FROM valor_positions WHERE status = 'open'
+                        ORDER BY open_time DESC
+                    """)
 
                 rows = c.fetchall()
                 columns = [desc[0] for desc in c.description]
@@ -748,7 +805,7 @@ class ValorDatabase:
                 # ON CONFLICT DO UPDATE ensures we never silently skip recording a trade
                 c.execute("""
                     INSERT INTO valor_closed_trades (
-                        position_id, symbol, direction, contracts,
+                        position_id, ticker, symbol, direction, contracts,
                         entry_price, exit_price, realized_pnl, gamma_regime,
                         signal_source, signal_confidence, win_probability,
                         vix_at_entry, atr_at_entry, close_reason, trade_reasoning,
@@ -757,7 +814,7 @@ class ValorDatabase:
                         stop_type, stop_points_used,
                         loss_analysis, mfe_points, mae_points,
                         was_profitable_before_loss, initial_stop_price, is_overnight_session
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (position_id) DO UPDATE SET
                         exit_price = EXCLUDED.exit_price,
                         realized_pnl = EXCLUDED.realized_pnl,
@@ -771,7 +828,8 @@ class ValorDatabase:
                         mae_points = EXCLUDED.mae_points,
                         was_profitable_before_loss = EXCLUDED.was_profitable_before_loss
                 """, (
-                    position_id, position.symbol, position.direction.value,
+                    position_id, getattr(position, 'ticker', 'MES'),
+                    position.symbol, position.direction.value,
                     position.contracts, _to_python(position.entry_price),
                     _to_python(close_price), _to_python(realized_pnl),
                     position.gamma_regime.value, position.signal_source.value,
@@ -1071,6 +1129,7 @@ class ValorDatabase:
         """Convert database row to FuturesPosition"""
         return FuturesPosition(
             position_id=data['position_id'],
+            ticker=data.get('ticker', 'MES'),
             symbol=data['symbol'],
             direction=TradeDirection(data['direction']),
             contracts=data['contracts'],
@@ -1115,9 +1174,10 @@ class ValorDatabase:
         self,
         start_date: Optional[date] = None,
         end_date: Optional[date] = None,
-        limit: int = 100
+        limit: int = 100,
+        ticker: Optional[str] = None
     ) -> List[Dict]:
-        """Get closed trades history"""
+        """Get closed trades history, optionally filtered by ticker."""
         trades = []
         try:
             with db_connection() as conn:
@@ -1126,6 +1186,9 @@ class ValorDatabase:
                 query = "SELECT * FROM valor_closed_trades WHERE 1=1"
                 params = []
 
+                if ticker:
+                    query += " AND ticker = %s"
+                    params.append(ticker)
                 if start_date:
                     query += " AND close_time >= %s"
                     params.append(start_date)
@@ -1153,6 +1216,46 @@ class ValorDatabase:
 
         return trades
 
+    def get_ticker_performance_stats(self, tickers: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Get per-ticker performance metrics for all specified tickers."""
+        result = {}
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                for ticker in tickers:
+                    c.execute("""
+                        SELECT
+                            COUNT(*) as total_trades,
+                            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                            SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
+                            COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                            COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
+                            COALESCE(AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END), 0) as avg_loss
+                        FROM valor_closed_trades
+                        WHERE ticker = %s
+                    """, (ticker,))
+                    row = c.fetchone()
+                    if row:
+                        total, wins, losses, total_pnl, avg_win, avg_loss = row
+                        result[ticker] = {
+                            "total_trades": total or 0,
+                            "wins": wins or 0,
+                            "losses": losses or 0,
+                            "total_pnl": float(total_pnl or 0),
+                            "avg_win": float(avg_win or 0),
+                            "avg_loss": float(avg_loss or 0),
+                            "win_rate": float(wins or 0) / max(total or 1, 1),
+                        }
+                    else:
+                        result[ticker] = {
+                            "total_trades": 0, "wins": 0, "losses": 0,
+                            "total_pnl": 0.0, "avg_win": 0.0, "avg_loss": 0.0,
+                            "win_rate": 0.0,
+                        }
+        except Exception as e:
+            logger.error(f"Failed to get ticker performance stats: {e}")
+        return result
+
     # ========================================================================
     # Equity Curve
     # ========================================================================
@@ -1165,21 +1268,22 @@ class ValorDatabase:
         open_positions: int = 0,
         trades_today: int = 0,
         wins_today: int = 0,
-        losses_today: int = 0
+        losses_today: int = 0,
+        ticker: str = "MES"
     ) -> bool:
-        """Save equity snapshot for equity curve"""
+        """Save equity snapshot for equity curve, tagged with ticker."""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
                     INSERT INTO valor_equity_snapshots (
                         account_balance, unrealized_pnl, realized_pnl_today,
-                        open_positions, trades_today, wins_today, losses_today
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        open_positions, trades_today, wins_today, losses_today, ticker
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     _to_python(account_balance), _to_python(unrealized_pnl),
                     _to_python(realized_pnl_today), open_positions,
-                    trades_today, wins_today, losses_today
+                    trades_today, wins_today, losses_today, ticker
                 ))
                 conn.commit()
                 return True
@@ -1187,19 +1291,29 @@ class ValorDatabase:
             logger.error(f"Failed to save equity snapshot: {e}")
             return False
 
-    def get_equity_curve(self, days: int = 30) -> List[Dict]:
-        """Get equity curve data"""
+    def get_equity_curve(self, days: int = 30, ticker: Optional[str] = None) -> List[Dict]:
+        """Get equity curve data, optionally filtered by ticker."""
         data = []
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                c.execute("""
-                    SELECT snapshot_time, account_balance, unrealized_pnl,
-                           realized_pnl_today, open_positions
-                    FROM valor_equity_snapshots
-                    WHERE snapshot_time >= NOW() - INTERVAL '%s days'
-                    ORDER BY snapshot_time ASC
-                """, (days,))
+                if ticker:
+                    c.execute("""
+                        SELECT snapshot_time, account_balance, unrealized_pnl,
+                               realized_pnl_today, open_positions, ticker
+                        FROM valor_equity_snapshots
+                        WHERE snapshot_time >= NOW() - INTERVAL '%s days'
+                          AND ticker = %s
+                        ORDER BY snapshot_time ASC
+                    """, (days, ticker))
+                else:
+                    c.execute("""
+                        SELECT snapshot_time, account_balance, unrealized_pnl,
+                               realized_pnl_today, open_positions, ticker
+                        FROM valor_equity_snapshots
+                        WHERE snapshot_time >= NOW() - INTERVAL '%s days'
+                        ORDER BY snapshot_time ASC
+                    """, (days,))
 
                 rows = c.fetchall()
                 columns = [desc[0] for desc in c.description]

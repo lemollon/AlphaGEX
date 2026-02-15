@@ -2,8 +2,11 @@
 VALOR - Data Models
 ======================
 
-MES Futures Scalping Bot using GEX signals.
+Multi-Futures Scalping Bot using GEX signals.
 Named after the legendary hero known for strength and perseverance.
+
+Trades multiple volatile futures contracts: MNQ, CL, NG, RTY (and MES).
+All instruments combined in a single bot (like AGAPE-SPOT for crypto).
 
 Clean, minimal data models for VALOR futures trading bot.
 Single source of truth for all position and configuration data.
@@ -53,10 +56,321 @@ PARAMETER_VERSION_DESCRIPTION = "Let winners run: no profit cap, trail at +0.75p
 # Tradier cache from market hours. That is TODAY's data, not tomorrow's.
 # =============================================================================
 
-# MES Contract Specifications
+# MES Contract Specifications (kept for backward compatibility)
 MES_POINT_VALUE = 5.0  # $5 per index point
 MES_TICK_SIZE = 0.25   # Minimum price movement
 MES_TICK_VALUE = 1.25  # $1.25 per tick (0.25 * $5)
+
+# =============================================================================
+# FUTURES_TICKERS - Multi-instrument contract specifications
+# =============================================================================
+# Each ticker defines its contract specs, quote sources, and per-ticker
+# trading parameters. This is the single source of truth for all instruments.
+# Follows the AGAPE-SPOT multi-ticker pattern.
+#
+# Adding a new ticker:
+#   1. Add entry to FUTURES_TICKERS below
+#   2. Database tables auto-migrate (ticker column added)
+#   3. Executor auto-detects Yahoo/DXFeed symbols
+#   4. Frontend auto-discovers via /api/valor/tickers
+# =============================================================================
+
+FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
+    "MNQ": {
+        "symbol": "MNQ",
+        "display_name": "Micro Nasdaq 100",
+        "description": "Micro E-mini Nasdaq-100 Futures",
+        "exchange": "CME",
+
+        # Contract specifications
+        "point_value": 2.0,       # $2 per index point
+        "tick_size": 0.25,        # Minimum price movement (0.25 points)
+        "tick_value": 0.50,       # $0.50 per tick (0.25 * $2)
+        "contract_months": "HMUZ",  # Mar, Jun, Sep, Dec
+        "contract_prefix": "/MNQ",  # e.g., /MNQH6
+
+        # Quote sources
+        "yahoo_symbol": "MNQ=F",
+        "dxfeed_symbol": "/MNQ:XCME",
+        "spy_derive_multiplier": None,  # Cannot derive from SPY
+
+        # Capital & risk
+        "starting_capital": 25000.0,
+        "risk_per_trade_pct": 1.0,
+        "max_contracts": 5,
+        "max_open_positions": 10,
+
+        # Exit parameters (tuned for NQ volatility - wider stops)
+        "initial_stop_points": 10.0,      # ~$20 risk per contract
+        "no_loss_activation_pts": 3.0,     # Activate trail after +3 pts ($6)
+        "no_loss_trail_distance": 5.0,     # Trail 5 pts behind ($10)
+        "no_loss_emergency_stop": 40.0,    # Emergency: 40 pts ($80)
+        "max_unrealized_loss_pts": 15.0,   # Safety net: 15 pts ($30)
+        "profit_target_points": 20.0,      # Target: 20 pts ($40)
+
+        # SAR parameters
+        "sar_trigger_pts": 6.0,
+        "sar_mfe_threshold": 1.5,
+
+        # Overnight
+        "overnight_stop_points": 5.0,
+        "overnight_target_points": 8.0,
+        "overnight_emergency_stop": 25.0,
+
+        # GEX source: NQ tracks NDX/QQQ
+        "gex_symbol": "NDX",
+        "gex_scale_factor": 1.0,  # NDX price ≈ MNQ price
+
+        # UI
+        "color_class": "purple",
+        "icon": "Zap",
+    },
+    "CL": {
+        "symbol": "CL",
+        "display_name": "Crude Oil",
+        "description": "WTI Crude Oil Futures (full-size)",
+        "exchange": "NYMEX",
+
+        # Contract specifications
+        "point_value": 1000.0,     # $1,000 per $1 move (1,000 barrels)
+        "tick_size": 0.01,         # $0.01 per barrel
+        "tick_value": 10.0,        # $10 per tick (0.01 * $1,000)
+        "contract_months": "FGHJKMNQUVXZ",  # Every month
+        "contract_prefix": "/CL",
+
+        # Quote sources
+        "yahoo_symbol": "CL=F",
+        "dxfeed_symbol": "/CL:XNYM",
+        "spy_derive_multiplier": None,
+
+        # Capital & risk
+        "starting_capital": 25000.0,
+        "risk_per_trade_pct": 1.0,
+        "max_contracts": 2,
+        "max_open_positions": 5,
+
+        # Exit parameters (CL moves ~$1-3/day, $1 = $1,000)
+        "initial_stop_points": 0.30,       # $0.30 = $300 risk per contract
+        "no_loss_activation_pts": 0.15,    # +$0.15 ($150) to activate trail
+        "no_loss_trail_distance": 0.20,    # Trail $0.20 ($200) behind
+        "no_loss_emergency_stop": 1.50,    # Emergency: $1.50 ($1,500)
+        "max_unrealized_loss_pts": 0.60,   # Safety: $0.60 ($600)
+        "profit_target_points": 0.80,      # Target: $0.80 ($800)
+
+        # SAR parameters
+        "sar_trigger_pts": 0.25,
+        "sar_mfe_threshold": 0.08,
+
+        # Overnight
+        "overnight_stop_points": 0.20,
+        "overnight_target_points": 0.40,
+        "overnight_emergency_stop": 1.00,
+
+        # GEX source: CL uses SPX GEX as macro regime proxy
+        "gex_symbol": "SPX",
+        "gex_scale_factor": None,  # No price scaling, regime only
+
+        # UI
+        "color_class": "amber",
+        "icon": "Flame",
+    },
+    "NG": {
+        "symbol": "NG",
+        "display_name": "Natural Gas",
+        "description": "Henry Hub Natural Gas Futures",
+        "exchange": "NYMEX",
+
+        # Contract specifications
+        "point_value": 10000.0,    # $10,000 per $1 move (10,000 mmBtu)
+        "tick_size": 0.001,        # $0.001 per mmBtu
+        "tick_value": 10.0,        # $10 per tick (0.001 * $10,000)
+        "contract_months": "FGHJKMNQUVXZ",  # Every month
+        "contract_prefix": "/NG",
+
+        # Quote sources
+        "yahoo_symbol": "NG=F",
+        "dxfeed_symbol": "/NG:XNYM",
+        "spy_derive_multiplier": None,
+
+        # Capital & risk
+        "starting_capital": 25000.0,
+        "risk_per_trade_pct": 0.5,   # Lower risk - NG is extremely volatile
+        "max_contracts": 1,
+        "max_open_positions": 3,
+
+        # Exit parameters (NG moves ~$0.05-0.20/day, $0.01 = $100)
+        "initial_stop_points": 0.020,      # $0.020 = $200 risk per contract
+        "no_loss_activation_pts": 0.010,   # +$0.010 ($100) to activate trail
+        "no_loss_trail_distance": 0.015,   # Trail $0.015 ($150) behind
+        "no_loss_emergency_stop": 0.100,   # Emergency: $0.10 ($1,000)
+        "max_unrealized_loss_pts": 0.040,  # Safety: $0.040 ($400)
+        "profit_target_points": 0.050,     # Target: $0.050 ($500)
+
+        # SAR parameters
+        "sar_trigger_pts": 0.015,
+        "sar_mfe_threshold": 0.005,
+
+        # Overnight
+        "overnight_stop_points": 0.015,
+        "overnight_target_points": 0.030,
+        "overnight_emergency_stop": 0.060,
+
+        # GEX source: NG uses SPX GEX as macro regime proxy
+        "gex_symbol": "SPX",
+        "gex_scale_factor": None,
+
+        # UI
+        "color_class": "green",
+        "icon": "Flame",
+    },
+    "RTY": {
+        "symbol": "RTY",
+        "display_name": "Micro Russell 2000",
+        "description": "Micro E-mini Russell 2000 Futures",
+        "exchange": "CME",
+
+        # Contract specifications
+        "point_value": 5.0,        # $5 per index point
+        "tick_size": 0.10,         # 0.10 points
+        "tick_value": 0.50,        # $0.50 per tick (0.10 * $5)
+        "contract_months": "HMUZ",  # Mar, Jun, Sep, Dec
+        "contract_prefix": "/M2K",  # Micro Russell 2000
+
+        # Quote sources
+        "yahoo_symbol": "RTY=F",
+        "dxfeed_symbol": "/M2K:XCME",
+        "spy_derive_multiplier": None,
+
+        # Capital & risk
+        "starting_capital": 15000.0,
+        "risk_per_trade_pct": 1.0,
+        "max_contracts": 5,
+        "max_open_positions": 10,
+
+        # Exit parameters (RTY moves ~15-40 pts/day, $5/pt)
+        "initial_stop_points": 3.0,        # 3 pts = $15 risk per contract
+        "no_loss_activation_pts": 1.5,     # +1.5 pts ($7.50) to activate trail
+        "no_loss_trail_distance": 2.0,     # Trail 2 pts ($10) behind
+        "no_loss_emergency_stop": 20.0,    # Emergency: 20 pts ($100)
+        "max_unrealized_loss_pts": 6.0,    # Safety: 6 pts ($30)
+        "profit_target_points": 8.0,       # Target: 8 pts ($40)
+
+        # SAR parameters
+        "sar_trigger_pts": 2.5,
+        "sar_mfe_threshold": 0.8,
+
+        # Overnight
+        "overnight_stop_points": 2.0,
+        "overnight_target_points": 4.0,
+        "overnight_emergency_stop": 12.0,
+
+        # GEX source: RTY tracks IWM
+        "gex_symbol": "IWM",
+        "gex_scale_factor": 10.0,  # IWM * 10 ≈ RTY price
+
+        # UI
+        "color_class": "red",
+        "icon": "TrendingUp",
+    },
+    "MES": {
+        "symbol": "MES",
+        "display_name": "Micro S&P 500",
+        "description": "Micro E-mini S&P 500 Futures (original VALOR instrument)",
+        "exchange": "CME",
+
+        # Contract specifications
+        "point_value": MES_POINT_VALUE,
+        "tick_size": MES_TICK_SIZE,
+        "tick_value": MES_TICK_VALUE,
+        "contract_months": "HMUZ",
+        "contract_prefix": "/MES",
+
+        # Quote sources
+        "yahoo_symbol": "MES=F",
+        "dxfeed_symbol": "/MES:XCME",
+        "spy_derive_multiplier": 10.0,  # SPY * 10 ≈ MES
+
+        # Capital & risk
+        "starting_capital": 25000.0,
+        "risk_per_trade_pct": 1.0,
+        "max_contracts": 5,
+        "max_open_positions": 100,
+
+        # Exit parameters (original VALOR params)
+        "initial_stop_points": 2.5,
+        "no_loss_activation_pts": 0.75,
+        "no_loss_trail_distance": 1.5,
+        "no_loss_emergency_stop": 15.0,
+        "max_unrealized_loss_pts": 5.0,
+        "profit_target_points": 6.0,
+
+        # SAR parameters
+        "sar_trigger_pts": 2.0,
+        "sar_mfe_threshold": 0.5,
+
+        # Overnight
+        "overnight_stop_points": 1.25,
+        "overnight_target_points": 2.0,
+        "overnight_emergency_stop": 8.0,
+
+        # GEX source: SPX (direct)
+        "gex_symbol": "SPX",
+        "gex_scale_factor": 1.0,
+
+        # UI
+        "color_class": "cyan",
+        "icon": "Activity",
+    },
+}
+
+# Default tickers to trade (can be overridden by config)
+DEFAULT_VALOR_TICKERS = ["MNQ", "CL", "NG", "RTY"]
+
+
+def get_ticker_config(ticker: str) -> Dict[str, Any]:
+    """Get configuration for a specific ticker. Returns empty dict if not found."""
+    return FUTURES_TICKERS.get(ticker, {})
+
+
+def get_ticker_point_value(ticker: str) -> float:
+    """Get point value for a ticker. Falls back to MES_POINT_VALUE."""
+    cfg = FUTURES_TICKERS.get(ticker, {})
+    return cfg.get("point_value", MES_POINT_VALUE)
+
+
+def get_front_month_symbol(ticker: str) -> str:
+    """
+    Get the current front month contract symbol for any futures ticker.
+
+    Month codes: F=Jan, G=Feb, H=Mar, J=Apr, K=May, M=Jun,
+                 N=Jul, Q=Aug, U=Sep, V=Oct, X=Nov, Z=Dec
+    """
+    cfg = FUTURES_TICKERS.get(ticker, {})
+    prefix = cfg.get("contract_prefix", f"/{ticker}")
+    months_str = cfg.get("contract_months", "HMUZ")
+
+    now = datetime.now(CENTRAL_TZ)
+    month = now.month
+    year = now.year % 10
+
+    # Month code mapping
+    month_codes = {
+        1: 'F', 2: 'G', 3: 'H', 4: 'J', 5: 'K', 6: 'M',
+        7: 'N', 8: 'Q', 9: 'U', 10: 'V', 11: 'X', 12: 'Z'
+    }
+    # Reverse mapping
+    code_to_month = {v: k for k, v in month_codes.items()}
+
+    # Find next valid contract month
+    available_months = sorted([code_to_month[c] for c in months_str if c in code_to_month])
+
+    for m in available_months:
+        if m >= month:
+            return f"{prefix}{month_codes[m]}{year}"
+
+    # Wrap to next year's first available month
+    next_year = (year + 1) % 10
+    return f"{prefix}{month_codes[available_months[0]]}{next_year}"
 
 
 class TradingMode(Enum):
@@ -104,16 +418,17 @@ class SignalSource(Enum):
 @dataclass
 class FuturesPosition:
     """
-    Represents an MES futures position.
+    Represents a futures position for any supported instrument.
 
     This is the ONLY position object used throughout the system.
     All fields are explicitly defined - no hidden state.
     """
     # Identity
     position_id: str
+    ticker: str = "MES"  # Instrument key into FUTURES_TICKERS (MNQ, CL, NG, RTY, MES)
 
     # Trade details
-    symbol: str  # e.g., "/MESH6"
+    symbol: str  # e.g., "/MESH6", "/MNQH6", "/CLG6"
     direction: TradeDirection
     contracts: int
 
@@ -172,12 +487,13 @@ class FuturesPosition:
         return 0.0  # Calculated externally with live price
 
     def calculate_pnl(self, current_price: float) -> float:
-        """Calculate P&L at given price"""
+        """Calculate P&L at given price using per-ticker point value"""
         if self.direction == TradeDirection.LONG:
             pnl_points = current_price - self.entry_price
         else:
             pnl_points = self.entry_price - current_price
-        return pnl_points * self.contracts * MES_POINT_VALUE
+        point_value = get_ticker_point_value(self.ticker)
+        return pnl_points * self.contracts * point_value
 
     @property
     def is_open(self) -> bool:
@@ -188,7 +504,8 @@ class FuturesPosition:
     def risk_amount(self) -> float:
         """Dollar risk from entry to initial stop"""
         stop_distance = abs(self.entry_price - self.initial_stop)
-        return stop_distance * self.contracts * MES_POINT_VALUE
+        point_value = get_ticker_point_value(self.ticker)
+        return stop_distance * self.contracts * point_value
 
     def should_trail_stop(self, current_price: float, trail_points: float = 1.0) -> Optional[float]:
         """
@@ -233,6 +550,7 @@ class FuturesPosition:
         """Convert to dictionary for DB/logging with FULL context"""
         return {
             'position_id': self.position_id,
+            'ticker': self.ticker,
             'symbol': self.symbol,
             'direction': self.direction.value,
             'contracts': self.contracts,
@@ -275,19 +593,23 @@ class ValorConfig:
     """
     VALOR configuration - all settings in one place.
 
-    MES Scalping Strategy Parameters:
+    Multi-Futures Scalping Strategy Parameters:
+    - Trades MNQ, CL, NG, RTY (and MES) simultaneously
     - GEX-based entries (positive = fade, negative = momentum)
-    - Tight trailing stops with breakeven activation
+    - Per-ticker stop/target/trailing params from FUTURES_TICKERS
     - Fixed fractional position sizing with ATR adjustment
     - 24/5 operation with n+1 GEX for overnight
     """
-    # Risk limits
+    # Multi-ticker configuration
+    tickers: List[str] = field(default_factory=lambda: list(DEFAULT_VALOR_TICKERS))
+
+    # Risk limits (shared defaults, overridden per-ticker by FUTURES_TICKERS)
     capital: float = 100000.0  # Paper trading capital ($100k starting)
     risk_per_trade_pct: float = 1.0  # Risk 1% per trade
     max_contracts: int = 5  # Maximum contracts per trade
     max_open_positions: int = 100  # Effectively unlimited positions per user request
 
-    # MES contract settings
+    # MES contract settings (legacy/default - new tickers use FUTURES_TICKERS)
     symbol: str = "/MESH6"  # Current front month (March 2026)
     point_value: float = MES_POINT_VALUE  # $5 per point
     tick_size: float = MES_TICK_SIZE  # 0.25 points
@@ -474,6 +796,78 @@ class ValorConfig:
 
         return contracts
 
+    def get_ticker_exit_params(self, ticker: str) -> Dict[str, Any]:
+        """
+        Get per-ticker exit parameters (stops, trails, targets).
+
+        Per-ticker values from FUTURES_TICKERS override shared config defaults.
+        """
+        cfg = FUTURES_TICKERS.get(ticker, {})
+        return {
+            "initial_stop_points": cfg.get("initial_stop_points", self.initial_stop_points),
+            "no_loss_activation_pts": cfg.get("no_loss_activation_pts", self.no_loss_activation_pts),
+            "no_loss_trail_distance": cfg.get("no_loss_trail_distance", self.no_loss_trail_distance),
+            "no_loss_emergency_stop": cfg.get("no_loss_emergency_stop", self.no_loss_emergency_stop),
+            "max_unrealized_loss_pts": cfg.get("max_unrealized_loss_pts", self.max_unrealized_loss_pts),
+            "profit_target_points": cfg.get("profit_target_points", self.profit_target_points),
+            "sar_trigger_pts": cfg.get("sar_trigger_pts", self.sar_trigger_pts),
+            "sar_mfe_threshold": cfg.get("sar_mfe_threshold", self.sar_mfe_threshold),
+            "overnight_stop_points": cfg.get("overnight_stop_points", self.overnight_stop_points),
+            "overnight_target_points": cfg.get("overnight_target_points", self.overnight_target_points),
+            "overnight_emergency_stop": cfg.get("overnight_emergency_stop", self.overnight_emergency_stop),
+        }
+
+    def get_ticker_risk_params(self, ticker: str) -> Dict[str, Any]:
+        """Get per-ticker risk/sizing parameters."""
+        cfg = FUTURES_TICKERS.get(ticker, {})
+        return {
+            "starting_capital": cfg.get("starting_capital", self.capital),
+            "risk_per_trade_pct": cfg.get("risk_per_trade_pct", self.risk_per_trade_pct),
+            "max_contracts": cfg.get("max_contracts", self.max_contracts),
+            "max_open_positions": cfg.get("max_open_positions", self.max_open_positions),
+            "point_value": cfg.get("point_value", self.point_value),
+            "tick_size": cfg.get("tick_size", self.tick_size),
+        }
+
+    def get_ticker_symbol(self, ticker: str) -> str:
+        """Get the current front month contract symbol for a ticker."""
+        return get_front_month_symbol(ticker)
+
+    def get_ticker_gex_config(self, ticker: str) -> Dict[str, Any]:
+        """Get GEX data source config for a ticker."""
+        cfg = FUTURES_TICKERS.get(ticker, {})
+        return {
+            "gex_symbol": cfg.get("gex_symbol", "SPX"),
+            "gex_scale_factor": cfg.get("gex_scale_factor"),
+        }
+
+    def calculate_position_size_for_ticker(
+        self,
+        ticker: str,
+        account_balance: float,
+        atr: float,
+        entry_price: float
+    ) -> int:
+        """Calculate position size for a specific ticker."""
+        risk_params = self.get_ticker_risk_params(ticker)
+        point_value = risk_params["point_value"]
+        risk_pct = risk_params["risk_per_trade_pct"]
+        max_cts = risk_params["max_contracts"]
+
+        if atr <= 0:
+            return 1
+
+        risk_amount = account_balance * (risk_pct / 100)
+        stop_distance = atr * self.atr_multiplier
+        dollar_risk_per_contract = stop_distance * point_value
+
+        if dollar_risk_per_contract <= 0:
+            return 1
+
+        contracts = int(risk_amount / dollar_risk_per_contract)
+        contracts = max(1, min(contracts, max_cts))
+        return contracts
+
     def validate(self) -> tuple[bool, str]:
         """Validate configuration values."""
         errors = []
@@ -493,6 +887,10 @@ class ValorConfig:
         if self.trailing_stop_points <= 0:
             errors.append(f"trailing_stop_points must be > 0, got {self.trailing_stop_points}")
 
+        for ticker in self.tickers:
+            if ticker not in FUTURES_TICKERS:
+                errors.append(f"Unknown ticker '{ticker}' not in FUTURES_TICKERS")
+
         if errors:
             return False, "; ".join(errors)
         return True, ""
@@ -501,8 +899,9 @@ class ValorConfig:
 @dataclass
 class FuturesSignal:
     """
-    A trading signal for MES futures with all context needed for execution.
+    A trading signal for any supported futures instrument.
     """
+    ticker: str  # Instrument key (MNQ, CL, NG, RTY, MES)
     direction: TradeDirection
     confidence: float
     source: SignalSource
@@ -552,7 +951,8 @@ class FuturesSignal:
     @property
     def risk_dollars(self) -> float:
         """Risk in dollars"""
-        return self.risk_points * self.contracts * MES_POINT_VALUE
+        point_value = get_ticker_point_value(self.ticker)
+        return self.risk_points * self.contracts * point_value
 
 
 @dataclass
