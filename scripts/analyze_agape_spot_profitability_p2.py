@@ -426,10 +426,10 @@ def p22_bayesian_accuracy(conn):
                 ELSE '06_NULL'
             END AS prob_bucket,
             COUNT(*) AS predictions,
-            COUNT(*) FILTER (WHERE actual_win = true) AS actual_wins,
+            COUNT(*) FILTER (WHERE actual_outcome = 1) AS actual_wins,
             AVG(bayesian_probability) AS avg_predicted_prob
         FROM agape_spot_ml_shadow
-        WHERE actual_win IS NOT NULL
+        WHERE actual_outcome IS NOT NULL
         GROUP BY ticker, prob_bucket
         ORDER BY ticker, prob_bucket
     """)
