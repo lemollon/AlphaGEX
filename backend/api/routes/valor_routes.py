@@ -28,12 +28,16 @@ router = APIRouter(tags=["VALOR"])
 ValorTrader = None
 get_valor_trader = None
 run_valor_scan = None
+FUTURES_TICKERS = None
+DEFAULT_VALOR_TICKERS = None
 
 try:
     from trading.valor import (
         ValorTrader,
         get_valor_trader,
         run_valor_scan,
+        FUTURES_TICKERS,
+        DEFAULT_VALOR_TICKERS,
     )
     logger.info("✅ VALOR module loaded")
 except ImportError as e:
@@ -51,20 +55,85 @@ def _get_trader():
 
 
 # ============================================================================
+# Tickers Endpoint (Multi-Instrument Support)
+# ============================================================================
+
+@router.get("/api/valor/tickers")
+async def get_valor_tickers():
+    """
+    Get all supported VALOR futures tickers with their configurations.
+
+    Returns the complete list of tradeable instruments including
+    contract specs, point values, and UI display config.
+    """
+    try:
+        trader = _get_trader()
+        tickers_info = {}
+        if FUTURES_TICKERS:
+            for symbol, cfg in FUTURES_TICKERS.items():
+                tickers_info[symbol] = {
+                    "symbol": symbol,
+                    "display_name": cfg.get("display_name", symbol),
+                    "point_value": cfg.get("point_value"),
+                    "tick_size": cfg.get("tick_size"),
+                    "tick_value": cfg.get("tick_value"),
+                    "starting_capital": cfg.get("starting_capital"),
+                    "color": cfg.get("color", "#6366f1"),
+                    "icon": cfg.get("icon", ""),
+                    "is_active": symbol in trader.config.tickers,
+                }
+
+        return {
+            "tickers": tickers_info,
+            "active_tickers": trader.config.tickers,
+            "default_tickers": DEFAULT_VALOR_TICKERS or [],
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting VALOR tickers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/valor/ticker-stats")
+async def get_valor_ticker_stats():
+    """
+    Get per-ticker performance statistics.
+
+    Returns win rate, P&L, trade count for each active ticker.
+    """
+    try:
+        trader = _get_trader()
+        stats = trader.get_ticker_stats()
+        return {
+            "ticker_stats": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting ticker stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # Status Endpoint
 # ============================================================================
 
 @router.get("/api/valor/status")
-async def get_valor_status():
+async def get_valor_status(
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+):
     """
     Get VALOR bot status and configuration.
 
     Returns current status, configuration, open positions count,
-    and performance summary.
+    and performance summary. Optionally filtered by ticker.
     """
     try:
         trader = _get_trader()
-        return trader.get_status()
+        return trader.get_status(ticker=ticker)
     except HTTPException:
         raise
     except Exception as e:
@@ -77,16 +146,20 @@ async def get_valor_status():
 # ============================================================================
 
 @router.get("/api/valor/positions")
-async def get_valor_positions():
+async def get_valor_positions(
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+):
     """
     Get all open VALOR positions with unrealized P&L.
+    Optionally filtered by ticker.
     """
     try:
         trader = _get_trader()
-        status = trader.get_status()
+        status = trader.get_status(ticker=ticker)
         return {
             "positions": status.get("positions", {}).get("positions", []),
             "count": status.get("positions", {}).get("open_count", 0),
+            "ticker_filter": ticker,
             "timestamp": datetime.now().isoformat()
         }
     except HTTPException:
@@ -99,17 +172,19 @@ async def get_valor_positions():
 @router.get("/api/valor/closed-trades")
 async def get_valor_closed_trades(
     limit: int = Query(1000, ge=1, le=10000, description="Number of trades to return (default: 1000 to show all daily trades)"),
-    today_only: bool = Query(False, description="If true, only return today's trades")
+    today_only: bool = Query(False, description="If true, only return today's trades"),
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
 ):
     """
     Get VALOR closed trade history.
 
     By default returns up to 1000 trades (enough for all daily trades).
     Use today_only=true to filter to just today's trades.
+    Optionally filtered by ticker.
     """
     try:
         trader = _get_trader()
-        trades = trader.get_closed_trades(limit=limit)
+        trades = trader.get_closed_trades(limit=limit, ticker=ticker)
 
         # Filter to today only if requested
         if today_only:
@@ -162,14 +237,15 @@ async def get_valor_closed_trades(
 
 @router.get("/api/valor/equity-curve")
 async def get_valor_equity_curve(
-    days: int = Query(30, ge=1, le=365, description="Number of days of history")
+    days: int = Query(30, ge=1, le=365, description="Number of days of history"),
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
 ):
     """
-    Get VALOR historical equity curve.
+    Get VALOR historical equity curve. Optionally filtered by ticker.
     """
     try:
         trader = _get_trader()
-        curve = trader.get_equity_curve(days=days)
+        curve = trader.get_equity_curve(days=days, ticker=ticker)
         return {
             "equity_curve": curve,
             "points": len(curve),
@@ -208,16 +284,19 @@ async def get_valor_intraday_equity():
 # ============================================================================
 
 @router.get("/api/valor/performance")
-async def get_valor_performance():
+async def get_valor_performance(
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+):
     """
     Get VALOR performance statistics.
 
     Includes win rate, total P&L, average win/loss,
     profit factor, and regime-specific stats.
+    Optionally filtered by ticker.
     """
     try:
         trader = _get_trader()
-        status = trader.get_status()
+        status = trader.get_status(ticker=ticker)
         return {
             "performance": status.get("performance", {}),
             "win_tracker": status.get("win_tracker", {}),
@@ -401,7 +480,7 @@ async def reset_valor_win_tracker():
 @router.get("/api/valor/market-status")
 async def get_valor_market_status():
     """
-    Check if MES futures market is open.
+    Check if futures market is open.
     """
     try:
         trader = _get_trader()
@@ -413,6 +492,7 @@ async def get_valor_market_status():
             "in_maintenance": maintenance_seconds > 0,
             "maintenance_seconds_remaining": maintenance_seconds,
             "symbol": trader.config.symbol,
+            "tickers": trader.config.tickers,
             "timestamp": datetime.now().isoformat()
         }
     except HTTPException:

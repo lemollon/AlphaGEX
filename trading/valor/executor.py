@@ -21,7 +21,8 @@ from zoneinfo import ZoneInfo
 
 from .models import (
     FuturesPosition, FuturesSignal, TradeDirection, PositionStatus,
-    ValorConfig, TradingMode, MES_POINT_VALUE, CENTRAL_TZ
+    ValorConfig, TradingMode, MES_POINT_VALUE, CENTRAL_TZ,
+    FUTURES_TICKERS, get_ticker_point_value
 )
 
 logger = logging.getLogger(__name__)
@@ -142,83 +143,85 @@ class TastytradeExecutor:
     # Quote & Market Data
     # ========================================================================
 
-    def get_mes_quote(self, symbol: str = None) -> Optional[Dict[str, Any]]:
+    def get_mes_quote(self, symbol: str = None, ticker: str = None) -> Optional[Dict[str, Any]]:
         """
-        Get current MES futures quote.
+        Get current futures quote for any supported instrument.
 
         Priority:
         1. Tastytrade DXLinkStreamer (real-time via WebSocket)
-        2. Yahoo Finance MES=F (may have 15-min delay)
-        3. SPY-derived price (last resort for paper trading)
+        2. Yahoo Finance (may have 15-min delay)
+        3. SPY-derived price (last resort for MES paper trading only)
+
+        Args:
+            symbol: Contract symbol (e.g. /MESH6, /MNQH6)
+            ticker: Instrument key (MNQ, CL, NG, RTY, MES) - used to look up Yahoo/DXFeed symbols
 
         Returns:
             Dict with bid, ask, last, volume or None if failed
         """
+        ticker = ticker or "MES"
         symbol = symbol or self.config.symbol
+        ticker_cfg = FUTURES_TICKERS.get(ticker, {})
 
         # Check cache first
-        cache_key = symbol
+        cache_key = ticker  # Cache by instrument, not contract symbol
         if cache_key in _quote_cache:
             cached_quote, cache_time = _quote_cache[cache_key]
             if datetime.now(CENTRAL_TZ) - cache_time < timedelta(seconds=QUOTE_CACHE_TTL_SECONDS):
-                logger.debug(f"Using cached quote for {symbol}")
+                logger.debug(f"Using cached quote for {ticker}")
                 return cached_quote
 
         # Try Tastytrade DXLinkStreamer (real-time WebSocket streaming)
+        dxfeed_symbol = ticker_cfg.get("dxfeed_symbol", f"/{ticker}:XCME")
         if TASTYTRADE_SDK_AVAILABLE and self.auth_method:
             try:
-                quote = self._get_tastytrade_streaming_quote(symbol)
+                quote = self._get_tastytrade_streaming_quote(dxfeed_symbol)
                 if quote:
+                    quote["ticker"] = ticker
                     _quote_cache[cache_key] = (quote, datetime.now(CENTRAL_TZ))
                     return quote
             except Exception as e:
-                logger.warning(f"DXLinkStreamer quote failed: {e}")
+                logger.warning(f"DXLinkStreamer quote failed for {ticker}: {e}")
 
-        # Fallback: Get direct MES futures quote from Yahoo Finance
-        # Yahoo provides free delayed MES=F quotes (typically 15-min delay)
-        mes_quote = self._get_yahoo_mes_quote()
-        if mes_quote:
-            _quote_cache[cache_key] = (mes_quote, datetime.now(CENTRAL_TZ))
-            return mes_quote
+        # Fallback: Yahoo Finance quote for this ticker
+        yahoo_symbol = ticker_cfg.get("yahoo_symbol", "MES=F")
+        yahoo_quote = self._get_yahoo_futures_quote(yahoo_symbol, ticker)
+        if yahoo_quote:
+            _quote_cache[cache_key] = (yahoo_quote, datetime.now(CENTRAL_TZ))
+            return yahoo_quote
 
-        # Last resort: Derive from SPY * 10 (not ideal but better than nothing)
-        if self.config.mode == TradingMode.PAPER:
-            spy_quote = self._get_spy_derived_quote(symbol)
+        # Last resort: SPY-derived price (only works for MES)
+        spy_mult = ticker_cfg.get("spy_derive_multiplier")
+        if self.config.mode == TradingMode.PAPER and spy_mult:
+            spy_quote = self._get_spy_derived_quote(symbol, spy_mult)
             if spy_quote:
+                spy_quote["ticker"] = ticker
                 _quote_cache[cache_key] = (spy_quote, datetime.now(CENTRAL_TZ))
             return spy_quote
 
         return None
 
-    def _get_tastytrade_streaming_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _get_tastytrade_streaming_quote(self, dxfeed_symbol: str) -> Optional[Dict[str, Any]]:
         """
         Get real-time futures quote via Tastytrade DXLinkStreamer.
 
-        This uses WebSocket streaming for real-time data.
-        Note: Requires tastytrade SDK (pip install tastytrade)
+        Args:
+            dxfeed_symbol: DXFeed symbol (e.g., /MES:XCME, /MNQ:XCME, /CL:XNYM)
         """
         if not TASTYTRADE_SDK_AVAILABLE:
             return None
 
         try:
-            # Convert symbol to DXFeed format
-            # Config uses /MESH6 (contract month) but DXFeed needs /MES:XCME (root + exchange)
-            # /MESH6, /MESM6, /MESU6, /MESZ6 all map to /MES:XCME for real-time quotes
-            if symbol.startswith('/MES'):
-                streamer_symbol = '/MES:XCME'
-            elif symbol.startswith('MES'):
-                streamer_symbol = '/MES:XCME'
-            else:
-                # For other symbols, add / prefix if needed
-                streamer_symbol = symbol if symbol.startswith('/') else f'/{symbol}'
-
-            logger.debug(f"Converting {symbol} to DXFeed symbol: {streamer_symbol}")
+            # Ensure proper format - dxfeed_symbol should already be correct
+            # from FUTURES_TICKERS config
+            streamer_symbol = dxfeed_symbol if dxfeed_symbol.startswith('/') else f'/{dxfeed_symbol}'
+            logger.debug(f"DXLinkStreamer quote for: {streamer_symbol}")
 
             # Run async function synchronously
             return asyncio.run(self._async_get_streaming_quote(streamer_symbol))
 
         except Exception as e:
-            logger.warning(f"Tastytrade streaming quote error: {e}")
+            logger.warning(f"Tastytrade streaming quote error for {dxfeed_symbol}: {e}")
             return None
 
     async def _async_get_streaming_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -270,16 +273,19 @@ class TastytradeExecutor:
         return None
 
     def _get_yahoo_mes_quote(self) -> Optional[Dict[str, Any]]:
-        """
-        Get MES futures quote from Yahoo Finance.
+        """Legacy method - calls _get_yahoo_futures_quote for MES."""
+        return self._get_yahoo_futures_quote("MES=F", "MES")
 
-        Yahoo Finance provides free MES=F quotes (Micro E-mini S&P 500 futures).
-        Data may be delayed 15 minutes per exchange rules, but this is acceptable
-        for paper trading and better than deriving from SPY.
+    def _get_yahoo_futures_quote(self, yahoo_symbol: str, ticker: str = "MES") -> Optional[Dict[str, Any]]:
+        """
+        Get futures quote from Yahoo Finance for any supported instrument.
+
+        Args:
+            yahoo_symbol: Yahoo symbol (e.g., MES=F, MNQ=F, CL=F, NG=F, RTY=F)
+            ticker: Instrument key for metadata
         """
         try:
-            # Yahoo Finance API for MES=F (Micro E-mini S&P 500)
-            yahoo_url = "https://query1.finance.yahoo.com/v8/finance/chart/MES=F"
+            yahoo_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_symbol}"
             params = {
                 "interval": "1m",
                 "range": "1d"
@@ -300,55 +306,56 @@ class TastytradeExecutor:
                     prev_close = meta.get("previousClose", price)
 
                     if price > 0:
-                        # MES typical spread is 0.25-0.50 points
-                        spread = 0.25
+                        # Estimate spread based on instrument
+                        ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+                        spread = ticker_cfg.get("tick_size", 0.25)
                         return {
-                            "symbol": "MES",
+                            "symbol": yahoo_symbol.replace("=F", ""),
+                            "ticker": ticker,
                             "bid": price - spread,
                             "ask": price + spread,
                             "last": price,
-                            "price": price,  # Alias for convenience
+                            "price": price,
                             "prev_close": prev_close,
                             "volume": meta.get("regularMarketVolume", 0),
                             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
-                            "source": "YAHOO_MES",
+                            "source": f"YAHOO_{ticker}",
                             "exchange": meta.get("exchangeName", "CME")
                         }
 
-            logger.warning(f"Yahoo MES quote failed: {response.status_code}")
+            logger.warning(f"Yahoo {yahoo_symbol} quote failed: {response.status_code}")
 
         except Exception as e:
-            logger.warning(f"Could not get MES quote from Yahoo: {e}")
+            logger.warning(f"Could not get {yahoo_symbol} quote from Yahoo: {e}")
 
         return None
 
-    def _get_spy_derived_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
+    def _get_spy_derived_quote(self, symbol: str, multiplier: float = 10.0) -> Optional[Dict[str, Any]]:
         """
-        Get MES-equivalent quote by deriving from SPY price.
-        SPY = S&P 500 / 10, so SPY * 10 ≈ ES/MES price.
+        Get futures-equivalent quote by deriving from SPY price.
+        SPY * multiplier ≈ futures price (e.g., SPY * 10 ≈ MES).
         Used as LAST RESORT fallback when both Tastytrade and Yahoo fail.
+        Only works for equity-index futures (MES, RTY).
         """
         try:
             from data.unified_data_provider import get_quote
             spy_quote = get_quote("SPY")
 
             if spy_quote and spy_quote.price > 0:
-                # SPY * 10 gives approximate ES/MES level
-                mes_price = spy_quote.price * 10
-                # Approximate bid/ask spread for MES (typically 0.25-0.50 points)
+                futures_price = spy_quote.price * multiplier
                 spread = 0.25
                 return {
                     "symbol": symbol,
-                    "bid": mes_price - spread,
-                    "ask": mes_price + spread,
-                    "last": mes_price,
-                    "price": mes_price,
-                    "volume": 100000,  # Placeholder for paper trading
+                    "bid": futures_price - spread,
+                    "ask": futures_price + spread,
+                    "last": futures_price,
+                    "price": futures_price,
+                    "volume": 100000,
                     "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
-                    "source": "SPY_DERIVED"  # Flag this as derived data
+                    "source": "SPY_DERIVED"
                 }
         except Exception as e:
-            logger.warning(f"Could not derive MES quote from SPY: {e}")
+            logger.warning(f"Could not derive futures quote from SPY: {e}")
 
         return None
 

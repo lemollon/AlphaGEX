@@ -22,7 +22,8 @@ from zoneinfo import ZoneInfo
 from .models import (
     FuturesPosition, FuturesSignal, TradeDirection, GammaRegime,
     PositionStatus, SignalSource, ValorConfig, TradingMode,
-    BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ
+    BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ,
+    FUTURES_TICKERS, get_ticker_point_value, get_ticker_config,
 )
 from .db import ValorDatabase
 from .signals import ValorSignalGenerator, get_gex_data_for_valor
@@ -119,7 +120,16 @@ class ValorTrader:
         self.daily_pnl: float = 0.0
         self._scan_count: int = 0  # Track scan number for direction tracker
 
-        # Loss streak tracking - pause after consecutive losses
+        # Per-ticker state (keyed by ticker symbol: MES, MNQ, CL, NG, RTY)
+        self._loss_streaks: Dict[str, int] = {}
+        self._loss_pause_until: Dict[str, Optional[datetime]] = {}
+
+        # Initialize per-ticker state for every configured ticker
+        for ticker in self.config.tickers:
+            self._loss_streaks[ticker] = 0
+            self._loss_pause_until[ticker] = None
+
+        # Legacy single-ticker aliases (for backward compatibility)
         self.consecutive_losses: int = 0
         self.loss_streak_pause_until: Optional[datetime] = None
 
@@ -139,7 +149,7 @@ class ValorTrader:
 
         logger.info(
             f"VALOR initialized: mode={self.config.mode.value}, "
-            f"symbol={self.config.symbol}, capital=${self.config.capital:,.2f}"
+            f"tickers={self.config.tickers}, capital=${self.config.capital:,.2f}"
         )
 
     def _startup_integrity_check(self) -> None:
@@ -189,23 +199,101 @@ class ValorTrader:
 
     def run_scan(self) -> Dict[str, Any]:
         """
-        Run a single trading scan.
+        Run a single trading scan across ALL configured tickers.
 
         This is called periodically (every minute) by the scheduler.
-        CRITICAL: Logs EVERY scan for ML training data collection.
+        Iterates over each ticker in self.config.tickers and runs
+        _run_ticker_scan(ticker) for each one independently.
         """
-        # Generate unique scan ID for ML tracking
-        scan_id = f"VALOR-SCAN-{uuid.uuid4().hex[:12]}"
-
-        # Increment scan counter and update direction tracker
         self._scan_count += 1
+        now = datetime.now(CENTRAL_TZ)
+
+        # Update direction tracker
         from .signals import get_direction_tracker
         direction_tracker = get_direction_tracker()
         direction_tracker.update_scan(self._scan_count)
 
+        results = {
+            "timestamp": now.isoformat(),
+            "cycle": self._scan_count,
+            "tickers": {},
+            "total_positions_checked": 0,
+            "total_signals_generated": 0,
+            "total_trades_executed": 0,
+            "total_positions_closed": 0,
+            "status": "completed",
+            "errors": [],
+        }
+
+        # ============================================================
+        # GATE 1: Market Hours Check (shared across all tickers)
+        # ============================================================
+        if not self.executor.is_market_open():
+            results["status"] = "market_closed"
+            now_ct = datetime.now(CENTRAL_TZ)
+            logger.info(
+                f"VALOR GATE 1 BLOCKED: Market closed "
+                f"(day={now_ct.strftime('%A')}, hour={now_ct.hour}, min={now_ct.minute})"
+            )
+            return results
+        logger.debug("VALOR GATE 1 PASSED: Market open")
+
+        # Get shared data (VIX, account balance, overnight status) once for all tickers
+        vix = self._get_vix()
+        is_overnight = self._is_overnight_session()
+
+        if self.config.mode == TradingMode.PAPER:
+            paper_account = self.db.get_paper_account()
+            account_balance = paper_account.get('current_balance', self.config.capital) if paper_account else self.config.capital
+        else:
+            balance = self.executor.get_account_balance()
+            account_balance = balance.get("net_liquidating_value", self.config.capital) if balance else self.config.capital
+
+        # ============================================================
+        # Per-Ticker Scan Loop
+        # ============================================================
+        for ticker in self.config.tickers:
+            try:
+                ticker_result = self._run_ticker_scan(
+                    ticker=ticker,
+                    vix=vix,
+                    account_balance=account_balance,
+                    is_overnight=is_overnight,
+                )
+                results["tickers"][ticker] = ticker_result
+                results["total_positions_checked"] += ticker_result.get("positions_checked", 0)
+                results["total_signals_generated"] += ticker_result.get("signals_generated", 0)
+                results["total_trades_executed"] += ticker_result.get("trades_executed", 0)
+                results["total_positions_closed"] += ticker_result.get("positions_closed", 0)
+                if ticker_result.get("errors"):
+                    results["errors"].extend(ticker_result["errors"])
+            except Exception as e:
+                logger.error(f"VALOR: Scan failed for {ticker}: {e}", exc_info=True)
+                results["tickers"][ticker] = {"status": "error", "error": str(e)}
+                results["errors"].append(f"{ticker}: {e}")
+
+        self.last_scan_time = datetime.now(CENTRAL_TZ)
+        return results
+
+    def _run_ticker_scan(
+        self,
+        ticker: str,
+        vix: float,
+        account_balance: float,
+        is_overnight: bool,
+    ) -> Dict[str, Any]:
+        """
+        Run a single trading scan for one ticker.
+
+        This contains the per-ticker logic that was previously in run_scan().
+        """
+        scan_id = f"VALOR-{ticker}-{uuid.uuid4().hex[:12]}"
+        ticker_cfg = get_ticker_config(ticker)
+
         scan_result = {
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
             "scan_id": scan_id,
+            "ticker": ticker,
             "status": "completed",
             "positions_checked": 0,
             "signals_generated": 0,
@@ -214,49 +302,30 @@ class ValorTrader:
             "errors": []
         }
 
-        # Scan context for ML data collection
         scan_context = {
             "scan_id": scan_id,
+            "ticker": ticker,
             "underlying_price": 0,
-            "vix": 0,
+            "vix": vix,
             "atr": 0,
             "gex_data": {},
             "signal": None,
-            "account_balance": 0,
-            "is_overnight": False,
+            "account_balance": account_balance,
+            "is_overnight": is_overnight,
             "position_id": None,
         }
 
         try:
             # ============================================================
-            # GATE 1: Market Hours Check
+            # GATE 2: Quote for this ticker
             # ============================================================
-            if not self.executor.is_market_open():
-                scan_result["status"] = "market_closed"
-                now_ct = datetime.now(CENTRAL_TZ)
-                logger.info(
-                    f"VALOR GATE 1 BLOCKED: Market closed "
-                    f"(day={now_ct.strftime('%A')}, hour={now_ct.hour}, min={now_ct.minute})"
-                )
-                self._log_scan_activity(scan_id, "MARKET_CLOSED", scan_result, scan_context,
-                                       skip_reason="Futures market closed")
-                return scan_result
-            logger.debug("VALOR GATE 1 PASSED: Market open")
-
-            # ============================================================
-            # GATE 2: MES Quote
-            # ============================================================
-            quote = self.executor.get_mes_quote()
+            quote = self.executor.get_mes_quote(ticker=ticker)
             if not quote:
                 scan_result["status"] = "no_quote"
-                scan_result["errors"].append("Could not get MES quote")
-                logger.warning(
-                    f"VALOR GATE 2 BLOCKED: No MES quote. "
-                    f"Tastytrade SDK={hasattr(self.executor, 'auth_method') and self.executor.auth_method or 'None'}. "
-                    f"Check Yahoo Finance MES=F and SPY fallback."
-                )
+                scan_result["errors"].append(f"Could not get {ticker} quote")
+                logger.warning(f"VALOR [{ticker}] GATE 2 BLOCKED: No quote")
                 self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
-                                       error_msg="Could not get MES quote")
+                                       error_msg=f"Could not get {ticker} quote", ticker=ticker)
                 return scan_result
 
             current_price = quote.get("last", 0)
@@ -266,92 +335,70 @@ class ValorTrader:
             scan_context["underlying_price"] = current_price
             scan_context["bid_price"] = bid_price
             scan_context["ask_price"] = ask_price
-            logger.debug(f"VALOR GATE 2 PASSED: MES quote={current_price:.2f} (source={quote_source})")
+            logger.debug(f"VALOR [{ticker}] GATE 2 PASSED: quote={current_price:.2f} (source={quote_source})")
 
             # ============================================================
             # GATE 3: Price Validation
             # ============================================================
             if current_price <= 0:
                 scan_result["status"] = "invalid_price"
-                logger.warning(f"VALOR GATE 3 BLOCKED: Invalid price {current_price} from source={quote_source}")
+                logger.warning(f"VALOR [{ticker}] GATE 3 BLOCKED: Invalid price {current_price}")
                 self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
-                                       error_msg="Invalid price <= 0")
+                                       error_msg="Invalid price <= 0", ticker=ticker)
                 return scan_result
 
             # ============================================================
-            # GATE 4: GEX Data
+            # GATE 4: GEX Data (per-ticker GEX source)
             # ============================================================
-            gex_data = get_gex_data_for_valor("SPX")
+            gex_symbol = ticker_cfg.get("gex_symbol", "SPX") if ticker_cfg else "SPX"
+            gex_data = get_gex_data_for_valor(gex_symbol)
             scan_context["gex_data"] = gex_data
             gex_source = gex_data.get('data_source', 'unknown')
             gex_flip = gex_data.get('flip_point', 0)
             logger.info(
-                f"VALOR GATE 4: GEX data source={gex_source}, flip={gex_flip:.2f}, "
-                f"call_wall={gex_data.get('call_wall', 0):.2f}, "
-                f"put_wall={gex_data.get('put_wall', 0):.2f}, "
-                f"net_gex={gex_data.get('net_gex', 0):.2e}, "
-                f"has_n1={'n1_flip_point' in gex_data}"
+                f"VALOR [{ticker}] GATE 4: GEX source={gex_source} (symbol={gex_symbol}), "
+                f"flip={gex_flip:.2f}, net_gex={gex_data.get('net_gex', 0):.2e}"
             )
 
-            # Get account balance (use paper balance in paper mode)
-            if self.config.mode == TradingMode.PAPER:
-                paper_account = self.db.get_paper_account()
-                account_balance = paper_account.get('current_balance', self.config.capital) if paper_account else self.config.capital
-            else:
-                balance = self.executor.get_account_balance()
-                account_balance = balance.get("net_liquidating_value", self.config.capital) if balance else self.config.capital
-            scan_context["account_balance"] = account_balance
-
-            # Get VIX from Tradier (more reliable than GEX data)
-            vix = self._get_vix()
             scan_context["vix"] = vix
 
-            # Calculate ATR from real data or estimate
-            atr, atr_is_estimated = self._get_atr(current_price)
+            # Calculate ATR for this ticker
+            atr, atr_is_estimated = self._get_atr(current_price, ticker=ticker)
             scan_context["atr"] = atr
             scan_context["atr_is_estimated"] = atr_is_estimated
 
-            # Determine if overnight session
-            is_overnight = self._is_overnight_session()
-            scan_context["is_overnight"] = is_overnight
-
-            # 1. Manage existing positions (check stops, trailing)
-            positions = self.db.get_open_positions()
+            # 1. Manage existing positions for THIS ticker
+            positions = self.db.get_open_positions(ticker=ticker)
             scan_result["positions_checked"] = len(positions)
 
             for position in positions:
-                closed = self._manage_position(position, current_price)
+                closed = self._manage_position(position, current_price, ticker=ticker)
                 if closed:
                     scan_result["positions_closed"] += 1
 
-            # 2. Check for new signals (if room for more positions)
-            open_count = len([p for p in self.db.get_open_positions()])
+            # 2. Check for new signals (if room for more positions for this ticker)
+            open_count = len(self.db.get_open_positions(ticker=ticker))
 
-            # Check loss streak pause
-            if self.loss_streak_pause_until:
+            # Check loss streak pause for THIS ticker
+            pause_until = self._loss_pause_until.get(ticker)
+            if pause_until:
                 now = datetime.now(CENTRAL_TZ)
-                if now < self.loss_streak_pause_until:
-                    remaining = (self.loss_streak_pause_until - now).total_seconds() / 60
+                if now < pause_until:
+                    remaining = (pause_until - now).total_seconds() / 60
+                    streak = self._loss_streaks.get(ticker, 0)
                     self._log_scan_activity(scan_id, "SKIP", scan_result, scan_context,
-                                           skip_reason=f"Loss streak pause: {remaining:.1f} min remaining ({self.consecutive_losses} consecutive losses)")
-                    # Still manage existing positions, just skip new entries
-                    self.last_scan_time = now
+                                           skip_reason=f"[{ticker}] Loss streak pause: {remaining:.1f} min remaining ({streak} consecutive losses)",
+                                           ticker=ticker)
                     return scan_result
                 else:
-                    # Pause expired - reset and continue
-                    logger.info(f"Loss streak pause expired - resuming trading (was {self.consecutive_losses} losses)")
-                    self.loss_streak_pause_until = None
-                    # Keep consecutive_losses count - only reset on a win
-
-            # VALOR uses its own built-in loss streak pause (self.loss_streak_pause_until)
-            # with configurable max_consecutive_losses and pause_minutes
-            # Proverbs monitor is kept in sync for dashboard visibility
+                    logger.info(f"VALOR [{ticker}] Loss streak pause expired - resuming trading")
+                    self._loss_pause_until[ticker] = None
 
             # ============================================================
-            # GATE 5: Signal Generation
+            # GATE 5: Signal Generation (per-ticker)
             # ============================================================
             logger.info(
-                f"VALOR GATE 5: Generating signal - price={current_price:.2f}, "
+                f"VALOR [{ticker}] GATE 5: Generating signal - price={current_price:.2f}, "
                 f"flip={gex_data.get('flip_point', 0):.2f}, VIX={vix:.1f}, ATR={atr:.2f}, "
                 f"is_overnight={is_overnight}, balance=${account_balance:,.0f}"
             )
@@ -361,7 +408,8 @@ class ValorTrader:
                 vix=vix,
                 atr=atr,
                 account_balance=account_balance,
-                is_overnight=is_overnight
+                is_overnight=is_overnight,
+                ticker=ticker,
             )
             scan_context["signal"] = signal
             scan_context["open_positions"] = open_count
@@ -369,35 +417,29 @@ class ValorTrader:
             if signal:
                 scan_result["signals_generated"] += 1
                 logger.info(
-                    f"VALOR GATE 5 PASSED: Signal generated - {signal.direction.value}, "
+                    f"VALOR [{ticker}] GATE 5 PASSED: Signal - {signal.direction.value}, "
                     f"confidence={signal.confidence:.2%}, win_prob={signal.win_probability:.2%}, "
-                    f"contracts={signal.contracts}, is_valid={signal.is_valid}"
+                    f"contracts={signal.contracts}"
                 )
 
                 # ============================================================
-                # GATE 6: Signal Validation (essential fields only)
-                # Only checks entry_price, stop_price, contracts.
-                # Confidence/win_prob no longer gate - risk is managed by
-                # no-loss trailing + SAR + emergency stop + 5-min loss streak.
+                # GATE 6: Signal Validation
                 # ============================================================
                 essential_valid = signal.entry_price > 0 and signal.stop_price > 0 and signal.contracts >= 1
                 if essential_valid:
                     logger.info(
-                        f"VALOR GATE 6 PASSED: executing {signal.direction.value} "
+                        f"VALOR [{ticker}] GATE 6 PASSED: executing {signal.direction.value} "
                         f"{signal.contracts} contracts at {signal.entry_price:.2f}"
                     )
-                    # Execute the signal with scan_id for ML tracking
-                    success, position_id = self._execute_signal_with_id(signal, account_balance, scan_id)
+                    success, position_id = self._execute_signal_with_id(signal, account_balance, scan_id, ticker=ticker)
                     if success:
                         scan_result["trades_executed"] += 1
                         scan_context["position_id"] = position_id
 
-                        # Log signal
                         self.db.save_signal(signal, was_executed=True)
+                        logger.info(f"VALOR [{ticker}] TRADE EXECUTED: {signal.direction.value} position {position_id}")
 
-                        logger.info(f"VALOR TRADE EXECUTED: {signal.direction.value} position {position_id}")
-
-                        # Log ML shadow prediction for Brier score comparison
+                        # Log ML shadow prediction
                         ml_prob = getattr(self.signal_generator, '_last_ml_prob', None)
                         bayes_prob = getattr(self.signal_generator, '_last_bayesian_prob', None)
                         if ml_prob is not None and bayes_prob is not None:
@@ -411,18 +453,17 @@ class ValorTrader:
                                     gamma_regime=regime_str,
                                 )
                             except Exception as e:
-                                logger.debug(f"VALOR shadow prediction log failed: {e}")
+                                logger.debug(f"VALOR [{ticker}] shadow prediction log failed: {e}")
 
-                        # Log scan activity with trade
                         self._log_scan_activity(scan_id, "TRADED", scan_result, scan_context,
-                                               action=f"Opened {signal.direction.value} position")
+                                               action=f"Opened {signal.direction.value} position",
+                                               ticker=ticker)
                     else:
-                        logger.warning(f"VALOR GATE 7 BLOCKED: Execution failed for {signal.direction.value} signal")
+                        logger.warning(f"VALOR [{ticker}] GATE 7 BLOCKED: Execution failed")
                         self.db.save_signal(signal, was_executed=False, skip_reason="Execution failed")
                         self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                               skip_reason="Execution failed")
+                                               skip_reason="Execution failed", ticker=ticker)
                 else:
-                    # Essential fields missing
                     failures = []
                     if signal.entry_price <= 0:
                         failures.append(f"entry={signal.entry_price:.2f}<=0")
@@ -433,41 +474,32 @@ class ValorTrader:
                     failed_str = " | ".join(failures) if failures else "unknown"
 
                     logger.warning(
-                        f"VALOR GATE 6 BLOCKED: {signal.direction.value} signal invalid - "
-                        f"FAILED: [{failed_str}] | "
-                        f"entry={signal.entry_price:.2f}, stop={signal.stop_price:.2f}, "
-                        f"contracts={signal.contracts}"
+                        f"VALOR [{ticker}] GATE 6 BLOCKED: {signal.direction.value} invalid - [{failed_str}]"
                     )
                     self.db.save_signal(signal, was_executed=False, skip_reason=f"Invalid: {failed_str}")
                     self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                           skip_reason=f"Invalid signal: {failed_str}")
+                                           skip_reason=f"Invalid signal: {failed_str}", ticker=ticker)
             else:
-                # No signal generated - signal generator returned None
-                # Detailed reason already logged at INFO level by signal generator
-                # Determine regime from net_gex (same logic as signal generator)
                 net_gex_val = gex_data.get('net_gex', 0) or 0
                 regime_str = "POSITIVE" if net_gex_val > 0 else ("NEGATIVE" if net_gex_val < 0 else "NEUTRAL")
                 gex_data_summary = (
-                    f"price={current_price:.2f}, "
+                    f"[{ticker}] price={current_price:.2f}, "
                     f"flip={gex_data.get('flip_point', 0):.2f}, "
-                    f"regime={regime_str}, "
-                    f"VIX={vix:.1f}"
+                    f"regime={regime_str}, VIX={vix:.1f}"
                 )
                 self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
-                                       skip_reason=f"No signal: {gex_data_summary}")
+                                       skip_reason=f"No signal: {gex_data_summary}", ticker=ticker)
 
-            # 3. Save equity snapshot with CURRENT positions (refresh to include any new positions)
-            current_positions = self.db.get_open_positions()
-            self._save_equity_snapshot(account_balance, current_positions)
-
-            self.last_scan_time = datetime.now(CENTRAL_TZ)
+            # 3. Save equity snapshot for THIS ticker
+            current_positions = self.db.get_open_positions(ticker=ticker)
+            self._save_equity_snapshot(account_balance, current_positions, ticker=ticker)
 
         except Exception as e:
-            logger.error(f"Error in VALOR scan: {e}")
+            logger.error(f"VALOR [{ticker}] scan error: {e}")
             scan_result["status"] = "error"
             scan_result["errors"].append(str(e))
             self._log_scan_activity(scan_id, "ERROR", scan_result, scan_context,
-                                   error_msg=str(e))
+                                   error_msg=str(e), ticker=ticker)
 
         return scan_result
 
@@ -479,15 +511,8 @@ class ValorTrader:
         (e.g., every 15-30 seconds) to reduce stop slippage caused by
         the 1-minute scan interval.
 
-        Does NOT:
-        - Generate new signals
-        - Log to scan_activity table
-        - Check for new trade opportunities
-
-        ONLY:
-        - Gets current price
-        - Checks all open positions against stops/targets
-        - Closes positions if stop/target hit
+        Iterates over all tickers with open positions and checks each
+        position against its ticker-specific price.
         """
         result = {
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
@@ -498,56 +523,53 @@ class ValorTrader:
         }
 
         try:
-            # Check market hours - no point monitoring if market is closed
             if not self.executor.is_market_open():
                 result["status"] = "market_closed"
                 return result
 
-            # Get current price only (no GEX, no VIX - just price)
-            quote = self.executor.get_mes_quote()
-            if not quote:
-                result["status"] = "no_quote"
-                return result
+            # Get ALL open positions across all tickers
+            all_positions = self.db.get_open_positions()
+            result["positions_checked"] = len(all_positions)
 
-            current_price = quote.get("last", 0)
-            if current_price <= 0:
-                result["status"] = "invalid_price"
-                return result
-
-            # Get open positions
-            positions = self.db.get_open_positions()
-            result["positions_checked"] = len(positions)
-
-            # Periodic heartbeat log (every ~1 min = every 4th call at 15-sec intervals)
             if not hasattr(self, '_monitor_call_count'):
                 self._monitor_call_count = 0
             self._monitor_call_count += 1
-            if self._monitor_call_count % 4 == 1:
-                logger.info(f"MONITOR HEARTBEAT: Price={current_price:.2f}, Open positions={len(positions)}")
 
-            if not positions:
+            if not all_positions:
                 return result
 
-            # Log monitor check with position details
-            for position in positions:
-                distance_to_stop = abs(current_price - position.current_stop)
-                distance_to_target = abs(current_price - (position.entry_price + self.config.profit_target_points if position.direction == TradeDirection.LONG else position.entry_price - self.config.profit_target_points))
-                logger.debug(
-                    f"MONITOR: {position.direction.value} @ {position.entry_price:.2f} | "
-                    f"Price: {current_price:.2f} | Stop: {position.current_stop:.2f} ({distance_to_stop:.2f} away) | "
-                    f"Target: {distance_to_target:.2f} away"
-                )
+            # Group positions by ticker for efficient quote fetching
+            positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+            for pos in all_positions:
+                t = getattr(pos, 'ticker', 'MES')
+                if t not in positions_by_ticker:
+                    positions_by_ticker[t] = []
+                positions_by_ticker[t].append(pos)
 
-            # Check each position
-            for position in positions:
-                closed = self._manage_position(position, current_price)
-                if closed:
-                    result["positions_closed"] += 1
-                    logger.info(
-                        f"MONITOR CLOSED: {position.position_id[:8]} | {position.direction.value} | "
-                        f"Entry: {position.entry_price:.2f} | Exit: {current_price:.2f} | "
-                        f"Stop was: {position.current_stop:.2f}"
-                    )
+            # Heartbeat log
+            if self._monitor_call_count % 4 == 1:
+                ticker_counts = {t: len(ps) for t, ps in positions_by_ticker.items()}
+                logger.info(f"MONITOR HEARTBEAT: Tickers={ticker_counts}, Total={len(all_positions)}")
+
+            # Check positions per-ticker (one quote per ticker)
+            for ticker, positions in positions_by_ticker.items():
+                quote = self.executor.get_mes_quote(ticker=ticker)
+                if not quote:
+                    continue
+
+                current_price = quote.get("last", 0)
+                if current_price <= 0:
+                    continue
+
+                for position in positions:
+                    closed = self._manage_position(position, current_price, ticker=ticker)
+                    if closed:
+                        result["positions_closed"] += 1
+                        logger.info(
+                            f"MONITOR CLOSED [{ticker}]: {position.position_id[:8]} | "
+                            f"{position.direction.value} | Entry: {position.entry_price:.2f} | "
+                            f"Exit: {current_price:.2f}"
+                        )
 
         except Exception as e:
             logger.warning(f"Position monitor error: {e}")
@@ -564,7 +586,8 @@ class ValorTrader:
         context: Dict,
         action: str = "",
         skip_reason: str = "",
-        error_msg: str = ""
+        error_msg: str = "",
+        ticker: str = "MES"
     ) -> None:
         """
         Log scan activity for ML training data collection.
@@ -624,7 +647,7 @@ class ValorTrader:
                 underlying_price=underlying_price,
                 bid_price=context.get("bid_price", 0),
                 ask_price=context.get("ask_price", 0),
-                underlying_symbol="MES",
+                underlying_symbol=ticker,
                 vix=context.get("vix", 0),
                 atr=context.get("atr", 0),
                 atr_is_estimated=context.get("atr_is_estimated", True),
@@ -664,17 +687,17 @@ class ValorTrader:
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
 
-    def _execute_signal_with_id(self, signal: FuturesSignal, account_balance: float, scan_id: str = "") -> Tuple[bool, str]:
+    def _execute_signal_with_id(self, signal: FuturesSignal, account_balance: float, scan_id: str = "", ticker: str = "MES") -> Tuple[bool, str]:
         """Execute signal and return (success, position_id) for scan tracking."""
-        position_id = f"VALOR-{uuid.uuid4().hex[:8]}"
-        success = self._execute_signal_internal(signal, account_balance, position_id, scan_id)
+        position_id = f"VALOR-{ticker}-{uuid.uuid4().hex[:8]}"
+        success = self._execute_signal_internal(signal, account_balance, position_id, scan_id, ticker=ticker)
         return success, position_id if success else ""
 
     # ========================================================================
     # Position Management
     # ========================================================================
 
-    def _manage_position(self, position: FuturesPosition, current_price: float) -> bool:
+    def _manage_position(self, position: FuturesPosition, current_price: float, ticker: str = "MES") -> bool:
         """
         Manage an open position - check stops and trailing.
 
@@ -1106,11 +1129,15 @@ class ValorTrader:
                     except Exception as e:
                         logger.debug(f"VALOR shadow prediction resolve failed: {e}")
 
-                    # Update loss streak tracking
+                    # Update per-ticker loss streak tracking
+                    pos_ticker = getattr(position, 'ticker', 'MES')
                     if won:
-                        # Reset streak on win
-                        if self.consecutive_losses > 0:
-                            logger.info(f"Loss streak reset (was {self.consecutive_losses})")
+                        prev_streak = self._loss_streaks.get(pos_ticker, 0)
+                        if prev_streak > 0:
+                            logger.info(f"[{pos_ticker}] Loss streak reset (was {prev_streak})")
+                        self._loss_streaks[pos_ticker] = 0
+                        self._loss_pause_until[pos_ticker] = None
+                        # Legacy single-ticker tracking
                         self.consecutive_losses = 0
                         self.loss_streak_pause_until = None
                         # Also reset Proverbs monitor so dashboard stays in sync
@@ -1122,19 +1149,22 @@ class ValorTrader:
                             except Exception:
                                 pass
                     else:
-                        # Increment streak on loss
+                        self._loss_streaks[pos_ticker] = self._loss_streaks.get(pos_ticker, 0) + 1
+                        streak = self._loss_streaks[pos_ticker]
+                        # Legacy single-ticker tracking
                         self.consecutive_losses += 1
-                        logger.warning(f"Consecutive losses: {self.consecutive_losses}")
+                        logger.warning(f"[{pos_ticker}] Consecutive losses: {streak}")
 
-                        # Check if we need to pause
                         max_losses = self.config.max_consecutive_losses
-                        if self.consecutive_losses >= max_losses:
+                        if streak >= max_losses:
                             pause_minutes = self.config.loss_streak_pause_minutes
-                            self.loss_streak_pause_until = datetime.now(CENTRAL_TZ) + timedelta(minutes=pause_minutes)
+                            pause_until = datetime.now(CENTRAL_TZ) + timedelta(minutes=pause_minutes)
+                            self._loss_pause_until[pos_ticker] = pause_until
+                            # Legacy single-ticker
+                            self.loss_streak_pause_until = pause_until
                             logger.warning(
-                                f"LOSS STREAK PAUSE: {self.consecutive_losses} consecutive losses - "
-                                f"pausing new entries until {self.loss_streak_pause_until.strftime('%H:%M:%S')} CT "
-                                f"({pause_minutes} min)"
+                                f"[{pos_ticker}] LOSS STREAK PAUSE: {streak} consecutive losses - "
+                                f"pausing until {pause_until.strftime('%H:%M:%S')} CT ({pause_minutes} min)"
                             )
 
                     # Update direction tracker (for nimble direction switching)
@@ -1302,14 +1332,16 @@ class ValorTrader:
         else:
             reversal_stop = current_price + reversal_stop_pts
 
-        # Create reversal position directly
+        # Create reversal position directly (use same ticker as original position)
+        pos_ticker = getattr(position, 'ticker', 'MES')
+        point_value = get_ticker_point_value(pos_ticker)
         reversal_position = FuturesPosition(
             position_id=reversal_position_id,
-            symbol=self.config.symbol,
+            symbol=position.symbol,
             direction=reversal_direction,
             contracts=position.contracts,  # Same size as original
             entry_price=current_price,
-            entry_value=current_price * position.contracts * MES_POINT_VALUE,
+            entry_value=current_price * position.contracts * point_value,
             initial_stop=reversal_stop,
             current_stop=reversal_stop,
             breakeven_price=current_price,
@@ -1329,6 +1361,7 @@ class ValorTrader:
             scan_id=position.scan_id,  # Link to original scan for ML tracking
             status=PositionStatus.OPEN,
             open_time=datetime.now(CENTRAL_TZ),
+            ticker=pos_ticker,
             stop_type="SAR_REVERSAL",
             stop_points_used=reversal_stop_pts
         )
@@ -1374,7 +1407,7 @@ class ValorTrader:
         position_id = f"VALOR-{uuid.uuid4().hex[:8]}"
         return self._execute_signal_internal(signal, account_balance, position_id)
 
-    def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "") -> bool:
+    def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "", ticker: str = "MES") -> bool:
         """Execute a trading signal with specified position_id and scan_id for ML tracking"""
         try:
             # Validate order parameters
@@ -1390,14 +1423,15 @@ class ValorTrader:
                 logger.error(f"Order execution failed: {message}")
                 return False
 
-            # Create position object
+            # Create position object with per-ticker point value
+            point_value = get_ticker_point_value(ticker)
             position = FuturesPosition(
                 position_id=position_id,
-                symbol=self.config.symbol,
+                symbol=self.config.get_ticker_symbol(ticker),
                 direction=signal.direction,
                 contracts=signal.contracts,
                 entry_price=signal.entry_price,
-                entry_value=signal.entry_price * signal.contracts * MES_POINT_VALUE,
+                entry_value=signal.entry_price * signal.contracts * point_value,
                 initial_stop=signal.stop_price,
                 current_stop=signal.stop_price,
                 breakeven_price=signal.entry_price,
@@ -1417,6 +1451,7 @@ class ValorTrader:
                 scan_id=scan_id,  # Link to scan activity for ML training
                 status=PositionStatus.OPEN,
                 open_time=datetime.now(CENTRAL_TZ),
+                ticker=ticker,
                 # A/B Test tracking - copy from signal
                 stop_type=signal.stop_type,
                 stop_points_used=signal.stop_points_used
@@ -1535,34 +1570,48 @@ class ValorTrader:
         logger.warning("Using default VIX=16.0 (all sources failed)")
         return 16.0
 
-    def _get_atr(self, current_price: float, period: int = 14) -> Tuple[float, bool]:
+    def _get_atr(self, current_price: float, period: int = 14, ticker: str = "MES") -> Tuple[float, bool]:
         """
-        Get ATR (Average True Range) for MES position sizing.
+        Get ATR (Average True Range) for position sizing.
 
         ATR is used for:
         - Stop loss placement
         - Position sizing (risk per trade / ATR = contracts)
         - Signal strength evaluation
 
+        Per-ticker: Uses SPY as proxy for equity futures (MES, MNQ, RTY)
+        and direct estimation for commodity futures (CL, NG).
+
         Returns:
             Tuple[float, bool]: (ATR value, is_estimated flag)
-                - is_estimated=False means ATR was calculated from real historical data
-                - is_estimated=True means ATR was estimated (fallback)
         """
         try:
             # Try to get historical data for real ATR calculation
             from data.unified_data_provider import get_historical_bars
 
-            # Get 20 days of daily bars for ATR calculation
-            bars = get_historical_bars("SPY", days=20, interval="day")
+            # Map ticker to ATR data source and scaling factor
+            atr_sources = {
+                "MES": ("SPY", 10.0),    # SPY * 10 ≈ MES
+                "MNQ": ("QQQ", 50.0),    # QQQ * 50 ≈ MNQ
+                "RTY": ("IWM", 10.0),    # IWM * 10 ≈ RTY
+                "CL": ("USO", 1.0),      # USO is not a direct proxy, use estimate
+                "NG": ("UNG", 1.0),      # UNG is not a direct proxy, use estimate
+            }
+
+            source_symbol, scale = atr_sources.get(ticker, ("SPY", 10.0))
+
+            # For commodities, skip SPY proxy and go straight to estimation
+            if ticker in ("CL", "NG"):
+                raise ValueError(f"No reliable ETF proxy for {ticker} ATR, using estimation")
+
+            bars = get_historical_bars(source_symbol, days=20, interval="day")
 
             if bars and len(bars) >= period:
-                # Calculate True Range for each bar
                 true_ranges = []
                 for i in range(1, len(bars)):
-                    high = bars[i].high * 10  # Scale to MES level
-                    low = bars[i].low * 10
-                    prev_close = bars[i-1].close * 10
+                    high = bars[i].high * scale
+                    low = bars[i].low * scale
+                    prev_close = bars[i-1].close * scale
 
                     tr = max(
                         high - low,
@@ -1571,42 +1620,53 @@ class ValorTrader:
                     )
                     true_ranges.append(tr)
 
-                # Calculate ATR as simple moving average of TR
                 if len(true_ranges) >= period:
                     atr = sum(true_ranges[-period:]) / period
-                    logger.debug(f"Calculated ATR from SPY data: {atr:.2f} (not estimated)")
-                    return (atr, False)  # Real ATR, not estimated
+                    logger.debug(f"[{ticker}] ATR from {source_symbol} data: {atr:.2f}")
+                    return (atr, False)
 
         except Exception as e:
-            logger.warning(f"Could not calculate real ATR: {e}")
+            logger.warning(f"[{ticker}] Could not calculate real ATR: {e}")
 
-        # Fallback: Estimate based on current price and VIX
-        estimated_atr = self._estimate_atr(current_price)
-        logger.debug(f"Using estimated ATR: {estimated_atr:.2f}")
-        return (estimated_atr, True)  # Estimated ATR
+        # Fallback: Estimate based on current price
+        estimated_atr = self._estimate_atr(current_price, ticker=ticker)
+        logger.debug(f"[{ticker}] Using estimated ATR: {estimated_atr:.2f}")
+        return (estimated_atr, True)
 
-    def _estimate_atr(self, current_price: float) -> float:
+    def _estimate_atr(self, current_price: float, ticker: str = "MES") -> float:
         """
         Estimate ATR when historical data unavailable.
 
-        MES typically has ATR of 15-30 points depending on volatility.
+        Per-ticker typical daily ranges:
+        - MES: ~15-30 points (0.3% of ~5900)
+        - MNQ: ~150-300 points (0.8% of ~21000)
+        - CL: ~1.5-3.0 (2% of ~75)
+        - NG: ~0.10-0.25 (3% of ~3.5)
+        - RTY: ~15-30 points (0.7% of ~2100)
         """
-        # MES typically moves ~0.3-0.5% per day
-        # ATR is roughly 15-25 points on average
-        base_atr = current_price * 0.003
+        # Per-ticker volatility profiles
+        atr_profiles = {
+            "MES": {"pct": 0.003, "min": 10.0, "max": 30.0},
+            "MNQ": {"pct": 0.008, "min": 100.0, "max": 400.0},
+            "CL": {"pct": 0.020, "min": 0.50, "max": 4.00},
+            "NG": {"pct": 0.030, "min": 0.05, "max": 0.30},
+            "RTY": {"pct": 0.007, "min": 10.0, "max": 35.0},
+        }
 
-        # Typical range for MES
-        return max(10.0, min(30.0, base_atr))
+        profile = atr_profiles.get(ticker, {"pct": 0.003, "min": 10.0, "max": 30.0})
+        base_atr = current_price * profile["pct"]
+        return max(profile["min"], min(profile["max"], base_atr))
 
     def _save_equity_snapshot(
         self,
         account_balance: float,
-        positions: List[FuturesPosition]
+        positions: List[FuturesPosition],
+        ticker: str = "MES"
     ) -> None:
-        """Save equity snapshot for equity curve"""
+        """Save equity snapshot for equity curve (per-ticker)"""
         try:
-            # Get current quote for unrealized P&L
-            quote = self.executor.get_mes_quote()
+            # Get current quote for unrealized P&L (for this ticker)
+            quote = self.executor.get_mes_quote(ticker=ticker)
             current_price = quote.get("last", 0) if quote else 0
 
             unrealized_pnl = 0.0
@@ -1623,12 +1683,13 @@ class ValorTrader:
                 realized_pnl_today=summary.realized_pnl,
                 open_positions=len([p for p in positions if p.is_open]),
                 trades_today=summary.positions_closed,
-                wins_today=0,  # Would track separately
-                losses_today=0
+                wins_today=0,
+                losses_today=0,
+                ticker=ticker,
             )
 
         except Exception as e:
-            logger.warning(f"Error saving equity snapshot: {e}")
+            logger.warning(f"[{ticker}] Error saving equity snapshot: {e}")
 
     # ========================================================================
     # ML Feedback Loop Integration
@@ -1755,13 +1816,10 @@ class ValorTrader:
         Process positions that need to be closed at EOD.
 
         For futures, this handles positions that should be closed during
-        the daily maintenance break (4-5pm CT).
+        the daily maintenance break (4-5pm CT). Processes all tickers.
 
         Returns dict with processing results for logging.
         """
-        now = datetime.now(CENTRAL_TZ)
-        today = now.strftime("%Y-%m-%d")
-
         result = {
             'processed_count': 0,
             'total_pnl': 0.0,
@@ -1770,54 +1828,51 @@ class ValorTrader:
         }
 
         try:
-            # Get current quote for marking to market
-            quote = self.executor.get_mes_quote()
-            current_price = quote.get("last", 0) if quote else 0
+            # Get all open positions across all tickers
+            all_positions = self.db.get_open_positions()
 
-            if current_price <= 0:
-                logger.warning("VALOR EOD: Could not get current price for expiration processing")
-                result['errors'].append("No price available")
-                return result
-
-            # Get all open positions
-            positions = self.db.get_open_positions()
-
-            if not positions:
+            if not all_positions:
                 logger.info("VALOR EOD: No open positions to process")
                 return result
 
-            logger.info(f"VALOR EOD: Processing {len(positions)} open position(s) at price {current_price:.2f}")
+            # Group by ticker for efficient quote fetching
+            positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+            for pos in all_positions:
+                t = getattr(pos, 'ticker', 'MES')
+                if t not in positions_by_ticker:
+                    positions_by_ticker[t] = []
+                positions_by_ticker[t].append(pos)
 
-            for pos in positions:
-                try:
-                    # Close position at current market price
-                    closed = self._close_position(
-                        pos,
-                        current_price,
-                        PositionStatus.CLOSED,
-                        "EOD_MAINTENANCE_BREAK"
-                    )
+            logger.info(f"VALOR EOD: Processing {len(all_positions)} position(s) across {list(positions_by_ticker.keys())}")
 
-                    if closed:
-                        # Calculate P&L
-                        pnl = pos.calculate_pnl(current_price)
-                        result['processed_count'] += 1
-                        result['total_pnl'] += pnl
-                        result['positions'].append({
-                            'position_id': pos.position_id,
-                            'direction': pos.direction.value,
-                            'pnl': pnl,
-                            'status': 'closed'
-                        })
+            for ticker, positions in positions_by_ticker.items():
+                quote = self.executor.get_mes_quote(ticker=ticker)
+                current_price = quote.get("last", 0) if quote else 0
 
-                        logger.info(
-                            f"VALOR EOD: Closed {pos.position_id} - "
-                            f"Final price: ${current_price:.2f}, P&L: ${pnl:.2f}"
+                if current_price <= 0:
+                    result['errors'].append(f"No price for {ticker}")
+                    continue
+
+                for pos in positions:
+                    try:
+                        closed = self._close_position(
+                            pos, current_price, PositionStatus.CLOSED, "EOD_MAINTENANCE_BREAK"
                         )
-
-                except Exception as e:
-                    logger.error(f"VALOR EOD: Failed to process {pos.position_id}: {e}")
-                    result['errors'].append(str(e))
+                        if closed:
+                            pnl = pos.calculate_pnl(current_price)
+                            result['processed_count'] += 1
+                            result['total_pnl'] += pnl
+                            result['positions'].append({
+                                'position_id': pos.position_id,
+                                'ticker': ticker,
+                                'direction': pos.direction.value,
+                                'pnl': pnl,
+                                'status': 'closed'
+                            })
+                            logger.info(f"VALOR EOD [{ticker}]: Closed {pos.position_id}, P&L: ${pnl:.2f}")
+                    except Exception as e:
+                        logger.error(f"VALOR EOD [{ticker}]: Failed to process {pos.position_id}: {e}")
+                        result['errors'].append(str(e))
 
             self.db.log("INFO", "EOD_PROCESSING",
                 f"Processed {result['processed_count']} positions, P&L: ${result['total_pnl']:.2f}")
@@ -1828,31 +1883,38 @@ class ValorTrader:
 
         return result
 
-    def force_close_all(self, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
-        """Force close all open positions"""
-        positions = self.db.get_open_positions()
+    def force_close_all(self, reason: str = "MANUAL_CLOSE", ticker: Optional[str] = None) -> Dict[str, Any]:
+        """Force close all open positions, optionally filtered by ticker."""
+        positions = self.db.get_open_positions(ticker=ticker)
         results = []
         total_pnl = 0.0
 
-        # Get current price
-        quote = self.executor.get_mes_quote()
-        current_price = quote.get("last", 0) if quote else 0
+        if not positions:
+            return {'closed': 0, 'failed': 0, 'total_pnl': 0.0, 'details': []}
 
-        if current_price <= 0:
-            return {'error': 'Could not get current price', 'closed': 0, 'failed': len(positions)}
-
+        # Group by ticker for efficient quote fetching
+        positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
         for pos in positions:
-            closed = self._close_position(pos, current_price, PositionStatus.CLOSED, reason)
-            pnl = pos.calculate_pnl(current_price) if closed else 0
+            t = getattr(pos, 'ticker', 'MES')
+            if t not in positions_by_ticker:
+                positions_by_ticker[t] = []
+            positions_by_ticker[t].append(pos)
 
-            if closed:
-                total_pnl += pnl
+        for t, t_positions in positions_by_ticker.items():
+            quote = self.executor.get_mes_quote(ticker=t)
+            current_price = quote.get("last", 0) if quote else 0
 
-            results.append({
-                'position_id': pos.position_id,
-                'success': closed,
-                'pnl': pnl
-            })
+            if current_price <= 0:
+                for pos in t_positions:
+                    results.append({'position_id': pos.position_id, 'ticker': t, 'success': False, 'pnl': 0})
+                continue
+
+            for pos in t_positions:
+                closed = self._close_position(pos, current_price, PositionStatus.CLOSED, reason)
+                pnl = pos.calculate_pnl(current_price) if closed else 0
+                if closed:
+                    total_pnl += pnl
+                results.append({'position_id': pos.position_id, 'ticker': t, 'success': closed, 'pnl': pnl})
 
         return {
             'closed': len([r for r in results if r['success']]),
@@ -1865,9 +1927,9 @@ class ValorTrader:
     # Status & Reporting
     # ========================================================================
 
-    def get_status(self) -> Dict[str, Any]:
-        """Get current bot status"""
-        positions = self.db.get_open_positions()
+    def get_status(self, ticker: Optional[str] = None) -> Dict[str, Any]:
+        """Get current bot status, optionally filtered by ticker."""
+        positions = self.db.get_open_positions(ticker=ticker)
         config = self.config
         stats = self.db.get_performance_stats()
         summary = self.db.get_daily_summary()
@@ -1877,23 +1939,43 @@ class ValorTrader:
         if config.mode == TradingMode.PAPER:
             paper_account = self.db.get_paper_account()
 
-        # Calculate loss streak pause status
+        # Calculate loss streak pause status (per-ticker if specified)
         now = datetime.now(CENTRAL_TZ)
         is_paused = False
         pause_remaining_seconds = 0
         pause_until_str = None
 
-        if self.loss_streak_pause_until:
-            if now < self.loss_streak_pause_until:
+        if ticker:
+            pause_until = self._loss_pause_until.get(ticker)
+            if pause_until and now < pause_until:
+                is_paused = True
+                pause_remaining_seconds = (pause_until - now).total_seconds()
+                pause_until_str = pause_until.isoformat()
+        else:
+            # Check if ANY ticker is paused
+            if self.loss_streak_pause_until and now < self.loss_streak_pause_until:
                 is_paused = True
                 pause_remaining_seconds = (self.loss_streak_pause_until - now).total_seconds()
                 pause_until_str = self.loss_streak_pause_until.isoformat()
+
+        # Per-ticker loss streak details
+        ticker_streaks = {}
+        for t in config.tickers:
+            streak = self._loss_streaks.get(t, 0)
+            t_pause = self._loss_pause_until.get(t)
+            ticker_streaks[t] = {
+                "consecutive_losses": streak,
+                "is_paused": t_pause is not None and now < t_pause if t_pause else False,
+                "pause_until": t_pause.isoformat() if t_pause and now < t_pause else None,
+            }
 
         status_dict = {
             "bot_name": "VALOR",
             "status": "paused_loss_streak" if is_paused else ("active" if self.executor.is_market_open() else "market_closed"),
             "mode": config.mode.value,
             "symbol": config.symbol,
+            "tickers": config.tickers,
+            "active_ticker_filter": ticker,
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
             "loss_streak": {
                 "consecutive_losses": self.consecutive_losses,
@@ -1901,7 +1983,8 @@ class ValorTrader:
                 "pause_until": pause_until_str,
                 "pause_remaining_seconds": pause_remaining_seconds,
                 "max_consecutive_losses": config.max_consecutive_losses,
-                "pause_minutes": config.loss_streak_pause_minutes
+                "pause_minutes": config.loss_streak_pause_minutes,
+                "per_ticker": ticker_streaks,
             },
             "config": {
                 "capital": config.capital,
@@ -1922,6 +2005,8 @@ class ValorTrader:
                 "use_sar": config.use_sar,
                 "sar_trigger_pts": config.sar_trigger_pts,
                 "sar_mfe_threshold": config.sar_mfe_threshold,
+                # Multi-ticker
+                "tickers": config.tickers,
             },
             "positions": {
                 "open_count": len(positions),
@@ -1953,12 +2038,11 @@ class ValorTrader:
 
         return status_dict
 
-    def get_equity_curve(self, days: int = 30) -> List[Dict]:
-        """Get equity curve data"""
-        # Use paper equity curve for paper mode (calculates from trades)
+    def get_equity_curve(self, days: int = 30, ticker: Optional[str] = None) -> List[Dict]:
+        """Get equity curve data, optionally filtered by ticker"""
         if self.config.mode == TradingMode.PAPER:
             return self.db.get_paper_equity_curve(days)
-        return self.db.get_equity_curve(days)
+        return self.db.get_equity_curve(days, ticker=ticker)
 
     def get_paper_account(self) -> Optional[Dict]:
         """Get paper trading account status"""
@@ -1972,9 +2056,9 @@ class ValorTrader:
         """Get today's equity curve"""
         return self.db.get_intraday_equity()
 
-    def get_closed_trades(self, limit: int = 50) -> List[Dict]:
-        """Get recent closed trades"""
-        return self.db.get_closed_trades(limit=limit)
+    def get_closed_trades(self, limit: int = 50, ticker: Optional[str] = None) -> List[Dict]:
+        """Get recent closed trades, optionally filtered by ticker"""
+        return self.db.get_closed_trades(limit=limit, ticker=ticker)
 
     def get_recent_signals(self, limit: int = 50) -> List[Dict]:
         """Get recent signals"""
@@ -1983,6 +2067,10 @@ class ValorTrader:
     def get_logs(self, limit: int = 100) -> List[Dict]:
         """Get recent logs"""
         return self.db.get_logs(limit)
+
+    def get_ticker_stats(self) -> Dict[str, Any]:
+        """Get per-ticker performance statistics"""
+        return self.db.get_ticker_performance_stats(self.config.tickers)
 
 
 # ============================================================================
