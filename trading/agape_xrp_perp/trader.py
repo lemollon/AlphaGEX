@@ -60,6 +60,7 @@ class AgapeXrpPerpTrader:
         self._enabled = True
         self.consecutive_losses = 0
         self.loss_streak_pause_until = None
+        self._liquidated = False
         self._direction_tracker = get_agape_xrp_perp_direction_tracker(self.config)
         self.db.log("INFO", "INIT", f"AGAPE-XRP-PERP initialized AGGRESSIVE (mode={self.config.mode.value})")
         logger.info(f"AGAPE-XRP-PERP Trader: Initialized AGGRESSIVE (mode={self.config.mode.value})")
@@ -133,6 +134,20 @@ class AgapeXrpPerpTrader:
             current_price = market_data.get("spot_price")
         if not current_price:
             return (len(open_positions), 0)
+        # Margin liquidation check - like a real exchange
+        equity = self._get_available_balance(open_positions)
+        maintenance_margin = self.config.starting_capital * 0.05
+        if equity <= maintenance_margin:
+            logger.warning(f"AGAPE-XRP-PERP: MARGIN LIQUIDATION - equity ${equity:.2f} <= maintenance ${maintenance_margin:.2f}")
+            liq_closed = 0
+            for pos in open_positions:
+                if self._close_position(pos, current_price, "MARGIN_LIQUIDATION"):
+                    liq_closed += 1
+            self._enabled = False
+            self._liquidated = True
+            self.db.log("CRITICAL", "MARGIN_LIQUIDATION",
+                f"Account liquidated at equity ${equity:.2f}. {liq_closed} positions closed. Bot disabled.")
+            return (len(open_positions), liq_closed)
         closed = 0
         now = datetime.now(CENTRAL_TZ)
         for pos in open_positions:
@@ -375,12 +390,13 @@ class AgapeXrpPerpTrader:
         closed = self.db.get_closed_trades(limit=10000)
         realized = sum(t.get("realized_pnl", 0) for t in closed) if closed else 0.0
         total_pnl = realized + total_unr
-        balance = self.config.starting_capital + total_pnl
-        ret = (total_pnl / self.config.starting_capital * 100) if self.config.starting_capital else 0
+        balance = max(0.0, self.config.starting_capital + total_pnl)
+        ret = max(-100.0, (total_pnl / self.config.starting_capital * 100)) if self.config.starting_capital else 0
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0] if closed else []
         wr = round(len(wins) / len(closed) * 100, 1) if closed else None
+        status = "LIQUIDATED" if self._liquidated else ("ACTIVE" if self._enabled else "DISABLED")
         return {
-            "bot_name": "AGAPE_XRP_PERP", "status": "ACTIVE" if self._enabled else "DISABLED",
+            "bot_name": "AGAPE_XRP_PERP", "status": status,
             "mode": self.config.mode.value, "ticker": "XRP", "instrument": "XRP-PERP",
             "exchange": "perpetual", "cycle_count": self._cycle_count,
             "open_positions": len(open_pos), "current_xrp_price": cp,
@@ -421,27 +437,30 @@ class AgapeXrpPerpTrader:
                 quantity = p.get("quantity", self.config.default_quantity)
                 unr += (cp - p["entry_price"]) * quantity * d
         if not closed:
+            ret_pct = max(-100.0, unr / self.config.starting_capital * 100) if self.config.starting_capital else 0
             return {"total_trades": 0, "open_positions": len(open_pos), "win_rate": None,
                     "total_pnl": round(unr, 2), "realized_pnl": 0, "unrealized_pnl": round(unr, 2),
                     "avg_win": 0, "avg_loss": 0, "best_trade": 0, "worst_trade": 0, "profit_factor": 0,
-                    "return_pct": round(unr / self.config.starting_capital * 100, 2)}
+                    "return_pct": round(ret_pct, 2)}
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0]
         losses = [t for t in closed if (t.get("realized_pnl") or 0) <= 0]
         realized = sum(t.get("realized_pnl", 0) for t in closed)
         tw = sum(t.get("realized_pnl", 0) for t in wins) if wins else 0
         tl = abs(sum(t.get("realized_pnl", 0) for t in losses)) if losses else 0
+        total_pnl = realized + unr
+        ret_pct = max(-100.0, total_pnl / self.config.starting_capital * 100) if self.config.starting_capital else 0
         return {
             "total_trades": len(closed), "open_positions": len(open_pos),
             "wins": len(wins), "losses": len(losses),
             "win_rate": round(len(wins) / len(closed) * 100, 1),
-            "total_pnl": round(realized + unr, 2), "realized_pnl": round(realized, 2),
+            "total_pnl": round(total_pnl, 2), "realized_pnl": round(realized, 2),
             "unrealized_pnl": round(unr, 2),
             "avg_win": round(tw / len(wins), 2) if wins else 0,
             "avg_loss": round(tl / len(losses), 2) if losses else 0,
             "best_trade": max((t.get("realized_pnl", 0) for t in closed), default=0),
             "worst_trade": min((t.get("realized_pnl", 0) for t in closed), default=0),
             "profit_factor": round(tw / tl, 2) if tl > 0 else float("inf"),
-            "return_pct": round((realized + unr) / self.config.starting_capital * 100, 2),
+            "return_pct": round(ret_pct, 2),
         }
 
     def force_close_all(self, reason="MANUAL_CLOSE"):
