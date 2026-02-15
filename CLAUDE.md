@@ -1048,5 +1048,76 @@ When the user says any of these, ensure full end-to-end implementation:
 
 ---
 
-*Last Updated: January 30, 2026*
+## AGAPE-SPOT Crypto Trading System
+
+### Architecture
+- **Location**: `trading/agape_spot/` (trader.py, signals.py, models.py, executor.py, db.py)
+- **Routes**: `backend/api/routes/agape_spot_routes.py`
+- **Exchange**: Coinbase Advanced Trade (spot only, no futures)
+- **Tickers**: ETH-USD, BTC-USD, DOGE-USD, XRP-USD, SHIB-USD
+- **Strategy**: Long-only spot crypto with Bayesian win tracking, funding regime gates, EWMA choppy market filter
+- **Accounts**: `default` (main), `dedicated` (per-ticker), `paper` (shadow)
+
+### Key Tables
+- `agape_spot_positions` - All positions (open + closed), columns: position_id, ticker, status, entry_price, close_price, quantity, realized_pnl, close_reason, account_label, funding_regime_at_entry, open_time, close_time, sell_fail_count, entry_fee_usd, exit_fee_usd
+- `agape_spot_scan_activity` - Every scan cycle with outcome (TRADE, NO_TRADE, BLOCKED_BY_CAPACITY, etc.)
+- `agape_spot_win_tracker` - Bayesian alpha/beta per ticker per funding regime
+- `agape_spot_equity_snapshots` - Periodic equity snapshots with eth_price
+- `agape_spot_ml_shadow` - ML prediction shadow logging (actual_outcome column, not actual_win)
+
+### Profitability Analysis Scripts
+- `scripts/analyze_agape_spot_profitability.py` - P1-P17 baseline queries (overall summary, win/loss asymmetry, funding regime, close reasons, hold duration, hour-of-day, day-of-week, Bayesian tracker, capital allocator, scan activity, alpha vs B&H, fees, loss streaks, paper vs live, recent trend, orphans, EV gate)
+- `scripts/analyze_agape_spot_profitability_p2.py` - P18-P30 deep dive (account breakdown, position stacking, BTC deep dive, signal actions, Bayesian accuracy, drawdown, time-to-loss, weekly trajectory, fallback audit, close reason heatmap, burst detection, unrealized P&L, post-fix validation)
+- `scripts/analyze_agape_spot_postfix.py` - PF1-PF11 post-fix monitoring (comparison vs pre-fix baseline, fix validation, overtrading, close reasons, time-of-day, fee tracking, loss streaks, R:R ratio, scan effectiveness, health dashboard, GO/NO-GO decisions)
+
+### Feb 15 2026 Audit Findings (Pre-Fix Baseline)
+All data below is from BEFORE the fixes deployed Feb 15 ~20:00 UTC.
+
+**P&L Summary (pre-fix, live non-fallback only):**
+| Ticker | Trades | P&L | WR | Avg Win | Avg Loss | EV/trade | Verdict |
+|--------|--------|-----|-----|---------|----------|----------|---------|
+| ETH-USD | 196 | +$188.05 | 58.2% | $7.99 | -$8.82 | +$0.96 | Profitable but loses $475 overnight |
+| DOGE-USD | 303 | +$45.79 | 61.1% | $0.31 | -$0.09 | +$0.15 | Overtrading (42.6/day), fees ~$116/wk eat all profit |
+| BTC-USD | 19 | +$0.24 | 52.6% | $0.06 | -$0.03 | +$0.02 | 17/19 expired MAX_HOLD, wrong timeout |
+| XRP-USD | 117 | -$0.55 | 50.4% | $0.05 | -$0.06 | -$0.005 | Negative EV, WR below 54.5% breakeven |
+| SHIB-USD | 142 | -$0.64 | 48.6% | $0.07 | -$0.08 | -$0.007 | Negative EV, WR below 53.3% breakeven |
+
+**Critical Issues Found:**
+1. **Fee blindness**: Only 3 of 777 trades had fee data. Estimated real P&L after Coinbase fees: ~$30-50 (not $233)
+2. **ETH overnight drain**: +$545 during 9am-2pm CT, -$475 during 5pm-8am CT (net only +$188)
+3. **DOGE overtrading**: 42.6 trades/day at ~$0.38/trade in fees but only $0.15 avg P&L = net negative after fees
+4. **Position pileup**: 93 simultaneous BTC positions when limit should be 36, blocking 1068/1400 ETH scans
+5. **Fallback pollution**: 359 BTC_fallback positions at 3.3% WR = -$90 in phantom losses
+6. **BTC wrong timeout**: Global 6h default used instead of configured 4h; trend scaling pushed to 12h
+7. **Max loss streaks**: ETH=32, SHIB=21, DOGE=17, XRP=13 (ETH streak cost ~$282, more than total profit)
+
+**Fixes Deployed Feb 15 2026:**
+- F1: Silent sell retry (DB stays open if Coinbase sell fails, retries next cycle)
+- F2: Position pileup fix (force-expire positions past 2x max_hold when price unavailable)
+- F3: EWMA dynamic choppy gate (replaces flat $0.50 threshold)
+- F4: BTC tightened (max_hold 4h, max 2 positions, 5-scan cooldown)
+- F5: Major/altcoin bias split removed (all tickers get 0.3 base)
+- F6: Momentum filter relaxed (-0.2% to -0.5%)
+- F7: Orphan auto-sell (market sells stranded Coinbase coins)
+- F8: ETH max positions 5->3 (flash crash exposure cut 40%)
+- F9: DOGE funding gate enforced (no more zero-signal ALTCOIN_BASE_LONG entries)
+- F10: Fallback position cleanup (legacy ghosts closed at entry price)
+- F11: Per-ticker max_hold_hours (BTC uses 4h not global 6h)
+- F12: Paper mirrors live exactly (paper = shadow of live fills)
+
+**Post-Fix Monitoring:**
+- Run `python scripts/analyze_agape_spot_postfix.py` every 48-72h
+- Fix cutoff: `2026-02-15 20:00:00+00`
+- After 7 days post-fix data, use PF11 GO/NO-GO to decide each ticker
+- Key metrics to watch: ETH overnight P&L (should be $0 if restricted), DOGE trades/day (should drop from 42 to <10), fee tracking coverage (should be >95%), loss streaks (should be shorter)
+
+**Still Not Fixed (action items):**
+- Fee tracking in executor.py (entry_fee_usd/exit_fee_usd still not populated for most trades)
+- No time-of-day trading restriction (ETH should only trade 9am-2pm CT)
+- XRP-USD and SHIB-USD should be disabled (negative EV, no fix addresses their core issue)
+
+---
+
+*Last Updated: February 15, 2026*
+*AGAPE-SPOT audit findings and post-fix monitoring added*
 *PROMETHEUS updated to standalone system with IC trading (no longer deploys to ARES/TITAN/PEGASUS)*
