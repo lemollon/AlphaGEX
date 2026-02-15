@@ -3503,3 +3503,107 @@ export const prefetchMarketData = {
     prefetchMarketData.traderStatus()
   },
 }
+
+// =============================================================================
+// MARGIN MANAGEMENT HOOKS
+// =============================================================================
+
+export function useMarginHealth() {
+  const { data, error, isLoading, mutate } = useSWR(
+    'margin-health',
+    async () => {
+      const response = await apiClient.getMarginHealth()
+      return response.data
+    },
+    { refreshInterval: 15000, revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading, mutate }
+}
+
+export function useMarginBotStatus(botName: string | null) {
+  const { data, error, isLoading, mutate } = useSWR(
+    botName ? `margin-bot-status-${botName}` : null,
+    async () => {
+      if (!botName) return null
+      const response = await apiClient.getMarginBotStatus(botName)
+      return response.data
+    },
+    { refreshInterval: 15000, revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading, mutate }
+}
+
+export function useMarginBotPositions(botName: string | null) {
+  const { data, error, isLoading } = useSWR(
+    botName ? `margin-bot-positions-${botName}` : null,
+    async () => {
+      if (!botName) return null
+      const response = await apiClient.getMarginBotPositions(botName)
+      return response.data
+    },
+    { refreshInterval: 15000, revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading }
+}
+
+export function useMarginAlerts(botName?: string, limit?: number) {
+  const { data, error, isLoading } = useSWR(
+    `margin-alerts-${botName || 'all'}-${limit || 50}`,
+    async () => {
+      const response = await apiClient.getMarginAlerts({ bot_name: botName, limit })
+      return response.data
+    },
+    { refreshInterval: 30000, revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading }
+}
+
+export function useMarginHistory(botName: string | null, hours?: number) {
+  const { data, error, isLoading } = useSWR(
+    botName ? `margin-history-${botName}-${hours || 24}` : null,
+    async () => {
+      if (!botName) return null
+      const response = await apiClient.getMarginHistory(botName, hours)
+      return response.data
+    },
+    { revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading }
+}
+
+export function useMarginDailyReport() {
+  const { data, error, isLoading } = useSWR(
+    'margin-daily-report',
+    async () => {
+      const response = await apiClient.getMarginDailyReport()
+      return response.data
+    },
+    { revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading }
+}
+
+export function useMarginBots() {
+  const { data, error, isLoading } = useSWR(
+    'margin-bots',
+    async () => {
+      const response = await apiClient.getMarginBots()
+      return response.data
+    },
+    { revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading }
+}
+
+export function useMarginConfig(botName: string | null) {
+  const { data, error, isLoading, mutate } = useSWR(
+    botName ? `margin-config-${botName}` : null,
+    async () => {
+      if (!botName) return null
+      const response = await apiClient.getMarginConfig(botName)
+      return response.data
+    },
+    { revalidateOnFocus: false }
+  )
+  return { data: data?.data, error, isLoading, mutate }
+}

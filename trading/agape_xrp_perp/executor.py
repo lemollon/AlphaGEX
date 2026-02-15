@@ -37,6 +37,23 @@ class AgapeXrpPerpExecutor:
     def execute_trade(self, signal: AgapeXrpPerpSignal) -> Optional[AgapeXrpPerpPosition]:
         if not signal.is_valid:
             return None
+
+        # Pre-trade margin check (non-blocking on failure)
+        try:
+            from trading.margin.pre_trade_check import check_margin_before_trade
+            approved, reason = check_margin_before_trade(
+                bot_name="AGAPE_XRP_PERP",
+                symbol="XRP-PERP",
+                side=signal.side or "long",
+                quantity=signal.quantity,
+                entry_price=signal.entry_price or signal.spot_price,
+            )
+            if not approved:
+                logger.warning(f"AGAPE-XRP-PERP: Trade rejected by margin check: {reason}")
+                return None
+        except Exception as e:
+            logger.debug(f"AGAPE-XRP-PERP: Margin check skipped: {e}")
+
         if self.config.mode == TradingMode.LIVE:
             return self._execute_live(signal)
         return self._execute_paper(signal)
