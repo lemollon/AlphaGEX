@@ -3,11 +3,12 @@
 AGAPE-SPOT EV Gate Replay Backtester
 =====================================
 
-Walk-forward replay of historical trades through three EV gate strategies:
+Walk-forward replay of historical trades through four EV gate strategies:
 
   A) NO GATE      — every LONG signal is taken (baseline)
   B) FLAT $0.50   — choppy markets require EV >= $0.50
   C) EWMA DYNAMIC — choppy markets require EV >= 10% of EWMA magnitude
+  D) FLAT $0.10   — choppy markets require EV >= $0.10 (relaxed gate)
 
 Data source:
   - agape_spot_positions (closed trades with realized P&L)
@@ -46,6 +47,7 @@ SQUEEZE_RANK = {"LOW": 1, "ELEVATED": 2, "HIGH": 3}
 
 # ── Gate parameters ──────────────────────────────────────────────
 FLAT_THRESHOLD = 0.50       # Strategy B: old hardcoded threshold
+FLAT_THRESHOLD_010 = 0.10   # Strategy D: relaxed choppy threshold
 EWMA_PCT = 0.10             # Strategy C: 10% of EWMA magnitude
 EWMA_FLOOR = 0.02           # Strategy C: minimum threshold
 EWMA_ALPHA = 0.034          # ln(2)/20 — halflife 20 trades
@@ -234,6 +236,19 @@ def gate_flat_050(trade: Trade, stats: RunningStats) -> bool:
     # Choppy: require EV >= $0.50
     if stats.has_ev_data():
         return stats.compute_ev(trade.oracle_win_prob) >= FLAT_THRESHOLD
+    return trade.oracle_win_prob >= CHOPPY_COLD_WIN_PROB
+
+
+def gate_flat_010(trade: Trade, stats: RunningStats) -> bool:
+    """Strategy D: flat $0.10 choppy gate (relaxed threshold)."""
+    if not is_choppy(trade):
+        if stats.has_ev_data():
+            return stats.compute_ev(trade.oracle_win_prob) > 0.0
+        return trade.oracle_win_prob >= COLD_START_WIN_PROB
+
+    # Choppy: require EV >= $0.10 (vs $0.50 in Strategy B)
+    if stats.has_ev_data():
+        return stats.compute_ev(trade.oracle_win_prob) >= FLAT_THRESHOLD_010
     return trade.oracle_win_prob >= CHOPPY_COLD_WIN_PROB
 
 
@@ -610,7 +625,7 @@ def _print_ascii_equity(results: Dict[str, StrategyResult], width: int = 70, hei
     y_range = y_max - y_min if y_max != y_min else 1.0
 
     max_len = max(len(c) for c in curves.values())
-    symbols = {"A: No Gate": ".", "B: Flat $0.50": "x", "C: EWMA Dynamic": "#"}
+    symbols = {"A: No Gate": ".", "B: Flat $0.50": "x", "C: EWMA Dynamic": "#", "D: Flat $0.10": "+"}
 
     # Build canvas
     canvas = [[" "] * width for _ in range(height)]
@@ -671,6 +686,7 @@ def main():
         "A: No Gate":       gate_no_filter,
         "B: Flat $0.50":    gate_flat_050,
         "C: EWMA Dynamic":  gate_ewma_dynamic,
+        "D: Flat $0.10":    gate_flat_010,
     }
 
     # Run replay
