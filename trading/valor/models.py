@@ -425,7 +425,6 @@ class FuturesPosition:
     """
     # Identity
     position_id: str
-    ticker: str = "MES"  # Instrument key into FUTURES_TICKERS (MNQ, CL, NG, RTY, MES)
 
     # Trade details
     symbol: str  # e.g., "/MESH6", "/MNQH6", "/CLG6"
@@ -440,6 +439,7 @@ class FuturesPosition:
     initial_stop: float      # Initial stop price
     current_stop: float      # Current stop (may be trailed)
     breakeven_price: float   # Price where stop moves to breakeven
+    ticker: str = "MES"  # Instrument key into FUTURES_TICKERS (MNQ, CL, NG, RTY, MES)
     trailing_active: bool = False
 
     # Market context at entry
