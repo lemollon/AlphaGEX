@@ -350,6 +350,17 @@ class AgapeSpotSignalGenerator:
         return ((current_price - oldest_price) / oldest_price) * 100
 
     def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
+        """Get ProphetAdvisor recommendation with crypto microstructure context.
+
+        NOTE: ProphetAdvisor's MarketContext only accepts equity-GEX fields
+        (spot_price, vix, gex_net, gex_regime, gex_flip_point, day_of_week).
+        It does NOT consume funding_rate, ls_ratio, liquidations, or
+        leverage_regime — those are crypto-only fields used by the signal
+        generator directly. This is a known data gap: ProphetAdvisor was
+        designed for equity options and cannot reason about crypto
+        microstructure. The top_factors list includes crypto context for
+        logging/transparency even though Prophet doesn't use them.
+        """
         if not self._prophet:
             return {
                 "advice": "UNAVAILABLE",
@@ -381,6 +392,19 @@ class AgapeSpotSignalGenerator:
             recommendation = self._prophet.get_strategy_recommendation(context)
             if recommendation:
                 advice = "TRADE" if recommendation.dir_suitability >= 0.5 else "SKIP"
+                # Include crypto microstructure in top_factors for transparency
+                # even though Prophet only consumed VIX proxy + GEX
+                crypto_factors = []
+                funding = market_data.get("funding_regime", "UNKNOWN")
+                if funding != "UNKNOWN":
+                    crypto_factors.append(f"funding={funding}")
+                ls = market_data.get("ls_bias", "NEUTRAL")
+                if ls != "NEUTRAL":
+                    crypto_factors.append(f"ls_bias={ls}")
+                squeeze = market_data.get("squeeze_risk", "LOW")
+                if squeeze != "LOW":
+                    crypto_factors.append(f"squeeze={squeeze}")
+
                 return {
                     "advice": advice,
                     "win_probability": recommendation.dir_suitability,
@@ -391,7 +415,7 @@ class AgapeSpotSignalGenerator:
                         f"gex_regime={recommendation.gex_regime.value}",
                         f"dir_suitability={recommendation.dir_suitability:.0%}",
                         f"size_mult={recommendation.size_multiplier}",
-                    ],
+                    ] + crypto_factors,
                 }
         except Exception as e:
             logger.error(f"AGAPE-SPOT Signals: Prophet call failed: {e}")

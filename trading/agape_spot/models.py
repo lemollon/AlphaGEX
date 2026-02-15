@@ -36,6 +36,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_unrealized_loss_pct": 1.5,
         "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
         "max_hold_hours": 8,  # Was 6h — ETH trends run 8-12h, don't exit mid-trend
+        "max_positions": 3,   # Was 5 (global default) — 5 x 1.5% max loss = 7.5% flash crash exposure
     },
     "BTC-USD": {
         "symbol": "BTC",
@@ -62,7 +63,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "symbol": "XRP",
         "display_name": "XRP",
         "starting_capital": 1000.0,
-        "live_capital": 50.0,
+        # live_capital removed — executor reads real Coinbase USD balance at order time
         "default_quantity": 100.0,
         "min_order": 1.0,
         "max_per_trade": 5000.0,
@@ -87,7 +88,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "symbol": "SHIB",
         "display_name": "Shiba Inu",
         "starting_capital": 1000.0,
-        "live_capital": 50.0,
+        # live_capital removed — executor reads real Coinbase USD balance at order time
         "default_quantity": 1000000.0,
         "min_order": 1000.0,
         "max_per_trade": 100000000.0,
@@ -112,7 +113,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "symbol": "DOGE",
         "display_name": "Dogecoin",
         "starting_capital": 1000.0,
-        "live_capital": 50.0,
+        # live_capital removed — executor reads real Coinbase USD balance at order time
         "default_quantity": 500.0,
         "min_order": 1.0,
         "max_per_trade": 50000.0,
@@ -125,9 +126,9 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "max_unrealized_loss_pct": 1.0,    # Was 0.75% — normal volatility triggered this
         "no_loss_profit_target_pct": 0.0,  # Disabled — let trail manage
         "max_hold_hours": 4,              # Was 2h — need to capture multi-hour trends
-        # Signal quality gates — DOGE trending well, keep base_long but add ETH leader + momentum
-        "require_funding_data": False,      # DOGE works without funding data (trending market)
-        "allow_base_long": True,            # Keep catchall — DOGE profits from it
+        # Signal quality gates — require funding data like XRP/SHIB for signal consistency
+        "require_funding_data": True,       # Was False — inconsistent with other alts, DOGE entered on zero signal
+        "allow_base_long": False,           # Was True — disabled to prevent entries with no real signal
         "use_eth_leader": True,             # Use ETH GEX signal as directional compass
         "use_momentum_filter": True,        # Block entries during price downtrends
         "min_scans_between_trades": 5,      # 5 min between entries (1-min scans)
@@ -137,7 +138,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "symbol": "MSTU",
         "display_name": "T-Rex 2X Long MSTR ETF",
         "starting_capital": 1000.0,
-        "live_capital": 50.0,
+        # live_capital removed — executor reads real Coinbase USD balance at order time
         "default_quantity": 10.0,           # ~$53 at $5.32
         "min_order": 0.01,                  # Coinbase supports fractional shares
         "max_per_trade": 500.0,
@@ -209,7 +210,7 @@ class AgapeSpotConfig:
 
     # Risk management (shared)
     risk_per_trade_pct: float = 5.0
-    max_open_positions_per_ticker: int = 5
+    max_open_positions_per_ticker: int = 3  # Was 5 — ETH at 5 = up to $5K flash crash exposure
 
     # Entry/exit rules
     profit_target_pct: float = 50.0
@@ -365,14 +366,15 @@ class AgapeSpotConfig:
         return [t for t in self.tickers if self.is_ticker_in_market_hours(t, now)]
 
     def get_trading_capital(self, ticker: str) -> float:
-        """Get capital used for position sizing.
+        """Get capital used for PAPER position sizing.
 
-        LIVE tickers use live_capital (real Coinbase balance).
-        PAPER tickers use starting_capital.
+        PAPER tickers use starting_capital for sizing.
+        LIVE tickers ignore this -- executor.py reads real Coinbase USD
+        balance via _get_usd_balance_from_client() at order time.
+        This method is only used by the signal generator for paper
+        quantity calculation.
         """
         cfg = self.get_ticker_config(ticker)
-        if self.is_live(ticker):
-            return cfg.get("live_capital", cfg.get("starting_capital", 1000.0))
         return cfg.get("starting_capital", 1000.0)
 
     @classmethod
