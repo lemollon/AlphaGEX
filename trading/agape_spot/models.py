@@ -278,7 +278,7 @@ class AgapeSpotConfig:
     # catches the bounce back to mean.
     enable_rsi_choppy_override: bool = True
     rsi_oversold_threshold: float = 30.0   # RSI below this = oversold entry
-    rsi_overbought_threshold: float = 70.0 # RSI above this = take profit exit
+    rsi_overbought_threshold: float = 67.0 # RSI above this = take profit exit
     rsi_lookback_periods: int = 14         # Standard RSI lookback
     rsi_oversold_size_mult: float = 1.5    # 1.5x position size at RSI < 30
 
