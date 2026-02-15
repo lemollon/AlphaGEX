@@ -206,7 +206,9 @@ class AgapeSpotTrader:
         (DB says closed but Coinbase still has holdings) and ghost
         positions (DB says open but Coinbase has no coins).
 
-        Logs mismatches loudly so the user can take manual action.
+        AUTO-SELLS orphaned coins: if Coinbase has coins but DB shows
+        0 open positions, sells them via market order. This reclaims
+        capital from failed sells that left coins stranded.
         """
         try:
             # Gather DB open positions grouped by ticker + account
@@ -222,8 +224,10 @@ class AgapeSpotTrader:
             if not exchange_balances:
                 return
 
-            # Aggregate Coinbase holdings across all accounts
+            # Aggregate Coinbase holdings across all accounts, track which
+            # account holds each ticker so we can auto-sell from the right one
             coinbase_qty_by_ticker: Dict[str, float] = {}
+            ticker_account_map: Dict[str, str] = {}  # ticker -> account_label
             for acct_label, acct_data in exchange_balances.items():
                 if isinstance(acct_data, dict) and "error" not in acct_data:
                     for ticker in self.config.tickers:
@@ -234,6 +238,7 @@ class AgapeSpotTrader:
                             coinbase_qty_by_ticker[ticker] = (
                                 coinbase_qty_by_ticker.get(ticker, 0) + bal
                             )
+                            ticker_account_map[ticker] = acct_label
 
             # Compare and log mismatches
             all_tickers = set(list(db_qty_by_ticker.keys()) + list(coinbase_qty_by_ticker.keys()))
@@ -252,10 +257,17 @@ class AgapeSpotTrader:
                     continue
 
                 if cb_qty > 0 and db_qty == 0:
+                    # ORPHANED COINS: DB says no open positions, but Coinbase
+                    # still has coins. Auto-sell to reclaim capital.
+                    orphan_usd = cb_qty * price
+                    acct = ticker_account_map.get(ticker, "dedicated")
                     mismatches.append(
                         f"ORPHANED COINS: {ticker} has {cb_qty:.6f} on Coinbase "
-                        f"(~${cb_qty * price:.2f}) but 0 open positions in DB"
+                        f"(~${orphan_usd:.2f}) but 0 open positions in DB — "
+                        f"AUTO-SELLING from [{acct}]"
                     )
+                    self._auto_sell_orphaned(ticker, cb_qty, acct, price)
+
                 elif db_qty > 0 and cb_qty == 0:
                     mismatches.append(
                         f"GHOST POSITIONS: {ticker} has {db_qty:.6f} in DB "
@@ -279,6 +291,50 @@ class AgapeSpotTrader:
 
         except Exception as e:
             logger.error(f"AGAPE-SPOT: Reconciliation check failed: {e}", exc_info=True)
+
+    def _auto_sell_orphaned(
+        self, ticker: str, quantity: float, account_label: str, price: float,
+    ) -> None:
+        """Auto-sell orphaned coins that have no matching DB position.
+
+        Uses market order via executor.sell_spot(). Logs result but does
+        not create DB position records (there's nothing to close).
+        """
+        try:
+            notional = quantity * price
+            logger.info(
+                f"AGAPE-SPOT: AUTO-SELL ORPHAN {ticker} {quantity:.6f} "
+                f"(~${notional:.2f}) from [{account_label}]"
+            )
+            sell_ok, fill_price, exec_details = self.executor.sell_spot(
+                ticker, quantity, f"ORPHAN-{ticker}", "RECONCILIATION_AUTO_SELL",
+                account_label=account_label,
+            )
+            if sell_ok:
+                fill = fill_price or price
+                proceeds = quantity * fill
+                self.db.log(
+                    "INFO", "ORPHAN_AUTO_SOLD",
+                    f"Auto-sold orphaned {ticker} {quantity:.6f} @ ${fill:.4f} "
+                    f"(~${proceeds:.2f}) from [{account_label}]",
+                    ticker=ticker,
+                )
+                logger.info(
+                    f"AGAPE-SPOT: ORPHAN SOLD OK {ticker} ~${proceeds:.2f}"
+                )
+            else:
+                self.db.log(
+                    "ERROR", "ORPHAN_SELL_FAILED",
+                    f"Failed to auto-sell orphaned {ticker} {quantity:.6f} "
+                    f"(~${notional:.2f}) from [{account_label}]. "
+                    f"Manual intervention required.",
+                    ticker=ticker,
+                )
+                logger.error(
+                    f"AGAPE-SPOT: ORPHAN SELL FAILED {ticker} — manual sell required"
+                )
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT: Auto-sell orphan failed for {ticker}: {e}")
 
     # ==================================================================
     # Top-level cycle -- iterates ALL tickers
