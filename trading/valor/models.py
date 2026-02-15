@@ -324,7 +324,7 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
 }
 
 # Default tickers to trade (can be overridden by config)
-DEFAULT_VALOR_TICKERS = ["MNQ", "CL", "NG", "RTY"]
+DEFAULT_VALOR_TICKERS = ["MNQ", "CL", "NG", "RTY", "MES"]
 
 
 def get_ticker_config(ticker: str) -> Dict[str, Any]:
