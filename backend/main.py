@@ -90,7 +90,6 @@ from backend.api.routes import (
     agape_shib_perp_routes,  # AGAPE-SHIB-PERP - SHIB Perpetual Contract bot
     omega_routes,  # OMEGA - Central Trading Decision Orchestrator (4-layer pipeline + gap implementations)
     bayesian_crypto_routes,  # Bayesian Crypto Performance Tracker - statistical edge detection for crypto strategies
-    margin_routes,  # Margin Management - unified margin tracking across all market types
 )
 
 # ============================================================================
@@ -362,7 +361,6 @@ app.include_router(agape_doge_perp_routes.router)
 app.include_router(agape_shib_perp_routes.router)
 app.include_router(omega_routes.router)
 app.include_router(bayesian_crypto_routes.router)
-app.include_router(margin_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, fortress, daily-manna, jubilee, watchtower, docs, proverbs, events, prophet, math-optimizer, validation, drift, bot-reports, tastytrade, valor, agape, agape-spot, agape-btc, agape-xrp, agape-eth-perp, agape-btc-perp, agape-xrp-perp, agape-doge-perp, agape-shib-perp, omega, bayesian-crypto")
 
 # Initialize existing AlphaGEX components (singleton pattern)

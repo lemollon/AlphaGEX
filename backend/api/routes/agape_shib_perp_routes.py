@@ -870,6 +870,71 @@ async def get_gex_mapping():
 
 
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Margin Analysis
+# ------------------------------------------------------------------
+
+@router.get("/margin")
+async def get_margin_analysis():
+    """Margin analysis for AGAPE-SHIB-PERP open positions."""
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "message": "AGAPE-SHIB-PERP not available"}
+
+    try:
+        from trading.shared.margin_engine import MarginCalculator
+        from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+
+        spec = PERPETUAL_MARGIN_SPECS.get("SHIB-PERP", {})
+        positions = trader.db.get_open_positions()
+        current_price = trader.executor.get_current_price()
+
+        starting_capital = getattr(trader.config, "starting_capital", 1000.0)
+        closed = trader.db.get_closed_trades(limit=10000)
+        realized_pnl = sum(float(t.get("realized_pnl", 0) or 0) for t in closed) if closed else 0.0
+        account_equity = starting_capital + realized_pnl
+
+        position_margins = []
+        for pos in positions:
+            if not current_price:
+                continue
+            leverage = pos.get("leverage_at_entry") or spec.get("default_leverage", 3)
+            result = MarginCalculator.calculate_perpetual_margin(
+                entry_price=pos["entry_price"],
+                current_price=current_price,
+                quantity=pos.get("quantity", 0),
+                side=pos.get("side", "long"),
+                leverage=leverage,
+                margin_mode="isolated",
+                maintenance_margin_rate=spec.get("maintenance_margin_rate", 0.015),
+                account_equity=account_equity,
+                funding_rate=pos.get("funding_rate_at_entry", 0) or 0,
+                funding_interval_hours=spec.get("funding_interval_hours", 8),
+            )
+            result["position_id"] = pos.get("position_id")
+            result["symbol"] = "SHIB-PERP"
+            result["side"] = pos.get("side", "long")
+            result["quantity"] = pos.get("quantity", 0)
+            result["entry_price"] = pos["entry_price"]
+            result["current_price"] = current_price
+            position_margins.append(result)
+
+        summary = MarginCalculator.aggregate_positions(position_margins, account_equity, "crypto_perp")
+        summary["spec"] = {
+            "name": spec.get("name", "SHIB Perpetual"),
+            "default_leverage": spec.get("default_leverage", 3),
+            "max_leverage": spec.get("max_leverage", 15),
+            "maintenance_margin_rate": spec.get("maintenance_margin_rate", 0.015),
+            "funding_interval_hours": spec.get("funding_interval_hours", 8),
+        }
+        summary["starting_capital"] = starting_capital
+
+        return {"success": True, "data": summary, "fetched_at": _format_ct()}
+    except Exception as e:
+        logger.error(f"AGAPE-SHIB-PERP margin analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Bot Control
 # ------------------------------------------------------------------
 
