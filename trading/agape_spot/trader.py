@@ -103,6 +103,12 @@ class AgapeSpotTrader:
         self._direction_trackers: Dict[str, Any] = {}
         self._last_trade_scan: Dict[str, int] = {}  # Last scan cycle a trade was opened per ticker
 
+        # Probation system: tracks LIVE/PROBATION/DISABLED per ticker
+        # LIVE = normal (live + paper), PROBATION = paper only, DISABLED = skip
+        self._probation_statuses: Dict[str, str] = {}
+        self._last_probation_eval: Optional[datetime] = None
+        self._load_probation_statuses()
+
         # Initialize per-ticker state for every configured ticker
         for ticker in self.config.tickers:
             self._loss_streaks[ticker] = 0
@@ -417,6 +423,13 @@ class AgapeSpotTrader:
         if self._cycle_count % 10 == 0:
             self._reconcile_exchange()
 
+        # Evaluate probation every 60 cycles (~1 hour)
+        if self._cycle_count % 60 == 0:
+            try:
+                self._evaluate_probation()
+            except Exception as e:
+                logger.error(f"AGAPE-SPOT PROBATION: Evaluation failed: {e}")
+
         results: Dict[str, Any] = {
             "cycle": self._cycle_count,
             "timestamp": now.isoformat(),
@@ -476,11 +489,16 @@ class AgapeSpotTrader:
                 scan_context["market_data"] = market_data
                 scan_context["spot_price"] = market_data.get("spot_price")
 
-            # Step 2: Get Prophet advice
-            prophet_data = None
-            if market_data:
-                prophet_data = self.signals.get_prophet_advice(market_data)
-                scan_context["prophet_data"] = prophet_data
+            # Step 2: Prophet DISABLED — hardcode neutral defaults
+            # ProphetAdvisor was designed for equity options, not crypto.
+            # Returning 0.5 win_prob lets Bayesian tracker + EV gate decide.
+            prophet_data = {
+                "advice": "DISABLED",
+                "win_probability": 0.5,
+                "confidence": 0.0,
+                "top_factors": ["prophet_disabled"],
+            }
+            scan_context["prophet_data"] = prophet_data
 
             # Step 2b: Get volatility context (ATR + chop detection)
             vol_context = self.executor.get_volatility_context(ticker)
@@ -531,9 +549,10 @@ class AgapeSpotTrader:
                     return result
 
             # Step 6b: Get all accounts for this ticker and check position limits per-account
-            # Uses per-ticker max_positions from entry filters (XRP/SHIB: 2, DOGE: 3, ETH: 5)
+            # Uses per-ticker max_positions from entry filters
+            # Probation tickers only get paper accounts (no live execution)
             max_positions = entry_filters.get("max_positions", self.config.max_open_positions_per_ticker)
-            accounts = self.executor.get_all_accounts(ticker)
+            accounts = self._get_eligible_accounts(ticker)
             all_open = [
                 p for p in self._get_open_positions_for_ticker(ticker)
                 if not p.get("account_label", "").endswith("_fallback")
@@ -1528,10 +1547,197 @@ class AgapeSpotTrader:
         """24/7 for crypto, market-hours-only for equity tickers (MSTU)."""
         if not self._enabled:
             return "BOT_DISABLED"
-        # Market hours restriction for equity-based tickers (e.g. MSTU)
+        # Market hours restriction for equity-based tickers (e.g. MSTU, ETH)
         if not self.config.is_ticker_in_market_hours(ticker, now):
             return "OUTSIDE_MARKET_HOURS"
+        # Probation: DISABLED tickers don't trade at all
+        probation_status = self._probation_statuses.get(ticker, "LIVE")
+        if probation_status == "DISABLED":
+            return "TICKER_DISABLED"
         return None
+
+    # ------------------------------------------------------------------
+    # Ticker Probation System
+    # ------------------------------------------------------------------
+
+    def _load_probation_statuses(self):
+        """Load probation statuses from DB. Missing tickers default to LIVE."""
+        try:
+            db_statuses = self.db.get_all_probation_statuses()
+            for ticker in self.config.tickers:
+                self._probation_statuses[ticker] = db_statuses.get(ticker, "LIVE")
+            logger.info(
+                f"AGAPE-SPOT PROBATION: Loaded statuses: "
+                f"{dict(self._probation_statuses)}"
+            )
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT PROBATION: Load failed: {e}")
+            for ticker in self.config.tickers:
+                self._probation_statuses[ticker] = "LIVE"
+
+    def _is_on_probation(self, ticker: str) -> bool:
+        """Return True if ticker is on probation (paper-only)."""
+        return self._probation_statuses.get(ticker, "LIVE") == "PROBATION"
+
+    def _get_eligible_accounts(self, ticker: str) -> list:
+        """Get accounts eligible for trading this ticker.
+
+        LIVE tickers: all accounts (live + paper)
+        PROBATION tickers: paper only
+        DISABLED tickers: none (blocked by _check_entry_conditions)
+        """
+        all_accounts = self.executor.get_all_accounts(ticker)
+        if self._is_on_probation(ticker):
+            # Paper only — strip live accounts
+            return [(label, False) for label, is_live in all_accounts if not is_live]
+        return all_accounts
+
+    def _evaluate_probation(self):
+        """Evaluate probation tickers for promotion and live tickers for demotion.
+
+        Called once per hour (every 60 cycles at ~1 min/cycle).
+
+        Promotion criteria (PROBATION → LIVE, ALL must pass 7+ days):
+          - ≥50 paper trades since demotion
+          - Win rate above breakeven (considering avg win/loss ratio)
+          - Positive EV/trade after estimated fees (0.8% round-trip)
+          - Max loss streak ≤ 10 in trailing 50 trades
+
+        Demotion criteria (LIVE → PROBATION, ANY triggers):
+          - Loss streak > 20 in trailing 100 trades
+          - Negative EV over trailing 100 trades (after fees)
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        for ticker in self.config.tickers:
+            status = self._probation_statuses.get(ticker, "LIVE")
+
+            if status == "PROBATION":
+                self._evaluate_promotion(ticker, now)
+            elif status == "LIVE":
+                self._evaluate_demotion(ticker, now)
+
+    def _evaluate_promotion(self, ticker: str, now: datetime):
+        """Check if a PROBATION ticker should be promoted to LIVE."""
+        probation_info = self.db.get_ticker_probation(ticker)
+        demoted_at = probation_info.get("demoted_at")
+        if not demoted_at:
+            return
+
+        paper_trades = self.db.get_paper_trades_since(ticker, demoted_at)
+        if len(paper_trades) < 50:
+            self.db.update_probation_metrics(
+                ticker, len(paper_trades), 0, 0, 0, 0,
+            )
+            return
+
+        # Calculate metrics
+        wins = sum(1 for t in paper_trades if t["realized_pnl"] > 0)
+        win_rate = wins / len(paper_trades) if paper_trades else 0
+
+        # EV after fees
+        total_pnl = sum(t["realized_pnl"] for t in paper_trades)
+        # Estimate fees for paper trades (0.8% round-trip with limit orders)
+        total_fees = sum(
+            (t.get("entry_fee_usd", 0) or 0) + (t.get("exit_fee_usd", 0) or 0)
+            for t in paper_trades
+        )
+        if total_fees == 0:
+            # Estimate if no fee data
+            total_fees = len(paper_trades) * 0.50  # conservative $0.50/trade estimate
+        net_pnl = total_pnl - total_fees
+        ev_per_trade = net_pnl / len(paper_trades)
+
+        # Max loss streak
+        max_streak = 0
+        current_streak = 0
+        for t in paper_trades:
+            if t["realized_pnl"] <= 0:
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        # Check all criteria
+        all_pass = (
+            len(paper_trades) >= 50
+            and win_rate > 0.30  # Low bar because 3:1 R:R makes 30% WR profitable
+            and ev_per_trade > 0
+            and max_streak <= 10
+        )
+
+        prev_days = probation_info.get("consecutive_passing_days", 0)
+        passing_days = (prev_days + 1) if all_pass else 0
+
+        self.db.update_probation_metrics(
+            ticker, len(paper_trades), round(win_rate, 4),
+            round(ev_per_trade, 4), max_streak, passing_days,
+        )
+
+        if passing_days >= 7:
+            # PROMOTE: criteria met for 7+ consecutive days
+            self.db.set_ticker_probation(
+                ticker, "LIVE",
+                f"Auto-promoted: {len(paper_trades)} trades, "
+                f"WR={win_rate:.1%}, EV=${ev_per_trade:.4f}/trade, "
+                f"max_streak={max_streak}, passing {passing_days} days",
+            )
+            self._probation_statuses[ticker] = "LIVE"
+            logger.info(
+                f"AGAPE-SPOT PROBATION: {ticker} PROMOTED to LIVE "
+                f"(WR={win_rate:.1%}, EV=${ev_per_trade:.4f})"
+            )
+
+    def _evaluate_demotion(self, ticker: str, now: datetime):
+        """Check if a LIVE ticker should be demoted to PROBATION."""
+        trades = self.db.get_live_trailing_trades(ticker, limit=100)
+        if len(trades) < 20:
+            return  # Not enough data to evaluate
+
+        # Check loss streak in trailing trades
+        max_streak = 0
+        current_streak = 0
+        for t in trades:
+            if t["realized_pnl"] <= 0:
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        # Check EV after fees
+        total_pnl = sum(t["realized_pnl"] for t in trades)
+        total_fees = sum(
+            (t.get("entry_fee_usd", 0) or 0) + (t.get("exit_fee_usd", 0) or 0)
+            for t in trades
+        )
+        if total_fees == 0:
+            total_fees = len(trades) * 0.50
+        net_pnl = total_pnl - total_fees
+        ev_per_trade = net_pnl / len(trades)
+
+        # Demotion triggers
+        if max_streak > 20:
+            self.db.set_ticker_probation(
+                ticker, "PROBATION",
+                f"Auto-demoted: loss streak {max_streak} > 20 "
+                f"in trailing {len(trades)} trades",
+            )
+            self._probation_statuses[ticker] = "PROBATION"
+            logger.warning(
+                f"AGAPE-SPOT PROBATION: {ticker} DEMOTED to PROBATION "
+                f"(loss streak {max_streak})"
+            )
+        elif ev_per_trade < 0 and len(trades) >= 50:
+            self.db.set_ticker_probation(
+                ticker, "PROBATION",
+                f"Auto-demoted: EV ${ev_per_trade:.4f}/trade < $0 "
+                f"over trailing {len(trades)} trades",
+            )
+            self._probation_statuses[ticker] = "PROBATION"
+            logger.warning(
+                f"AGAPE-SPOT PROBATION: {ticker} DEMOTED to PROBATION "
+                f"(EV=${ev_per_trade:.4f})"
+            )
 
     # ==================================================================
     # Equity snapshot (per-ticker)
