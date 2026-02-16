@@ -540,10 +540,10 @@ class AgapeSpotExecutor:
     # Fee extraction (robust, with fallbacks)
     # =========================================================================
 
-    # Coinbase Advanced Trade taker fee rate.
+    # Coinbase Advanced Trade fee rates.
     # Actual rate depends on 30-day volume tier (0.40%-1.20%).
-    # 0.80% is a conservative mid-tier estimate for market orders.
-    COINBASE_TAKER_FEE_RATE = 0.008
+    COINBASE_TAKER_FEE_RATE = 0.008  # 0.80% conservative mid-tier for market orders
+    COINBASE_MAKER_FEE_RATE = 0.004  # 0.40% for limit orders (maker)
 
     def _extract_fee_from_fills(
         self, fills_list: list, side: str, ticker: str,
@@ -701,9 +701,11 @@ class AgapeSpotExecutor:
 
     def _estimate_fee(
         self, fill_price: float, quantity: float, ticker: str, side: str,
+        order_type: str = "market",
     ) -> float:
-        """Estimate fee using Coinbase taker fee rate when extraction fails.
+        """Estimate fee using Coinbase fee rate when extraction fails.
 
+        Uses maker rate for limit orders, taker rate for market orders.
         This is a last resort. The estimated fee is tagged as estimated
         in logs so you can distinguish real vs estimated fees in analysis.
 
@@ -711,11 +713,12 @@ class AgapeSpotExecutor:
             Estimated fee in USD (always > 0).
         """
         notional = fill_price * quantity
-        estimated_fee = round(notional * self.COINBASE_TAKER_FEE_RATE, 6)
+        rate = self.COINBASE_MAKER_FEE_RATE if order_type == "limit" else self.COINBASE_TAKER_FEE_RATE
+        estimated_fee = round(notional * rate, 6)
         logger.info(
             f"AGAPE-SPOT FEE: {side} {ticker} fee=${estimated_fee:.6f} "
-            f"(method=ESTIMATED, rate={self.COINBASE_TAKER_FEE_RATE:.3%}, "
-            f"notional=${notional:.2f})"
+            f"(method=ESTIMATED, rate={rate:.3%}, "
+            f"order_type={order_type}, notional=${notional:.2f})"
         )
         return estimated_fee
 
@@ -728,13 +731,14 @@ class AgapeSpotExecutor:
         quantity: float,
         ticker: str,
         side: str,
+        order_type: str = "market",
     ) -> float:
         """Resolve the fee for a trade using all available methods.
 
         Priority:
           1. Extract from fill objects (commission / size_in_quote)
           2. Fetch from order object (get_order → total_fees)
-          3. Estimate from notional × taker fee rate
+          3. Estimate from notional × fee rate (maker for limit, taker for market)
 
         Always returns a fee > 0. Never returns None.
         """
@@ -749,8 +753,8 @@ class AgapeSpotExecutor:
             if fee is not None and fee > 0:
                 return fee
 
-        # 3. Estimate
-        return self._estimate_fee(fill_price, quantity, ticker, side)
+        # 3. Estimate (uses maker rate for limit orders, taker for market)
+        return self._estimate_fee(fill_price, quantity, ticker, side, order_type)
 
     def _get_usd_balance_from_client(self, client) -> Optional[float]:
         """Get available USD balance directly from a specific Coinbase client.
@@ -869,6 +873,246 @@ class AgapeSpotExecutor:
         if limits and limits.get("base_min_size", 0) > 0:
             return limits["base_min_size"]
         return SPOT_TICKERS.get(ticker, {}).get("min_order", 0.001)
+
+    # =========================================================================
+    # Limit order support — reduces fees from 0.6% taker to 0.4% maker
+    # =========================================================================
+
+    def get_best_bid_ask(self, ticker: str, client=None) -> Tuple[Optional[float], Optional[float]]:
+        """Get best bid/ask from Coinbase product book.
+
+        Returns (best_bid, best_ask) or (None, None) on failure.
+        Uses the product ticker endpoint which includes bid/ask.
+        """
+        if client is None:
+            client = self._get_client(ticker)
+        if not client:
+            return (None, None)
+        try:
+            product = client.get_product(ticker)
+            if product:
+                bid = self._resp(product, "bid")
+                ask = self._resp(product, "ask")
+                if bid is not None and ask is not None:
+                    return (float(bid), float(ask))
+                # Fallback: use price as mid
+                price = self._resp(product, "price")
+                if price:
+                    p = float(price)
+                    # Estimate spread as 0.02% for majors, 0.05% for alts
+                    spread_pct = 0.0002 if ticker in ("ETH-USD", "BTC-USD") else 0.0005
+                    return (p * (1 - spread_pct), p * (1 + spread_pct))
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT Executor: Bid/ask lookup failed for {ticker}: {e}")
+        return (None, None)
+
+    def _place_limit_buy(
+        self, client, ticker: str, quantity: float, limit_price: float,
+        client_order_id: str,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Place a limit GTC buy and wait for fill, falling back to market order.
+
+        Returns (success, order_response, order_type) where order_type is
+        'limit' or 'market'.
+        """
+        timeout = self.config.limit_order_timeout_seconds
+        pd_val = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
+
+        try:
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIMIT BUY {ticker} "
+                f"qty={quantity} limit=${limit_price:.{pd_val}f} "
+                f"timeout={timeout}s"
+            )
+            order = client.limit_order_gtc_buy(
+                client_order_id=client_order_id,
+                product_id=ticker,
+                base_size=str(quantity),
+                limit_price=str(round(limit_price, pd_val)),
+            )
+
+            success = self._resp(order, "success", False)
+            if not success:
+                # Limit rejected — fall back to market
+                logger.warning(
+                    f"AGAPE-SPOT: Limit buy rejected for {ticker}, "
+                    f"falling back to market order"
+                )
+                return self._place_market_buy_fallback(
+                    client, ticker, quantity,
+                )
+
+            # Wait for fill
+            success_resp = self._resp(order, "success_response")
+            order_id = self._resp(success_resp, "order_id", "")
+
+            import time
+            fill_wait = 0
+            poll_interval = 2  # seconds
+            while fill_wait < timeout:
+                time.sleep(poll_interval)
+                fill_wait += poll_interval
+                try:
+                    order_status = client.get_order(order_id=str(order_id))
+                    status = self._resp(order_status, "status", "")
+                    if status in ("FILLED", "COMPLETED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit buy FILLED {ticker} "
+                            f"in {fill_wait}s (maker fee)"
+                        )
+                        return (True, order, "limit")
+                    if status in ("CANCELLED", "EXPIRED", "FAILED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit buy {status} {ticker}, "
+                            f"falling back to market"
+                        )
+                        return self._place_market_buy_fallback(
+                            client, ticker, quantity,
+                        )
+                except Exception:
+                    pass
+
+            # Timeout — cancel and fall back to market
+            try:
+                client.cancel_orders(order_ids=[str(order_id)])
+                logger.info(
+                    f"AGAPE-SPOT: Limit buy TIMED OUT {ticker} "
+                    f"after {timeout}s, cancelled → market fallback"
+                )
+            except Exception as ce:
+                logger.debug(f"AGAPE-SPOT: Cancel failed: {ce}")
+
+            return self._place_market_buy_fallback(
+                client, ticker, quantity,
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"AGAPE-SPOT: Limit buy exception for {ticker}: {e}, "
+                f"falling back to market"
+            )
+            return self._place_market_buy_fallback(
+                client, ticker, quantity,
+            )
+
+    def _place_market_buy_fallback(
+        self, client, ticker: str, quantity: float,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Market order fallback when limit order fails."""
+        fallback_id = str(uuid.uuid4())
+        try:
+            order = client.market_order_buy(
+                client_order_id=fallback_id,
+                product_id=ticker,
+                base_size=str(quantity),
+            )
+            success = self._resp(order, "success", False)
+            return (success, order, "market")
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT: Market buy fallback also failed: {e}")
+            return (False, None, "market")
+
+    def _place_limit_sell(
+        self, client, ticker: str, quantity: float, limit_price: float,
+        client_order_id: str,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Place a limit GTC sell and wait for fill, falling back to market order.
+
+        Returns (success, order_response, order_type).
+        """
+        timeout = self.config.limit_order_timeout_seconds
+        pd_val = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
+
+        try:
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIMIT SELL {ticker} "
+                f"qty={quantity} limit=${limit_price:.{pd_val}f} "
+                f"timeout={timeout}s"
+            )
+            order = client.limit_order_gtc_sell(
+                client_order_id=client_order_id,
+                product_id=ticker,
+                base_size=str(quantity),
+                limit_price=str(round(limit_price, pd_val)),
+            )
+
+            success = self._resp(order, "success", False)
+            if not success:
+                logger.warning(
+                    f"AGAPE-SPOT: Limit sell rejected for {ticker}, "
+                    f"falling back to market"
+                )
+                return self._place_market_sell_fallback(
+                    client, ticker, quantity,
+                )
+
+            success_resp = self._resp(order, "success_response")
+            order_id = self._resp(success_resp, "order_id", "")
+
+            import time
+            fill_wait = 0
+            poll_interval = 2
+            while fill_wait < timeout:
+                time.sleep(poll_interval)
+                fill_wait += poll_interval
+                try:
+                    order_status = client.get_order(order_id=str(order_id))
+                    status = self._resp(order_status, "status", "")
+                    if status in ("FILLED", "COMPLETED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit sell FILLED {ticker} "
+                            f"in {fill_wait}s (maker fee)"
+                        )
+                        return (True, order, "limit")
+                    if status in ("CANCELLED", "EXPIRED", "FAILED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit sell {status} {ticker}, "
+                            f"falling back to market"
+                        )
+                        return self._place_market_sell_fallback(
+                            client, ticker, quantity,
+                        )
+                except Exception:
+                    pass
+
+            try:
+                client.cancel_orders(order_ids=[str(order_id)])
+                logger.info(
+                    f"AGAPE-SPOT: Limit sell TIMED OUT {ticker} "
+                    f"after {timeout}s, cancelled → market fallback"
+                )
+            except Exception as ce:
+                logger.debug(f"AGAPE-SPOT: Cancel failed: {ce}")
+
+            return self._place_market_sell_fallback(
+                client, ticker, quantity,
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"AGAPE-SPOT: Limit sell exception for {ticker}: {e}, "
+                f"falling back to market"
+            )
+            return self._place_market_sell_fallback(
+                client, ticker, quantity,
+            )
+
+    def _place_market_sell_fallback(
+        self, client, ticker: str, quantity: float,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Market order fallback when limit sell fails."""
+        fallback_id = str(uuid.uuid4())
+        try:
+            order = client.market_order_sell(
+                client_order_id=fallback_id,
+                product_id=ticker,
+                base_size=str(quantity),
+            )
+            success = self._resp(order, "success", False)
+            return (success, order, "market")
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT: Market sell fallback also failed: {e}")
+            return (False, None, "market")
 
     # =========================================================================
     # Trade execution
@@ -1164,19 +1408,44 @@ class AgapeSpotExecutor:
                 f"(~${notional_est:.2f}) client_order_id={client_order_id}"
             )
 
-            # LONG-ONLY: Always buy to open
-            order = client.market_order_buy(
-                client_order_id=client_order_id,
-                product_id=signal.ticker,
-                base_size=str(quantity),
-            )
+            # LONG-ONLY: Buy to open — use limit orders when enabled (lower fees)
+            order_type = "market"
+            if self.config.use_limit_orders:
+                bid, ask = self.get_best_bid_ask(signal.ticker, client)
+                if bid and ask:
+                    # Place limit at ask - offset (aggressive, likely fills quickly)
+                    offset = self.config.limit_order_offset_pct / 100
+                    limit_price = ask * (1 - offset)
+                    success, order, order_type = self._place_limit_buy(
+                        client, signal.ticker, quantity, limit_price,
+                        client_order_id,
+                    )
+                    if not success:
+                        return None
+                else:
+                    # Can't get bid/ask — fall back to market order
+                    logger.info(
+                        f"AGAPE-SPOT: No bid/ask for {signal.ticker}, "
+                        f"using market order"
+                    )
+                    order = client.market_order_buy(
+                        client_order_id=client_order_id,
+                        product_id=signal.ticker,
+                        base_size=str(quantity),
+                    )
+            else:
+                order = client.market_order_buy(
+                    client_order_id=client_order_id,
+                    product_id=signal.ticker,
+                    base_size=str(quantity),
+                )
 
             # Log the raw response for debugging
             try:
                 if hasattr(order, "to_dict"):
-                    logger.info(f"AGAPE-SPOT: Order response: {order.to_dict()}")
+                    logger.info(f"AGAPE-SPOT: Order response ({order_type}): {order.to_dict()}")
                 else:
-                    logger.info(f"AGAPE-SPOT: Order response: {order}")
+                    logger.info(f"AGAPE-SPOT: Order response ({order_type}): {order}")
             except Exception:
                 logger.info(f"AGAPE-SPOT: Order response type={type(order).__name__}")
 
@@ -1225,6 +1494,7 @@ class AgapeSpotExecutor:
                     client, fills_list, order_id,
                     fill_price, quantity,
                     signal.ticker, "buy",
+                    order_type=order_type,
                 )
 
                 position = AgapeSpotPosition(
@@ -1375,18 +1645,39 @@ class AgapeSpotExecutor:
                 f"{position_id} qty={sell_qty} (~${notional_est:.2f}) ({reason})"
             )
 
-            order = client.market_order_sell(
-                client_order_id=client_order_id,
-                product_id=ticker,
-                base_size=str(sell_qty),
-            )
+            # Use limit orders when enabled (lower fees)
+            sell_order_type = "market"
+            if self.config.use_limit_orders:
+                bid, ask = self.get_best_bid_ask(ticker, client)
+                if bid and ask:
+                    # Place limit at bid + offset (aggressive, likely fills quickly)
+                    offset = self.config.limit_order_offset_pct / 100
+                    limit_price = bid * (1 + offset)
+                    success, order, sell_order_type = self._place_limit_sell(
+                        client, ticker, sell_qty, limit_price,
+                        client_order_id,
+                    )
+                    if not success:
+                        return (False, None, None)
+                else:
+                    order = client.market_order_sell(
+                        client_order_id=client_order_id,
+                        product_id=ticker,
+                        base_size=str(sell_qty),
+                    )
+            else:
+                order = client.market_order_sell(
+                    client_order_id=client_order_id,
+                    product_id=ticker,
+                    base_size=str(sell_qty),
+                )
 
             # Log raw response
             try:
                 if hasattr(order, "to_dict"):
-                    logger.info(f"AGAPE-SPOT: Sell response: {order.to_dict()}")
+                    logger.info(f"AGAPE-SPOT: Sell response ({sell_order_type}): {order.to_dict()}")
                 else:
-                    logger.info(f"AGAPE-SPOT: Sell response: {order}")
+                    logger.info(f"AGAPE-SPOT: Sell response ({sell_order_type}): {order}")
             except Exception:
                 pass
 
@@ -1432,12 +1723,14 @@ class AgapeSpotExecutor:
                     client, fills_list, order_id,
                     fill_price or current_price, sell_qty,
                     ticker, "sell",
+                    order_type=sell_order_type,
                 )
 
                 exec_details = {
                     "coinbase_sell_order_id": str(order_id),
                     "exit_slippage_pct": exit_slippage,
                     "exit_fee_usd": exit_fee,
+                    "order_type": sell_order_type,
                 }
 
                 logger.info(

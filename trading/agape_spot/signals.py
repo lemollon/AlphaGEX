@@ -51,14 +51,13 @@ try:
 except ImportError as e:
     logger.warning(f"AGAPE-SPOT Signals: CryptoDataProvider not available: {e}")
 
+# ProphetAdvisor DISABLED — designed for equity options, not crypto microstructure.
+# It only consumed VIX proxy + GEX (not funding, liquidations, leverage).
+# Returning hardcoded 0.5 win_prob is better than bad advice.
+# See CLAUDE.md "Tier 4 — Remove Prophet/Oracle" for rationale.
 ProphetAdvisor = None
 MarketContext = None
 GEXRegime = None
-try:
-    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
-    logger.info("AGAPE-SPOT Signals: ProphetAdvisor loaded")
-except ImportError as e:
-    logger.warning(f"AGAPE-SPOT Signals: ProphetAdvisor not available: {e}")
 
 # ML Shadow Advisor for shadow mode predictions
 _ml_advisor = None
@@ -174,11 +173,7 @@ class AgapeSpotSignalGenerator:
             except Exception as e:
                 logger.warning(f"AGAPE-SPOT Signals: Crypto provider init failed: {e}")
 
-        if ProphetAdvisor:
-            try:
-                self._prophet = ProphetAdvisor()
-            except Exception as e:
-                logger.warning(f"AGAPE-SPOT Signals: Prophet init failed: {e}")
+        # ProphetAdvisor removed — see module-level comment
 
     def get_market_data(self, ticker: str) -> Optional[Dict[str, Any]]:
         """Fetch market data for the given ticker.
@@ -350,78 +345,15 @@ class AgapeSpotSignalGenerator:
         return ((current_price - oldest_price) / oldest_price) * 100
 
     def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
-        """Get ProphetAdvisor recommendation with crypto microstructure context.
+        """Prophet/Oracle DISABLED — returns neutral defaults.
 
-        NOTE: ProphetAdvisor's MarketContext only accepts equity-GEX fields
-        (spot_price, vix, gex_net, gex_regime, gex_flip_point, day_of_week).
-        It does NOT consume funding_rate, ls_ratio, liquidations, or
-        leverage_regime — those are crypto-only fields used by the signal
-        generator directly. This is a known data gap: ProphetAdvisor was
-        designed for equity options and cannot reason about crypto
-        microstructure. The top_factors list includes crypto context for
-        logging/transparency even though Prophet doesn't use them.
+        ProphetAdvisor was designed for equity options and could not reason
+        about crypto microstructure (funding, liquidations, leverage).
+        Returning 0.5 win_prob lets the Bayesian tracker and EV gate
+        drive all entry decisions based on actual crypto signals.
         """
-        if not self._prophet:
-            return {
-                "advice": "UNAVAILABLE",
-                "win_probability": 0.5,
-                "confidence": 0.0,
-                "top_factors": ["oracle_unavailable"],
-            }
-
-        try:
-            vix_proxy = self._funding_to_vix_proxy(market_data.get("funding_rate", 0))
-            crypto_gex_regime = market_data.get("crypto_gex_regime", "NEUTRAL")
-
-            gex_regime_map = {
-                "POSITIVE": GEXRegime.POSITIVE,
-                "NEGATIVE": GEXRegime.NEGATIVE,
-                "NEUTRAL": GEXRegime.NEUTRAL,
-            }
-            gex_regime = gex_regime_map.get(crypto_gex_regime, GEXRegime.NEUTRAL)
-
-            context = MarketContext(
-                spot_price=market_data["spot_price"],
-                vix=vix_proxy,
-                gex_net=market_data.get("crypto_gex", 0),
-                gex_regime=gex_regime,
-                gex_flip_point=market_data.get("max_pain", market_data["spot_price"]),
-                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
-            )
-
-            recommendation = self._prophet.get_strategy_recommendation(context)
-            if recommendation:
-                advice = "TRADE" if recommendation.dir_suitability >= 0.5 else "SKIP"
-                # Include crypto microstructure in top_factors for transparency
-                # even though Prophet only consumed VIX proxy + GEX
-                crypto_factors = []
-                funding = market_data.get("funding_regime", "UNKNOWN")
-                if funding != "UNKNOWN":
-                    crypto_factors.append(f"funding={funding}")
-                ls = market_data.get("ls_bias", "NEUTRAL")
-                if ls != "NEUTRAL":
-                    crypto_factors.append(f"ls_bias={ls}")
-                squeeze = market_data.get("squeeze_risk", "LOW")
-                if squeeze != "LOW":
-                    crypto_factors.append(f"squeeze={squeeze}")
-
-                return {
-                    "advice": advice,
-                    "win_probability": recommendation.dir_suitability,
-                    "confidence": recommendation.confidence,
-                    "top_factors": [
-                        f"strategy={recommendation.recommended_strategy.value}",
-                        f"vix_regime={recommendation.vix_regime.value}",
-                        f"gex_regime={recommendation.gex_regime.value}",
-                        f"dir_suitability={recommendation.dir_suitability:.0%}",
-                        f"size_mult={recommendation.size_multiplier}",
-                    ] + crypto_factors,
-                }
-        except Exception as e:
-            logger.error(f"AGAPE-SPOT Signals: Prophet call failed: {e}")
-
         return {
-            "advice": "UNAVAILABLE",
+            "advice": "DISABLED",
             "win_probability": 0.5,
             "confidence": 0.0,
             "top_factors": ["oracle_error"],
@@ -936,11 +868,10 @@ class AgapeSpotSignalGenerator:
                     return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
 
         # Momentum fallback: if no microstructure signal fires but price is
-        # clearly rising, take the long.  This handles the case where
-        # combined_signal is WAIT (low confidence data) but the actual
-        # price trend is bullish.
+        # clearly rising, take the long.  For swing trading, require stronger
+        # momentum (0.5%+ vs old 0.1%) to filter out noise entries.
         momentum_pct = self.get_momentum_pct(ticker)
-        if momentum_pct is not None and momentum_pct > 0.1:
+        if momentum_pct is not None and momentum_pct > 0.5:
             should_skip, _ = tracker.should_skip_direction("LONG")
             if not should_skip:
                 return (SignalAction.LONG, self._build_reasoning("MOMENTUM_LONG", market_data))
@@ -1193,15 +1124,17 @@ class AgapeSpotSignalGenerator:
         volatility so normal market noise doesn't trigger them. Falls back
         to the fixed per-ticker percentages when ATR is unavailable.
 
-        Stop = max(1.5 × ATR, fixed_pct_stop)  — at least as wide as 1.5 ATR
-        Target = max(2.5 × ATR, fixed_pct_target) — 2.5:1.5 ATR reward:risk
+        Stop = max(2.0 × ATR, fixed_pct_stop)  — at least as wide as 2.0 ATR
+        Target = max(3.0 × stop, profit_target_pct) — 3:1 reward:risk minimum
         """
         exit_params = self.config.get_exit_params(ticker)
         max_loss_pct = exit_params["max_unrealized_loss_pct"]
+        profit_target_pct = exit_params.get("no_loss_profit_target_pct", 5.0)
 
         # Base stop/target from per-ticker config (the floor)
         stop_pct = max_loss_pct / 100
-        target_pct = stop_pct * 2  # 2:1 reward:risk
+        # 3:1 reward:risk — swing trades need big winners to overcome fees
+        target_pct = max(stop_pct * 3, profit_target_pct / 100) if profit_target_pct > 0 else stop_pct * 3
 
         squeeze = market_data.get("squeeze_risk", "LOW")
         if squeeze == "HIGH":
@@ -1215,14 +1148,14 @@ class AgapeSpotSignalGenerator:
         vc = vol_context or {}
         atr = vc.get("atr")
         if atr and atr > 0 and spot > 0:
-            # Stop: 1.5 × ATR below entry (covers normal noise)
-            # In choppy markets, widen to 2.0 × ATR
-            atr_mult = 2.0 if vc.get("is_choppy") else 1.5
+            # Stop: 2.0 × ATR below entry (swing trades need room for daily noise)
+            # In choppy markets, widen to 2.5 × ATR
+            atr_mult = 2.5 if vc.get("is_choppy") else 2.0
             atr_stop_distance = atr * atr_mult
             atr_stop_pct = atr_stop_distance / spot
 
-            # Target: proportional — keep 2:1 reward:risk vs ATR stop
-            atr_target_distance = atr_stop_distance * 2.0
+            # Target: 3:1 reward:risk vs ATR stop — fees need big wins
+            atr_target_distance = atr_stop_distance * 3.0
             atr_target_pct = atr_target_distance / spot
 
             # Use the WIDER of ATR-based or fixed-pct (ATR is the floor)
