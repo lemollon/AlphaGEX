@@ -220,8 +220,8 @@ class AgapeSpotConfig:
 
     # No-Loss Trailing
     use_no_loss_trailing: bool = True
-    no_loss_activation_pct: float = 1.5  # Was 1.0% — don't activate trail too early
-    no_loss_trail_distance_pct: float = 1.25  # Was 0.75% — was giving back exactly 0.75% every trade
+    no_loss_activation_pct: float = 2.5  # Was 1.5% — 1-min crypto noise is ±0.8-1.2%, need room above that
+    no_loss_trail_distance_pct: float = 1.75  # Was 1.25% — only 0.25% cushion after activation, noise kept stopping out
     no_loss_emergency_stop_pct: float = 5.0
     max_unrealized_loss_pct: float = 1.5  # Was 3.0% — losses were $30 vs $9 avg win, need 77% WR to break even
     no_loss_profit_target_pct: float = 0.0
@@ -278,9 +278,9 @@ class AgapeSpotConfig:
     # catches the bounce back to mean.
     enable_rsi_choppy_override: bool = True
     rsi_oversold_threshold: float = 30.0   # RSI below this = oversold entry
-    rsi_overbought_threshold: float = 67.0 # RSI above this = take profit exit
+    rsi_overbought_threshold: float = 72.0 # RSI above this = take profit exit (was 67 — exiting too early on normal bounces)
     rsi_lookback_periods: int = 14         # Standard RSI lookback
-    rsi_oversold_size_mult: float = 1.5    # 1.5x position size at RSI < 30
+    rsi_oversold_size_mult: float = 1.0    # No size boost at RSI < 30 (was 1.5x — amplified losses when reversion failed)
 
     def is_live(self, ticker: str) -> bool:
         """Return True if *ticker* should execute real Coinbase orders."""
