@@ -1654,7 +1654,7 @@ async def get_valor_paper_equity_curve(
         # If no trades yet, return starting point
         if not curve:
             paper_account = trader.get_paper_account()
-            starting_capital = paper_account.get('starting_capital', 500000.0) if paper_account else 500000.0
+            starting_capital = paper_account.get('starting_capital', 100000.0) if paper_account else 100000.0
             curve = [{
                 'date': datetime.now().date().isoformat(),
                 'daily_pnl': 0.0,

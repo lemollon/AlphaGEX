@@ -766,11 +766,12 @@ const fetchers = {
   valorEquityCurve: async (days: number = 30, ticker?: string) => {
     const params = new URLSearchParams({ days: String(days) })
     if (ticker) params.append('ticker', ticker)
-    const response = await api.get(`/api/valor/paper-equity-curve?${params}`)
+    const response = await api.get(`/api/valor/equity-curve?${params}`)
     return response.data
   },
-  valorIntradayEquity: async () => {
-    const response = await api.get('/api/valor/equity-curve/intraday')
+  valorIntradayEquity: async (ticker?: string) => {
+    const params = ticker ? `?ticker=${ticker}` : ''
+    const response = await api.get(`/api/valor/equity-curve/intraday${params}`)
     return response.data
   },
   valorTickers: async () => {
@@ -1949,12 +1950,16 @@ export function useValorTickerStats(options?: SWRConfiguration) {
   })
 }
 
-export function useValorIntradayEquity(options?: SWRConfiguration) {
-  return useSWR('valor-intraday-equity', fetchers.valorIntradayEquity, {
-    ...swrConfig,
-    refreshInterval: 60 * 1000,
-    ...options,
-  })
+export function useValorIntradayEquity(ticker?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `valor-intraday-equity-${ticker || 'all'}`,
+    () => fetchers.valorIntradayEquity(ticker),
+    {
+      ...swrConfig,
+      refreshInterval: 60 * 1000,
+      ...options,
+    }
+  )
 }
 
 export function useValorConfig(options?: SWRConfiguration) {
