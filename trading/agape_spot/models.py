@@ -198,16 +198,14 @@ class AgapeSpotConfig:
     bot_name: str = "AGAPE-SPOT"
     mode: TradingMode = TradingMode.PAPER
 
-    # Active tickers (XRP-USD, SHIB-USD disabled — negative EV, no fix for core issue)
-    tickers: List[str] = field(
-        default_factory=lambda: [t for t in SPOT_TICKERS if t not in ("XRP-USD", "SHIB-USD")]
-    )
+    # Active tickers
+    tickers: List[str] = field(default_factory=lambda: list(SPOT_TICKERS.keys()))
 
     # Per-ticker live trading: tickers in this list execute real Coinbase orders.
     # Tickers NOT in this list run in paper mode regardless of global mode.
     # ETH-USD and BTC-USD use COINBASE_DEDICATED_API_KEY (shared dedicated account).
     live_tickers: List[str] = field(
-        default_factory=lambda: ["ETH-USD", "BTC-USD", "DOGE-USD", "MSTU-USD"]
+        default_factory=lambda: ["ETH-USD", "BTC-USD", "XRP-USD", "SHIB-USD", "DOGE-USD", "MSTU-USD"]
     )
 
     # Risk management (shared)
