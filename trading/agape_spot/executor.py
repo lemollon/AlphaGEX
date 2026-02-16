@@ -536,6 +536,222 @@ class AgapeSpotExecutor:
             return obj.get(key, default)
         return default
 
+    # =========================================================================
+    # Fee extraction (robust, with fallbacks)
+    # =========================================================================
+
+    # Coinbase Advanced Trade taker fee rate.
+    # Actual rate depends on 30-day volume tier (0.40%-1.20%).
+    # 0.80% is a conservative mid-tier estimate for market orders.
+    COINBASE_TAKER_FEE_RATE = 0.008
+
+    def _extract_fee_from_fills(
+        self, fills_list: list, side: str, ticker: str,
+    ) -> Optional[float]:
+        """Extract total fee from Coinbase fill objects.
+
+        Tries multiple field names because the Coinbase SDK has changed
+        field names across versions:
+          - "commission" (documented in REST API)
+          - "trade_commission" (some SDK versions)
+          - "fee" (older SDK versions)
+
+        Also tries to derive fee from size_in_quote when commission
+        fields are unavailable: fee = size_in_quote - (price * size).
+
+        Args:
+            fills_list: List of fill objects from client.get_fills()
+            side: "buy" or "sell" — for logging context
+            ticker: Ticker symbol for logging
+
+        Returns:
+            Total fee in USD, or None if extraction failed entirely.
+        """
+        if not fills_list:
+            return None
+
+        total_fee = 0.0
+        extraction_method = None
+
+        # --- Attempt 1: Direct commission field ---
+        # Try multiple field names that Coinbase SDK has used
+        for fee_field in ("commission", "trade_commission", "fee"):
+            try:
+                field_fee = 0.0
+                field_found = False
+                for f in fills_list:
+                    raw_val = self._resp(f, fee_field)
+                    if raw_val is not None and raw_val != "" and raw_val != "0":
+                        field_found = True
+                        parsed = float(raw_val)
+                        if parsed > 0:
+                            field_fee += parsed
+                if field_found and field_fee > 0:
+                    total_fee = field_fee
+                    extraction_method = fee_field
+                    break
+            except (ValueError, TypeError):
+                continue
+
+        # --- Attempt 2: Derive from size_in_quote ---
+        # size_in_quote = total USD value INCLUDING fee for a buy,
+        # or total USD received MINUS fee for a sell.
+        # fee = |size_in_quote - (price * size)|
+        if total_fee == 0:
+            try:
+                derived_fee = 0.0
+                for f in fills_list:
+                    siq = self._resp(f, "size_in_quote")
+                    price = self._resp(f, "price")
+                    size = self._resp(f, "size")
+                    if siq is not None and price is not None and size is not None:
+                        siq_f = float(siq)
+                        price_f = float(price)
+                        size_f = float(size)
+                        if siq_f > 0 and price_f > 0 and size_f > 0:
+                            raw_value = price_f * size_f
+                            fill_fee = abs(siq_f - raw_value)
+                            # Sanity: fee should be < 5% of trade value
+                            if fill_fee < raw_value * 0.05:
+                                derived_fee += fill_fee
+                if derived_fee > 0:
+                    total_fee = derived_fee
+                    extraction_method = "size_in_quote_derived"
+            except (ValueError, TypeError):
+                pass
+
+        if total_fee > 0:
+            total_fee = round(total_fee, 6)
+            logger.info(
+                f"AGAPE-SPOT FEE: {side} {ticker} fee=${total_fee:.6f} "
+                f"(method={extraction_method}, fills={len(fills_list)})"
+            )
+            return total_fee
+
+        # Log what we actually got for debugging
+        if fills_list:
+            try:
+                sample = fills_list[0]
+                debug_fields = {}
+                for field_name in ("commission", "trade_commission", "fee", "size_in_quote", "price", "size"):
+                    val = self._resp(sample, field_name)
+                    debug_fields[field_name] = repr(val)
+                logger.warning(
+                    f"AGAPE-SPOT FEE: {side} {ticker} — could not extract fee "
+                    f"from {len(fills_list)} fills. Sample fill fields: {debug_fields}"
+                )
+            except Exception:
+                logger.warning(
+                    f"AGAPE-SPOT FEE: {side} {ticker} — could not extract fee "
+                    f"from {len(fills_list)} fills (debug logging also failed)"
+                )
+
+        return None
+
+    def _get_fee_from_order(
+        self, client, order_id: str, side: str, ticker: str,
+    ) -> Optional[float]:
+        """Fetch fee from the order object itself via get_order().
+
+        Coinbase order objects contain 'total_fees' which is the
+        authoritative fee for the entire order. This is more reliable
+        than summing fill-level commissions.
+
+        Args:
+            client: Coinbase REST client
+            order_id: The Coinbase order ID
+            side: "buy" or "sell" — for logging
+            ticker: Ticker symbol for logging
+
+        Returns:
+            Fee in USD, or None if unavailable.
+        """
+        try:
+            order_resp = client.get_order(order_id=str(order_id))
+            if order_resp:
+                # Try 'total_fees' (primary)
+                total_fees = self._resp(order_resp, "total_fees")
+                if total_fees is not None and total_fees != "" and total_fees != "0":
+                    fee = float(total_fees)
+                    if fee > 0:
+                        logger.info(
+                            f"AGAPE-SPOT FEE: {side} {ticker} fee=${fee:.6f} "
+                            f"(method=get_order.total_fees)"
+                        )
+                        return round(fee, 6)
+
+                # Try nested order_configuration.total_fees or similar
+                order_config = self._resp(order_resp, "order_configuration")
+                if order_config:
+                    tf = self._resp(order_config, "total_fees")
+                    if tf is not None and tf != "" and tf != "0":
+                        fee = float(tf)
+                        if fee > 0:
+                            logger.info(
+                                f"AGAPE-SPOT FEE: {side} {ticker} fee=${fee:.6f} "
+                                f"(method=get_order.order_config.total_fees)"
+                            )
+                            return round(fee, 6)
+        except Exception as e:
+            logger.debug(
+                f"AGAPE-SPOT FEE: get_order fee lookup failed for {ticker} "
+                f"order={order_id}: {e}"
+            )
+        return None
+
+    def _estimate_fee(
+        self, fill_price: float, quantity: float, ticker: str, side: str,
+    ) -> float:
+        """Estimate fee using Coinbase taker fee rate when extraction fails.
+
+        This is a last resort. The estimated fee is tagged as estimated
+        in logs so you can distinguish real vs estimated fees in analysis.
+
+        Returns:
+            Estimated fee in USD (always > 0).
+        """
+        notional = fill_price * quantity
+        estimated_fee = round(notional * self.COINBASE_TAKER_FEE_RATE, 6)
+        logger.info(
+            f"AGAPE-SPOT FEE: {side} {ticker} fee=${estimated_fee:.6f} "
+            f"(method=ESTIMATED, rate={self.COINBASE_TAKER_FEE_RATE:.3%}, "
+            f"notional=${notional:.2f})"
+        )
+        return estimated_fee
+
+    def _resolve_fee(
+        self,
+        client,
+        fills_list: list,
+        order_id: str,
+        fill_price: float,
+        quantity: float,
+        ticker: str,
+        side: str,
+    ) -> float:
+        """Resolve the fee for a trade using all available methods.
+
+        Priority:
+          1. Extract from fill objects (commission / size_in_quote)
+          2. Fetch from order object (get_order → total_fees)
+          3. Estimate from notional × taker fee rate
+
+        Always returns a fee > 0. Never returns None.
+        """
+        # 1. Try fills
+        fee = self._extract_fee_from_fills(fills_list, side, ticker)
+        if fee is not None and fee > 0:
+            return fee
+
+        # 2. Try order-level fee
+        if client and order_id:
+            fee = self._get_fee_from_order(client, order_id, side, ticker)
+            if fee is not None and fee > 0:
+                return fee
+
+        # 3. Estimate
+        return self._estimate_fee(fill_price, quantity, ticker, side)
+
     def _get_usd_balance_from_client(self, client) -> Optional[float]:
         """Get available USD balance directly from a specific Coinbase client.
 
@@ -1004,18 +1220,12 @@ class AgapeSpotExecutor:
                     if signal.spot_price > 0 else None
                 )
 
-                # Extract fee from fills if available
-                entry_fee = None
-                try:
-                    if fills_list:
-                        entry_fee = sum(
-                            float(self._resp(f, "commission", 0))
-                            for f in fills_list
-                        )
-                        if entry_fee == 0:
-                            entry_fee = None
-                except Exception:
-                    pass
+                # Extract fee using robust multi-method resolution
+                entry_fee = self._resolve_fee(
+                    client, fills_list, order_id,
+                    fill_price, quantity,
+                    signal.ticker, "buy",
+                )
 
                 position = AgapeSpotPosition(
                     position_id=position_id,
@@ -1186,6 +1396,7 @@ class AgapeSpotExecutor:
                 success_resp = self._resp(order, "success_response")
                 order_id = self._resp(success_resp, "order_id", "")
                 fill_price = None
+                fills_list = []
 
                 try:
                     fills = client.get_fills(order_id=str(order_id))
@@ -1216,18 +1427,12 @@ class AgapeSpotExecutor:
                         (fill_price - current_price) / current_price * 100, 4
                     )
 
-                # Extract fee
-                exit_fee = None
-                try:
-                    if fills_list:
-                        exit_fee = sum(
-                            float(self._resp(f, "commission", 0))
-                            for f in fills_list
-                        )
-                        if exit_fee == 0:
-                            exit_fee = None
-                except Exception:
-                    pass
+                # Extract fee using robust multi-method resolution
+                exit_fee = self._resolve_fee(
+                    client, fills_list, order_id,
+                    fill_price or current_price, sell_qty,
+                    ticker, "sell",
+                )
 
                 exec_details = {
                     "coinbase_sell_order_id": str(order_id),
