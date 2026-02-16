@@ -608,76 +608,8 @@ export default function ValorPage() {
                 </div>
               )}
 
-              {/* Open Positions */}
-              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                  <Activity className="h-5 w-5 text-yellow-400" />
-                  Open Positions ({positions.length})
-                </h3>
-
-                {positions.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Zap className="h-12 w-12 text-gray-600 mx-auto mb-4" />
-                    <p className="text-gray-400">No open positions</p>
-                    <p className="text-gray-500 text-sm mt-2">
-                      VALOR will open positions when GEX signals meet criteria
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {positions.map((position: any) => {
-                      const posTicker = position.ticker || 'MES'
-                      const posMeta = getTickerMeta(posTicker)
-                      return (
-                      <div key={position.position_id} className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <div className={`p-2 rounded-lg ${
-                              position.direction === 'LONG'
-                                ? 'bg-green-900/50 text-green-400'
-                                : 'bg-red-900/50 text-red-400'
-                            }`}>
-                              {position.direction === 'LONG'
-                                ? <TrendingUp className="h-5 w-5" />
-                                : <TrendingDown className="h-5 w-5" />
-                              }
-                            </div>
-                            <div>
-                              <div className="font-semibold flex items-center gap-2">
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: posMeta.hexColor + '20', color: posMeta.hexColor }}>
-                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: posMeta.hexColor }} />
-                                  {posTicker}
-                                </span>
-                                {position.symbol}
-                              </div>
-                              <div className="text-sm text-gray-400">
-                                {position.contracts} contracts @ {position.entry_price?.toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                          <div className={`px-3 py-1 rounded-full text-sm ${
-                            position.gamma_regime === 'POSITIVE'
-                              ? 'bg-blue-900/50 text-blue-400'
-                              : 'bg-purple-900/50 text-purple-400'
-                          }`}>
-                            {position.gamma_regime} GAMMA
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-4 gap-4 mt-3 text-sm text-gray-400">
-                          <div>Stop: <span className="text-white font-mono">{position.current_stop?.toFixed(2)}</span></div>
-                          <div>Trailing: <span className={position.trailing_active ? 'text-green-400' : 'text-gray-500'}>{position.trailing_active ? 'Active' : 'Inactive'}</span></div>
-                          <div>Opened: <span className="text-white">{new Date(position.open_time).toLocaleTimeString()}</span></div>
-                          <div>ID: <span className="text-white font-mono text-xs">{position.position_id?.slice(0, 8)}</span></div>
-                        </div>
-                      </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
               {/* Margin Analysis */}
-              <MarginAnalysis botName="VALOR" marketType="stock_futures" marginEndpoint="/api/valor/margin" />
+              <MarginAnalysis botName="VALOR" marketType="stock_futures" marginEndpoint={selectedTicker ? `/api/valor/margin?ticker=${selectedTicker}` : '/api/valor/margin'} />
 
               {/* Equity Curve */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
@@ -770,6 +702,74 @@ export default function ValorPage() {
                       <p>No equity data for {selectedTimeframe.label}</p>
                       <p className="text-xs mt-1">Data will appear after trades are executed</p>
                     </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Open Positions */}
+              <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-yellow-400" />
+                  Open Positions ({positions.length})
+                </h3>
+
+                {positions.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Zap className="h-12 w-12 text-gray-600 mx-auto mb-4" />
+                    <p className="text-gray-400">No open positions</p>
+                    <p className="text-gray-500 text-sm mt-2">
+                      VALOR will open positions when GEX signals meet criteria
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {positions.map((position: any) => {
+                      const posTicker = position.ticker || 'MES'
+                      const posMeta = getTickerMeta(posTicker)
+                      return (
+                      <div key={position.position_id} className="bg-gray-900/50 rounded-lg p-4 border border-gray-800">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className={`p-2 rounded-lg ${
+                              position.direction === 'LONG'
+                                ? 'bg-green-900/50 text-green-400'
+                                : 'bg-red-900/50 text-red-400'
+                            }`}>
+                              {position.direction === 'LONG'
+                                ? <TrendingUp className="h-5 w-5" />
+                                : <TrendingDown className="h-5 w-5" />
+                              }
+                            </div>
+                            <div>
+                              <div className="font-semibold flex items-center gap-2">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: posMeta.hexColor + '20', color: posMeta.hexColor }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: posMeta.hexColor }} />
+                                  {posTicker}
+                                </span>
+                                {position.symbol}
+                              </div>
+                              <div className="text-sm text-gray-400">
+                                {position.contracts} contracts @ {position.entry_price?.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                          <div className={`px-3 py-1 rounded-full text-sm ${
+                            position.gamma_regime === 'POSITIVE'
+                              ? 'bg-blue-900/50 text-blue-400'
+                              : 'bg-purple-900/50 text-purple-400'
+                          }`}>
+                            {position.gamma_regime} GAMMA
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-4 gap-4 mt-3 text-sm text-gray-400">
+                          <div>Stop: <span className="text-white font-mono">{position.current_stop?.toFixed(2)}</span></div>
+                          <div>Trailing: <span className={position.trailing_active ? 'text-green-400' : 'text-gray-500'}>{position.trailing_active ? 'Active' : 'Inactive'}</span></div>
+                          <div>Opened: <span className="text-white">{new Date(position.open_time).toLocaleTimeString()}</span></div>
+                          <div>ID: <span className="text-white font-mono text-xs">{position.position_id?.slice(0, 8)}</span></div>
+                        </div>
+                      </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>

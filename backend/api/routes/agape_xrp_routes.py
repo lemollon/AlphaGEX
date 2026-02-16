@@ -937,7 +937,10 @@ async def get_margin_analysis():
 
         spec = FUTURES_MARGIN_SPECS.get("XRP_FUT", {})
         positions = trader.db.get_open_positions()
-        current_price = trader.executor.get_current_price()
+        try:
+            current_price = trader.executor.get_current_price()
+        except Exception:
+            current_price = None
 
         starting_capital = getattr(trader.config, "starting_capital", 25000.0)
         closed = trader.db.get_closed_trades(limit=10000)
@@ -946,12 +949,13 @@ async def get_margin_analysis():
 
         position_margins = []
         for pos in positions:
-            if not current_price:
+            pos_price = current_price or pos.get("entry_price", 0)
+            if not pos_price:
                 continue
             contracts = pos.get("contracts", 1)
             result = MarginCalculator.calculate_futures_margin(
                 entry_price=pos["entry_price"],
-                current_price=current_price,
+                current_price=pos_price,
                 contracts=contracts,
                 side=pos.get("side", "long"),
                 point_value=spec.get("point_value", 2500.0),
@@ -964,7 +968,7 @@ async def get_margin_analysis():
             result["side"] = pos.get("side", "long")
             result["contracts"] = contracts
             result["entry_price"] = pos["entry_price"]
-            result["current_price"] = current_price
+            result["current_price"] = pos_price
             position_margins.append(result)
 
         summary = MarginCalculator.aggregate_positions(position_margins, account_equity, "crypto_futures")
