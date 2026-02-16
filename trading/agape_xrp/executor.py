@@ -65,6 +65,21 @@ class AgapeXrpExecutor:
     def execute_trade(self, signal: AgapeXrpSignal) -> Optional[AgapeXrpPosition]:
         if not signal.is_valid:
             return None
+
+        # Pre-trade margin check (STRICT - CME futures use leverage, must verify margin)
+        from trading.margin.pre_trade_check import check_margin_before_trade
+        approved, reason = check_margin_before_trade(
+            bot_name="AGAPE_XRP",
+            symbol="/XRP",
+            side=signal.side or "long",
+            quantity=float(signal.contracts) if hasattr(signal, 'contracts') else signal.quantity,
+            entry_price=signal.entry_price or signal.spot_price,
+            strict=True,
+        )
+        if not approved:
+            logger.warning(f"AGAPE-XRP: Trade BLOCKED by margin check: {reason}")
+            return None
+
         if self.config.mode == TradingMode.LIVE:
             return self._execute_live(signal)
         return self._execute_paper(signal)

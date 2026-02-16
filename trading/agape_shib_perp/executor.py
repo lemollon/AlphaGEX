@@ -35,21 +35,19 @@ class AgapeShibPerpExecutor:
         if not signal.is_valid:
             return None
 
-        # Pre-trade margin check (non-blocking on failure)
-        try:
-            from trading.margin.pre_trade_check import check_margin_before_trade
-            approved, reason = check_margin_before_trade(
-                bot_name="AGAPE_SHIB_PERP",
-                symbol="SHIB-PERP",
-                side=signal.side or "long",
-                quantity=signal.quantity,
-                entry_price=signal.entry_price or signal.spot_price,
-            )
-            if not approved:
-                logger.warning(f"AGAPE-SHIB-PERP: Trade rejected by margin check: {reason}")
-                return None
-        except Exception as e:
-            logger.debug(f"AGAPE-SHIB-PERP: Margin check skipped: {e}")
+        # Pre-trade margin check (STRICT - perpetuals use leverage, must verify margin)
+        from trading.margin.pre_trade_check import check_margin_before_trade
+        approved, reason = check_margin_before_trade(
+            bot_name="AGAPE_SHIB_PERP",
+            symbol="SHIB-PERP",
+            side=signal.side or "long",
+            quantity=signal.quantity,
+            entry_price=signal.entry_price or signal.spot_price,
+            strict=True,
+        )
+        if not approved:
+            logger.warning(f"AGAPE-SHIB-PERP: Trade BLOCKED by margin check: {reason}")
+            return None
 
         if self.config.mode == TradingMode.LIVE:
             return self._execute_paper(signal)

@@ -433,6 +433,21 @@ class TastytradeExecutor:
         Returns:
             (success, message, order_id)
         """
+        # Pre-trade margin check (STRICT - MES futures use leverage, must verify margin)
+        from trading.margin.pre_trade_check import check_margin_before_trade
+        ticker = getattr(signal, 'ticker', None) or "MES"
+        approved, reason = check_margin_before_trade(
+            bot_name="VALOR",
+            symbol=ticker,
+            side=signal.direction.value if hasattr(signal.direction, 'value') else str(signal.direction),
+            quantity=float(signal.contracts),
+            entry_price=signal.entry_price,
+            strict=True,
+        )
+        if not approved:
+            logger.warning(f"VALOR: Trade BLOCKED by margin check: {reason}")
+            return False, f"Margin check failed: {reason}", None
+
         if self.config.mode == TradingMode.PAPER:
             return self._simulate_execution(signal, position_id)
 

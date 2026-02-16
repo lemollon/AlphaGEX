@@ -36,6 +36,7 @@ def check_margin_before_trade(
     entry_price: float,
     leverage: Optional[float] = None,
     account_equity: Optional[float] = None,
+    strict: bool = False,
 ) -> Tuple[bool, str]:
     """Check if a proposed trade passes margin requirements.
 
@@ -50,14 +51,22 @@ def check_margin_before_trade(
         entry_price: Expected entry price
         leverage: Optional leverage override (for perps)
         account_equity: Optional equity override
+        strict: If True, BLOCK trades when margin system is unavailable.
+                Use strict=True for leveraged products (futures, perpetuals)
+                where trading without margin checks risks liquidation.
+                Use strict=False (default) for options/spot where max loss
+                is defined at entry.
 
     Returns:
         Tuple of (approved: bool, reason: str)
         If approved is False, reason explains why.
 
     Note:
-        If margin system is unavailable, returns (True, "margin_system_unavailable")
-        to avoid blocking trades when margin tracking isn't loaded.
+        When strict=False (default): margin system errors allow the trade
+        through to avoid blocking when margin tracking isn't loaded.
+        When strict=True: margin system errors BLOCK the trade. This is
+        the correct behavior for futures/perpetuals where you can lose
+        more than your account balance if margin isn't tracked.
     """
     try:
         from trading.margin.margin_monitor import get_margin_monitor
@@ -76,28 +85,43 @@ def check_margin_before_trade(
         )
 
         if result is None:
-            # Margin system can't determine - allow trade but warn
+            if strict:
+                logger.warning(
+                    f"MARGIN BLOCKED {bot_name}: margin data unavailable "
+                    f"(strict mode - cannot trade without margin verification)"
+                )
+                return False, "margin_data_unavailable_strict"
             logger.debug(f"Margin check unavailable for {bot_name} - allowing trade")
             return True, "margin_data_unavailable"
 
         if result["approved"]:
-            logger.debug(
-                f"Margin check APPROVED for {bot_name}: "
-                f"usage={result['new_margin_usage_pct']:.1f}%"
+            logger.info(
+                f"MARGIN APPROVED {bot_name}: {side} {quantity} {symbol} @ "
+                f"${entry_price:,.2f} | usage={result['new_margin_usage_pct']:.1f}%"
             )
             return True, "approved"
         else:
             logger.warning(
-                f"Margin check REJECTED for {bot_name}: {result['reason']}"
+                f"MARGIN REJECTED {bot_name}: {result['reason']}"
             )
             return False, result["reason"]
 
     except ImportError:
-        # Margin module not installed - allow trade
+        if strict:
+            logger.error(
+                f"MARGIN BLOCKED {bot_name}: margin module not installed "
+                f"(strict mode - cannot trade leveraged products without margin system)"
+            )
+            return False, "margin_module_not_available_strict"
         logger.debug("Margin module not available - allowing trade")
         return True, "margin_module_not_available"
     except Exception as e:
-        # Never block trades due to margin system errors
+        if strict:
+            logger.error(
+                f"MARGIN BLOCKED {bot_name}: margin check error: {e} "
+                f"(strict mode - cannot trade leveraged products without margin verification)"
+            )
+            return False, f"margin_check_error_strict: {e}"
         logger.warning(f"Margin check error for {bot_name}: {e} - allowing trade")
         return True, f"margin_check_error: {e}"
 
