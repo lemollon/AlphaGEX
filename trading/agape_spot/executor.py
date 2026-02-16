@@ -1219,12 +1219,15 @@ class AgapeSpotExecutor:
                 open_time=now,
                 high_water_mark=round(fill_price, pd),
                 account_label=account_label,
+                # Estimate entry fee: Coinbase taker fee ~0.6% for market orders
+                entry_fee_usd=round(signal.quantity * fill_price * 0.006, 4),
             )
 
             notional = signal.quantity * fill_price
             logger.info(
                 f"AGAPE-SPOT: PAPER BUY [{account_label}] {signal.ticker} "
-                f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.{pd}f}"
+                f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.{pd}f} "
+                f"(est fee ${position.entry_fee_usd:.4f})"
             )
             return position
 
@@ -1282,13 +1285,15 @@ class AgapeSpotExecutor:
                 open_time=now,
                 high_water_mark=round(live_fill_price, pd),
                 account_label=account_label,
+                # Estimate entry fee: Coinbase taker fee ~0.6% for market orders
+                entry_fee_usd=round(live_quantity * live_fill_price * 0.006, 4),
             )
 
             notional = live_quantity * live_fill_price
             logger.info(
                 f"AGAPE-SPOT: PAPER MIRROR [{account_label}] {signal.ticker} "
                 f"{live_quantity:.4f} (${notional:.2f}) @ ${live_fill_price:.{pd}f} "
-                f"(mirroring live fill)"
+                f"(paper sizing, live price, est fee ${position.entry_fee_usd:.4f})"
             )
             return position
 
