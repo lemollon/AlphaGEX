@@ -1047,6 +1047,59 @@ class AgapeSpotTrader:
         profit_target_pct = exit_params["no_loss_profit_target_pct"]
         max_hold = exit_params["max_hold_hours"]
 
+        # ----- Minimum hold time gate -----
+        # Block all exits during the first N minutes unless RSI is overbought.
+        # Crypto 5-min ATR is 0.3-0.5%, so a normal dip can trigger MAX_LOSS
+        # before the trade develops.  RSI > 70 override lets us exit overbought
+        # spikes immediately even during the grace period.
+        min_hold_min = self.config.min_hold_minutes
+        rsi_override_thresh = self.config.rsi_exit_override_threshold
+        open_time_raw = pos.get("open_time")
+        hold_minutes = None
+        if open_time_raw:
+            try:
+                if isinstance(open_time_raw, str):
+                    ot = datetime.fromisoformat(open_time_raw)
+                else:
+                    ot = open_time_raw
+                if ot.tzinfo is None:
+                    ot = ot.replace(tzinfo=CENTRAL_TZ)
+                hold_minutes = (now - ot).total_seconds() / 60.0
+            except (ValueError, TypeError):
+                pass
+
+        if hold_minutes is not None and hold_minutes < min_hold_min:
+            # Check RSI override: allow exit if overbought
+            rsi = (vol_context or {}).get("rsi") if vol_context else None
+            if rsi is not None and rsi > rsi_override_thresh:
+                profit_pct_check = ((current_price - entry_price) / entry_price) * 100
+                if profit_pct_check > 0:
+                    logger.info(
+                        f"AGAPE-SPOT MIN_HOLD OVERRIDE: {ticker} {position_id} "
+                        f"RSI={rsi:.1f} > {rsi_override_thresh} at {hold_minutes:.1f}min "
+                        f"— allowing early exit (in profit +{profit_pct_check:.2f}%)"
+                    )
+                    return self._close_position(
+                        ticker, pos, current_price,
+                        f"RSI_OVERBOUGHT_{rsi:.0f}_EARLY_+{profit_pct_check:.1f}pct",
+                    )
+
+            # Emergency stop still fires during min hold (can't let 5%+ losses run)
+            profit_pct_check = ((current_price - entry_price) / entry_price) * 100
+            if -profit_pct_check >= emergency_pct:
+                logger.info(
+                    f"AGAPE-SPOT MIN_HOLD EMERGENCY: {ticker} {position_id} "
+                    f"at {hold_minutes:.1f}min but loss={profit_pct_check:.2f}% "
+                    f">= emergency {emergency_pct}%"
+                )
+                stop_price = entry_price * (1 - emergency_pct / 100)
+                return self._close_position(ticker, pos, stop_price, "EMERGENCY_STOP")
+
+            # Otherwise: skip all exit checks, let the trade develop
+            # Still update HWM so trailing stop is ready when grace period ends
+            self._update_hwm(position_id, current_price, pos.get("high_water_mark") or entry_price)
+            return False
+
         # Dynamic trend-aware exits: scale hold time and trail with trend strength
         # Stronger trends get wider exits so positions ride momentum
         trend_pct = self._get_trend_strength(ticker, current_price)
@@ -1064,13 +1117,22 @@ class AgapeSpotTrader:
             # 12h during mild uptrends, defeating the purpose of the tight config.
             # max_hold is a safety ceiling, not a trend-riding parameter.
 
-        # ATR-adaptive: override fixed percentages when ATR data exists
+        # ATR-adaptive: override fixed percentages when ATR data exists.
+        # Primary source: atr_at_entry (stored when position was opened).
+        # Fallback: current vol_context ATR (computed this scan cycle).
+        # This ensures ATR-adaptive exits work even when entry ATR was
+        # unavailable (e.g., candle API was down at entry time).
         atr = pos.get("atr_at_entry")
+        chop = pos.get("chop_index_at_entry")
+        atr_source = "entry"
+        if (not atr or atr <= 0) and vol_context:
+            atr = (vol_context or {}).get("atr")
+            chop = (vol_context or {}).get("chop_index")
+            atr_source = "current"
         if atr and atr > 0 and entry_price > 0:
             atr_pct = (atr / entry_price) * 100  # ATR as % of entry price
 
             # Stop: 1.5 × ATR (or 2.0 × ATR if entered in choppy market)
-            chop = pos.get("chop_index_at_entry")
             atr_mult = 2.0 if (chop and chop > 0.65) else 1.5
             atr_stop_pct = atr_pct * atr_mult
 
@@ -1091,7 +1153,8 @@ class AgapeSpotTrader:
                     f"AGAPE-SPOT ATR-ADAPTIVE: {ticker} {position_id} "
                     f"stop widened {old_max_loss:.2f}% -> {max_loss_pct:.2f}% "
                     f"(ATR=${atr:.4f}, atr_pct={atr_pct:.2f}%, "
-                    f"chop={chop or 'N/A'}, mult={atr_mult}x)"
+                    f"chop={chop or 'N/A'}, mult={atr_mult}x, "
+                    f"source={atr_source})"
                 )
 
         # Use per-ticker price decimals (SHIB=8, XRP/DOGE=4, ETH=2)
