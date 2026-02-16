@@ -1081,9 +1081,18 @@ class AgapeSpotTrader:
             atr_trail_pct = atr_pct * 1.0
 
             # Use the WIDER of ATR-based or config (never tighter than ATR)
+            old_max_loss = max_loss_pct
             max_loss_pct = max(max_loss_pct, atr_stop_pct)
             activation_pct = max(activation_pct, atr_activation_pct)
             trail_distance_pct = max(trail_distance_pct, atr_trail_pct)
+
+            if max_loss_pct > old_max_loss:
+                logger.info(
+                    f"AGAPE-SPOT ATR-ADAPTIVE: {ticker} {position_id} "
+                    f"stop widened {old_max_loss:.2f}% -> {max_loss_pct:.2f}% "
+                    f"(ATR=${atr:.4f}, atr_pct={atr_pct:.2f}%, "
+                    f"chop={chop or 'N/A'}, mult={atr_mult}x)"
+                )
 
         # Use per-ticker price decimals (SHIB=8, XRP/DOGE=4, ETH=2)
         pd = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
@@ -1339,6 +1348,15 @@ class AgapeSpotTrader:
 
         # Long-only P&L -- no direction multiplier
         realized_pnl = round((actual_close_price - entry_price) * quantity, 2)
+
+        # Diagnostic logging: trace every exit with full price context
+        price_change_pct = ((actual_close_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+        logger.info(
+            f"AGAPE-SPOT EXIT: {ticker} {position_id} [{account_label}] "
+            f"reason={reason} entry=${entry_price:.4f} exit=${actual_close_price:.4f} "
+            f"qty={quantity} pnl=${realized_pnl:+.4f} "
+            f"price_chg={price_change_pct:+.3f}%"
+        )
 
         # Extract Coinbase sell execution details if available
         sell_order_id = exec_details.get("coinbase_sell_order_id") if exec_details else None
