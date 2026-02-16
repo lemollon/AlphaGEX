@@ -537,6 +537,8 @@ class AgapeBtcPerpTrader:
         total_pnl = realized_pnl + total_unrealized
         current_balance = max(0.0, self.config.starting_capital + total_pnl)
         return_pct = max(-100.0, (total_pnl / self.config.starting_capital * 100)) if self.config.starting_capital else 0
+        if return_pct < -90:
+            logger.warning(f"AGAPE-BTC-PERP: Return is {return_pct:.1f}% — approaching or past liquidation threshold")
         wins = [t for t in closed_trades if (t.get("realized_pnl") or 0) > 0] if closed_trades else []
         win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else None
 

@@ -383,6 +383,8 @@ class AgapeEthPerpTrader:
         total_pnl = realized + total_unr
         balance = max(0.0, self.config.starting_capital + total_pnl)
         ret = max(-100.0, (total_pnl / self.config.starting_capital * 100)) if self.config.starting_capital else 0
+        if ret < -90:
+            logger.warning(f"AGAPE-ETH-PERP: Return is {ret:.1f}% — approaching or past liquidation threshold")
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0] if closed else []
         wr = round(len(wins) / len(closed) * 100, 1) if closed else None
         status = "LIQUIDATED" if self._liquidated else ("ACTIVE" if self._enabled else "DISABLED")
