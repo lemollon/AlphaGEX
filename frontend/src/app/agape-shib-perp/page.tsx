@@ -23,7 +23,7 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
-import BotMarginWidget from '@/components/BotMarginWidget'
+import MarginAnalysis from '@/components/MarginAnalysis'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   BotPageHeader,
@@ -355,8 +355,8 @@ function PortfolioTab({
         </div>
       </div>
 
-      {/* Margin Status */}
-      <BotMarginWidget botName="AGAPE_SHIB_PERP" />
+      {/* Margin Analysis */}
+      <MarginAnalysis botName="AGAPE_SHIB_PERP" marketType="crypto_perp" marginEndpoint="/api/agape-shib-perp/margin" />
 
       {/* Equity Curve */}
       <BotCard title="Equity Curve" botName="AGAPE_SHIB_PERP" icon={<TrendingUp className="w-5 h-5" />}

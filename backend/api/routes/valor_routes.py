@@ -1935,3 +1935,103 @@ async def get_valor_diagnostics():
     except Exception as e:
         logger.error(f"Error getting VALOR diagnostics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Margin Analysis
+# ============================================================================
+
+@router.get("/api/valor/margin")
+async def get_valor_margin_analysis(
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+):
+    """Margin analysis for VALOR open positions.
+
+    Returns margin usage, liquidation prices, effective leverage,
+    and distance to liquidation for CME micro futures contracts.
+    Supports multi-ticker (MES, MNQ, CL, NG, RTY).
+    """
+    try:
+        trader = _get_trader()
+        from trading.shared.margin_engine import MarginCalculator
+        from trading.shared.margin_config import FUTURES_MARGIN_SPECS
+
+        # Get paper account for equity
+        paper_account = trader.get_paper_account()
+        if paper_account:
+            starting_capital = paper_account.get("starting_capital", 500000.0)
+            account_equity = paper_account.get("current_balance") or starting_capital
+        else:
+            starting_capital = 500000.0
+            account_equity = starting_capital
+
+        # Get open positions
+        status = trader.get_status(ticker=ticker)
+        positions = status.get("positions", {}).get("positions", [])
+
+        position_margins = []
+        for pos in positions:
+            pos_ticker = pos.get("ticker", "MES")
+            spec = FUTURES_MARGIN_SPECS.get(pos_ticker, FUTURES_MARGIN_SPECS.get("MES", {}))
+            if not spec:
+                continue
+
+            # Get current price for this ticker
+            quote = trader.executor.get_mes_quote(ticker=pos_ticker)
+            current_price = quote.get("price") or quote.get("last") if quote else None
+            if not current_price:
+                continue
+
+            contracts = pos.get("contracts", 1)
+            side_str = pos.get("direction", "long")
+            if hasattr(side_str, "value"):
+                side_str = side_str.value
+
+            result = MarginCalculator.calculate_futures_margin(
+                entry_price=pos.get("entry_price", 0),
+                current_price=current_price,
+                contracts=contracts,
+                side=side_str,
+                point_value=spec.get("point_value", 5.0),
+                initial_margin_per_contract=spec.get("initial_margin", 1500.0),
+                maintenance_margin_per_contract=spec.get("maintenance_margin", 1350.0),
+                account_equity=account_equity,
+            )
+            result["position_id"] = pos.get("position_id")
+            result["symbol"] = pos_ticker
+            result["side"] = side_str
+            result["contracts"] = contracts
+            result["entry_price"] = pos.get("entry_price", 0)
+            result["current_price"] = current_price
+            position_margins.append(result)
+
+        summary = MarginCalculator.aggregate_positions(position_margins, account_equity, "stock_futures")
+        summary["starting_capital"] = starting_capital
+        summary["paper_trading"] = True
+
+        # Include available contract specs for reference
+        specs_ref = {}
+        for key, spec in FUTURES_MARGIN_SPECS.items():
+            if spec.get("market_type") in ("stock_futures", "energy_futures"):
+                im = spec["initial_margin"]
+                specs_ref[key] = {
+                    "name": spec["name"],
+                    "initial_margin": im,
+                    "maintenance_margin": spec["maintenance_margin"],
+                    "point_value": spec["point_value"],
+                    "last_updated": spec.get("last_updated", "unknown"),
+                    "max_contracts_at_equity": int(account_equity / im) if im > 0 else 0,
+                    "recommended_max": int(account_equity * 0.5 / im) if im > 0 else 0,
+                }
+        summary["contract_specs"] = specs_ref
+
+        return {
+            "success": True,
+            "data": summary,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting VALOR margin analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

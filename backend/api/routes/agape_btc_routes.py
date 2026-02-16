@@ -897,6 +897,83 @@ async def get_margin_status():
 
 
 # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Margin Analysis (new calculator-based)
+# ------------------------------------------------------------------
+
+@router.get("/margin")
+async def get_margin_analysis():
+    """Margin analysis for AGAPE-BTC /MBT positions using MarginCalculator.
+
+    Returns per-position margin breakdown with liquidation prices,
+    effective leverage, and distance to liquidation for CME Micro
+    Bitcoin Futures (/MBT, 0.1 BTC per contract).
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "message": "AGAPE-BTC not available"}
+
+    try:
+        from trading.shared.margin_engine import MarginCalculator
+        from trading.shared.margin_config import FUTURES_MARGIN_SPECS
+
+        spec = FUTURES_MARGIN_SPECS.get("MBT", {})
+        positions = trader.db.get_open_positions()
+        current_price = trader.executor.get_current_price()
+
+        starting_capital = getattr(trader.config, "starting_capital", 25000.0)
+        closed = trader.db.get_closed_trades(limit=10000)
+        realized_pnl = sum(float(t.get("realized_pnl", 0) or 0) for t in closed) if closed else 0.0
+        account_equity = starting_capital + realized_pnl
+
+        position_margins = []
+        for pos in positions:
+            if not current_price:
+                continue
+            contracts = pos.get("contracts", 1)
+            result = MarginCalculator.calculate_futures_margin(
+                entry_price=pos["entry_price"],
+                current_price=current_price,
+                contracts=contracts,
+                side=pos.get("side", "long"),
+                point_value=spec.get("point_value", 0.1),
+                initial_margin_per_contract=spec.get("initial_margin", 2500.0),
+                maintenance_margin_per_contract=spec.get("maintenance_margin", 2250.0),
+                account_equity=account_equity,
+            )
+            result["position_id"] = pos.get("position_id")
+            result["symbol"] = "/MBT"
+            result["side"] = pos.get("side", "long")
+            result["contracts"] = contracts
+            result["entry_price"] = pos["entry_price"]
+            result["current_price"] = current_price
+            position_margins.append(result)
+
+        summary = MarginCalculator.aggregate_positions(position_margins, account_equity, "crypto_futures")
+        summary["spec"] = {
+            "name": spec.get("name", "Micro Bitcoin (CME)"),
+            "exchange": "CME",
+            "point_value": spec.get("point_value", 0.1),
+            "initial_margin": spec.get("initial_margin", 2500.0),
+            "maintenance_margin": spec.get("maintenance_margin", 2250.0),
+            "last_updated": spec.get("last_updated", "unknown"),
+        }
+        summary["starting_capital"] = starting_capital
+
+        # Calculate max contracts at current equity
+        im = spec.get("initial_margin", 2500.0)
+        if im > 0:
+            max_contracts_100 = int(account_equity / im)
+            max_contracts_50 = int(account_equity * 0.5 / im)
+            summary["max_contracts_at_100pct"] = max_contracts_100
+            summary["max_contracts_recommended"] = max_contracts_50
+
+        return {"success": True, "data": summary, "fetched_at": _format_ct()}
+    except Exception as e:
+        logger.error(f"AGAPE-BTC margin analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Bot Control
 # ------------------------------------------------------------------
 

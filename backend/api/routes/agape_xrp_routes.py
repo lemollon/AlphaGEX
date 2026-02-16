@@ -916,6 +916,80 @@ async def get_margin_status():
 
 
 # ------------------------------------------------------------------
+# Margin Analysis (new calculator-based)
+# ------------------------------------------------------------------
+
+@router.get("/margin")
+async def get_margin_analysis():
+    """Margin analysis for AGAPE-XRP /XRP positions using MarginCalculator.
+
+    Returns per-position margin breakdown with liquidation prices,
+    effective leverage, and distance to liquidation for CME XRP
+    Futures (/XRP, 2,500 XRP per contract).
+    """
+    trader = _get_trader()
+    if not trader:
+        return {"success": False, "message": "AGAPE-XRP not available"}
+
+    try:
+        from trading.shared.margin_engine import MarginCalculator
+        from trading.shared.margin_config import FUTURES_MARGIN_SPECS
+
+        spec = FUTURES_MARGIN_SPECS.get("XRP_FUT", {})
+        positions = trader.db.get_open_positions()
+        current_price = trader.executor.get_current_price()
+
+        starting_capital = getattr(trader.config, "starting_capital", 25000.0)
+        closed = trader.db.get_closed_trades(limit=10000)
+        realized_pnl = sum(float(t.get("realized_pnl", 0) or 0) for t in closed) if closed else 0.0
+        account_equity = starting_capital + realized_pnl
+
+        position_margins = []
+        for pos in positions:
+            if not current_price:
+                continue
+            contracts = pos.get("contracts", 1)
+            result = MarginCalculator.calculate_futures_margin(
+                entry_price=pos["entry_price"],
+                current_price=current_price,
+                contracts=contracts,
+                side=pos.get("side", "long"),
+                point_value=spec.get("point_value", 2500.0),
+                initial_margin_per_contract=spec.get("initial_margin", 1800.0),
+                maintenance_margin_per_contract=spec.get("maintenance_margin", 1620.0),
+                account_equity=account_equity,
+            )
+            result["position_id"] = pos.get("position_id")
+            result["symbol"] = "/XRP"
+            result["side"] = pos.get("side", "long")
+            result["contracts"] = contracts
+            result["entry_price"] = pos["entry_price"]
+            result["current_price"] = current_price
+            position_margins.append(result)
+
+        summary = MarginCalculator.aggregate_positions(position_margins, account_equity, "crypto_futures")
+        summary["spec"] = {
+            "name": spec.get("name", "XRP Futures (CME)"),
+            "exchange": "CME",
+            "point_value": spec.get("point_value", 2500.0),
+            "initial_margin": spec.get("initial_margin", 1800.0),
+            "maintenance_margin": spec.get("maintenance_margin", 1620.0),
+            "last_updated": spec.get("last_updated", "unknown"),
+        }
+        summary["starting_capital"] = starting_capital
+
+        im = spec.get("initial_margin", 1800.0)
+        if im > 0:
+            summary["max_contracts_at_100pct"] = int(account_equity / im)
+            summary["max_contracts_recommended"] = int(account_equity * 0.5 / im)
+
+        return {"success": True, "data": summary, "fetched_at": _format_ct()}
+    except Exception as e:
+        logger.error(f"AGAPE-XRP margin analysis error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ------------------------------------------------------------------
 # Bot Control
 # ------------------------------------------------------------------
 

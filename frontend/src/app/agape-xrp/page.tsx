@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import MarginAnalysis from '@/components/MarginAnalysis'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   BotPageHeader,
@@ -362,67 +363,8 @@ function PortfolioTab({
         </div>
       </div>
 
-      {/* Margin Status */}
-      {status?.margin && (
-        <div className={`rounded-lg border p-4 ${
-          status.margin.margin_health === 'HEALTHY' ? 'border-green-800 bg-green-900/10' :
-          status.margin.margin_health === 'WARNING' ? 'border-yellow-800 bg-yellow-900/10' :
-          status.margin.margin_health === 'MARGIN_CALL' ? 'border-orange-800 bg-orange-900/10' :
-          status.margin.margin_health === 'LIQUIDATION' ? 'border-red-800 bg-red-900/10' :
-          'border-gray-800 bg-[#0a0a0a]'
-        }`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Shield className={`w-5 h-5 ${
-                status.margin.margin_health === 'HEALTHY' ? 'text-green-400' :
-                status.margin.margin_health === 'WARNING' ? 'text-yellow-400' :
-                'text-red-400'
-              }`} />
-              <span className="text-sm font-semibold text-white">Margin Status</span>
-            </div>
-            <span className={`px-2 py-1 rounded text-xs font-bold ${
-              status.margin.margin_health === 'HEALTHY' ? 'bg-green-900/50 text-green-400' :
-              status.margin.margin_health === 'WARNING' ? 'bg-yellow-900/50 text-yellow-400' :
-              status.margin.margin_health === 'MARGIN_CALL' ? 'bg-orange-900/50 text-orange-400' :
-              status.margin.margin_health === 'LIQUIDATION' ? 'bg-red-900/50 text-red-400' :
-              'bg-gray-800 text-gray-400'
-            }`}>
-              {status.margin.margin_health}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
-            <div>
-              <span className="text-gray-500">Account Equity</span>
-              <p className="text-white font-mono">${status.margin.account_equity?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Margin Used</span>
-              <p className="text-white font-mono">${status.margin.margin_used?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Margin Available</span>
-              <p className="text-white font-mono">${status.margin.margin_available?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Margin Ratio</span>
-              <p className={`font-mono font-bold ${
-                (status.margin.margin_ratio_pct || 0) > 200 ? 'text-green-400' :
-                (status.margin.margin_ratio_pct || 0) > 150 ? 'text-yellow-400' :
-                'text-red-400'
-              }`}>{status.margin.margin_ratio_pct?.toFixed(1) || '—'}%</p>
-            </div>
-            <div>
-              <span className="text-gray-500">Maint. Margin</span>
-              <p className="text-white font-mono">${status.margin.maintenance_margin?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-            </div>
-          </div>
-          {status.margin.margin_ratio_pct && status.margin.margin_ratio_pct <= 150 && (
-            <div className="mt-2 text-xs text-yellow-400">
-              ⚠ Margin is tight. Reduce positions or add capital. Auto-liquidation at {status.margin.auto_liquidation_threshold_pct}%.
-            </div>
-          )}
-        </div>
-      )}
+      {/* Margin Analysis */}
+      <MarginAnalysis botName="AGAPE_XRP" marketType="crypto_futures" marginEndpoint="/api/agape-xrp/margin" />
 
       {/* Equity Curve */}
       <BotCard title="Equity Curve" botName="AGAPE_XRP" icon={<TrendingUp className="w-5 h-5" />}
