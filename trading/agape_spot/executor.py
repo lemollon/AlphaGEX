@@ -184,6 +184,15 @@ class AgapeSpotExecutor:
                 "Set COINBASE_API_KEY/SECRET and/or COINBASE_DEDICATED_API_KEY/SECRET."
             )
 
+        # --- Startup balance check: log each account's USD so we can
+        #     verify in production that both keys point to different accounts ---
+        if self._client:
+            bal = self._get_usd_balance_from_client(self._client, account_label="default")
+            logger.info(f"AGAPE-SPOT INIT: default account cash = ${bal or 0:.2f}")
+        if self._dedicated_client:
+            bal = self._get_usd_balance_from_client(self._dedicated_client, account_label="dedicated")
+            logger.info(f"AGAPE-SPOT INIT: dedicated account cash = ${bal or 0:.2f}")
+
     def _get_client(self, ticker: str) -> Optional[object]:
         """Get any available Coinbase client for a ticker.
 
@@ -758,7 +767,7 @@ class AgapeSpotExecutor:
         # 3. Estimate (uses maker rate for limit orders, taker for market)
         return self._estimate_fee(fill_price, quantity, ticker, side, order_type)
 
-    def _get_usd_balance_from_client(self, client) -> Optional[float]:
+    def _get_usd_balance_from_client(self, client, account_label: str = "unknown") -> Optional[float]:
         """Get available USD + USDC cash balance from a Coinbase client.
 
         Returns the CASH available to trade (not crypto holdings).
@@ -820,7 +829,7 @@ class AgapeSpotExecutor:
 
             # Always log at INFO — we need to see this in production
             logger.info(
-                f"AGAPE-SPOT BALANCE: USD=${usd_balance or 0:.2f}, "
+                f"AGAPE-SPOT BALANCE [{account_label}]: USD=${usd_balance or 0:.2f}, "
                 f"USDC=${usdc_balance or 0:.2f}, "
                 f"TOTAL CASH=${cash:.2f} "
                 f"({total_scanned} accounts scanned). "
@@ -834,17 +843,17 @@ class AgapeSpotExecutor:
             # This is normal when a position is open (max_positions=1)
             if top_holdings:
                 logger.info(
-                    f"AGAPE-SPOT BALANCE: $0 cash but have crypto holdings. "
+                    f"AGAPE-SPOT BALANCE [{account_label}]: $0 cash but have crypto holdings. "
                     f"This is normal when a position is open."
                 )
             else:
                 logger.warning(
-                    f"AGAPE-SPOT BALANCE: $0 total across {total_scanned} "
+                    f"AGAPE-SPOT BALANCE [{account_label}]: $0 total across {total_scanned} "
                     f"accounts — account may be empty"
                 )
             return None
         except Exception as e:
-            logger.warning(f"AGAPE-SPOT BALANCE: Lookup failed: {e}")
+            logger.warning(f"AGAPE-SPOT BALANCE [{account_label}]: Lookup failed: {e}")
         return None
 
     def _store_product_limits(self, ticker: str, product) -> None:
@@ -1219,12 +1228,15 @@ class AgapeSpotExecutor:
                 open_time=now,
                 high_water_mark=round(fill_price, pd),
                 account_label=account_label,
+                # Estimate entry fee: Coinbase taker fee ~0.6% for market orders
+                entry_fee_usd=round(signal.quantity * fill_price * 0.006, 4),
             )
 
             notional = signal.quantity * fill_price
             logger.info(
                 f"AGAPE-SPOT: PAPER BUY [{account_label}] {signal.ticker} "
-                f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.{pd}f}"
+                f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.{pd}f} "
+                f"(est fee ${position.entry_fee_usd:.4f})"
             )
             return position
 
@@ -1282,13 +1294,15 @@ class AgapeSpotExecutor:
                 open_time=now,
                 high_water_mark=round(live_fill_price, pd),
                 account_label=account_label,
+                # Estimate entry fee: Coinbase taker fee ~0.6% for market orders
+                entry_fee_usd=round(live_quantity * live_fill_price * 0.006, 4),
             )
 
             notional = live_quantity * live_fill_price
             logger.info(
                 f"AGAPE-SPOT: PAPER MIRROR [{account_label}] {signal.ticker} "
                 f"{live_quantity:.4f} (${notional:.2f}) @ ${live_fill_price:.{pd}f} "
-                f"(mirroring live fill)"
+                f"(paper sizing, live price, est fee ${position.entry_fee_usd:.4f})"
             )
             return position
 
@@ -1336,7 +1350,7 @@ class AgapeSpotExecutor:
             # No hardcoded fallbacks. If we can't read the balance, don't trade.
             # The allocator ranks tickers by performance and assigns each a %
             # of the available balance.
-            usd_available = self._get_usd_balance_from_client(client)
+            usd_available = self._get_usd_balance_from_client(client, account_label=account_label)
 
             if usd_available is None:
                 logger.error(
@@ -2033,7 +2047,7 @@ class AgapeSpotExecutor:
         # Account 2: Dedicated
         if self._dedicated_client:
             try:
-                usd_bal = self._get_usd_balance_from_client(self._dedicated_client)
+                usd_bal = self._get_usd_balance_from_client(self._dedicated_client, account_label="dedicated")
                 balances: Dict[str, Any] = {
                     "exchange": "coinbase",
                     "account_type": "dedicated",

@@ -548,9 +548,19 @@ class AgapeSpotTrader:
                     self._log_scan(ticker, result, scan_context)
                     return result
 
-            # Step 6b: Get all accounts for this ticker and check position limits per-account
-            # Uses per-ticker max_positions from entry filters
-            # Probation tickers only get paper accounts (no live execution)
+            # Step 6b: Check position limits GLOBALLY per ticker.
+            #
+            # max_positions is the TOTAL open positions allowed for this ticker
+            # across ALL live accounts combined.  Paper gets its own independent
+            # slot so it can always shadow live signals.
+            #
+            # Example: ETH max_positions=1
+            #   - If default has 1 open ETH → NO more live trades (dedicated blocked too)
+            #   - Paper can still open 1 independent position
+            #
+            # This prevents capital fragmentation: with 2 live accounts and
+            # max_positions=1 per-account, the old code allowed 2 live + 1 paper
+            # = 3 simultaneous positions from the same signal, draining USD.
             max_positions = entry_filters.get("max_positions", self.config.max_open_positions_per_ticker)
             accounts = self._get_eligible_accounts(ticker)
             all_open = [
@@ -558,21 +568,46 @@ class AgapeSpotTrader:
                 if not p.get("account_label", "").endswith("_fallback")
             ]
 
-            # Filter to accounts that still have capacity
+            # Split open positions by type
+            live_open = [p for p in all_open if p.get("account_label", "default") != "paper"]
+            paper_open = [p for p in all_open if p.get("account_label", "default") == "paper"]
+
+            # Build eligible accounts list with GLOBAL live limit
             eligible_accounts = []
+            live_at_capacity = len(live_open) >= max_positions
+
             for account_label, is_live in accounts:
-                acct_open = [
-                    p for p in all_open
-                    if p.get("account_label", "default") == account_label
-                ]
-                if len(acct_open) < max_positions:
-                    eligible_accounts.append((account_label, is_live))
+                if is_live:
+                    # Live accounts share a global position limit
+                    if not live_at_capacity:
+                        eligible_accounts.append((account_label, is_live))
+                else:
+                    # Paper has its own independent limit
+                    if len(paper_open) < max_positions:
+                        eligible_accounts.append((account_label, is_live))
+
+            # Once one live account is added, mark live as at capacity
+            # (only one live account should open per signal)
+            if any(is_live for _, is_live in eligible_accounts):
+                # Keep only the FIRST eligible live account to avoid
+                # duplicate positions on default + dedicated for same signal
+                first_live_found = False
+                filtered = []
+                for account_label, is_live in eligible_accounts:
+                    if is_live:
+                        if not first_live_found:
+                            filtered.append((account_label, is_live))
+                            first_live_found = True
+                        # Skip subsequent live accounts
+                    else:
+                        filtered.append((account_label, is_live))
+                eligible_accounts = filtered
 
             if not eligible_accounts:
                 total_open = len(all_open)
                 result["outcome"] = (
                     f"MAX_POSITIONS_{total_open}/"
-                    f"{max_positions} (all accounts)"
+                    f"{max_positions} (live={len(live_open)}, paper={len(paper_open)})"
                 )
                 self._log_scan(ticker, result, scan_context)
                 return result
@@ -594,19 +629,22 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context, signal=signal)
                 return result
 
-            # Step 8: Execute trade — live first, then paper mirrors live fill.
+            # Step 8: Execute trade on each eligible account.
             #
-            # ONE AGENT, ONE RESULT: Paper must use the exact same fill price
-            # and quantity as the live order so all accounts track identical
-            # performance.  Paper-only tickers (no live accounts) still get
-            # simulated fills via _execute_paper().
+            # INDEPENDENT SIZING PER ACCOUNT TYPE:
+            #   - Live accounts (default, dedicated): sized from REAL Coinbase
+            #     USD balance via executor._execute_live().  Each API key has
+            #     its own balance pool.
+            #   - Paper account: sized from signal.quantity which is computed
+            #     from starting_capital ($5000 ETH, $1000 others).  Paper uses
+            #     the live fill PRICE for realism but its OWN quantity so it
+            #     evaluates the strategy at proper scale.
             traded_accounts = []
             live_accounts = [(a, l) for a, l in eligible_accounts if l]
             paper_accounts = [(a, l) for a, l in eligible_accounts if not l]
 
-            # Track the first successful live fill to mirror on paper
+            # Track the first successful live fill price for paper realism
             live_fill_price = None
-            live_fill_qty = None
 
             # Execute LIVE accounts first
             for account_label, is_live in live_accounts:
@@ -616,10 +654,9 @@ class AgapeSpotTrader:
                 if position:
                     self.db.save_position(position)
                     traded_accounts.append(account_label)
-                    # Capture first live fill for paper mirroring
+                    # Capture first live fill price for paper price realism
                     if live_fill_price is None:
                         live_fill_price = position.entry_price
-                        live_fill_qty = position.quantity
 
                     actual_qty = position.quantity
                     notional = actual_qty * position.entry_price
@@ -643,12 +680,13 @@ class AgapeSpotTrader:
                         ticker=ticker,
                     )
 
-            # Execute PAPER accounts — mirror the live fill when available
+            # Execute PAPER accounts — own sizing from starting_capital,
+            # but use the live fill PRICE if available for realistic fills.
             for account_label, is_live in paper_accounts:
-                if live_fill_price is not None and live_fill_qty is not None:
-                    # Mirror: use exact live fill price and quantity
+                if live_fill_price is not None:
+                    # Use live fill price but paper's OWN quantity from signal
                     position = self.executor.execute_paper_mirror(
-                        signal, live_fill_price, live_fill_qty,
+                        signal, live_fill_price, signal.quantity,
                         account_label=account_label,
                     )
                 else:
@@ -1444,6 +1482,10 @@ class AgapeSpotTrader:
         sell_order_id = exec_details.get("coinbase_sell_order_id") if exec_details else None
         exit_slippage = exec_details.get("exit_slippage_pct") if exec_details else None
         exit_fee = exec_details.get("exit_fee_usd") if exec_details else None
+
+        # Estimate exit fee for paper/non-live trades so fee tracking is complete
+        if exit_fee is None:
+            exit_fee = round(actual_close_price * quantity * 0.006, 4)
 
         if reason == "MAX_HOLD_TIME":
             success = self.db.expire_position(
