@@ -30,22 +30,20 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,  # Coinbase $1 min + safety buffer
         "quantity_decimals": 4,
         "price_decimals": 2,
-        # ETH exit params: SWING STRATEGY — hold 24-48h targeting 3-5% moves
-        # Previous scalp strategy: 1.5% activation, 1.25% trail, 8h hold → $0.96/trade
-        # but fees (~$2-5/trade) ate the edge. Longer holds = fee becomes noise.
-        "no_loss_activation_pct": 3.0,    # Was 1.5% — need 3% move before trailing activates
-        "no_loss_trail_distance_pct": 2.0, # Was 1.25% — wider trail for multi-day holds
-        "max_unrealized_loss_pct": 2.0,   # Was 1.5% — give swing trades room to breathe
-        "no_loss_profit_target_pct": 5.0,  # Was 0 (disabled) — take profit at 5% gain
-        "max_hold_hours": 48,  # Was 8h — swing trades need 1-2 days to play out
-        "max_positions": 1,   # Was 3 — one high-conviction position at a time
-        # Guardrails: restrict to profitable hours, reduce overtrading
+        # ETH exit params: moderate hold with wider stops for bigger positions
+        "no_loss_activation_pct": 2.0,    # 2% move before trailing activates
+        "no_loss_trail_distance_pct": 1.5, # 1.5% trail distance
+        "max_unrealized_loss_pct": 1.5,   # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3% gain
+        "max_hold_hours": 12,  # 12h max — capture intraday trends
+        "max_positions": 1,   # One position at a time (full balance per trade)
+        # Guardrails: restrict to profitable hours
         "market_hours_only": True,         # Kill overnight drain (-$475 pre-fix)
         "market_open_hour": 2,             # 02:00 CT — ETH profitable from early AM
         "market_open_minute": 0,
         "market_close_hour": 14,           # 14:00 CT — cut before overnight session
         "market_close_minute": 0,
-        "min_scans_between_trades": 60,    # Was 0 — 60 scans ≈ 60 min cooldown (253→~34 trades)
+        "min_scans_between_trades": 10,    # 10 scans ≈ 10 min cooldown
     },
     "BTC-USD": {
         "symbol": "BTC",
@@ -57,16 +55,14 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 5,
         "price_decimals": 2,
-        # BTC exit params: SWING STRATEGY — hold 24-72h targeting 3-5% moves
-        # Previous: 4h hold, 1.5% activation → only 5 real trades, mostly MAX_HOLD exits
-        # BTC moves slower than ETH but makes bigger multi-day trends
-        "no_loss_activation_pct": 3.0,    # Was 1.5% — need real move before trailing
-        "no_loss_trail_distance_pct": 2.5, # Was 1.25% — BTC needs wider trail for multi-day
-        "max_unrealized_loss_pct": 2.0,   # Was 1.5% — room for BTC's daily range
-        "no_loss_profit_target_pct": 5.0,  # Was 0 (disabled) — take profit at 5%
-        "max_hold_hours": 72,  # Was 4h — BTC trends are multi-day, give them time
-        "max_positions": 1,    # Was 2 — one high-conviction BTC trade at a time
-        "min_scans_between_trades": 120,   # Was 5 — 2h between entries for swing trading
+        # BTC exit params: moderate hold targeting 2-3% moves
+        "no_loss_activation_pct": 2.0,    # 2% move before trailing activates
+        "no_loss_trail_distance_pct": 1.5, # 1.5% trail distance
+        "max_unrealized_loss_pct": 1.5,   # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3%
+        "max_hold_hours": 12,  # 12h max — capture intraday BTC trends
+        "max_positions": 1,    # One position (full balance per trade)
+        "min_scans_between_trades": 10,    # 10 min between entries
     },
     "XRP-USD": {
         "symbol": "XRP",
@@ -78,21 +74,19 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # XRP exit params: SWING STRATEGY — hold 24-48h targeting 3-4% moves
-        # Previous: 4h hold, 0.8% activation → -$0.005 EV, 50.4% WR (coin flip)
-        # With 3:1 R:R, even 35% WR is profitable: 0.35*3 - 0.65*1 = +0.40/unit
-        "no_loss_activation_pct": 2.5,    # Was 0.8% — XRP needs real momentum
-        "no_loss_trail_distance_pct": 1.5, # Was 0.75% — wider for swing holds
-        "max_unrealized_loss_pct": 1.5,   # Keep at 1.5% — cut losers early
-        "no_loss_profit_target_pct": 4.0,  # Was 0 (disabled) — take profit at 4%
-        "max_hold_hours": 36,              # Was 4h — swing trades need a day+
-        # Signal quality gates — XRP has no Deribit options data, need actual funding signal
-        "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
-        "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
-        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
-        "use_momentum_filter": True,        # Block entries during price downtrends
-        "min_scans_between_trades": 60,     # Was 10 — 1h between entries for swing trading
-        "max_positions": 1,                 # Was 2 — one position at a time
+        # XRP exit params: moderate hold targeting 2-3% moves
+        "no_loss_activation_pct": 1.5,    # 1.5% activation
+        "no_loss_trail_distance_pct": 1.0, # 1% trail
+        "max_unrealized_loss_pct": 1.5,   # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3%
+        "max_hold_hours": 8,               # 8h max
+        # Signal quality gates
+        "require_funding_data": True,
+        "allow_base_long": False,
+        "use_eth_leader": True,
+        "use_momentum_filter": True,
+        "min_scans_between_trades": 10,     # 10 min cooldown
+        "max_positions": 1,
     },
     "SHIB-USD": {
         "symbol": "SHIB",
@@ -104,21 +98,19 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 8,
-        # SHIB exit params: SWING STRATEGY — hold 24-36h targeting 4-5% moves
-        # Previous: 4h hold, 0.8% activation → -$0.007 EV, 48.6% WR (below coin flip)
-        # Meme coins make big % swings — capturing 4-5% moves with 1.5% stops = 3:1 R:R
-        "no_loss_activation_pct": 3.0,      # Was 0.8% — need real meme pump to activate
-        "no_loss_trail_distance_pct": 2.0,  # Was 0.60% — wider for multi-day holds
-        "max_unrealized_loss_pct": 1.5,     # Keep at 1.5% — cut losers early
-        "no_loss_profit_target_pct": 5.0,   # Was 0 (disabled) — take profit at 5%
-        "max_hold_hours": 36,               # Was 4h — swing trades need a day+
-        # Signal quality gates — SHIB has no Deribit data, meme coin needs real signal
-        "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
-        "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
-        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
-        "use_momentum_filter": True,        # Block entries during price downtrends
-        "min_scans_between_trades": 60,     # Was 10 — 1h between entries for swing trading
-        "max_positions": 1,                 # Was 2 — one position at a time
+        # SHIB exit params: moderate hold targeting 2-3% meme swings
+        "no_loss_activation_pct": 1.5,      # 1.5% activation
+        "no_loss_trail_distance_pct": 1.0,  # 1% trail
+        "max_unrealized_loss_pct": 1.5,     # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,   # Take profit at 3%
+        "max_hold_hours": 8,                # 8h max
+        # Signal quality gates
+        "require_funding_data": True,
+        "allow_base_long": False,
+        "use_eth_leader": True,
+        "use_momentum_filter": True,
+        "min_scans_between_trades": 10,     # 10 min cooldown
+        "max_positions": 1,
     },
     "DOGE-USD": {
         "symbol": "DOGE",
@@ -130,21 +122,19 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # DOGE exit params: SWING STRATEGY — hold 24-36h targeting 3-5% moves
-        # Previous: 4h hold, 0.8% activation → +$0.15 EV but $0.38 fee = net negative
-        # DOGE is the only altcoin with positive gross EV — swing strategy should amplify
-        "no_loss_activation_pct": 2.5,     # Was 0.8% — need real DOGE pump
-        "no_loss_trail_distance_pct": 1.5, # Was 0.75% — wider for multi-day holds
-        "max_unrealized_loss_pct": 1.5,    # Keep at 1.5% — cut losers early
-        "no_loss_profit_target_pct": 4.0,  # Was 0 (disabled) — take profit at 4%
-        "max_hold_hours": 36,              # Was 4h — swing trades need a day+
-        # Signal quality gates — require funding data like XRP/SHIB for signal consistency
-        "require_funding_data": True,       # DOGE entered on zero signal before
-        "allow_base_long": False,           # Disabled to prevent entries with no real signal
-        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
-        "use_momentum_filter": True,        # Block entries during price downtrends
-        "min_scans_between_trades": 60,     # Was 5 — 1h between entries for swing trading
-        "max_positions": 1,                 # Was 3 — one position at a time
+        # DOGE exit params: moderate hold targeting 2-3% moves
+        "no_loss_activation_pct": 1.5,     # 1.5% activation
+        "no_loss_trail_distance_pct": 1.0, # 1% trail
+        "max_unrealized_loss_pct": 1.5,    # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3%
+        "max_hold_hours": 8,               # 8h max
+        # Signal quality gates
+        "require_funding_data": True,
+        "allow_base_long": False,
+        "use_eth_leader": True,
+        "use_momentum_filter": True,
+        "min_scans_between_trades": 10,     # 10 min cooldown
+        "max_positions": 1,
     },
     "MSTU-USD": {
         "symbol": "MSTU",
@@ -228,15 +218,15 @@ class AgapeSpotConfig:
     profit_target_pct: float = 50.0
     stop_loss_pct: float = 100.0
     trailing_stop_pct: float = 0.0
-    max_hold_hours: int = 48  # Was 6h — swing strategy: hold 1-3 days for 3-5% moves
+    max_hold_hours: int = 12  # 12h max — capture intraday trends
 
-    # No-Loss Trailing — SWING STRATEGY defaults (per-ticker overrides in SPOT_TICKERS)
+    # No-Loss Trailing — defaults (per-ticker overrides in SPOT_TICKERS)
     use_no_loss_trailing: bool = True
-    no_loss_activation_pct: float = 3.0   # Was 2.5% — swing trades need 3%+ moves before trailing
-    no_loss_trail_distance_pct: float = 2.0  # Was 1.75% — wider trail for multi-day holds
+    no_loss_activation_pct: float = 2.0   # 2% move before trailing activates
+    no_loss_trail_distance_pct: float = 1.5  # 1.5% trail behind high water mark
     no_loss_emergency_stop_pct: float = 5.0
-    max_unrealized_loss_pct: float = 2.0  # Was 1.5% — give swing trades room to breathe
-    no_loss_profit_target_pct: float = 5.0  # Was 0 (disabled) — take profit at 5%
+    max_unrealized_loss_pct: float = 1.5  # Cut losers at 1.5%
+    no_loss_profit_target_pct: float = 3.0  # Take profit at 3%
 
     # Minimum hold time: no exits allowed before this many minutes UNLESS
     # RSI > rsi_exit_override_threshold (overbought spike = take profit immediately).
@@ -248,8 +238,8 @@ class AgapeSpotConfig:
     # SAR disabled for long-only (can't reverse to short)
     use_sar: bool = False
 
-    # Signal thresholds — MEDIUM minimum for swing trades (fewer, higher conviction)
-    min_confidence: str = "MEDIUM"
+    # Signal thresholds — LOW minimum to allow more trades with larger positions
+    min_confidence: str = "LOW"
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0

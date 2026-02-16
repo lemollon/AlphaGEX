@@ -868,10 +868,10 @@ class AgapeSpotSignalGenerator:
                     return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
 
         # Momentum fallback: if no microstructure signal fires but price is
-        # clearly rising, take the long.  For swing trading, require stronger
-        # momentum (0.5%+ vs old 0.1%) to filter out noise entries.
+        # clearly rising, take the long.  With full-balance sizing, each
+        # trade matters more — 0.2% threshold balances frequency vs quality.
         momentum_pct = self.get_momentum_pct(ticker)
-        if momentum_pct is not None and momentum_pct > 0.5:
+        if momentum_pct is not None and momentum_pct > 0.2:
             should_skip, _ = tracker.should_skip_direction("LONG")
             if not should_skip:
                 return (SignalAction.LONG, self._build_reasoning("MOMENTUM_LONG", market_data))
@@ -1124,17 +1124,17 @@ class AgapeSpotSignalGenerator:
         volatility so normal market noise doesn't trigger them. Falls back
         to the fixed per-ticker percentages when ATR is unavailable.
 
-        Stop = max(2.0 × ATR, fixed_pct_stop)  — at least as wide as 2.0 ATR
-        Target = max(3.0 × stop, profit_target_pct) — 3:1 reward:risk minimum
+        Stop = max(1.5 × ATR, fixed_pct_stop)  — at least as wide as 1.5 ATR
+        Target = max(2.0 × stop, profit_target_pct) — 2:1 reward:risk minimum
         """
         exit_params = self.config.get_exit_params(ticker)
         max_loss_pct = exit_params["max_unrealized_loss_pct"]
-        profit_target_pct = exit_params.get("no_loss_profit_target_pct", 5.0)
+        profit_target_pct = exit_params.get("no_loss_profit_target_pct", 3.0)
 
         # Base stop/target from per-ticker config (the floor)
         stop_pct = max_loss_pct / 100
-        # 3:1 reward:risk — swing trades need big winners to overcome fees
-        target_pct = max(stop_pct * 3, profit_target_pct / 100) if profit_target_pct > 0 else stop_pct * 3
+        # 2:1 reward:risk — with full-balance sizing, fees are small relative to position
+        target_pct = max(stop_pct * 2, profit_target_pct / 100) if profit_target_pct > 0 else stop_pct * 2
 
         squeeze = market_data.get("squeeze_risk", "LOW")
         if squeeze == "HIGH":
@@ -1148,14 +1148,14 @@ class AgapeSpotSignalGenerator:
         vc = vol_context or {}
         atr = vc.get("atr")
         if atr and atr > 0 and spot > 0:
-            # Stop: 2.0 × ATR below entry (swing trades need room for daily noise)
-            # In choppy markets, widen to 2.5 × ATR
-            atr_mult = 2.5 if vc.get("is_choppy") else 2.0
+            # Stop: 1.5 × ATR below entry (covers normal noise)
+            # In choppy markets, widen to 2.0 × ATR
+            atr_mult = 2.0 if vc.get("is_choppy") else 1.5
             atr_stop_distance = atr * atr_mult
             atr_stop_pct = atr_stop_distance / spot
 
-            # Target: 3:1 reward:risk vs ATR stop — fees need big wins
-            atr_target_distance = atr_stop_distance * 3.0
+            # Target: 2:1 reward:risk vs ATR stop
+            atr_target_distance = atr_stop_distance * 2.0
             atr_target_pct = atr_target_distance / spot
 
             # Use the WIDER of ATR-based or fixed-pct (ATR is the floor)

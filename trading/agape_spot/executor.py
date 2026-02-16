@@ -1356,29 +1356,33 @@ class AgapeSpotExecutor:
                     )
                 return None
 
-            # Size from real balance × allocator ranking
-            usable_usd = usd_available * 0.95  # Reserve 5% for fees/slippage
+            # Size from real balance — use FULL available balance per trade.
+            #
+            # With max_positions=1 per ticker, the old allocator split the
+            # balance 5 ways (one per ticker) even though only 1 trade opens
+            # at a time.  Result: $50 balance → $9.50 per trade → $4.75 per
+            # account → trades too small to overcome fees.
+            #
+            # New approach: use 90% of available USD for each trade.  The
+            # Coinbase balance already reflects capital tied up in other open
+            # positions (it's the AVAILABLE balance, not total balance).
+            # Reserve 10% for fees + slippage headroom.
+            usable_usd = usd_available * 0.90
 
-            alloc_pct = 1.0
-            if self.capital_allocator:
-                alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
-            allocated_usd = usable_usd * alloc_pct
-
-            affordable_qty = allocated_usd / signal.spot_price
+            affordable_qty = usable_usd / signal.spot_price
             affordable_qty = round(affordable_qty, qty_decimals)
 
             logger.info(
                 f"AGAPE-SPOT: SIZING [{account_label}] {signal.ticker} "
-                f"balance=${usd_available:.2f}, usable=${usable_usd:.2f}, "
-                f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
-                f"qty={affordable_qty}"
+                f"balance=${usd_available:.2f}, usable=${usable_usd:.2f} "
+                f"(90% of balance), qty={affordable_qty}"
             )
             if self.db:
                 self.db.log(
-                    "INFO", "ALLOC_SIZED",
+                    "INFO", "FULL_BALANCE_SIZED",
                     f"[{account_label}] {signal.ticker}: "
                     f"balance=${usd_available:.2f}, "
-                    f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                    f"usable=${usable_usd:.2f} (90%), "
                     f"qty={affordable_qty}",
                     ticker=signal.ticker,
                 )
