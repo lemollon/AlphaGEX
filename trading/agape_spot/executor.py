@@ -541,9 +541,11 @@ class AgapeSpotExecutor:
     # =========================================================================
 
     # Coinbase Advanced Trade fee rates.
-    # Actual rate depends on 30-day volume tier (0.40%-1.20%).
-    COINBASE_TAKER_FEE_RATE = 0.008  # 0.80% conservative mid-tier for market orders
-    COINBASE_MAKER_FEE_RATE = 0.004  # 0.40% for limit orders (maker)
+    # Observed from live trades (Feb 2026): 1.2-1.4% per side on small orders.
+    # Coinbase charges higher rates on sub-$10K monthly volume.
+    # Taker: ~1.2% (market orders), Maker: ~0.6% (limit orders)
+    COINBASE_TAKER_FEE_RATE = 0.012  # 1.20% — observed from live fills
+    COINBASE_MAKER_FEE_RATE = 0.006  # 0.60% — estimated maker tier
 
     def _extract_fee_from_fills(
         self, fills_list: list, side: str, ticker: str,
