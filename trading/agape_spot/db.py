@@ -512,7 +512,15 @@ class AgapeSpotDatabase:
             cursor.close()
             conn.close()
 
-    def expire_position(self, position_id: str, realized_pnl: float, close_price: float) -> bool:
+    def expire_position(
+        self,
+        position_id: str,
+        realized_pnl: float,
+        close_price: float,
+        coinbase_sell_order_id: str = None,
+        exit_slippage_pct: float = None,
+        exit_fee_usd: float = None,
+    ) -> bool:
         conn = self._get_conn()
         if not conn:
             return False
@@ -521,9 +529,16 @@ class AgapeSpotDatabase:
             cursor.execute("""
                 UPDATE agape_spot_positions
                 SET status = 'expired', close_time = NOW(),
-                    close_price = %s, realized_pnl = %s, close_reason = 'MAX_HOLD_TIME'
+                    close_price = %s, realized_pnl = %s, close_reason = 'MAX_HOLD_TIME',
+                    coinbase_sell_order_id = COALESCE(%s, coinbase_sell_order_id),
+                    exit_slippage_pct = COALESCE(%s, exit_slippage_pct),
+                    exit_fee_usd = COALESCE(%s, exit_fee_usd)
                 WHERE position_id = %s AND status = 'open'
-            """, (close_price, realized_pnl, position_id))
+            """, (
+                close_price, realized_pnl,
+                coinbase_sell_order_id, exit_slippage_pct, exit_fee_usd,
+                position_id,
+            ))
             conn.commit()
             return cursor.rowcount > 0
         except Exception as e:

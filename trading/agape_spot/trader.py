@@ -1427,7 +1427,12 @@ class AgapeSpotTrader:
         exit_fee = exec_details.get("exit_fee_usd") if exec_details else None
 
         if reason == "MAX_HOLD_TIME":
-            success = self.db.expire_position(position_id, realized_pnl, actual_close_price)
+            success = self.db.expire_position(
+                position_id, realized_pnl, actual_close_price,
+                coinbase_sell_order_id=sell_order_id,
+                exit_slippage_pct=exit_slippage,
+                exit_fee_usd=exit_fee,
+            )
         else:
             success = self.db.close_position(
                 position_id, actual_close_price, realized_pnl, reason,
