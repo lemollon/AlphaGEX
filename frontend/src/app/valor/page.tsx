@@ -93,7 +93,7 @@ type ValorTabId = typeof VALOR_TABS[number]['id']
 // TICKER METADATA (matches AGAPE-SPOT TICKER_META pattern)
 // ==============================================================================
 
-const VALOR_TICKERS = ['ALL', 'MNQ', 'CL', 'NG', 'RTY', 'MES'] as const
+const VALOR_TICKERS = ['ALL', 'MES', 'MNQ', 'CL', 'NG', 'RTY'] as const
 type ValorTickerId = typeof VALOR_TICKERS[number]
 
 const TICKER_META: Record<string, {
@@ -106,11 +106,26 @@ const TICKER_META: Record<string, {
   borderCard: string
 }> = {
   'ALL': { symbol: 'ALL',  label: 'All Instruments', hexColor: '#6366f1', bgActive: 'bg-indigo-600',  textActive: 'text-indigo-400',  bgCard: 'bg-indigo-950/30', borderCard: 'border-indigo-700/40' },
+  'MES': { symbol: 'MES',  label: 'Micro S&P 500',   hexColor: '#A855F7', bgActive: 'bg-purple-600',  textActive: 'text-purple-400',  bgCard: 'bg-purple-950/30', borderCard: 'border-purple-700/40' },
   'MNQ': { symbol: 'MNQ',  label: 'Micro Nasdaq',    hexColor: '#06B6D4', bgActive: 'bg-cyan-600',    textActive: 'text-cyan-400',    bgCard: 'bg-cyan-950/30',   borderCard: 'border-cyan-700/40' },
   'CL':  { symbol: 'CL',   label: 'Crude Oil',       hexColor: '#F59E0B', bgActive: 'bg-amber-600',   textActive: 'text-amber-400',   bgCard: 'bg-amber-950/30',  borderCard: 'border-amber-700/40' },
   'NG':  { symbol: 'NG',   label: 'Natural Gas',     hexColor: '#22C55E', bgActive: 'bg-green-600',   textActive: 'text-green-400',   bgCard: 'bg-green-950/30',  borderCard: 'border-green-700/40' },
   'RTY': { symbol: 'RTY',  label: 'Micro Russell',   hexColor: '#F97316', bgActive: 'bg-orange-600',  textActive: 'text-orange-400',  bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
-  'MES': { symbol: 'MES',  label: 'Micro S&P 500',   hexColor: '#A855F7', bgActive: 'bg-purple-600',  textActive: 'text-purple-400',  bgCard: 'bg-purple-950/30', borderCard: 'border-purple-700/40' },
+}
+
+// Per-ticker contract specifications ($100K starting capital each)
+const TICKER_SPECS: Record<string, {
+  pointValue: string
+  tickSize: string
+  tickValue: string
+  dayMargin: string
+  startingCapital: number
+}> = {
+  'MES': { pointValue: '$5.00/point',     tickSize: '0.25 points', tickValue: '$1.25/tick',    dayMargin: '~$1,500',  startingCapital: 100000 },
+  'MNQ': { pointValue: '$2.00/point',     tickSize: '0.25 points', tickValue: '$0.50/tick',    dayMargin: '~$1,800',  startingCapital: 100000 },
+  'CL':  { pointValue: '$1,000/point',    tickSize: '0.01 points', tickValue: '$10.00/tick',   dayMargin: '~$6,000',  startingCapital: 100000 },
+  'NG':  { pointValue: '$10,000/point',   tickSize: '0.001 points', tickValue: '$10.00/tick',  dayMargin: '~$2,500',  startingCapital: 100000 },
+  'RTY': { pointValue: '$5.00/point',     tickSize: '0.10 points', tickValue: '$0.50/tick',    dayMargin: '~$800',    startingCapital: 100000 },
 }
 
 // Helper: get metadata for a ticker (with fallback)
@@ -140,10 +155,10 @@ export default function ValorPage() {
   const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus(selectedTicker)
   const { data: closedTradesData } = useValorClosedTrades(1000, selectedTicker)
   const { data: equityCurveData } = useValorEquityCurve(selectedTimeframe.days || 30, selectedTicker)
-  const { data: intradayEquityData } = useValorIntradayEquity()
+  const { data: intradayEquityData } = useValorIntradayEquity(selectedTicker)
   const { data: tickersData } = useValorTickers()
   const { data: tickerStatsData } = useValorTickerStats()
-  const { data: scanActivityData, mutate: mutateScanActivity } = useValorScanActivity(1000)
+  const { data: scanActivityData, mutate: mutateScanActivity } = useValorScanActivity(1000, undefined)
   const { data: mlTrainingData } = useValorMLTrainingData()
   const { data: mlTrainingDataStats, mutate: refreshTrainingStats } = useValorMLTrainingDataStats()
   const { data: mlStatus, mutate: refreshMLStatus } = useValorMLStatus()
@@ -258,12 +273,13 @@ export default function ValorPage() {
   const positions = status?.positions?.positions || []
   const performance = status?.performance || {}
 
-  // SINGLE SOURCE OF TRUTH for starting capital
+  // SINGLE SOURCE OF TRUTH for starting capital ($100K per instrument)
   // Priority: unified metrics -> paper account -> config -> default
   const startingCapital = unifiedMetrics?.starting_capital ??
     status?.paper_account?.starting_capital ??
     status?.config?.capital ??
     100000
+  const scanToday = scanActivityData?.today_summary || {}
   const config = status?.config || {}
   const winTracker = status?.win_tracker || {}
   const paperAccount = status?.paper_account || null
@@ -441,7 +457,7 @@ export default function ValorPage() {
                   Paper Trading Mode - {selectedTicker ? `${selectedTicker} Futures` : 'Multi-Instrument Futures'} Scalping
                 </h3>
                 <p className="text-gray-300 text-sm mt-1">
-                  VALOR is paper trading {selectedTicker || 'MNQ, CL, NG, RTY'} futures with simulated capital. Uses GEX signals for mean reversion (positive gamma) and momentum (negative gamma).
+                  VALOR is paper trading {selectedTicker || 'MES, MNQ, CL, NG, RTY'} futures with $100K per instrument. Uses GEX signals for mean reversion (positive gamma) and momentum (negative gamma).
                 </p>
                 <p className="text-gray-400 text-xs mt-2">
                   24/5 trading: Sun 5pm - Fri 4pm CT with 4-5pm daily maintenance break.
@@ -662,7 +678,11 @@ export default function ValorPage() {
                             {position.gamma_regime} GAMMA
                           </div>
                         </div>
-                        <div className="grid grid-cols-4 gap-4 mt-3 text-sm text-gray-400">
+                        <div className="grid grid-cols-3 md:grid-cols-6 gap-4 mt-3 text-sm text-gray-400">
+                          <div>Current: <span className="text-white font-mono">{position.current_price?.toFixed(2) || '—'}</span></div>
+                          <div>Unrealized: <span className={`font-mono font-semibold ${(position.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {position.unrealized_pnl != null ? `$${position.unrealized_pnl >= 0 ? '+' : ''}${position.unrealized_pnl.toFixed(2)}` : '—'}
+                          </span></div>
                           <div>Stop: <span className="text-white font-mono">{position.current_stop?.toFixed(2)}</span></div>
                           <div>Trailing: <span className={position.trailing_active ? 'text-green-400' : 'text-gray-500'}>{position.trailing_active ? 'Active' : 'Inactive'}</span></div>
                           <div>Opened: <span className="text-white">{new Date(position.open_time).toLocaleTimeString()}</span></div>
@@ -987,37 +1007,14 @@ export default function ValorPage() {
                 )
               })()}
 
-              {/* ML Training Status */}
+              {/* ML Training Data Status */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <div className="flex items-center justify-between mb-4">
+                <div className="mb-4">
                   <h3 className="text-lg font-semibold flex items-center gap-2">
                     <GraduationCap className="h-5 w-5 text-yellow-400" />
                     ML Training Data Status
                   </h3>
-                  {/* Train Button */}
-                  <button
-                    onClick={handleTrainML}
-                    disabled={isTraining || !mlTrainingDataStats?.ready_for_ml_training}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
-                      isTraining
-                        ? 'bg-yellow-600/50 text-yellow-300 cursor-wait'
-                        : mlTrainingDataStats?.ready_for_ml_training
-                          ? 'bg-yellow-600 hover:bg-yellow-500 text-black'
-                          : 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                    }`}
-                  >
-                    {isTraining ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin" />
-                        Training...
-                      </>
-                    ) : (
-                      <>
-                        <GraduationCap className="h-4 w-4" />
-                        Train Model
-                      </>
-                    )}
-                  </button>
+                  <p className="text-xs text-gray-500 mt-1">Use ML Shadow Advisor above to train, promote, or discard models.</p>
                 </div>
 
                 {/* Parameter Version Warning Banner */}
@@ -1119,50 +1116,9 @@ export default function ValorPage() {
                   }`}>
                     {trainingResult.success ? (
                       <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-green-400 font-semibold">
-                            <CheckCircle className="h-5 w-5" />
-                            Model Trained Successfully
-                          </div>
-                          {/* Approve/Reject Buttons after training */}
-                          {!mlApprovalStatus?.ml_approved && (
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={handleRejectML}
-                                disabled={isRejecting || isApproving}
-                                className="flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-semibold transition-colors disabled:opacity-50"
-                              >
-                                {isRejecting ? (
-                                  <>
-                                    <RefreshCw className="h-4 w-4 animate-spin" />
-                                    Rejecting...
-                                  </>
-                                ) : (
-                                  <>
-                                    <XCircle className="h-4 w-4" />
-                                    Reject Model
-                                  </>
-                                )}
-                              </button>
-                              <button
-                                onClick={handleApproveML}
-                                disabled={isApproving || isRejecting}
-                                className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold transition-colors disabled:opacity-50 animate-pulse"
-                              >
-                                {isApproving ? (
-                                  <>
-                                    <RefreshCw className="h-4 w-4 animate-spin" />
-                                    Approving...
-                                  </>
-                                ) : (
-                                  <>
-                                    <CheckCircle className="h-4 w-4" />
-                                    Approve & Activate ML
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )}
+                        <div className="flex items-center gap-2 text-green-400 font-semibold">
+                          <CheckCircle className="h-5 w-5" />
+                          Model Trained Successfully
                         </div>
 
                         {/* New vs Previous Comparison */}
@@ -1358,117 +1314,40 @@ export default function ValorPage() {
                   </div>
                 )}
 
-                {/* Model Status */}
-                {mlStatus && (
+                {/* Model Status (read-only summary) */}
+                {mlStatus && mlStatus.model_trained && (
                   <div className="mt-4 p-4 bg-gray-900/30 rounded-lg border border-gray-700">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className={`w-3 h-3 rounded-full ${
-                          mlApprovalStatus?.ml_approved && mlStatus.model_trained
-                            ? 'bg-green-500'
-                            : mlStatus.model_trained
-                              ? 'bg-yellow-500'
-                              : 'bg-gray-500'
+                          mlApprovalStatus?.ml_approved ? 'bg-green-500' : 'bg-yellow-500'
                         }`} />
                         <span className="font-medium">
-                          {mlApprovalStatus?.ml_approved && mlStatus.model_trained
-                            ? 'ML Model Active'
-                            : mlStatus.model_trained
-                              ? 'ML Model Trained (Awaiting Approval)'
-                              : 'ML Model Not Trained'}
+                          {mlApprovalStatus?.ml_approved ? 'ML Model Active' : 'ML Model Trained (Awaiting Promotion)'}
                         </span>
                       </div>
-                      {mlStatus.model_trained && mlStatus.last_trained && (
+                      {mlStatus.last_trained && (
                         <span className="text-sm text-gray-400">
                           Last trained: {new Date(mlStatus.last_trained).toLocaleString()}
                         </span>
                       )}
                     </div>
-                    {mlStatus.model_trained && (
-                      <>
-                        <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <span className="text-gray-400">Model Accuracy:</span>
-                            <span className="ml-2 text-yellow-400 font-mono">{((mlStatus.accuracy || 0) * 100).toFixed(1)}%</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Training Samples:</span>
-                            <span className="ml-2 text-white font-mono">{mlStatus.training_samples || 0}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Probability Source:</span>
-                            <span className={`ml-2 font-mono ${mlApprovalStatus?.probability_source === 'ML' ? 'text-green-400' : 'text-blue-400'}`}>
-                              {mlApprovalStatus?.probability_source || 'BAYESIAN'}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* ML Approval Controls */}
-                        <div className="mt-4 flex items-center gap-4">
-                          {mlApprovalStatus?.ml_approved ? (
-                            <button
-                              onClick={handleRevokeML}
-                              disabled={isRevoking}
-                              className="flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                            >
-                              {isRevoking ? (
-                                <>
-                                  <RefreshCw className="h-4 w-4 animate-spin" />
-                                  Revoking...
-                                </>
-                              ) : (
-                                <>
-                                  <AlertTriangle className="h-4 w-4" />
-                                  Revoke ML Approval
-                                </>
-                              )}
-                            </button>
-                          ) : (
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={handleRejectML}
-                                disabled={isRejecting || isApproving}
-                                className="flex items-center gap-2 px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                              >
-                                {isRejecting ? (
-                                  <>
-                                    <RefreshCw className="h-4 w-4 animate-spin" />
-                                    Rejecting...
-                                  </>
-                                ) : (
-                                  <>
-                                    <XCircle className="h-4 w-4" />
-                                    Reject Model
-                                  </>
-                                )}
-                              </button>
-                              <button
-                                onClick={handleApproveML}
-                                disabled={isApproving || isRejecting}
-                                className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                              >
-                                {isApproving ? (
-                                  <>
-                                    <RefreshCw className="h-4 w-4 animate-spin" />
-                                    Approving...
-                                  </>
-                                ) : (
-                                  <>
-                                    <CheckCircle className="h-4 w-4" />
-                                    Approve ML Model
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )}
-                          <span className="text-sm text-gray-400">
-                            {mlApprovalStatus?.ml_approved
-                              ? 'ML predictions are being used for win probability'
-                              : 'Using Bayesian fallback - approve to use ML predictions'}
-                          </span>
-                        </div>
-                      </>
-                    )}
+                    <div className="mt-3 grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-400">Model Accuracy:</span>
+                        <span className="ml-2 text-yellow-400 font-mono">{((mlStatus.accuracy || 0) * 100).toFixed(1)}%</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Training Samples:</span>
+                        <span className="ml-2 text-white font-mono">{mlStatus.training_samples || 0}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Probability Source:</span>
+                        <span className={`ml-2 font-mono ${mlApprovalStatus?.probability_source === 'ML' ? 'text-green-400' : 'text-blue-400'}`}>
+                          {mlApprovalStatus?.probability_source || 'BAYESIAN'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -1658,6 +1537,101 @@ export default function ValorPage() {
                 </div>
               </div>
 
+              {/* Today's Scan Summary */}
+              {(scanToday.scans_today > 0) && (
+                <div className="bg-yellow-900/20 border border-yellow-700/40 rounded-lg p-4">
+                  <div className="flex items-center gap-3 text-sm">
+                    <Zap className="h-4 w-4 text-yellow-400" />
+                    <span className="text-yellow-400 font-semibold">Today:</span>
+                    <span className="text-gray-300">{scanToday.scans_today} scans</span>
+                    <span className="text-gray-500">&middot;</span>
+                    <span className="text-green-400">{scanToday.traded_today} traded</span>
+                    <span className="text-gray-500">&middot;</span>
+                    <span className="text-gray-300">{(scanToday.trade_rate_today_pct || 0).toFixed(1)}% rate</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Recent Signals */}
+              {signals.length > 0 && (
+                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
+                  <div className="p-4 border-b border-gray-800">
+                    <h3 className="font-semibold flex items-center gap-2">
+                      <Zap className="h-5 w-5 text-yellow-400" />
+                      Recent Signals ({signals.length})
+                    </h3>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-900">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-gray-400">Time</th>
+                          <th className="px-4 py-3 text-left text-gray-400">Ticker</th>
+                          <th className="px-4 py-3 text-left text-gray-400">Direction</th>
+                          <th className="px-4 py-3 text-left text-gray-400">Source</th>
+                          <th className="px-4 py-3 text-left text-gray-400">Regime</th>
+                          <th className="px-4 py-3 text-right text-gray-400">Price</th>
+                          <th className="px-4 py-3 text-right text-gray-400">Win Prob</th>
+                          <th className="px-4 py-3 text-left text-gray-400">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-800">
+                        {signals.slice(0, 20).map((signal: any, idx: number) => {
+                          const sigTicker = signal.ticker || 'MES'
+                          const sigMeta = getTickerMeta(sigTicker)
+                          return (
+                            <tr key={signal.signal_id || idx} className="hover:bg-gray-900/50">
+                              <td className="px-4 py-3 font-mono text-xs">
+                                {signal.signal_time ? new Date(signal.signal_time).toLocaleTimeString() : '—'}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: sigMeta.hexColor + '20', color: sigMeta.hexColor }}>
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: sigMeta.hexColor }} />
+                                  {sigTicker}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-1 rounded text-xs ${
+                                  signal.direction === 'LONG' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'
+                                }`}>
+                                  {signal.direction}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-xs text-gray-400">{signal.source || signal.signal_source || '—'}</td>
+                              <td className="px-4 py-3">
+                                {signal.gamma_regime && (
+                                  <span className={`px-2 py-1 rounded text-xs ${
+                                    signal.gamma_regime === 'POSITIVE' ? 'bg-blue-900/50 text-blue-400' : 'bg-purple-900/50 text-purple-400'
+                                  }`}>
+                                    {signal.gamma_regime}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-right font-mono">{signal.entry_price?.toFixed(2) || signal.price?.toFixed(2) || '—'}</td>
+                              <td className="px-4 py-3 text-right font-mono text-xs">
+                                {signal.win_probability != null
+                                  ? <span className={signal.win_probability >= 0.55 ? 'text-green-400' : signal.win_probability >= 0.45 ? 'text-yellow-400' : 'text-red-400'}>
+                                      {(signal.win_probability * 100).toFixed(0)}%
+                                    </span>
+                                  : <span className="text-gray-600">—</span>
+                                }
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className={`px-2 py-1 rounded text-xs ${
+                                  signal.executed ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'
+                                }`}>
+                                  {signal.executed ? 'Executed' : 'Skipped'}
+                                </span>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               {/* Scan Activity Table */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
                 <div className="p-4 border-b border-gray-800 flex items-center justify-between">
@@ -1686,6 +1660,7 @@ export default function ValorPage() {
                       <thead className="bg-gray-900">
                         <tr>
                           <th className="px-4 py-3 text-left text-gray-400">Time</th>
+                          <th className="px-4 py-3 text-left text-gray-400">Ticker</th>
                           <th className="px-4 py-3 text-left text-gray-400">Outcome</th>
                           <th className="px-4 py-3 text-left text-gray-400">Regime</th>
                           <th className="px-4 py-3 text-right text-gray-400">Price</th>
@@ -1696,17 +1671,28 @@ export default function ValorPage() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-800">
-                        {scans.slice(0, 50).map((scan: any) => (
+                        {scans.slice(0, 50).map((scan: any) => {
+                          const scanTicker = scan.ticker || 'MES'
+                          const scanMeta = getTickerMeta(scanTicker)
+                          return (
                           <tr key={scan.scan_id} className="hover:bg-gray-900/50">
                             <td className="px-4 py-3 font-mono text-xs">
                               {new Date(scan.scan_time).toLocaleTimeString()}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold" style={{ backgroundColor: scanMeta.hexColor + '20', color: scanMeta.hexColor }}>
+                                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: scanMeta.hexColor }} />
+                                {scanTicker}
+                              </span>
                             </td>
                             <td className="px-4 py-3">
                               <span className={`px-2 py-1 rounded text-xs ${
                                 scan.outcome === 'TRADED' ? 'bg-green-900/50 text-green-400' :
                                 scan.outcome === 'NO_TRADE' ? 'bg-yellow-900/50 text-yellow-400' :
                                 scan.outcome === 'SKIP' ? 'bg-gray-700 text-gray-400' :
-                                'bg-red-900/50 text-red-400'
+                                scan.outcome === 'MARKET_CLOSED' ? 'bg-gray-800 text-gray-500' :
+                                scan.outcome === 'ERROR' ? 'bg-red-900/50 text-red-400' :
+                                'bg-gray-700 text-gray-400'
                               }`}>
                                 {scan.outcome}
                               </span>
@@ -1756,7 +1742,8 @@ export default function ValorPage() {
                               {scan.decision_summary || scan.skip_reason || '-'}
                             </td>
                           </tr>
-                        ))}
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1767,6 +1754,48 @@ export default function ValorPage() {
 
           {activeTab === 'history' && (
             <div className="space-y-6">
+              {/* Trade Summary Stats */}
+              {closedTrades.length > 0 && (() => {
+                const wins = closedTrades.filter((t: any) => (t.realized_pnl || 0) > 0)
+                const losses = closedTrades.filter((t: any) => (t.realized_pnl || 0) <= 0)
+                const totalPnl = closedTrades.reduce((sum: number, t: any) => sum + (t.realized_pnl || 0), 0)
+                const winRate = (wins.length / closedTrades.length) * 100
+                const avgWin = wins.length > 0 ? wins.reduce((s: number, t: any) => s + t.realized_pnl, 0) / wins.length : 0
+                const avgLoss = losses.length > 0 ? losses.reduce((s: number, t: any) => s + t.realized_pnl, 0) / losses.length : 0
+                return (
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
+                      <div className="text-sm text-gray-400">Total Trades</div>
+                      <div className="text-2xl font-bold mt-1">{closedTrades.length}</div>
+                    </div>
+                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
+                      <div className="text-sm text-gray-400">Win Rate</div>
+                      <div className={`text-2xl font-bold mt-1 ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>{winRate.toFixed(1)}%</div>
+                    </div>
+                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
+                      <div className="text-sm text-gray-400">Total P&L</div>
+                      <div className={`text-2xl font-bold mt-1 ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>${totalPnl.toFixed(2)}</div>
+                    </div>
+                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
+                      <div className="text-sm text-gray-400">Avg Win</div>
+                      <div className="text-2xl font-bold mt-1 text-green-400">${avgWin.toFixed(2)}</div>
+                    </div>
+                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
+                      <div className="text-sm text-gray-400">Avg Loss</div>
+                      <div className="text-2xl font-bold mt-1 text-red-400">${avgLoss.toFixed(2)}</div>
+                    </div>
+                    <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4 text-center">
+                      <div className="text-sm text-gray-400">W/L</div>
+                      <div className="text-2xl font-bold mt-1">
+                        <span className="text-green-400">{wins.length}</span>
+                        <span className="text-gray-500">/</span>
+                        <span className="text-red-400">{losses.length}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 overflow-hidden">
                 <div className="p-4 border-b border-gray-800">
                   <h3 className="font-semibold flex items-center gap-2">
@@ -1848,11 +1877,11 @@ export default function ValorPage() {
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
                 <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                   <Settings className="h-5 w-5 text-yellow-400" />
-                  VALOR Configuration
+                  VALOR Configuration {selectedTicker ? `(${selectedTicker})` : '(All Instruments)'}
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <ConfigItem label="Symbol" value={status?.symbol || '/MESH6'} />
-                  <ConfigItem label="Capital" value={`$${startingCapital.toLocaleString()}`} />
+                  <ConfigItem label="Instruments" value={selectedTicker || 'MES, MNQ, CL, NG, RTY'} />
+                  <ConfigItem label="Capital / Instrument" value="$100,000" />
                   <ConfigItem label="Risk/Trade" value={`${config.risk_per_trade_pct || 1}%`} />
                   <ConfigItem label="Max Contracts" value={config.max_contracts || 5} />
                   <ConfigItem label="Initial Stop" value={`${config.initial_stop_points || 3} pts`} />
@@ -1862,26 +1891,71 @@ export default function ValorPage() {
                 </div>
               </div>
 
+              {/* Per-Ticker Contract Specifications */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
-                <h3 className="text-lg font-semibold mb-4">MES Futures Specifications</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-gray-400">Point Value</div>
-                    <div className="font-mono mt-1">$5.00/point</div>
+                <h3 className="text-lg font-semibold mb-4">
+                  {selectedTicker ? `${selectedTicker} Futures Specifications` : 'Futures Contract Specifications'}
+                </h3>
+                {selectedTicker && TICKER_SPECS[selectedTicker] ? (
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-gray-400">Point Value</div>
+                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].pointValue}</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-gray-400">Tick Size</div>
+                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].tickSize}</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-gray-400">Tick Value</div>
+                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].tickValue}</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-gray-400">Day Margin</div>
+                      <div className="font-mono mt-1">{TICKER_SPECS[selectedTicker].dayMargin}</div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="text-gray-400">Starting Capital</div>
+                      <div className="font-mono mt-1">${TICKER_SPECS[selectedTicker].startingCapital.toLocaleString()}</div>
+                    </div>
                   </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-gray-400">Tick Size</div>
-                    <div className="font-mono mt-1">0.25 points</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-900/50">
+                        <tr>
+                          <th className="px-4 py-2.5 text-left text-gray-400 font-medium">Ticker</th>
+                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Point Value</th>
+                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Tick Size</th>
+                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Tick Value</th>
+                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Day Margin</th>
+                          <th className="px-4 py-2.5 text-right text-gray-400 font-medium">Capital</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-800/60">
+                        {Object.entries(TICKER_SPECS).map(([tk, spec]) => {
+                          const meta = getTickerMeta(tk)
+                          return (
+                            <tr key={tk} className="hover:bg-gray-800/30">
+                              <td className="px-4 py-2.5">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: meta.hexColor }} />
+                                  <span className="font-bold text-white">{tk}</span>
+                                  <span className="text-xs text-gray-500">{meta.label}</span>
+                                </div>
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.pointValue}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.tickSize}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.tickValue}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-gray-300">{spec.dayMargin}</td>
+                              <td className="px-4 py-2.5 text-right font-mono text-green-400">${spec.startingCapital.toLocaleString()}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
                   </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-gray-400">Tick Value</div>
-                    <div className="font-mono mt-1">$1.25/tick</div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3">
-                    <div className="text-gray-400">Day Margin</div>
-                    <div className="font-mono mt-1">~$1,500</div>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           )}
