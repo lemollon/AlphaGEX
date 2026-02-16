@@ -73,7 +73,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         # XRP exit params: widened to stop noise-exits that give alpha to buy-and-hold
         "no_loss_activation_pct": 0.8,    # Was 0.3% — way too tight, trail activated on noise
         "no_loss_trail_distance_pct": 0.75, # Was 0.25% — XRP moves 0.25% every few min, this is noise
-        "max_unrealized_loss_pct": 1.0,   # Was 0.5% — too tight, normal pullback triggers stop
+        "max_unrealized_loss_pct": 1.5,   # Was 1.0% — 2-candle adverse move triggered stop on noise
         "no_loss_profit_target_pct": 0.0,  # Disabled — let trail manage exits
         "max_hold_hours": 4,              # Was 2h — too short to capture multi-hour trends
         # Signal quality gates — XRP has no Deribit options data, need actual funding signal
@@ -98,7 +98,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         # SHIB exit params: widened — meme coin has big swings, 0.2% trail was pure noise
         "no_loss_activation_pct": 0.8,      # Was 0.3% — activated on noise
         "no_loss_trail_distance_pct": 0.60, # Was 0.2% — SHIB swings 0.5%+ per candle, 0.2% is noise
-        "max_unrealized_loss_pct": 1.0,     # Was 0.5% — normal SHIB volatility triggered this
+        "max_unrealized_loss_pct": 1.5,     # Was 1.0% — 2-candle adverse move triggered stop on noise
         "no_loss_profit_target_pct": 0.0,   # Disabled — let trail manage exits
         "max_hold_hours": 4,                # Was 2h — need time to capture real moves
         # Signal quality gates — SHIB has no Deribit data, meme coin needs real signal
@@ -123,7 +123,7 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         # DOGE exit params: widened to match altcoin reality — 0.25% trail was noise-level
         "no_loss_activation_pct": 0.8,     # Was 0.3% — trail activated on noise
         "no_loss_trail_distance_pct": 0.75, # Was 0.25% — DOGE swings 0.3%+ constantly
-        "max_unrealized_loss_pct": 1.0,    # Was 0.75% — normal volatility triggered this
+        "max_unrealized_loss_pct": 1.5,    # Was 1.0% — 2-candle adverse move triggered stop on noise
         "no_loss_profit_target_pct": 0.0,  # Disabled — let trail manage
         "max_hold_hours": 4,              # Was 2h — need to capture multi-hour trends
         # Signal quality gates — require funding data like XRP/SHIB for signal consistency
@@ -225,6 +225,13 @@ class AgapeSpotConfig:
     no_loss_emergency_stop_pct: float = 5.0
     max_unrealized_loss_pct: float = 1.5  # Was 3.0% — losses were $30 vs $9 avg win, need 77% WR to break even
     no_loss_profit_target_pct: float = 0.0
+
+    # Minimum hold time: no exits allowed before this many minutes UNLESS
+    # RSI > rsi_exit_override_threshold (overbought spike = take profit immediately).
+    # Prevents noise-exits where a normal 5-min dip triggers MAX_LOSS before
+    # the trade has time to develop.
+    min_hold_minutes: float = 10.0
+    rsi_exit_override_threshold: float = 70.0  # RSI above this bypasses min hold
 
     # SAR disabled for long-only (can't reverse to short)
     use_sar: bool = False
