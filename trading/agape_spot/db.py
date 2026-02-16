@@ -578,7 +578,8 @@ class AgapeSpotDatabase:
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
                        COALESCE(trailing_active, FALSE), current_stop,
-                       COALESCE(account_label, 'default')
+                       COALESCE(account_label, 'default'),
+                       atr_at_entry, atr_pct_at_entry, chop_index_at_entry
                 FROM agape_spot_positions
                 WHERE status = 'open'
             """
@@ -623,6 +624,9 @@ class AgapeSpotDatabase:
                     "trailing_active": bool(row[26]),
                     "current_stop": float(row[27]) if row[27] else None,
                     "account_label": row[28] if len(row) > 28 else "default",
+                    "atr_at_entry": float(row[29]) if len(row) > 29 and row[29] else None,
+                    "atr_pct_at_entry": float(row[30]) if len(row) > 30 and row[30] else None,
+                    "chop_index_at_entry": float(row[31]) if len(row) > 31 and row[31] else None,
                 })
             return positions
         except Exception as e:
