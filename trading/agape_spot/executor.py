@@ -541,9 +541,11 @@ class AgapeSpotExecutor:
     # =========================================================================
 
     # Coinbase Advanced Trade fee rates.
-    # Actual rate depends on 30-day volume tier (0.40%-1.20%).
-    COINBASE_TAKER_FEE_RATE = 0.008  # 0.80% conservative mid-tier for market orders
-    COINBASE_MAKER_FEE_RATE = 0.004  # 0.40% for limit orders (maker)
+    # Observed from live trades (Feb 2026): 1.2-1.4% per side on small orders.
+    # Coinbase charges higher rates on sub-$10K monthly volume.
+    # Taker: ~1.2% (market orders), Maker: ~0.6% (limit orders)
+    COINBASE_TAKER_FEE_RATE = 0.012  # 1.20% — observed from live fills
+    COINBASE_MAKER_FEE_RATE = 0.006  # 0.60% — estimated maker tier
 
     def _extract_fee_from_fills(
         self, fills_list: list, side: str, ticker: str,
@@ -757,14 +759,21 @@ class AgapeSpotExecutor:
         return self._estimate_fee(fill_price, quantity, ticker, side, order_type)
 
     def _get_usd_balance_from_client(self, client) -> Optional[float]:
-        """Get available USD balance directly from a specific Coinbase client.
+        """Get available USD + USDC cash balance from a Coinbase client.
 
-        Used for balance-aware position sizing so each account trades
-        within its actual available capital.
+        Returns the CASH available to trade (not crypto holdings).
 
-        Paginates through ALL Coinbase accounts (API default is 49 per page,
-        but accounts with 200+ coins need multiple pages to reach USD).
-        Falls back to USDC if no USD fiat wallet is found.
+        Compounding works naturally:
+          1. Start with $100 USD
+          2. Buy 0.037 ETH ($100) → USD drops to ~$0
+          3. ETH goes up 3%, sell → $103 USD back
+          4. Next trade: $103 × 90% = $92.70 position (compounded!)
+
+        The key is that after a profitable sell, USD increases. Each new
+        trade is sized from the current USD balance, which includes all
+        prior profits. No artificial capital tracking needed.
+
+        Logs at INFO level so we can see actual balance in production.
         """
         if not client:
             return None
@@ -773,17 +782,15 @@ class AgapeSpotExecutor:
             usdc_balance = None
             cursor = None
             total_scanned = 0
-            currencies_found = []
+            top_holdings = []
 
-            # Paginate through all accounts
-            for page in range(20):  # safety limit (20 × 250 = 5000 accounts max)
+            for page in range(20):
                 kwargs = {"limit": 250}
                 if cursor:
                     kwargs["cursor"] = cursor
 
                 accounts = client.get_accounts(**kwargs)
                 acct_list = self._resp(accounts, "accounts", [])
-
                 if not acct_list:
                     break
 
@@ -795,43 +802,49 @@ class AgapeSpotExecutor:
 
                     if currency == "USD":
                         usd_balance = val
-                    elif currency == "USDC" and usdc_balance is None:
+                    elif currency == "USDC":
                         usdc_balance = val
 
-                    # Track non-zero balances for debug logging
+                    # Track top holdings for visibility
                     if val > 0:
-                        currencies_found.append(f"{currency}=${val:.2f}")
+                        top_holdings.append(f"{currency}={val}")
 
-                if usd_balance is not None:
-                    logger.debug(
-                        f"AGAPE-SPOT Executor: Found USD=${usd_balance:.2f} "
-                        f"on page {page + 1} ({total_scanned} accounts scanned)"
-                    )
-                    return usd_balance
-
-                # Check for next page
+                # Don't return early — scan ALL pages to find USD + USDC
                 next_cursor = self._resp(accounts, "cursor", None)
                 if not next_cursor or next_cursor == cursor:
                     break
                 cursor = next_cursor
 
-            # USD not found — fall back to USDC (stablecoin, ~$1 each)
-            if usdc_balance is not None and usdc_balance > 0:
-                logger.info(
-                    f"AGAPE-SPOT Executor: No USD wallet found after "
-                    f"{total_scanned} accounts, using USDC=${usdc_balance:.2f}"
-                )
-                return usdc_balance
+            # Combine USD + USDC (both are dollar-denominated cash)
+            cash = (usd_balance or 0) + (usdc_balance or 0)
 
-            # Nothing found — log what we DID find for debugging
-            logger.warning(
-                f"AGAPE-SPOT Executor: USD wallet NOT FOUND after scanning "
-                f"{total_scanned} accounts. Non-zero balances found: "
-                f"{currencies_found or 'NONE'}"
+            # Always log at INFO — we need to see this in production
+            logger.info(
+                f"AGAPE-SPOT BALANCE: USD=${usd_balance or 0:.2f}, "
+                f"USDC=${usdc_balance or 0:.2f}, "
+                f"TOTAL CASH=${cash:.2f} "
+                f"({total_scanned} accounts scanned). "
+                f"Top holdings: {top_holdings[:10]}"
             )
-            return usd_balance  # None
+
+            if cash > 0:
+                return cash
+
+            # $0 cash — all money is deployed in crypto positions
+            # This is normal when a position is open (max_positions=1)
+            if top_holdings:
+                logger.info(
+                    f"AGAPE-SPOT BALANCE: $0 cash but have crypto holdings. "
+                    f"This is normal when a position is open."
+                )
+            else:
+                logger.warning(
+                    f"AGAPE-SPOT BALANCE: $0 total across {total_scanned} "
+                    f"accounts — account may be empty"
+                )
+            return None
         except Exception as e:
-            logger.warning(f"AGAPE-SPOT Executor: USD balance lookup failed: {e}")
+            logger.warning(f"AGAPE-SPOT BALANCE: Lookup failed: {e}")
         return None
 
     def _store_product_limits(self, ticker: str, product) -> None:
@@ -1354,29 +1367,33 @@ class AgapeSpotExecutor:
                     )
                 return None
 
-            # Size from real balance × allocator ranking
-            usable_usd = usd_available * 0.95  # Reserve 5% for fees/slippage
+            # Size from real balance — use FULL available balance per trade.
+            #
+            # With max_positions=1 per ticker, the old allocator split the
+            # balance 5 ways (one per ticker) even though only 1 trade opens
+            # at a time.  Result: $50 balance → $9.50 per trade → $4.75 per
+            # account → trades too small to overcome fees.
+            #
+            # New approach: use 90% of available USD for each trade.  The
+            # Coinbase balance already reflects capital tied up in other open
+            # positions (it's the AVAILABLE balance, not total balance).
+            # Reserve 10% for fees + slippage headroom.
+            usable_usd = usd_available * 0.90
 
-            alloc_pct = 1.0
-            if self.capital_allocator:
-                alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
-            allocated_usd = usable_usd * alloc_pct
-
-            affordable_qty = allocated_usd / signal.spot_price
+            affordable_qty = usable_usd / signal.spot_price
             affordable_qty = round(affordable_qty, qty_decimals)
 
             logger.info(
                 f"AGAPE-SPOT: SIZING [{account_label}] {signal.ticker} "
-                f"balance=${usd_available:.2f}, usable=${usable_usd:.2f}, "
-                f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
-                f"qty={affordable_qty}"
+                f"balance=${usd_available:.2f}, usable=${usable_usd:.2f} "
+                f"(90% of balance), qty={affordable_qty}"
             )
             if self.db:
                 self.db.log(
-                    "INFO", "ALLOC_SIZED",
+                    "INFO", "FULL_BALANCE_SIZED",
                     f"[{account_label}] {signal.ticker}: "
                     f"balance=${usd_available:.2f}, "
-                    f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                    f"usable=${usable_usd:.2f} (90%), "
                     f"qty={affordable_qty}",
                     ticker=signal.ticker,
                 )
