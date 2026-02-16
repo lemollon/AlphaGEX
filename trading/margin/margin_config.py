@@ -279,6 +279,23 @@ MARKET_DEFAULTS: Dict[str, MarketConfig] = {
         settlement_type=SettlementType.DAILY_MTM,
     ),
 
+    "/XRP": MarketConfig(
+        market_type=MarketType.CRYPTO_FUTURES,
+        exchange="CME",
+        margin_mode=MarginMode.CROSS,
+        liquidation_method=LiquidationMethod.MARGIN_CALL,
+        initial_margin_rate=1650.0,        # CME XRP Futures
+        maintenance_margin_rate=1500.0,
+        is_margin_per_contract=True,
+        max_leverage=15.0,
+        default_leverage=1.0,
+        contract_multiplier=2500.0,        # 2,500 XRP per contract
+        tick_size=0.0001,
+        tick_value=0.25,
+        has_expiry=True,
+        settlement_type=SettlementType.DAILY_MTM,
+    ),
+
     # --- Crypto Perpetual Futures ---
     "BTC-PERP": MarketConfig(
         market_type=MarketType.CRYPTO_PERPETUAL,
@@ -456,6 +473,7 @@ BOT_INSTRUMENT_MAP: Dict[str, str] = {
 
     # CME Crypto Futures
     "AGAPE_BTC": "/MBT",
+    "AGAPE_XRP": "/XRP",
 
     # Crypto Perpetuals
     "AGAPE_BTC_PERP": "BTC-PERP",
@@ -467,7 +485,8 @@ BOT_INSTRUMENT_MAP: Dict[str, str] = {
     # Crypto Spot
     "AGAPE_SPOT": "ETH-USD",       # Primary ticker
 
-    # Stock Index Futures (future bots)
+    # Stock Index Futures
+    "VALOR": "MES",
     "PHOENIX": "MES",
     "ATLAS": "SPX",
     "HERMES": "MNQ",

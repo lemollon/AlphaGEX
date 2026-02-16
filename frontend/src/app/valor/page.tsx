@@ -31,6 +31,7 @@ import {
   ReferenceLine,
 } from 'recharts'
 import Navigation from '@/components/Navigation'
+import BotMarginWidget from '@/components/BotMarginWidget'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   BotPageHeader,
@@ -674,6 +675,9 @@ export default function ValorPage() {
                   </div>
                 )}
               </div>
+
+              {/* Margin Status */}
+              <BotMarginWidget botName="VALOR" />
 
               {/* Equity Curve */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">

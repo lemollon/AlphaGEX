@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import BotMarginWidget from '@/components/BotMarginWidget'
 import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import {
   BotPageHeader,
@@ -353,6 +354,9 @@ function PortfolioTab({
           </div>
         </div>
       </div>
+
+      {/* Margin Status */}
+      <BotMarginWidget botName="AGAPE_DOGE_PERP" />
 
       {/* Equity Curve */}
       <BotCard title="Equity Curve" botName="AGAPE_DOGE_PERP" icon={<TrendingUp className="w-5 h-5" />}
