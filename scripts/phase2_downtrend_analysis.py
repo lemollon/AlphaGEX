@@ -118,12 +118,12 @@ def d1_downtrend_identification(conn):
             )
             SELECT
                 CASE
-                    WHEN pct_change_1h < -1.0 THEN 'STRONG_DOWN (>-1%/hr)'
-                    WHEN pct_change_1h < -0.5 THEN 'MILD_DOWN (-0.5 to -1%/hr)'
-                    WHEN pct_change_1h < 0.0 THEN 'SLIGHT_DOWN (0 to -0.5%/hr)'
-                    WHEN pct_change_1h < 0.5 THEN 'SLIGHT_UP (0 to +0.5%/hr)'
-                    WHEN pct_change_1h < 1.0 THEN 'MILD_UP (+0.5 to +1%/hr)'
-                    ELSE 'STRONG_UP (>+1%/hr)'
+                    WHEN pct_change_1h < -1.0 THEN 'STRONG_DOWN (>-1%%/hr)'
+                    WHEN pct_change_1h < -0.5 THEN 'MILD_DOWN (-0.5 to -1%%/hr)'
+                    WHEN pct_change_1h < 0.0 THEN 'SLIGHT_DOWN (0 to -0.5%%/hr)'
+                    WHEN pct_change_1h < 0.5 THEN 'SLIGHT_UP (0 to +0.5%%/hr)'
+                    WHEN pct_change_1h < 1.0 THEN 'MILD_UP (+0.5 to +1%%/hr)'
+                    ELSE 'STRONG_UP (>+1%%/hr)'
                 END AS trend,
                 COUNT(*) AS periods,
                 AVG(pct_change_1h) AS avg_change,
@@ -210,12 +210,12 @@ def d2_bounce_analysis(conn):
             )
             SELECT
                 CASE
-                    WHEN drop_pct < -2.0 THEN 'CRASH (>-2%)'
-                    WHEN drop_pct < -1.0 THEN 'STRONG_DROP (-1 to -2%)'
-                    ELSE 'MILD_DROP (-0.5 to -1%)'
+                    WHEN drop_pct < -2.0 THEN 'CRASH (>-2%%)'
+                    WHEN drop_pct < -1.0 THEN 'STRONG_DROP (-1 to -2%%)'
+                    ELSE 'MILD_DROP (-0.5 to -1%%)'
                 END AS drop_severity,
                 COUNT(*) AS drop_events,
-                -- Bounce = price rises 0.3%+ from low within 15 min
+                -- Bounce = price rises 0.3%%+ from low within 15 min
                 COUNT(*) FILTER (
                     WHERE (max_next_15min_high - low_point) / NULLIF(low_point, 0) * 100 > 0.3
                 ) AS bounced_03,
@@ -278,18 +278,18 @@ def d3_funding_dynamics(conn):
             )
             SELECT
                 CASE
-                    WHEN funding_rate < -0.01 THEN 'VERY_NEGATIVE (<-1%)'
-                    WHEN funding_rate < -0.001 THEN 'NEGATIVE (-1% to -0.1%)'
+                    WHEN funding_rate < -0.01 THEN 'VERY_NEGATIVE (<-1%%)'
+                    WHEN funding_rate < -0.001 THEN 'NEGATIVE (-1%% to -0.1%%)'
                     WHEN funding_rate < 0.001 THEN 'NEUTRAL'
-                    WHEN funding_rate < 0.01 THEN 'POSITIVE (+0.1% to +1%)'
-                    ELSE 'VERY_POSITIVE (>+1%)'
+                    WHEN funding_rate < 0.01 THEN 'POSITIVE (+0.1%% to +1%%)'
+                    ELSE 'VERY_POSITIVE (>+1%%)'
                 END AS regime,
                 COUNT(*) AS readings,
                 AVG((price_5min_later - eth_price) / NULLIF(eth_price, 0) * 100) AS avg_5min_return,
                 AVG((price_15min_later - eth_price) / NULLIF(eth_price, 0) * 100) AS avg_15min_return,
                 AVG((price_30min_later - eth_price) / NULLIF(eth_price, 0) * 100) AS avg_30min_return,
                 AVG((price_60min_later - eth_price) / NULLIF(eth_price, 0) * 100) AS avg_60min_return,
-                -- % of times price was higher 15 min later
+                -- pct of times price was higher 15 min later
                 COUNT(*) FILTER (WHERE price_15min_later > eth_price)::FLOAT / NULLIF(COUNT(*), 0) * 100 AS pct_up_15min
             FROM scans
             WHERE price_5min_later IS NOT NULL
@@ -444,16 +444,16 @@ def d6_recovery_speed(conn):
             )
             SELECT
                 CASE
-                    WHEN drawdown_pct < -2.0 THEN 'DEEP (>-2%)'
-                    WHEN drawdown_pct < -1.0 THEN 'MODERATE (-1 to -2%)'
-                    WHEN drawdown_pct < -0.5 THEN 'MILD (-0.5 to -1%)'
-                    ELSE 'SHALLOW (<-0.5%)'
+                    WHEN drawdown_pct < -2.0 THEN 'DEEP (>-2%%)'
+                    WHEN drawdown_pct < -1.0 THEN 'MODERATE (-1 to -2%%)'
+                    WHEN drawdown_pct < -0.5 THEN 'MILD (-0.5 to -1%%)'
+                    ELSE 'SHALLOW (<-0.5%%)'
                 END AS depth,
                 COUNT(*) AS events,
-                -- % that recovered to at least the local peak within 1h
+                -- pct that recovered to at least the local peak within 1h
                 COUNT(*) FILTER (WHERE max_next_1h >= local_peak_1h * 0.998)::FLOAT
                     / NULLIF(COUNT(*), 0) * 100 AS full_recovery_pct,
-                -- % that bounced at least 0.3% from bottom
+                -- pct that bounced at least 0.3%% from bottom
                 COUNT(*) FILTER (WHERE (max_next_1h - price) / NULLIF(price, 0) * 100 > 0.3)::FLOAT
                     / NULLIF(COUNT(*), 0) * 100 AS bounce_03_pct,
                 AVG((max_next_1h - price) / NULLIF(price, 0) * 100) AS avg_recovery_pct
@@ -516,10 +516,10 @@ def d7_mean_reversion_window(conn):
             )
             SELECT
                 CASE
-                    WHEN drop_from_peak < -1.5 THEN 'Drop > -1.5%'
-                    WHEN drop_from_peak < -1.0 THEN 'Drop -1.0 to -1.5%'
-                    WHEN drop_from_peak < -0.5 THEN 'Drop -0.5 to -1.0%'
-                    ELSE 'Drop < -0.5%'
+                    WHEN drop_from_peak < -1.5 THEN 'Drop > -1.5%%'
+                    WHEN drop_from_peak < -1.0 THEN 'Drop -1.0 to -1.5%%'
+                    WHEN drop_from_peak < -0.5 THEN 'Drop -0.5 to -1.0%%'
+                    ELSE 'Drop < -0.5%%'
                 END AS entry_threshold,
                 COUNT(*) AS entries,
                 -- 15-min return after entry

@@ -648,9 +648,9 @@ def f10_chop_outcome(conn):
             CASE
                 WHEN chop_index_at_entry IS NULL THEN 'NO_DATA'
                 ELSE CONCAT(
-                    ROUND(FLOOR(chop_index_at_entry * 10) / 10.0, 1)::text,
+                    ROUND((FLOOR(chop_index_at_entry * 10) / 10.0)::numeric, 1)::text,
                     '-',
-                    ROUND((FLOOR(chop_index_at_entry * 10) + 1) / 10.0, 1)::text
+                    ROUND(((FLOOR(chop_index_at_entry * 10) + 1) / 10.0)::numeric, 1)::text
                 )
             END AS bucket,
             COUNT(*) AS trades,
