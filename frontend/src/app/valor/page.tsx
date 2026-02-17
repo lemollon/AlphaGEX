@@ -722,8 +722,8 @@ export default function ValorPage() {
                   <div className="h-64 flex items-center justify-center text-gray-500">
                     <div className="text-center">
                       <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>No equity data for {selectedTimeframe.label}</p>
-                      <p className="text-xs mt-1">Data will appear after trades are executed</p>
+                      <p>No equity data{selectedTicker ? ` for ${selectedTicker}` : ''} ({selectedTimeframe.label})</p>
+                      <p className="text-xs mt-1">{selectedTicker ? `${selectedTicker} equity snapshots will appear after trades are executed for this instrument` : 'Data will appear after trades are executed'}</p>
                     </div>
                   </div>
                 )}

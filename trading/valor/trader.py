@@ -1663,8 +1663,19 @@ class ValorTrader:
         positions: List[FuturesPosition],
         ticker: str = "MES"
     ) -> None:
-        """Save equity snapshot for equity curve (per-ticker)"""
+        """Save equity snapshot for equity curve (per-ticker).
+
+        account_balance is the combined paper account balance — we compute
+        per-ticker equity from starting_capital + realized P&L for this ticker.
+        """
         try:
+            # Per-ticker equity: starting_capital + realized P&L for this ticker
+            ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+            starting_cap = ticker_cfg.get("starting_capital", 100000.0)
+            ticker_stats = self.db.get_ticker_performance_stats([ticker])
+            realized_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
+            ticker_equity = starting_cap + realized_pnl
+
             # Get current quote for unrealized P&L (for this ticker)
             quote = self.executor.get_mes_quote(ticker=ticker)
             current_price = quote.get("last", 0) if quote else 0
@@ -1678,7 +1689,7 @@ class ValorTrader:
             summary = self.db.get_daily_summary()
 
             self.db.save_equity_snapshot(
-                account_balance=account_balance,
+                account_balance=ticker_equity,
                 unrealized_pnl=unrealized_pnl,
                 realized_pnl_today=summary.realized_pnl,
                 open_positions=len([p for p in positions if p.is_open]),
@@ -2079,9 +2090,9 @@ class ValorTrader:
         """Reset paper trading account with new starting capital"""
         return self.db.reset_paper_account(starting_capital)
 
-    def get_intraday_equity(self) -> List[Dict]:
-        """Get today's equity curve"""
-        return self.db.get_intraday_equity()
+    def get_intraday_equity(self, ticker: Optional[str] = None) -> List[Dict]:
+        """Get today's equity curve, optionally filtered by ticker"""
+        return self.db.get_intraday_equity(ticker=ticker)
 
     def get_closed_trades(self, limit: int = 50, ticker: Optional[str] = None) -> List[Dict]:
         """Get recent closed trades, optionally filtered by ticker"""

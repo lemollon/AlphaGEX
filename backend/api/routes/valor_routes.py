@@ -299,16 +299,19 @@ async def get_valor_equity_curve(
 
 
 @router.get("/api/valor/equity-curve/intraday")
-async def get_valor_intraday_equity():
+async def get_valor_intraday_equity(
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+):
     """
-    Get VALOR today's equity snapshots.
+    Get VALOR today's equity snapshots. Optionally filtered by ticker.
     """
     try:
         trader = _get_trader()
-        curve = trader.get_intraday_equity()
+        curve = trader.get_intraday_equity(ticker=ticker)
         return {
             "equity_curve": curve,
             "points": len(curve),
+            "ticker_filter": ticker,
             "timestamp": datetime.now().isoformat()
         }
     except HTTPException:
