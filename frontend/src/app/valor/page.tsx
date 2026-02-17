@@ -279,11 +279,11 @@ export default function ValorPage() {
 
   // SINGLE SOURCE OF TRUTH for starting capital
   // Per-ticker: $100K per instrument (from backend paper_account when ticker is filtered)
-  // ALL view: $500K total (5 instruments × $100K each)
+  // ALL view: N instruments × $100K (derived from VALOR_TICKERS, excluding 'ALL')
   // When a ticker is selected, paper_account already has per-ticker values from backend
   // When ALL is selected, use unified metrics or paper_account combined values
   const CAPITAL_PER_INSTRUMENT = 100000
-  const ACTIVE_INSTRUMENT_COUNT = 5  // MES, MNQ, CL, NG, RTY
+  const ACTIVE_INSTRUMENT_COUNT = VALOR_TICKERS.filter(t => t !== 'ALL').length
   const startingCapital = selectedTicker
     ? (status?.paper_account?.starting_capital ?? CAPITAL_PER_INSTRUMENT)
     : (unifiedMetrics?.starting_capital ?? status?.paper_account?.starting_capital ?? CAPITAL_PER_INSTRUMENT * ACTIVE_INSTRUMENT_COUNT)
