@@ -1,21 +1,18 @@
 """
-FAITH - Database Layer
+GRACE - Database Layer
 =====================
 
-Single source of truth for all FAITH paper trading data.
-Cloned from FORTRESS with FAITH-specific tables and paper account tracking.
+Single source of truth for all GRACE paper trading data.
+Clone of FAITH's database layer with grace_* tables.
 
 Tables:
-- faith_positions: Open and closed IC positions
-- faith_signals: Generated trading signals
-- faith_daily_perf: Daily performance summary
-- faith_logs: Activity and decision logs
-- faith_equity_snapshots: Equity curve data
-- faith_paper_account: Paper account balance tracking
-- faith_pdt_log: Pattern Day Trade tracking
-
-All tables have a dte_mode column ('2DTE' or '1DTE') to support
-side-by-side comparison of different DTE strategies.
+- grace_positions: Open and closed IC positions
+- grace_signals: Generated trading signals
+- grace_daily_perf: Daily performance summary
+- grace_logs: Activity and decision logs
+- grace_equity_snapshots: Equity curve data
+- grace_paper_account: Paper account balance tracking
+- grace_pdt_log: Pattern Day Trade tracking
 """
 
 import json
@@ -27,7 +24,7 @@ from contextlib import contextmanager
 from database_adapter import get_connection
 from .models import (
     IronCondorPosition, PositionStatus,
-    FaithConfig, TradingMode, PaperAccount,
+    GraceConfig, TradingMode, PaperAccount,
     DailySummary, CENTRAL_TZ
 )
 
@@ -67,17 +64,16 @@ def db_connection():
                 pass
 
 
-class FaithDatabase:
+class GraceDatabase:
     """
-    All FAITH database operations in one place.
+    All GRACE database operations in one place.
 
     No SQL scattered throughout the codebase.
     """
 
-    def __init__(self, bot_name: str = "FAITH", dte_mode: str = "2DTE"):
+    def __init__(self, bot_name: str = "GRACE"):
         """Initialize the database layer and ensure all tables exist."""
         self.bot_name = bot_name
-        self.dte_mode = dte_mode
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -88,7 +84,7 @@ class FaithDatabase:
 
                 # Main positions table for Iron Condors
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS faith_positions (
+                    CREATE TABLE IF NOT EXISTS grace_positions (
                         id SERIAL PRIMARY KEY,
                         position_id VARCHAR(50) UNIQUE NOT NULL,
                         ticker VARCHAR(10) NOT NULL,
@@ -135,7 +131,7 @@ class FaithDatabase:
                         original_put_width DECIMAL(10, 2),
                         original_call_width DECIMAL(10, 2),
 
-                        -- Order tracking (always PAPER for FAITH)
+                        -- Order tracking (always PAPER for GRACE)
                         put_order_id VARCHAR(50) DEFAULT 'PAPER',
                         call_order_id VARCHAR(50) DEFAULT 'PAPER',
 
@@ -148,9 +144,6 @@ class FaithDatabase:
                         close_reason VARCHAR(100),
                         realized_pnl DECIMAL(10, 2),
 
-                        -- DTE mode for 1DTE vs 2DTE comparison
-                        dte_mode VARCHAR(5) DEFAULT '2DTE',
-
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                     )
@@ -158,7 +151,7 @@ class FaithDatabase:
 
                 # Signals table
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS faith_signals (
+                    CREATE TABLE IF NOT EXISTS grace_signals (
                         id SERIAL PRIMARY KEY,
                         signal_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         spot_price DECIMAL(10, 2),
@@ -176,14 +169,13 @@ class FaithDatabase:
                         was_executed BOOLEAN DEFAULT FALSE,
                         skip_reason VARCHAR(200),
                         reasoning TEXT,
-                        wings_adjusted BOOLEAN DEFAULT FALSE,
-                        dte_mode VARCHAR(5) DEFAULT '2DTE'
+                        wings_adjusted BOOLEAN DEFAULT FALSE
                     )
                 """)
 
                 # Daily performance
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS faith_daily_perf (
+                    CREATE TABLE IF NOT EXISTS grace_daily_perf (
                         id SERIAL PRIMARY KEY,
                         trade_date DATE UNIQUE NOT NULL,
                         trades_executed INTEGER DEFAULT 0,
@@ -195,19 +187,18 @@ class FaithDatabase:
 
                 # Logs
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS faith_logs (
+                    CREATE TABLE IF NOT EXISTS grace_logs (
                         id SERIAL PRIMARY KEY,
                         log_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         level VARCHAR(10),
                         message TEXT,
-                        details JSONB,
-                        dte_mode VARCHAR(5) DEFAULT '2DTE'
+                        details JSONB
                     )
                 """)
 
                 # Equity snapshots
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS faith_equity_snapshots (
+                    CREATE TABLE IF NOT EXISTS grace_equity_snapshots (
                         id SERIAL PRIMARY KEY,
                         timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         balance DECIMAL(12, 2) NOT NULL,
@@ -215,14 +206,13 @@ class FaithDatabase:
                         realized_pnl DECIMAL(12, 2) DEFAULT 0,
                         open_positions INTEGER DEFAULT 0,
                         note TEXT,
-                        dte_mode VARCHAR(5) DEFAULT '2DTE',
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                     )
                 """)
 
                 # Paper account tracking
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS faith_paper_account (
+                    CREATE TABLE IF NOT EXISTS grace_paper_account (
                         id SERIAL PRIMARY KEY,
                         starting_capital DECIMAL(12, 2) NOT NULL,
                         current_balance DECIMAL(12, 2) NOT NULL,
@@ -233,7 +223,6 @@ class FaithDatabase:
                         high_water_mark DECIMAL(12, 2) NOT NULL,
                         max_drawdown DECIMAL(12, 2) DEFAULT 0,
                         is_active BOOLEAN DEFAULT TRUE,
-                        dte_mode VARCHAR(5) DEFAULT '2DTE',
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                     )
@@ -241,7 +230,7 @@ class FaithDatabase:
 
                 # PDT day trade log
                 c.execute("""
-                    CREATE TABLE IF NOT EXISTS faith_pdt_log (
+                    CREATE TABLE IF NOT EXISTS grace_pdt_log (
                         id SERIAL PRIMARY KEY,
                         trade_date DATE NOT NULL,
                         symbol VARCHAR(10) NOT NULL,
@@ -254,51 +243,26 @@ class FaithDatabase:
                         exit_cost DECIMAL(10, 4),
                         pnl DECIMAL(10, 2),
                         close_reason VARCHAR(50),
-                        dte_mode VARCHAR(5) DEFAULT '2DTE',
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                     )
                 """)
 
                 # Create indexes
                 c.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_faith_positions_status
-                    ON faith_positions(status)
+                    CREATE INDEX IF NOT EXISTS idx_grace_positions_status
+                    ON grace_positions(status)
                 """)
                 c.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_faith_positions_open_date
-                    ON faith_positions(open_date)
+                    CREATE INDEX IF NOT EXISTS idx_grace_positions_open_date
+                    ON grace_positions(open_date)
                 """)
                 c.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_faith_pdt_log_date
-                    ON faith_pdt_log(trade_date)
+                    CREATE INDEX IF NOT EXISTS idx_grace_pdt_log_date
+                    ON grace_pdt_log(trade_date)
                 """)
-                c.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_faith_positions_dte_mode
-                    ON faith_positions(dte_mode)
-                """)
-                c.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_faith_paper_account_dte_mode
-                    ON faith_paper_account(dte_mode)
-                """)
-
-                # Add dte_mode column to existing tables if missing
-                # and backfill NULL values to '2DTE' for pre-existing data
-                for table in ['faith_positions', 'faith_signals', 'faith_logs',
-                              'faith_equity_snapshots', 'faith_paper_account', 'faith_pdt_log']:
-                    try:
-                        c.execute(f"""
-                            ALTER TABLE {table}
-                            ADD COLUMN IF NOT EXISTS dte_mode VARCHAR(5) DEFAULT '2DTE'
-                        """)
-                        # Backfill any NULL values from before column was added
-                        c.execute(f"""
-                            UPDATE {table} SET dte_mode = '2DTE' WHERE dte_mode IS NULL
-                        """)
-                    except Exception:
-                        pass  # Column already exists
 
                 conn.commit()
-                logger.info(f"{self.bot_name}: Database tables verified (dte_mode={self.dte_mode})")
+                logger.info(f"{self.bot_name}: Database tables verified")
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to ensure tables: {e}")
 
@@ -311,24 +275,24 @@ class FaithDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                # Check if active account exists for this dte_mode
+                # Check if active account exists
                 c.execute("""
-                    SELECT id FROM faith_paper_account
-                    WHERE is_active = TRUE AND dte_mode = %s
+                    SELECT id FROM grace_paper_account
+                    WHERE is_active = TRUE
                     LIMIT 1
-                """, (self.dte_mode,))
+                """)
                 if c.fetchone():
-                    logger.info(f"{self.bot_name}: Paper account already exists (dte_mode={self.dte_mode})")
+                    logger.info(f"{self.bot_name}: Paper account already exists")
                     return True
 
                 c.execute("""
-                    INSERT INTO faith_paper_account (
+                    INSERT INTO grace_paper_account (
                         starting_capital, current_balance, cumulative_pnl,
-                        buying_power, high_water_mark, dte_mode
-                    ) VALUES (%s, %s, 0, %s, %s, %s)
-                """, (starting_capital, starting_capital, starting_capital, starting_capital, self.dte_mode))
+                        buying_power, high_water_mark
+                    ) VALUES (%s, %s, 0, %s, %s)
+                """, (starting_capital, starting_capital, starting_capital, starting_capital))
                 conn.commit()
-                logger.info(f"{self.bot_name}: Paper account initialized with ${starting_capital} (dte_mode={self.dte_mode})")
+                logger.info(f"{self.bot_name}: Paper account initialized with ${starting_capital}")
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to initialize paper account: {e}")
@@ -343,10 +307,10 @@ class FaithDatabase:
                     SELECT starting_capital, current_balance, cumulative_pnl,
                            total_trades, collateral_in_use, buying_power,
                            high_water_mark, max_drawdown, is_active
-                    FROM faith_paper_account
-                    WHERE is_active = TRUE AND dte_mode = %s
+                    FROM grace_paper_account
+                    WHERE is_active = TRUE
                     ORDER BY id DESC LIMIT 1
-                """, (self.dte_mode,))
+                """)
                 row = c.fetchone()
                 if row:
                     return PaperAccount(
@@ -371,26 +335,20 @@ class FaithDatabase:
         realized_pnl: float = 0,
         collateral_change: float = 0
     ) -> bool:
-        """
-        Update paper trading balance after a trade event.
-
-        Args:
-            realized_pnl: P&L from closing a trade (positive for profit, negative for loss)
-            collateral_change: Change in collateral (positive = locked up, negative = released)
-        """
+        """Update paper trading balance after a trade event."""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
                     SELECT id, current_balance, cumulative_pnl, total_trades,
                            collateral_in_use, high_water_mark, max_drawdown, starting_capital
-                    FROM faith_paper_account
-                    WHERE is_active = TRUE AND dte_mode = %s
+                    FROM grace_paper_account
+                    WHERE is_active = TRUE
                     ORDER BY id DESC LIMIT 1
-                """, (self.dte_mode,))
+                """)
                 row = c.fetchone()
                 if not row:
-                    logger.error(f"{self.bot_name}: No active paper account found (dte_mode={self.dte_mode})")
+                    logger.error(f"{self.bot_name}: No active paper account found")
                     return False
 
                 account_id = row[0]
@@ -414,7 +372,7 @@ class FaithDatabase:
                 new_max_dd = max(max_drawdown, current_dd)
 
                 c.execute("""
-                    UPDATE faith_paper_account
+                    UPDATE grace_paper_account
                     SET current_balance = %s,
                         cumulative_pnl = %s,
                         total_trades = %s,
@@ -466,10 +424,10 @@ class FaithDatabase:
                         put_order_id, call_order_id,
                         status, open_time, close_time, close_price, close_reason,
                         realized_pnl, collateral_required
-                    FROM faith_positions
-                    WHERE status = 'open' AND dte_mode = %s
+                    FROM grace_positions
+                    WHERE status = 'open'
                     ORDER BY open_time DESC
-                """, (self.dte_mode,))
+                """)
 
                 for row in c.fetchall():
                     pos = IronCondorPosition(
@@ -528,7 +486,7 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO faith_positions (
+                    INSERT INTO grace_positions (
                         position_id, ticker, expiration,
                         put_short_strike, put_long_strike, put_credit,
                         call_short_strike, call_long_strike, call_credit,
@@ -541,12 +499,12 @@ class FaithDatabase:
                         oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         wings_adjusted, original_put_width, original_call_width,
                         put_order_id, call_order_id,
-                        status, open_time, open_date, dte_mode
+                        status, open_time, open_date
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
                     pos.position_id, pos.ticker, pos.expiration,
@@ -572,10 +530,9 @@ class FaithDatabase:
                     pos.put_order_id or "PAPER", pos.call_order_id or "PAPER",
                     pos.status.value, pos.open_time,
                     pos.open_time.date() if pos.open_time else datetime.now(CENTRAL_TZ).date(),
-                    self.dte_mode,
                 ))
                 conn.commit()
-                logger.info(f"{self.bot_name}: Saved position {pos.position_id} (dte_mode={self.dte_mode})")
+                logger.info(f"{self.bot_name}: Saved position {pos.position_id}")
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to save position: {e}")
@@ -595,16 +552,16 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    UPDATE faith_positions
+                    UPDATE grace_positions
                     SET status = 'closed',
                         close_time = NOW(),
                         close_price = %s,
                         realized_pnl = %s,
                         close_reason = %s,
                         updated_at = NOW()
-                    WHERE position_id = %s AND status = 'open' AND dte_mode = %s
+                    WHERE position_id = %s AND status = 'open'
                     RETURNING id
-                """, (close_price, realized_pnl, close_reason, position_id, self.dte_mode))
+                """, (close_price, realized_pnl, close_reason, position_id))
                 result = c.fetchone()
                 conn.commit()
                 if result:
@@ -621,16 +578,16 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    UPDATE faith_positions
+                    UPDATE grace_positions
                     SET status = 'expired',
                         close_time = NOW(),
                         close_reason = 'EXPIRED',
                         close_price = %s,
                         realized_pnl = %s,
                         updated_at = NOW()
-                    WHERE position_id = %s AND status = 'open' AND dte_mode = %s
+                    WHERE position_id = %s AND status = 'open'
                     RETURNING id
-                """, (_to_python(close_price), _to_python(realized_pnl), position_id, self.dte_mode))
+                """, (_to_python(close_price), _to_python(realized_pnl), position_id))
                 result = c.fetchone()
                 conn.commit()
                 return result is not None
@@ -644,24 +601,22 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute(
-                    "SELECT COUNT(*) FROM faith_positions WHERE status = 'open' AND dte_mode = %s",
-                    (self.dte_mode,)
+                    "SELECT COUNT(*) FROM grace_positions WHERE status = 'open'"
                 )
                 return c.fetchone()[0]
         except Exception:
             return 0
 
     def has_traded_today(self, date: str) -> bool:
-        """Check if FAITH has already traded today."""
+        """Check if GRACE has already traded today."""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
                     SELECT COUNT(*)
-                    FROM faith_positions
+                    FROM grace_positions
                     WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
-                    AND dte_mode = %s
-                """, (date, self.dte_mode))
+                """, (date,))
                 return c.fetchone()[0] > 0
         except Exception:
             return False
@@ -673,10 +628,9 @@ class FaithDatabase:
                 c = conn.cursor()
                 c.execute("""
                     SELECT COUNT(*)
-                    FROM faith_positions
+                    FROM grace_positions
                     WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
-                    AND dte_mode = %s
-                """, (date, self.dte_mode))
+                """, (date,))
                 return c.fetchone()[0]
         except Exception:
             return 0
@@ -698,13 +652,13 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO faith_pdt_log (
+                    INSERT INTO grace_pdt_log (
                         trade_date, symbol, position_id, opened_at,
-                        contracts, entry_credit, dte_mode
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        contracts, entry_credit
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
                 """, (
                     opened_at.date(), symbol, position_id,
-                    opened_at, contracts, entry_credit, self.dte_mode
+                    opened_at, contracts, entry_credit
                 ))
                 conn.commit()
                 return True
@@ -724,18 +678,17 @@ class FaithDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                # Determine if this is a day trade (opened and closed same calendar day)
                 c.execute("""
-                    UPDATE faith_pdt_log
+                    UPDATE grace_pdt_log
                     SET closed_at = %s,
                         exit_cost = %s,
                         pnl = %s,
                         close_reason = %s,
                         is_day_trade = (DATE(opened_at::timestamptz AT TIME ZONE 'America/New_York')
                                      = DATE(%s::timestamptz AT TIME ZONE 'America/New_York'))
-                    WHERE position_id = %s AND dte_mode = %s
+                    WHERE position_id = %s
                     RETURNING id
-                """, (closed_at, exit_cost, pnl, close_reason, closed_at, position_id, self.dte_mode))
+                """, (closed_at, exit_cost, pnl, close_reason, closed_at, position_id))
                 result = c.fetchone()
                 conn.commit()
                 return result is not None
@@ -744,22 +697,15 @@ class FaithDatabase:
             return False
 
     def get_day_trade_count_rolling_5_days(self) -> int:
-        """
-        Count day trades in the rolling 5 business day window.
-
-        A day trade is a position that was opened and closed on the same calendar day.
-        """
+        """Count day trades in the rolling 5 business day window."""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                # Calculate 5 business days ago (approximately 7 calendar days)
                 c.execute("""
                     SELECT COUNT(*)
-                    FROM faith_pdt_log
+                    FROM grace_pdt_log
                     WHERE is_day_trade = TRUE
-                    AND dte_mode = %s
                     AND trade_date >= (
-                        -- Get the date 5 business days ago
                         SELECT d::date
                         FROM generate_series(
                             CURRENT_DATE - INTERVAL '10 days',
@@ -770,7 +716,7 @@ class FaithDatabase:
                         ORDER BY d DESC
                         LIMIT 1 OFFSET 4
                     )
-                """, (self.dte_mode,))
+                """)
                 result = c.fetchone()
                 return result[0] if result else 0
         except Exception as e:
@@ -786,10 +732,10 @@ class FaithDatabase:
                 c.execute("""
                     SELECT trade_date, symbol, position_id, opened_at, closed_at,
                            is_day_trade, contracts, entry_credit, exit_cost, pnl, close_reason
-                    FROM faith_pdt_log
-                    WHERE trade_date >= CURRENT_DATE - %s AND dte_mode = %s
+                    FROM grace_pdt_log
+                    WHERE trade_date >= CURRENT_DATE - %s
                     ORDER BY opened_at DESC
-                """, (days, self.dte_mode))
+                """, (days,))
                 for row in c.fetchall():
                     entries.append({
                         'trade_date': str(row[0]),
@@ -813,12 +759,10 @@ class FaithDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                # Get the oldest day trade in the rolling window
                 c.execute("""
                     SELECT MIN(trade_date)
-                    FROM faith_pdt_log
+                    FROM grace_pdt_log
                     WHERE is_day_trade = TRUE
-                    AND dte_mode = %s
                     AND trade_date >= (
                         SELECT d::date
                         FROM generate_series(
@@ -830,11 +774,10 @@ class FaithDatabase:
                         ORDER BY d DESC
                         LIMIT 1 OFFSET 4
                     )
-                """, (self.dte_mode,))
+                """)
                 result = c.fetchone()
                 if result and result[0]:
                     oldest_date = result[0]
-                    # The reset date is 6 business days after the oldest day trade
                     reset_date = oldest_date
                     biz_days = 0
                     while biz_days < 6:
@@ -874,12 +817,12 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO faith_signals (
+                    INSERT INTO grace_signals (
                         spot_price, vix, expected_move, call_wall, put_wall,
                         gex_regime, put_short, put_long, call_short, call_long,
                         total_credit, confidence, was_executed, skip_reason, reasoning,
-                        wings_adjusted, dte_mode
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        wings_adjusted
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
                     _to_python(spot_price), _to_python(vix), _to_python(expected_move),
@@ -887,8 +830,7 @@ class FaithDatabase:
                     gex_regime, _to_python(put_short), _to_python(put_long),
                     _to_python(call_short), _to_python(call_long),
                     _to_python(total_credit), _to_python(confidence),
-                    was_executed, skip_reason, reasoning, wings_adjusted,
-                    self.dte_mode
+                    was_executed, skip_reason, reasoning, wings_adjusted
                 ))
                 signal_id = c.fetchone()[0]
                 conn.commit()
@@ -901,19 +843,19 @@ class FaithDatabase:
     # CONFIG & LOGGING
     # =========================================================================
 
-    def load_config(self) -> FaithConfig:
+    def load_config(self) -> GraceConfig:
         """Load config from database or return defaults."""
-        config = FaithConfig()
+        config = GraceConfig()
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
                     SELECT key, value
                     FROM autonomous_config
-                    WHERE key LIKE 'faith_%'
+                    WHERE key LIKE 'grace_%'
                 """)
                 for key, value in c.fetchall():
-                    field_name = key.replace('faith_', '', 1)
+                    field_name = key.replace('grace_', '', 1)
                     if hasattr(config, field_name):
                         if field_name == 'mode':
                             setattr(config, field_name, TradingMode(value))
@@ -938,9 +880,9 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO faith_logs (level, message, details, dte_mode)
-                    VALUES (%s, %s, %s, %s)
-                """, (level, message, json.dumps(details) if details else None, self.dte_mode))
+                    INSERT INTO grace_logs (level, message, details)
+                    VALUES (%s, %s, %s)
+                """, (level, message, json.dumps(details) if details else None))
                 conn.commit()
         except Exception as e:
             logger.debug(f"Failed to log to database: {e}")
@@ -969,13 +911,13 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO faith_daily_perf (
+                    INSERT INTO grace_daily_perf (
                         trade_date, trades_executed, positions_closed, realized_pnl
                     ) VALUES (%s, %s, %s, %s)
                     ON CONFLICT (trade_date) DO UPDATE SET
-                        trades_executed = faith_daily_perf.trades_executed + EXCLUDED.trades_executed,
-                        positions_closed = faith_daily_perf.positions_closed + EXCLUDED.positions_closed,
-                        realized_pnl = faith_daily_perf.realized_pnl + EXCLUDED.realized_pnl,
+                        trades_executed = grace_daily_perf.trades_executed + EXCLUDED.trades_executed,
+                        positions_closed = grace_daily_perf.positions_closed + EXCLUDED.positions_closed,
+                        realized_pnl = grace_daily_perf.realized_pnl + EXCLUDED.realized_pnl,
                         updated_at = NOW()
                 """, (
                     summary.date,
@@ -1002,10 +944,10 @@ class FaithDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO faith_equity_snapshots
-                    (timestamp, balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-                    VALUES (NOW(), %s, %s, %s, %s, %s, %s)
-                """, (balance, realized_pnl, unrealized_pnl, open_positions, note, self.dte_mode))
+                    INSERT INTO grace_equity_snapshots
+                    (timestamp, balance, realized_pnl, unrealized_pnl, open_positions, note)
+                    VALUES (NOW(), %s, %s, %s, %s, %s)
+                """, (balance, realized_pnl, unrealized_pnl, open_positions, note))
                 conn.commit()
                 return True
         except Exception as e:
@@ -1037,11 +979,11 @@ class FaithDatabase:
                         open_time, close_time,
                         underlying_at_entry, vix_at_entry,
                         wings_adjusted, original_put_width, original_call_width
-                    FROM faith_positions
-                    WHERE status IN ('closed', 'expired') AND dte_mode = %s
+                    FROM grace_positions
+                    WHERE status IN ('closed', 'expired')
                     ORDER BY close_time DESC
                     LIMIT %s
-                """, (self.dte_mode, limit))
+                """, (limit,))
 
                 for row in c.fetchall():
                     put_width = float(row[3]) - float(row[4])
@@ -1083,10 +1025,9 @@ class FaithDatabase:
                 c.execute("""
                     WITH trades AS (
                         SELECT realized_pnl, close_reason, total_credit, contracts
-                        FROM faith_positions
+                        FROM grace_positions
                         WHERE status IN ('closed', 'expired')
                         AND realized_pnl IS NOT NULL
-                        AND dte_mode = %s
                     )
                     SELECT
                         COUNT(*) as total_trades,
@@ -1098,7 +1039,7 @@ class FaithDatabase:
                         COALESCE(MAX(realized_pnl), 0) as best_trade,
                         COALESCE(MIN(realized_pnl), 0) as worst_trade
                     FROM trades
-                """, (self.dte_mode,))
+                """)
                 row = c.fetchone()
                 if row:
                     total = int(row[0])
@@ -1132,9 +1073,9 @@ class FaithDatabase:
                 c = conn.cursor()
                 # Get starting capital
                 c.execute("""
-                    SELECT starting_capital FROM faith_paper_account
-                    WHERE is_active = TRUE AND dte_mode = %s LIMIT 1
-                """, (self.dte_mode,))
+                    SELECT starting_capital FROM grace_paper_account
+                    WHERE is_active = TRUE LIMIT 1
+                """)
                 row = c.fetchone()
                 starting_capital = float(row[0]) if row else 5000.0
 
@@ -1144,13 +1085,12 @@ class FaithDatabase:
                         close_time,
                         realized_pnl,
                         SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
-                    FROM faith_positions
+                    FROM grace_positions
                     WHERE status IN ('closed', 'expired')
                     AND realized_pnl IS NOT NULL
                     AND close_time IS NOT NULL
-                    AND dte_mode = %s
                     ORDER BY close_time
-                """, (self.dte_mode,))
+                """)
 
                 for row in c.fetchall():
                     curve.append({
@@ -1171,11 +1111,10 @@ class FaithDatabase:
                 c = conn.cursor()
                 c.execute("""
                     SELECT log_time, level, message, details
-                    FROM faith_logs
-                    WHERE dte_mode = %s
+                    FROM grace_logs
                     ORDER BY log_time DESC
                     LIMIT %s
-                """, (self.dte_mode, limit))
+                """, (limit,))
                 for row in c.fetchall():
                     logs.append({
                         'timestamp': row[0].isoformat() if row[0] else None,

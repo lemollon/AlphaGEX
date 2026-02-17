@@ -39,7 +39,8 @@ import {
   Shield,
   Zap,
   Globe,
-  Layers
+  Layers,
+  Heart
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -69,6 +70,8 @@ const navItems = [
   { href: '/jubilee', label: `${BOT_DISPLAY_NAMES.JUBILEE} (Box Spread + IC)`, icon: Flame, category: 'Live Trading' },
   { href: '/fortress', label: `${BOT_DISPLAY_NAMES.FORTRESS} (SPY Iron Condor)`, icon: Sword, category: 'Live Trading' },
   { href: '/faith', label: `${BOT_DISPLAY_NAMES.FAITH} (2DTE Paper IC)`, icon: Sword, category: 'Live Trading' },
+  { href: '/grace', label: `${BOT_DISPLAY_NAMES.GRACE} (1DTE Paper IC)`, icon: Heart, category: 'Live Trading' },
+  { href: '/faith/compare', label: 'FAITH vs GRACE Compare', icon: BarChart3, category: 'Live Trading' },
   { href: '/solomon', label: `${BOT_DISPLAY_NAMES.SOLOMON} (Directional Spreads)`, icon: Target, category: 'Live Trading' },
   { href: '/gideon', label: `${BOT_DISPLAY_NAMES.GIDEON} (Aggressive Directional)`, icon: Flame, category: 'Live Trading' },
   { href: '/anchor', label: `${BOT_DISPLAY_NAMES.ANCHOR} (SPX Iron Condor)`, icon: Shield, category: 'Live Trading' },

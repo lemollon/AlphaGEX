@@ -55,7 +55,7 @@ def _get_bot_enum(bot_name: str):
     except (KeyError, AttributeError):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid bot name: {bot_name}. Valid options: FORTRESS, SOLOMON, GIDEON, SAMSON, ANCHOR, VALOR, FAITH, AGAPE"
+            detail=f"Invalid bot name: {bot_name}. Valid options: FORTRESS, SOLOMON, GIDEON, SAMSON, ANCHOR, VALOR, FAITH, GRACE, AGAPE"
         )
 
 

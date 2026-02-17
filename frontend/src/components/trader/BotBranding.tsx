@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Activity, Globe } from 'lucide-react'
+import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Activity, Globe, Heart } from 'lucide-react'
 import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/botDisplayNames'
 
 // =============================================================================
@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'GRACE' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
 
 export interface BotBrand {
   name: BotName
@@ -372,6 +372,42 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#0EA5E9',
     hexLight: '#38BDF8',
     hexDark: '#0284C7',
+  },
+  GRACE: {
+    name: 'GRACE',
+    displayName: BOT_DISPLAY_NAMES.GRACE,  // GRACE - 1 Corinthians 15:10
+    fullName: `${BOT_DISPLAY_NAMES.GRACE} 1DTE Paper IC`,
+    description: 'Paper Trading 1DTE Iron Condors with Real Market Data',
+    strategy: '1DTE Paper Iron Condor Strategy',
+    // Primary - Purple (grace, royalty, spiritual wisdom)
+    primaryColor: 'purple',
+    primaryBg: 'bg-purple-600',
+    primaryBorder: 'border-purple-500',
+    primaryText: 'text-purple-400',
+    // Light variants
+    lightBg: 'bg-purple-900/20',
+    lightText: 'text-purple-300',
+    lightBorder: 'border-purple-700/50',
+    // Chart colors
+    chartLine: 'stroke-purple-400',
+    chartFill: 'fill-purple-500/20',
+    chartPositive: 'text-purple-400',
+    chartNegative: 'text-purple-600',
+    // Position cards
+    positionBorder: 'border-purple-600/50',
+    positionBg: 'bg-purple-950/30',
+    positionAccent: 'bg-purple-500',
+    // Badges
+    badgeBg: 'bg-purple-900/50',
+    badgeText: 'text-purple-300',
+    // Gradient
+    icon: Heart,
+    gradientFrom: 'from-purple-500',
+    gradientTo: 'to-purple-900',
+    // Hex for Recharts
+    hexPrimary: '#A855F7',
+    hexLight: '#C084FC',
+    hexDark: '#7C3AED',
   },
   VALOR: {
     name: 'VALOR',

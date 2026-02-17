@@ -91,6 +91,7 @@ export default function AllBotReportsSummary() {
     JUBILEE: undefined,
     VALOR: undefined,
     FAITH: undefined,
+    GRACE: undefined,
     AGAPE: undefined,
     AGAPE_SPOT: undefined,
     AGAPE_BTC: undefined,

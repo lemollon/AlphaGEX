@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Sword, TrendingUp, Activity, DollarSign, Target,
+  Heart, TrendingUp, Activity, DollarSign, Target,
   BarChart3, Shield, Clock, AlertTriangle, CheckCircle2,
   XCircle, RefreshCw, Power, FileText
 } from 'lucide-react'
@@ -214,10 +214,9 @@ function WingBadge({ adjusted, putWidth, callWidth }: {
 // PAGE COMPONENT
 // ============================================================================
 
-export default function FaithPage() {
+export default function GracePage() {
   const paddingClass = useSidebarPadding()
 
-  const [dteMode, setDteMode] = useState<'2DTE' | '1DTE'>('2DTE')
   const [status, setStatus] = useState<BotStatus | null>(null)
   const [monitor, setMonitor] = useState<PositionMonitor | null>(null)
   const [trades, setTrades] = useState<Trade[]>([])
@@ -228,14 +227,13 @@ export default function FaithPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'activity'>('overview')
 
   const fetchData = useCallback(async () => {
-    const q = `dte_mode=${dteMode}`
     try {
       const [statusData, monitorData, tradesData, perfData, logsData] = await Promise.all([
-        fetchApi<BotStatus>(`/api/faith/status?${q}`),
-        fetchApi<PositionMonitor>(`/api/faith/position-monitor?${q}`),
-        fetchApi<Trade[]>(`/api/faith/trades?${q}`),
-        fetchApi<Performance>(`/api/faith/performance?${q}`),
-        fetchApi<LogEntry[]>(`/api/faith/logs?limit=50&${q}`),
+        fetchApi<BotStatus>('/api/grace/status'),
+        fetchApi<PositionMonitor>('/api/grace/position-monitor'),
+        fetchApi<Trade[]>('/api/grace/trades'),
+        fetchApi<Performance>('/api/grace/performance'),
+        fetchApi<LogEntry[]>('/api/grace/logs?limit=50'),
       ])
       setStatus(statusData)
       setMonitor(monitorData)
@@ -248,34 +246,27 @@ export default function FaithPage() {
     } finally {
       setLoading(false)
     }
-  }, [dteMode])
+  }, [])
 
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, 15000) // Refresh every 15s
+    const interval = setInterval(fetchData, 15000)
     return () => clearInterval(interval)
   }, [fetchData])
 
   const handleToggle = async () => {
     if (!status) return
     try {
-      await fetch(`${API_URL}/api/faith/toggle?active=${!status.is_active}&dte_mode=${dteMode}`, { method: 'POST' })
+      await fetch(`${API_URL}/api/grace/toggle?active=${!status.is_active}`, { method: 'POST' })
       fetchData()
     } catch { /* handled by next refresh */ }
   }
 
   const handleRunCycle = async () => {
     try {
-      await fetch(`${API_URL}/api/faith/run-cycle?dte_mode=${dteMode}`, { method: 'POST' })
+      await fetch(`${API_URL}/api/grace/run-cycle`, { method: 'POST' })
       setTimeout(fetchData, 2000)
     } catch { /* handled by next refresh */ }
-  }
-
-  const handleDteModeChange = (mode: '2DTE' | '1DTE') => {
-    if (mode !== dteMode) {
-      setLoading(true)
-      setDteMode(mode)
-    }
   }
 
   // ---------- LOADING ----------
@@ -287,7 +278,7 @@ export default function FaithPage() {
           <div className="max-w-7xl mx-auto px-4">
             <div className="flex items-center justify-center h-64">
               <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent" />
-              <span className="ml-3 text-text-secondary">Loading FAITH bot...</span>
+              <span className="ml-3 text-text-secondary">Loading GRACE bot...</span>
             </div>
           </div>
         </main>
@@ -304,7 +295,7 @@ export default function FaithPage() {
           <div className="max-w-7xl mx-auto px-4">
             <div className="bg-red-900/20 border border-red-700 rounded-lg p-6 text-center">
               <AlertTriangle className="w-8 h-8 text-red-400 mx-auto mb-3" />
-              <h2 className="text-lg font-semibold text-red-400 mb-2">Failed to Load FAITH</h2>
+              <h2 className="text-lg font-semibold text-red-400 mb-2">Failed to Load GRACE</h2>
               <p className="text-text-secondary mb-4">{error}</p>
               <button onClick={fetchData} className="px-4 py-2 bg-red-700 hover:bg-red-600 rounded text-white text-sm">
                 Retry
@@ -331,41 +322,18 @@ export default function FaithPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold flex items-center gap-3">
-                <Sword className="w-7 h-7 text-blue-400" />
-                FAITH
-                <span className="text-sm font-normal text-text-secondary">{dteMode} Paper Iron Condor</span>
+                <Heart className="w-7 h-7 text-purple-400" />
+                GRACE
+                <span className="text-sm font-normal text-text-secondary">1DTE Paper Iron Condor</span>
               </h1>
               <p className="text-sm text-text-secondary mt-1">
-                SPY {dteMode} IC | {formatPct(status?.profit_target_pct ?? 30)} profit target | Paper trading with real Tradier data
+                SPY 1DTE IC | {formatPct(status?.profit_target_pct ?? 30)} profit target | Paper trading with real Tradier data
               </p>
             </div>
             <div className="flex items-center gap-3">
-              {/* DTE Mode Toggle */}
-              <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
-                <button
-                  onClick={() => handleDteModeChange('2DTE')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    dteMode === '2DTE'
-                      ? 'bg-blue-600 text-white shadow'
-                      : 'text-text-secondary hover:text-text-primary'
-                  }`}
-                >
-                  2DTE
-                </button>
-                <button
-                  onClick={() => handleDteModeChange('1DTE')}
-                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                    dteMode === '1DTE'
-                      ? 'bg-blue-600 text-white shadow'
-                      : 'text-text-secondary hover:text-text-primary'
-                  }`}
-                >
-                  1DTE
-                </button>
-              </div>
               <button
                 onClick={handleRunCycle}
-                className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-purple-600 hover:bg-purple-500 text-white transition-colors"
               >
                 <RefreshCw className="w-4 h-4" /> Run Cycle
               </button>
@@ -385,11 +353,11 @@ export default function FaithPage() {
           {/* ============================================================ */}
           {/* PAPER TRADING BANNER */}
           {/* ============================================================ */}
-          <div className="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4">
+          <div className="bg-purple-900/20 border border-purple-700/50 rounded-lg p-4">
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div className="flex items-center gap-3">
-                <FileText className="w-5 h-5 text-blue-400" />
-                <span className="text-sm font-medium text-blue-300">PAPER TRADING</span>
+                <FileText className="w-5 h-5 text-purple-400" />
+                <span className="text-sm font-medium text-purple-300">PAPER TRADING</span>
                 <span className="text-xs text-text-secondary">Real data, simulated fills</span>
               </div>
               <div className="flex items-center gap-6 text-sm">
@@ -429,7 +397,7 @@ export default function FaithPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-text-secondary">Mode</span>
-                  <span className="text-blue-400">PAPER</span>
+                  <span className="text-purple-400">PAPER</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-text-secondary">Last Scan</span>
@@ -456,7 +424,6 @@ export default function FaithPage() {
                     {pdt?.day_trades_rolling_5 ?? 0} / {pdt?.max_day_trades ?? 3}
                   </span>
                 </div>
-                {/* PDT Progress Bar */}
                 <div className="w-full bg-gray-800 rounded-full h-3">
                   <div
                     className={`h-3 rounded-full transition-all ${
@@ -534,8 +501,8 @@ export default function FaithPage() {
           {/* POSITION MONITOR (when trade is open) */}
           {/* ============================================================ */}
           {monitor && (
-            <div className="bg-background-card border border-blue-700/50 rounded-lg p-5">
-              <h3 className="text-sm font-semibold text-blue-400 uppercase mb-4 flex items-center gap-2">
+            <div className="bg-background-card border border-purple-700/50 rounded-lg p-5">
+              <h3 className="text-sm font-semibold text-purple-400 uppercase mb-4 flex items-center gap-2">
                 <Target className="w-4 h-4" />
                 Open Position — Monitoring for {formatPct(monitor.profit_target_pct)} profit target
               </h3>
@@ -632,7 +599,6 @@ export default function FaithPage() {
           {/* ============================================================ */}
           {activeTab === 'overview' && (
             <div className="space-y-6">
-              {/* Config Summary */}
               <div className="bg-background-card border border-gray-800 rounded-lg p-5">
                 <h3 className="text-sm font-semibold text-text-secondary uppercase mb-3">Strategy Configuration</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -642,7 +608,7 @@ export default function FaithPage() {
                   </div>
                   <div>
                     <span className="text-text-secondary block">DTE Target</span>
-                    <span className="font-semibold">{status?.dte ?? 2} days</span>
+                    <span className="font-semibold">{status?.dte ?? 1} day</span>
                   </div>
                   <div>
                     <span className="text-text-secondary block">SD Multiplier</span>
@@ -666,23 +632,21 @@ export default function FaithPage() {
                   </div>
                   <div>
                     <span className="text-text-secondary block">VIX Skip</span>
-                    <span className="font-semibold">{'>'}  {status?.vix_skip ?? 32}</span>
+                    <span className="font-semibold">{'>'} {status?.vix_skip ?? 32}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Empty state if no trades yet */}
               {!performance || performance.total_trades === 0 ? (
                 <div className="bg-background-card border border-gray-800 rounded-lg p-12 text-center">
-                  <Sword className="w-10 h-10 text-text-secondary mx-auto mb-4 opacity-50" />
+                  <Heart className="w-10 h-10 text-text-secondary mx-auto mb-4 opacity-50" />
                   <h3 className="text-lg font-medium text-text-secondary mb-2">No Closed Trades Yet</h3>
                   <p className="text-sm text-text-secondary">
-                    Performance stats will appear here once FAITH closes its first trade.
+                    Performance stats will appear here once GRACE closes its first trade.
                     {(status?.open_positions ?? 0) > 0 && ' There is an open position being monitored above.'}
                   </p>
                 </div>
               ) : (
-                /* Stats Grid */
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   {[
                     { label: 'Total P&L', value: formatCurrency(performance.total_pnl), color: performance.total_pnl >= 0 ? 'text-green-400' : 'text-red-400' },
@@ -777,7 +741,7 @@ export default function FaithPage() {
                   <FileText className="w-10 h-10 text-text-secondary mx-auto mb-4 opacity-50" />
                   <h3 className="text-lg font-medium text-text-secondary mb-2">No Activity Yet</h3>
                   <p className="text-sm text-text-secondary">
-                    Activity logs will appear here as FAITH scans for opportunities.
+                    Activity logs will appear here as GRACE scans for opportunities.
                   </p>
                 </div>
               ) : (

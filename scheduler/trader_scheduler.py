@@ -263,6 +263,15 @@ except ImportError:
     FaithTrader = None
     print("Warning: FAITH not available. 2DTE paper IC trading will be disabled.")
 
+# Import GRACE (1DTE Paper Iron Condor - for comparison with FAITH)
+try:
+    from trading.grace.trader import GraceTrader
+    GRACE_AVAILABLE = True
+except ImportError:
+    GRACE_AVAILABLE = False
+    GraceTrader = None
+    print("Warning: GRACE not available. 1DTE paper IC trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -670,7 +679,6 @@ class AutonomousTraderScheduler:
         # FAITH - 2DTE Paper Iron Condor (SPY)
         # Paper-only bot: real Tradier data, simulated fills, $5K capital
         self.faith_trader = None
-        self.faith_1dte_trader = None
         if FAITH_AVAILABLE:
             try:
                 self.faith_trader = FaithTrader()
@@ -679,15 +687,15 @@ class AutonomousTraderScheduler:
                 logger.warning(f"FAITH 2DTE initialization failed: {e}")
                 self.faith_trader = None
 
-            # FAITH 1DTE - same bot, different DTE for comparison
+        # GRACE - 1DTE Paper Iron Condor (separate bot for comparison with FAITH)
+        self.grace_trader = None
+        if GRACE_AVAILABLE:
             try:
-                from trading.faith.models import FaithConfig
-                faith_1dte_config = FaithConfig(min_dte=1, dte_mode="1DTE")
-                self.faith_1dte_trader = FaithTrader(config=faith_1dte_config)
-                logger.info(f"✅ FAITH 1DTE initialized (1DTE Paper Iron Condor, PAPER mode)")
+                self.grace_trader = GraceTrader()
+                logger.info(f"✅ GRACE initialized (1DTE Paper Iron Condor, PAPER mode)")
             except Exception as e:
-                logger.warning(f"FAITH 1DTE initialization failed: {e}")
-                self.faith_1dte_trader = None
+                logger.warning(f"GRACE initialization failed: {e}")
+                self.grace_trader = None
 
         # JUBILEE - Box Spread Synthetic Borrowing
         # Generates cash through box spreads to fund IC bot volume scaling
@@ -891,7 +899,7 @@ class AutonomousTraderScheduler:
         self.gideon_execution_count = 0
         self.samson_execution_count = 0
         self.faith_execution_count = 0
-        self.faith_1dte_execution_count = 0
+        self.grace_execution_count = 0
         self.watchtower_execution_count = 0
         self.valor_execution_count = 0
 
@@ -2462,78 +2470,78 @@ class AutonomousTraderScheduler:
             logger.info(f"=" * 80)
 
     # ========================================================================
-    # FAITH 1DTE - 1DTE Paper Iron Condor (SPY) - for comparison
+    # GRACE - 1DTE Paper Iron Condor (SPY) - separate bot for comparison
     # ========================================================================
 
-    def scheduled_faith_1dte_logic(self):
+    def scheduled_grace_logic(self):
         """
-        FAITH 1DTE Paper Iron Condor trading logic - runs every 5 minutes during market hours.
-        Same as 2DTE FAITH but targets 1DTE for side-by-side comparison.
+        GRACE 1DTE Paper Iron Condor trading logic - runs every 5 minutes during market hours.
+        Separate bot from FAITH for side-by-side 1DTE vs 2DTE comparison.
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"FAITH 1DTE (Paper IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"GRACE (1DTE Paper IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.faith_1dte_trader:
-            logger.warning("FAITH 1DTE trader not available - skipping")
-            self._save_heartbeat('FAITH_1DTE', 'UNAVAILABLE')
+        if not self.grace_trader:
+            logger.warning("GRACE trader not available - skipping")
+            self._save_heartbeat('GRACE', 'UNAVAILABLE')
             return
 
         try:
-            result = self.faith_1dte_trader.run_cycle()
+            result = self.grace_trader.run_cycle()
 
             action = result.get('action', 'none')
             traded = result.get('traded', False)
             managed = result.get('positions_managed', 0)
 
-            logger.info(f"FAITH 1DTE cycle completed: {action}")
+            logger.info(f"GRACE cycle completed: {action}")
             if traded:
                 logger.info(f"  NEW PAPER TRADE OPENED (1DTE)")
             if managed > 0:
                 logger.info(f"  Positions managed: {managed}")
 
-            self.faith_1dte_execution_count += 1
-            self._save_heartbeat('FAITH_1DTE', 'TRADED' if traded else 'SCAN_COMPLETE', {
-                'scan_number': self.faith_1dte_execution_count,
+            self.grace_execution_count += 1
+            self._save_heartbeat('GRACE', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.grace_execution_count,
                 'traded': traded,
                 'action': action
             })
 
-            logger.info(f"FAITH 1DTE scan #{self.faith_1dte_execution_count} completed")
+            logger.info(f"GRACE scan #{self.grace_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            logger.error(f"ERROR in FAITH 1DTE: {str(e)}")
+            logger.error(f"ERROR in GRACE: {str(e)}")
             logger.error(traceback.format_exc())
-            self._save_heartbeat('FAITH_1DTE', 'ERROR', {'error': str(e)})
+            self._save_heartbeat('GRACE', 'ERROR', {'error': str(e)})
             logger.info(f"=" * 80)
 
-    def scheduled_faith_1dte_eod_logic(self):
-        """FAITH 1DTE End-of-Day processing."""
+    def scheduled_grace_eod_logic(self):
+        """GRACE End-of-Day processing."""
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"FAITH 1DTE EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"GRACE EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.faith_1dte_trader:
-            logger.warning("FAITH 1DTE trader not available - skipping EOD processing")
+        if not self.grace_trader:
+            logger.warning("GRACE trader not available - skipping EOD processing")
             return
 
         try:
-            result = self.faith_1dte_trader.run_cycle(close_only=True)
+            result = self.grace_trader.run_cycle(close_only=True)
             managed = result.get('positions_managed', 0)
 
             if managed > 0:
-                logger.info(f"FAITH 1DTE EOD: Closed {managed} remaining position(s)")
+                logger.info(f"GRACE EOD: Closed {managed} remaining position(s)")
             else:
-                logger.info("FAITH 1DTE EOD: No positions to process")
+                logger.info("GRACE EOD: No positions to process")
 
-            logger.info(f"FAITH 1DTE EOD processing completed")
+            logger.info(f"GRACE EOD processing completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            logger.error(f"ERROR in FAITH 1DTE EOD: {str(e)}")
+            logger.error(f"ERROR in GRACE EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
@@ -5694,41 +5702,41 @@ class AutonomousTraderScheduler:
             )
             logger.info("✅ FAITH EOD job scheduled (3:50 PM CT daily)")
 
+        if not self.faith_trader:
+            logger.warning("⚠️ FAITH not available - 2DTE paper IC trading disabled")
+
         # =================================================================
-        # FAITH 1DTE JOB: 1DTE Paper Iron Condor - for comparison
-        # Same schedule as 2DTE FAITH but targets 1DTE
+        # GRACE JOB: 1DTE Paper Iron Condor - separate bot for comparison
+        # Same schedule as FAITH but completely separate bot with own tables
         # =================================================================
-        if self.faith_1dte_trader:
+        if self.grace_trader:
             self.scheduler.add_job(
-                self.scheduled_faith_1dte_logic,
+                self.scheduled_grace_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
                     timezone='America/Chicago'
                 ),
-                id='faith_1dte_trading',
-                name='FAITH 1DTE - Paper Iron Condor (5-min intervals)',
+                id='grace_trading',
+                name='GRACE - 1DTE Paper Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ FAITH 1DTE job scheduled (every 5 min, checks market hours internally)")
+            logger.info("✅ GRACE job scheduled (every 5 min, checks market hours internally)")
 
             self.scheduler.add_job(
-                self.scheduled_faith_1dte_eod_logic,
+                self.scheduled_grace_eod_logic,
                 trigger=CronTrigger(
                     hour=15,
                     minute=50,
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
-                id='faith_1dte_eod',
-                name='FAITH 1DTE - EOD Safety Net Close',
+                id='grace_eod',
+                name='GRACE - EOD Safety Net Close',
                 replace_existing=True
             )
-            logger.info("✅ FAITH 1DTE EOD job scheduled (3:50 PM CT daily)")
+            logger.info("✅ GRACE EOD job scheduled (3:50 PM CT daily)")
         else:
-            logger.warning("⚠️ FAITH 1DTE not available - 1DTE paper IC comparison disabled")
-
-        if not self.faith_trader and not self.faith_1dte_trader:
-            logger.warning("⚠️ FAITH not available - paper IC trading disabled")
+            logger.warning("⚠️ GRACE not available - 1DTE paper IC comparison disabled")
 
         # =================================================================
         # VALOR JOB: MES Futures Scalping - runs every 1 minute (24/5)

@@ -50,6 +50,16 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // GRACE (1DTE Paper IC - Unmerited Favor, Comparison with FAITH)
+  // ─────────────────────────────────────────────────────────────────────────────
+  GRACE: {
+    displayName: 'GRACE',
+    verse: '"But by the grace of God I am what I am, and his grace to me was not without effect."',
+    reference: '1 Corinthians 15:10',
+    why: 'GRACE is the 1DTE companion to FAITH. Like grace that is given freely, this bot tests whether shorter-duration trades yield better results—comparing 1DTE to 2DTE Iron Condors side by side.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // ATHENA → SOLOMON (Directional Spreads - Wisdom, Strategic Decisions)
   // ─────────────────────────────────────────────────────────────────────────────
   ATHENA: {
@@ -305,6 +315,7 @@ export const BOT_DISPLAY_NAMES = {
   // New biblical names (used in navigation and UI)
   FORTRESS: BOT_SCRIPTURES.ARES.displayName,
   FAITH: BOT_SCRIPTURES.FAITH.displayName,
+  GRACE: BOT_SCRIPTURES.GRACE.displayName,
   SOLOMON: BOT_SCRIPTURES.ATHENA.displayName,
   GIDEON: BOT_SCRIPTURES.ICARUS.displayName,
   ANCHOR: BOT_SCRIPTURES.PEGASUS.displayName,
