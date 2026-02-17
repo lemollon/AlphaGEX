@@ -282,12 +282,17 @@ class FaithDatabase:
                 """)
 
                 # Add dte_mode column to existing tables if missing
+                # and backfill NULL values to '2DTE' for pre-existing data
                 for table in ['faith_positions', 'faith_signals', 'faith_logs',
                               'faith_equity_snapshots', 'faith_paper_account', 'faith_pdt_log']:
                     try:
                         c.execute(f"""
                             ALTER TABLE {table}
                             ADD COLUMN IF NOT EXISTS dte_mode VARCHAR(5) DEFAULT '2DTE'
+                        """)
+                        # Backfill any NULL values from before column was added
+                        c.execute(f"""
+                            UPDATE {table} SET dte_mode = '2DTE' WHERE dte_mode IS NULL
                         """)
                     except Exception:
                         pass  # Column already exists

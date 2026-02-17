@@ -331,7 +331,7 @@ export default function FaithPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold flex items-center gap-3">
-                <Sword className="w-7 h-7 text-sky-400" />
+                <Sword className="w-7 h-7 text-blue-400" />
                 FAITH
                 <span className="text-sm font-normal text-text-secondary">{dteMode} Paper Iron Condor</span>
               </h1>
@@ -346,7 +346,7 @@ export default function FaithPage() {
                   onClick={() => handleDteModeChange('2DTE')}
                   className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                     dteMode === '2DTE'
-                      ? 'bg-sky-600 text-white shadow'
+                      ? 'bg-blue-600 text-white shadow'
                       : 'text-text-secondary hover:text-text-primary'
                   }`}
                 >
@@ -356,7 +356,7 @@ export default function FaithPage() {
                   onClick={() => handleDteModeChange('1DTE')}
                   className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                     dteMode === '1DTE'
-                      ? 'bg-sky-600 text-white shadow'
+                      ? 'bg-blue-600 text-white shadow'
                       : 'text-text-secondary hover:text-text-primary'
                   }`}
                 >
@@ -365,7 +365,7 @@ export default function FaithPage() {
               </div>
               <button
                 onClick={handleRunCycle}
-                className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-sky-600 hover:bg-sky-500 text-white transition-colors"
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
               >
                 <RefreshCw className="w-4 h-4" /> Run Cycle
               </button>
