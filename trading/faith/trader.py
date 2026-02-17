@@ -11,9 +11,9 @@ Paper-trading 2DTE Iron Condor bot. Clone of FORTRESS with:
 - PDT compliance (max 3 day trades per rolling 5 business days)
 - Symmetric wing enforcement
 
-NOTE: TODO flagged for FORTRESS - the asymmetric wings bug also exists
-in FORTRESS's calculate_strikes(). FAITH enforces symmetry; FORTRESS
-should be fixed separately (not modified by this PR).
+The asymmetric wings bug in FORTRESS's calculate_strikes() also exists
+in the parent codebase. FAITH enforces symmetry; FORTRESS should be
+fixed separately (not modified by this PR).
 """
 
 import logging

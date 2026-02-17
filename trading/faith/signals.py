@@ -600,10 +600,22 @@ class FaithSignalGenerator:
         # Step 5: Calculate strikes
         strikes = self.calculate_strikes(spot, expected_move)
 
-        # Step 6: Enforce symmetric wings
+        # Step 6: Enforce symmetric wings (pass real chain strikes if available)
+        available_strikes = None
+        if self.tradier:
+            try:
+                chain = self.tradier.get_option_chain(self.config.ticker, expiration)
+                if chain and hasattr(chain, 'chains') and chain.chains:
+                    for contracts in chain.chains.values():
+                        available_strikes = {c.strike for c in contracts if hasattr(c, 'strike')}
+                        break
+            except Exception as e:
+                logger.debug(f"FAITH: Could not fetch chain for strike validation: {e}")
+
         symmetric = self.enforce_symmetric_wings(
             strikes['put_short'], strikes['put_long'],
             strikes['call_short'], strikes['call_long'],
+            available_strikes=available_strikes,
         )
 
         put_short = symmetric['short_put']
