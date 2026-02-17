@@ -156,13 +156,48 @@ async def get_valor_positions(
     """
     Get all open VALOR positions with unrealized P&L.
     Optionally filtered by ticker.
+
+    Each position includes:
+    - Entry details (price, direction, contracts, ticker)
+    - Current price from live quote
+    - Unrealized P&L: (current - entry) * point_value * direction * contracts
     """
     try:
         trader = _get_trader()
+        from trading.valor.models import get_ticker_point_value
         status = trader.get_status(ticker=ticker)
+        positions = status.get("positions", {}).get("positions", [])
+
+        # Enrich each position with current_price and unrealized_pnl
+        # Cache quotes per ticker to avoid duplicate fetches
+        price_cache = {}
+        for pos in positions:
+            pos_ticker = pos.get("ticker", "MES")
+            entry_price = pos.get("entry_price", 0)
+
+            # Get current price (cached per ticker)
+            if pos_ticker not in price_cache:
+                try:
+                    quote = trader.executor.get_mes_quote(ticker=pos_ticker)
+                    price_cache[pos_ticker] = quote.get("price") or quote.get("last") if quote else None
+                except Exception:
+                    price_cache[pos_ticker] = None
+            current_price = price_cache[pos_ticker]
+
+            if current_price:
+                direction = 1 if pos.get("direction", "").upper() in ("LONG", "BUY") else -1
+                point_value = get_ticker_point_value(pos_ticker)
+                contracts = pos.get("contracts", 1)
+                pnl = (current_price - entry_price) * point_value * direction * contracts
+                pos["unrealized_pnl"] = round(pnl, 2)
+                pos["current_price"] = round(current_price, 2)
+            else:
+                pos["unrealized_pnl"] = 0.0
+                pos["current_price"] = None
+
         return {
-            "positions": status.get("positions", {}).get("positions", []),
-            "count": status.get("positions", {}).get("open_count", 0),
+            "positions": positions,
+            "count": len(positions),
             "ticker_filter": ticker,
             "timestamp": datetime.now().isoformat()
         }

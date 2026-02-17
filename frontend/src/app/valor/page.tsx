@@ -41,6 +41,7 @@ import {
 } from '@/components/trader'
 import {
   useValorStatus,
+  useValorPositions,
   useValorClosedTrades,
   useValorEquityCurve,
   useValorIntradayEquity,
@@ -139,6 +140,7 @@ export default function ValorPage() {
 
   // Data hooks (per-ticker filtering)
   const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = useValorStatus(selectedTicker)
+  const { data: positionsData } = useValorPositions(selectedTicker)
   const { data: closedTradesData } = useValorClosedTrades(1000, selectedTicker)
   const { data: equityCurveData } = useValorEquityCurve(selectedTimeframe.days || 30, selectedTicker)
   const { data: intradayEquityData } = useValorIntradayEquity()
@@ -256,7 +258,8 @@ export default function ValorPage() {
 
   // Extract data
   const status = statusData || {}
-  const positions = status?.positions?.positions || []
+  // Use dedicated positions endpoint (has unrealized P&L), fall back to status
+  const positions = positionsData?.positions || status?.positions?.positions || []
   const performance = status?.performance || {}
 
   // SINGLE SOURCE OF TRUTH for starting capital
@@ -753,19 +756,46 @@ export default function ValorPage() {
                               </div>
                             </div>
                           </div>
-                          <div className={`px-3 py-1 rounded-full text-sm ${
-                            position.gamma_regime === 'POSITIVE'
-                              ? 'bg-blue-900/50 text-blue-400'
-                              : 'bg-purple-900/50 text-purple-400'
-                          }`}>
-                            {position.gamma_regime} GAMMA
+                          <div className="flex items-center gap-3">
+                            <div className={`px-3 py-1 rounded-full text-sm ${
+                              position.gamma_regime === 'POSITIVE'
+                                ? 'bg-blue-900/50 text-blue-400'
+                                : 'bg-purple-900/50 text-purple-400'
+                            }`}>
+                              {position.gamma_regime} GAMMA
+                            </div>
+                            <span className={`text-lg font-mono font-bold ${
+                              (position.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {(position.unrealized_pnl || 0) >= 0 ? '+' : ''}${position.unrealized_pnl?.toFixed(2) || '0.00'}
+                            </span>
                           </div>
                         </div>
-                        <div className="grid grid-cols-4 gap-4 mt-3 text-sm text-gray-400">
-                          <div>Stop: <span className="text-white font-mono">{position.current_stop?.toFixed(2)}</span></div>
-                          <div>Trailing: <span className={position.trailing_active ? 'text-green-400' : 'text-gray-500'}>{position.trailing_active ? 'Active' : 'Inactive'}</span></div>
-                          <div>Opened: <span className="text-white">{new Date(position.open_time).toLocaleTimeString()}</span></div>
-                          <div>ID: <span className="text-white font-mono text-xs">{position.position_id?.slice(0, 8)}</span></div>
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mt-3 text-sm text-gray-400">
+                          <div>
+                            <span className="text-gray-500">Current</span>
+                            <p className="text-white font-mono">{position.current_price ? `$${position.current_price.toFixed(2)}` : '---'}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Stop</span>
+                            <p className="text-red-400 font-mono">{position.current_stop?.toFixed(2)}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Trailing</span>
+                            <p className={position.trailing_active ? 'text-green-400' : 'text-gray-500'}>{position.trailing_active ? 'Active' : 'Inactive'}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Opened</span>
+                            <p className="text-white">{new Date(position.open_time).toLocaleTimeString()}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Signal</span>
+                            <p className="text-white">{position.signal_confidence ? `${(position.signal_confidence * 100).toFixed(0)}%` : '---'}</p>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">ID</span>
+                            <p className="text-white font-mono text-xs">{position.position_id?.slice(0, 8)}</p>
+                          </div>
                         </div>
                       </div>
                       )
