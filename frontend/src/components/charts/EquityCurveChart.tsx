@@ -63,6 +63,13 @@ const getBrandColors = (botFilter?: string) => {
       dark: BOT_BRANDS.FAITH.hexDark,        // Dark sky
     }
   }
+  if (botFilter === 'GRACE') {
+    return {
+      primary: BOT_BRANDS.GRACE.hexPrimary, // Purple #A855F7
+      light: BOT_BRANDS.GRACE.hexLight,      // Light purple
+      dark: BOT_BRANDS.GRACE.hexDark,        // Dark purple
+    }
+  }
   // Default green/red for combined view
   return {
     primary: '#22C55E',
@@ -510,6 +517,7 @@ export default function EquityCurveChart({
         botFilter === 'SAMSON' ? 'border-violet-700/50' :
         botFilter === 'GIDEON' ? 'border-orange-700/50' :
         botFilter === 'FAITH' ? 'border-sky-700/50' :
+        botFilter === 'GRACE' ? 'border-purple-700/50' :
         'border-gray-800'
       }`}>
         <div className="text-center py-8">
@@ -520,6 +528,7 @@ export default function EquityCurveChart({
             botFilter === 'SAMSON' ? 'bg-violet-900/30' :
             botFilter === 'GIDEON' ? 'bg-orange-900/30' :
             botFilter === 'FAITH' ? 'bg-sky-900/30' :
+            botFilter === 'GRACE' ? 'bg-purple-900/30' :
             'bg-gray-800/50'
           }`}>
             <TrendingUp className={`w-8 h-8 ${
@@ -529,6 +538,7 @@ export default function EquityCurveChart({
               botFilter === 'SAMSON' ? 'text-violet-400' :
               botFilter === 'GIDEON' ? 'text-orange-400' :
               botFilter === 'FAITH' ? 'text-sky-400' :
+              botFilter === 'GRACE' ? 'text-purple-400' :
               'text-gray-400'
             }`} />
           </div>
@@ -539,6 +549,7 @@ export default function EquityCurveChart({
             botFilter === 'SAMSON' ? 'text-violet-400' :
             botFilter === 'GIDEON' ? 'text-orange-400' :
             botFilter === 'FAITH' ? 'text-sky-400' :
+            botFilter === 'GRACE' ? 'text-purple-400' :
             'text-gray-300'
           }`}>No Equity Data Available</p>
           <p className="text-gray-500 text-sm">
@@ -579,6 +590,7 @@ export default function EquityCurveChart({
         botFilter === 'SAMSON' ? 'border-violet-700/50' :
         botFilter === 'GIDEON' ? 'border-orange-700/50' :
         botFilter === 'FAITH' ? 'border-sky-700/50' :
+        botFilter === 'GRACE' ? 'border-purple-700/50' :
         'border-gray-800'
       }`}>
         <div className="animate-pulse space-y-4">
@@ -589,6 +601,7 @@ export default function EquityCurveChart({
             botFilter === 'SAMSON' ? 'bg-violet-900/30' :
             botFilter === 'GIDEON' ? 'bg-orange-900/30' :
             botFilter === 'FAITH' ? 'bg-sky-900/30' :
+            botFilter === 'GRACE' ? 'bg-purple-900/30' :
             'bg-gray-800'
           }`} />
           <div className={`h-64 rounded ${
@@ -598,6 +611,7 @@ export default function EquityCurveChart({
             botFilter === 'SAMSON' ? 'bg-violet-900/20' :
             botFilter === 'GIDEON' ? 'bg-orange-900/20' :
             botFilter === 'FAITH' ? 'bg-sky-900/20' :
+            botFilter === 'GRACE' ? 'bg-purple-900/20' :
             'bg-gray-800'
           }`} />
         </div>
@@ -630,13 +644,14 @@ export default function EquityCurveChart({
       botFilter === 'SAMSON' ? 'border-violet-700/50' :
       botFilter === 'GIDEON' ? 'border-orange-700/50' :
       botFilter === 'FAITH' ? 'border-sky-700/50' :
+      botFilter === 'GRACE' ? 'border-purple-700/50' :
       'border-gray-800'
     }`}>
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            <TrendingUp className={`w-5 h-5 ${botFilter === 'FORTRESS' ? 'text-amber-400' : botFilter === 'SOLOMON' ? 'text-cyan-400' : botFilter === 'ANCHOR' ? 'text-blue-400' : botFilter === 'SAMSON' ? 'text-violet-400' : botFilter === 'GIDEON' ? 'text-orange-400' : botFilter === 'FAITH' ? 'text-sky-400' : 'text-green-400'}`} />
+            <TrendingUp className={`w-5 h-5 ${botFilter === 'FORTRESS' ? 'text-amber-400' : botFilter === 'SOLOMON' ? 'text-cyan-400' : botFilter === 'ANCHOR' ? 'text-blue-400' : botFilter === 'SAMSON' ? 'text-violet-400' : botFilter === 'GIDEON' ? 'text-orange-400' : botFilter === 'FAITH' ? 'text-sky-400' : botFilter === 'GRACE' ? 'text-purple-400' : 'text-green-400'}`} />
             <h3 className="font-bold text-white">{title}</h3>
             {botFilter && (
               <span className={`px-2 py-0.5 text-xs rounded ${
@@ -646,6 +661,7 @@ export default function EquityCurveChart({
                 botFilter === 'SAMSON' ? 'bg-violet-500/20 text-violet-400' :
                 botFilter === 'GIDEON' ? 'bg-orange-500/20 text-orange-400' :
                 botFilter === 'FAITH' ? 'bg-sky-500/20 text-sky-400' :
+                botFilter === 'GRACE' ? 'bg-purple-500/20 text-purple-400' :
                 'bg-purple-500/20 text-purple-400'
               }`}>
                 {botFilter}
@@ -1004,6 +1020,7 @@ export default function EquityCurveChart({
                 botFilter === 'SAMSON' ? 'bg-violet-900/30' :
                 botFilter === 'GIDEON' ? 'bg-orange-900/30' :
                 botFilter === 'FAITH' ? 'bg-sky-900/30' :
+                botFilter === 'GRACE' ? 'bg-purple-900/30' :
                 'bg-gray-800/50'
               }`}>
                 <TrendingUp className={`w-6 h-6 ${
@@ -1013,6 +1030,7 @@ export default function EquityCurveChart({
                   botFilter === 'SAMSON' ? 'text-violet-400/70' :
                   botFilter === 'GIDEON' ? 'text-orange-400/70' :
                   botFilter === 'FAITH' ? 'text-sky-400/70' :
+                  botFilter === 'GRACE' ? 'text-purple-400/70' :
                   'text-gray-500'
                 }`} />
               </div>

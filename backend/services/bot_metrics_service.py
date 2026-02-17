@@ -45,6 +45,7 @@ class BotName(Enum):
     ANCHOR = "ANCHOR"
     VALOR = "VALOR"
     FAITH = "FAITH"
+    GRACE = "GRACE"
     AGAPE = "AGAPE"
 
 
@@ -165,6 +166,7 @@ class BotMetricsService:
         BotName.ANCHOR: 200000,
         BotName.VALOR: 100000,  # MES Futures paper trading
         BotName.FAITH: 5000,       # 2DTE Paper Iron Condor
+        BotName.GRACE: 5000,       # 1DTE Paper Iron Condor (comparison with FAITH)
         BotName.AGAPE: 5000,       # ETH Micro Futures paper trading
     }
 
@@ -205,6 +207,11 @@ class BotMetricsService:
             'positions': 'faith_positions',
             'snapshots': 'faith_equity_snapshots',
             'config_key': 'faith_starting_capital',
+        },
+        BotName.GRACE: {
+            'positions': 'grace_positions',
+            'snapshots': 'grace_equity_snapshots',
+            'config_key': 'grace_starting_capital',
         },
         BotName.AGAPE: {
             'positions': 'agape_positions',
