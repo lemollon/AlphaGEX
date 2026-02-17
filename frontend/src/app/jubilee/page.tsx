@@ -326,33 +326,12 @@ export default function PrometheusBoxDashboard() {
               </div>
             </div>
 
-            {/* Visual equation showing how the numbers add up */}
-            <div className="mt-4 pt-3 border-t border-gray-700/50">
-              <div className="flex items-center justify-center gap-3 text-sm flex-wrap">
-                <div className="flex items-center gap-1 bg-gray-800/50 px-2 py-1 rounded">
-                  <span className="text-gray-500 text-xs">IC Profit:</span>
-                  <span className={`font-mono font-bold ${totalICReturns >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {formatCurrency(totalICReturns)}
-                  </span>
-                </div>
-                <span className="text-gray-500 text-lg font-bold">−</span>
-                <div className="flex items-center gap-1 bg-gray-800/50 px-2 py-1 rounded">
-                  <span className="text-gray-500 text-xs">Cost:</span>
-                  <span className="font-mono font-bold text-red-400">{formatCurrency(totalCostAccrued)}</span>
-                </div>
-                <span className="text-gray-500 text-lg font-bold">=</span>
-                <div className={`flex items-center gap-1 px-3 py-1 rounded font-bold ${netPnL >= 0 ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}`}>
-                  <span className="text-xs opacity-75">Net:</span>
-                  <span className="font-mono text-lg">{netPnL >= 0 ? '+' : ''}{formatCurrency(netPnL)}</span>
-                </div>
-              </div>
-              {/* Data freshness indicator */}
-              <div className="mt-3 text-center text-xs text-gray-600">
-                Data refreshes every 30 seconds • {reconciliation ?
-                  <span className="text-gray-500">Last updated: {new Date().toLocaleTimeString()}</span> :
-                  <span className="animate-pulse">Loading...</span>
-                }
-              </div>
+            {/* Data freshness indicator */}
+            <div className="mt-4 pt-3 border-t border-gray-700/50 text-center text-xs text-gray-600">
+              Data refreshes every 30 seconds • {reconciliation ?
+                <span className="text-gray-500">Last updated: {new Date().toLocaleTimeString()}</span> :
+                <span className="animate-pulse">Loading...</span>
+              }
             </div>
           </div>
 
@@ -2218,45 +2197,6 @@ export default function PrometheusBoxDashboard() {
                     }`}>
                       {icStatus?.status?.enabled ? 'ENABLED' : 'DISABLED'}
                     </div>
-                  </div>
-
-                  {/* CAPITAL SOURCE - WHERE THE MONEY COMES FROM */}
-                  <div className="bg-black/40 rounded-lg p-4 mb-4 border border-gray-600">
-                    <h3 className="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
-                      💰 YOUR CAPITAL SOURCE
-                      <span className="text-xs font-normal text-gray-500">(Where the money comes from)</span>
-                    </h3>
-                    <div className="grid md:grid-cols-5 gap-3 text-sm">
-                      <div className="bg-blue-900/30 rounded p-3 border border-blue-700/50">
-                        <div className="text-xs text-gray-400">From Box Spreads</div>
-                        <div className="text-lg font-bold text-blue-400">{formatCurrency(totalBorrowed)}</div>
-                        <div className="text-xs text-gray-500">{positions?.positions?.length || 0} positions</div>
-                      </div>
-                      <div className="flex items-center justify-center text-gray-500">−</div>
-                      <div className="bg-yellow-900/30 rounded p-3 border border-yellow-700/50">
-                        <div className="text-xs text-gray-400">Reserved ({reconciliation?.config?.reserve_pct || 10}%)</div>
-                        <div className="text-lg font-bold text-yellow-400">{formatCurrency(reconciliation?.capital_deployment?.reserved || totalBorrowed * (reconciliation?.config?.reserve_pct || 10) / 100)}</div>
-                        <div className="text-xs text-gray-500">Margin buffer</div>
-                      </div>
-                      <div className="flex items-center justify-center text-gray-500">−</div>
-                      <div className="bg-orange-900/30 rounded p-3 border border-orange-700/50">
-                        <div className="text-xs text-gray-400">In IC Trades</div>
-                        <div className="text-lg font-bold text-orange-400">
-                          {formatCurrency(reconciliation?.capital_deployment?.in_ic_trades || (icStatus?.status?.open_positions || 0) * (reconciliation?.config?.min_capital_per_trade || 5000))}
-                        </div>
-                        <div className="text-xs text-gray-500">{icStatus?.status?.open_positions || 0} × {formatCurrency(reconciliation?.config?.min_capital_per_trade || 5000)}/trade</div>
-                      </div>
-                    </div>
-                    <div className="mt-3 pt-3 border-t border-gray-600 flex justify-between items-center">
-                      <span className="text-gray-400">AVAILABLE TO TRADE:</span>
-                      <span className="text-2xl font-bold text-green-400">{formatCurrency(icStatus?.status?.available_capital || 0)}</span>
-                    </div>
-                    {totalBorrowed > 0 && (
-                      <div className="mt-2 text-xs text-gray-500">
-                        Daily borrowing cost: <span className="text-red-400">{formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 365)}</span>/day
-                        {' '}| Must earn at least: <span className="text-yellow-400">{formatCurrency((totalBorrowed * (rateAnalysis?.box_implied_rate || 4.0) / 100) / 12)}</span>/month to break even
-                      </div>
-                    )}
                   </div>
 
                   {/* TRADING STATUS - WHY CAN/CAN'T TRADE */}
