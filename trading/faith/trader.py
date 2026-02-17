@@ -45,13 +45,21 @@ class FaithTrader:
 
     def __init__(self, config: Optional[FaithConfig] = None):
         """Initialize FAITH trader with database, signal generator, and executor."""
-        self.db = FaithDatabase(bot_name="FAITH")
-
         # Load config from DB or use provided/default
         if config:
             self.config = config
         else:
+            self.config = FaithConfig()
+
+        dte_mode = self.config.dte_mode
+        bot_name = f"FAITH_{dte_mode}" if dte_mode != "2DTE" else "FAITH"
+        self.db = FaithDatabase(bot_name=bot_name, dte_mode=dte_mode)
+
+        # If no config provided, load from DB (after DB is initialized)
+        if not config:
             self.config = self.db.load_config()
+            # Restore dte_mode since DB config doesn't store it
+            self.config.dte_mode = dte_mode
 
         # Ensure paper account exists
         self.db.initialize_paper_account(self.config.starting_capital)
@@ -67,7 +75,7 @@ class FaithTrader:
 
         logger.info(
             f"FAITH initialized: capital=${self.config.starting_capital}, "
-            f"DTE={self.config.min_dte}, PT={self.config.profit_target_pct}%, "
+            f"DTE={self.config.min_dte}, mode={dte_mode}, PT={self.config.profit_target_pct}%, "
             f"SL={self.config.stop_loss_pct}%, EOD={self.config.eod_cutoff_et} ET"
         )
 
@@ -424,7 +432,8 @@ class FaithTrader:
         return {
             'bot_name': 'FAITH',
             'display_name': 'FAITH',
-            'strategy': '2DTE Paper Iron Condor',
+            'strategy': f'{self.config.dte_mode} Paper Iron Condor',
+            'dte_mode': self.config.dte_mode,
             'is_active': self.is_active,
             'is_paper': True,
             'mode': 'PAPER',

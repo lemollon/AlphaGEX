@@ -2,7 +2,8 @@
 FAITH API Routes
 ================
 
-API endpoints for the FAITH 2DTE Paper Iron Condor bot.
+API endpoints for the FAITH Paper Iron Condor bot.
+Supports both 2DTE and 1DTE modes via ?dte_mode= parameter for side-by-side comparison.
 
 Endpoints:
 - GET  /api/faith/status              - Bot status and configuration
@@ -17,44 +18,55 @@ Endpoints:
 - GET  /api/faith/logs                - Activity logs
 - POST /api/faith/toggle              - Enable/disable bot
 - POST /api/faith/run-cycle           - Manually trigger a scan cycle
+
+All GET endpoints accept ?dte_mode=2DTE or ?dte_mode=1DTE (default: 2DTE)
 """
 
 import logging
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["FAITH"])
 
-# Lazy-initialized singleton
-_faith_trader = None
+# Lazy-initialized singletons per DTE mode
+_faith_traders = {}
 
 
-def _get_trader():
-    """Get or create the FAITH trader singleton."""
-    global _faith_trader
-    if _faith_trader is None:
+def _get_trader(dte_mode: str = "2DTE"):
+    """Get or create the FAITH trader singleton for a given DTE mode."""
+    global _faith_traders
+    if dte_mode not in _faith_traders:
         try:
             from trading.faith.trader import FaithTrader
-            _faith_trader = FaithTrader()
-            logger.info("FAITH: Trader initialized via API")
+            from trading.faith.models import FaithConfig
+
+            if dte_mode == "1DTE":
+                config = FaithConfig(min_dte=1, dte_mode="1DTE")
+                _faith_traders[dte_mode] = FaithTrader(config=config)
+            else:
+                _faith_traders[dte_mode] = FaithTrader()
+
+            logger.info(f"FAITH: Trader initialized via API (dte_mode={dte_mode})")
         except Exception as e:
-            logger.error(f"FAITH: Failed to initialize trader: {e}")
+            logger.error(f"FAITH: Failed to initialize trader (dte_mode={dte_mode}): {e}")
             raise HTTPException(
                 status_code=503,
                 detail=f"FAITH bot unavailable: {e}"
             )
-    return _faith_trader
+    return _faith_traders[dte_mode]
 
 
 @router.get("/api/faith/status")
-async def get_faith_status():
+async def get_faith_status(
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Get comprehensive FAITH bot status."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         status = trader.get_status()
         return {"status": "success", "data": status}
     except HTTPException:
@@ -65,10 +77,12 @@ async def get_faith_status():
 
 
 @router.get("/api/faith/positions")
-async def get_faith_positions():
+async def get_faith_positions(
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Get current open positions."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         positions = trader.db.get_open_positions()
         return {
             "status": "success",
@@ -83,10 +97,13 @@ async def get_faith_positions():
 
 
 @router.get("/api/faith/trades")
-async def get_faith_trades(limit: int = 50):
+async def get_faith_trades(
+    limit: int = 50,
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Get trade history (closed positions)."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         trades = trader.db.get_closed_trades(limit=limit)
         return {
             "status": "success",
@@ -101,10 +118,12 @@ async def get_faith_trades(limit: int = 50):
 
 
 @router.get("/api/faith/performance")
-async def get_faith_performance():
+async def get_faith_performance(
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Get performance statistics (win rate, P&L, etc.)."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         stats = trader.db.get_performance_stats()
         account = trader.db.get_paper_account()
         return {
@@ -127,14 +146,16 @@ async def get_faith_performance():
 
 
 @router.get("/api/faith/pdt-status")
-async def get_faith_pdt_status():
+async def get_faith_pdt_status(
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """
     Get PDT (Pattern Day Trader) status.
 
     Returns day trade count, remaining trades, and next reset date.
     """
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         can_trade, pdt_count, pdt_msg = trader.can_trade_today()
         pdt_log = trader.db.get_pdt_log(days=10)
         next_reset = trader.db.get_next_pdt_reset_date()
@@ -169,10 +190,12 @@ async def get_faith_pdt_status():
 
 
 @router.get("/api/faith/paper-account")
-async def get_faith_paper_account():
+async def get_faith_paper_account(
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Get paper account balance and collateral data."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         account = trader.db.get_paper_account()
         return {
             "status": "success",
@@ -186,7 +209,9 @@ async def get_faith_paper_account():
 
 
 @router.get("/api/faith/position-monitor")
-async def get_faith_position_monitor():
+async def get_faith_position_monitor(
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """
     Get live position monitoring data.
 
@@ -194,7 +219,7 @@ async def get_faith_position_monitor():
     Returns null data field if no open position.
     """
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         monitor = trader.get_position_monitor()
         return {
             "status": "success",
@@ -209,10 +234,12 @@ async def get_faith_position_monitor():
 
 
 @router.get("/api/faith/equity-curve")
-async def get_faith_equity_curve():
+async def get_faith_equity_curve(
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Get historical equity curve from closed trades."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         curve = trader.db.get_equity_curve()
         return {
             "status": "success",
@@ -227,7 +254,10 @@ async def get_faith_equity_curve():
 
 
 @router.get("/api/faith/equity-curve/intraday")
-async def get_faith_intraday_equity(date: str = None):
+async def get_faith_intraday_equity(
+    date: str = None,
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """
     Get FAITH intraday equity curve with snapshots.
 
@@ -257,11 +287,12 @@ async def get_faith_intraday_equity(date: str = None):
             except (ValueError, TypeError):
                 pass
 
-        # If no config, check paper account starting_balance
+        # If no config, check paper account starting_balance for this dte_mode
         if starting_capital == 5000:
             cursor.execute("""
-                SELECT starting_balance FROM faith_paper_account LIMIT 1
-            """)
+                SELECT starting_capital FROM faith_paper_account
+                WHERE dte_mode = %s LIMIT 1
+            """, (dte_mode,))
             pa_row = cursor.fetchone()
             if pa_row and pa_row[0]:
                 try:
@@ -269,22 +300,24 @@ async def get_faith_intraday_equity(date: str = None):
                 except (ValueError, TypeError):
                     pass
 
-        # Get intraday snapshots
+        # Get intraday snapshots filtered by dte_mode
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
             FROM faith_equity_snapshots
             WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            AND dte_mode = %s
             ORDER BY timestamp ASC
-        """, (today,))
+        """, (today, dte_mode))
         snapshots = cursor.fetchall()
 
-        # Get total realized P&L up to today
+        # Get total realized P&L up to today filtered by dte_mode
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM faith_positions
             WHERE status IN ('closed', 'expired')
+            AND dte_mode = %s
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
-        """, (today,))
+        """, (dte_mode, today))
         total_realized = float(cursor.fetchone()[0] or 0)
 
         # Get today's closed P&L
@@ -292,8 +325,9 @@ async def get_faith_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM faith_positions
             WHERE status IN ('closed', 'expired')
+            AND dte_mode = %s
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
-        """, (today,))
+        """, (dte_mode, today))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0] or 0)
         today_closed_count = int(today_row[1] or 0)
@@ -303,16 +337,17 @@ async def get_faith_intraday_equity(date: str = None):
             SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
             FROM faith_positions
             WHERE status IN ('closed', 'expired')
+            AND dte_mode = %s
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY COALESCE(close_time, open_time) ASC
-        """, (today,))
+        """, (dte_mode, today))
         today_closes = cursor.fetchall()
 
         # Get unrealized P&L from open positions
         unrealized_pnl = 0
         open_count = 0
         try:
-            trader = _get_trader()
+            trader = _get_trader(dte_mode)
             monitor = trader.get_position_monitor()
             if monitor:
                 unrealized_pnl = monitor.get('pnl_total', 0) or 0
@@ -385,6 +420,7 @@ async def get_faith_intraday_equity(date: str = None):
             "success": True,
             "date": today,
             "bot": "FAITH",
+            "dte_mode": dte_mode,
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
             "day_pnl": round(day_pnl, 2),
@@ -409,6 +445,7 @@ async def get_faith_intraday_equity(date: str = None):
             "error": str(e),
             "date": today,
             "bot": "FAITH",
+            "dte_mode": dte_mode,
             "data_points": [{
                 "timestamp": now.isoformat(),
                 "time": current_time,
@@ -431,10 +468,13 @@ async def get_faith_intraday_equity(date: str = None):
 
 
 @router.get("/api/faith/logs")
-async def get_faith_logs(limit: int = 100):
+async def get_faith_logs(
+    limit: int = 100,
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Get activity logs."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         logs = trader.db.get_logs(limit=limit)
         return {
             "status": "success",
@@ -449,10 +489,13 @@ async def get_faith_logs(limit: int = 100):
 
 
 @router.post("/api/faith/toggle")
-async def toggle_faith(active: bool = True):
+async def toggle_faith(
+    active: bool = True,
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """Enable or disable the FAITH bot."""
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         result = trader.toggle(active)
         return {"status": "success", "data": result}
     except HTTPException:
@@ -463,7 +506,10 @@ async def toggle_faith(active: bool = True):
 
 
 @router.post("/api/faith/run-cycle")
-async def run_faith_cycle(close_only: bool = False):
+async def run_faith_cycle(
+    close_only: bool = False,
+    dte_mode: str = Query("2DTE", description="DTE mode: 2DTE or 1DTE")
+):
     """
     Manually trigger a FAITH scan/trade cycle.
 
@@ -471,7 +517,7 @@ async def run_faith_cycle(close_only: bool = False):
         close_only: If true, only manage existing positions (no new trades)
     """
     try:
-        trader = _get_trader()
+        trader = _get_trader(dte_mode)
         result = trader.run_cycle(close_only=close_only)
         return {"status": "success", "data": result}
     except HTTPException:
