@@ -48,8 +48,9 @@ class FaithConfig:
     mode: TradingMode = TradingMode.PAPER
     ticker: str = "SPY"
 
-    # DTE - FAITH targets 2DTE for more premium
+    # DTE - FAITH targets 2DTE for more premium (or 1DTE for comparison)
     min_dte: int = 2
+    dte_mode: str = "2DTE"  # "2DTE" or "1DTE" - used for side-by-side comparison
 
     # Capital
     starting_capital: float = 5000.0
@@ -99,7 +100,7 @@ class FaithConfig:
         if self.max_trades_per_day < 1:
             return False, "Max trades per day must be at least 1"
         if self.min_dte < 1:
-            return False, "Min DTE must be at least 1 for FAITH (2DTE bot)"
+            return False, "Min DTE must be at least 1"
         return True, "OK"
 
 

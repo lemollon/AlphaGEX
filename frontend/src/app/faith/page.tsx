@@ -217,6 +217,7 @@ function WingBadge({ adjusted, putWidth, callWidth }: {
 export default function FaithPage() {
   const paddingClass = useSidebarPadding()
 
+  const [dteMode, setDteMode] = useState<'2DTE' | '1DTE'>('2DTE')
   const [status, setStatus] = useState<BotStatus | null>(null)
   const [monitor, setMonitor] = useState<PositionMonitor | null>(null)
   const [trades, setTrades] = useState<Trade[]>([])
@@ -227,13 +228,14 @@ export default function FaithPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'activity'>('overview')
 
   const fetchData = useCallback(async () => {
+    const q = `dte_mode=${dteMode}`
     try {
       const [statusData, monitorData, tradesData, perfData, logsData] = await Promise.all([
-        fetchApi<BotStatus>('/api/faith/status'),
-        fetchApi<PositionMonitor>('/api/faith/position-monitor'),
-        fetchApi<Trade[]>('/api/faith/trades'),
-        fetchApi<Performance>('/api/faith/performance'),
-        fetchApi<LogEntry[]>('/api/faith/logs?limit=50'),
+        fetchApi<BotStatus>(`/api/faith/status?${q}`),
+        fetchApi<PositionMonitor>(`/api/faith/position-monitor?${q}`),
+        fetchApi<Trade[]>(`/api/faith/trades?${q}`),
+        fetchApi<Performance>(`/api/faith/performance?${q}`),
+        fetchApi<LogEntry[]>(`/api/faith/logs?limit=50&${q}`),
       ])
       setStatus(statusData)
       setMonitor(monitorData)
@@ -246,7 +248,7 @@ export default function FaithPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [dteMode])
 
   useEffect(() => {
     fetchData()
@@ -257,16 +259,23 @@ export default function FaithPage() {
   const handleToggle = async () => {
     if (!status) return
     try {
-      await fetch(`${API_URL}/api/faith/toggle?active=${!status.is_active}`, { method: 'POST' })
+      await fetch(`${API_URL}/api/faith/toggle?active=${!status.is_active}&dte_mode=${dteMode}`, { method: 'POST' })
       fetchData()
     } catch { /* handled by next refresh */ }
   }
 
   const handleRunCycle = async () => {
     try {
-      await fetch(`${API_URL}/api/faith/run-cycle`, { method: 'POST' })
+      await fetch(`${API_URL}/api/faith/run-cycle?dte_mode=${dteMode}`, { method: 'POST' })
       setTimeout(fetchData, 2000)
     } catch { /* handled by next refresh */ }
+  }
+
+  const handleDteModeChange = (mode: '2DTE' | '1DTE') => {
+    if (mode !== dteMode) {
+      setLoading(true)
+      setDteMode(mode)
+    }
   }
 
   // ---------- LOADING ----------
@@ -322,18 +331,41 @@ export default function FaithPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold flex items-center gap-3">
-                <Sword className="w-7 h-7 text-blue-400" />
+                <Sword className="w-7 h-7 text-sky-400" />
                 FAITH
-                <span className="text-sm font-normal text-text-secondary">2DTE Paper Iron Condor</span>
+                <span className="text-sm font-normal text-text-secondary">{dteMode} Paper Iron Condor</span>
               </h1>
               <p className="text-sm text-text-secondary mt-1">
-                SPY {status?.dte || 2}DTE IC | {formatPct(status?.profit_target_pct ?? 30)} profit target | Paper trading with real Tradier data
+                SPY {dteMode} IC | {formatPct(status?.profit_target_pct ?? 30)} profit target | Paper trading with real Tradier data
               </p>
             </div>
             <div className="flex items-center gap-3">
+              {/* DTE Mode Toggle */}
+              <div className="flex items-center bg-gray-800 rounded-lg p-0.5">
+                <button
+                  onClick={() => handleDteModeChange('2DTE')}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    dteMode === '2DTE'
+                      ? 'bg-sky-600 text-white shadow'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  2DTE
+                </button>
+                <button
+                  onClick={() => handleDteModeChange('1DTE')}
+                  className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    dteMode === '1DTE'
+                      ? 'bg-sky-600 text-white shadow'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  1DTE
+                </button>
+              </div>
               <button
                 onClick={handleRunCycle}
-                className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-blue-600 hover:bg-blue-500 text-white transition-colors"
+                className="flex items-center gap-2 px-3 py-2 text-sm rounded bg-sky-600 hover:bg-sky-500 text-white transition-colors"
               >
                 <RefreshCw className="w-4 h-4" /> Run Cycle
               </button>
