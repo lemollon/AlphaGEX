@@ -188,6 +188,8 @@ class BotName(Enum):
     GIDEON = "GIDEON"      # Aggressive Directional Spreads (relaxed filters)
     SAMSON = "SAMSON"        # Aggressive SPX Iron Condor ($12 spreads)
     JUBILEE = "JUBILEE"  # Box Spread Synthetic Borrowing + IC Trading
+    FAITH = "FAITH"      # 2DTE Paper Iron Condor (SPY)
+    GRACE = "GRACE"      # 1DTE Paper Iron Condor (SPY)
 
 
 class TradeOutcome(Enum):

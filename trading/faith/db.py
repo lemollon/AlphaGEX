@@ -748,6 +748,12 @@ class FaithDatabase:
         Count day trades in the rolling 5 business day window.
 
         A day trade is a position that was opened and closed on the same calendar day.
+
+        NOTE: This query skips weekends (DOW 0=Sun, 6=Sat) but does NOT account
+        for market holidays (e.g., MLK Day, Presidents Day). On weeks with a
+        holiday, the rolling window may be 1 day too short. This is a conservative
+        error — it may block a legal trade but will never allow an illegal one.
+        A future enhancement could integrate MarketCalendar for exact holiday handling.
         """
         try:
             with db_connection() as conn:
@@ -962,6 +968,27 @@ class FaithDatabase:
                 conn.commit()
         except Exception as e:
             logger.debug(f"Failed to update heartbeat: {e}")
+
+    def get_heartbeat_info(self) -> Optional[Dict[str, Any]]:
+        """Get heartbeat info for this bot from DB (scan_count, last_heartbeat, status)."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT scan_count, last_heartbeat, status, details
+                    FROM bot_heartbeats WHERE bot_name = %s
+                """, (self.bot_name,))
+                row = c.fetchone()
+                if row:
+                    return {
+                        'scan_count': row[0] or 0,
+                        'last_heartbeat': row[1].isoformat() if row[1] else None,
+                        'status': row[2],
+                        'details': row[3],
+                    }
+        except Exception as e:
+            logger.debug(f"Failed to get heartbeat info: {e}")
+        return None
 
     def update_daily_performance(self, summary: DailySummary) -> bool:
         """Update daily performance record."""
