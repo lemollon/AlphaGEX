@@ -1912,7 +1912,7 @@ export function useValorPositions(ticker?: string, options?: SWRConfiguration) {
       ...swrConfig,
       dedupingInterval: 5000,
       keepPreviousData: false,
-      refreshInterval: 30 * 1000,
+      refreshInterval: 15 * 1000,
       ...options,
     }
   )

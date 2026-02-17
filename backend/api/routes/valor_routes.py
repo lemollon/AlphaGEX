@@ -156,13 +156,48 @@ async def get_valor_positions(
     """
     Get all open VALOR positions with unrealized P&L.
     Optionally filtered by ticker.
+
+    Each position includes:
+    - Entry details (price, direction, contracts, ticker)
+    - Current price from live quote
+    - Unrealized P&L: (current - entry) * point_value * direction * contracts
     """
     try:
         trader = _get_trader()
+        from trading.valor.models import get_ticker_point_value
         status = trader.get_status(ticker=ticker)
+        positions = status.get("positions", {}).get("positions", [])
+
+        # Enrich each position with current_price and unrealized_pnl
+        # Cache quotes per ticker to avoid duplicate fetches
+        price_cache = {}
+        for pos in positions:
+            pos_ticker = pos.get("ticker", "MES")
+            entry_price = pos.get("entry_price", 0)
+
+            # Get current price (cached per ticker)
+            if pos_ticker not in price_cache:
+                try:
+                    quote = trader.executor.get_mes_quote(ticker=pos_ticker)
+                    price_cache[pos_ticker] = quote.get("price") or quote.get("last") if quote else None
+                except Exception:
+                    price_cache[pos_ticker] = None
+            current_price = price_cache[pos_ticker]
+
+            if current_price:
+                direction = 1 if pos.get("direction", "").upper() in ("LONG", "BUY") else -1
+                point_value = get_ticker_point_value(pos_ticker)
+                contracts = pos.get("contracts", 1)
+                pnl = (current_price - entry_price) * point_value * direction * contracts
+                pos["unrealized_pnl"] = round(pnl, 2)
+                pos["current_price"] = round(current_price, 2)
+            else:
+                pos["unrealized_pnl"] = 0.0
+                pos["current_price"] = None
+
         return {
-            "positions": status.get("positions", {}).get("positions", []),
-            "count": status.get("positions", {}).get("open_count", 0),
+            "positions": positions,
+            "count": len(positions),
             "ticker_filter": ticker,
             "timestamp": datetime.now().isoformat()
         }
@@ -1950,22 +1985,39 @@ async def get_valor_margin_analysis(
     Returns margin usage, liquidation prices, effective leverage,
     and distance to liquidation for CME micro futures contracts.
     Supports multi-ticker (MES, MNQ, CL, NG, RTY).
+
+    When ticker is specified:
+      - Only that ticker's positions are included
+      - Equity = per-instrument $100K starting capital + that ticker's realized P&L
+    When ticker is None (ALL):
+      - All positions across all instruments
+      - Equity = combined paper account balance
     """
     try:
         trader = _get_trader()
         from trading.shared.margin_engine import MarginCalculator
         from trading.shared.margin_config import FUTURES_MARGIN_SPECS
+        from trading.valor.models import FUTURES_TICKERS
 
-        # Get paper account for equity
-        paper_account = trader.get_paper_account()
-        if paper_account:
-            starting_capital = paper_account.get("starting_capital", 500000.0)
-            account_equity = paper_account.get("current_balance") or starting_capital
+        if ticker:
+            # Per-instrument equity: $100K starting + realized P&L for this ticker
+            ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+            starting_capital = ticker_cfg.get("starting_capital", 100000.0)
+            # Get realized P&L for this specific ticker
+            ticker_stats = trader.db.get_ticker_performance_stats([ticker])
+            realized_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
+            account_equity = starting_capital + realized_pnl
         else:
-            starting_capital = 500000.0
-            account_equity = starting_capital
+            # Combined equity: paper account balance across all instruments
+            paper_account = trader.get_paper_account()
+            if paper_account:
+                starting_capital = paper_account.get("starting_capital", 500000.0)
+                account_equity = paper_account.get("current_balance") or starting_capital
+            else:
+                starting_capital = 500000.0
+                account_equity = starting_capital
 
-        # Get open positions
+        # Get open positions (already filtered by ticker if specified)
         status = trader.get_status(ticker=ticker)
         positions = status.get("positions", {}).get("positions", [])
 
@@ -1977,8 +2029,17 @@ async def get_valor_margin_analysis(
                 continue
 
             # Get current price for this ticker
-            quote = trader.executor.get_mes_quote(ticker=pos_ticker)
-            current_price = quote.get("price") or quote.get("last") if quote else None
+            current_price = None
+            try:
+                quote = trader.executor.get_mes_quote(ticker=pos_ticker)
+                current_price = quote.get("price") or quote.get("last") if quote else None
+            except Exception:
+                pass
+
+            # Fallback: use entry_price if quote unavailable (shows 0 unrealized P&L)
+            if not current_price:
+                current_price = pos.get("entry_price", 0)
+
             if not current_price:
                 continue
 
@@ -2008,6 +2069,7 @@ async def get_valor_margin_analysis(
         summary = MarginCalculator.aggregate_positions(position_margins, account_equity, "stock_futures")
         summary["starting_capital"] = starting_capital
         summary["paper_trading"] = True
+        summary["ticker_filter"] = ticker
 
         # Include available contract specs for reference
         specs_ref = {}
