@@ -1995,6 +1995,9 @@ class AgapeSpotExecutor:
     def get_account_balance(self, ticker: str = None) -> Optional[Dict]:
         """Get account balances for USD, USDC, and all supported crypto currencies.
 
+        Paginates through ALL Coinbase account pages (up to 20) to ensure
+        USD/USDC are found even when they're on later pages.
+
         If *ticker* is specified, uses that ticker's client (dedicated or default).
         If None, uses the default client.
         """
@@ -2002,16 +2005,23 @@ class AgapeSpotExecutor:
         if not client:
             return None
         try:
-            accounts = client.get_accounts()
-            acct_list = self._resp(accounts, "accounts", [])
-            if acct_list:
-                balances: Dict[str, float] = {}
-                # Collect all currencies we care about (USD + USDC + all traded coins)
-                tracked_currencies = {"USD", "USDC"}
-                for ticker_key in self.config.tickers:
-                    symbol = SPOT_TICKERS.get(ticker_key, {}).get("symbol")
-                    if symbol:
-                        tracked_currencies.add(symbol)
+            balances: Dict[str, Any] = {}
+            tracked_currencies = {"USD", "USDC"}
+            for ticker_key in self.config.tickers:
+                symbol = SPOT_TICKERS.get(ticker_key, {}).get("symbol")
+                if symbol:
+                    tracked_currencies.add(symbol)
+
+            cursor = None
+            for page in range(20):
+                kwargs = {"limit": 250}
+                if cursor:
+                    kwargs["cursor"] = cursor
+
+                accounts = client.get_accounts(**kwargs)
+                acct_list = self._resp(accounts, "accounts", [])
+                if not acct_list:
+                    break
 
                 for acct in acct_list:
                     currency = self._resp(acct, "currency", "")
@@ -2020,8 +2030,13 @@ class AgapeSpotExecutor:
                         available = float(self._resp(avail_bal, "value", 0))
                         balances[currency.lower() + "_balance"] = available
 
+                next_cursor = self._resp(accounts, "cursor", None)
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+            if balances:
                 balances["exchange"] = "coinbase"
-                # Determine account type from which client was used
                 if ticker and self._dedicated_client and client is self._dedicated_client:
                     balances["account_type"] = "dedicated"
                 else:
@@ -2034,17 +2049,29 @@ class AgapeSpotExecutor:
     def get_all_account_balances(self) -> Dict[str, Any]:
         """Get balances from ALL Coinbase accounts (default + dedicated).
 
+        Uses _get_usd_balance_from_client() for BOTH accounts to ensure
+        proper pagination (Coinbase may spread accounts across many pages).
+
         Returns a dict keyed by account_label with balance details.
         """
         results: Dict[str, Any] = {}
 
-        # Account 1: Default
+        # Account 1: Default (paginated balance read)
         if self._client:
-            bal = self.get_account_balance()
-            if bal:
-                results["default"] = bal
+            try:
+                usd_bal = self._get_usd_balance_from_client(self._client, account_label="default")
+                balances: Dict[str, Any] = {
+                    "exchange": "coinbase",
+                    "account_type": "default",
+                }
+                if usd_bal is not None:
+                    balances["usd_balance"] = usd_bal
+                results["default"] = balances
+            except Exception as e:
+                logger.error(f"AGAPE-SPOT Executor: Default balance fetch failed: {e}")
+                results["default"] = {"error": str(e)}
 
-        # Account 2: Dedicated
+        # Account 2: Dedicated (paginated balance read)
         if self._dedicated_client:
             try:
                 usd_bal = self._get_usd_balance_from_client(self._dedicated_client, account_label="dedicated")
