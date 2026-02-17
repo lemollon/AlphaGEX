@@ -9,7 +9,7 @@ import { BOT_DISPLAY_NAMES, getBotDisplayName, getBotScripture } from '@/lib/bot
 // =============================================================================
 // Unified branding for trading bots with biblical display names (Fruits of the Spirit)
 
-export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
+export type BotName = 'FORTRESS' | 'SOLOMON' | 'GIDEON' | 'ANCHOR' | 'SAMSON' | 'LAZARUS' | 'CORNERSTONE' | 'JUBILEE' | 'VALOR' | 'FAITH' | 'AGAPE' | 'AGAPE_SPOT' | 'AGAPE_BTC' | 'AGAPE_XRP' | 'AGAPE_ETH_PERP' | 'AGAPE_BTC_PERP' | 'AGAPE_XRP_PERP' | 'AGAPE_DOGE_PERP' | 'AGAPE_SHIB_PERP'
 
 export interface BotBrand {
   name: BotName
@@ -336,6 +336,42 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#10B981',
     hexLight: '#6EE7B7',
     hexDark: '#059669',
+  },
+  FAITH: {
+    name: 'FAITH',
+    displayName: BOT_DISPLAY_NAMES.FAITH,  // FAITH - Hebrews 11:1
+    fullName: `${BOT_DISPLAY_NAMES.FAITH} 2DTE Paper IC`,
+    description: 'Paper Trading 2DTE Iron Condors with Real Market Data',
+    strategy: '2DTE Paper Iron Condor Strategy',
+    // Primary - Sky blue (trust, faith, clarity)
+    primaryColor: 'sky',
+    primaryBg: 'bg-sky-600',
+    primaryBorder: 'border-sky-500',
+    primaryText: 'text-sky-400',
+    // Light variants
+    lightBg: 'bg-sky-900/20',
+    lightText: 'text-sky-300',
+    lightBorder: 'border-sky-700/50',
+    // Chart colors
+    chartLine: 'stroke-sky-400',
+    chartFill: 'fill-sky-500/20',
+    chartPositive: 'text-sky-400',
+    chartNegative: 'text-sky-600',
+    // Position cards
+    positionBorder: 'border-sky-600/50',
+    positionBg: 'bg-sky-950/30',
+    positionAccent: 'bg-sky-500',
+    // Badges
+    badgeBg: 'bg-sky-900/50',
+    badgeText: 'text-sky-300',
+    // Gradient
+    icon: Sword,
+    gradientFrom: 'from-sky-500',
+    gradientTo: 'to-sky-900',
+    // Hex for Recharts
+    hexPrimary: '#0EA5E9',
+    hexLight: '#38BDF8',
+    hexDark: '#0284C7',
   },
   VALOR: {
     name: 'VALOR',

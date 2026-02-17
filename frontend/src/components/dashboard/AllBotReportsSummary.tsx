@@ -90,6 +90,7 @@ export default function AllBotReportsSummary() {
     CORNERSTONE: undefined,
     JUBILEE: undefined,
     VALOR: undefined,
+    FAITH: undefined,
     AGAPE: undefined,
     AGAPE_SPOT: undefined,
     AGAPE_BTC: undefined,
