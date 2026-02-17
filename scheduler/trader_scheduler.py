@@ -5649,7 +5649,8 @@ class AutonomousTraderScheduler:
                 ),
                 id='faith_trading',
                 name='FAITH - 2DTE Paper Iron Condor (5-min intervals)',
-                replace_existing=True
+                replace_existing=True,
+                max_instances=1
             )
             logger.info("✅ FAITH job scheduled (every 5 min, checks market hours internally)")
 
@@ -5668,7 +5669,8 @@ class AutonomousTraderScheduler:
                 ),
                 id='faith_eod',
                 name='FAITH - EOD Safety Net Close',
-                replace_existing=True
+                replace_existing=True,
+                max_instances=1
             )
             logger.info("✅ FAITH EOD job scheduled (3:50 PM CT daily)")
 
@@ -5688,7 +5690,8 @@ class AutonomousTraderScheduler:
                 ),
                 id='grace_trading',
                 name='GRACE - 1DTE Paper Iron Condor (5-min intervals)',
-                replace_existing=True
+                replace_existing=True,
+                max_instances=1
             )
             logger.info("✅ GRACE job scheduled (every 5 min, checks market hours internally)")
 
@@ -5702,7 +5705,8 @@ class AutonomousTraderScheduler:
                 ),
                 id='grace_eod',
                 name='GRACE - EOD Safety Net Close',
-                replace_existing=True
+                replace_existing=True,
+                max_instances=1
             )
             logger.info("✅ GRACE EOD job scheduled (3:50 PM CT daily)")
         else:
@@ -6569,7 +6573,7 @@ class AutonomousTraderScheduler:
         startup_status = 'STARTING' if is_open else market_status
         startup_details = {'event': 'scheduler_startup', 'market_status': market_status}
 
-        for bot_name in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'GIDEON', 'SAMSON', 'CORNERSTONE', 'LAZARUS']:
+        for bot_name in ['FORTRESS', 'SOLOMON', 'ANCHOR', 'GIDEON', 'SAMSON', 'CORNERSTONE', 'LAZARUS', 'FAITH', 'GRACE']:
             try:
                 self._save_heartbeat(bot_name, startup_status, startup_details)
             except Exception as e:

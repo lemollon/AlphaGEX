@@ -188,8 +188,7 @@ class FaithSignalGenerator:
                 ) if market_data.get('spot_price', 0) > 0 else 0,
             )
 
-            # Use FORTRESS bot name since FAITH uses the same strategy
-            prediction = prophet.get_prediction(BotName.FORTRESS, context)
+            prediction = prophet.get_prediction(BotName.FAITH, context)
             if prediction:
                 return {
                     'advice': prediction.advice.value if hasattr(prediction.advice, 'value') else str(prediction.advice),
@@ -239,6 +238,67 @@ class FaithSignalGenerator:
         expiration = target.strftime("%Y-%m-%d")
         logger.info(f"FAITH: Target expiration {expiration} ({min_dte} trading days out)")
         return expiration
+
+    def _validate_expiration(self, target_expiration: str) -> Optional[str]:
+        """
+        Validate that the target expiration actually has options listed.
+
+        If the target expiration has no options (holiday, etc.), find the
+        nearest valid expiration. Returns None if no valid expiration found.
+        """
+        if not self.tradier:
+            # Can't validate without Tradier — assume it's valid
+            return target_expiration
+
+        try:
+            expirations = self.tradier.get_expirations(self.config.ticker)
+            if not expirations:
+                logger.warning("FAITH: Could not fetch expirations list from Tradier")
+                return target_expiration  # Assume valid if we can't check
+
+            # Normalize to list of date strings
+            exp_dates = []
+            for exp in expirations:
+                if isinstance(exp, str):
+                    exp_dates.append(exp)
+                elif hasattr(exp, 'date'):
+                    exp_dates.append(str(exp.date))
+                else:
+                    exp_dates.append(str(exp))
+
+            if target_expiration in exp_dates:
+                return target_expiration
+
+            # Target not available — find nearest valid expiration
+            logger.warning(
+                f"FAITH: Target expiration {target_expiration} not in available expirations, "
+                f"searching for nearest valid date"
+            )
+            from datetime import datetime as dt
+            target_date = dt.strptime(target_expiration, '%Y-%m-%d')
+
+            nearest = None
+            min_diff = float('inf')
+            for exp_str in exp_dates:
+                try:
+                    exp_date = dt.strptime(exp_str, '%Y-%m-%d')
+                    diff = abs((exp_date - target_date).days)
+                    if diff < min_diff and exp_date >= dt.now():
+                        min_diff = diff
+                        nearest = exp_str
+                except (ValueError, TypeError):
+                    continue
+
+            if nearest:
+                logger.info(f"FAITH: Using nearest valid expiration {nearest} (target was {target_expiration})")
+                return nearest
+
+            logger.error("FAITH: No valid expiration dates found")
+            return None
+
+        except Exception as e:
+            logger.warning(f"FAITH: Expiration validation failed: {e} — using target as-is")
+            return target_expiration
 
     def calculate_strikes(
         self,
@@ -370,12 +430,18 @@ class FaithSignalGenerator:
                 if valid_puts:
                     long_put = valid_puts[-1]  # Closest strike that's far enough out
                     logger.info(f"FAITH: Adjusted long put to nearest valid strike: ${long_put}")
+                else:
+                    logger.warning(f"FAITH: No valid put strike found for long put (need <= ${short_put - target_width})")
+                    return None
 
             if long_call not in available_strikes:
                 valid_calls = sorted([s for s in available_strikes if s >= short_call + target_width])
                 if valid_calls:
                     long_call = valid_calls[0]  # Closest strike that's far enough out
                     logger.info(f"FAITH: Adjusted long call to nearest valid strike: ${long_call}")
+                else:
+                    logger.warning(f"FAITH: No valid call strike found for long call (need >= ${short_call + target_width})")
+                    return None
 
         return {
             'short_put': short_put,
@@ -594,8 +660,15 @@ class FaithSignalGenerator:
                     reasoning=f"Win probability {oracle_win_prob:.0%} below threshold"
                 )
 
-        # Step 4: Get target expiration (2DTE)
+        # Step 4: Get target expiration (2DTE) and validate it has options
         expiration = self._get_target_expiration(now)
+        expiration = self._validate_expiration(expiration)
+        if not expiration:
+            logger.warning("FAITH: No valid expiration with options available")
+            return IronCondorSignal(
+                spot_price=spot, vix=vix, expected_move=expected_move,
+                is_valid=False, reasoning="No valid expiration with options available"
+            )
 
         # Step 5: Calculate strikes
         strikes = self.calculate_strikes(spot, expected_move)
@@ -617,6 +690,14 @@ class FaithSignalGenerator:
             strikes['call_short'], strikes['call_long'],
             available_strikes=available_strikes,
         )
+
+        # enforce_symmetric_wings returns None when no valid strikes exist
+        if symmetric is None:
+            logger.warning("FAITH: No valid strikes after wing adjustment — skipping trade")
+            return IronCondorSignal(
+                spot_price=spot, vix=vix, expected_move=expected_move,
+                is_valid=False, reasoning="No valid strikes available for symmetric wings"
+            )
 
         put_short = symmetric['short_put']
         put_long = symmetric['long_put']

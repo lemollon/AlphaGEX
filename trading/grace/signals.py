@@ -181,8 +181,7 @@ class GraceSignalGenerator:
                 ) if market_data.get('spot_price', 0) > 0 else 0,
             )
 
-            # Use FORTRESS bot name since GRACE uses the same strategy
-            prediction = prophet.get_prediction(BotName.FORTRESS, context)
+            prediction = prophet.get_prediction(BotName.GRACE, context)
             if prediction:
                 return {
                     'advice': prediction.advice.value if hasattr(prediction.advice, 'value') else str(prediction.advice),
@@ -232,6 +231,64 @@ class GraceSignalGenerator:
         expiration = target.strftime("%Y-%m-%d")
         logger.info(f"GRACE: Target expiration {expiration} ({min_dte} trading days out)")
         return expiration
+
+    def _validate_expiration(self, target_expiration: str) -> Optional[str]:
+        """
+        Validate that the target expiration actually has options listed.
+
+        If the target expiration has no options (holiday, etc.), find the
+        nearest valid expiration. Returns None if no valid expiration found.
+        """
+        if not self.tradier:
+            return target_expiration
+
+        try:
+            expirations = self.tradier.get_expirations(self.config.ticker)
+            if not expirations:
+                logger.warning("GRACE: Could not fetch expirations list from Tradier")
+                return target_expiration
+
+            exp_dates = []
+            for exp in expirations:
+                if isinstance(exp, str):
+                    exp_dates.append(exp)
+                elif hasattr(exp, 'date'):
+                    exp_dates.append(str(exp.date))
+                else:
+                    exp_dates.append(str(exp))
+
+            if target_expiration in exp_dates:
+                return target_expiration
+
+            logger.warning(
+                f"GRACE: Target expiration {target_expiration} not in available expirations, "
+                f"searching for nearest valid date"
+            )
+            from datetime import datetime as dt
+            target_date = dt.strptime(target_expiration, '%Y-%m-%d')
+
+            nearest = None
+            min_diff = float('inf')
+            for exp_str in exp_dates:
+                try:
+                    exp_date = dt.strptime(exp_str, '%Y-%m-%d')
+                    diff = abs((exp_date - target_date).days)
+                    if diff < min_diff and exp_date >= dt.now():
+                        min_diff = diff
+                        nearest = exp_str
+                except (ValueError, TypeError):
+                    continue
+
+            if nearest:
+                logger.info(f"GRACE: Using nearest valid expiration {nearest} (target was {target_expiration})")
+                return nearest
+
+            logger.error("GRACE: No valid expiration dates found")
+            return None
+
+        except Exception as e:
+            logger.warning(f"GRACE: Expiration validation failed: {e} — using target as-is")
+            return target_expiration
 
     def calculate_strikes(
         self,
@@ -337,12 +394,18 @@ class GraceSignalGenerator:
                 if valid_puts:
                     long_put = valid_puts[-1]
                     logger.info(f"GRACE: Adjusted long put to nearest valid strike: ${long_put}")
+                else:
+                    logger.warning(f"GRACE: No valid put strike found for long put (need <= ${short_put - target_width})")
+                    return None
 
             if long_call not in available_strikes:
                 valid_calls = sorted([s for s in available_strikes if s >= short_call + target_width])
                 if valid_calls:
                     long_call = valid_calls[0]
                     logger.info(f"GRACE: Adjusted long call to nearest valid strike: ${long_call}")
+                else:
+                    logger.warning(f"GRACE: No valid call strike found for long call (need >= ${short_call + target_width})")
+                    return None
 
         return {
             'short_put': short_put,
@@ -533,8 +596,15 @@ class GraceSignalGenerator:
                     reasoning=f"Win probability {oracle_win_prob:.0%} below threshold"
                 )
 
-        # Step 4: Get target expiration (1DTE)
+        # Step 4: Get target expiration (1DTE) and validate it has options
         expiration = self._get_target_expiration(now)
+        expiration = self._validate_expiration(expiration)
+        if not expiration:
+            logger.warning("GRACE: No valid expiration with options available")
+            return IronCondorSignal(
+                spot_price=spot, vix=vix, expected_move=expected_move,
+                is_valid=False, reasoning="No valid expiration with options available"
+            )
 
         # Step 5: Calculate strikes
         strikes = self.calculate_strikes(spot, expected_move)
@@ -556,6 +626,14 @@ class GraceSignalGenerator:
             strikes['call_short'], strikes['call_long'],
             available_strikes=available_strikes,
         )
+
+        # enforce_symmetric_wings returns None when no valid strikes exist
+        if symmetric is None:
+            logger.warning("GRACE: No valid strikes after wing adjustment — skipping trade")
+            return IronCondorSignal(
+                spot_price=spot, vix=vix, expected_move=expected_move,
+                is_valid=False, reasoning="No valid strikes available for symmetric wings"
+            )
 
         put_short = symmetric['short_put']
         put_long = symmetric['long_put']

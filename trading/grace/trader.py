@@ -13,6 +13,7 @@ Paper-trading 1DTE Iron Condor bot. Clone of FAITH with:
 """
 
 import logging
+import threading
 import time
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
@@ -63,6 +64,11 @@ class GraceTrader:
         self.is_active = True
         self.last_scan_time = None
         self.last_scan_result = None
+        self._cycle_lock = threading.RLock()
+        self._mtm_failure_counts = {}  # {position_id: consecutive_failure_count}
+
+        # Circuit breaker: force-close after this many consecutive MTM failures
+        self.MAX_CONSECUTIVE_MTM_FAILURES = 10
 
         logger.info(
             f"GRACE initialized: capital=${self.config.starting_capital}, "
@@ -70,12 +76,55 @@ class GraceTrader:
             f"SL={self.config.stop_loss_pct}%, EOD={self.config.eod_cutoff_et} ET"
         )
 
+        # Recover orphaned positions on startup
+        self._recover_orphaned_positions()
+
+    def _recover_orphaned_positions(self):
+        """
+        On startup, check for orphaned open positions.
+
+        If market is open: log and resume monitoring (run_cycle will handle them).
+        If market is closed: force-close with reason 'server_restart_recovery'.
+        """
+        try:
+            open_positions = self.db.get_open_positions()
+            if not open_positions:
+                return
+
+            now = datetime.now(CENTRAL_TZ)
+            in_window, _ = self._is_in_trading_window(now)
+
+            for position in open_positions:
+                if in_window:
+                    logger.info(
+                        f"GRACE: Recovered orphaned position {position.position_id} — "
+                        f"market open, resuming monitoring"
+                    )
+                    self.db.log("RECOVERY", f"Orphaned position {position.position_id} found on restart — resuming monitoring")
+                else:
+                    logger.warning(
+                        f"GRACE: Recovered orphaned position {position.position_id} — "
+                        f"market closed, force-closing at entry credit"
+                    )
+                    close_price = position.total_credit
+                    self.executor.close_paper_position(
+                        position, close_price, "server_restart_recovery"
+                    )
+                    self.db.log("RECOVERY", f"Orphaned position {position.position_id} force-closed on restart (market closed)")
+        except Exception as e:
+            logger.error(f"GRACE: Position recovery failed: {e}")
+
     def run_cycle(self, close_only: bool = False) -> Dict[str, Any]:
         """
         Execute one complete trading cycle.
 
         This is the main entry point called by the scheduler every 5 minutes.
         """
+        with self._cycle_lock:
+            return self._run_cycle_inner(close_only)
+
+    def _run_cycle_inner(self, close_only: bool = False) -> Dict[str, Any]:
+        """Inner cycle logic, protected by _cycle_lock."""
         now = datetime.now(CENTRAL_TZ)
         self.last_scan_time = now
         result = {
@@ -87,14 +136,27 @@ class GraceTrader:
         }
 
         try:
-            # Step 1: Check if bot is active
+            # Step 1: ALWAYS manage existing positions (even if bot is disabled)
+            # This ensures stop-loss, profit target, and EOD safety fire regardless
+            open_positions = self.db.get_open_positions()
+            if open_positions:
+                managed, manage_pnl = self._manage_positions(now)
+                result['positions_managed'] = managed
+                if managed > 0:
+                    result['details']['managed_pnl'] = manage_pnl
+
+            # Step 2: Check if bot is active (only blocks NEW trades, not monitoring)
             if not self.is_active:
                 result['action'] = 'inactive'
-                result['details']['reason'] = 'Bot is disabled'
-                self.db.update_heartbeat('inactive', 'disabled')
+                note = 'Bot disabled'
+                if open_positions:
+                    note += f' — monitoring {len(open_positions)} existing position(s) only'
+                result['details']['reason'] = note
+                self.db.update_heartbeat('inactive', 'disabled_monitoring' if open_positions else 'disabled')
+                self.last_scan_result = result
                 return result
 
-            # Step 2: Check trading window
+            # Step 3: Check trading window
             in_window, window_msg = self._is_in_trading_window(now)
             if not in_window:
                 result['action'] = 'outside_window'
@@ -103,21 +165,21 @@ class GraceTrader:
                 self.last_scan_result = result
                 return result
 
-            # Step 3: Manage open positions
-            managed, manage_pnl = self._manage_positions(now)
-            result['positions_managed'] = managed
+            # Step 4: Manage positions again if not done above (bot active, in window)
+            if not open_positions:
+                managed, manage_pnl = self._manage_positions(now)
+                result['positions_managed'] = managed
+                if managed > 0:
+                    result['details']['managed_pnl'] = manage_pnl
 
-            if managed > 0:
-                result['details']['managed_pnl'] = manage_pnl
-
-            # Step 4: If close_only, stop here
+            # Step 5: If close_only, stop here
             if close_only:
                 result['action'] = 'close_only'
                 self.db.update_heartbeat('active', 'close_only')
                 self.last_scan_result = result
                 return result
 
-            # Step 5: Check if we can open a new trade
+            # Step 6: Check if we can open a new trade
             open_positions = self.db.get_open_positions()
             if open_positions:
                 result['action'] = 'monitoring'
@@ -204,7 +266,15 @@ class GraceTrader:
                 self.last_scan_result = result
                 return result
 
-            # Step 11: Execute paper trade
+            # Step 11: Atomic guard — re-check no open position right before opening
+            if self.db.get_open_positions():
+                result['action'] = 'skipped'
+                result['details']['reason'] = 'Position already exists (race condition guard)'
+                self.db.log("SKIP", "Position already open — aborting duplicate open")
+                self.last_scan_result = result
+                return result
+
+            # Step 12: Execute paper trade
             position = self.executor.open_paper_position(signal, max_contracts)
             if not position:
                 result['action'] = 'execution_failed'
@@ -274,10 +344,33 @@ class GraceTrader:
             )
 
             if close_price is None:
+                # Track consecutive MTM failures per position
+                pid = position.position_id
+                self._mtm_failure_counts[pid] = self._mtm_failure_counts.get(pid, 0) + 1
+                fail_count = self._mtm_failure_counts[pid]
+
                 logger.warning(
-                    f"GRACE: Could not get MTM for {position.position_id}, "
-                    f"checking EOD cutoff only"
+                    f"GRACE: Could not get MTM for {pid} "
+                    f"({fail_count}/{self.MAX_CONSECUTIVE_MTM_FAILURES} consecutive failures)"
                 )
+
+                # Circuit breaker: force-close after N consecutive failures
+                if fail_count >= self.MAX_CONSECUTIVE_MTM_FAILURES:
+                    logger.error(
+                        f"GRACE: MTM circuit breaker triggered for {pid} — "
+                        f"{fail_count} consecutive failures, force-closing at entry credit"
+                    )
+                    close_price = position.total_credit
+                    success, pnl = self.executor.close_paper_position(
+                        position, close_price, "data_feed_failure"
+                    )
+                    if success:
+                        managed += 1
+                        total_pnl += pnl
+                        self._mtm_failure_counts.pop(pid, None)
+                    continue
+
+                # If we can't get MTM, still check EOD cutoff
                 if self._is_past_eod_cutoff(now):
                     close_price = position.total_credit
                     success, pnl = self.executor.close_paper_position(
@@ -286,7 +379,11 @@ class GraceTrader:
                     if success:
                         managed += 1
                         total_pnl += pnl
+                        self._mtm_failure_counts.pop(pid, None)
                 continue
+
+            # Reset MTM failure counter on successful quote
+            self._mtm_failure_counts.pop(position.position_id, None)
 
             entry_credit = position.total_credit
 
@@ -391,6 +488,10 @@ class GraceTrader:
         today_str = now.strftime('%Y-%m-%d')
         trades_today = self.db.get_trades_today_count(today_str)
 
+        # Get DB-based execution count from heartbeat (survives restarts)
+        heartbeat = self.db.get_heartbeat_info()
+        execution_count = heartbeat.get('scan_count', 0) if heartbeat else 0
+
         return {
             'bot_name': 'GRACE',
             'display_name': 'GRACE',
@@ -419,6 +520,13 @@ class GraceTrader:
                 'can_trade': can_trade,
                 'reason': pdt_msg,
                 'next_reset': self.db.get_next_pdt_reset_date(),
+            },
+            'scheduler': {
+                'job_id': 'grace_trading',
+                'interval_minutes': 5,
+                'execution_count': execution_count,
+                'last_heartbeat': heartbeat.get('last_heartbeat') if heartbeat else None,
+                'heartbeat_status': heartbeat.get('status') if heartbeat else 'UNKNOWN',
             },
         }
 
