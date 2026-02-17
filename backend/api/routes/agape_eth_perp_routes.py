@@ -299,7 +299,7 @@ async def get_equity_curve(
                 "cumulative_pnl": round(cumulative_pnl, 2),
                 "equity": round(equity, 2),
                 "trades": day_trades,
-                "return_pct": round(cumulative_pnl / starting_capital * 100, 2),
+                "return_pct": round(max(-100.0, cumulative_pnl / starting_capital * 100), 2),
             })
 
         # Filter to requested days (output filter only, not SQL)
@@ -316,7 +316,7 @@ async def get_equity_curve(
                 "starting_capital": starting_capital,
                 "current_equity": round(current_equity, 2),
                 "total_pnl": round(total_pnl, 2),
-                "total_return_pct": round(total_pnl / starting_capital * 100, 2),
+                "total_return_pct": round(max(-100.0, total_pnl / starting_capital * 100), 2),
             },
             "points": len(equity_curve),
             "days": days,

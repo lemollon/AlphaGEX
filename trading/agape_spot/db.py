@@ -239,6 +239,26 @@ class AgapeSpotDatabase:
                 )
             """)
 
+            # ----- agape_spot_ticker_probation -----
+            # Tracks ticker trading status: LIVE, PROBATION (paper-only), DISABLED
+            # Probation tickers still scan and generate paper trades for evaluation.
+            # Auto-promotion/demotion based on trailing paper performance.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agape_spot_ticker_probation (
+                    ticker VARCHAR(20) PRIMARY KEY,
+                    status VARCHAR(20) NOT NULL DEFAULT 'LIVE',
+                    demoted_at TIMESTAMP WITH TIME ZONE,
+                    promoted_at TIMESTAMP WITH TIME ZONE,
+                    paper_trades_since_demotion INTEGER DEFAULT 0,
+                    paper_win_rate FLOAT,
+                    paper_ev_per_trade FLOAT,
+                    paper_max_loss_streak INTEGER,
+                    consecutive_passing_days INTEGER DEFAULT 0,
+                    last_evaluated_at TIMESTAMP WITH TIME ZONE,
+                    reason TEXT
+                )
+            """)
+
             # ==========================================================
             # MIGRATIONS for existing tables
             # ==========================================================
@@ -512,7 +532,15 @@ class AgapeSpotDatabase:
             cursor.close()
             conn.close()
 
-    def expire_position(self, position_id: str, realized_pnl: float, close_price: float) -> bool:
+    def expire_position(
+        self,
+        position_id: str,
+        realized_pnl: float,
+        close_price: float,
+        coinbase_sell_order_id: str = None,
+        exit_slippage_pct: float = None,
+        exit_fee_usd: float = None,
+    ) -> bool:
         conn = self._get_conn()
         if not conn:
             return False
@@ -521,9 +549,16 @@ class AgapeSpotDatabase:
             cursor.execute("""
                 UPDATE agape_spot_positions
                 SET status = 'expired', close_time = NOW(),
-                    close_price = %s, realized_pnl = %s, close_reason = 'MAX_HOLD_TIME'
+                    close_price = %s, realized_pnl = %s, close_reason = 'MAX_HOLD_TIME',
+                    coinbase_sell_order_id = COALESCE(%s, coinbase_sell_order_id),
+                    exit_slippage_pct = COALESCE(%s, exit_slippage_pct),
+                    exit_fee_usd = COALESCE(%s, exit_fee_usd)
                 WHERE position_id = %s AND status = 'open'
-            """, (close_price, realized_pnl, position_id))
+            """, (
+                close_price, realized_pnl,
+                coinbase_sell_order_id, exit_slippage_pct, exit_fee_usd,
+                position_id,
+            ))
             conn.commit()
             return cursor.rowcount > 0
         except Exception as e:
@@ -578,7 +613,8 @@ class AgapeSpotDatabase:
                        signal_action, signal_confidence, signal_reasoning,
                        status, open_time, high_water_mark,
                        COALESCE(trailing_active, FALSE), current_stop,
-                       COALESCE(account_label, 'default')
+                       COALESCE(account_label, 'default'),
+                       atr_at_entry, atr_pct_at_entry, chop_index_at_entry
                 FROM agape_spot_positions
                 WHERE status = 'open'
             """
@@ -623,6 +659,9 @@ class AgapeSpotDatabase:
                     "trailing_active": bool(row[26]),
                     "current_stop": float(row[27]) if row[27] else None,
                     "account_label": row[28] if len(row) > 28 else "default",
+                    "atr_at_entry": float(row[29]) if len(row) > 29 and row[29] else None,
+                    "atr_pct_at_entry": float(row[30]) if len(row) > 30 and row[30] else None,
+                    "chop_index_at_entry": float(row[31]) if len(row) > 31 and row[31] else None,
                 })
             return positions
         except Exception as e:
@@ -1396,6 +1435,234 @@ class AgapeSpotDatabase:
             logger.error(f"AGAPE-SPOT DB: Win tracker save failed for {tracker.ticker}: {e}")
             conn.rollback()
             return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Ticker Probation System
+    # ------------------------------------------------------------------
+
+    def get_ticker_probation(self, ticker: str) -> Dict[str, Any]:
+        """Get probation status for a single ticker.
+
+        Returns dict with status, demoted_at, etc.
+        If ticker has no row, returns LIVE (default).
+        """
+        conn = self._get_conn()
+        if not conn:
+            return {"ticker": ticker, "status": "LIVE"}
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT ticker, status, demoted_at, promoted_at,
+                       paper_trades_since_demotion, paper_win_rate,
+                       paper_ev_per_trade, paper_max_loss_streak,
+                       consecutive_passing_days, last_evaluated_at, reason
+                FROM agape_spot_ticker_probation
+                WHERE ticker = %s
+            """, (ticker,))
+            row = cursor.fetchone()
+            if row:
+                return {
+                    "ticker": row[0],
+                    "status": row[1],
+                    "demoted_at": row[2],
+                    "promoted_at": row[3],
+                    "paper_trades_since_demotion": row[4] or 0,
+                    "paper_win_rate": row[5],
+                    "paper_ev_per_trade": row[6],
+                    "paper_max_loss_streak": row[7],
+                    "consecutive_passing_days": row[8] or 0,
+                    "last_evaluated_at": row[9],
+                    "reason": row[10],
+                }
+            return {"ticker": ticker, "status": "LIVE"}
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT DB: Probation lookup failed for {ticker}: {e}")
+            return {"ticker": ticker, "status": "LIVE"}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_all_probation_statuses(self) -> Dict[str, str]:
+        """Get probation status for all tickers.
+
+        Returns {ticker: status} dict. Tickers without a row are LIVE.
+        """
+        conn = self._get_conn()
+        if not conn:
+            return {}
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT ticker, status FROM agape_spot_ticker_probation")
+            rows = cursor.fetchall()
+            return {row[0]: row[1] for row in rows}
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT DB: Probation status fetch failed: {e}")
+            return {}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def set_ticker_probation(
+        self, ticker: str, status: str, reason: str,
+    ) -> bool:
+        """Set probation status for a ticker (upsert).
+
+        status: 'LIVE', 'PROBATION', or 'DISABLED'
+        """
+        now = _now_ct()
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO agape_spot_ticker_probation (ticker, status, reason, last_evaluated_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (ticker) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    reason = EXCLUDED.reason,
+                    last_evaluated_at = EXCLUDED.last_evaluated_at,
+                    demoted_at = CASE
+                        WHEN EXCLUDED.status = 'PROBATION' AND agape_spot_ticker_probation.status = 'LIVE'
+                        THEN %s ELSE agape_spot_ticker_probation.demoted_at END,
+                    promoted_at = CASE
+                        WHEN EXCLUDED.status = 'LIVE' AND agape_spot_ticker_probation.status = 'PROBATION'
+                        THEN %s ELSE agape_spot_ticker_probation.promoted_at END,
+                    paper_trades_since_demotion = CASE
+                        WHEN EXCLUDED.status = 'PROBATION' AND agape_spot_ticker_probation.status = 'LIVE'
+                        THEN 0 ELSE agape_spot_ticker_probation.paper_trades_since_demotion END,
+                    consecutive_passing_days = CASE
+                        WHEN EXCLUDED.status = 'LIVE' THEN 0
+                        ELSE agape_spot_ticker_probation.consecutive_passing_days END
+            """, (ticker, status, reason, now, now, now))
+            conn.commit()
+            logger.info(
+                f"AGAPE-SPOT PROBATION: {ticker} → {status} "
+                f"(reason: {reason})"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Probation update failed for {ticker}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_probation_metrics(
+        self, ticker: str, paper_trades: int, win_rate: float,
+        ev_per_trade: float, max_loss_streak: int, passing_days: int,
+    ) -> bool:
+        """Update evaluation metrics for a ticker on probation."""
+        conn = self._get_conn()
+        if not conn:
+            return False
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE agape_spot_ticker_probation SET
+                    paper_trades_since_demotion = %s,
+                    paper_win_rate = %s,
+                    paper_ev_per_trade = %s,
+                    paper_max_loss_streak = %s,
+                    consecutive_passing_days = %s,
+                    last_evaluated_at = %s
+                WHERE ticker = %s
+            """, (paper_trades, win_rate, ev_per_trade, max_loss_streak,
+                  passing_days, _now_ct(), ticker))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT DB: Probation metrics update failed for {ticker}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_paper_trades_since(
+        self, ticker: str, since: datetime, limit: int = 200,
+    ) -> List[Dict[str, Any]]:
+        """Get paper trades for a ticker since a given timestamp.
+
+        Used by the probation evaluator to assess paper-only performance.
+        """
+        conn = self._get_conn()
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT position_id, entry_price, close_price,
+                       realized_pnl, close_reason, open_time, close_time,
+                       entry_fee_usd, exit_fee_usd
+                FROM agape_spot_positions
+                WHERE ticker = %s
+                  AND account_label = 'paper'
+                  AND status IN ('closed', 'expired')
+                  AND close_time >= %s
+                ORDER BY close_time ASC
+                LIMIT %s
+            """, (ticker, since, limit))
+            rows = cursor.fetchall()
+            return [
+                {
+                    "position_id": r[0],
+                    "entry_price": r[1],
+                    "close_price": r[2],
+                    "realized_pnl": r[3] or 0,
+                    "close_reason": r[4],
+                    "open_time": r[5],
+                    "close_time": r[6],
+                    "entry_fee_usd": r[7] or 0,
+                    "exit_fee_usd": r[8] or 0,
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT DB: Paper trades lookup failed for {ticker}: {e}")
+            return []
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_live_trailing_trades(
+        self, ticker: str, limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Get the most recent live closed trades for demotion evaluation."""
+        conn = self._get_conn()
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT position_id, realized_pnl, close_reason,
+                       close_time, entry_fee_usd, exit_fee_usd
+                FROM agape_spot_positions
+                WHERE ticker = %s
+                  AND account_label != 'paper'
+                  AND status IN ('closed', 'expired')
+                ORDER BY close_time DESC
+                LIMIT %s
+            """, (ticker, limit))
+            rows = cursor.fetchall()
+            return [
+                {
+                    "position_id": r[0],
+                    "realized_pnl": r[1] or 0,
+                    "close_reason": r[2],
+                    "close_time": r[3],
+                    "entry_fee_usd": r[4] or 0,
+                    "exit_fee_usd": r[5] or 0,
+                }
+                for r in rows
+            ]
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT DB: Live trailing trades failed for {ticker}: {e}")
+            return []
         finally:
             cursor.close()
             conn.close()

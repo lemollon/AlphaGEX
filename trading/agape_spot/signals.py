@@ -51,14 +51,13 @@ try:
 except ImportError as e:
     logger.warning(f"AGAPE-SPOT Signals: CryptoDataProvider not available: {e}")
 
+# ProphetAdvisor DISABLED — designed for equity options, not crypto microstructure.
+# It only consumed VIX proxy + GEX (not funding, liquidations, leverage).
+# Returning hardcoded 0.5 win_prob is better than bad advice.
+# See CLAUDE.md "Tier 4 — Remove Prophet/Oracle" for rationale.
 ProphetAdvisor = None
 MarketContext = None
 GEXRegime = None
-try:
-    from quant.prophet_advisor import ProphetAdvisor, MarketContext, GEXRegime
-    logger.info("AGAPE-SPOT Signals: ProphetAdvisor loaded")
-except ImportError as e:
-    logger.warning(f"AGAPE-SPOT Signals: ProphetAdvisor not available: {e}")
 
 # ML Shadow Advisor for shadow mode predictions
 _ml_advisor = None
@@ -174,11 +173,7 @@ class AgapeSpotSignalGenerator:
             except Exception as e:
                 logger.warning(f"AGAPE-SPOT Signals: Crypto provider init failed: {e}")
 
-        if ProphetAdvisor:
-            try:
-                self._prophet = ProphetAdvisor()
-            except Exception as e:
-                logger.warning(f"AGAPE-SPOT Signals: Prophet init failed: {e}")
+        # ProphetAdvisor removed — see module-level comment
 
     def get_market_data(self, ticker: str) -> Optional[Dict[str, Any]]:
         """Fetch market data for the given ticker.
@@ -350,78 +345,15 @@ class AgapeSpotSignalGenerator:
         return ((current_price - oldest_price) / oldest_price) * 100
 
     def get_prophet_advice(self, market_data: Dict) -> Dict[str, Any]:
-        """Get ProphetAdvisor recommendation with crypto microstructure context.
+        """Prophet/Oracle DISABLED — returns neutral defaults.
 
-        NOTE: ProphetAdvisor's MarketContext only accepts equity-GEX fields
-        (spot_price, vix, gex_net, gex_regime, gex_flip_point, day_of_week).
-        It does NOT consume funding_rate, ls_ratio, liquidations, or
-        leverage_regime — those are crypto-only fields used by the signal
-        generator directly. This is a known data gap: ProphetAdvisor was
-        designed for equity options and cannot reason about crypto
-        microstructure. The top_factors list includes crypto context for
-        logging/transparency even though Prophet doesn't use them.
+        ProphetAdvisor was designed for equity options and could not reason
+        about crypto microstructure (funding, liquidations, leverage).
+        Returning 0.5 win_prob lets the Bayesian tracker and EV gate
+        drive all entry decisions based on actual crypto signals.
         """
-        if not self._prophet:
-            return {
-                "advice": "UNAVAILABLE",
-                "win_probability": 0.5,
-                "confidence": 0.0,
-                "top_factors": ["oracle_unavailable"],
-            }
-
-        try:
-            vix_proxy = self._funding_to_vix_proxy(market_data.get("funding_rate", 0))
-            crypto_gex_regime = market_data.get("crypto_gex_regime", "NEUTRAL")
-
-            gex_regime_map = {
-                "POSITIVE": GEXRegime.POSITIVE,
-                "NEGATIVE": GEXRegime.NEGATIVE,
-                "NEUTRAL": GEXRegime.NEUTRAL,
-            }
-            gex_regime = gex_regime_map.get(crypto_gex_regime, GEXRegime.NEUTRAL)
-
-            context = MarketContext(
-                spot_price=market_data["spot_price"],
-                vix=vix_proxy,
-                gex_net=market_data.get("crypto_gex", 0),
-                gex_regime=gex_regime,
-                gex_flip_point=market_data.get("max_pain", market_data["spot_price"]),
-                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
-            )
-
-            recommendation = self._prophet.get_strategy_recommendation(context)
-            if recommendation:
-                advice = "TRADE" if recommendation.dir_suitability >= 0.5 else "SKIP"
-                # Include crypto microstructure in top_factors for transparency
-                # even though Prophet only consumed VIX proxy + GEX
-                crypto_factors = []
-                funding = market_data.get("funding_regime", "UNKNOWN")
-                if funding != "UNKNOWN":
-                    crypto_factors.append(f"funding={funding}")
-                ls = market_data.get("ls_bias", "NEUTRAL")
-                if ls != "NEUTRAL":
-                    crypto_factors.append(f"ls_bias={ls}")
-                squeeze = market_data.get("squeeze_risk", "LOW")
-                if squeeze != "LOW":
-                    crypto_factors.append(f"squeeze={squeeze}")
-
-                return {
-                    "advice": advice,
-                    "win_probability": recommendation.dir_suitability,
-                    "confidence": recommendation.confidence,
-                    "top_factors": [
-                        f"strategy={recommendation.recommended_strategy.value}",
-                        f"vix_regime={recommendation.vix_regime.value}",
-                        f"gex_regime={recommendation.gex_regime.value}",
-                        f"dir_suitability={recommendation.dir_suitability:.0%}",
-                        f"size_mult={recommendation.size_multiplier}",
-                    ] + crypto_factors,
-                }
-        except Exception as e:
-            logger.error(f"AGAPE-SPOT Signals: Prophet call failed: {e}")
-
         return {
-            "advice": "UNAVAILABLE",
+            "advice": "DISABLED",
             "win_probability": 0.5,
             "confidence": 0.0,
             "top_factors": ["oracle_error"],
@@ -588,7 +520,12 @@ class AgapeSpotSignalGenerator:
             )
 
         # Spot-native position sizing (per-ticker)
-        quantity, max_risk = self._calculate_position_size(ticker, spot)
+        # RSI < 30 = biggest buying: boost position size by rsi_oversold_size_mult
+        vc = vol_context or {}
+        rsi_for_sizing = vc.get("rsi")
+        quantity, max_risk = self._calculate_position_size(
+            ticker, spot, rsi=rsi_for_sizing,
+        )
 
         # If sizing returned 0 (below min notional), emit WAIT instead of LONG
         if quantity <= 0:
@@ -638,6 +575,7 @@ class AgapeSpotSignalGenerator:
             atr_pct=vc.get("atr_pct"),
             chop_index=vc.get("chop_index"),
             volatility_regime=vc.get("regime", "UNKNOWN"),
+            rsi=vc.get("rsi"),
             action=SignalAction.LONG,
             confidence=combined_confidence,
             reasoning=reasoning,
@@ -708,14 +646,41 @@ class AgapeSpotSignalGenerator:
         # Dynamic EWMA threshold: adapts to each ticker's trade magnitude
         choppy_ev_threshold = self._get_choppy_ev_threshold(ticker, vol_context)
 
+        # RSI oversold override: when market is choppy but RSI < 30,
+        # this is a high-conviction mean-reversion entry at the bottom of
+        # the range.  Trailing stop catches the bounce.  Use relaxed gate
+        # (EV > 0) instead of the strict choppy_ev_threshold.
+        rsi = (vol_context or {}).get("rsi")
+        rsi_override = (
+            is_choppy
+            and self.config.enable_rsi_choppy_override
+            and rsi is not None
+            and rsi < self.config.rsi_oversold_threshold
+        )
+
         if is_choppy and self.config.enable_bayesian_choppy:
-            if has_ev_data:
+            if rsi_override:
+                # RSI oversold in choppy market: relax to EV > 0 gate
+                if has_ev_data and ev <= self.MIN_EXPECTED_VALUE:
+                    logger.info(
+                        f"AGAPE-SPOT RSI OVERRIDE: {ticker} RSI={rsi:.1f} oversold "
+                        f"but EV=${ev:.4f} <= $0 — BLOCKED (negative EV)"
+                    )
+                    return (SignalAction.WAIT, f"RSI_OVERSOLD_BUT_NEG_EV_{ev:.3f}")
+                else:
+                    logger.info(
+                        f"AGAPE-SPOT RSI OVERRIDE: {ticker} RSI={rsi:.1f} < "
+                        f"{self.config.rsi_oversold_threshold} in choppy market, "
+                        f"EV=${ev:.4f} > $0 — PASS (mean-reversion entry)"
+                    )
+            elif has_ev_data:
                 if ev < choppy_ev_threshold:
                     logger.info(
                         f"AGAPE-SPOT CHOPPY GATE [EWMA]: {ticker} EV=${ev:.4f} "
                         f"< ${choppy_ev_threshold:.4f} (oracle_wp={oracle_win_prob:.4f}, "
                         f"avg_win=${self._perf_stats.get(ticker, {}).get('avg_win', 0):.2f}, "
-                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f}) "
+                        f"avg_loss=${abs(self._perf_stats.get(ticker, {}).get('avg_loss', 0)):.2f}"
+                        f"{f', RSI={rsi:.1f}' if rsi is not None else ''}) "
                         f"— BLOCKED"
                     )
                     return (SignalAction.WAIT, f"CHOPPY_LOW_EV_{ev:.3f}")
@@ -903,11 +868,10 @@ class AgapeSpotSignalGenerator:
                     return (SignalAction.LONG, self._build_reasoning("ALTCOIN_BASE_LONG", market_data))
 
         # Momentum fallback: if no microstructure signal fires but price is
-        # clearly rising, take the long.  This handles the case where
-        # combined_signal is WAIT (low confidence data) but the actual
-        # price trend is bullish.
+        # clearly rising, take the long.  With full-balance sizing, each
+        # trade matters more — 0.2% threshold balances frequency vs quality.
         momentum_pct = self.get_momentum_pct(ticker)
-        if momentum_pct is not None and momentum_pct > 0.1:
+        if momentum_pct is not None and momentum_pct > 0.2:
             should_skip, _ = tracker.should_skip_direction("LONG")
             if not should_skip:
                 return (SignalAction.LONG, self._build_reasoning("MOMENTUM_LONG", market_data))
@@ -1060,7 +1024,9 @@ class AgapeSpotSignalGenerator:
         except Exception:
             return False
 
-    def _calculate_position_size(self, ticker: str, spot_price: float) -> Tuple[float, float]:
+    def _calculate_position_size(
+        self, ticker: str, spot_price: float, rsi: Optional[float] = None,
+    ) -> Tuple[float, float]:
         """Calculate position size using per-ticker config from SPOT_TICKERS.
 
         SPOT-NATIVE: Risk-based sizing with capital-based cap.
@@ -1070,6 +1036,10 @@ class AgapeSpotSignalGenerator:
         quantity = min(risk_based_qty, capital_based_qty, max_per_trade)
         Capped at max_per_trade, floored at min_order.
         Rounded to quantity_decimals for the ticker.
+
+        RSI boost: When RSI < oversold threshold (30), position size is
+        multiplied by rsi_oversold_size_mult (1.5x). This is the "biggest
+        buying" at the bottom of a range-bound market.
         """
         ticker_config = SPOT_TICKERS.get(ticker, SPOT_TICKERS.get("ETH-USD", {}))
         # Use trading capital (live_capital for LIVE tickers, starting_capital for PAPER)
@@ -1080,6 +1050,21 @@ class AgapeSpotSignalGenerator:
         default_quantity = ticker_config.get("default_quantity", 0.1)
 
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
+
+        # RSI oversold boost: biggest buying at the bottom of the range
+        rsi_boost = 1.0
+        if (
+            rsi is not None
+            and self.config.enable_rsi_choppy_override
+            and rsi < self.config.rsi_oversold_threshold
+        ):
+            rsi_boost = self.config.rsi_oversold_size_mult
+            max_risk_usd *= rsi_boost
+            logger.info(
+                f"AGAPE-SPOT SIZING: {ticker} RSI={rsi:.1f} < "
+                f"{self.config.rsi_oversold_threshold} — boosting size "
+                f"{rsi_boost:.1f}x (risk ${max_risk_usd:.2f})"
+            )
 
         # Risk per unit based on per-ticker max loss (altcoins: 0.75%, ETH: 1.5%)
         exit_params = self.config.get_exit_params(ticker)
@@ -1140,14 +1125,16 @@ class AgapeSpotSignalGenerator:
         to the fixed per-ticker percentages when ATR is unavailable.
 
         Stop = max(1.5 × ATR, fixed_pct_stop)  — at least as wide as 1.5 ATR
-        Target = max(2.5 × ATR, fixed_pct_target) — 2.5:1.5 ATR reward:risk
+        Target = max(2.0 × stop, profit_target_pct) — 2:1 reward:risk minimum
         """
         exit_params = self.config.get_exit_params(ticker)
         max_loss_pct = exit_params["max_unrealized_loss_pct"]
+        profit_target_pct = exit_params.get("no_loss_profit_target_pct", 3.0)
 
         # Base stop/target from per-ticker config (the floor)
         stop_pct = max_loss_pct / 100
-        target_pct = stop_pct * 2  # 2:1 reward:risk
+        # 2:1 reward:risk — with full-balance sizing, fees are small relative to position
+        target_pct = max(stop_pct * 2, profit_target_pct / 100) if profit_target_pct > 0 else stop_pct * 2
 
         squeeze = market_data.get("squeeze_risk", "LOW")
         if squeeze == "HIGH":
@@ -1167,7 +1154,7 @@ class AgapeSpotSignalGenerator:
             atr_stop_distance = atr * atr_mult
             atr_stop_pct = atr_stop_distance / spot
 
-            # Target: proportional — keep 2:1 reward:risk vs ATR stop
+            # Target: 2:1 reward:risk vs ATR stop
             atr_target_distance = atr_stop_distance * 2.0
             atr_target_pct = atr_target_distance / spot
 

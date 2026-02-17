@@ -103,6 +103,12 @@ class AgapeSpotTrader:
         self._direction_trackers: Dict[str, Any] = {}
         self._last_trade_scan: Dict[str, int] = {}  # Last scan cycle a trade was opened per ticker
 
+        # Probation system: tracks LIVE/PROBATION/DISABLED per ticker
+        # LIVE = normal (live + paper), PROBATION = paper only, DISABLED = skip
+        self._probation_statuses: Dict[str, str] = {}
+        self._last_probation_eval: Optional[datetime] = None
+        self._load_probation_statuses()
+
         # Initialize per-ticker state for every configured ticker
         for ticker in self.config.tickers:
             self._loss_streaks[ticker] = 0
@@ -417,6 +423,13 @@ class AgapeSpotTrader:
         if self._cycle_count % 10 == 0:
             self._reconcile_exchange()
 
+        # Evaluate probation every 60 cycles (~1 hour)
+        if self._cycle_count % 60 == 0:
+            try:
+                self._evaluate_probation()
+            except Exception as e:
+                logger.error(f"AGAPE-SPOT PROBATION: Evaluation failed: {e}")
+
         results: Dict[str, Any] = {
             "cycle": self._cycle_count,
             "timestamp": now.isoformat(),
@@ -476,18 +489,24 @@ class AgapeSpotTrader:
                 scan_context["market_data"] = market_data
                 scan_context["spot_price"] = market_data.get("spot_price")
 
-            # Step 2: Get Prophet advice
-            prophet_data = None
-            if market_data:
-                prophet_data = self.signals.get_prophet_advice(market_data)
-                scan_context["prophet_data"] = prophet_data
+            # Step 2: Prophet DISABLED — hardcode neutral defaults
+            # ProphetAdvisor was designed for equity options, not crypto.
+            # Returning 0.5 win_prob lets Bayesian tracker + EV gate decide.
+            prophet_data = {
+                "advice": "DISABLED",
+                "win_probability": 0.5,
+                "confidence": 0.0,
+                "top_factors": ["prophet_disabled"],
+            }
+            scan_context["prophet_data"] = prophet_data
 
             # Step 2b: Get volatility context (ATR + chop detection)
             vol_context = self.executor.get_volatility_context(ticker)
             scan_context["volatility"] = vol_context
 
             # Step 3: Manage existing positions for this ticker
-            managed, closed = self._manage_positions(ticker, market_data)
+            # vol_context contains RSI(14) on 1-min candles for exit signals
+            managed, closed = self._manage_positions(ticker, market_data, vol_context=vol_context)
             result["positions_managed"] = managed
             result["positions_closed"] = closed
 
@@ -529,30 +548,66 @@ class AgapeSpotTrader:
                     self._log_scan(ticker, result, scan_context)
                     return result
 
-            # Step 6b: Get all accounts for this ticker and check position limits per-account
-            # Uses per-ticker max_positions from entry filters (XRP/SHIB: 2, DOGE: 3, ETH: 5)
+            # Step 6b: Check position limits GLOBALLY per ticker.
+            #
+            # max_positions is the TOTAL open positions allowed for this ticker
+            # across ALL live accounts combined.  Paper gets its own independent
+            # slot so it can always shadow live signals.
+            #
+            # Example: ETH max_positions=1
+            #   - If default has 1 open ETH → NO more live trades (dedicated blocked too)
+            #   - Paper can still open 1 independent position
+            #
+            # This prevents capital fragmentation: with 2 live accounts and
+            # max_positions=1 per-account, the old code allowed 2 live + 1 paper
+            # = 3 simultaneous positions from the same signal, draining USD.
             max_positions = entry_filters.get("max_positions", self.config.max_open_positions_per_ticker)
-            accounts = self.executor.get_all_accounts(ticker)
+            accounts = self._get_eligible_accounts(ticker)
             all_open = [
                 p for p in self._get_open_positions_for_ticker(ticker)
                 if not p.get("account_label", "").endswith("_fallback")
             ]
 
-            # Filter to accounts that still have capacity
+            # Split open positions by type
+            live_open = [p for p in all_open if p.get("account_label", "default") != "paper"]
+            paper_open = [p for p in all_open if p.get("account_label", "default") == "paper"]
+
+            # Build eligible accounts list with GLOBAL live limit
             eligible_accounts = []
+            live_at_capacity = len(live_open) >= max_positions
+
             for account_label, is_live in accounts:
-                acct_open = [
-                    p for p in all_open
-                    if p.get("account_label", "default") == account_label
-                ]
-                if len(acct_open) < max_positions:
-                    eligible_accounts.append((account_label, is_live))
+                if is_live:
+                    # Live accounts share a global position limit
+                    if not live_at_capacity:
+                        eligible_accounts.append((account_label, is_live))
+                else:
+                    # Paper has its own independent limit
+                    if len(paper_open) < max_positions:
+                        eligible_accounts.append((account_label, is_live))
+
+            # Once one live account is added, mark live as at capacity
+            # (only one live account should open per signal)
+            if any(is_live for _, is_live in eligible_accounts):
+                # Keep only the FIRST eligible live account to avoid
+                # duplicate positions on default + dedicated for same signal
+                first_live_found = False
+                filtered = []
+                for account_label, is_live in eligible_accounts:
+                    if is_live:
+                        if not first_live_found:
+                            filtered.append((account_label, is_live))
+                            first_live_found = True
+                        # Skip subsequent live accounts
+                    else:
+                        filtered.append((account_label, is_live))
+                eligible_accounts = filtered
 
             if not eligible_accounts:
                 total_open = len(all_open)
                 result["outcome"] = (
                     f"MAX_POSITIONS_{total_open}/"
-                    f"{max_positions} (all accounts)"
+                    f"{max_positions} (live={len(live_open)}, paper={len(paper_open)})"
                 )
                 self._log_scan(ticker, result, scan_context)
                 return result
@@ -574,19 +629,22 @@ class AgapeSpotTrader:
                 self._log_scan(ticker, result, scan_context, signal=signal)
                 return result
 
-            # Step 8: Execute trade — live first, then paper mirrors live fill.
+            # Step 8: Execute trade on each eligible account.
             #
-            # ONE AGENT, ONE RESULT: Paper must use the exact same fill price
-            # and quantity as the live order so all accounts track identical
-            # performance.  Paper-only tickers (no live accounts) still get
-            # simulated fills via _execute_paper().
+            # INDEPENDENT SIZING PER ACCOUNT TYPE:
+            #   - Live accounts (default, dedicated): sized from REAL Coinbase
+            #     USD balance via executor._execute_live().  Each API key has
+            #     its own balance pool.
+            #   - Paper account: sized from signal.quantity which is computed
+            #     from starting_capital ($5000 ETH, $1000 others).  Paper uses
+            #     the live fill PRICE for realism but its OWN quantity so it
+            #     evaluates the strategy at proper scale.
             traded_accounts = []
             live_accounts = [(a, l) for a, l in eligible_accounts if l]
             paper_accounts = [(a, l) for a, l in eligible_accounts if not l]
 
-            # Track the first successful live fill to mirror on paper
+            # Track the first successful live fill price for paper realism
             live_fill_price = None
-            live_fill_qty = None
 
             # Execute LIVE accounts first
             for account_label, is_live in live_accounts:
@@ -596,10 +654,9 @@ class AgapeSpotTrader:
                 if position:
                     self.db.save_position(position)
                     traded_accounts.append(account_label)
-                    # Capture first live fill for paper mirroring
+                    # Capture first live fill price for paper price realism
                     if live_fill_price is None:
                         live_fill_price = position.entry_price
-                        live_fill_qty = position.quantity
 
                     actual_qty = position.quantity
                     notional = actual_qty * position.entry_price
@@ -623,12 +680,13 @@ class AgapeSpotTrader:
                         ticker=ticker,
                     )
 
-            # Execute PAPER accounts — mirror the live fill when available
+            # Execute PAPER accounts — own sizing from starting_capital,
+            # but use the live fill PRICE if available for realistic fills.
             for account_label, is_live in paper_accounts:
-                if live_fill_price is not None and live_fill_qty is not None:
-                    # Mirror: use exact live fill price and quantity
+                if live_fill_price is not None:
+                    # Use live fill price but paper's OWN quantity from signal
                     position = self.executor.execute_paper_mirror(
-                        signal, live_fill_price, live_fill_qty,
+                        signal, live_fill_price, signal.quantity,
                         account_label=account_label,
                     )
                 else:
@@ -779,6 +837,7 @@ class AgapeSpotTrader:
 
     def _manage_positions(
         self, ticker: str, market_data: Optional[Dict],
+        vol_context: Optional[Dict] = None,
     ) -> tuple:
         """Manage open positions for a specific ticker. Long-only."""
         open_positions = self._get_open_positions_for_ticker(ticker)
@@ -851,6 +910,7 @@ class AgapeSpotTrader:
                 if self.config.use_no_loss_trailing:
                     did_close = self._manage_no_loss_trailing(
                         ticker, pos_dict, current_price, now,
+                        vol_context=vol_context,
                     )
                 else:
                     should_close, reason = self._check_exit_conditions(
@@ -920,6 +980,7 @@ class AgapeSpotTrader:
                 if self.config.use_no_loss_trailing:
                     did_close = self._manage_no_loss_trailing(
                         ticker, pos_dict, current_price, now,
+                        vol_context=vol_context,
                     )
                 else:
                     should_close, reason = self._check_exit_conditions(
@@ -1010,6 +1071,7 @@ class AgapeSpotTrader:
         pos: Dict,
         current_price: float,
         now: datetime,
+        vol_context: Optional[Dict] = None,
     ) -> bool:
         """No-loss trailing stop management. LONG-ONLY.
 
@@ -1019,6 +1081,11 @@ class AgapeSpotTrader:
 
         BENCHMARK-AWARE: In strong uptrends, trail distance and max hold time
         are widened so positions ride the trend instead of exiting too early.
+
+        RSI EXIT: When RSI(14) on 1-min candles crosses above 70 (overbought)
+        and the position is in profit, take profit. The trailing stop may not
+        fire fast enough when price spikes then reverses — RSI catches the
+        overbought condition at the top of the range.
 
         profit_pct   = (current - entry) / entry * 100
         hwm          = highest price seen (only updates when price goes up)
@@ -1037,6 +1104,59 @@ class AgapeSpotTrader:
         profit_target_pct = exit_params["no_loss_profit_target_pct"]
         max_hold = exit_params["max_hold_hours"]
 
+        # ----- Minimum hold time gate -----
+        # Block all exits during the first N minutes unless RSI is overbought.
+        # Crypto 5-min ATR is 0.3-0.5%, so a normal dip can trigger MAX_LOSS
+        # before the trade develops.  RSI > 70 override lets us exit overbought
+        # spikes immediately even during the grace period.
+        min_hold_min = self.config.min_hold_minutes
+        rsi_override_thresh = self.config.rsi_exit_override_threshold
+        open_time_raw = pos.get("open_time")
+        hold_minutes = None
+        if open_time_raw:
+            try:
+                if isinstance(open_time_raw, str):
+                    ot = datetime.fromisoformat(open_time_raw)
+                else:
+                    ot = open_time_raw
+                if ot.tzinfo is None:
+                    ot = ot.replace(tzinfo=CENTRAL_TZ)
+                hold_minutes = (now - ot).total_seconds() / 60.0
+            except (ValueError, TypeError):
+                pass
+
+        if hold_minutes is not None and hold_minutes < min_hold_min:
+            # Check RSI override: allow exit if overbought
+            rsi = (vol_context or {}).get("rsi") if vol_context else None
+            if rsi is not None and rsi > rsi_override_thresh:
+                profit_pct_check = ((current_price - entry_price) / entry_price) * 100
+                if profit_pct_check > 0:
+                    logger.info(
+                        f"AGAPE-SPOT MIN_HOLD OVERRIDE: {ticker} {position_id} "
+                        f"RSI={rsi:.1f} > {rsi_override_thresh} at {hold_minutes:.1f}min "
+                        f"— allowing early exit (in profit +{profit_pct_check:.2f}%)"
+                    )
+                    return self._close_position(
+                        ticker, pos, current_price,
+                        f"RSI_OVERBOUGHT_{rsi:.0f}_EARLY_+{profit_pct_check:.1f}pct",
+                    )
+
+            # Emergency stop still fires during min hold (can't let 5%+ losses run)
+            profit_pct_check = ((current_price - entry_price) / entry_price) * 100
+            if -profit_pct_check >= emergency_pct:
+                logger.info(
+                    f"AGAPE-SPOT MIN_HOLD EMERGENCY: {ticker} {position_id} "
+                    f"at {hold_minutes:.1f}min but loss={profit_pct_check:.2f}% "
+                    f">= emergency {emergency_pct}%"
+                )
+                stop_price = entry_price * (1 - emergency_pct / 100)
+                return self._close_position(ticker, pos, stop_price, "EMERGENCY_STOP")
+
+            # Otherwise: skip all exit checks, let the trade develop
+            # Still update HWM so trailing stop is ready when grace period ends
+            self._update_hwm(position_id, current_price, pos.get("high_water_mark") or entry_price)
+            return False
+
         # Dynamic trend-aware exits: scale hold time and trail with trend strength
         # Stronger trends get wider exits so positions ride momentum
         trend_pct = self._get_trend_strength(ticker, current_price)
@@ -1054,13 +1174,22 @@ class AgapeSpotTrader:
             # 12h during mild uptrends, defeating the purpose of the tight config.
             # max_hold is a safety ceiling, not a trend-riding parameter.
 
-        # ATR-adaptive: override fixed percentages when ATR data exists
+        # ATR-adaptive: override fixed percentages when ATR data exists.
+        # Primary source: atr_at_entry (stored when position was opened).
+        # Fallback: current vol_context ATR (computed this scan cycle).
+        # This ensures ATR-adaptive exits work even when entry ATR was
+        # unavailable (e.g., candle API was down at entry time).
         atr = pos.get("atr_at_entry")
+        chop = pos.get("chop_index_at_entry")
+        atr_source = "entry"
+        if (not atr or atr <= 0) and vol_context:
+            atr = (vol_context or {}).get("atr")
+            chop = (vol_context or {}).get("chop_index")
+            atr_source = "current"
         if atr and atr > 0 and entry_price > 0:
             atr_pct = (atr / entry_price) * 100  # ATR as % of entry price
 
             # Stop: 1.5 × ATR (or 2.0 × ATR if entered in choppy market)
-            chop = pos.get("chop_index_at_entry")
             atr_mult = 2.0 if (chop and chop > 0.65) else 1.5
             atr_stop_pct = atr_pct * atr_mult
 
@@ -1071,9 +1200,19 @@ class AgapeSpotTrader:
             atr_trail_pct = atr_pct * 1.0
 
             # Use the WIDER of ATR-based or config (never tighter than ATR)
+            old_max_loss = max_loss_pct
             max_loss_pct = max(max_loss_pct, atr_stop_pct)
             activation_pct = max(activation_pct, atr_activation_pct)
             trail_distance_pct = max(trail_distance_pct, atr_trail_pct)
+
+            if max_loss_pct > old_max_loss:
+                logger.info(
+                    f"AGAPE-SPOT ATR-ADAPTIVE: {ticker} {position_id} "
+                    f"stop widened {old_max_loss:.2f}% -> {max_loss_pct:.2f}% "
+                    f"(ATR=${atr:.4f}, atr_pct={atr_pct:.2f}%, "
+                    f"chop={chop or 'N/A'}, mult={atr_mult}x, "
+                    f"source={atr_source})"
+                )
 
         # Use per-ticker price decimals (SHIB=8, XRP/DOGE=4, ETH=2)
         pd = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
@@ -1115,6 +1254,27 @@ class AgapeSpotTrader:
                     ticker, pos, current_stop,
                     f"TRAIL_STOP_+{exit_pnl_pct:.1f}pct",
                 )
+
+        # ---- RSI overbought take profit (1-min RSI > 70 while in profit) ----
+        # When RSI spikes above 70, the coin is overbought at the top of the
+        # range. Take profit now — the trailing stop may lag behind a spike
+        # that reverses quickly.  Only fires when position is in profit.
+        rsi = (vol_context or {}).get("rsi") if vol_context else None
+        if (
+            rsi is not None
+            and self.config.enable_rsi_choppy_override
+            and rsi > self.config.rsi_overbought_threshold
+            and profit_pct > 0
+        ):
+            logger.info(
+                f"AGAPE-SPOT RSI EXIT: {ticker} RSI={rsi:.1f} > "
+                f"{self.config.rsi_overbought_threshold} while +{profit_pct:.1f}% "
+                f"— taking profit"
+            )
+            return self._close_position(
+                ticker, pos, current_price,
+                f"RSI_OVERBOUGHT_{rsi:.0f}_+{profit_pct:.1f}pct",
+            )
 
         # ---- Profit target (disabled for all tickers) ----
         if profit_target_pct > 0 and profit_pct >= profit_target_pct:
@@ -1309,13 +1469,31 @@ class AgapeSpotTrader:
         # Long-only P&L -- no direction multiplier
         realized_pnl = round((actual_close_price - entry_price) * quantity, 2)
 
+        # Diagnostic logging: trace every exit with full price context
+        price_change_pct = ((actual_close_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
+        logger.info(
+            f"AGAPE-SPOT EXIT: {ticker} {position_id} [{account_label}] "
+            f"reason={reason} entry=${entry_price:.4f} exit=${actual_close_price:.4f} "
+            f"qty={quantity} pnl=${realized_pnl:+.4f} "
+            f"price_chg={price_change_pct:+.3f}%"
+        )
+
         # Extract Coinbase sell execution details if available
         sell_order_id = exec_details.get("coinbase_sell_order_id") if exec_details else None
         exit_slippage = exec_details.get("exit_slippage_pct") if exec_details else None
         exit_fee = exec_details.get("exit_fee_usd") if exec_details else None
 
+        # Estimate exit fee for paper/non-live trades so fee tracking is complete
+        if exit_fee is None:
+            exit_fee = round(actual_close_price * quantity * 0.006, 4)
+
         if reason == "MAX_HOLD_TIME":
-            success = self.db.expire_position(position_id, realized_pnl, actual_close_price)
+            success = self.db.expire_position(
+                position_id, realized_pnl, actual_close_price,
+                coinbase_sell_order_id=sell_order_id,
+                exit_slippage_pct=exit_slippage,
+                exit_fee_usd=exit_fee,
+            )
         else:
             success = self.db.close_position(
                 position_id, actual_close_price, realized_pnl, reason,
@@ -1411,10 +1589,197 @@ class AgapeSpotTrader:
         """24/7 for crypto, market-hours-only for equity tickers (MSTU)."""
         if not self._enabled:
             return "BOT_DISABLED"
-        # Market hours restriction for equity-based tickers (e.g. MSTU)
+        # Market hours restriction for equity-based tickers (e.g. MSTU, ETH)
         if not self.config.is_ticker_in_market_hours(ticker, now):
             return "OUTSIDE_MARKET_HOURS"
+        # Probation: DISABLED tickers don't trade at all
+        probation_status = self._probation_statuses.get(ticker, "LIVE")
+        if probation_status == "DISABLED":
+            return "TICKER_DISABLED"
         return None
+
+    # ------------------------------------------------------------------
+    # Ticker Probation System
+    # ------------------------------------------------------------------
+
+    def _load_probation_statuses(self):
+        """Load probation statuses from DB. Missing tickers default to LIVE."""
+        try:
+            db_statuses = self.db.get_all_probation_statuses()
+            for ticker in self.config.tickers:
+                self._probation_statuses[ticker] = db_statuses.get(ticker, "LIVE")
+            logger.info(
+                f"AGAPE-SPOT PROBATION: Loaded statuses: "
+                f"{dict(self._probation_statuses)}"
+            )
+        except Exception as e:
+            logger.warning(f"AGAPE-SPOT PROBATION: Load failed: {e}")
+            for ticker in self.config.tickers:
+                self._probation_statuses[ticker] = "LIVE"
+
+    def _is_on_probation(self, ticker: str) -> bool:
+        """Return True if ticker is on probation (paper-only)."""
+        return self._probation_statuses.get(ticker, "LIVE") == "PROBATION"
+
+    def _get_eligible_accounts(self, ticker: str) -> list:
+        """Get accounts eligible for trading this ticker.
+
+        LIVE tickers: all accounts (live + paper)
+        PROBATION tickers: paper only
+        DISABLED tickers: none (blocked by _check_entry_conditions)
+        """
+        all_accounts = self.executor.get_all_accounts(ticker)
+        if self._is_on_probation(ticker):
+            # Paper only — strip live accounts
+            return [(label, False) for label, is_live in all_accounts if not is_live]
+        return all_accounts
+
+    def _evaluate_probation(self):
+        """Evaluate probation tickers for promotion and live tickers for demotion.
+
+        Called once per hour (every 60 cycles at ~1 min/cycle).
+
+        Promotion criteria (PROBATION → LIVE, ALL must pass 7+ days):
+          - ≥50 paper trades since demotion
+          - Win rate above breakeven (considering avg win/loss ratio)
+          - Positive EV/trade after estimated fees (0.8% round-trip)
+          - Max loss streak ≤ 10 in trailing 50 trades
+
+        Demotion criteria (LIVE → PROBATION, ANY triggers):
+          - Loss streak > 20 in trailing 100 trades
+          - Negative EV over trailing 100 trades (after fees)
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        for ticker in self.config.tickers:
+            status = self._probation_statuses.get(ticker, "LIVE")
+
+            if status == "PROBATION":
+                self._evaluate_promotion(ticker, now)
+            elif status == "LIVE":
+                self._evaluate_demotion(ticker, now)
+
+    def _evaluate_promotion(self, ticker: str, now: datetime):
+        """Check if a PROBATION ticker should be promoted to LIVE."""
+        probation_info = self.db.get_ticker_probation(ticker)
+        demoted_at = probation_info.get("demoted_at")
+        if not demoted_at:
+            return
+
+        paper_trades = self.db.get_paper_trades_since(ticker, demoted_at)
+        if len(paper_trades) < 50:
+            self.db.update_probation_metrics(
+                ticker, len(paper_trades), 0, 0, 0, 0,
+            )
+            return
+
+        # Calculate metrics
+        wins = sum(1 for t in paper_trades if t["realized_pnl"] > 0)
+        win_rate = wins / len(paper_trades) if paper_trades else 0
+
+        # EV after fees
+        total_pnl = sum(t["realized_pnl"] for t in paper_trades)
+        # Estimate fees for paper trades (0.8% round-trip with limit orders)
+        total_fees = sum(
+            (t.get("entry_fee_usd", 0) or 0) + (t.get("exit_fee_usd", 0) or 0)
+            for t in paper_trades
+        )
+        if total_fees == 0:
+            # Estimate if no fee data
+            total_fees = len(paper_trades) * 0.50  # conservative $0.50/trade estimate
+        net_pnl = total_pnl - total_fees
+        ev_per_trade = net_pnl / len(paper_trades)
+
+        # Max loss streak
+        max_streak = 0
+        current_streak = 0
+        for t in paper_trades:
+            if t["realized_pnl"] <= 0:
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        # Check all criteria
+        all_pass = (
+            len(paper_trades) >= 50
+            and win_rate > 0.30  # Low bar because 3:1 R:R makes 30% WR profitable
+            and ev_per_trade > 0
+            and max_streak <= 10
+        )
+
+        prev_days = probation_info.get("consecutive_passing_days", 0)
+        passing_days = (prev_days + 1) if all_pass else 0
+
+        self.db.update_probation_metrics(
+            ticker, len(paper_trades), round(win_rate, 4),
+            round(ev_per_trade, 4), max_streak, passing_days,
+        )
+
+        if passing_days >= 7:
+            # PROMOTE: criteria met for 7+ consecutive days
+            self.db.set_ticker_probation(
+                ticker, "LIVE",
+                f"Auto-promoted: {len(paper_trades)} trades, "
+                f"WR={win_rate:.1%}, EV=${ev_per_trade:.4f}/trade, "
+                f"max_streak={max_streak}, passing {passing_days} days",
+            )
+            self._probation_statuses[ticker] = "LIVE"
+            logger.info(
+                f"AGAPE-SPOT PROBATION: {ticker} PROMOTED to LIVE "
+                f"(WR={win_rate:.1%}, EV=${ev_per_trade:.4f})"
+            )
+
+    def _evaluate_demotion(self, ticker: str, now: datetime):
+        """Check if a LIVE ticker should be demoted to PROBATION."""
+        trades = self.db.get_live_trailing_trades(ticker, limit=100)
+        if len(trades) < 20:
+            return  # Not enough data to evaluate
+
+        # Check loss streak in trailing trades
+        max_streak = 0
+        current_streak = 0
+        for t in trades:
+            if t["realized_pnl"] <= 0:
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        # Check EV after fees
+        total_pnl = sum(t["realized_pnl"] for t in trades)
+        total_fees = sum(
+            (t.get("entry_fee_usd", 0) or 0) + (t.get("exit_fee_usd", 0) or 0)
+            for t in trades
+        )
+        if total_fees == 0:
+            total_fees = len(trades) * 0.50
+        net_pnl = total_pnl - total_fees
+        ev_per_trade = net_pnl / len(trades)
+
+        # Demotion triggers
+        if max_streak > 20:
+            self.db.set_ticker_probation(
+                ticker, "PROBATION",
+                f"Auto-demoted: loss streak {max_streak} > 20 "
+                f"in trailing {len(trades)} trades",
+            )
+            self._probation_statuses[ticker] = "PROBATION"
+            logger.warning(
+                f"AGAPE-SPOT PROBATION: {ticker} DEMOTED to PROBATION "
+                f"(loss streak {max_streak})"
+            )
+        elif ev_per_trade < 0 and len(trades) >= 50:
+            self.db.set_ticker_probation(
+                ticker, "PROBATION",
+                f"Auto-demoted: EV ${ev_per_trade:.4f}/trade < $0 "
+                f"over trailing {len(trades)} trades",
+            )
+            self._probation_statuses[ticker] = "PROBATION"
+            logger.warning(
+                f"AGAPE-SPOT PROBATION: {ticker} DEMOTED to PROBATION "
+                f"(EV=${ev_per_trade:.4f})"
+            )
 
     # ==================================================================
     # Equity snapshot (per-ticker)

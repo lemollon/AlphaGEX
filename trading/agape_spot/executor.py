@@ -184,6 +184,15 @@ class AgapeSpotExecutor:
                 "Set COINBASE_API_KEY/SECRET and/or COINBASE_DEDICATED_API_KEY/SECRET."
             )
 
+        # --- Startup balance check: log each account's USD so we can
+        #     verify in production that both keys point to different accounts ---
+        if self._client:
+            bal = self._get_usd_balance_from_client(self._client, account_label="default")
+            logger.info(f"AGAPE-SPOT INIT: default account cash = ${bal or 0:.2f}")
+        if self._dedicated_client:
+            bal = self._get_usd_balance_from_client(self._dedicated_client, account_label="dedicated")
+            logger.info(f"AGAPE-SPOT INIT: dedicated account cash = ${bal or 0:.2f}")
+
     def _get_client(self, ticker: str) -> Optional[object]:
         """Get any available Coinbase client for a ticker.
 
@@ -329,7 +338,7 @@ class AgapeSpotExecutor:
     def get_volatility_context(
         self, ticker: str, periods: int = 14,
     ) -> Dict[str, Any]:
-        """Get ATR + chop index for a ticker.
+        """Get ATR + chop index + RSI for a ticker.
 
         Returns:
             {
@@ -338,6 +347,8 @@ class AgapeSpotExecutor:
                 "chop_index": float,    # 0-1, high = choppy
                 "is_choppy": bool,      # True if chop_index > 0.65
                 "regime": str,          # TRENDING / CHOPPY / UNKNOWN
+                "rsi": float,           # RSI(14) on 5-min candles, 0-100
+                "spot_price": float,    # Current price (latest close)
             }
         """
         result: Dict[str, Any] = {
@@ -346,6 +357,8 @@ class AgapeSpotExecutor:
             "chop_index": None,
             "is_choppy": False,
             "regime": "UNKNOWN",
+            "rsi": None,
+            "spot_price": None,
         }
 
         client = self._get_client(ticker)
@@ -417,12 +430,94 @@ class AgapeSpotExecutor:
             result["chop_index"] = round(chop_index, 4)
             result["is_choppy"] = chop_index > 0.65
             result["regime"] = "CHOPPY" if chop_index > 0.65 else "TRENDING"
+            result["spot_price"] = current_price
+
+            # RSI(14) on 1-MINUTE candles for fast scalping entries/exits.
+            # Separate API call from the 5-min ATR/chop candles because
+            # 1-min RSI is more responsive for mean-reversion timing.
+            result["rsi"] = self.get_rsi(ticker, periods=periods)
 
             return result
 
         except Exception as e:
             logger.debug(f"AGAPE-SPOT volatility context: Failed for {ticker}: {e}")
             return result
+
+    def get_rsi(
+        self, ticker: str, periods: int = 14,
+    ) -> Optional[float]:
+        """Calculate RSI on 1-MINUTE candles (Wilder smoothing).
+
+        Uses 1-min granularity for fast mean-reversion timing:
+        - RSI < 30 = oversold → biggest buying opportunity in range-bound markets
+        - RSI > 70 = overbought → take profit exit signal
+
+        Separate from the 5-min candles used for ATR/chop because 1-min RSI
+        is more responsive to short-term price swings in crypto scalping.
+
+        Returns:
+            RSI value (0-100), or None if candles unavailable.
+        """
+        client = self._get_client(ticker)
+        if not client:
+            return None
+
+        try:
+            import time
+            now_ts = str(int(time.time()))
+            # 1-min candles: need periods + 5 buffer candles
+            lookback = periods + 10
+            start_ts = str(int(time.time()) - 60 * lookback)
+
+            candles_resp = client.get_candles(
+                product_id=ticker,
+                start=start_ts,
+                end=now_ts,
+                granularity="ONE_MINUTE",
+            )
+            candles = self._resp(candles_resp, "candles", [])
+            if not candles or len(candles) < periods + 1:
+                return None
+
+            candles = sorted(candles, key=lambda c: int(self._resp(c, "start", "0")))
+
+            closes = []
+            for c in candles:
+                close = float(self._resp(c, "close", 0))
+                if close > 0:
+                    closes.append(close)
+
+            if len(closes) < periods + 1:
+                return None
+
+            # Wilder smoothed RSI: SMA seed then EMA
+            gains = []
+            losses = []
+            for i in range(1, len(closes)):
+                delta = closes[i] - closes[i - 1]
+                gains.append(max(delta, 0))
+                losses.append(max(-delta, 0))
+
+            if len(gains) < periods:
+                return None
+
+            avg_gain = sum(gains[:periods]) / periods
+            avg_loss = sum(losses[:periods]) / periods
+            for j in range(periods, len(gains)):
+                avg_gain = (avg_gain * (periods - 1) + gains[j]) / periods
+                avg_loss = (avg_loss * (periods - 1) + losses[j]) / periods
+
+            if avg_loss > 0:
+                rs = avg_gain / avg_loss
+                rsi = 100 - (100 / (1 + rs))
+            else:
+                rsi = 100.0
+
+            return round(rsi, 2)
+
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT RSI: Failed for {ticker}: {e}")
+            return None
 
     # =========================================================================
     # Helpers
@@ -450,15 +545,244 @@ class AgapeSpotExecutor:
             return obj.get(key, default)
         return default
 
-    def _get_usd_balance_from_client(self, client) -> Optional[float]:
-        """Get available USD balance directly from a specific Coinbase client.
+    # =========================================================================
+    # Fee extraction (robust, with fallbacks)
+    # =========================================================================
 
-        Used for balance-aware position sizing so each account trades
-        within its actual available capital.
+    # Coinbase Advanced Trade fee rates.
+    # Observed from live trades (Feb 2026): 1.2-1.4% per side on small orders.
+    # Coinbase charges higher rates on sub-$10K monthly volume.
+    # Taker: ~1.2% (market orders), Maker: ~0.6% (limit orders)
+    COINBASE_TAKER_FEE_RATE = 0.012  # 1.20% — observed from live fills
+    COINBASE_MAKER_FEE_RATE = 0.006  # 0.60% — estimated maker tier
 
-        Paginates through ALL Coinbase accounts (API default is 49 per page,
-        but accounts with 200+ coins need multiple pages to reach USD).
-        Falls back to USDC if no USD fiat wallet is found.
+    def _extract_fee_from_fills(
+        self, fills_list: list, side: str, ticker: str,
+    ) -> Optional[float]:
+        """Extract total fee from Coinbase fill objects.
+
+        Tries multiple field names because the Coinbase SDK has changed
+        field names across versions:
+          - "commission" (documented in REST API)
+          - "trade_commission" (some SDK versions)
+          - "fee" (older SDK versions)
+
+        Also tries to derive fee from size_in_quote when commission
+        fields are unavailable: fee = size_in_quote - (price * size).
+
+        Args:
+            fills_list: List of fill objects from client.get_fills()
+            side: "buy" or "sell" — for logging context
+            ticker: Ticker symbol for logging
+
+        Returns:
+            Total fee in USD, or None if extraction failed entirely.
+        """
+        if not fills_list:
+            return None
+
+        total_fee = 0.0
+        extraction_method = None
+
+        # --- Attempt 1: Direct commission field ---
+        # Try multiple field names that Coinbase SDK has used
+        for fee_field in ("commission", "trade_commission", "fee"):
+            try:
+                field_fee = 0.0
+                field_found = False
+                for f in fills_list:
+                    raw_val = self._resp(f, fee_field)
+                    if raw_val is not None and raw_val != "" and raw_val != "0":
+                        field_found = True
+                        parsed = float(raw_val)
+                        if parsed > 0:
+                            field_fee += parsed
+                if field_found and field_fee > 0:
+                    total_fee = field_fee
+                    extraction_method = fee_field
+                    break
+            except (ValueError, TypeError):
+                continue
+
+        # --- Attempt 2: Derive from size_in_quote ---
+        # size_in_quote = total USD value INCLUDING fee for a buy,
+        # or total USD received MINUS fee for a sell.
+        # fee = |size_in_quote - (price * size)|
+        if total_fee == 0:
+            try:
+                derived_fee = 0.0
+                for f in fills_list:
+                    siq = self._resp(f, "size_in_quote")
+                    price = self._resp(f, "price")
+                    size = self._resp(f, "size")
+                    if siq is not None and price is not None and size is not None:
+                        siq_f = float(siq)
+                        price_f = float(price)
+                        size_f = float(size)
+                        if siq_f > 0 and price_f > 0 and size_f > 0:
+                            raw_value = price_f * size_f
+                            fill_fee = abs(siq_f - raw_value)
+                            # Sanity: fee should be < 5% of trade value
+                            if fill_fee < raw_value * 0.05:
+                                derived_fee += fill_fee
+                if derived_fee > 0:
+                    total_fee = derived_fee
+                    extraction_method = "size_in_quote_derived"
+            except (ValueError, TypeError):
+                pass
+
+        if total_fee > 0:
+            total_fee = round(total_fee, 6)
+            logger.info(
+                f"AGAPE-SPOT FEE: {side} {ticker} fee=${total_fee:.6f} "
+                f"(method={extraction_method}, fills={len(fills_list)})"
+            )
+            return total_fee
+
+        # Log what we actually got for debugging
+        if fills_list:
+            try:
+                sample = fills_list[0]
+                debug_fields = {}
+                for field_name in ("commission", "trade_commission", "fee", "size_in_quote", "price", "size"):
+                    val = self._resp(sample, field_name)
+                    debug_fields[field_name] = repr(val)
+                logger.warning(
+                    f"AGAPE-SPOT FEE: {side} {ticker} — could not extract fee "
+                    f"from {len(fills_list)} fills. Sample fill fields: {debug_fields}"
+                )
+            except Exception:
+                logger.warning(
+                    f"AGAPE-SPOT FEE: {side} {ticker} — could not extract fee "
+                    f"from {len(fills_list)} fills (debug logging also failed)"
+                )
+
+        return None
+
+    def _get_fee_from_order(
+        self, client, order_id: str, side: str, ticker: str,
+    ) -> Optional[float]:
+        """Fetch fee from the order object itself via get_order().
+
+        Coinbase order objects contain 'total_fees' which is the
+        authoritative fee for the entire order. This is more reliable
+        than summing fill-level commissions.
+
+        Args:
+            client: Coinbase REST client
+            order_id: The Coinbase order ID
+            side: "buy" or "sell" — for logging
+            ticker: Ticker symbol for logging
+
+        Returns:
+            Fee in USD, or None if unavailable.
+        """
+        try:
+            order_resp = client.get_order(order_id=str(order_id))
+            if order_resp:
+                # Try 'total_fees' (primary)
+                total_fees = self._resp(order_resp, "total_fees")
+                if total_fees is not None and total_fees != "" and total_fees != "0":
+                    fee = float(total_fees)
+                    if fee > 0:
+                        logger.info(
+                            f"AGAPE-SPOT FEE: {side} {ticker} fee=${fee:.6f} "
+                            f"(method=get_order.total_fees)"
+                        )
+                        return round(fee, 6)
+
+                # Try nested order_configuration.total_fees or similar
+                order_config = self._resp(order_resp, "order_configuration")
+                if order_config:
+                    tf = self._resp(order_config, "total_fees")
+                    if tf is not None and tf != "" and tf != "0":
+                        fee = float(tf)
+                        if fee > 0:
+                            logger.info(
+                                f"AGAPE-SPOT FEE: {side} {ticker} fee=${fee:.6f} "
+                                f"(method=get_order.order_config.total_fees)"
+                            )
+                            return round(fee, 6)
+        except Exception as e:
+            logger.debug(
+                f"AGAPE-SPOT FEE: get_order fee lookup failed for {ticker} "
+                f"order={order_id}: {e}"
+            )
+        return None
+
+    def _estimate_fee(
+        self, fill_price: float, quantity: float, ticker: str, side: str,
+        order_type: str = "market",
+    ) -> float:
+        """Estimate fee using Coinbase fee rate when extraction fails.
+
+        Uses maker rate for limit orders, taker rate for market orders.
+        This is a last resort. The estimated fee is tagged as estimated
+        in logs so you can distinguish real vs estimated fees in analysis.
+
+        Returns:
+            Estimated fee in USD (always > 0).
+        """
+        notional = fill_price * quantity
+        rate = self.COINBASE_MAKER_FEE_RATE if order_type == "limit" else self.COINBASE_TAKER_FEE_RATE
+        estimated_fee = round(notional * rate, 6)
+        logger.info(
+            f"AGAPE-SPOT FEE: {side} {ticker} fee=${estimated_fee:.6f} "
+            f"(method=ESTIMATED, rate={rate:.3%}, "
+            f"order_type={order_type}, notional=${notional:.2f})"
+        )
+        return estimated_fee
+
+    def _resolve_fee(
+        self,
+        client,
+        fills_list: list,
+        order_id: str,
+        fill_price: float,
+        quantity: float,
+        ticker: str,
+        side: str,
+        order_type: str = "market",
+    ) -> float:
+        """Resolve the fee for a trade using all available methods.
+
+        Priority:
+          1. Extract from fill objects (commission / size_in_quote)
+          2. Fetch from order object (get_order → total_fees)
+          3. Estimate from notional × fee rate (maker for limit, taker for market)
+
+        Always returns a fee > 0. Never returns None.
+        """
+        # 1. Try fills
+        fee = self._extract_fee_from_fills(fills_list, side, ticker)
+        if fee is not None and fee > 0:
+            return fee
+
+        # 2. Try order-level fee
+        if client and order_id:
+            fee = self._get_fee_from_order(client, order_id, side, ticker)
+            if fee is not None and fee > 0:
+                return fee
+
+        # 3. Estimate (uses maker rate for limit orders, taker for market)
+        return self._estimate_fee(fill_price, quantity, ticker, side, order_type)
+
+    def _get_usd_balance_from_client(self, client, account_label: str = "unknown") -> Optional[float]:
+        """Get available USD + USDC cash balance from a Coinbase client.
+
+        Returns the CASH available to trade (not crypto holdings).
+
+        Compounding works naturally:
+          1. Start with $100 USD
+          2. Buy 0.037 ETH ($100) → USD drops to ~$0
+          3. ETH goes up 3%, sell → $103 USD back
+          4. Next trade: $103 × 90% = $92.70 position (compounded!)
+
+        The key is that after a profitable sell, USD increases. Each new
+        trade is sized from the current USD balance, which includes all
+        prior profits. No artificial capital tracking needed.
+
+        Logs at INFO level so we can see actual balance in production.
         """
         if not client:
             return None
@@ -467,17 +791,15 @@ class AgapeSpotExecutor:
             usdc_balance = None
             cursor = None
             total_scanned = 0
-            currencies_found = []
+            top_holdings = []
 
-            # Paginate through all accounts
-            for page in range(20):  # safety limit (20 × 250 = 5000 accounts max)
+            for page in range(20):
                 kwargs = {"limit": 250}
                 if cursor:
                     kwargs["cursor"] = cursor
 
                 accounts = client.get_accounts(**kwargs)
                 acct_list = self._resp(accounts, "accounts", [])
-
                 if not acct_list:
                     break
 
@@ -489,43 +811,49 @@ class AgapeSpotExecutor:
 
                     if currency == "USD":
                         usd_balance = val
-                    elif currency == "USDC" and usdc_balance is None:
+                    elif currency == "USDC":
                         usdc_balance = val
 
-                    # Track non-zero balances for debug logging
+                    # Track top holdings for visibility
                     if val > 0:
-                        currencies_found.append(f"{currency}=${val:.2f}")
+                        top_holdings.append(f"{currency}={val}")
 
-                if usd_balance is not None:
-                    logger.debug(
-                        f"AGAPE-SPOT Executor: Found USD=${usd_balance:.2f} "
-                        f"on page {page + 1} ({total_scanned} accounts scanned)"
-                    )
-                    return usd_balance
-
-                # Check for next page
+                # Don't return early — scan ALL pages to find USD + USDC
                 next_cursor = self._resp(accounts, "cursor", None)
                 if not next_cursor or next_cursor == cursor:
                     break
                 cursor = next_cursor
 
-            # USD not found — fall back to USDC (stablecoin, ~$1 each)
-            if usdc_balance is not None and usdc_balance > 0:
-                logger.info(
-                    f"AGAPE-SPOT Executor: No USD wallet found after "
-                    f"{total_scanned} accounts, using USDC=${usdc_balance:.2f}"
-                )
-                return usdc_balance
+            # Combine USD + USDC (both are dollar-denominated cash)
+            cash = (usd_balance or 0) + (usdc_balance or 0)
 
-            # Nothing found — log what we DID find for debugging
-            logger.warning(
-                f"AGAPE-SPOT Executor: USD wallet NOT FOUND after scanning "
-                f"{total_scanned} accounts. Non-zero balances found: "
-                f"{currencies_found or 'NONE'}"
+            # Always log at INFO — we need to see this in production
+            logger.info(
+                f"AGAPE-SPOT BALANCE [{account_label}]: USD=${usd_balance or 0:.2f}, "
+                f"USDC=${usdc_balance or 0:.2f}, "
+                f"TOTAL CASH=${cash:.2f} "
+                f"({total_scanned} accounts scanned). "
+                f"Top holdings: {top_holdings[:10]}"
             )
-            return usd_balance  # None
+
+            if cash > 0:
+                return cash
+
+            # $0 cash — all money is deployed in crypto positions
+            # This is normal when a position is open (max_positions=1)
+            if top_holdings:
+                logger.info(
+                    f"AGAPE-SPOT BALANCE [{account_label}]: $0 cash but have crypto holdings. "
+                    f"This is normal when a position is open."
+                )
+            else:
+                logger.warning(
+                    f"AGAPE-SPOT BALANCE [{account_label}]: $0 total across {total_scanned} "
+                    f"accounts — account may be empty"
+                )
+            return None
         except Exception as e:
-            logger.warning(f"AGAPE-SPOT Executor: USD balance lookup failed: {e}")
+            logger.warning(f"AGAPE-SPOT BALANCE [{account_label}]: Lookup failed: {e}")
         return None
 
     def _store_product_limits(self, ticker: str, product) -> None:
@@ -567,6 +895,246 @@ class AgapeSpotExecutor:
         if limits and limits.get("base_min_size", 0) > 0:
             return limits["base_min_size"]
         return SPOT_TICKERS.get(ticker, {}).get("min_order", 0.001)
+
+    # =========================================================================
+    # Limit order support — reduces fees from 0.6% taker to 0.4% maker
+    # =========================================================================
+
+    def get_best_bid_ask(self, ticker: str, client=None) -> Tuple[Optional[float], Optional[float]]:
+        """Get best bid/ask from Coinbase product book.
+
+        Returns (best_bid, best_ask) or (None, None) on failure.
+        Uses the product ticker endpoint which includes bid/ask.
+        """
+        if client is None:
+            client = self._get_client(ticker)
+        if not client:
+            return (None, None)
+        try:
+            product = client.get_product(ticker)
+            if product:
+                bid = self._resp(product, "bid")
+                ask = self._resp(product, "ask")
+                if bid is not None and ask is not None:
+                    return (float(bid), float(ask))
+                # Fallback: use price as mid
+                price = self._resp(product, "price")
+                if price:
+                    p = float(price)
+                    # Estimate spread as 0.02% for majors, 0.05% for alts
+                    spread_pct = 0.0002 if ticker in ("ETH-USD", "BTC-USD") else 0.0005
+                    return (p * (1 - spread_pct), p * (1 + spread_pct))
+        except Exception as e:
+            logger.debug(f"AGAPE-SPOT Executor: Bid/ask lookup failed for {ticker}: {e}")
+        return (None, None)
+
+    def _place_limit_buy(
+        self, client, ticker: str, quantity: float, limit_price: float,
+        client_order_id: str,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Place a limit GTC buy and wait for fill, falling back to market order.
+
+        Returns (success, order_response, order_type) where order_type is
+        'limit' or 'market'.
+        """
+        timeout = self.config.limit_order_timeout_seconds
+        pd_val = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
+
+        try:
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIMIT BUY {ticker} "
+                f"qty={quantity} limit=${limit_price:.{pd_val}f} "
+                f"timeout={timeout}s"
+            )
+            order = client.limit_order_gtc_buy(
+                client_order_id=client_order_id,
+                product_id=ticker,
+                base_size=str(quantity),
+                limit_price=str(round(limit_price, pd_val)),
+            )
+
+            success = self._resp(order, "success", False)
+            if not success:
+                # Limit rejected — fall back to market
+                logger.warning(
+                    f"AGAPE-SPOT: Limit buy rejected for {ticker}, "
+                    f"falling back to market order"
+                )
+                return self._place_market_buy_fallback(
+                    client, ticker, quantity,
+                )
+
+            # Wait for fill
+            success_resp = self._resp(order, "success_response")
+            order_id = self._resp(success_resp, "order_id", "")
+
+            import time
+            fill_wait = 0
+            poll_interval = 2  # seconds
+            while fill_wait < timeout:
+                time.sleep(poll_interval)
+                fill_wait += poll_interval
+                try:
+                    order_status = client.get_order(order_id=str(order_id))
+                    status = self._resp(order_status, "status", "")
+                    if status in ("FILLED", "COMPLETED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit buy FILLED {ticker} "
+                            f"in {fill_wait}s (maker fee)"
+                        )
+                        return (True, order, "limit")
+                    if status in ("CANCELLED", "EXPIRED", "FAILED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit buy {status} {ticker}, "
+                            f"falling back to market"
+                        )
+                        return self._place_market_buy_fallback(
+                            client, ticker, quantity,
+                        )
+                except Exception:
+                    pass
+
+            # Timeout — cancel and fall back to market
+            try:
+                client.cancel_orders(order_ids=[str(order_id)])
+                logger.info(
+                    f"AGAPE-SPOT: Limit buy TIMED OUT {ticker} "
+                    f"after {timeout}s, cancelled → market fallback"
+                )
+            except Exception as ce:
+                logger.debug(f"AGAPE-SPOT: Cancel failed: {ce}")
+
+            return self._place_market_buy_fallback(
+                client, ticker, quantity,
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"AGAPE-SPOT: Limit buy exception for {ticker}: {e}, "
+                f"falling back to market"
+            )
+            return self._place_market_buy_fallback(
+                client, ticker, quantity,
+            )
+
+    def _place_market_buy_fallback(
+        self, client, ticker: str, quantity: float,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Market order fallback when limit order fails."""
+        fallback_id = str(uuid.uuid4())
+        try:
+            order = client.market_order_buy(
+                client_order_id=fallback_id,
+                product_id=ticker,
+                base_size=str(quantity),
+            )
+            success = self._resp(order, "success", False)
+            return (success, order, "market")
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT: Market buy fallback also failed: {e}")
+            return (False, None, "market")
+
+    def _place_limit_sell(
+        self, client, ticker: str, quantity: float, limit_price: float,
+        client_order_id: str,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Place a limit GTC sell and wait for fill, falling back to market order.
+
+        Returns (success, order_response, order_type).
+        """
+        timeout = self.config.limit_order_timeout_seconds
+        pd_val = SPOT_TICKERS.get(ticker, {}).get("price_decimals", 2)
+
+        try:
+            logger.info(
+                f"AGAPE-SPOT: PLACING LIMIT SELL {ticker} "
+                f"qty={quantity} limit=${limit_price:.{pd_val}f} "
+                f"timeout={timeout}s"
+            )
+            order = client.limit_order_gtc_sell(
+                client_order_id=client_order_id,
+                product_id=ticker,
+                base_size=str(quantity),
+                limit_price=str(round(limit_price, pd_val)),
+            )
+
+            success = self._resp(order, "success", False)
+            if not success:
+                logger.warning(
+                    f"AGAPE-SPOT: Limit sell rejected for {ticker}, "
+                    f"falling back to market"
+                )
+                return self._place_market_sell_fallback(
+                    client, ticker, quantity,
+                )
+
+            success_resp = self._resp(order, "success_response")
+            order_id = self._resp(success_resp, "order_id", "")
+
+            import time
+            fill_wait = 0
+            poll_interval = 2
+            while fill_wait < timeout:
+                time.sleep(poll_interval)
+                fill_wait += poll_interval
+                try:
+                    order_status = client.get_order(order_id=str(order_id))
+                    status = self._resp(order_status, "status", "")
+                    if status in ("FILLED", "COMPLETED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit sell FILLED {ticker} "
+                            f"in {fill_wait}s (maker fee)"
+                        )
+                        return (True, order, "limit")
+                    if status in ("CANCELLED", "EXPIRED", "FAILED"):
+                        logger.info(
+                            f"AGAPE-SPOT: Limit sell {status} {ticker}, "
+                            f"falling back to market"
+                        )
+                        return self._place_market_sell_fallback(
+                            client, ticker, quantity,
+                        )
+                except Exception:
+                    pass
+
+            try:
+                client.cancel_orders(order_ids=[str(order_id)])
+                logger.info(
+                    f"AGAPE-SPOT: Limit sell TIMED OUT {ticker} "
+                    f"after {timeout}s, cancelled → market fallback"
+                )
+            except Exception as ce:
+                logger.debug(f"AGAPE-SPOT: Cancel failed: {ce}")
+
+            return self._place_market_sell_fallback(
+                client, ticker, quantity,
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"AGAPE-SPOT: Limit sell exception for {ticker}: {e}, "
+                f"falling back to market"
+            )
+            return self._place_market_sell_fallback(
+                client, ticker, quantity,
+            )
+
+    def _place_market_sell_fallback(
+        self, client, ticker: str, quantity: float,
+    ) -> Tuple[bool, Optional[object], str]:
+        """Market order fallback when limit sell fails."""
+        fallback_id = str(uuid.uuid4())
+        try:
+            order = client.market_order_sell(
+                client_order_id=fallback_id,
+                product_id=ticker,
+                base_size=str(quantity),
+            )
+            success = self._resp(order, "success", False)
+            return (success, order, "market")
+        except Exception as e:
+            logger.error(f"AGAPE-SPOT: Market sell fallback also failed: {e}")
+            return (False, None, "market")
 
     # =========================================================================
     # Trade execution
@@ -660,12 +1228,15 @@ class AgapeSpotExecutor:
                 open_time=now,
                 high_water_mark=round(fill_price, pd),
                 account_label=account_label,
+                # Estimate entry fee: Coinbase taker fee ~0.6% for market orders
+                entry_fee_usd=round(signal.quantity * fill_price * 0.006, 4),
             )
 
             notional = signal.quantity * fill_price
             logger.info(
                 f"AGAPE-SPOT: PAPER BUY [{account_label}] {signal.ticker} "
-                f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.{pd}f}"
+                f"{signal.quantity:.4f} (${notional:.2f}) @ ${fill_price:.{pd}f} "
+                f"(est fee ${position.entry_fee_usd:.4f})"
             )
             return position
 
@@ -723,13 +1294,15 @@ class AgapeSpotExecutor:
                 open_time=now,
                 high_water_mark=round(live_fill_price, pd),
                 account_label=account_label,
+                # Estimate entry fee: Coinbase taker fee ~0.6% for market orders
+                entry_fee_usd=round(live_quantity * live_fill_price * 0.006, 4),
             )
 
             notional = live_quantity * live_fill_price
             logger.info(
                 f"AGAPE-SPOT: PAPER MIRROR [{account_label}] {signal.ticker} "
                 f"{live_quantity:.4f} (${notional:.2f}) @ ${live_fill_price:.{pd}f} "
-                f"(mirroring live fill)"
+                f"(paper sizing, live price, est fee ${position.entry_fee_usd:.4f})"
             )
             return position
 
@@ -777,7 +1350,7 @@ class AgapeSpotExecutor:
             # No hardcoded fallbacks. If we can't read the balance, don't trade.
             # The allocator ranks tickers by performance and assigns each a %
             # of the available balance.
-            usd_available = self._get_usd_balance_from_client(client)
+            usd_available = self._get_usd_balance_from_client(client, account_label=account_label)
 
             if usd_available is None:
                 logger.error(
@@ -808,29 +1381,33 @@ class AgapeSpotExecutor:
                     )
                 return None
 
-            # Size from real balance × allocator ranking
-            usable_usd = usd_available * 0.95  # Reserve 5% for fees/slippage
+            # Size from real balance — use FULL available balance per trade.
+            #
+            # With max_positions=1 per ticker, the old allocator split the
+            # balance 5 ways (one per ticker) even though only 1 trade opens
+            # at a time.  Result: $50 balance → $9.50 per trade → $4.75 per
+            # account → trades too small to overcome fees.
+            #
+            # New approach: use 90% of available USD for each trade.  The
+            # Coinbase balance already reflects capital tied up in other open
+            # positions (it's the AVAILABLE balance, not total balance).
+            # Reserve 10% for fees + slippage headroom.
+            usable_usd = usd_available * 0.90
 
-            alloc_pct = 1.0
-            if self.capital_allocator:
-                alloc_pct = self.capital_allocator.get_allocation(signal.ticker)
-            allocated_usd = usable_usd * alloc_pct
-
-            affordable_qty = allocated_usd / signal.spot_price
+            affordable_qty = usable_usd / signal.spot_price
             affordable_qty = round(affordable_qty, qty_decimals)
 
             logger.info(
                 f"AGAPE-SPOT: SIZING [{account_label}] {signal.ticker} "
-                f"balance=${usd_available:.2f}, usable=${usable_usd:.2f}, "
-                f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
-                f"qty={affordable_qty}"
+                f"balance=${usd_available:.2f}, usable=${usable_usd:.2f} "
+                f"(90% of balance), qty={affordable_qty}"
             )
             if self.db:
                 self.db.log(
-                    "INFO", "ALLOC_SIZED",
+                    "INFO", "FULL_BALANCE_SIZED",
                     f"[{account_label}] {signal.ticker}: "
                     f"balance=${usd_available:.2f}, "
-                    f"alloc={alloc_pct:.1%} (${allocated_usd:.2f}), "
+                    f"usable=${usable_usd:.2f} (90%), "
                     f"qty={affordable_qty}",
                     ticker=signal.ticker,
                 )
@@ -862,19 +1439,44 @@ class AgapeSpotExecutor:
                 f"(~${notional_est:.2f}) client_order_id={client_order_id}"
             )
 
-            # LONG-ONLY: Always buy to open
-            order = client.market_order_buy(
-                client_order_id=client_order_id,
-                product_id=signal.ticker,
-                base_size=str(quantity),
-            )
+            # LONG-ONLY: Buy to open — use limit orders when enabled (lower fees)
+            order_type = "market"
+            if self.config.use_limit_orders:
+                bid, ask = self.get_best_bid_ask(signal.ticker, client)
+                if bid and ask:
+                    # Place limit at ask - offset (aggressive, likely fills quickly)
+                    offset = self.config.limit_order_offset_pct / 100
+                    limit_price = ask * (1 - offset)
+                    success, order, order_type = self._place_limit_buy(
+                        client, signal.ticker, quantity, limit_price,
+                        client_order_id,
+                    )
+                    if not success:
+                        return None
+                else:
+                    # Can't get bid/ask — fall back to market order
+                    logger.info(
+                        f"AGAPE-SPOT: No bid/ask for {signal.ticker}, "
+                        f"using market order"
+                    )
+                    order = client.market_order_buy(
+                        client_order_id=client_order_id,
+                        product_id=signal.ticker,
+                        base_size=str(quantity),
+                    )
+            else:
+                order = client.market_order_buy(
+                    client_order_id=client_order_id,
+                    product_id=signal.ticker,
+                    base_size=str(quantity),
+                )
 
             # Log the raw response for debugging
             try:
                 if hasattr(order, "to_dict"):
-                    logger.info(f"AGAPE-SPOT: Order response: {order.to_dict()}")
+                    logger.info(f"AGAPE-SPOT: Order response ({order_type}): {order.to_dict()}")
                 else:
-                    logger.info(f"AGAPE-SPOT: Order response: {order}")
+                    logger.info(f"AGAPE-SPOT: Order response ({order_type}): {order}")
             except Exception:
                 logger.info(f"AGAPE-SPOT: Order response type={type(order).__name__}")
 
@@ -918,18 +1520,13 @@ class AgapeSpotExecutor:
                     if signal.spot_price > 0 else None
                 )
 
-                # Extract fee from fills if available
-                entry_fee = None
-                try:
-                    if fills_list:
-                        entry_fee = sum(
-                            float(self._resp(f, "commission", 0))
-                            for f in fills_list
-                        )
-                        if entry_fee == 0:
-                            entry_fee = None
-                except Exception:
-                    pass
+                # Extract fee using robust multi-method resolution
+                entry_fee = self._resolve_fee(
+                    client, fills_list, order_id,
+                    fill_price, quantity,
+                    signal.ticker, "buy",
+                    order_type=order_type,
+                )
 
                 position = AgapeSpotPosition(
                     position_id=position_id,
@@ -1079,18 +1676,39 @@ class AgapeSpotExecutor:
                 f"{position_id} qty={sell_qty} (~${notional_est:.2f}) ({reason})"
             )
 
-            order = client.market_order_sell(
-                client_order_id=client_order_id,
-                product_id=ticker,
-                base_size=str(sell_qty),
-            )
+            # Use limit orders when enabled (lower fees)
+            sell_order_type = "market"
+            if self.config.use_limit_orders:
+                bid, ask = self.get_best_bid_ask(ticker, client)
+                if bid and ask:
+                    # Place limit at bid + offset (aggressive, likely fills quickly)
+                    offset = self.config.limit_order_offset_pct / 100
+                    limit_price = bid * (1 + offset)
+                    success, order, sell_order_type = self._place_limit_sell(
+                        client, ticker, sell_qty, limit_price,
+                        client_order_id,
+                    )
+                    if not success:
+                        return (False, None, None)
+                else:
+                    order = client.market_order_sell(
+                        client_order_id=client_order_id,
+                        product_id=ticker,
+                        base_size=str(sell_qty),
+                    )
+            else:
+                order = client.market_order_sell(
+                    client_order_id=client_order_id,
+                    product_id=ticker,
+                    base_size=str(sell_qty),
+                )
 
             # Log raw response
             try:
                 if hasattr(order, "to_dict"):
-                    logger.info(f"AGAPE-SPOT: Sell response: {order.to_dict()}")
+                    logger.info(f"AGAPE-SPOT: Sell response ({sell_order_type}): {order.to_dict()}")
                 else:
-                    logger.info(f"AGAPE-SPOT: Sell response: {order}")
+                    logger.info(f"AGAPE-SPOT: Sell response ({sell_order_type}): {order}")
             except Exception:
                 pass
 
@@ -1100,6 +1718,7 @@ class AgapeSpotExecutor:
                 success_resp = self._resp(order, "success_response")
                 order_id = self._resp(success_resp, "order_id", "")
                 fill_price = None
+                fills_list = []
 
                 try:
                     fills = client.get_fills(order_id=str(order_id))
@@ -1130,23 +1749,19 @@ class AgapeSpotExecutor:
                         (fill_price - current_price) / current_price * 100, 4
                     )
 
-                # Extract fee
-                exit_fee = None
-                try:
-                    if fills_list:
-                        exit_fee = sum(
-                            float(self._resp(f, "commission", 0))
-                            for f in fills_list
-                        )
-                        if exit_fee == 0:
-                            exit_fee = None
-                except Exception:
-                    pass
+                # Extract fee using robust multi-method resolution
+                exit_fee = self._resolve_fee(
+                    client, fills_list, order_id,
+                    fill_price or current_price, sell_qty,
+                    ticker, "sell",
+                    order_type=sell_order_type,
+                )
 
                 exec_details = {
                     "coinbase_sell_order_id": str(order_id),
                     "exit_slippage_pct": exit_slippage,
                     "exit_fee_usd": exit_fee,
+                    "order_type": sell_order_type,
                 }
 
                 logger.info(
@@ -1432,7 +2047,7 @@ class AgapeSpotExecutor:
         # Account 2: Dedicated
         if self._dedicated_client:
             try:
-                usd_bal = self._get_usd_balance_from_client(self._dedicated_client)
+                usd_bal = self._get_usd_balance_from_client(self._dedicated_client, account_label="dedicated")
                 balances: Dict[str, Any] = {
                     "exchange": "coinbase",
                     "account_type": "dedicated",

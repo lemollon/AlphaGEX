@@ -30,13 +30,20 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,  # Coinbase $1 min + safety buffer
         "quantity_decimals": 4,
         "price_decimals": 2,
-        # ETH exit params: wider trail, longer hold to capture full trends
-        "no_loss_activation_pct": 1.5,
-        "no_loss_trail_distance_pct": 1.25,
-        "max_unrealized_loss_pct": 1.5,
-        "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
-        "max_hold_hours": 8,  # Was 6h — ETH trends run 8-12h, don't exit mid-trend
-        "max_positions": 3,   # Was 5 (global default) — 5 x 1.5% max loss = 7.5% flash crash exposure
+        # ETH exit params: moderate hold with wider stops for bigger positions
+        "no_loss_activation_pct": 2.0,    # 2% move before trailing activates
+        "no_loss_trail_distance_pct": 1.5, # 1.5% trail distance
+        "max_unrealized_loss_pct": 1.5,   # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3% gain
+        "max_hold_hours": 12,  # 12h max — capture intraday trends
+        "max_positions": 1,   # One position at a time (full balance per trade)
+        # Guardrails: restrict to profitable hours
+        "market_hours_only": True,         # Kill overnight drain (-$475 pre-fix)
+        "market_open_hour": 2,             # 02:00 CT — ETH profitable from early AM
+        "market_open_minute": 0,
+        "market_close_hour": 14,           # 14:00 CT — cut before overnight session
+        "market_close_minute": 0,
+        "min_scans_between_trades": 10,    # 10 scans ≈ 10 min cooldown
     },
     "BTC-USD": {
         "symbol": "BTC",
@@ -48,91 +55,86 @@ SPOT_TICKERS: Dict[str, Dict[str, Any]] = {
         "min_notional_usd": 2.0,
         "quantity_decimals": 5,
         "price_decimals": 2,
-        # BTC exit params: tighter than ETH — backtest shows BTC net negative (-$89)
-        # Faster exits reduce drawdown on a ticker that doesn't have edge yet
-        "no_loss_activation_pct": 1.5,
-        "no_loss_trail_distance_pct": 1.25,
-        "max_unrealized_loss_pct": 1.5,
-        "no_loss_profit_target_pct": 0.0,  # disabled — let trail manage
-        "max_hold_hours": 4,  # Was 8h — BTC lost money in backtest, don't hold losers long
-        # Position cap: BTC has negative EV in backtest, limit exposure until profitable
-        "max_positions": 2,
-        "min_scans_between_trades": 5,  # 5 min between entries — prevent burst stacking
+        # BTC exit params: moderate hold targeting 2-3% moves
+        "no_loss_activation_pct": 2.0,    # 2% move before trailing activates
+        "no_loss_trail_distance_pct": 1.5, # 1.5% trail distance
+        "max_unrealized_loss_pct": 1.5,   # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3%
+        "max_hold_hours": 12,  # 12h max — capture intraday BTC trends
+        "max_positions": 1,    # One position (full balance per trade)
+        "min_scans_between_trades": 10,    # 10 min between entries
     },
     "XRP-USD": {
         "symbol": "XRP",
         "display_name": "XRP",
         "starting_capital": 1000.0,
-        # live_capital removed — executor reads real Coinbase USD balance at order time
         "default_quantity": 100.0,
         "min_order": 1.0,
         "max_per_trade": 5000.0,
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # XRP exit params: widened to stop noise-exits that give alpha to buy-and-hold
-        "no_loss_activation_pct": 0.8,    # Was 0.3% — way too tight, trail activated on noise
-        "no_loss_trail_distance_pct": 0.75, # Was 0.25% — XRP moves 0.25% every few min, this is noise
-        "max_unrealized_loss_pct": 1.0,   # Was 0.5% — too tight, normal pullback triggers stop
-        "no_loss_profit_target_pct": 0.0,  # Disabled — let trail manage exits
-        "max_hold_hours": 4,              # Was 2h — too short to capture multi-hour trends
-        # Signal quality gates — XRP has no Deribit options data, need actual funding signal
-        "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
-        "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
-        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
-        "use_momentum_filter": True,        # Block entries during price downtrends
-        "min_scans_between_trades": 10,     # 10 min between entries (1-min scans)
-        "max_positions": 2,                 # Was 5 — reduce concurrent exposure
+        # XRP exit params: moderate hold targeting 2-3% moves
+        "no_loss_activation_pct": 1.5,    # 1.5% activation
+        "no_loss_trail_distance_pct": 1.0, # 1% trail
+        "max_unrealized_loss_pct": 1.5,   # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3%
+        "max_hold_hours": 8,               # 8h max
+        # Signal quality gates
+        "require_funding_data": True,
+        "allow_base_long": False,
+        "use_eth_leader": True,
+        "use_momentum_filter": True,
+        "min_scans_between_trades": 10,     # 10 min cooldown
+        "max_positions": 1,
     },
     "SHIB-USD": {
         "symbol": "SHIB",
         "display_name": "Shiba Inu",
         "starting_capital": 1000.0,
-        # live_capital removed — executor reads real Coinbase USD balance at order time
         "default_quantity": 1000000.0,
         "min_order": 1000.0,
         "max_per_trade": 100000000.0,
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 8,
-        # SHIB exit params: widened — meme coin has big swings, 0.2% trail was pure noise
-        "no_loss_activation_pct": 0.8,      # Was 0.3% — activated on noise
-        "no_loss_trail_distance_pct": 0.60, # Was 0.2% — SHIB swings 0.5%+ per candle, 0.2% is noise
-        "max_unrealized_loss_pct": 1.0,     # Was 0.5% — normal SHIB volatility triggered this
-        "no_loss_profit_target_pct": 0.0,   # Disabled — let trail manage exits
-        "max_hold_hours": 4,                # Was 2h — need time to capture real moves
-        # Signal quality gates — SHIB has no Deribit data, meme coin needs real signal
-        "require_funding_data": True,       # Don't enter on UNKNOWN funding regime
-        "allow_base_long": False,           # Disable ALTCOIN_BASE_LONG catchall
-        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
-        "use_momentum_filter": True,        # Block entries during price downtrends
-        "min_scans_between_trades": 10,     # 10 min between entries (1-min scans)
-        "max_positions": 2,                 # Was 5 — reduce concurrent exposure
+        # SHIB exit params: moderate hold targeting 2-3% meme swings
+        "no_loss_activation_pct": 1.5,      # 1.5% activation
+        "no_loss_trail_distance_pct": 1.0,  # 1% trail
+        "max_unrealized_loss_pct": 1.5,     # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,   # Take profit at 3%
+        "max_hold_hours": 8,                # 8h max
+        # Signal quality gates
+        "require_funding_data": True,
+        "allow_base_long": False,
+        "use_eth_leader": True,
+        "use_momentum_filter": True,
+        "min_scans_between_trades": 10,     # 10 min cooldown
+        "max_positions": 1,
     },
     "DOGE-USD": {
         "symbol": "DOGE",
         "display_name": "Dogecoin",
         "starting_capital": 1000.0,
-        # live_capital removed — executor reads real Coinbase USD balance at order time
         "default_quantity": 500.0,
         "min_order": 1.0,
         "max_per_trade": 50000.0,
         "min_notional_usd": 2.0,
         "quantity_decimals": 0,
         "price_decimals": 4,
-        # DOGE exit params: widened to match altcoin reality — 0.25% trail was noise-level
-        "no_loss_activation_pct": 0.8,     # Was 0.3% — trail activated on noise
-        "no_loss_trail_distance_pct": 0.75, # Was 0.25% — DOGE swings 0.3%+ constantly
-        "max_unrealized_loss_pct": 1.0,    # Was 0.75% — normal volatility triggered this
-        "no_loss_profit_target_pct": 0.0,  # Disabled — let trail manage
-        "max_hold_hours": 4,              # Was 2h — need to capture multi-hour trends
-        # Signal quality gates — require funding data like XRP/SHIB for signal consistency
-        "require_funding_data": True,       # Was False — inconsistent with other alts, DOGE entered on zero signal
-        "allow_base_long": False,           # Was True — disabled to prevent entries with no real signal
-        "use_eth_leader": True,             # Use ETH GEX signal as directional compass
-        "use_momentum_filter": True,        # Block entries during price downtrends
-        "min_scans_between_trades": 5,      # 5 min between entries (1-min scans)
-        "max_positions": 3,                 # Was 5 — slight reduction
+        # DOGE exit params: moderate hold targeting 2-3% moves
+        "no_loss_activation_pct": 1.5,     # 1.5% activation
+        "no_loss_trail_distance_pct": 1.0, # 1% trail
+        "max_unrealized_loss_pct": 1.5,    # Cut losers at 1.5%
+        "no_loss_profit_target_pct": 3.0,  # Take profit at 3%
+        "max_hold_hours": 8,               # 8h max
+        # Signal quality gates
+        "require_funding_data": True,
+        "allow_base_long": False,
+        "use_eth_leader": True,
+        "use_momentum_filter": True,
+        "min_scans_between_trades": 10,     # 10 min cooldown
+        "max_positions": 1,
     },
     "MSTU-USD": {
         "symbol": "MSTU",
@@ -216,28 +218,42 @@ class AgapeSpotConfig:
     profit_target_pct: float = 50.0
     stop_loss_pct: float = 100.0
     trailing_stop_pct: float = 0.0
-    max_hold_hours: int = 6  # Was 24h — data shows 4-12h trades lose money (56% WR, -$9.95 avg)
+    max_hold_hours: int = 12  # 12h max — capture intraday trends
 
-    # No-Loss Trailing
+    # No-Loss Trailing — defaults (per-ticker overrides in SPOT_TICKERS)
     use_no_loss_trailing: bool = True
-    no_loss_activation_pct: float = 1.5  # Was 1.0% — don't activate trail too early
-    no_loss_trail_distance_pct: float = 1.25  # Was 0.75% — was giving back exactly 0.75% every trade
+    no_loss_activation_pct: float = 2.0   # 2% move before trailing activates
+    no_loss_trail_distance_pct: float = 1.5  # 1.5% trail behind high water mark
     no_loss_emergency_stop_pct: float = 5.0
-    max_unrealized_loss_pct: float = 1.5  # Was 3.0% — losses were $30 vs $9 avg win, need 77% WR to break even
-    no_loss_profit_target_pct: float = 0.0
+    max_unrealized_loss_pct: float = 1.5  # Cut losers at 1.5%
+    no_loss_profit_target_pct: float = 3.0  # Take profit at 3%
+
+    # Minimum hold time: no exits allowed before this many minutes UNLESS
+    # RSI > rsi_exit_override_threshold (overbought spike = take profit immediately).
+    # Prevents noise-exits where a normal 5-min dip triggers MAX_LOSS before
+    # the trade has time to develop.
+    min_hold_minutes: float = 10.0
+    rsi_exit_override_threshold: float = 70.0  # RSI above this bypasses min hold
 
     # SAR disabled for long-only (can't reverse to short)
     use_sar: bool = False
 
-    # Signal thresholds
+    # Signal thresholds — LOW minimum to allow more trades with larger positions
     min_confidence: str = "LOW"
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
 
-    # Prophet
+    # Prophet — DISABLED: designed for equity options, not crypto microstructure
     require_prophet_approval: bool = False
     min_prophet_win_probability: float = 0.35
+
+    # Limit orders: use limit orders instead of market orders to reduce fees
+    # Maker fee (0.4%) vs Taker fee (0.6%) = 33% fee reduction per side
+    # Round-trip: 0.8% (limit) vs 1.2% (market) = 33% total fee savings
+    use_limit_orders: bool = True
+    limit_order_offset_pct: float = 0.02  # Place limit 0.02% inside spread (aggressive fill)
+    limit_order_timeout_seconds: int = 30  # Cancel and retry as market if not filled in 30s
 
     # Cooldown
     cooldown_minutes: int = 0  # Cooldowns removed — trade freely
@@ -270,6 +286,17 @@ class AgapeSpotConfig:
     # where avg_trade_magnitude = (avg_win + |avg_loss|) / 2.
     choppy_ev_threshold_pct: float = 0.10  # 10% of avg trade magnitude
     choppy_ev_threshold_floor: float = 0.02  # Minimum $0.02 — never gate on dust
+
+    # RSI oversold entry in choppy markets:
+    # When market is range-bound and RSI drops below threshold, this is a
+    # high-conviction mean-reversion entry.  Instead of requiring the elevated
+    # choppy EV threshold, use the relaxed EV > 0 gate.  Trailing stop
+    # catches the bounce back to mean.
+    enable_rsi_choppy_override: bool = True
+    rsi_oversold_threshold: float = 30.0   # RSI below this = oversold entry
+    rsi_overbought_threshold: float = 72.0 # RSI above this = take profit exit (was 67 — exiting too early on normal bounces)
+    rsi_lookback_periods: int = 14         # Standard RSI lookback
+    rsi_oversold_size_mult: float = 1.0    # No size boost at RSI < 30 (was 1.5x — amplified losses when reversion failed)
 
     def is_live(self, ticker: str) -> bool:
         """Return True if *ticker* should execute real Coinbase orders."""
@@ -438,11 +465,12 @@ class AgapeSpotSignal:
     oracle_confidence: float = 0.0
     oracle_top_factors: List[str] = field(default_factory=list)
 
-    # Volatility context (ATR + chop detection)
+    # Volatility context (ATR + chop detection + RSI)
     atr: Optional[float] = None           # Average True Range ($)
     atr_pct: Optional[float] = None       # ATR as % of price
     chop_index: Optional[float] = None    # 0=trending, 1=choppy
     volatility_regime: str = "UNKNOWN"    # TRENDING / CHOPPY / UNKNOWN
+    rsi: Optional[float] = None           # RSI(14) on 5-min candles, 0-100
 
     # Trade parameters - LONG ONLY
     entry_price: Optional[float] = None
@@ -488,6 +516,7 @@ class AgapeSpotSignal:
             "atr_pct": self.atr_pct,
             "chop_index": self.chop_index,
             "volatility_regime": self.volatility_regime,
+            "rsi": self.rsi,
             "entry_price": self.entry_price,
             "stop_loss": self.stop_loss,
             "take_profit": self.take_profit,
