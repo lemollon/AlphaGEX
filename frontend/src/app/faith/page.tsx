@@ -643,9 +643,10 @@ export default function FaithPage() {
               {!performance || performance.total_trades === 0 ? (
                 <div className="bg-background-card border border-gray-800 rounded-lg p-12 text-center">
                   <Sword className="w-10 h-10 text-text-secondary mx-auto mb-4 opacity-50" />
-                  <h3 className="text-lg font-medium text-text-secondary mb-2">No Trades Yet</h3>
+                  <h3 className="text-lg font-medium text-text-secondary mb-2">No Closed Trades Yet</h3>
                   <p className="text-sm text-text-secondary">
-                    FAITH hasn&apos;t placed any trades yet. The bot is scanning for 2DTE Iron Condor opportunities.
+                    Performance stats will appear here once FAITH closes its first trade.
+                    {(status?.open_positions ?? 0) > 0 && ' There is an open position being monitored above.'}
                   </p>
                 </div>
               ) : (
@@ -675,9 +676,10 @@ export default function FaithPage() {
               {trades.length === 0 ? (
                 <div className="bg-background-card border border-gray-800 rounded-lg p-12 text-center">
                   <Activity className="w-10 h-10 text-text-secondary mx-auto mb-4 opacity-50" />
-                  <h3 className="text-lg font-medium text-text-secondary mb-2">No Trade History</h3>
+                  <h3 className="text-lg font-medium text-text-secondary mb-2">No Closed Trades Yet</h3>
                   <p className="text-sm text-text-secondary">
-                    Closed trades will appear here once FAITH completes its first trade.
+                    Closed trades will appear here once an open position hits its profit target, stop loss, or EOD cutoff.
+                    {(status?.open_positions ?? 0) > 0 && ' There is an open position being monitored above.'}
                   </p>
                 </div>
               ) : (
