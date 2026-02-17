@@ -3258,6 +3258,36 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in JUBILEE IC MTM Update: {str(e)}")
             logger.error(traceback.format_exc())
 
+    def scheduled_jubilee_ic_equity_snapshot(self):
+        """
+        JUBILEE IC Equity Snapshot - runs every 5 minutes during market hours.
+
+        Records periodic equity snapshots for the intraday equity curve chart.
+        Without this, the chart only gets data points when trades open/close,
+        which can leave the chart empty on quiet days.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        if not self.is_market_open():
+            return
+
+        if not self.jubilee_ic_trader:
+            return
+
+        try:
+            from trading.jubilee.db import JubileeDatabase
+            db = JubileeDatabase()
+            success = db.record_ic_equity_snapshot()
+
+            if success:
+                logger.info(f"JUBILEE IC: Equity snapshot recorded at {now.strftime('%H:%M:%S')}")
+            else:
+                logger.warning(f"JUBILEE IC: Failed to record equity snapshot")
+
+        except Exception as e:
+            logger.error(f"ERROR in JUBILEE IC Equity Snapshot: {str(e)}")
+            logger.error(traceback.format_exc())
+
     def scheduled_watchtower_logic(self):
         """
         WATCHTOWER (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
@@ -5983,9 +6013,24 @@ class AutonomousTraderScheduler:
             )
             logger.info("✅ JUBILEE IC job scheduled (every 5 min - MATCHES ANCHOR)")
 
-            # JUBILEE IC MTM: Now event-driven (on open/close) to match SAMSON
+            # JUBILEE IC MTM: Event-driven (on open/close) to match SAMSON
             # No separate scheduled MTM job needed
             logger.info("✅ JUBILEE IC MTM is event-driven (on trade open/close, matches SAMSON)")
+
+            # JUBILEE IC Equity Snapshots - runs every 5 minutes during market hours
+            # Records periodic equity snapshots so the intraday chart always has data,
+            # even when no trades are opened or closed during the session
+            self.scheduler.add_job(
+                self.scheduled_jubilee_ic_equity_snapshot,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='jubilee_ic_equity_snapshot',
+                name='JUBILEE IC - Equity Snapshot (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ JUBILEE IC equity snapshot job scheduled (every 5 min)")
         else:
             logger.warning("⚠️ JUBILEE IC not available - IC trading with borrowed capital disabled")
 
