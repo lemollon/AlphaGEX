@@ -44,6 +44,7 @@ class BotName(Enum):
     SAMSON = "SAMSON"
     ANCHOR = "ANCHOR"
     VALOR = "VALOR"
+    FAITH = "FAITH"
     AGAPE = "AGAPE"
 
 
@@ -163,6 +164,7 @@ class BotMetricsService:
         BotName.SAMSON: 200000,
         BotName.ANCHOR: 200000,
         BotName.VALOR: 100000,  # MES Futures paper trading
+        BotName.FAITH: 5000,       # 2DTE Paper Iron Condor
         BotName.AGAPE: 5000,       # ETH Micro Futures paper trading
     }
 
@@ -198,6 +200,11 @@ class BotMetricsService:
             'closed_trades': 'valor_closed_trades',
             'snapshots': 'valor_equity_snapshots',
             'config_key': 'valor_starting_capital',
+        },
+        BotName.FAITH: {
+            'positions': 'faith_positions',
+            'snapshots': 'faith_equity_snapshots',
+            'config_key': 'faith_starting_capital',
         },
         BotName.AGAPE: {
             'positions': 'agape_positions',
