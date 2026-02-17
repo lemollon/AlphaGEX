@@ -1292,7 +1292,12 @@ class ValorDatabase:
             return False
 
     def get_equity_curve(self, days: int = 30, ticker: Optional[str] = None) -> List[Dict]:
-        """Get equity curve data, optionally filtered by ticker."""
+        """Get equity curve data from snapshots, optionally filtered by ticker.
+
+        When ticker is specified: return that ticker's snapshots directly.
+        When ticker is None (ALL): aggregate per-ticker snapshots by minute
+        into combined portfolio equity.
+        """
         data = []
         try:
             with db_connection() as conn:
@@ -1307,11 +1312,18 @@ class ValorDatabase:
                         ORDER BY snapshot_time ASC
                     """, (days, ticker))
                 else:
+                    # ALL view: aggregate per-ticker snapshots by minute
                     c.execute("""
-                        SELECT snapshot_time, account_balance, unrealized_pnl,
-                               realized_pnl_today, open_positions, ticker
+                        SELECT
+                            date_trunc('minute', snapshot_time) as snapshot_time,
+                            SUM(account_balance) as account_balance,
+                            SUM(COALESCE(unrealized_pnl, 0)) as unrealized_pnl,
+                            SUM(COALESCE(realized_pnl_today, 0)) as realized_pnl_today,
+                            SUM(COALESCE(open_positions, 0)) as open_positions,
+                            NULL as ticker
                         FROM valor_equity_snapshots
                         WHERE snapshot_time >= NOW() - INTERVAL '%s days'
+                        GROUP BY date_trunc('minute', snapshot_time)
                         ORDER BY snapshot_time ASC
                     """, (days,))
 
@@ -1329,23 +1341,48 @@ class ValorDatabase:
 
         return data
 
-    def get_intraday_equity(self) -> List[Dict]:
-        """Get today's equity snapshots with equity field for frontend compatibility"""
+    def get_intraday_equity(self, ticker: Optional[str] = None) -> List[Dict]:
+        """Get today's equity snapshots with equity field for frontend compatibility.
+
+        When ticker is specified: return snapshots for that instrument only.
+        When ticker is None (ALL): aggregate per-ticker snapshots by minute
+        into a combined portfolio equity view.
+        """
         data = []
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                # Include equity as alias for account_balance + unrealized_pnl
-                # Frontend expects 'equity' field for chart rendering
-                c.execute("""
-                    SELECT snapshot_time, account_balance, unrealized_pnl,
-                           realized_pnl_today, open_positions, trades_today,
-                           (account_balance + COALESCE(unrealized_pnl, 0)) as equity
-                    FROM valor_equity_snapshots
-                    WHERE DATE(snapshot_time AT TIME ZONE 'America/Chicago') =
-                          DATE(NOW() AT TIME ZONE 'America/Chicago')
-                    ORDER BY snapshot_time ASC
-                """)
+                if ticker:
+                    # Per-instrument: return snapshots for this ticker only
+                    c.execute("""
+                        SELECT snapshot_time, account_balance, unrealized_pnl,
+                               realized_pnl_today, open_positions, trades_today,
+                               (account_balance + COALESCE(unrealized_pnl, 0)) as equity
+                        FROM valor_equity_snapshots
+                        WHERE DATE(snapshot_time AT TIME ZONE 'America/Chicago') =
+                              DATE(NOW() AT TIME ZONE 'America/Chicago')
+                          AND ticker = %s
+                        ORDER BY snapshot_time ASC
+                    """, (ticker,))
+                else:
+                    # ALL view: aggregate per-ticker snapshots by minute bucket
+                    # Each ticker saves its own snapshot per scan cycle; sum them
+                    # to get combined portfolio equity per time period.
+                    c.execute("""
+                        SELECT
+                            date_trunc('minute', snapshot_time) as snapshot_time,
+                            SUM(account_balance) as account_balance,
+                            SUM(COALESCE(unrealized_pnl, 0)) as unrealized_pnl,
+                            SUM(COALESCE(realized_pnl_today, 0)) as realized_pnl_today,
+                            SUM(COALESCE(open_positions, 0)) as open_positions,
+                            SUM(COALESCE(trades_today, 0)) as trades_today,
+                            SUM(account_balance + COALESCE(unrealized_pnl, 0)) as equity
+                        FROM valor_equity_snapshots
+                        WHERE DATE(snapshot_time AT TIME ZONE 'America/Chicago') =
+                              DATE(NOW() AT TIME ZONE 'America/Chicago')
+                        GROUP BY date_trunc('minute', snapshot_time)
+                        ORDER BY snapshot_time ASC
+                    """)
 
                 rows = c.fetchall()
                 columns = [desc[0] for desc in c.description]

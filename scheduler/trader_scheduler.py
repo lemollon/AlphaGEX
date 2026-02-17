@@ -254,6 +254,15 @@ except ImportError:
     AgapeShibPerpTrader = None
     print("Warning: AGAPE-SHIB-PERP not available. SHIB perpetual trading will be disabled.")
 
+# Import FAITH (2DTE Paper Iron Condor)
+try:
+    from trading.faith.trader import FaithTrader
+    FAITH_AVAILABLE = True
+except ImportError:
+    FAITH_AVAILABLE = False
+    FaithTrader = None
+    print("Warning: FAITH not available. 2DTE paper IC trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -658,6 +667,17 @@ class AutonomousTraderScheduler:
                 logger.warning(f"SAMSON initialization failed: {e}")
                 self.samson_trader = None
 
+        # FAITH - 2DTE Paper Iron Condor (SPY)
+        # Paper-only bot: real Tradier data, simulated fills, $5K capital
+        self.faith_trader = None
+        if FAITH_AVAILABLE:
+            try:
+                self.faith_trader = FaithTrader()
+                logger.info(f"✅ FAITH initialized (2DTE Paper Iron Condor, PAPER mode)")
+            except Exception as e:
+                logger.warning(f"FAITH initialization failed: {e}")
+                self.faith_trader = None
+
         # JUBILEE - Box Spread Synthetic Borrowing
         # Generates cash through box spreads to fund IC bot volume scaling
         # PAPER mode: Simulated trades for testing the strategy
@@ -848,6 +868,7 @@ class AutonomousTraderScheduler:
         self.last_anchor_check = None
         self.last_gideon_check = None
         self.last_samson_check = None
+        self.last_faith_check = None
         self.last_watchtower_check = None
         self.last_valor_check = None
         self.last_error = None
@@ -858,6 +879,7 @@ class AutonomousTraderScheduler:
         self.anchor_execution_count = 0
         self.gideon_execution_count = 0
         self.samson_execution_count = 0
+        self.faith_execution_count = 0
         self.watchtower_execution_count = 0
         self.valor_execution_count = 0
 
@@ -2337,6 +2359,93 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in SAMSON EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"=" * 80)
+
+    # ========================================================================
+    # FAITH - 2DTE Paper Iron Condor (SPY)
+    # ========================================================================
+
+    def scheduled_faith_logic(self):
+        """
+        FAITH (2DTE Paper Iron Condor) trading logic - runs every 5 minutes during market hours
+
+        Paper-only bot: real Tradier data, simulated fills, $5K capital.
+        FAITH's run_cycle() handles market hours, position management,
+        and new trade entry internally.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        self.last_faith_check = now
+
+        logger.info(f"=" * 80)
+        logger.info(f"FAITH (2DTE Paper IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.faith_trader:
+            logger.warning("FAITH trader not available - skipping")
+            self._save_heartbeat('FAITH', 'UNAVAILABLE')
+            return
+
+        try:
+            result = self.faith_trader.run_cycle()
+
+            action = result.get('action', 'none')
+            traded = result.get('traded', False)
+            managed = result.get('positions_managed', 0)
+
+            logger.info(f"FAITH cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW PAPER TRADE OPENED")
+            if managed > 0:
+                logger.info(f"  Positions managed: {managed}")
+
+            self.faith_execution_count += 1
+            self._save_heartbeat('FAITH', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.faith_execution_count,
+                'traded': traded,
+                'action': action
+            })
+
+            logger.info(f"FAITH scan #{self.faith_execution_count} completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in FAITH: {str(e)}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('FAITH', 'ERROR', {'error': str(e)})
+            logger.info(f"=" * 80)
+
+    def scheduled_faith_eod_logic(self):
+        """
+        FAITH End-of-Day processing - runs daily at 3:50 PM CT
+
+        FAITH uses 3:45 PM ET (2:45 PM CT) EOD cutoff. The regular 5-min
+        cycle handles closing at that cutoff. This EOD job at 3:50 PM CT is
+        a safety net to force-close any positions that slipped through.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"FAITH EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.faith_trader:
+            logger.warning("FAITH trader not available - skipping EOD processing")
+            return
+
+        try:
+            # Run a close-only cycle to catch any remaining positions
+            result = self.faith_trader.run_cycle(close_only=True)
+            managed = result.get('positions_managed', 0)
+
+            if managed > 0:
+                logger.info(f"FAITH EOD: Closed {managed} remaining position(s)")
+            else:
+                logger.info("FAITH EOD: No positions to process")
+
+            logger.info(f"FAITH EOD processing completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in FAITH EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
@@ -5429,6 +5538,45 @@ class AutonomousTraderScheduler:
             logger.info("✅ SAMSON EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ SAMSON not available - aggressive SPX IC trading disabled")
+
+        # =================================================================
+        # FAITH JOB: 2DTE Paper Iron Condor - runs every 5 minutes
+        # Paper-only bot with real Tradier data, $5K simulated capital
+        # Market hours are checked inside the job (FAITH's run_cycle handles it)
+        # =================================================================
+        if self.faith_trader:
+            self.scheduler.add_job(
+                self.scheduled_faith_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='faith_trading',
+                name='FAITH - 2DTE Paper Iron Condor (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ FAITH job scheduled (every 5 min, checks market hours internally)")
+
+            # =================================================================
+            # FAITH EOD JOB: Safety net close - runs at 3:50 PM CT
+            # FAITH's EOD cutoff is 3:45 PM ET (2:45 PM CT). The 5-min cycle
+            # handles it, but this is a safety net at 3:50 PM CT.
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_faith_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,       # 3:00 PM CT
+                    minute=50,     # 3:50 PM CT - safety net after EOD cutoff
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='faith_eod',
+                name='FAITH - EOD Safety Net Close',
+                replace_existing=True
+            )
+            logger.info("✅ FAITH EOD job scheduled (3:50 PM CT daily)")
+        else:
+            logger.warning("⚠️ FAITH not available - 2DTE paper IC trading disabled")
 
         # =================================================================
         # VALOR JOB: MES Futures Scalping - runs every 1 minute (24/5)

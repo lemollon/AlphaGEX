@@ -1663,8 +1663,19 @@ class ValorTrader:
         positions: List[FuturesPosition],
         ticker: str = "MES"
     ) -> None:
-        """Save equity snapshot for equity curve (per-ticker)"""
+        """Save equity snapshot for equity curve (per-ticker).
+
+        account_balance is the combined paper account balance — we compute
+        per-ticker equity from starting_capital + realized P&L for this ticker.
+        """
         try:
+            # Per-ticker equity: starting_capital + realized P&L for this ticker
+            ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+            starting_cap = ticker_cfg.get("starting_capital", 100000.0)
+            ticker_stats = self.db.get_ticker_performance_stats([ticker])
+            realized_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
+            ticker_equity = starting_cap + realized_pnl
+
             # Get current quote for unrealized P&L (for this ticker)
             quote = self.executor.get_mes_quote(ticker=ticker)
             current_price = quote.get("last", 0) if quote else 0
@@ -1678,7 +1689,7 @@ class ValorTrader:
             summary = self.db.get_daily_summary()
 
             self.db.save_equity_snapshot(
-                account_balance=account_balance,
+                account_balance=ticker_equity,
                 unrealized_pnl=unrealized_pnl,
                 realized_pnl_today=summary.realized_pnl,
                 open_positions=len([p for p in positions if p.is_open]),
@@ -2021,20 +2032,47 @@ class ValorTrader:
 
         # Add paper account info if available
         if paper_account:
-            starting_cap = paper_account.get('starting_capital', 500000) or 500000  # Ensure non-zero
-            cumulative_pnl = paper_account.get('cumulative_pnl', 0)
-            status_dict["paper_account"] = {
-                "starting_capital": paper_account.get('starting_capital', 0),
-                "current_balance": paper_account.get('current_balance', 0),
-                "cumulative_pnl": cumulative_pnl,
-                "total_trades": paper_account.get('total_trades', 0),
-                "margin_used": paper_account.get('margin_used', 0),
-                "margin_available": paper_account.get('margin_available', 0),
-                "high_water_mark": paper_account.get('high_water_mark', 0),
-                "max_drawdown": paper_account.get('max_drawdown', 0),
-                # BUG FIX: Protect against division by zero
-                "return_pct": (cumulative_pnl / starting_cap) * 100 if starting_cap > 0 else 0.0
-            }
+            if ticker:
+                # Per-instrument view: compute stats from closed trades for this ticker only
+                from trading.valor.models import FUTURES_TICKERS
+                ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+                starting_cap = ticker_cfg.get("starting_capital", 100000.0)
+                ticker_stats = self.db.get_ticker_performance_stats([ticker])
+                ticker_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
+                ticker_trades = ticker_stats.get(ticker, {}).get("total_trades", 0)
+                # Include unrealized P&L from open positions for this ticker
+                unrealized = sum(
+                    getattr(p, 'unrealized_pnl', 0) or 0
+                    for p in positions
+                )
+                cumulative_pnl = ticker_pnl + unrealized
+                status_dict["paper_account"] = {
+                    "starting_capital": starting_cap,
+                    "current_balance": starting_cap + cumulative_pnl,
+                    "cumulative_pnl": cumulative_pnl,
+                    "total_trades": ticker_trades,
+                    "margin_used": paper_account.get('margin_used', 0),
+                    "margin_available": paper_account.get('margin_available', 0),
+                    "high_water_mark": paper_account.get('high_water_mark', 0),
+                    "max_drawdown": paper_account.get('max_drawdown', 0),
+                    "return_pct": (cumulative_pnl / starting_cap) * 100 if starting_cap > 0 else 0.0,
+                    "ticker_filter": ticker,
+                }
+            else:
+                # ALL instruments view: use combined paper account
+                starting_cap = paper_account.get('starting_capital', 500000) or 500000  # Ensure non-zero
+                cumulative_pnl = paper_account.get('cumulative_pnl', 0)
+                status_dict["paper_account"] = {
+                    "starting_capital": paper_account.get('starting_capital', 0),
+                    "current_balance": paper_account.get('current_balance', 0),
+                    "cumulative_pnl": cumulative_pnl,
+                    "total_trades": paper_account.get('total_trades', 0),
+                    "margin_used": paper_account.get('margin_used', 0),
+                    "margin_available": paper_account.get('margin_available', 0),
+                    "high_water_mark": paper_account.get('high_water_mark', 0),
+                    "max_drawdown": paper_account.get('max_drawdown', 0),
+                    "return_pct": (cumulative_pnl / starting_cap) * 100 if starting_cap > 0 else 0.0,
+                }
 
         return status_dict
 
@@ -2052,9 +2090,9 @@ class ValorTrader:
         """Reset paper trading account with new starting capital"""
         return self.db.reset_paper_account(starting_capital)
 
-    def get_intraday_equity(self) -> List[Dict]:
-        """Get today's equity curve"""
-        return self.db.get_intraday_equity()
+    def get_intraday_equity(self, ticker: Optional[str] = None) -> List[Dict]:
+        """Get today's equity curve, optionally filtered by ticker"""
+        return self.db.get_intraday_equity(ticker=ticker)
 
     def get_closed_trades(self, limit: int = 50, ticker: Optional[str] = None) -> List[Dict]:
         """Get recent closed trades, optionally filtered by ticker"""

@@ -277,12 +277,16 @@ export default function ValorPage() {
   const positions = positionsData?.positions || status?.positions?.positions || []
   const performance = status?.performance || {}
 
-  // SINGLE SOURCE OF TRUTH for starting capital ($100K per instrument)
-  // Priority: unified metrics -> paper account -> config -> default
-  const startingCapital = unifiedMetrics?.starting_capital ??
-    status?.paper_account?.starting_capital ??
-    status?.config?.capital ??
-    100000
+  // SINGLE SOURCE OF TRUTH for starting capital
+  // Per-ticker: $100K per instrument (from backend paper_account when ticker is filtered)
+  // ALL view: N instruments × $100K (derived from VALOR_TICKERS, excluding 'ALL')
+  // When a ticker is selected, paper_account already has per-ticker values from backend
+  // When ALL is selected, use unified metrics or paper_account combined values
+  const CAPITAL_PER_INSTRUMENT = 100000
+  const ACTIVE_INSTRUMENT_COUNT = VALOR_TICKERS.filter(t => t !== 'ALL').length
+  const startingCapital = selectedTicker
+    ? (status?.paper_account?.starting_capital ?? CAPITAL_PER_INSTRUMENT)
+    : (unifiedMetrics?.starting_capital ?? status?.paper_account?.starting_capital ?? CAPITAL_PER_INSTRUMENT * ACTIVE_INSTRUMENT_COUNT)
   const scanToday = scanActivityData?.today_summary || {}
   const config = status?.config || {}
   const winTracker = status?.win_tracker || {}
@@ -602,10 +606,10 @@ export default function ValorPage() {
                   <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
                     <div className="text-sm text-gray-400">Current Balance</div>
                     <div className={`text-2xl font-bold mt-1 ${
-                      (paperAccount.current_balance || 0) >= startingCapital
+                      (paperAccount.current_balance ?? 0) >= startingCapital
                         ? 'text-green-400' : 'text-red-400'
                     }`}>
-                      ${(paperAccount?.current_balance || startingCapital).toLocaleString()}
+                      ${(paperAccount?.current_balance ?? startingCapital).toLocaleString()}
                     </div>
                   </div>
                   <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-4">
@@ -718,8 +722,8 @@ export default function ValorPage() {
                   <div className="h-64 flex items-center justify-center text-gray-500">
                     <div className="text-center">
                       <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p>No equity data for {selectedTimeframe.label}</p>
-                      <p className="text-xs mt-1">Data will appear after trades are executed</p>
+                      <p>No equity data{selectedTicker ? ` for ${selectedTicker}` : ''} ({selectedTimeframe.label})</p>
+                      <p className="text-xs mt-1">{selectedTicker ? `${selectedTicker} equity snapshots will appear after trades are executed for this instrument` : 'Data will appear after trades are executed'}</p>
                     </div>
                   </div>
                 )}
