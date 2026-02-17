@@ -20,7 +20,7 @@ async function fetchApi<T>(endpoint: string): Promise<T | null> {
     const res = await fetch(`${API_URL}${endpoint}`)
     if (!res.ok) return null
     const json = await res.json()
-    return json.data ?? json
+    return 'data' in json ? json.data : json
   } catch {
     return null
   }
