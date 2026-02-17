@@ -40,6 +40,16 @@ export const BOT_SCRIPTURES: Record<string, BotScripture> = {
   },
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // FAITH (2DTE Paper IC - Trust, Confidence in the Unseen)
+  // ─────────────────────────────────────────────────────────────────────────────
+  FAITH: {
+    displayName: 'FAITH',
+    verse: '"Now faith is confidence in what we hope for and assurance about what we do not see."',
+    reference: 'Hebrews 11:1',
+    why: 'Paper trading requires faith—trusting the strategy with simulated capital before committing real money. Like faith that acts on conviction before seeing results, this bot proves the 2DTE Iron Condor thesis through disciplined paper execution.',
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // ATHENA → SOLOMON (Directional Spreads - Wisdom, Strategic Decisions)
   // ─────────────────────────────────────────────────────────────────────────────
   ATHENA: {
@@ -294,6 +304,7 @@ export const ADVISOR_SCRIPTURES: Record<string, BotScripture> = {
 export const BOT_DISPLAY_NAMES = {
   // New biblical names (used in navigation and UI)
   FORTRESS: BOT_SCRIPTURES.ARES.displayName,
+  FAITH: BOT_SCRIPTURES.FAITH.displayName,
   SOLOMON: BOT_SCRIPTURES.ATHENA.displayName,
   GIDEON: BOT_SCRIPTURES.ICARUS.displayName,
   ANCHOR: BOT_SCRIPTURES.PEGASUS.displayName,

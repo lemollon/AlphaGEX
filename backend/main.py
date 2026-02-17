@@ -55,6 +55,7 @@ from backend.api.routes import (
     volatility_surface_routes,  # Volatility surface analysis (previously orphaned)
     zero_dte_backtest_routes,  # 0DTE Iron Condor hybrid scaling backtest
     fortress_routes,  # FORTRESS Aggressive Iron Condor bot endpoints
+    faith_routes,  # FAITH 2DTE Paper Iron Condor bot endpoints
     solomon_routes,  # SOLOMON Directional Spread bot endpoints
     gideon_routes,  # GIDEON Aggressive Directional Spread bot endpoints
     anchor_routes,  # ANCHOR SPX Iron Condor bot endpoints
@@ -325,6 +326,7 @@ app.include_router(regime_routes.router)
 app.include_router(volatility_surface_routes.router)
 app.include_router(zero_dte_backtest_routes.router)
 app.include_router(fortress_routes.router)
+app.include_router(faith_routes.router)
 app.include_router(solomon_routes.router)
 app.include_router(gideon_routes.router)
 app.include_router(anchor_routes.router)
