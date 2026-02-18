@@ -198,8 +198,10 @@ export default function GexProfilePage() {
   const [chartView, setChartView] = useState<ChartView>('intraday')
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [nextCandleCountdown, setNextCandleCountdown] = useState('')
-  const [dataSource, setDataSource] = useState<string | null>(null)
+  const [dataSource, setDataSource] = useState<string>('tradier_live')
+  const [sourceLabel, setSourceLabel] = useState<string | null>(null)
   const [isLive, setIsLive] = useState(false)
+  const [sessionDate, setSessionDate] = useState<string | null>(null)
 
   // ── Fetch ───────────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym: string, clearFirst = false) => {
@@ -213,7 +215,8 @@ export default function GexProfilePage() {
       const result = res.data
       if (result?.success) {
         setData(result.data)
-        setDataSource(result.source || 'tradier')
+        setDataSource(result.source || 'tradier_live')
+        setSourceLabel(result.source_label || null)
         setLastUpdated(new Date())
       } else if (result?.data_unavailable) {
         setError(result.message || 'Data unavailable — market may be closed')
@@ -227,7 +230,7 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  const fetchIntradayTicks = useCallback(async (sym: string, clearFirst = false) => {
+  const fetchIntradayTicks = useCallback(async (sym: string, clearFirst = false, useFallback = false) => {
     try {
       if (clearFirst) {
         setIntradayTicks([]) // Only clear on symbol change
@@ -235,14 +238,17 @@ export default function GexProfilePage() {
       }
       setIntradayLoading(true)
       const [ticksRes, barsRes] = await Promise.all([
-        apiClient.getWatchtowerIntradayTicks(sym, 5),
-        apiClient.getWatchtowerIntradayBars(sym, '5min'),
+        apiClient.getWatchtowerIntradayTicks(sym, 5, useFallback || undefined),
+        apiClient.getWatchtowerIntradayBars(sym, '5min', useFallback || undefined),
       ])
       if (ticksRes.data?.success && ticksRes.data?.data?.ticks) {
         setIntradayTicks(ticksRes.data.data.ticks)
       }
       if (barsRes.data?.success && barsRes.data?.data?.bars) {
         setIntradayBars(barsRes.data.data.bars)
+        if (barsRes.data.data.session_date) {
+          setSessionDate(barsRes.data.data.session_date)
+        }
       }
     } catch (err) {
       console.error('Intraday ticks error:', err)
@@ -263,10 +269,10 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  // Initial load + symbol change (clear stale data)
+  // Initial load + symbol change (clear stale data, use fallback for instant render)
   useEffect(() => {
     fetchGexData(symbol, true)
-    fetchIntradayTicks(symbol, true)
+    fetchIntradayTicks(symbol, true, true) // fallback=true: always show data on load
   }, [symbol, fetchGexData, fetchIntradayTicks])
 
   // Auto-refresh during market hours
@@ -594,7 +600,13 @@ export default function GexProfilePage() {
                     </span>
                   )}
                   {chartView === 'intraday' && !isLive && intradayBars.length > 0 && (
-                    <span className="ml-2 text-xs text-gray-500">Market Closed</span>
+                    <span className="ml-2 text-xs text-gray-400">
+                      Market Closed
+                      {sessionDate && <span className="text-gray-500"> · Showing {sessionDate} session</span>}
+                      {dataSource === 'trading_volatility' && (
+                        <span className="text-purple-400"> · Next-day GEX via TradingVolatility</span>
+                      )}
+                    </span>
                   )}
                   {chartView === 'intraday' && nextCandleCountdown && (
                     <span className="ml-3 text-xs font-mono bg-gray-900 border border-gray-600 rounded px-2 py-0.5 text-cyan-400">
@@ -883,11 +895,11 @@ export default function GexProfilePage() {
                         <span className="text-orange-400/50">░ Expected Move</span>
                         <span className="text-gray-700">|</span>
                         {isLive
-                          ? <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />LIVE</span>
+                          ? <span className="flex items-center gap-1 text-green-400"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />LIVE</span>
                           : <span className="text-gray-500">Market Closed</span>
                         }
                         <span className="text-gray-700">|</span>
-                        <span className="text-gray-500">{intradayBars.length} bars today</span>
+                        <span className="text-gray-500">{intradayBars.length} bars{sessionDate ? ` · ${sessionDate}` : ''}</span>
                       </div>
                     </>
                   )

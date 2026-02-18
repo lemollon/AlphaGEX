@@ -1,3 +1,4 @@
+// DEPRECATED: Not in use. See Plotly-based chart in gex-profile/page.tsx
 'use client'
 
 /**

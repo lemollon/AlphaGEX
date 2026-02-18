@@ -985,10 +985,10 @@ export const apiClient = {
     api.get('/api/watchtower/gamma', { params: { symbol, expiration } }),
   getWatchtowerHistory: (expiration?: string, minutes?: number) =>
     api.get('/api/watchtower/history', { params: { expiration, minutes } }),
-  getWatchtowerIntradayTicks: (symbol?: string, interval?: number) =>
-    api.get('/api/watchtower/intraday-ticks', { params: { symbol, interval } }),
-  getWatchtowerIntradayBars: (symbol?: string, interval?: string) =>
-    api.get('/api/watchtower/intraday-bars', { params: { symbol, interval } }),
+  getWatchtowerIntradayTicks: (symbol?: string, interval?: number, fallback?: boolean) =>
+    api.get('/api/watchtower/intraday-ticks', { params: { symbol, interval, fallback } }),
+  getWatchtowerIntradayBars: (symbol?: string, interval?: string, fallback?: boolean) =>
+    api.get('/api/watchtower/intraday-bars', { params: { symbol, interval, fallback } }),
   getWatchtowerSessionData: (symbol?: string, date?: string) =>
     api.get('/api/watchtower/session-data', { params: { symbol, date } }),
   getWatchtowerProbability: () => api.get('/api/watchtower/probability'),
