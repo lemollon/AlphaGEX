@@ -979,6 +979,40 @@ class LiveChartManager:
 
 live_chart_manager = LiveChartManager()
 
+# ── Shared httpx client (Section 5: avoid creating a new client per call) ──
+_httpx_client = None  # type: ignore
+
+
+async def _get_httpx_client():
+    """Get or create a shared async HTTP client with connection pooling."""
+    global _httpx_client
+    import httpx as _httpx
+    if _httpx_client is None or _httpx_client.is_closed:
+        _httpx_client = _httpx.AsyncClient(
+            timeout=5.0,
+            limits=_httpx.Limits(max_connections=10, max_keepalive_connections=5),
+        )
+    return _httpx_client
+
+# ── GEX level cache (Section 3: decouple DB queries from WS loop) ──
+_gex_level_cache: dict = {}       # symbol -> levels dict
+_gex_level_cache_times: dict = {} # symbol -> unix timestamp
+_GEX_CACHE_TTL = 30               # seconds
+
+
+def _get_cached_gex_levels(symbol: str):
+    import time as _time
+    if symbol in _gex_level_cache and symbol in _gex_level_cache_times:
+        if _time.time() - _gex_level_cache_times[symbol] < _GEX_CACHE_TTL:
+            return _gex_level_cache[symbol]
+    return None
+
+
+def _set_cached_gex_levels(symbol: str, levels: dict):
+    import time as _time
+    _gex_level_cache[symbol] = levels
+    _gex_level_cache_times[symbol] = _time.time()
+
 
 class _LiveCandleTracker:
     """Track the forming candle from quote ticks"""
@@ -1029,19 +1063,13 @@ async def websocket_live_chart(websocket: WebSocket, symbol: str = "SPY"):
     """
     Real-time chart streaming for intraday candlestick + GEX overlays.
 
-    On connect:
-      - Sends session data (historical bars + GEX levels) for instant render
-    During market hours (every ~1.5s):
-      - quote: latest price
-      - candle_update: forming candle OHLC
-      - completed_candle: when a 5-min candle closes
-    Every 30s:
-      - gex_levels: updated flip point, walls, expected move bounds
-    Market closed:
-      - session_data on connect, then keepalive every 60s
+    On connect: session data for instant render.
+    Market hours: ~1.5s fixed-interval tick loop (quote + forming candle),
+      completed candles verified against Tradier timesales (Section 1),
+      GEX levels refreshed by background task every ~30s (Section 3).
+    Market closed: keepalive every 60s.
     """
     import asyncio
-    import httpx
 
     symbol = symbol.upper()
     await live_chart_manager.connect(websocket, symbol)
@@ -1049,6 +1077,9 @@ async def websocket_live_chart(websocket: WebSocket, symbol: str = "SPY"):
     if symbol not in _candle_trackers:
         _candle_trackers[symbol] = _LiveCandleTracker(interval_minutes=5)
     tracker = _candle_trackers[symbol]
+
+    # Section 3: background GEX refresh task, scoped to this connection
+    gex_refresh_task = None
 
     try:
         # --- Send initial session data for instant chart render ---
@@ -1060,12 +1091,35 @@ async def websocket_live_chart(websocket: WebSocket, symbol: str = "SPY"):
             **session_payload,
         })
 
-        tick_count = 0
+        # Section 3: background coroutine refreshes GEX cache every 30s
+        async def _gex_refresh_loop():
+            while True:
+                try:
+                    levels = await _fetch_gex_levels_uncached(symbol)
+                    if levels:
+                        _set_cached_gex_levels(symbol, levels)
+                except Exception as exc:
+                    print(f"GEX refresh error: {exc}")
+                await asyncio.sleep(30)
+
+        gex_refresh_task = asyncio.create_task(_gex_refresh_loop())
+
+        # Also seed cache immediately so first reads don't miss
+        try:
+            seed = await _fetch_gex_levels_uncached(symbol)
+            if seed:
+                _set_cached_gex_levels(symbol, seed)
+        except Exception:
+            pass
+
         while True:
             market_is_open = is_market_open() if is_market_open else False
 
             if market_is_open:
-                # --- Fetch latest quote from Tradier (async) ---
+                # Section 7: record start for fixed-interval sleep
+                loop_start = asyncio.get_event_loop().time()
+
+                # --- Fetch latest quote (shared client) ---
                 quote_data = await _fetch_tradier_quote_async(symbol)
                 if quote_data and quote_data.get("price"):
                     price = quote_data["price"]
@@ -1088,27 +1142,27 @@ async def websocket_live_chart(websocket: WebSocket, symbol: str = "SPY"):
                         "timestamp": now.isoformat(),
                     })
 
-                    # If a candle completed, send it
+                    # Section 1: verify completed candle against Tradier before sending
                     if completed:
+                        verified = await _verify_completed_candle(symbol, completed)
                         await websocket.send_json({
                             "type": "completed_candle",
                             "symbol": symbol,
-                            "candle": completed,
+                            "candle": verified,
                         })
 
-                tick_count += 1
+                # Section 3: read GEX levels from cache (non-blocking)
+                cached_levels = _get_cached_gex_levels(symbol)
+                if cached_levels:
+                    await websocket.send_json({
+                        "type": "gex_levels",
+                        "symbol": symbol,
+                        **cached_levels,
+                    })
 
-                # Every 20 ticks (~30s at 1.5s interval) send GEX level update
-                if tick_count % 20 == 0:
-                    gex_levels = await _fetch_gex_levels(symbol)
-                    if gex_levels:
-                        await websocket.send_json({
-                            "type": "gex_levels",
-                            "symbol": symbol,
-                            **gex_levels,
-                        })
-
-                await asyncio.sleep(1.5)
+                # Section 7: fixed-interval sleep (subtract elapsed time)
+                elapsed = asyncio.get_event_loop().time() - loop_start
+                await asyncio.sleep(max(0.1, 1.5 - elapsed))
             else:
                 # Market closed - keepalive
                 await websocket.send_json({
@@ -1124,54 +1178,125 @@ async def websocket_live_chart(websocket: WebSocket, symbol: str = "SPY"):
         if str(e):
             print(f"Live chart WebSocket error: {e}")
     finally:
+        # Section 5: cancel background task on disconnect
+        if gex_refresh_task and not gex_refresh_task.done():
+            gex_refresh_task.cancel()
+            try:
+                await gex_refresh_task
+            except asyncio.CancelledError:
+                pass
         live_chart_manager.disconnect(websocket, symbol)
 
 
 async def _fetch_tradier_quote_async(symbol: str) -> dict | None:
-    """Fetch latest quote from Tradier using async HTTP"""
+    """Fetch latest quote from Tradier using shared async HTTP client (Section 5)."""
     try:
         from unified_config import APIConfig
         api_key = APIConfig.TRADIER_API_KEY or APIConfig.TRADIER_SANDBOX_API_KEY
         if not api_key:
             return None
 
-        # Determine base URL
         is_sandbox = not APIConfig.TRADIER_API_KEY
         base_url = "https://sandbox.tradier.com" if is_sandbox else "https://api.tradier.com"
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(
-                f"{base_url}/v1/markets/quotes",
-                params={"symbols": symbol, "greeks": "false"},
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Accept": "application/json",
-                },
-            )
-            if resp.status_code != 200:
-                return None
+        client = await _get_httpx_client()
+        resp = await client.get(
+            f"{base_url}/v1/markets/quotes",
+            params={"symbols": symbol, "greeks": "false"},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            },
+        )
+        if resp.status_code != 200:
+            return None
 
-            data = resp.json()
-            quotes = data.get("quotes", {})
-            quote = quotes.get("quote", {})
-            if isinstance(quote, list):
-                quote = quote[0] if quote else {}
+        data = resp.json()
+        quotes = data.get("quotes", {})
+        quote = quotes.get("quote", {})
+        if isinstance(quote, list):
+            quote = quote[0] if quote else {}
 
-            return {
-                "price": float(quote.get("last", 0)),
-                "bid": float(quote.get("bid", 0)),
-                "ask": float(quote.get("ask", 0)),
-                "volume": int(quote.get("volume", 0)),
-                "change": float(quote.get("change", 0)),
-                "change_pct": float(quote.get("change_percentage", 0)),
-            }
+        return {
+            "price": float(quote.get("last", 0)),
+            "bid": float(quote.get("bid", 0)),
+            "ask": float(quote.get("ask", 0)),
+            "volume": int(quote.get("volume", 0)),
+            "change": float(quote.get("change", 0)),
+            "change_pct": float(quote.get("change_percentage", 0)),
+        }
     except Exception as e:
         print(f"Tradier quote fetch error: {e}")
         return None
 
 
-async def _fetch_gex_levels(symbol: str) -> dict | None:
-    """Fetch current GEX levels from watchtower snapshots"""
+async def _verify_completed_candle(symbol: str, tracker_candle: dict) -> dict:
+    """
+    Section 1: On candle close, fetch the official bar from Tradier timesales
+    and overwrite the tracker's OHLC with authoritative values. Falls back to
+    tracker data if the fetch fails.
+    """
+    try:
+        from unified_config import APIConfig
+        api_key = APIConfig.TRADIER_API_KEY or APIConfig.TRADIER_SANDBOX_API_KEY
+        if not api_key:
+            return tracker_candle
+
+        is_sandbox = not APIConfig.TRADIER_API_KEY
+        base_url = "https://sandbox.tradier.com" if is_sandbox else "https://api.tradier.com"
+
+        candle_time = datetime.fromisoformat(tracker_candle["time"])
+        start_str = candle_time.strftime('%Y-%m-%d %H:%M')
+        end_time = candle_time + timedelta(minutes=5)
+        end_str = end_time.strftime('%Y-%m-%d %H:%M')
+
+        client = await _get_httpx_client()
+        resp = await client.get(
+            f"{base_url}/v1/markets/timesales",
+            params={
+                "symbol": symbol,
+                "interval": "5min",
+                "start": start_str,
+                "end": end_str,
+                "session_filter": "open",
+            },
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            },
+        )
+        if resp.status_code != 200:
+            return tracker_candle
+
+        series = resp.json().get("series", {})
+        if not series or series == "null":
+            return tracker_candle
+
+        raw = series.get("data", [])
+        if isinstance(raw, dict):
+            raw = [raw]
+        if not raw:
+            return tracker_candle
+
+        bar = raw[0]
+        return {
+            "time": tracker_candle["time"],
+            "open": round(float(bar.get("open", tracker_candle["open"])), 2),
+            "high": round(float(bar.get("high", tracker_candle["high"])), 2),
+            "low": round(float(bar.get("low", tracker_candle["low"])), 2),
+            "close": round(float(bar.get("close", tracker_candle["close"])), 2),
+            "volume": int(bar.get("volume", tracker_candle["volume"])),
+        }
+    except Exception as e:
+        print(f"Candle verification error (falling back to tracker): {e}")
+        return tracker_candle
+
+
+async def _fetch_gex_levels_uncached(symbol: str) -> dict | None:
+    """
+    Section 3: Fetch GEX levels from DB. Called by background task, NOT inline
+    with the WS loop. Uses DB spot_price for ±1SD (avoids extra Tradier call).
+    """
     try:
         conn = get_connection()
         if not conn:
@@ -1179,7 +1304,7 @@ async def _fetch_gex_levels(symbol: str) -> dict | None:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT flip_point, call_wall, put_wall, expected_move, vix,
-                   total_net_gamma, gamma_regime
+                   total_net_gamma, gamma_regime, spot_price
             FROM watchtower_snapshots
             WHERE symbol = %s
             ORDER BY snapshot_time DESC
@@ -1191,16 +1316,12 @@ async def _fetch_gex_levels(symbol: str) -> dict | None:
         if not row:
             return None
 
-        flip, cw, pw, em, vix_val, net_gamma, regime = row
-        # Compute ±1SD from expected move and current price
-        price_data = await _fetch_tradier_quote_async(symbol)
-        spot = price_data["price"] if price_data and price_data.get("price") else None
+        flip, cw, pw, em, vix_val, net_gamma, regime, spot = row
         upper_1sd = None
         lower_1sd = None
         if spot and em:
-            em_float = float(em)
-            upper_1sd = round(spot * (1 + em_float), 2)
-            lower_1sd = round(spot * (1 - em_float), 2)
+            upper_1sd = round(float(spot) * (1 + float(em)), 2)
+            lower_1sd = round(float(spot) * (1 - float(em)), 2)
 
         return {
             "flip_point": round(float(flip), 2) if flip else None,

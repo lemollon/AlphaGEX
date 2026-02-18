@@ -5,11 +5,14 @@
  * price quotes, candle updates, and GEX level changes.
  *
  * Features:
- * - Auto-reconnect with exponential backoff
+ * - Auto-reconnect with exponential backoff (resets on success)
  * - Fallback to short-interval HTTP polling (2s) when WS unavailable
+ * - Mutual exclusion: polling stops when WS connects, WS stops when polling
  * - Animation-friendly throttled updates (capped at ~30fps)
- * - Connection status tracking (connected/reconnecting/disconnected)
- * - Proper cleanup on unmount (no memory leaks)
+ * - Connection status tracking (connected/reconnecting/disconnected/polling)
+ * - Session data deduplication on reconnect (Section 2)
+ * - Forming candle merges with last REST bar to avoid duplicates (Section 4)
+ * - Proper cleanup on unmount (no memory leaks) (Section 5)
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -71,25 +74,15 @@ export interface SessionData {
 }
 
 export interface ChartWebSocketState {
-  /** Session bars (historical + live) */
   bars: CandleData[]
-  /** Current forming candle (updates in real-time) */
   formingCandle: CandleData | null
-  /** Latest price quote */
   quote: QuoteData | null
-  /** GEX overlay levels */
   gexLevels: GexLevels
-  /** GEX ticks (intraday time series) */
   gexTicks: GexTick[]
-  /** Session date being displayed */
   sessionDate: string | null
-  /** Available historical session dates */
   availableDates: string[]
-  /** Whether market is currently open */
   marketOpen: boolean
-  /** WebSocket / polling connection status */
   connectionStatus: ConnectionStatus
-  /** Error message if any */
   error: string | null
 }
 
@@ -136,7 +129,6 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
   const throttledSetFormingCandle = useCallback((candle: CandleData) => {
     const now = performance.now()
     pendingCandleRef.current = candle
-    // Cap at ~30fps (33ms between frames)
     if (now - lastUpdateRef.current >= 33) {
       lastUpdateRef.current = now
       flushCandleUpdate()
@@ -165,7 +157,9 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
 
   // ── Polling fallback (2s interval) ──────────────────────────────
   const startPolling = useCallback(() => {
-    if (pollingTimerRef.current) return
+    // Section 2: guard against starting polling after unmount
+    if (!mountedRef.current) return
+    if (pollingTimerRef.current) return // already polling
     setConnectionStatus('polling')
 
     const poll = async () => {
@@ -181,7 +175,6 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
         }
         if (ticksRes.data?.success && ticksRes.data?.data?.ticks) {
           setGexTicks(ticksRes.data.data.ticks)
-          // Update GEX levels from latest tick
           const ticks = ticksRes.data.data.ticks
           if (ticks.length > 0) {
             const last = ticks[ticks.length - 1]
@@ -194,7 +187,7 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
           }
         }
         setError(null)
-      } catch (err) {
+      } catch {
         // Silent - don't disrupt chart on poll failure
       }
     }
@@ -213,7 +206,14 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
   // ── WebSocket connection ────────────────────────────────────────
   const connect = useCallback(() => {
     if (!mountedRef.current) return
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return
+    // Section 2: close any existing socket before creating a new one
+    if (wsRef.current) {
+      if (wsRef.current.readyState === WebSocket.OPEN ||
+          wsRef.current.readyState === WebSocket.CONNECTING) {
+        return // already connected / connecting
+      }
+      wsRef.current = null
+    }
 
     try {
       const wsUrl = API_BASE.replace('http://', 'ws://').replace('https://', 'wss://')
@@ -223,7 +223,9 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
         if (!mountedRef.current) return
         setConnectionStatus('connected')
         setError(null)
+        // Section 2: reset backoff counter on successful connect
         reconnectAttemptRef.current = 0
+        // Section 2: stop polling — mutual exclusion
         stopPolling()
       }
 
@@ -234,7 +236,8 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
 
           switch (msg.type) {
             case 'session_data':
-              // Initial session data from WebSocket
+              // Section 2: on reconnect, WS sends session data again.
+              // Replace bars only if WS actually sent bars (don't clear with empty).
               if (msg.bars?.length > 0) setBars(msg.bars)
               if (msg.gex_levels) setGexLevels(prev => ({ ...prev, ...msg.gex_levels }))
               if (msg.gex_ticks?.length > 0) setGexTicks(msg.gex_ticks)
@@ -244,7 +247,6 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
               break
 
             case 'candle_update':
-              // Real-time forming candle update (throttled)
               if (msg.candle) {
                 throttledSetFormingCandle(msg.candle)
               }
@@ -256,16 +258,23 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
                   timestamp: msg.timestamp,
                 })
               }
+              // Section 4: receiving candle_update means market is open —
+              // this drives the LIVE badge without requiring a clock check.
               setMarketOpen(true)
               break
 
             case 'completed_candle':
-              // A 5-min candle closed — append to bars
+              // Section 2+4: merge completed candle into bars, replacing any
+              // existing bar at the same timestamp (handles REST→WS overlap).
               if (msg.candle) {
                 setBars(prev => {
-                  // Avoid duplicates
-                  const existing = prev.find(b => b.time === msg.candle.time)
-                  if (existing) return prev
+                  const idx = prev.findIndex(b => b.time === msg.candle.time)
+                  if (idx >= 0) {
+                    // Update in place (REST bar → verified WS bar)
+                    const updated = [...prev]
+                    updated[idx] = msg.candle
+                    return updated
+                  }
                   return [...prev, msg.candle]
                 })
               }
@@ -286,37 +295,32 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
 
       ws.onerror = () => {
         if (!mountedRef.current) return
-        reconnectAttemptRef.current++
         setError('WebSocket connection error')
-
-        // After max attempts, fall back to polling
-        if (reconnectAttemptRef.current >= maxReconnectAttempts) {
-          startPolling()
-        }
+        // Don't increment here — onclose always fires after onerror and handles retry
       }
 
       ws.onclose = () => {
         if (!mountedRef.current) return
+
+        // Section 2: only reconnect / poll if still mounted
+        reconnectAttemptRef.current++
         setConnectionStatus('reconnecting')
 
-        // Start polling immediately as fallback
+        // Start polling as immediate fallback
         startPolling()
 
-        // Schedule reconnect with exponential backoff
-        const delay = Math.min(
-          1000 * Math.pow(2, reconnectAttemptRef.current),
-          30000
-        )
-        reconnectTimerRef.current = setTimeout(() => {
-          if (mountedRef.current && reconnectAttemptRef.current < maxReconnectAttempts) {
-            connect()
-          }
-        }, delay)
+        // Schedule WS reconnect with exponential backoff
+        if (reconnectAttemptRef.current < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptRef.current), 30000)
+          reconnectTimerRef.current = setTimeout(() => {
+            if (mountedRef.current) connect()
+          }, delay)
+        }
       }
 
       wsRef.current = ws
-    } catch (err) {
-      console.error('Failed to create chart WebSocket:', err)
+    } catch {
+      console.error('Failed to create chart WebSocket')
       startPolling()
     }
   }, [stopPolling, startPolling, throttledSetFormingCandle])
@@ -333,17 +337,31 @@ export function useChartWebSocket(symbol: string): ChartWebSocketState {
     connect()
 
     return () => {
+      // Section 5: set mounted false FIRST to prevent callbacks from firing
       mountedRef.current = false
+
+      // Cancel pending reconnect
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = undefined
+      }
+
+      // Stop polling
+      stopPolling()
+
+      // Close WebSocket
       if (wsRef.current) {
+        wsRef.current.onclose = null // prevent onclose from triggering reconnect
+        wsRef.current.onerror = null
+        wsRef.current.onmessage = null
         wsRef.current.close()
         wsRef.current = null
       }
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current)
-      }
-      stopPolling()
+
+      // Cancel any pending animation frame
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current)
+        rafRef.current = undefined
       }
     }
   }, [symbol]) // eslint-disable-line react-hooks/exhaustive-deps

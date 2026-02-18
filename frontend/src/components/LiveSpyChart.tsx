@@ -420,12 +420,31 @@ const LiveSpyChart: React.FC<LiveSpyChartProps> = ({
           </div>
         )}
 
-        {/* Empty state */}
-        {bars.length === 0 && !formingCandle && connectionStatus === 'disconnected' && (
+        {/* Section 6: Empty state — shown for any failure mode when no data */}
+        {bars.length === 0 && !formingCandle && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80">
             <div className="text-center">
-              <div className="text-gray-400 text-sm mb-1">No chart data available</div>
-              <div className="text-gray-600 text-xs">Data will appear when the market opens</div>
+              {connectionStatus === 'disconnected' ? (
+                <>
+                  <div className="text-red-400 text-sm mb-1">Connection lost</div>
+                  <div className="text-gray-600 text-xs">Attempting to reconnect...</div>
+                </>
+              ) : connectionStatus === 'polling' ? (
+                <>
+                  <div className="text-yellow-400 text-sm mb-1">Loading chart data...</div>
+                  <div className="text-gray-600 text-xs">Fetching from server via polling</div>
+                </>
+              ) : connectionStatus === 'reconnecting' ? (
+                <>
+                  <div className="text-yellow-400 text-sm mb-1">Reconnecting...</div>
+                  <div className="text-gray-600 text-xs">Chart will update automatically</div>
+                </>
+              ) : (
+                <>
+                  <div className="text-gray-400 text-sm mb-1">No chart data available</div>
+                  <div className="text-gray-600 text-xs">Data will appear when the market opens</div>
+                </>
+              )}
             </div>
           </div>
         )}
