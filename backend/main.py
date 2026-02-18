@@ -1462,9 +1462,9 @@ async def _get_session_data(symbol: str) -> dict:
                         params={
                             "symbol": symbol,
                             "interval": "5min",
-                            "start": f"{date_str} 08:30",
-                            "end": f"{date_str} 15:15",
-                            "session_filter": "open",
+                            "start": f"{date_str} 07:00",
+                            "end": f"{date_str} 17:00",
+                            "session_filter": "all",
                         },
                         headers={
                             "Authorization": f"Bearer {api_key}",
