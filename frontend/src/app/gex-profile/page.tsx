@@ -161,7 +161,7 @@ function isMarketOpen(): boolean {
   const month = now.getUTCMonth()
   const isDST = month >= 2 && month <= 9
   const etMin = utcMin - (isDST ? 4 : 5) * 60
-  return etMin >= 570 && etMin < 975 // 9:30 AM – 4:15 PM ET
+  return etMin >= 570 && etMin < 975 // 9:30 AM – 4:15 PM ET (= 8:30 AM – 3:15 PM CT)
 }
 
 function formatGex(num: number, decimals = 2): string {
@@ -176,8 +176,42 @@ function formatDollar(num: number): string {
   return `$${num.toFixed(2)}`
 }
 
+/**
+ * Convert any timestamp to a Central Time display string (e.g. "8:30 AM").
+ * Tradier returns ET; watchtower_snapshots may return UTC.  Using
+ * toLocaleTimeString with an explicit timeZone avoids DST pitfalls.
+ */
 function tickTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  return new Date(iso).toLocaleTimeString('en-US', {
+    timeZone: 'America/Chicago',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+/**
+ * Convert a timestamp string to a CT-localized ISO-like string that Plotly
+ * will render correctly on a datetime axis.  Plotly treats bare datetime
+ * strings (no offset) as local time, so we emit "YYYY-MM-DD HH:MM:SS"
+ * in Central Time so the x-axis labels show CT regardless of the browser's
+ * timezone.
+ */
+function toCentralPlotly(iso: string): string {
+  const d = new Date(iso)
+  // Format each component in CT
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d)
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? '00'
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`
 }
 
 // ── Page ────────────────────────────────────────────────────────────
@@ -526,7 +560,7 @@ export default function GexProfilePage() {
               </button>
               {lastUpdated && (
                 <span className="text-[10px] text-gray-600">
-                  {lastUpdated.toLocaleTimeString()}
+                  {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })} CT
                 </span>
               )}
             </div>
@@ -644,8 +678,8 @@ export default function GexProfilePage() {
                   </div>
                 ) : (() => {
                   // ── Build Plotly data ──
-                  // Candlestick trace from Tradier OHLC bars
-                  const candleTimes = intradayBars.map(b => b.time)
+                  // Candlestick trace from Tradier OHLC bars — convert to CT for x-axis
+                  const candleTimes = intradayBars.map(b => toCentralPlotly(b.time))
                   const candleOpen = intradayBars.map(b => b.open)
                   const candleHigh = intradayBars.map(b => b.high)
                   const candleLow = intradayBars.map(b => b.low)
@@ -653,7 +687,7 @@ export default function GexProfilePage() {
 
                   // If no candle data, use spot_price as a line trace
                   const hasCandleData = intradayBars.length > 0
-                  const spotTimes = intradayChartData.map(d => d.time)
+                  const spotTimes = intradayChartData.map(d => toCentralPlotly(d.time))
                   const spotPrices = intradayChartData.map(d => d.spot_price)
 
                   // GEX bar shapes — horizontal rectangles at each strike price,
@@ -854,7 +888,7 @@ export default function GexProfilePage() {
                               gridcolor: '#1f2937',
                               showgrid: true,
                               rangeslider: { visible: false },
-                              hoverformat: '%I:%M %p',
+                              hoverformat: '%I:%M %p CT',
                               tickformat: '%I:%M %p',
                             },
                             yaxis: {
@@ -1319,7 +1353,7 @@ function NoStrikeData() {
   return (
     <div className="text-center py-12 text-yellow-400">
       <AlertCircle className="w-8 h-8 mx-auto mb-2" />
-      <p className="text-sm">Real-time data not available outside market hours (8:30am–4:15pm ET)</p>
+      <p className="text-sm">Real-time data not available outside market hours (8:30 AM – 3:00 PM CT)</p>
     </div>
   )
 }
