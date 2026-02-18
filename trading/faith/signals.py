@@ -188,7 +188,7 @@ class FaithSignalGenerator:
                 ) if market_data.get('spot_price', 0) > 0 else 0,
             )
 
-            prediction = prophet.get_prediction(BotName.FAITH, context)
+            prediction = prophet.get_fortress_advice(context)
             if prediction:
                 return {
                     'advice': prediction.advice.value if hasattr(prediction.advice, 'value') else str(prediction.advice),
@@ -251,7 +251,7 @@ class FaithSignalGenerator:
             return target_expiration
 
         try:
-            expirations = self.tradier.get_expirations(self.config.ticker)
+            expirations = self.tradier.get_option_expirations(self.config.ticker)
             if not expirations:
                 logger.warning("FAITH: Could not fetch expirations list from Tradier")
                 return target_expiration  # Assume valid if we can't check
