@@ -2720,15 +2720,24 @@ async def get_session_data(
         """, (symbol,))
         available_dates = [r[0] for r in cursor.fetchall()]
 
-        if not available_dates:
-            return {"success": True, "data": {"bars": [], "gex_levels": {}, "gex_ticks": [], "session_date": None, "available_dates": [], "market_open": False}}
-
         # Pick the requested date or most recent
         if date:
             from datetime import date as date_type
             target_date = date_type.fromisoformat(date)
-        else:
+        elif available_dates:
             target_date = available_dates[0]
+        else:
+            # Fallback: no watchtower_snapshots data — calculate the last trading day
+            # and fetch bars directly from Tradier so the chart isn't empty when market is closed.
+            from datetime import date as date_type, timedelta
+            ct = get_central_time()
+            d = ct.date()
+            # Walk backwards up to 5 days to find the most recent weekday
+            for _ in range(5):
+                d = d - timedelta(days=1)
+                if d.weekday() < 5:  # Mon-Fri
+                    break
+            target_date = d
 
         # GEX ticks for the session
         cursor.execute("""

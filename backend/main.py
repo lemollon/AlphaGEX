@@ -1368,7 +1368,19 @@ async def _get_session_data(symbol: str) -> dict:
 
         if dates:
             session_date = dates[0].isoformat()
+        else:
+            # Fallback: no watchtower_snapshots data — calculate last trading day
+            # so the chart can still show candles from Tradier when market is closed.
+            from datetime import timedelta
+            now = datetime.now()
+            d = now.date()
+            for _ in range(5):
+                d = d - timedelta(days=1)
+                if d.weekday() < 5:  # Mon-Fri
+                    break
+            session_date = d.isoformat()
 
+        if dates:
             # Get GEX ticks for that day
             cursor.execute("""
                 SELECT
@@ -1440,37 +1452,36 @@ async def _get_session_data(symbol: str) -> dict:
                 is_sandbox = not APIConfig.TRADIER_API_KEY
                 base_url = "https://sandbox.tradier.com" if is_sandbox else "https://api.tradier.com"
 
-                import httpx
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.get(
-                        f"{base_url}/v1/markets/timesales",
-                        params={
-                            "symbol": symbol,
-                            "interval": "5min",
-                            "start": f"{session_date} 08:30",
-                            "end": f"{session_date} 15:15",
-                            "session_filter": "open",
-                        },
-                        headers={
-                            "Authorization": f"Bearer {api_key}",
-                            "Accept": "application/json",
-                        },
-                    )
-                    if resp.status_code == 200:
-                        series = resp.json().get("series", {})
-                        if series and series != "null":
-                            raw = series.get("data", [])
-                            if isinstance(raw, dict):
-                                raw = [raw]
-                            for bar in raw:
-                                bars.append({
-                                    "time": bar.get("time", ""),
-                                    "open": round(float(bar.get("open", 0)), 2),
-                                    "high": round(float(bar.get("high", 0)), 2),
-                                    "low": round(float(bar.get("low", 0)), 2),
-                                    "close": round(float(bar.get("close", 0)), 2),
-                                    "volume": int(bar.get("volume", 0)),
-                                })
+                client = await _get_httpx_client()
+                resp = await client.get(
+                    f"{base_url}/v1/markets/timesales",
+                    params={
+                        "symbol": symbol,
+                        "interval": "5min",
+                        "start": f"{session_date} 08:30",
+                        "end": f"{session_date} 15:15",
+                        "session_filter": "open",
+                    },
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Accept": "application/json",
+                    },
+                )
+                if resp.status_code == 200:
+                    series = resp.json().get("series", {})
+                    if series and series != "null":
+                        raw = series.get("data", [])
+                        if isinstance(raw, dict):
+                            raw = [raw]
+                        for bar in raw:
+                            bars.append({
+                                "time": bar.get("time", ""),
+                                "open": round(float(bar.get("open", 0)), 2),
+                                "high": round(float(bar.get("high", 0)), 2),
+                                "low": round(float(bar.get("low", 0)), 2),
+                                "close": round(float(bar.get("close", 0)), 2),
+                                "volume": int(bar.get("volume", 0)),
+                            })
         except Exception as e:
             print(f"Session bars fetch error: {e}")
 

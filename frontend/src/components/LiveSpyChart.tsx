@@ -190,6 +190,20 @@ const LiveSpyChart: React.FC<LiveSpyChartProps> = ({
     candleSeriesRef.current = candleSeries
     volumeSeriesRef.current = volumeSeries
 
+    // Hide TradingView attribution logo (lightweight-charts is just the renderer,
+    // our data comes from Tradier - showing TV logo is misleading).
+    // The library creates an <a href="tradingview.com"> element dynamically.
+    const tvContainer = chartContainerRef.current
+    const hideTvLogo = () => {
+      if (!tvContainer) return
+      tvContainer.querySelectorAll('a[href*="tradingview"]').forEach((el) => {
+        ;(el as HTMLElement).style.display = 'none'
+      })
+    }
+    hideTvLogo()
+    const tvObserver = new MutationObserver(hideTvLogo)
+    tvObserver.observe(tvContainer, { childList: true, subtree: true })
+
     // Resize observer
     const resizeObserver = new ResizeObserver((entries) => {
       const { width } = entries[0].contentRect
@@ -198,6 +212,7 @@ const LiveSpyChart: React.FC<LiveSpyChartProps> = ({
     resizeObserver.observe(chartContainerRef.current)
 
     return () => {
+      tvObserver.disconnect()
       resizeObserver.disconnect()
       priceLinesRef.current.clear()
       chart.remove()
