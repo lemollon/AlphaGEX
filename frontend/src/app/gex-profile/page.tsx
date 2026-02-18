@@ -201,6 +201,7 @@ export default function GexProfilePage() {
   const [chartView, setChartView] = useState<ChartView>('intraday')
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [nextCandleCountdown, setNextCandleCountdown] = useState('')
+  const [dataSource, setDataSource] = useState<string | null>(null)
 
   // ── Fetch ───────────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym: string, clearFirst = false) => {
@@ -214,6 +215,7 @@ export default function GexProfilePage() {
       const result = res.data
       if (result?.success) {
         setData(result.data)
+        setDataSource(result.source || 'tradier')
         setLastUpdated(new Date())
       } else if (result?.data_unavailable) {
         setError(result.message || 'Data unavailable — market may be closed')
@@ -447,9 +449,17 @@ export default function GexProfilePage() {
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <BarChart3 className="w-7 h-7 text-cyan-400" />
             GEX Profile
+            {dataSource === 'trading_volatility' && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-400 font-normal">
+                Next-Day Profile
+              </span>
+            )}
           </h1>
           <p className="text-gray-500 text-sm mt-1">
-            Gamma exposure by strike, intraday dynamics, and options flow
+            {dataSource === 'trading_volatility'
+              ? 'After-hours next-day gamma positioning via TradingVolatility — switches to live Tradier data at market open'
+              : 'Gamma exposure by strike, intraday dynamics, and options flow'
+            }
           </p>
         </div>
 

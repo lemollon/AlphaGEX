@@ -745,6 +745,170 @@ def is_market_hours() -> bool:
     return 8 * 60 + 30 <= time_minutes < 15 * 60
 
 
+def _get_tv_api():
+    """Get a TradingVolatilityAPI instance (lazy import, returns None if unavailable)."""
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        return TradingVolatilityAPI()
+    except Exception:
+        return None
+
+
+def fetch_gex_from_trading_volatility(symbol: str = "SPY") -> Optional[dict]:
+    """
+    Fetch GEX profile from TradingVolatility API for after-hours display.
+
+    After market close, TradingVolatility updates their GEX data to reflect
+    next-day positioning.  Returns a gex-analysis–shaped dict or None if
+    the API is unavailable / returns empty data.
+    """
+    tv = _get_tv_api()
+    if not tv or not tv.api_key:
+        logger.debug("WATCHTOWER: TradingVolatility API not available (no key)")
+        return None
+
+    cache_key = f"tv_gex_profile_{symbol}"
+    cached = get_cached(cache_key, 600)  # 10-min cache after hours
+    if cached:
+        return cached
+
+    try:
+        profile = tv.get_gex_profile(symbol)
+        if not profile or not profile.get('strikes'):
+            logger.warning(f"WATCHTOWER: TradingVolatility returned empty for {symbol}")
+            return None
+
+        spot_price = profile.get('spot_price', 0)
+        flip_point = profile.get('flip_point', 0)
+        call_wall = profile.get('call_wall', 0)
+        put_wall = profile.get('put_wall', 0)
+        aggregate = profile.get('aggregate_from_gammaOI', {})
+        net_gex = aggregate.get('net_gex', 0)
+        iv = aggregate.get('implied_volatility', 0.20)
+
+        # Gamma regime from flip point
+        if flip_point and spot_price:
+            gamma_form = 'POSITIVE' if spot_price >= flip_point else 'NEGATIVE'
+        else:
+            gamma_form = 'NEUTRAL'
+
+        # Rating from net GEX
+        if net_gex > 0:
+            rating_str = 'BULLISH'
+        elif net_gex < 0:
+            rating_str = 'BEARISH'
+        else:
+            rating_str = 'NEUTRAL'
+
+        # Expected move and ±1σ
+        import math
+        em_pct = iv * math.sqrt(1 / 252) if iv else 0
+        upper_1sd = round(spot_price * (1 + em_pct), 2) if spot_price else None
+        lower_1sd = round(spot_price * (1 - em_pct), 2) if spot_price else None
+
+        # Build strikes in gex-analysis format
+        strikes_out = []
+        total_call_oi = 0
+        total_put_oi = 0
+        for s in profile['strikes']:
+            call_oi = s.get('call_oi', 0)
+            put_oi = s.get('put_oi', 0)
+            total_call_oi += call_oi
+            total_put_oi += put_oi
+            strikes_out.append({
+                'strike': s['strike'],
+                'net_gamma': s.get('total_gamma', 0),
+                'call_gamma': s.get('call_gamma', 0),
+                'put_gamma': s.get('put_gamma', 0),
+                'call_volume': 0,
+                'put_volume': 0,
+                'total_volume': 0,
+                'call_iv': None,
+                'put_iv': None,
+                'call_oi': call_oi,
+                'put_oi': put_oi,
+                'is_magnet': False,
+                'magnet_rank': None,
+                'is_pin': s['strike'] == flip_point if flip_point else False,
+                'is_danger': False,
+                'danger_type': None,
+            })
+
+        total_oi = total_call_oi + total_put_oi
+        pc_ratio = (total_put_oi / total_call_oi) if total_call_oi > 0 else 0
+        collection_date = aggregate.get('collection_date', '')
+
+        result = {
+            'success': True,
+            'source': 'trading_volatility',
+            'data': {
+                'symbol': symbol,
+                'timestamp': collection_date or get_central_time().isoformat(),
+                'expiration': 'next-day',
+                'header': {
+                    'price': round(spot_price, 2),
+                    'gex_flip': round(flip_point, 2) if flip_point else None,
+                    '30_day_vol': round(iv * 100, 1) if iv else None,
+                    'call_structure': gamma_form,
+                    'gex_at_expiration': 0,
+                    'net_gex': net_gex,
+                    'rating': rating_str,
+                    'gamma_form': gamma_form,
+                    'previous_regime': None,
+                    'regime_flipped': False,
+                },
+                'flow_diagnostics': {'cards': [], 'note': 'Flow diagnostics unavailable after hours (requires live volume data).'},
+                'skew_measures': {
+                    'skew_ratio': 0,
+                    'skew_ratio_description': 'Unavailable after hours',
+                    'call_skew': 0,
+                    'call_skew_description': 'Unavailable after hours',
+                    'atm_call_iv': None,
+                    'atm_put_iv': None,
+                    'avg_otm_call_iv': None,
+                    'avg_otm_put_iv': None,
+                },
+                'rating': {
+                    'rating': rating_str,
+                    'confidence': 'MEDIUM',
+                    'bullish_score': 1 if net_gex > 0 else 0,
+                    'bearish_score': 1 if net_gex < 0 else 0,
+                    'net_score': 1 if net_gex > 0 else (-1 if net_gex < 0 else 0),
+                },
+                'levels': {
+                    'price': round(spot_price, 2),
+                    'upper_1sd': upper_1sd,
+                    'lower_1sd': lower_1sd,
+                    'gex_flip': round(flip_point, 2) if flip_point else None,
+                    'call_wall': round(call_wall, 2) if call_wall else None,
+                    'put_wall': round(put_wall, 2) if put_wall else None,
+                    'expected_move': round(em_pct, 4) if em_pct else None,
+                },
+                'gex_chart': {
+                    'expiration': 'next-day',
+                    'strikes': strikes_out,
+                    'total_net_gamma': net_gex,
+                    'gamma_regime': gamma_form,
+                },
+                'summary': {
+                    'total_call_volume': 0,
+                    'total_put_volume': 0,
+                    'total_volume': 0,
+                    'total_call_oi': int(total_call_oi),
+                    'total_put_oi': int(total_put_oi),
+                    'put_call_ratio': round(pc_ratio, 2),
+                    'net_gex': net_gex,
+                },
+            },
+        }
+        set_cached(cache_key, result)
+        return result
+
+    except Exception as e:
+        logger.error(f"WATCHTOWER: TradingVolatility fetch error: {e}")
+        return None
+
+
 async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
     """
     Fetch gamma data from Tradier API with caching.
@@ -1031,8 +1195,9 @@ async def get_gamma_data(
             # Treat as cached to prevent smoothing updates and database persistence
             is_cached = True
             logger.debug("WATCHTOWER: Skipping re-processing, using previous snapshot due to invalid spot price")
-        elif not market_open and engine.previous_snapshot:
-            # Market closed - use existing snapshot, don't reprocess
+        elif (not market_open and engine.previous_snapshot
+              and getattr(engine.previous_snapshot, 'expiration', None) == expiration):
+            # Market closed, same expiration - use existing snapshot, don't reprocess
             # Also freeze VIX from the snapshot for complete consistency
             is_cached = True
             logger.debug(f"WATCHTOWER: Market closed - using frozen snapshot to prevent data changes")
@@ -2172,9 +2337,15 @@ async def get_flow_diagnostics(
             }
 
         # Process the options chain to get strike data
-        # After hours: reuse existing snapshot to prevent engine state mutation
+        # After hours: reuse snapshot only if same expiration (after close,
+        # get_0dte_expiration returns the next trading day)
         market_open = is_market_hours()
-        if not market_open and engine.previous_snapshot:
+        reuse_snapshot = (
+            not market_open
+            and engine.previous_snapshot
+            and getattr(engine.previous_snapshot, 'expiration', None) == expiration
+        )
+        if reuse_snapshot:
             snapshot = engine.previous_snapshot
         else:
             snapshot = engine.process_options_chain(
@@ -2285,6 +2456,17 @@ async def get_gex_analysis(
         raise HTTPException(status_code=503, detail="WATCHTOWER engine not available")
 
     try:
+        # After market close, use TradingVolatility for next-day GEX profile.
+        # TradingVolatility updates after close to reflect next-day positioning,
+        # while Tradier chains become stale.  Switch back to Tradier at market open.
+        market_open = is_market_hours()
+        if not market_open and not expiration:
+            tv_result = fetch_gex_from_trading_volatility(symbol)
+            if tv_result:
+                logger.info(f"WATCHTOWER: Serving after-hours GEX from TradingVolatility for {symbol}")
+                return tv_result
+
+        # During market hours (or TV unavailable): use Tradier live chain
         # Determine expiration
         target_expiration = expiration
         if not target_expiration:
@@ -2313,16 +2495,21 @@ async def get_gex_analysis(
                 "message": "Cannot calculate GEX without valid spot price"
             }
 
-        # When market is closed, use existing snapshot to prevent smoothing re-calculation
-        # on stale data (same safeguard as the /gamma endpoint for ARGUS)
+        # When market is closed, reuse existing snapshot ONLY if it matches the
+        # same expiration.  After close, get_0dte_expiration now returns the next
+        # trading day, so we must process the fresh chain for that date.
         market_open = is_market_hours()
-        if not market_open and engine.previous_snapshot:
+        reuse_snapshot = (
+            not market_open
+            and engine.previous_snapshot
+            and getattr(engine.previous_snapshot, 'expiration', None) == target_expiration
+        )
+        if reuse_snapshot:
             snapshot = engine.previous_snapshot
-            # Use the spot price and VIX from the snapshot for consistency
             spot_price = snapshot.spot_price
             vix = snapshot.vix
         else:
-            # Process the options chain (only during market hours or on first load)
+            # Process the options chain (during market hours, first load, or new expiration)
             snapshot = engine.process_options_chain(
                 raw_data,
                 spot_price,
@@ -2548,26 +2735,36 @@ async def get_intraday_ticks(
 
         cursor = conn.cursor()
 
-        # Get today's snapshots (bucket to nearest interval)
+        # Get intraday snapshots — try today first, fall back to most recent session
+        # so that after-hours / weekends still show the last trading day's ticks.
         cursor.execute("""
+            WITH target_date AS (
+                SELECT COALESCE(
+                    -- today if we have data
+                    (SELECT snapshot_time::date FROM watchtower_snapshots
+                     WHERE symbol = %s AND snapshot_time::date = CURRENT_DATE LIMIT 1),
+                    -- otherwise most recent date with data
+                    (SELECT MAX(snapshot_time::date) FROM watchtower_snapshots WHERE symbol = %s)
+                ) AS d
+            )
             SELECT
-                date_trunc('hour', snapshot_time) +
-                    (floor(extract(minute FROM snapshot_time) / %s) * %s || ' minutes')::interval
+                date_trunc('hour', ws.snapshot_time) +
+                    (floor(extract(minute FROM ws.snapshot_time) / %s) * %s || ' minutes')::interval
                     AS tick_time,
-                AVG(spot_price) AS spot_price,
-                AVG(total_net_gamma) AS total_net_gamma,
-                AVG(vix) AS vix,
-                AVG(expected_move) AS expected_move,
-                MODE() WITHIN GROUP (ORDER BY gamma_regime) AS gamma_regime,
-                AVG(flip_point) AS flip_point,
-                AVG(call_wall) AS call_wall,
-                AVG(put_wall) AS put_wall,
+                AVG(ws.spot_price) AS spot_price,
+                AVG(ws.total_net_gamma) AS total_net_gamma,
+                AVG(ws.vix) AS vix,
+                AVG(ws.expected_move) AS expected_move,
+                MODE() WITHIN GROUP (ORDER BY ws.gamma_regime) AS gamma_regime,
+                AVG(ws.flip_point) AS flip_point,
+                AVG(ws.call_wall) AS call_wall,
+                AVG(ws.put_wall) AS put_wall,
                 COUNT(*) AS sample_count
-            FROM watchtower_snapshots
-            WHERE symbol = %s
-            AND snapshot_time::date = CURRENT_DATE
+            FROM watchtower_snapshots ws, target_date td
+            WHERE ws.symbol = %s
+            AND ws.snapshot_time::date = td.d
             ORDER BY tick_time ASC
-        """, (interval, interval, symbol))
+        """, (symbol, symbol, interval, interval, symbol))
 
         rows = cursor.fetchall()
 
@@ -2621,11 +2818,14 @@ async def get_intraday_bars(
     """
     Get intraday OHLCV bars from Tradier timesales API.
 
-    Returns 5-minute candlestick data for the current trading day.
+    Returns 5-minute candlestick data including premarket and aftermarket.
+    After hours / weekends, falls back to the most recent trading session.
     Used by the GEX Profile chart to overlay price candles on gamma data.
     """
+    market_open = is_market_hours()
+    bar_ttl = 30 if market_open else 300  # 30s live, 5min after hours
     cache_key = f"intraday_bars_{symbol}_{interval}"
-    cached = get_cached(cache_key, ttl=30)
+    cached = get_cached(cache_key, ttl=bar_ttl)
     if cached:
         return cached
 
@@ -2635,27 +2835,43 @@ async def get_intraday_bars(
         return result
 
     try:
-        # Tradier timesales endpoint returns intraday OHLCV bars
+        # Tradier timesales endpoint returns intraday OHLCV bars.
+        # Use session_filter='all' to include premarket (7:00 CT) and aftermarket (up to 17:00 CT).
+        # After market close (or weekends), walk back to the most recent trading session
+        # so users always see candles.
         now = get_central_time()
-        params = {
-            'symbol': symbol,
-            'interval': interval,
-            'start': now.strftime('%Y-%m-%d 08:30'),
-            'end': now.strftime('%Y-%m-%d 15:15'),
-            'session_filter': 'open'
-        }
 
-        response = tradier._make_request('GET', 'markets/timesales', params=params)
-        series = response.get('series', {})
+        def _fetch_bars_for_date(dt):
+            """Fetch 5m bars for a given date, returns list or empty."""
+            date_str = dt.strftime('%Y-%m-%d') if hasattr(dt, 'strftime') else str(dt)
+            params = {
+                'symbol': symbol,
+                'interval': interval,
+                'start': f'{date_str} 07:00',
+                'end': f'{date_str} 17:00',
+                'session_filter': 'all'
+            }
+            resp = tradier._make_request('GET', 'markets/timesales', params=params)
+            series = resp.get('series', {})
+            if not series or series == 'null':
+                return []
+            raw = series.get('data', [])
+            if isinstance(raw, dict):
+                raw = [raw]
+            return raw
 
-        if not series or series == 'null':
-            result = {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval}}
-            set_cached(cache_key, result)
-            return result
+        raw_data = _fetch_bars_for_date(now)
 
-        raw_data = series.get('data', [])
-        if isinstance(raw_data, dict):
-            raw_data = [raw_data]
+        # If no bars today (market hasn't opened, weekend, holiday), walk back up to 4 days
+        if not raw_data:
+            for offset in range(1, 5):
+                candidate = now - timedelta(days=offset)
+                if candidate.weekday() >= 5:
+                    continue  # skip weekends
+                raw_data = _fetch_bars_for_date(candidate)
+                if raw_data:
+                    logger.info(f"WATCHTOWER: No bars today, using most recent session {candidate.strftime('%Y-%m-%d')}")
+                    break
 
         bars = []
         for bar in raw_data:
@@ -2727,16 +2943,14 @@ async def get_session_data(
         elif available_dates:
             target_date = available_dates[0]
         else:
-            # Fallback: no watchtower_snapshots data — calculate the last trading day
-            # and fetch bars directly from Tradier so the chart isn't empty when market is closed.
+            # Fallback: no watchtower_snapshots data — use today (if a weekday)
+            # or walk back to find the most recent weekday.
             from datetime import date as date_type, timedelta
             ct = get_central_time()
             d = ct.date()
-            # Walk backwards up to 5 days to find the most recent weekday
-            for _ in range(5):
-                d = d - timedelta(days=1)
-                if d.weekday() < 5:  # Mon-Fri
-                    break
+            if d.weekday() >= 5:
+                # Weekend: walk back to Friday
+                d = d - timedelta(days=(d.weekday() - 4))
             target_date = d
 
         # GEX ticks for the session
@@ -2805,36 +3019,48 @@ async def get_session_data(
                 "gamma_regime": regime,
             }
 
-        # Fetch OHLCV bars from Tradier for the session date
+        # Fetch OHLCV bars from Tradier for the session date.
+        # If target_date returns no bars (market holiday), walk back up to 4 more
+        # weekdays so we always show the most recent trading session.
         bars = []
         tradier = get_tradier()
         if tradier:
-            try:
-                date_str = target_date.isoformat() if hasattr(target_date, 'isoformat') else str(target_date)
-                params = {
-                    'symbol': symbol,
-                    'interval': '5min',
-                    'start': f'{date_str} 08:30',
-                    'end': f'{date_str} 15:15',
-                    'session_filter': 'open'
-                }
-                response = tradier._make_request('GET', 'markets/timesales', params=params)
-                series = response.get('series', {})
-                if series and series != 'null':
-                    raw = series.get('data', [])
-                    if isinstance(raw, dict):
-                        raw = [raw]
-                    for bar in raw:
-                        bars.append({
-                            "time": bar.get('time', ''),
-                            "open": round(float(bar.get('open', 0)), 2),
-                            "high": round(float(bar.get('high', 0)), 2),
-                            "low": round(float(bar.get('low', 0)), 2),
-                            "close": round(float(bar.get('close', 0)), 2),
-                            "volume": int(bar.get('volume', 0)),
-                        })
-            except Exception as e:
-                logger.error(f"Error fetching session bars: {e}")
+            from datetime import timedelta as _td
+            candidate = target_date
+            for _attempt in range(5):
+                try:
+                    date_str = candidate.isoformat() if hasattr(candidate, 'isoformat') else str(candidate)
+                    params = {
+                        'symbol': symbol,
+                        'interval': '5min',
+                        'start': f'{date_str} 07:00',
+                        'end': f'{date_str} 17:00',
+                        'session_filter': 'all'
+                    }
+                    response = tradier._make_request('GET', 'markets/timesales', params=params)
+                    series = response.get('series', {})
+                    if series and series != 'null':
+                        raw = series.get('data', [])
+                        if isinstance(raw, dict):
+                            raw = [raw]
+                        if raw:
+                            for bar in raw:
+                                bars.append({
+                                    "time": bar.get('time', ''),
+                                    "open": round(float(bar.get('open', 0)), 2),
+                                    "high": round(float(bar.get('high', 0)), 2),
+                                    "low": round(float(bar.get('low', 0)), 2),
+                                    "close": round(float(bar.get('close', 0)), 2),
+                                    "volume": int(bar.get('volume', 0)),
+                                })
+                            target_date = candidate  # update so session_date reflects actual data
+                            break
+                except Exception as e:
+                    logger.error(f"Error fetching session bars for {candidate}: {e}")
+                # No bars for this date (holiday?) — try previous weekday
+                candidate = candidate - _td(days=1)
+                while candidate.weekday() >= 5:
+                    candidate = candidate - _td(days=1)
 
         # Determine if market is currently open
         ct = get_central_time()
