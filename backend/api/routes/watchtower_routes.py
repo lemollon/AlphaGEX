@@ -745,6 +745,170 @@ def is_market_hours() -> bool:
     return 8 * 60 + 30 <= time_minutes < 15 * 60
 
 
+def _get_tv_api():
+    """Get a TradingVolatilityAPI instance (lazy import, returns None if unavailable)."""
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        return TradingVolatilityAPI()
+    except Exception:
+        return None
+
+
+def fetch_gex_from_trading_volatility(symbol: str = "SPY") -> Optional[dict]:
+    """
+    Fetch GEX profile from TradingVolatility API for after-hours display.
+
+    After market close, TradingVolatility updates their GEX data to reflect
+    next-day positioning.  Returns a gex-analysis–shaped dict or None if
+    the API is unavailable / returns empty data.
+    """
+    tv = _get_tv_api()
+    if not tv or not tv.api_key:
+        logger.debug("WATCHTOWER: TradingVolatility API not available (no key)")
+        return None
+
+    cache_key = f"tv_gex_profile_{symbol}"
+    cached = get_cached(cache_key, 600)  # 10-min cache after hours
+    if cached:
+        return cached
+
+    try:
+        profile = tv.get_gex_profile(symbol)
+        if not profile or not profile.get('strikes'):
+            logger.warning(f"WATCHTOWER: TradingVolatility returned empty for {symbol}")
+            return None
+
+        spot_price = profile.get('spot_price', 0)
+        flip_point = profile.get('flip_point', 0)
+        call_wall = profile.get('call_wall', 0)
+        put_wall = profile.get('put_wall', 0)
+        aggregate = profile.get('aggregate_from_gammaOI', {})
+        net_gex = aggregate.get('net_gex', 0)
+        iv = aggregate.get('implied_volatility', 0.20)
+
+        # Gamma regime from flip point
+        if flip_point and spot_price:
+            gamma_form = 'POSITIVE' if spot_price >= flip_point else 'NEGATIVE'
+        else:
+            gamma_form = 'NEUTRAL'
+
+        # Rating from net GEX
+        if net_gex > 0:
+            rating_str = 'BULLISH'
+        elif net_gex < 0:
+            rating_str = 'BEARISH'
+        else:
+            rating_str = 'NEUTRAL'
+
+        # Expected move and ±1σ
+        import math
+        em_pct = iv * math.sqrt(1 / 252) if iv else 0
+        upper_1sd = round(spot_price * (1 + em_pct), 2) if spot_price else None
+        lower_1sd = round(spot_price * (1 - em_pct), 2) if spot_price else None
+
+        # Build strikes in gex-analysis format
+        strikes_out = []
+        total_call_oi = 0
+        total_put_oi = 0
+        for s in profile['strikes']:
+            call_oi = s.get('call_oi', 0)
+            put_oi = s.get('put_oi', 0)
+            total_call_oi += call_oi
+            total_put_oi += put_oi
+            strikes_out.append({
+                'strike': s['strike'],
+                'net_gamma': s.get('total_gamma', 0),
+                'call_gamma': s.get('call_gamma', 0),
+                'put_gamma': s.get('put_gamma', 0),
+                'call_volume': 0,
+                'put_volume': 0,
+                'total_volume': 0,
+                'call_iv': None,
+                'put_iv': None,
+                'call_oi': call_oi,
+                'put_oi': put_oi,
+                'is_magnet': False,
+                'magnet_rank': None,
+                'is_pin': s['strike'] == flip_point if flip_point else False,
+                'is_danger': False,
+                'danger_type': None,
+            })
+
+        total_oi = total_call_oi + total_put_oi
+        pc_ratio = (total_put_oi / total_call_oi) if total_call_oi > 0 else 0
+        collection_date = aggregate.get('collection_date', '')
+
+        result = {
+            'success': True,
+            'source': 'trading_volatility',
+            'data': {
+                'symbol': symbol,
+                'timestamp': collection_date or get_central_time().isoformat(),
+                'expiration': 'next-day',
+                'header': {
+                    'price': round(spot_price, 2),
+                    'gex_flip': round(flip_point, 2) if flip_point else None,
+                    '30_day_vol': round(iv * 100, 1) if iv else None,
+                    'call_structure': gamma_form,
+                    'gex_at_expiration': 0,
+                    'net_gex': net_gex,
+                    'rating': rating_str,
+                    'gamma_form': gamma_form,
+                    'previous_regime': None,
+                    'regime_flipped': False,
+                },
+                'flow_diagnostics': {'cards': [], 'note': 'Flow diagnostics unavailable after hours (requires live volume data).'},
+                'skew_measures': {
+                    'skew_ratio': 0,
+                    'skew_ratio_description': 'Unavailable after hours',
+                    'call_skew': 0,
+                    'call_skew_description': 'Unavailable after hours',
+                    'atm_call_iv': None,
+                    'atm_put_iv': None,
+                    'avg_otm_call_iv': None,
+                    'avg_otm_put_iv': None,
+                },
+                'rating': {
+                    'rating': rating_str,
+                    'confidence': 'MEDIUM',
+                    'bullish_score': 1 if net_gex > 0 else 0,
+                    'bearish_score': 1 if net_gex < 0 else 0,
+                    'net_score': 1 if net_gex > 0 else (-1 if net_gex < 0 else 0),
+                },
+                'levels': {
+                    'price': round(spot_price, 2),
+                    'upper_1sd': upper_1sd,
+                    'lower_1sd': lower_1sd,
+                    'gex_flip': round(flip_point, 2) if flip_point else None,
+                    'call_wall': round(call_wall, 2) if call_wall else None,
+                    'put_wall': round(put_wall, 2) if put_wall else None,
+                    'expected_move': round(em_pct, 4) if em_pct else None,
+                },
+                'gex_chart': {
+                    'expiration': 'next-day',
+                    'strikes': strikes_out,
+                    'total_net_gamma': net_gex,
+                    'gamma_regime': gamma_form,
+                },
+                'summary': {
+                    'total_call_volume': 0,
+                    'total_put_volume': 0,
+                    'total_volume': 0,
+                    'total_call_oi': int(total_call_oi),
+                    'total_put_oi': int(total_put_oi),
+                    'put_call_ratio': round(pc_ratio, 2),
+                    'net_gex': net_gex,
+                },
+            },
+        }
+        set_cached(cache_key, result)
+        return result
+
+    except Exception as e:
+        logger.error(f"WATCHTOWER: TradingVolatility fetch error: {e}")
+        return None
+
+
 async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
     """
     Fetch gamma data from Tradier API with caching.
@@ -2292,6 +2456,17 @@ async def get_gex_analysis(
         raise HTTPException(status_code=503, detail="WATCHTOWER engine not available")
 
     try:
+        # After market close, use TradingVolatility for next-day GEX profile.
+        # TradingVolatility updates after close to reflect next-day positioning,
+        # while Tradier chains become stale.  Switch back to Tradier at market open.
+        market_open = is_market_hours()
+        if not market_open and not expiration:
+            tv_result = fetch_gex_from_trading_volatility(symbol)
+            if tv_result:
+                logger.info(f"WATCHTOWER: Serving after-hours GEX from TradingVolatility for {symbol}")
+                return tv_result
+
+        # During market hours (or TV unavailable): use Tradier live chain
         # Determine expiration
         target_expiration = expiration
         if not target_expiration:
