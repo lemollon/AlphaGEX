@@ -2727,16 +2727,14 @@ async def get_session_data(
         elif available_dates:
             target_date = available_dates[0]
         else:
-            # Fallback: no watchtower_snapshots data — calculate the last trading day
-            # and fetch bars directly from Tradier so the chart isn't empty when market is closed.
+            # Fallback: no watchtower_snapshots data — use today (if a weekday)
+            # or walk back to find the most recent weekday.
             from datetime import date as date_type, timedelta
             ct = get_central_time()
             d = ct.date()
-            # Walk backwards up to 5 days to find the most recent weekday
-            for _ in range(5):
-                d = d - timedelta(days=1)
-                if d.weekday() < 5:  # Mon-Fri
-                    break
+            if d.weekday() >= 5:
+                # Weekend: walk back to Friday
+                d = d - timedelta(days=(d.weekday() - 4))
             target_date = d
 
         # GEX ticks for the session
@@ -2805,36 +2803,48 @@ async def get_session_data(
                 "gamma_regime": regime,
             }
 
-        # Fetch OHLCV bars from Tradier for the session date
+        # Fetch OHLCV bars from Tradier for the session date.
+        # If target_date returns no bars (market holiday), walk back up to 4 more
+        # weekdays so we always show the most recent trading session.
         bars = []
         tradier = get_tradier()
         if tradier:
-            try:
-                date_str = target_date.isoformat() if hasattr(target_date, 'isoformat') else str(target_date)
-                params = {
-                    'symbol': symbol,
-                    'interval': '5min',
-                    'start': f'{date_str} 08:30',
-                    'end': f'{date_str} 15:15',
-                    'session_filter': 'open'
-                }
-                response = tradier._make_request('GET', 'markets/timesales', params=params)
-                series = response.get('series', {})
-                if series and series != 'null':
-                    raw = series.get('data', [])
-                    if isinstance(raw, dict):
-                        raw = [raw]
-                    for bar in raw:
-                        bars.append({
-                            "time": bar.get('time', ''),
-                            "open": round(float(bar.get('open', 0)), 2),
-                            "high": round(float(bar.get('high', 0)), 2),
-                            "low": round(float(bar.get('low', 0)), 2),
-                            "close": round(float(bar.get('close', 0)), 2),
-                            "volume": int(bar.get('volume', 0)),
-                        })
-            except Exception as e:
-                logger.error(f"Error fetching session bars: {e}")
+            from datetime import timedelta as _td
+            candidate = target_date
+            for _attempt in range(5):
+                try:
+                    date_str = candidate.isoformat() if hasattr(candidate, 'isoformat') else str(candidate)
+                    params = {
+                        'symbol': symbol,
+                        'interval': '5min',
+                        'start': f'{date_str} 08:30',
+                        'end': f'{date_str} 15:15',
+                        'session_filter': 'open'
+                    }
+                    response = tradier._make_request('GET', 'markets/timesales', params=params)
+                    series = response.get('series', {})
+                    if series and series != 'null':
+                        raw = series.get('data', [])
+                        if isinstance(raw, dict):
+                            raw = [raw]
+                        if raw:
+                            for bar in raw:
+                                bars.append({
+                                    "time": bar.get('time', ''),
+                                    "open": round(float(bar.get('open', 0)), 2),
+                                    "high": round(float(bar.get('high', 0)), 2),
+                                    "low": round(float(bar.get('low', 0)), 2),
+                                    "close": round(float(bar.get('close', 0)), 2),
+                                    "volume": int(bar.get('volume', 0)),
+                                })
+                            target_date = candidate  # update so session_date reflects actual data
+                            break
+                except Exception as e:
+                    logger.error(f"Error fetching session bars for {candidate}: {e}")
+                # No bars for this date (holiday?) — try previous weekday
+                candidate = candidate - _td(days=1)
+                while candidate.weekday() >= 5:
+                    candidate = candidate - _td(days=1)
 
         # Determine if market is currently open
         ct = get_central_time()
