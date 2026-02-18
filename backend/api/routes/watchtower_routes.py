@@ -2685,6 +2685,187 @@ async def get_intraday_bars(
         return {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval, "error": str(e)}}
 
 
+@router.get("/session-data")
+async def get_session_data(
+    symbol: str = Query("SPY", description="Symbol"),
+    date: Optional[str] = Query(None, description="Date YYYY-MM-DD (default: most recent session)"),
+):
+    """
+    Get complete session data (candles + GEX levels + ticks) for a specific date.
+
+    Used by the live chart to instantly render cached data on page load,
+    even when the market is closed. Stores the last 5 sessions.
+    """
+    cache_key = f"session_data_{symbol}_{date or 'latest'}"
+    cached = get_cached(cache_key, ttl=60)
+    if cached:
+        return cached
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"bars": [], "gex_levels": {}, "gex_ticks": [], "session_date": None, "market_open": False}}
+
+        cursor = conn.cursor()
+
+        # Find available session dates
+        cursor.execute("""
+            SELECT DISTINCT snapshot_time::date AS d
+            FROM watchtower_snapshots
+            WHERE symbol = %s
+            ORDER BY d DESC
+            LIMIT 5
+        """, (symbol,))
+        available_dates = [r[0] for r in cursor.fetchall()]
+
+        if not available_dates:
+            return {"success": True, "data": {"bars": [], "gex_levels": {}, "gex_ticks": [], "session_date": None, "available_dates": [], "market_open": False}}
+
+        # Pick the requested date or most recent
+        if date:
+            from datetime import date as date_type
+            target_date = date_type.fromisoformat(date)
+        else:
+            target_date = available_dates[0]
+
+        # GEX ticks for the session
+        cursor.execute("""
+            SELECT
+                date_trunc('hour', snapshot_time) +
+                    (floor(extract(minute FROM snapshot_time) / 5) * 5 || ' minutes')::interval
+                    AS tick_time,
+                AVG(spot_price) AS spot_price,
+                AVG(total_net_gamma) AS total_net_gamma,
+                AVG(vix) AS vix,
+                AVG(expected_move) AS expected_move,
+                MODE() WITHIN GROUP (ORDER BY gamma_regime) AS gamma_regime,
+                AVG(flip_point) AS flip_point,
+                AVG(call_wall) AS call_wall,
+                AVG(put_wall) AS put_wall,
+                COUNT(*) AS sample_count
+            FROM watchtower_snapshots
+            WHERE symbol = %s AND snapshot_time::date = %s
+            ORDER BY tick_time ASC
+        """, (symbol, target_date))
+
+        gex_ticks = []
+        for row in cursor.fetchall():
+            tick_time, spot, ng, vix_val, em, regime, fp, cw, pw, cnt = row
+            gex_ticks.append({
+                "time": tick_time.isoformat() if tick_time else None,
+                "spot_price": round(float(spot), 2) if spot else None,
+                "net_gamma": round(float(ng), 2) if ng else None,
+                "vix": round(float(vix_val), 2) if vix_val else None,
+                "expected_move": round(float(em), 4) if em else None,
+                "gamma_regime": regime,
+                "flip_point": round(float(fp), 2) if fp else None,
+                "call_wall": round(float(cw), 2) if cw else None,
+                "put_wall": round(float(pw), 2) if pw else None,
+                "samples": cnt,
+            })
+
+        # Latest GEX levels for that session
+        cursor.execute("""
+            SELECT flip_point, call_wall, put_wall, expected_move, vix,
+                   total_net_gamma, gamma_regime, spot_price
+            FROM watchtower_snapshots
+            WHERE symbol = %s AND snapshot_time::date = %s
+            ORDER BY snapshot_time DESC
+            LIMIT 1
+        """, (symbol, target_date))
+        level_row = cursor.fetchone()
+        gex_levels = {}
+        if level_row:
+            fp, cw, pw, em, vix_val, ng, regime, spot = level_row
+            upper_1sd = None
+            lower_1sd = None
+            if spot and em:
+                upper_1sd = round(float(spot) * (1 + float(em)), 2)
+                lower_1sd = round(float(spot) * (1 - float(em)), 2)
+            gex_levels = {
+                "flip_point": round(float(fp), 2) if fp else None,
+                "call_wall": round(float(cw), 2) if cw else None,
+                "put_wall": round(float(pw), 2) if pw else None,
+                "expected_move": round(float(em), 4) if em else None,
+                "upper_1sd": upper_1sd,
+                "lower_1sd": lower_1sd,
+                "vix": round(float(vix_val), 2) if vix_val else None,
+                "net_gamma": round(float(ng), 2) if ng else None,
+                "gamma_regime": regime,
+            }
+
+        # Fetch OHLCV bars from Tradier for the session date
+        bars = []
+        tradier = get_tradier()
+        if tradier:
+            try:
+                date_str = target_date.isoformat() if hasattr(target_date, 'isoformat') else str(target_date)
+                params = {
+                    'symbol': symbol,
+                    'interval': '5min',
+                    'start': f'{date_str} 08:30',
+                    'end': f'{date_str} 15:15',
+                    'session_filter': 'open'
+                }
+                response = tradier._make_request('GET', 'markets/timesales', params=params)
+                series = response.get('series', {})
+                if series and series != 'null':
+                    raw = series.get('data', [])
+                    if isinstance(raw, dict):
+                        raw = [raw]
+                    for bar in raw:
+                        bars.append({
+                            "time": bar.get('time', ''),
+                            "open": round(float(bar.get('open', 0)), 2),
+                            "high": round(float(bar.get('high', 0)), 2),
+                            "low": round(float(bar.get('low', 0)), 2),
+                            "close": round(float(bar.get('close', 0)), 2),
+                            "volume": int(bar.get('volume', 0)),
+                        })
+            except Exception as e:
+                logger.error(f"Error fetching session bars: {e}")
+
+        # Determine if market is currently open
+        ct = get_central_time()
+        is_weekday = ct.weekday() < 5
+        market_open_time = ct.replace(hour=8, minute=30, second=0, microsecond=0)
+        market_close_time = ct.replace(hour=15, minute=0, second=0, microsecond=0)
+        market_open = is_weekday and market_open_time <= ct < market_close_time
+
+        result = {
+            "success": True,
+            "data": {
+                "bars": bars,
+                "gex_levels": gex_levels,
+                "gex_ticks": gex_ticks,
+                "session_date": target_date.isoformat() if hasattr(target_date, 'isoformat') else str(target_date),
+                "available_dates": [d.isoformat() for d in available_dates],
+                "market_open": market_open,
+                "bar_count": len(bars),
+                "tick_count": len(gex_ticks),
+            }
+        }
+        set_cached(cache_key, result)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error getting session data: {e}")
+        return {"success": True, "data": {"bars": [], "gex_levels": {}, "gex_ticks": [], "session_date": None, "market_open": False, "error": str(e)}}
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+
 @router.get("/probability")
 async def get_probability_data():
     """
