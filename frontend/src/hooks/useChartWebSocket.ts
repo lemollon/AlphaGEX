@@ -1,3 +1,4 @@
+// DEPRECATED: Not in use. See Plotly-based chart in gex-profile/page.tsx
 /**
  * useChartWebSocket - Real-time chart data streaming hook
  *

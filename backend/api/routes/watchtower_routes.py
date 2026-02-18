@@ -841,6 +841,7 @@ def fetch_gex_from_trading_volatility(symbol: str = "SPY") -> Optional[dict]:
         result = {
             'success': True,
             'source': 'trading_volatility',
+            'source_label': 'Next-Day GEX Profile (TradingVolatility)',
             'data': {
                 'symbol': symbol,
                 'timestamp': collection_date or get_central_time().isoformat(),
@@ -2584,6 +2585,8 @@ async def get_gex_analysis(
 
         response = {
             "success": True,
+            "source": "tradier_live" if market_open else "tradier_cached",
+            "source_label": "Live Options Chain" if market_open else "Last Session (Tradier)",
             "data": {
                 "symbol": symbol,
                 "timestamp": format_central_timestamp(),
@@ -2718,13 +2721,16 @@ async def get_gamma_history(
 @router.get("/intraday-ticks")
 async def get_intraday_ticks(
     symbol: str = Query("SPY", description="Symbol to get ticks for"),
-    interval: int = Query(5, description="Interval in minutes to bucket ticks")
+    interval: int = Query(5, description="Interval in minutes to bucket ticks"),
+    fallback: bool = Query(False, description="When true and today has no ticks, walk back to most recent session")
 ):
     """
     Get intraday 5-minute ticks of key GEX metrics from watchtower_snapshots.
 
     Returns time-series of: spot_price, total_net_gamma, gamma_regime, vix,
     flip_point, call_wall, put_wall for the current trading day.
+    With fallback=true, walks back to the most recent session when today
+    has no data (weekends, holidays, pre-market).
     """
     conn = None
     cursor = None
@@ -2735,42 +2741,69 @@ async def get_intraday_ticks(
 
         cursor = conn.cursor()
 
-        # Get intraday snapshots — try today first, fall back to most recent session
-        # so that after-hours / weekends still show the last trading day's ticks.
-        cursor.execute("""
-            WITH target_date AS (
-                SELECT COALESCE(
-                    -- today if we have data
-                    (SELECT snapshot_time::date FROM watchtower_snapshots
-                     WHERE symbol = %s AND snapshot_time::date = CURRENT_DATE LIMIT 1),
-                    -- otherwise most recent date with data
-                    (SELECT MAX(snapshot_time::date) FROM watchtower_snapshots WHERE symbol = %s)
-                ) AS d
-            )
-            SELECT
-                date_trunc('hour', ws.snapshot_time) +
-                    (floor(extract(minute FROM ws.snapshot_time) / %s) * %s || ' minutes')::interval
-                    AS tick_time,
-                AVG(ws.spot_price) AS spot_price,
-                AVG(ws.total_net_gamma) AS total_net_gamma,
-                AVG(ws.vix) AS vix,
-                AVG(ws.expected_move) AS expected_move,
-                MODE() WITHIN GROUP (ORDER BY ws.gamma_regime) AS gamma_regime,
-                AVG(ws.flip_point) AS flip_point,
-                AVG(ws.call_wall) AS call_wall,
-                AVG(ws.put_wall) AS put_wall,
-                COUNT(*) AS sample_count
-            FROM watchtower_snapshots ws, target_date td
-            WHERE ws.symbol = %s
-            AND ws.snapshot_time::date = td.d
-            ORDER BY tick_time ASC
-        """, (symbol, symbol, interval, interval, symbol))
+        if fallback:
+            # Try today first, fall back to most recent session with data
+            date_query = """
+                WITH target_date AS (
+                    SELECT COALESCE(
+                        (SELECT snapshot_time::date FROM watchtower_snapshots
+                         WHERE symbol = %s AND snapshot_time::date = CURRENT_DATE LIMIT 1),
+                        (SELECT MAX(snapshot_time::date) FROM watchtower_snapshots WHERE symbol = %s)
+                    ) AS d
+                )
+                SELECT
+                    date_trunc('hour', ws.snapshot_time) +
+                        (floor(extract(minute FROM ws.snapshot_time) / %s) * %s || ' minutes')::interval
+                        AS tick_time,
+                    AVG(ws.spot_price) AS spot_price,
+                    AVG(ws.total_net_gamma) AS total_net_gamma,
+                    AVG(ws.vix) AS vix,
+                    AVG(ws.expected_move) AS expected_move,
+                    MODE() WITHIN GROUP (ORDER BY ws.gamma_regime) AS gamma_regime,
+                    AVG(ws.flip_point) AS flip_point,
+                    AVG(ws.call_wall) AS call_wall,
+                    AVG(ws.put_wall) AS put_wall,
+                    COUNT(*) AS sample_count,
+                    td.d AS session_date
+                FROM watchtower_snapshots ws, target_date td
+                WHERE ws.symbol = %s
+                AND ws.snapshot_time::date = td.d
+                GROUP BY tick_time, td.d
+                ORDER BY tick_time ASC
+            """
+            cursor.execute(date_query, (symbol, symbol, interval, interval, symbol))
+        else:
+            # Only today's data
+            cursor.execute("""
+                SELECT
+                    date_trunc('hour', snapshot_time) +
+                        (floor(extract(minute FROM snapshot_time) / %s) * %s || ' minutes')::interval
+                        AS tick_time,
+                    AVG(spot_price) AS spot_price,
+                    AVG(total_net_gamma) AS total_net_gamma,
+                    AVG(vix) AS vix,
+                    AVG(expected_move) AS expected_move,
+                    MODE() WITHIN GROUP (ORDER BY gamma_regime) AS gamma_regime,
+                    AVG(flip_point) AS flip_point,
+                    AVG(call_wall) AS call_wall,
+                    AVG(put_wall) AS put_wall,
+                    COUNT(*) AS sample_count,
+                    CURRENT_DATE AS session_date
+                FROM watchtower_snapshots
+                WHERE symbol = %s
+                AND snapshot_time::date = CURRENT_DATE
+                GROUP BY tick_time
+                ORDER BY tick_time ASC
+            """, (interval, interval, symbol))
 
         rows = cursor.fetchall()
 
         ticks = []
+        session_date = None
         for row in rows:
-            tick_time, spot, net_gamma, vix_val, em, regime, flip, cw, pw, count = row
+            tick_time, spot, net_gamma, vix_val, em, regime, flip, cw, pw, count, sd = row
+            if not session_date and sd:
+                session_date = sd.isoformat() if hasattr(sd, 'isoformat') else str(sd)
             ticks.append({
                 "time": tick_time.isoformat() if tick_time else None,
                 "spot_price": round(float(spot), 2) if spot else None,
@@ -2790,7 +2823,8 @@ async def get_intraday_ticks(
                 "ticks": ticks,
                 "symbol": symbol,
                 "interval": interval,
-                "count": len(ticks)
+                "count": len(ticks),
+                "session_date": session_date,
             }
         }
 
@@ -2813,18 +2847,19 @@ async def get_intraday_ticks(
 @router.get("/intraday-bars")
 async def get_intraday_bars(
     symbol: str = Query("SPY", description="Symbol to get bars for"),
-    interval: str = Query("5min", description="Bar interval: 1min, 5min, 15min")
+    interval: str = Query("5min", description="Bar interval: 1min, 5min, 15min"),
+    fallback: bool = Query(False, description="When true and today has no bars, walk back to most recent trading session")
 ):
     """
     Get intraday OHLCV bars from Tradier timesales API.
 
     Returns 5-minute candlestick data including premarket and aftermarket.
-    After hours / weekends, falls back to the most recent trading session.
-    Used by the GEX Profile chart to overlay price candles on gamma data.
+    With fallback=true, walks back to the most recent trading session when
+    today has no data (weekends, holidays, pre-market).
     """
     market_open = is_market_hours()
     bar_ttl = 30 if market_open else 300  # 30s live, 5min after hours
-    cache_key = f"intraday_bars_{symbol}_{interval}"
+    cache_key = f"intraday_bars_{symbol}_{interval}_fb{fallback}"
     cached = get_cached(cache_key, ttl=bar_ttl)
     if cached:
         return cached
@@ -2835,11 +2870,8 @@ async def get_intraday_bars(
         return result
 
     try:
-        # Tradier timesales endpoint returns intraday OHLCV bars.
-        # Use session_filter='all' to include premarket (7:00 CT) and aftermarket (up to 17:00 CT).
-        # After market close (or weekends), walk back to the most recent trading session
-        # so users always see candles.
         now = get_central_time()
+        session_date = now.strftime('%Y-%m-%d')
 
         def _fetch_bars_for_date(dt):
             """Fetch 5m bars for a given date, returns list or empty."""
@@ -2862,15 +2894,16 @@ async def get_intraday_bars(
 
         raw_data = _fetch_bars_for_date(now)
 
-        # If no bars today (market hasn't opened, weekend, holiday), walk back up to 4 days
-        if not raw_data:
-            for offset in range(1, 5):
+        # Walk back to most recent session only when fallback is requested
+        if not raw_data and fallback:
+            for offset in range(1, 6):
                 candidate = now - timedelta(days=offset)
                 if candidate.weekday() >= 5:
                     continue  # skip weekends
                 raw_data = _fetch_bars_for_date(candidate)
                 if raw_data:
-                    logger.info(f"WATCHTOWER: No bars today, using most recent session {candidate.strftime('%Y-%m-%d')}")
+                    session_date = candidate.strftime('%Y-%m-%d')
+                    logger.info(f"WATCHTOWER: No bars today, fallback to session {session_date}")
                     break
 
         bars = []
@@ -2890,7 +2923,8 @@ async def get_intraday_bars(
                 "bars": bars,
                 "symbol": symbol,
                 "interval": interval,
-                "count": len(bars)
+                "count": len(bars),
+                "session_date": session_date,
             }
         }
         set_cached(cache_key, result)

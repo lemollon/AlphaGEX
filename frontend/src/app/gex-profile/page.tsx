@@ -28,11 +28,8 @@ import {
 } from 'recharts'
 import { apiClient } from '@/lib/api'
 
-// Plotly for strike-based GEX views (avoid SSR)
+// Plotly for the unified candlestick + GEX overlay chart (avoid SSR)
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
-
-// LiveSpyChart for the streaming intraday view (avoid SSR — uses canvas)
-const LiveSpyChart = dynamic(() => import('@/components/LiveSpyChart'), { ssr: false })
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -201,7 +198,10 @@ export default function GexProfilePage() {
   const [chartView, setChartView] = useState<ChartView>('intraday')
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [nextCandleCountdown, setNextCandleCountdown] = useState('')
-  const [dataSource, setDataSource] = useState<string | null>(null)
+  const [dataSource, setDataSource] = useState<string>('tradier_live')
+  const [sourceLabel, setSourceLabel] = useState<string | null>(null)
+  const [isLive, setIsLive] = useState(false)
+  const [sessionDate, setSessionDate] = useState<string | null>(null)
 
   // ── Fetch ───────────────────────────────────────────────────────
   const fetchGexData = useCallback(async (sym: string, clearFirst = false) => {
@@ -215,7 +215,8 @@ export default function GexProfilePage() {
       const result = res.data
       if (result?.success) {
         setData(result.data)
-        setDataSource(result.source || 'tradier')
+        setDataSource(result.source || 'tradier_live')
+        setSourceLabel(result.source_label || null)
         setLastUpdated(new Date())
       } else if (result?.data_unavailable) {
         setError(result.message || 'Data unavailable — market may be closed')
@@ -229,7 +230,7 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  const fetchIntradayTicks = useCallback(async (sym: string, clearFirst = false) => {
+  const fetchIntradayTicks = useCallback(async (sym: string, clearFirst = false, useFallback = false) => {
     try {
       if (clearFirst) {
         setIntradayTicks([]) // Only clear on symbol change
@@ -237,14 +238,17 @@ export default function GexProfilePage() {
       }
       setIntradayLoading(true)
       const [ticksRes, barsRes] = await Promise.all([
-        apiClient.getWatchtowerIntradayTicks(sym, 5),
-        apiClient.getWatchtowerIntradayBars(sym, '5min'),
+        apiClient.getWatchtowerIntradayTicks(sym, 5, useFallback || undefined),
+        apiClient.getWatchtowerIntradayBars(sym, '5min', useFallback || undefined),
       ])
       if (ticksRes.data?.success && ticksRes.data?.data?.ticks) {
         setIntradayTicks(ticksRes.data.data.ticks)
       }
       if (barsRes.data?.success && barsRes.data?.data?.bars) {
         setIntradayBars(barsRes.data.data.bars)
+        if (barsRes.data.data.session_date) {
+          setSessionDate(barsRes.data.data.session_date)
+        }
       }
     } catch (err) {
       console.error('Intraday ticks error:', err)
@@ -265,26 +269,29 @@ export default function GexProfilePage() {
     }
   }, [])
 
-  // Initial load + symbol change (clear stale data)
+  // Initial load + symbol change (clear stale data, use fallback for instant render)
   useEffect(() => {
     fetchGexData(symbol, true)
-    fetchIntradayTicks(symbol, true)
+    fetchIntradayTicks(symbol, true, true) // fallback=true: always show data on load
   }, [symbol, fetchGexData, fetchIntradayTicks])
 
   // Auto-refresh during market hours
-  // GEX data every 30s, candlestick bars every 15s for near-live updates
+  // Bars every 10s for near-live candle updates, full GEX every 30s
   useEffect(() => {
     if (!autoRefresh) return
+    setIsLive(isMarketOpen())
     let tick = 0
     const id = setInterval(() => {
-      if (!isMarketOpen()) return
+      const open = isMarketOpen()
+      setIsLive(open)
+      if (!open) return
       tick++
-      refreshBars(symbol) // Every 15s — near-live candlestick updates
-      if (tick % 2 === 0) { // Every 30s — full GEX + ticks refresh (no clear)
+      refreshBars(symbol) // Every 10s — near-live candlestick updates
+      if (tick % 3 === 0) { // Every 30s — full GEX + ticks refresh (no clear)
         fetchGexData(symbol, false)
         fetchIntradayTicks(symbol, false)
       }
-    }, 15_000)
+    }, 10_000)
     return () => clearInterval(id)
   }, [autoRefresh, symbol, fetchGexData, fetchIntradayTicks, refreshBars])
 
@@ -586,6 +593,21 @@ export default function GexProfilePage() {
                     ? `${symbol} Intraday 5m — Price + Net Gamma`
                     : `${symbol} ${chartView === 'net' ? 'Net' : 'Call vs Put'} GEX by Strike — ${data.expiration}`
                   }
+                  {chartView === 'intraday' && isLive && (
+                    <span className="flex items-center gap-1 ml-2 text-xs text-green-400">
+                      <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                      LIVE
+                    </span>
+                  )}
+                  {chartView === 'intraday' && !isLive && intradayBars.length > 0 && (
+                    <span className="ml-2 text-xs text-gray-400">
+                      Market Closed
+                      {sessionDate && <span className="text-gray-500"> · Showing {sessionDate} session</span>}
+                      {dataSource === 'trading_volatility' && (
+                        <span className="text-purple-400"> · Next-day GEX via TradingVolatility</span>
+                      )}
+                    </span>
+                  )}
                   {chartView === 'intraday' && nextCandleCountdown && (
                     <span className="ml-3 text-xs font-mono bg-gray-900 border border-gray-600 rounded px-2 py-0.5 text-cyan-400">
                       Next candle: {nextCandleCountdown}
@@ -609,14 +631,279 @@ export default function GexProfilePage() {
                 </div>
               </div>
 
-              {/* ── INTRADAY 5M — Live Streaming Candlestick + GEX Levels ── */}
+              {/* ── INTRADAY 5M — Unified Candlestick + GEX Overlay (Plotly) ── */}
               {chartView === 'intraday' && (
-                <LiveSpyChart
-                  symbol={symbol}
-                  height={550}
-                  strikeData={sortedStrikes}
-                  showLevels={true}
-                />
+                intradayBars.length === 0 && intradayChartData.length === 0 ? (
+                  <div className="text-center py-12 text-yellow-400">
+                    <AlertCircle className="w-8 h-8 mx-auto mb-2" />
+                    <p className="text-sm">
+                      {intradayLoading
+                        ? 'Loading intraday data...'
+                        : 'No intraday data yet — ticks accumulate during market hours.'}
+                    </p>
+                  </div>
+                ) : (() => {
+                  // ── Build Plotly data ──
+                  // Candlestick trace from Tradier OHLC bars
+                  const candleTimes = intradayBars.map(b => b.time)
+                  const candleOpen = intradayBars.map(b => b.open)
+                  const candleHigh = intradayBars.map(b => b.high)
+                  const candleLow = intradayBars.map(b => b.low)
+                  const candleClose = intradayBars.map(b => b.close)
+
+                  // If no candle data, use spot_price as a line trace
+                  const hasCandleData = intradayBars.length > 0
+                  const spotTimes = intradayChartData.map(d => d.time)
+                  const spotPrices = intradayChartData.map(d => d.spot_price)
+
+                  // GEX bar shapes — horizontal rectangles at each strike price,
+                  // extending from right edge leftward proportional to gamma magnitude.
+                  // xref='paper' (0=left, 1=right), yref='y' (price axis)
+                  // Filter to strikes within the visible price range to avoid Y-axis distortion
+                  const priceValues = hasCandleData
+                    ? [...candleHigh, ...candleLow]
+                    : spotPrices.filter((p): p is number => p !== null)
+                  const priceMin = priceValues.length > 0 ? Math.min(...priceValues) : 0
+                  const priceMax = priceValues.length > 0 ? Math.max(...priceValues) : 0
+                  const priceRange = priceMax - priceMin || 1
+                  const visibleStrikes = sortedStrikes.filter(s =>
+                    s.strike >= priceMin - priceRange * 1.5 &&
+                    s.strike <= priceMax + priceRange * 1.5
+                  )
+
+                  const maxGamma = visibleStrikes.length > 0
+                    ? Math.max(...visibleStrikes.map(s => s.abs_net_gamma), 0.001)
+                    : 1
+                  const barMaxWidth = 0.35 // max 35% of chart width from right edge
+                  // Strike spacing for bar height
+                  const strikeSpacing = visibleStrikes.length > 1
+                    ? Math.abs(visibleStrikes[0].strike - visibleStrikes[1].strike) * 0.35
+                    : 0.5
+
+                  const gexShapes: any[] = visibleStrikes.map(s => {
+                    const pct = (s.abs_net_gamma / maxGamma) * barMaxWidth
+                    const color = s.net_gamma >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)'
+                    const borderColor = s.net_gamma >= 0 ? 'rgba(34,197,94,0.9)' : 'rgba(239,68,68,0.9)'
+                    return {
+                      type: 'rect',
+                      xref: 'paper',
+                      yref: 'y',
+                      x0: 1,
+                      x1: 1 - pct,
+                      y0: s.strike - strikeSpacing,
+                      y1: s.strike + strikeSpacing,
+                      fillcolor: color,
+                      line: { color: borderColor, width: 1 },
+                      layer: 'above',
+                    }
+                  })
+
+                  // GEX value annotations on the bars
+                  const gexAnnotations: any[] = visibleStrikes
+                    .filter(s => s.abs_net_gamma / maxGamma > 0.08) // only label visible bars
+                    .map(s => {
+                      const pct = (s.abs_net_gamma / maxGamma) * barMaxWidth
+                      return {
+                        xref: 'paper',
+                        yref: 'y',
+                        x: 1 - pct - 0.005,
+                        y: s.strike,
+                        text: `${formatGex(s.net_gamma, 1)} [$${s.strike}]`,
+                        showarrow: false,
+                        font: {
+                          color: s.net_gamma >= 0 ? '#22c55e' : '#ef4444',
+                          size: 9,
+                          family: 'monospace',
+                        },
+                        xanchor: 'right',
+                        yanchor: 'middle',
+                      }
+                    })
+
+                  // Reference level lines (horizontal) — thick enough to see
+                  const refLines: any[] = []
+                  const { gex_flip: flip, call_wall: cw, put_wall: pw, upper_1sd, lower_1sd, expected_move } = data.levels
+                  if (flip) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: flip, y1: flip,
+                    line: { color: '#eab308', width: 2.5, dash: 'dash' },
+                  })
+                  if (cw) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: cw, y1: cw,
+                    line: { color: '#06b6d4', width: 2.5, dash: 'dot' },
+                  })
+                  if (pw) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: pw, y1: pw,
+                    line: { color: '#a855f7', width: 2.5, dash: 'dot' },
+                  })
+                  // ±1 Standard Deviation lines
+                  if (upper_1sd) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: upper_1sd, y1: upper_1sd,
+                    line: { color: '#f97316', width: 1.5, dash: 'dashdot' },
+                  })
+                  if (lower_1sd) refLines.push({
+                    type: 'line', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: lower_1sd, y1: lower_1sd,
+                    line: { color: '#f97316', width: 1.5, dash: 'dashdot' },
+                  })
+                  // Expected Move shaded band (between ±1SD)
+                  if (upper_1sd && lower_1sd) refLines.push({
+                    type: 'rect', xref: 'paper', yref: 'y',
+                    x0: 0, x1: 1, y0: lower_1sd, y1: upper_1sd,
+                    fillcolor: 'rgba(249,115,22,0.06)',
+                    line: { width: 0 },
+                    layer: 'below',
+                  })
+
+                  // Compute Y-axis range: include price data + reference levels + padding
+                  const yPoints = [...priceValues]
+                  if (flip) yPoints.push(flip)
+                  if (cw) yPoints.push(cw)
+                  if (pw) yPoints.push(pw)
+                  if (upper_1sd) yPoints.push(upper_1sd)
+                  if (lower_1sd) yPoints.push(lower_1sd)
+                  const yMin = yPoints.length > 0 ? Math.min(...yPoints) : 0
+                  const yMax = yPoints.length > 0 ? Math.max(...yPoints) : 0
+                  const yPad = (yMax - yMin) * 0.35 || 4
+                  const yRange: [number, number] = [yMin - yPad, yMax + yPad]
+
+                  // Reference level annotations (on right edge)
+                  const refAnnotations: any[] = []
+                  if (flip) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.01, y: flip,
+                    text: `FLIP $${flip.toFixed(0)}`, showarrow: false,
+                    font: { color: '#eab308', size: 10 },
+                    xanchor: 'left', yanchor: 'bottom',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (cw) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.01, y: cw,
+                    text: `CALL WALL $${cw.toFixed(0)}`, showarrow: false,
+                    font: { color: '#06b6d4', size: 10 },
+                    xanchor: 'left', yanchor: 'bottom',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (pw) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.01, y: pw,
+                    text: `PUT WALL $${pw.toFixed(0)}`, showarrow: false,
+                    font: { color: '#a855f7', size: 10 },
+                    xanchor: 'left', yanchor: 'top',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (upper_1sd) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.99, y: upper_1sd,
+                    text: `+1σ $${upper_1sd.toFixed(0)}${expected_move ? ` (EM $${expected_move.toFixed(1)})` : ''}`,
+                    showarrow: false,
+                    font: { color: '#f97316', size: 9 },
+                    xanchor: 'right', yanchor: 'bottom',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+                  if (lower_1sd) refAnnotations.push({
+                    xref: 'paper', yref: 'y', x: 0.99, y: lower_1sd,
+                    text: `-1σ $${lower_1sd.toFixed(0)}`,
+                    showarrow: false,
+                    font: { color: '#f97316', size: 9 },
+                    xanchor: 'right', yanchor: 'top',
+                    bgcolor: 'rgba(0,0,0,0.7)', borderpad: 2,
+                  })
+
+                  // Price trace
+                  const traces: any[] = []
+                  if (hasCandleData) {
+                    traces.push({
+                      x: candleTimes,
+                      open: candleOpen,
+                      high: candleHigh,
+                      low: candleLow,
+                      close: candleClose,
+                      type: 'candlestick',
+                      increasing: { line: { color: '#22c55e' }, fillcolor: 'rgba(34,197,94,0.3)' },
+                      decreasing: { line: { color: '#ef4444' }, fillcolor: 'rgba(239,68,68,0.8)' },
+                      name: 'Price',
+                      hoverinfo: 'x+text',
+                      text: intradayBars.map(b =>
+                        `O:${b.open.toFixed(2)} H:${b.high.toFixed(2)} L:${b.low.toFixed(2)} C:${b.close.toFixed(2)}<br>Vol:${b.volume.toLocaleString()}`
+                      ),
+                    })
+                  } else {
+                    traces.push({
+                      x: spotTimes,
+                      y: spotPrices,
+                      type: 'scatter',
+                      mode: 'lines',
+                      line: { color: '#3b82f6', width: 2.5 },
+                      name: 'Price',
+                    })
+                  }
+
+                  return (
+                    <>
+                      <div style={{ height: 550 }}>
+                        <Plot
+                          data={traces}
+                          layout={{
+                            height: 550,
+                            paper_bgcolor: '#111827',
+                            plot_bgcolor: '#1a2332',
+                            font: { color: '#9ca3af', family: 'Arial, sans-serif', size: 11 },
+                            xaxis: {
+                              type: 'date',
+                              gridcolor: '#1f2937',
+                              showgrid: true,
+                              rangeslider: { visible: false },
+                              hoverformat: '%I:%M %p',
+                              tickformat: '%I:%M %p',
+                            },
+                            yaxis: {
+                              title: { text: 'Price', font: { size: 11, color: '#6b7280' } },
+                              gridcolor: '#1f2937',
+                              showgrid: true,
+                              side: 'right',
+                              tickformat: '$,.0f',
+                              range: yRange,
+                              autorange: false,
+                            },
+                            shapes: [...gexShapes, ...refLines],
+                            annotations: [...gexAnnotations, ...refAnnotations],
+                            margin: { t: 10, b: 40, l: 10, r: 60 },
+                            hovermode: 'x unified',
+                            showlegend: false,
+                            transition: { duration: 300, easing: 'cubic-in-out' },
+                          }}
+                          config={{ displayModeBar: false, responsive: true }}
+                          style={{ width: '100%', height: '100%' }}
+                        />
+                      </div>
+
+                      {/* Legend */}
+                      <div className="flex flex-wrap gap-4 mt-3 text-xs">
+                        {hasCandleData
+                          ? <><LegendItem color="bg-green-500" label="Bullish" /><LegendItem color="bg-red-500" label="Bearish" /></>
+                          : <LegendItem color="bg-blue-500" label="Price" line />
+                        }
+                        <span className="text-gray-700">|</span>
+                        <span className="text-green-400 font-semibold">■ +GEX Bar</span>
+                        <span className="text-red-400 font-semibold">■ -GEX Bar</span>
+                        <span className="text-gray-700">|</span>
+                        <span className="text-yellow-400">╌╌ Flip</span>
+                        <span className="text-cyan-400">┄┄ Call Wall</span>
+                        <span className="text-purple-400">┄┄ Put Wall</span>
+                        <span className="text-orange-400">-·- ±1σ</span>
+                        <span className="text-orange-400/50">░ Expected Move</span>
+                        <span className="text-gray-700">|</span>
+                        {isLive
+                          ? <span className="flex items-center gap-1 text-green-400"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />LIVE</span>
+                          : <span className="text-gray-500">Market Closed</span>
+                        }
+                        <span className="text-gray-700">|</span>
+                        <span className="text-gray-500">{intradayBars.length} bars{sessionDate ? ` · ${sessionDate}` : ''}</span>
+                      </div>
+                    </>
+                  )
+                })()
               )}
 
               {/* ── NET GEX BY STRIKE ── */}
