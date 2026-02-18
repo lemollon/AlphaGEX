@@ -2735,26 +2735,36 @@ async def get_intraday_ticks(
 
         cursor = conn.cursor()
 
-        # Get today's snapshots (bucket to nearest interval)
+        # Get intraday snapshots — try today first, fall back to most recent session
+        # so that after-hours / weekends still show the last trading day's ticks.
         cursor.execute("""
+            WITH target_date AS (
+                SELECT COALESCE(
+                    -- today if we have data
+                    (SELECT snapshot_time::date FROM watchtower_snapshots
+                     WHERE symbol = %s AND snapshot_time::date = CURRENT_DATE LIMIT 1),
+                    -- otherwise most recent date with data
+                    (SELECT MAX(snapshot_time::date) FROM watchtower_snapshots WHERE symbol = %s)
+                ) AS d
+            )
             SELECT
-                date_trunc('hour', snapshot_time) +
-                    (floor(extract(minute FROM snapshot_time) / %s) * %s || ' minutes')::interval
+                date_trunc('hour', ws.snapshot_time) +
+                    (floor(extract(minute FROM ws.snapshot_time) / %s) * %s || ' minutes')::interval
                     AS tick_time,
-                AVG(spot_price) AS spot_price,
-                AVG(total_net_gamma) AS total_net_gamma,
-                AVG(vix) AS vix,
-                AVG(expected_move) AS expected_move,
-                MODE() WITHIN GROUP (ORDER BY gamma_regime) AS gamma_regime,
-                AVG(flip_point) AS flip_point,
-                AVG(call_wall) AS call_wall,
-                AVG(put_wall) AS put_wall,
+                AVG(ws.spot_price) AS spot_price,
+                AVG(ws.total_net_gamma) AS total_net_gamma,
+                AVG(ws.vix) AS vix,
+                AVG(ws.expected_move) AS expected_move,
+                MODE() WITHIN GROUP (ORDER BY ws.gamma_regime) AS gamma_regime,
+                AVG(ws.flip_point) AS flip_point,
+                AVG(ws.call_wall) AS call_wall,
+                AVG(ws.put_wall) AS put_wall,
                 COUNT(*) AS sample_count
-            FROM watchtower_snapshots
-            WHERE symbol = %s
-            AND snapshot_time::date = CURRENT_DATE
+            FROM watchtower_snapshots ws, target_date td
+            WHERE ws.symbol = %s
+            AND ws.snapshot_time::date = td.d
             ORDER BY tick_time ASC
-        """, (interval, interval, symbol))
+        """, (symbol, symbol, interval, interval, symbol))
 
         rows = cursor.fetchall()
 
@@ -2808,11 +2818,14 @@ async def get_intraday_bars(
     """
     Get intraday OHLCV bars from Tradier timesales API.
 
-    Returns 5-minute candlestick data for the current trading day.
+    Returns 5-minute candlestick data including premarket and aftermarket.
+    After hours / weekends, falls back to the most recent trading session.
     Used by the GEX Profile chart to overlay price candles on gamma data.
     """
+    market_open = is_market_hours()
+    bar_ttl = 30 if market_open else 300  # 30s live, 5min after hours
     cache_key = f"intraday_bars_{symbol}_{interval}"
-    cached = get_cached(cache_key, ttl=30)
+    cached = get_cached(cache_key, ttl=bar_ttl)
     if cached:
         return cached
 
@@ -2822,27 +2835,43 @@ async def get_intraday_bars(
         return result
 
     try:
-        # Tradier timesales endpoint returns intraday OHLCV bars
+        # Tradier timesales endpoint returns intraday OHLCV bars.
+        # Use session_filter='all' to include premarket (7:00 CT) and aftermarket (up to 17:00 CT).
+        # After market close (or weekends), walk back to the most recent trading session
+        # so users always see candles.
         now = get_central_time()
-        params = {
-            'symbol': symbol,
-            'interval': interval,
-            'start': now.strftime('%Y-%m-%d 08:30'),
-            'end': now.strftime('%Y-%m-%d 15:15'),
-            'session_filter': 'open'
-        }
 
-        response = tradier._make_request('GET', 'markets/timesales', params=params)
-        series = response.get('series', {})
+        def _fetch_bars_for_date(dt):
+            """Fetch 5m bars for a given date, returns list or empty."""
+            date_str = dt.strftime('%Y-%m-%d') if hasattr(dt, 'strftime') else str(dt)
+            params = {
+                'symbol': symbol,
+                'interval': interval,
+                'start': f'{date_str} 07:00',
+                'end': f'{date_str} 17:00',
+                'session_filter': 'all'
+            }
+            resp = tradier._make_request('GET', 'markets/timesales', params=params)
+            series = resp.get('series', {})
+            if not series or series == 'null':
+                return []
+            raw = series.get('data', [])
+            if isinstance(raw, dict):
+                raw = [raw]
+            return raw
 
-        if not series or series == 'null':
-            result = {"success": True, "data": {"bars": [], "symbol": symbol, "interval": interval}}
-            set_cached(cache_key, result)
-            return result
+        raw_data = _fetch_bars_for_date(now)
 
-        raw_data = series.get('data', [])
-        if isinstance(raw_data, dict):
-            raw_data = [raw_data]
+        # If no bars today (market hasn't opened, weekend, holiday), walk back up to 4 days
+        if not raw_data:
+            for offset in range(1, 5):
+                candidate = now - timedelta(days=offset)
+                if candidate.weekday() >= 5:
+                    continue  # skip weekends
+                raw_data = _fetch_bars_for_date(candidate)
+                if raw_data:
+                    logger.info(f"WATCHTOWER: No bars today, using most recent session {candidate.strftime('%Y-%m-%d')}")
+                    break
 
         bars = []
         for bar in raw_data:
@@ -3004,9 +3033,9 @@ async def get_session_data(
                     params = {
                         'symbol': symbol,
                         'interval': '5min',
-                        'start': f'{date_str} 08:30',
-                        'end': f'{date_str} 15:15',
-                        'session_filter': 'open'
+                        'start': f'{date_str} 07:00',
+                        'end': f'{date_str} 17:00',
+                        'session_filter': 'all'
                     }
                     response = tradier._make_request('GET', 'markets/timesales', params=params)
                     series = response.get('series', {})
