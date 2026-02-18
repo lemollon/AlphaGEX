@@ -513,19 +513,29 @@ class WatchtowerEngine:
         Get the 0DTE expiration date.
         SPY has 0DTE every day (Mon-Fri).
 
+        After market close (3:00 PM CT), 'today' advances to the next trading
+        day so the GEX profile shows tomorrow's gamma structure instead of
+        the already-expired 0DTE.
+
         Args:
             target_day: 'today', 'mon', 'tue', 'wed', 'thu', 'fri'
 
         Returns:
             Expiration date string in YYYY-MM-DD format
         """
-        today = date.today()
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        ct_now = datetime.now(ZoneInfo("America/Chicago"))
+        today = ct_now.date()
 
         if target_day == 'today':
-            # If weekend, return next Monday
-            if today.weekday() >= 5:
-                days_until_monday = 7 - today.weekday()
-                return (today + timedelta(days=days_until_monday)).strftime('%Y-%m-%d')
+            # After market close (3:00 PM CT) or on weekends, advance to next trading day
+            after_close = ct_now.hour >= 15
+            if today.weekday() >= 5 or after_close:
+                d = today + timedelta(days=1)
+                while d.weekday() >= 5:
+                    d = d + timedelta(days=1)
+                return d.strftime('%Y-%m-%d')
             return today.strftime('%Y-%m-%d')
 
         # Map day names to weekday numbers

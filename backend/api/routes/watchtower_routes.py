@@ -1031,8 +1031,9 @@ async def get_gamma_data(
             # Treat as cached to prevent smoothing updates and database persistence
             is_cached = True
             logger.debug("WATCHTOWER: Skipping re-processing, using previous snapshot due to invalid spot price")
-        elif not market_open and engine.previous_snapshot:
-            # Market closed - use existing snapshot, don't reprocess
+        elif (not market_open and engine.previous_snapshot
+              and getattr(engine.previous_snapshot, 'expiration', None) == expiration):
+            # Market closed, same expiration - use existing snapshot, don't reprocess
             # Also freeze VIX from the snapshot for complete consistency
             is_cached = True
             logger.debug(f"WATCHTOWER: Market closed - using frozen snapshot to prevent data changes")
@@ -2172,9 +2173,15 @@ async def get_flow_diagnostics(
             }
 
         # Process the options chain to get strike data
-        # After hours: reuse existing snapshot to prevent engine state mutation
+        # After hours: reuse snapshot only if same expiration (after close,
+        # get_0dte_expiration returns the next trading day)
         market_open = is_market_hours()
-        if not market_open and engine.previous_snapshot:
+        reuse_snapshot = (
+            not market_open
+            and engine.previous_snapshot
+            and getattr(engine.previous_snapshot, 'expiration', None) == expiration
+        )
+        if reuse_snapshot:
             snapshot = engine.previous_snapshot
         else:
             snapshot = engine.process_options_chain(
@@ -2313,16 +2320,21 @@ async def get_gex_analysis(
                 "message": "Cannot calculate GEX without valid spot price"
             }
 
-        # When market is closed, use existing snapshot to prevent smoothing re-calculation
-        # on stale data (same safeguard as the /gamma endpoint for ARGUS)
+        # When market is closed, reuse existing snapshot ONLY if it matches the
+        # same expiration.  After close, get_0dte_expiration now returns the next
+        # trading day, so we must process the fresh chain for that date.
         market_open = is_market_hours()
-        if not market_open and engine.previous_snapshot:
+        reuse_snapshot = (
+            not market_open
+            and engine.previous_snapshot
+            and getattr(engine.previous_snapshot, 'expiration', None) == target_expiration
+        )
+        if reuse_snapshot:
             snapshot = engine.previous_snapshot
-            # Use the spot price and VIX from the snapshot for consistency
             spot_price = snapshot.spot_price
             vix = snapshot.vix
         else:
-            # Process the options chain (only during market hours or on first load)
+            # Process the options chain (during market hours, first load, or new expiration)
             snapshot = engine.process_options_chain(
                 raw_data,
                 spot_price,
