@@ -989,6 +989,8 @@ export const apiClient = {
     api.get('/api/watchtower/intraday-ticks', { params: { symbol, interval } }),
   getWatchtowerIntradayBars: (symbol?: string, interval?: string) =>
     api.get('/api/watchtower/intraday-bars', { params: { symbol, interval } }),
+  getWatchtowerSessionData: (symbol?: string, date?: string) =>
+    api.get('/api/watchtower/session-data', { params: { symbol, date } }),
   getWatchtowerProbability: () => api.get('/api/watchtower/probability'),
   getWatchtowerAlerts: (acknowledged?: boolean, priority?: string) =>
     api.get('/api/watchtower/alerts', { params: { acknowledged, priority } }),

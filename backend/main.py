@@ -941,6 +941,434 @@ async def websocket_positions(websocket: WebSocket):
 
 
 # ============================================================================
+# LIVE CHART WebSocket - Real-Time Price Streaming for Intraday Charts
+# ============================================================================
+
+class LiveChartManager:
+    """Manage live chart WebSocket connections with per-symbol tracking"""
+
+    def __init__(self):
+        self.connections: dict[str, list[WebSocket]] = {}  # symbol -> connections
+
+    async def connect(self, websocket: WebSocket, symbol: str):
+        await websocket.accept()
+        if symbol not in self.connections:
+            self.connections[symbol] = []
+        self.connections[symbol].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, symbol: str):
+        if symbol in self.connections:
+            try:
+                self.connections[symbol].remove(websocket)
+            except ValueError:
+                pass
+            if not self.connections[symbol]:
+                del self.connections[symbol]
+
+    async def broadcast(self, symbol: str, message: dict):
+        if symbol not in self.connections:
+            return
+        dead = []
+        for ws in self.connections[symbol]:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws, symbol)
+
+live_chart_manager = LiveChartManager()
+
+
+class _LiveCandleTracker:
+    """Track the forming candle from quote ticks"""
+
+    def __init__(self, interval_minutes: int = 5):
+        self.interval = interval_minutes
+        self.current_candle: dict | None = None
+        self.candle_start: datetime | None = None
+
+    def _candle_time(self, dt: datetime) -> datetime:
+        minute = (dt.minute // self.interval) * self.interval
+        return dt.replace(minute=minute, second=0, microsecond=0)
+
+    def update(self, price: float, volume: int = 0, ts: datetime | None = None):
+        """Feed a price tick. Returns the completed candle if a new period started, else None."""
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = ts or datetime.now(CENTRAL_TZ)
+        ct = self._candle_time(now)
+
+        if self.candle_start != ct:
+            completed = self.current_candle
+            self.current_candle = {
+                "time": ct.isoformat(),
+                "open": price,
+                "high": price,
+                "low": price,
+                "close": price,
+                "volume": volume,
+            }
+            self.candle_start = ct
+            return completed
+
+        if self.current_candle:
+            self.current_candle["high"] = max(self.current_candle["high"], price)
+            self.current_candle["low"] = min(self.current_candle["low"], price)
+            self.current_candle["close"] = price
+            self.current_candle["volume"] += volume
+        return None
+
+
+# Per-symbol candle trackers
+_candle_trackers: dict[str, _LiveCandleTracker] = {}
+
+
+@app.websocket("/ws/live-chart")
+async def websocket_live_chart(websocket: WebSocket, symbol: str = "SPY"):
+    """
+    Real-time chart streaming for intraday candlestick + GEX overlays.
+
+    On connect:
+      - Sends session data (historical bars + GEX levels) for instant render
+    During market hours (every ~1.5s):
+      - quote: latest price
+      - candle_update: forming candle OHLC
+      - completed_candle: when a 5-min candle closes
+    Every 30s:
+      - gex_levels: updated flip point, walls, expected move bounds
+    Market closed:
+      - session_data on connect, then keepalive every 60s
+    """
+    import asyncio
+    import httpx
+
+    symbol = symbol.upper()
+    await live_chart_manager.connect(websocket, symbol)
+
+    if symbol not in _candle_trackers:
+        _candle_trackers[symbol] = _LiveCandleTracker(interval_minutes=5)
+    tracker = _candle_trackers[symbol]
+
+    try:
+        # --- Send initial session data for instant chart render ---
+        session_payload = await _get_session_data(symbol)
+        await websocket.send_json({
+            "type": "session_data",
+            "symbol": symbol,
+            "market_open": is_market_open() if is_market_open else False,
+            **session_payload,
+        })
+
+        tick_count = 0
+        while True:
+            market_is_open = is_market_open() if is_market_open else False
+
+            if market_is_open:
+                # --- Fetch latest quote from Tradier (async) ---
+                quote_data = await _fetch_tradier_quote_async(symbol)
+                if quote_data and quote_data.get("price"):
+                    price = quote_data["price"]
+                    volume = quote_data.get("volume", 0)
+
+                    from zoneinfo import ZoneInfo
+                    CENTRAL_TZ = ZoneInfo("America/Chicago")
+                    now = datetime.now(CENTRAL_TZ)
+
+                    completed = tracker.update(price, volume, now)
+
+                    # Send forming candle update
+                    await websocket.send_json({
+                        "type": "candle_update",
+                        "symbol": symbol,
+                        "candle": tracker.current_candle,
+                        "price": price,
+                        "bid": quote_data.get("bid"),
+                        "ask": quote_data.get("ask"),
+                        "timestamp": now.isoformat(),
+                    })
+
+                    # If a candle completed, send it
+                    if completed:
+                        await websocket.send_json({
+                            "type": "completed_candle",
+                            "symbol": symbol,
+                            "candle": completed,
+                        })
+
+                tick_count += 1
+
+                # Every 20 ticks (~30s at 1.5s interval) send GEX level update
+                if tick_count % 20 == 0:
+                    gex_levels = await _fetch_gex_levels(symbol)
+                    if gex_levels:
+                        await websocket.send_json({
+                            "type": "gex_levels",
+                            "symbol": symbol,
+                            **gex_levels,
+                        })
+
+                await asyncio.sleep(1.5)
+            else:
+                # Market closed - keepalive
+                await websocket.send_json({
+                    "type": "keepalive",
+                    "market_open": False,
+                    "timestamp": datetime.now().isoformat(),
+                })
+                await asyncio.sleep(60)
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        if str(e):
+            print(f"Live chart WebSocket error: {e}")
+    finally:
+        live_chart_manager.disconnect(websocket, symbol)
+
+
+async def _fetch_tradier_quote_async(symbol: str) -> dict | None:
+    """Fetch latest quote from Tradier using async HTTP"""
+    try:
+        from unified_config import APIConfig
+        api_key = APIConfig.TRADIER_API_KEY or APIConfig.TRADIER_SANDBOX_API_KEY
+        if not api_key:
+            return None
+
+        # Determine base URL
+        is_sandbox = not APIConfig.TRADIER_API_KEY
+        base_url = "https://sandbox.tradier.com" if is_sandbox else "https://api.tradier.com"
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(
+                f"{base_url}/v1/markets/quotes",
+                params={"symbols": symbol, "greeks": "false"},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json",
+                },
+            )
+            if resp.status_code != 200:
+                return None
+
+            data = resp.json()
+            quotes = data.get("quotes", {})
+            quote = quotes.get("quote", {})
+            if isinstance(quote, list):
+                quote = quote[0] if quote else {}
+
+            return {
+                "price": float(quote.get("last", 0)),
+                "bid": float(quote.get("bid", 0)),
+                "ask": float(quote.get("ask", 0)),
+                "volume": int(quote.get("volume", 0)),
+                "change": float(quote.get("change", 0)),
+                "change_pct": float(quote.get("change_percentage", 0)),
+            }
+    except Exception as e:
+        print(f"Tradier quote fetch error: {e}")
+        return None
+
+
+async def _fetch_gex_levels(symbol: str) -> dict | None:
+    """Fetch current GEX levels from watchtower snapshots"""
+    try:
+        conn = get_connection()
+        if not conn:
+            return None
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT flip_point, call_wall, put_wall, expected_move, vix,
+                   total_net_gamma, gamma_regime
+            FROM watchtower_snapshots
+            WHERE symbol = %s
+            ORDER BY snapshot_time DESC
+            LIMIT 1
+        """, (symbol,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if not row:
+            return None
+
+        flip, cw, pw, em, vix_val, net_gamma, regime = row
+        # Compute ±1SD from expected move and current price
+        price_data = await _fetch_tradier_quote_async(symbol)
+        spot = price_data["price"] if price_data and price_data.get("price") else None
+        upper_1sd = None
+        lower_1sd = None
+        if spot and em:
+            em_float = float(em)
+            upper_1sd = round(spot * (1 + em_float), 2)
+            lower_1sd = round(spot * (1 - em_float), 2)
+
+        return {
+            "flip_point": round(float(flip), 2) if flip else None,
+            "call_wall": round(float(cw), 2) if cw else None,
+            "put_wall": round(float(pw), 2) if pw else None,
+            "expected_move": round(float(em), 4) if em else None,
+            "upper_1sd": upper_1sd,
+            "lower_1sd": lower_1sd,
+            "vix": round(float(vix_val), 2) if vix_val else None,
+            "net_gamma": round(float(net_gamma), 2) if net_gamma else None,
+            "gamma_regime": regime,
+        }
+    except Exception as e:
+        print(f"GEX levels fetch error: {e}")
+        return None
+
+
+async def _get_session_data(symbol: str) -> dict:
+    """
+    Get session data for initial chart render.
+    Returns bars + GEX levels for the last trading session.
+    """
+    bars = []
+    gex_levels = {}
+    gex_ticks = []
+    session_date = None
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return {"bars": bars, "gex_levels": gex_levels, "gex_ticks": gex_ticks, "session_date": session_date}
+
+        cursor = conn.cursor()
+
+        # Find the most recent day with snapshots
+        cursor.execute("""
+            SELECT DISTINCT snapshot_time::date AS d
+            FROM watchtower_snapshots
+            WHERE symbol = %s
+            ORDER BY d DESC
+            LIMIT 5
+        """, (symbol,))
+        dates = [r[0] for r in cursor.fetchall()]
+
+        if dates:
+            session_date = dates[0].isoformat()
+
+            # Get GEX ticks for that day
+            cursor.execute("""
+                SELECT
+                    date_trunc('hour', snapshot_time) +
+                        (floor(extract(minute FROM snapshot_time) / 5) * 5 || ' minutes')::interval
+                        AS tick_time,
+                    AVG(spot_price) AS spot_price,
+                    AVG(total_net_gamma) AS total_net_gamma,
+                    AVG(vix) AS vix,
+                    AVG(expected_move) AS expected_move,
+                    MODE() WITHIN GROUP (ORDER BY gamma_regime) AS gamma_regime,
+                    AVG(flip_point) AS flip_point,
+                    AVG(call_wall) AS call_wall,
+                    AVG(put_wall) AS put_wall
+                FROM watchtower_snapshots
+                WHERE symbol = %s AND snapshot_time::date = %s
+                ORDER BY tick_time ASC
+            """, (symbol, dates[0]))
+
+            for row in cursor.fetchall():
+                tick_time, spot, ng, vix_val, em, regime, fp, cw, pw = row
+                gex_ticks.append({
+                    "time": tick_time.isoformat() if tick_time else None,
+                    "spot_price": round(float(spot), 2) if spot else None,
+                    "net_gamma": round(float(ng), 2) if ng else None,
+                    "vix": round(float(vix_val), 2) if vix_val else None,
+                    "expected_move": round(float(em), 4) if em else None,
+                    "gamma_regime": regime,
+                    "flip_point": round(float(fp), 2) if fp else None,
+                    "call_wall": round(float(cw), 2) if cw else None,
+                    "put_wall": round(float(pw), 2) if pw else None,
+                })
+
+            # Latest GEX levels
+            cursor.execute("""
+                SELECT flip_point, call_wall, put_wall, expected_move, vix,
+                       total_net_gamma, gamma_regime, spot_price
+                FROM watchtower_snapshots
+                WHERE symbol = %s AND snapshot_time::date = %s
+                ORDER BY snapshot_time DESC
+                LIMIT 1
+            """, (symbol, dates[0]))
+            level_row = cursor.fetchone()
+            if level_row:
+                fp, cw, pw, em, vix_val, ng, regime, spot = level_row
+                upper_1sd = None
+                lower_1sd = None
+                if spot and em:
+                    upper_1sd = round(float(spot) * (1 + float(em)), 2)
+                    lower_1sd = round(float(spot) * (1 - float(em)), 2)
+                gex_levels = {
+                    "flip_point": round(float(fp), 2) if fp else None,
+                    "call_wall": round(float(cw), 2) if cw else None,
+                    "put_wall": round(float(pw), 2) if pw else None,
+                    "expected_move": round(float(em), 4) if em else None,
+                    "upper_1sd": upper_1sd,
+                    "lower_1sd": lower_1sd,
+                    "vix": round(float(vix_val), 2) if vix_val else None,
+                    "net_gamma": round(float(ng), 2) if ng else None,
+                    "gamma_regime": regime,
+                }
+
+        # Fetch OHLCV bars from Tradier for the session date
+        try:
+            from data.tradier_data_fetcher import TradierDataFetcher
+            from unified_config import APIConfig
+            api_key = APIConfig.TRADIER_API_KEY or APIConfig.TRADIER_SANDBOX_API_KEY
+            if api_key and session_date:
+                is_sandbox = not APIConfig.TRADIER_API_KEY
+                base_url = "https://sandbox.tradier.com" if is_sandbox else "https://api.tradier.com"
+
+                import httpx
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.get(
+                        f"{base_url}/v1/markets/timesales",
+                        params={
+                            "symbol": symbol,
+                            "interval": "5min",
+                            "start": f"{session_date} 08:30",
+                            "end": f"{session_date} 15:15",
+                            "session_filter": "open",
+                        },
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Accept": "application/json",
+                        },
+                    )
+                    if resp.status_code == 200:
+                        series = resp.json().get("series", {})
+                        if series and series != "null":
+                            raw = series.get("data", [])
+                            if isinstance(raw, dict):
+                                raw = [raw]
+                            for bar in raw:
+                                bars.append({
+                                    "time": bar.get("time", ""),
+                                    "open": round(float(bar.get("open", 0)), 2),
+                                    "high": round(float(bar.get("high", 0)), 2),
+                                    "low": round(float(bar.get("low", 0)), 2),
+                                    "close": round(float(bar.get("close", 0)), 2),
+                                    "volume": int(bar.get("volume", 0)),
+                                })
+        except Exception as e:
+            print(f"Session bars fetch error: {e}")
+
+        cursor.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"Session data fetch error: {e}")
+
+    return {
+        "bars": bars,
+        "gex_levels": gex_levels,
+        "gex_ticks": gex_ticks,
+        "session_date": session_date,
+        "available_dates": [d.isoformat() for d in dates] if 'dates' in dir() else [],
+    }
+
+
+# ============================================================================
 # CHRONICLES WebSocket - Real-Time Backtest Progress and GEX Updates
 # ============================================================================
 
