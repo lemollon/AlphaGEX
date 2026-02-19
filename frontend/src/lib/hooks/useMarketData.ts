@@ -1303,7 +1303,10 @@ const fetchers = {
 
 export const swrConfig: SWRConfiguration = {
   revalidateOnFocus: false,
-  revalidateOnReconnect: true,
+  // PERF FIX: revalidateOnReconnect was causing a full re-fetch storm (60+ calls)
+  // whenever the user switched back to the browser tab. The refreshInterval on
+  // each hook already keeps data fresh — no need to also refetch on reconnect.
+  revalidateOnReconnect: false,
   dedupingInterval: 60000,
   errorRetryCount: 3,
   errorRetryInterval: 5000,
@@ -1602,7 +1605,7 @@ export function useSolomonLivePnL(options?: SWRConfiguration) {
   return useSWR(
     'solomon-live-pnl',
     fetchers.solomonLivePnL,
-    { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }  // 30s matches other bots
   )
 }
 
@@ -1702,7 +1705,7 @@ export function useGideonLivePnL(options?: SWRConfiguration) {
   return useSWR(
     'gideon-live-pnl',
     fetchers.gideonLivePnL,
-    { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }  // 30s matches other bots
   )
 }
 
