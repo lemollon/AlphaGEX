@@ -27,9 +27,11 @@ class DatabaseUnavailableError(Exception):
 class DatabaseAdapter:
     """PostgreSQL database adapter with connection pooling"""
 
-    # Pool configuration
-    MIN_CONNECTIONS = 2
-    MAX_CONNECTIONS = 15  # Increased for high-traffic scenarios
+    # Pool configuration — Render Standard supports up to ~97 connections.
+    # min=5 keeps warm connections ready; max=40 handles batch endpoint
+    # concurrency without exhausting the Render PostgreSQL limit.
+    MIN_CONNECTIONS = 5
+    MAX_CONNECTIONS = 40
 
     def __init__(self):
         """Initialize adapter with connection pool - requires DATABASE_URL"""
