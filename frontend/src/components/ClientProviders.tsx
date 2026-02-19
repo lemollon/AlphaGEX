@@ -1,11 +1,17 @@
 'use client'
 
 import { useEffect } from 'react'
+import dynamic from 'next/dynamic'
 import { SWRConfig } from 'swr'
-import FloatingChatbot from './FloatingChatbot'
 import { ToastProvider } from './ui/Toast'
 import { swrConfig, prefetchMarketData } from '@/lib/hooks/useMarketData'
 import { SidebarProvider } from '@/contexts/SidebarContext'
+
+// Lazy-load the chatbot — it's 1,153 lines + react-markdown and most users
+// don't interact with it on every page load. Defers ~50KB from First Load JS.
+const FloatingChatbot = dynamic(() => import('./FloatingChatbot'), {
+  ssr: false,
+})
 
 interface ClientProvidersProps {
   children: React.ReactNode

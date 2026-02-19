@@ -3,8 +3,8 @@
 import dynamic from 'next/dynamic'
 import { useMemo } from 'react'
 
-// Dynamically import Plotly to avoid SSR issues
-const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
+// Dynamically import the minimal Plotly build to avoid SSR issues and reduce bundle
+const Plot = dynamic(() => import('@/components/charts/PlotlyChart'), { ssr: false })
 
 interface GEXLevel {
   strike: number

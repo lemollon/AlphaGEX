@@ -29,7 +29,8 @@ import {
 import { apiClient } from '@/lib/api'
 
 // Plotly for the unified candlestick + GEX overlay chart (avoid SSR)
-const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
+// Uses minimal plotly.js-dist-min build (~1MB vs ~3.5MB full)
+const Plot = dynamic(() => import('@/components/charts/PlotlyChart'), { ssr: false })
 
 // ── Types ───────────────────────────────────────────────────────────
 
