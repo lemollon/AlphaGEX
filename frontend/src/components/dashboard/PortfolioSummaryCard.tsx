@@ -1,9 +1,15 @@
 'use client'
 
 import { useMemo } from 'react'
-import useSWR from 'swr'
 import { Wallet, TrendingUp, TrendingDown, Target, DollarSign, BarChart3, RefreshCw } from 'lucide-react'
 import { BOT_BRANDS, BotName } from '@/components/trader/BotBranding'
+import {
+  useFortressStatus,
+  useSolomonStatus,
+  useGideonStatus,
+  useANCHORStatus,
+  useSamsonStatus,
+} from '@/lib/hooks/useMarketData'
 
 interface BotStatus {
   is_active?: boolean
@@ -60,31 +66,18 @@ const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
   AGAPE_SHIB_PERP: 1000,
 }
 
-const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
-  { name: 'FORTRESS', endpoint: '/api/fortress/status' },
-  { name: 'SOLOMON', endpoint: '/api/solomon/status' },
-  { name: 'GIDEON', endpoint: '/api/gideon/status' },
-  { name: 'ANCHOR', endpoint: '/api/anchor/status' },
-  { name: 'SAMSON', endpoint: '/api/samson/status' },
-]
-
-const fetcher = async (url: string): Promise<BotStatusResponse> => {
-  try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ''}${url}`)
-    if (!res.ok) return {}
-    return res.json()
-  } catch {
-    return {}
-  }
-}
-
 export default function PortfolioSummaryCard() {
-  // Fetch status for all bots
-  const { data: aresData, isLoading: aresLoading } = useSWR('/api/fortress/status', fetcher, { refreshInterval: 30000 })
-  const { data: solomonData, isLoading: solomonLoading } = useSWR('/api/solomon/status', fetcher, { refreshInterval: 30000 })
-  const { data: icarusData, isLoading: icarusLoading } = useSWR('/api/gideon/status', fetcher, { refreshInterval: 30000 })
-  const { data: anchorData, isLoading: anchorLoading } = useSWR('/api/anchor/status', fetcher, { refreshInterval: 30000 })
-  const { data: titanData, isLoading: titanLoading } = useSWR('/api/samson/status', fetcher, { refreshInterval: 30000 })
+  // PERF FIX: Use the same SWR hooks as BotStatusOverview.
+  // SWR deduplicates by cache key — these share cache keys like 'fortress-status',
+  // so no duplicate HTTP requests are made. Previously this component used raw
+  // useSWR('/api/fortress/status', ...) with URL-based keys, which SWR treated
+  // as separate cache entries from BotStatusOverview's 'fortress-status' keys,
+  // causing 5 duplicate requests on every /live-trading page load.
+  const { data: aresData, isLoading: aresLoading } = useFortressStatus()
+  const { data: solomonData, isLoading: solomonLoading } = useSolomonStatus()
+  const { data: icarusData, isLoading: icarusLoading } = useGideonStatus()
+  const { data: anchorData, isLoading: anchorLoading } = useANCHORStatus()
+  const { data: titanData, isLoading: titanLoading } = useSamsonStatus()
 
   const isLoading = aresLoading || solomonLoading || icarusLoading || anchorLoading || titanLoading
 

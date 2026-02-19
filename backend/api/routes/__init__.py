@@ -34,6 +34,7 @@ from . import daily_manna_routes
 from . import bot_reports_routes
 from . import tastytrade_routes
 from . import valor_routes
+from . import dashboard_batch_routes
 
 __all__ = [
     'vix_routes',
@@ -67,4 +68,5 @@ __all__ = [
     'bot_reports_routes',
     'tastytrade_routes',
     'valor_routes',
+    'dashboard_batch_routes',
 ]
