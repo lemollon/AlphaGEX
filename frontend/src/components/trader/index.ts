@@ -25,10 +25,12 @@ export {
 export type { BotName, BotBrand, TabId } from './BotBranding'
 
 // Core Portfolio Components
-export { default as LivePortfolio } from './LivePortfolio'
+// NOTE: LivePortfolio, LiveEquityCurve, EquityCurve, PresetPerformanceChart
+// are NOT re-exported here to avoid pulling recharts into every page that
+// imports from this barrel. Import them directly if needed:
+//   import LivePortfolio from '@/components/trader/LivePortfolio'
 export { default as OpenPositionsLive } from './OpenPositionsLive'
 export { default as AllOpenPositions } from './AllOpenPositions'
-export { default as LiveEquityCurve } from './LiveEquityCurve'
 
 // Trade Story & Decisions
 export { default as TradeStoryCard } from './TradeStoryCard'
@@ -49,7 +51,7 @@ export { default as TodayReportCard } from './TodayReportCard'
 export { default as WhyNotTrading } from './WhyNotTrading'
 export { default as RiskMetrics } from './RiskMetrics'
 export { default as PerformanceComparison } from './PerformanceComparison'
-export { default as PresetPerformanceChart } from './PresetPerformanceChart'
+// PresetPerformanceChart removed from barrel - import directly to avoid recharts in bundle
 export { default as UnrealizedPnLCard } from './UnrealizedPnLCard'
 export { default as HedgeSignalCard } from './HedgeSignalCard'
 
@@ -70,17 +72,15 @@ export type { DecisionFilters } from './DecisionFilter'
 export { default as PositionDetailModal } from './PositionDetailModal'
 
 // Legacy / Existing Components
-export { default as EquityCurve } from './EquityCurve'
+// EquityCurve removed from barrel - import directly to avoid recharts in bundle
 export { default as DecisionLogViewer } from './DecisionLogViewer'
 export { default as MLModelStatus } from './MLModelStatus'
 export { default as PerformanceCards } from './PerformanceCards'
 export { default as ExportButtons } from './ExportButtons'
 export { default as WheelDashboard } from './WheelDashboard'
 
-// Re-export types from LivePortfolio
+// Types re-exported separately (type-only imports don't pull in runtime code)
 export type { LivePnLData, LivePosition, EquityDataPoint, TimePeriod } from './LivePortfolio'
-
-// Re-export types from LiveEquityCurve (with alias to avoid conflict)
 export type { EquityPoint } from './LiveEquityCurve'
 
 // Unified Bot Metrics - Single Source of Truth for all bot statistics

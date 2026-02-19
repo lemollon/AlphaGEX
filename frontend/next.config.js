@@ -6,6 +6,20 @@ const gitCommit = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'local'
 
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // Optimize barrel exports for these packages to improve tree-shaking
+    // This transforms `import { X } from 'pkg'` into direct imports,
+    // preventing the entire package from being bundled
+    optimizePackageImports: [
+      'recharts',
+      'lucide-react',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-tabs',
+      '@radix-ui/react-toast',
+      'date-fns',
+    ],
+  },
   async redirects() {
     return [
       {
