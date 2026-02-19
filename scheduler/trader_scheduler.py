@@ -3378,8 +3378,10 @@ class AutonomousTraderScheduler:
         if not self.is_market_open():
             return
 
-        if not self.jubilee_ic_trader:
-            return
+        # NOTE: This job does NOT need self.jubilee_ic_trader — it uses
+        # JubileeDatabase directly. The old guard (if not self.jubilee_ic_trader)
+        # caused this job to silently do nothing when the trader failed to init,
+        # which is the root cause of "No equity data for Today".
 
         try:
             from trading.jubilee.db import JubileeDatabase
@@ -6162,23 +6164,26 @@ class AutonomousTraderScheduler:
             # JUBILEE IC MTM: Event-driven (on open/close) to match SAMSON
             # No separate scheduled MTM job needed
             logger.info("✅ JUBILEE IC MTM is event-driven (on trade open/close, matches SAMSON)")
-
-            # JUBILEE IC Equity Snapshots - runs every 5 minutes during market hours
-            # Records periodic equity snapshots so the intraday chart always has data,
-            # even when no trades are opened or closed during the session
-            self.scheduler.add_job(
-                self.scheduled_jubilee_ic_equity_snapshot,
-                trigger=IntervalTrigger(
-                    minutes=5,
-                    timezone='America/Chicago'
-                ),
-                id='jubilee_ic_equity_snapshot',
-                name='JUBILEE IC - Equity Snapshot (5-min intervals)',
-                replace_existing=True
-            )
-            logger.info("✅ JUBILEE IC equity snapshot job scheduled (every 5 min)")
         else:
-            logger.warning("⚠️ JUBILEE IC not available - IC trading with borrowed capital disabled")
+            logger.warning("⚠️ JUBILEE IC trader not available - IC trading with borrowed capital disabled")
+
+        # JUBILEE IC Equity Snapshots - runs every 5 minutes during market hours
+        # Records periodic equity snapshots so the intraday chart always has data,
+        # even when no trades are opened or closed during the session.
+        # IMPORTANT: This job uses JubileeDatabase directly, NOT the trader.
+        # It must run even if the trader failed to initialize, so the chart
+        # shows equity state (realized P&L from closed trades) regardless.
+        self.scheduler.add_job(
+            self.scheduled_jubilee_ic_equity_snapshot,
+            trigger=IntervalTrigger(
+                minutes=5,
+                timezone='America/Chicago'
+            ),
+            id='jubilee_ic_equity_snapshot',
+            name='JUBILEE IC - Equity Snapshot (5-min intervals)',
+            replace_existing=True
+        )
+        logger.info("✅ JUBILEE IC equity snapshot job scheduled (every 5 min)")
 
         # =================================================================
         # WATCHTOWER JOB: Commentary Generation - runs every 5 minutes
