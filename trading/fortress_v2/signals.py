@@ -489,6 +489,107 @@ class SignalGenerator:
             'source': f'SD_{sd:.1f}',
         }
 
+    def enforce_symmetric_wings(
+        self,
+        short_put: float,
+        long_put: float,
+        short_call: float,
+        long_call: float,
+        available_strikes: Optional[set] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Ensure put spread width == call spread width.
+
+        If they differ, adjust the LONG (protective) strikes to match.
+        Always adjust outward (wider), never inward - never reduce protection.
+
+        Args:
+            short_put: Short put strike
+            long_put: Long put strike
+            short_call: Short call strike
+            long_call: Long call strike
+            available_strikes: Set of available strikes from options chain (for validation)
+
+        Returns:
+            Dict with adjusted strikes and metadata, or None if no valid adjustment found.
+        """
+        put_width = short_put - long_put
+        call_width = long_call - short_call
+        adjusted = False
+        original_put_width = put_width
+        original_call_width = call_width
+
+        if abs(put_width - call_width) < 0.01:
+            # Already symmetric (within floating point tolerance)
+            return {
+                'short_put': short_put,
+                'long_put': long_put,
+                'short_call': short_call,
+                'long_call': long_call,
+                'adjusted': False,
+                'original_put_width': put_width,
+                'original_call_width': call_width,
+            }
+
+        # Use the WIDER of the two as the target width
+        target_width = max(put_width, call_width)
+
+        # Adjust the narrower side's long strike outward
+        if put_width < target_width:
+            long_put = short_put - target_width
+            logger.info(
+                f"FORTRESS: Wings adjusted: put side widened from "
+                f"${original_put_width:.0f} to ${target_width:.0f} to match call side"
+            )
+            adjusted = True
+        elif call_width < target_width:
+            long_call = short_call + target_width
+            logger.info(
+                f"FORTRESS: Wings adjusted: call side widened from "
+                f"${original_call_width:.0f} to ${target_width:.0f} to match put side"
+            )
+            adjusted = True
+
+        # Validate symmetry
+        final_put_width = short_put - long_put
+        final_call_width = long_call - short_call
+        if abs(final_put_width - final_call_width) > 0.01:
+            logger.error(
+                f"FORTRESS: Wings still asymmetric after adjustment: "
+                f"put=${final_put_width}, call=${final_call_width}"
+            )
+
+        # If available_strikes provided, validate the adjusted strike exists
+        if available_strikes and adjusted:
+            if long_put not in available_strikes:
+                # Find nearest valid strike that keeps width >= target_width
+                valid_puts = sorted([s for s in available_strikes if s <= short_put - target_width])
+                if valid_puts:
+                    long_put = valid_puts[-1]  # Closest strike that's far enough out
+                    logger.info(f"FORTRESS: Adjusted long put to nearest valid strike: ${long_put}")
+                else:
+                    logger.warning(f"FORTRESS: No valid put strike found for long put (need <= ${short_put - target_width})")
+                    return None
+
+            if long_call not in available_strikes:
+                valid_calls = sorted([s for s in available_strikes if s >= short_call + target_width])
+                if valid_calls:
+                    long_call = valid_calls[0]  # Closest strike that's far enough out
+                    logger.info(f"FORTRESS: Adjusted long call to nearest valid strike: ${long_call}")
+                else:
+                    logger.warning(f"FORTRESS: No valid call strike found for long call (need >= ${short_call + target_width})")
+                    return None
+
+        return {
+            'short_put': short_put,
+            'long_put': long_put,
+            'short_call': short_call,
+            'long_call': long_call,
+            'adjusted': adjusted,
+            'original_put_width': original_put_width,
+            'original_call_width': original_call_width,
+        }
+
     def get_real_credits(
         self,
         expiration: str,
@@ -1036,6 +1137,27 @@ class SignalGenerator:
             spot_price=spot,
             expected_move=expected_move,
         )
+
+        # Step 4b: Enforce symmetric wings (put width == call width)
+        symmetric = self.enforce_symmetric_wings(
+            short_put=strikes['put_short'],
+            long_put=strikes['put_long'],
+            short_call=strikes['call_short'],
+            long_call=strikes['call_long'],
+        )
+        if symmetric is None:
+            logger.error("FORTRESS: Cannot enforce symmetric wings - no valid strikes found")
+            return None
+        if symmetric['adjusted']:
+            logger.info(
+                f"FORTRESS: Symmetric enforcement applied — "
+                f"put width ${symmetric['original_put_width']:.0f} → ${symmetric['short_put'] - symmetric['long_put']:.0f}, "
+                f"call width ${symmetric['original_call_width']:.0f} → ${symmetric['long_call'] - symmetric['short_call']:.0f}"
+            )
+            strikes['put_short'] = symmetric['short_put']
+            strikes['put_long'] = symmetric['long_put']
+            strikes['call_short'] = symmetric['short_call']
+            strikes['call_long'] = symmetric['long_call']
 
         # Step 5: Get expiration (min 2DTE) - needed for real quotes
         # FIX (Feb 2026): 0DTE SPY $2-wide ICs had no premium ($0.02 credits).

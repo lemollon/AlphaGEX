@@ -1330,30 +1330,34 @@ class FortressTrader(MathOptimizerMixin):
         Check if IC should be closed.
 
         Exit conditions (in priority order):
-        1. FORCE_EXIT: Current time >= force exit time on expiration day
+        1. EOD_CLOSE: Current time >= force exit time ANY day (no swing trades allowed)
         2. EXPIRED: Position's expiration date is BEFORE today (past expiration)
         3. PROFIT_TARGET / STOP_LOSS: P&L targets
 
-        NOTE: On expiration day, we use FORCE_EXIT (not EXPIRED) to ensure positions are
-        closed at the proper time (10 min before market close), not at market open.
+        FORTRESS RULE: All positions must be closed before market close every day.
+        No overnight holds, no swing trades. This is enforced by EOD_CLOSE firing
+        at force_exit time regardless of expiration date or day of week.
         """
         # Get force exit time (handles early close days)
         force_time = self._get_force_exit_time(now, today)
 
-        # FRIDAY WEEKEND CLOSE: Force close ALL positions before weekend regardless of expiration.
-        # We don't want to hold any positions over the weekend.
-        is_friday = now.weekday() == 4  # Monday=0, Friday=4
-        if is_friday and now >= force_time:
-            logger.info(f"FORTRESS: Friday close - force closing {pos.position_id} before weekend (exp: {pos.expiration})")
-            return True, "FRIDAY_WEEKEND_CLOSE"
+        # EOD_CLOSE: Force close ALL positions before market close EVERY trading day.
+        # FORTRESS does NOT hold positions overnight — no swing trades allowed.
+        # This replaces the old Friday-only and expiration-only close logic.
+        if now >= force_time:
+            if now.weekday() == 4:
+                logger.info(f"FORTRESS: EOD close (Friday) - force closing {pos.position_id} (exp: {pos.expiration})")
+                return True, "EOD_CLOSE_FRIDAY"
+            elif pos.expiration == today:
+                logger.info(f"FORTRESS: EOD close (expiration day) - force closing {pos.position_id}")
+                return True, "EOD_CLOSE_EXPIRATION"
+            else:
+                logger.info(f"FORTRESS: EOD close (no swing trades) - force closing {pos.position_id} (exp: {pos.expiration})")
+                return True, "EOD_CLOSE"
 
-        # FORCE_EXIT: On expiration day, close at force exit time (10 min before market close)
-        if pos.expiration == today and now >= force_time:
-            return True, "FORCE_EXIT_TIME"
-
-        # EXPIRED: Position is PAST expiration (should have been closed yesterday)
+        # EXPIRED: Position is PAST expiration (should have been closed yesterday/previous day)
         if pos.expiration < today:
-            logger.warning(f"Position {pos.position_id} is PAST expiration ({pos.expiration}) - closing immediately")
+            logger.warning(f"FORTRESS: Position {pos.position_id} is PAST expiration ({pos.expiration}) - closing immediately")
             return True, "EXPIRED"
 
         # Get current value with fallback handling
@@ -1363,11 +1367,12 @@ class FortressTrader(MathOptimizerMixin):
             logger.warning(f"[FORTRESS EXIT] Pricing unavailable for {pos.position_id}")
 
             # If we're within 30 minutes of force exit time, force close anyway
+            # No expiration check needed — FORTRESS closes ALL positions daily
             force_time = self._get_force_exit_time(now, today)
             minutes_to_force = (force_time - now).total_seconds() / 60
-            if minutes_to_force <= 30 and pos.expiration == today:
-                logger.warning(f"[FORTRESS EXIT] Force closing {pos.position_id} - pricing failed but {minutes_to_force:.0f}min to force exit")
-                return True, "PRICING_FAILURE_NEAR_EXPIRY"
+            if minutes_to_force <= 30:
+                logger.warning(f"[FORTRESS EXIT] Force closing {pos.position_id} - pricing failed but {minutes_to_force:.0f}min to EOD close")
+                return True, "PRICING_FAILURE_NEAR_EOD"
 
             # Log but don't block - we'll retry next cycle
             self.db.log("WARNING", f"Pricing unavailable for exit check: {pos.position_id}")

@@ -1522,13 +1522,11 @@ class AutonomousTraderScheduler:
 
     def scheduled_fortress_eod_logic(self):
         """
-        FORTRESS End-of-Day processing - runs daily at 3:05 PM CT
+        FORTRESS End-of-Day processing - runs daily at 3:01 PM CT
 
-        Processes expired 0DTE Iron Condor positions:
-        - Calculates realized P&L based on closing price
-        - Updates position status to 'expired'
-        - Feeds Prophet for ML training feedback loop
-        - Updates daily performance metrics
+        Two-phase EOD processing:
+        Phase 1: Force close ALL open positions (no swing trades allowed)
+        Phase 2: Process any expired positions for expiration P&L calculation
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -1540,14 +1538,27 @@ class AutonomousTraderScheduler:
             return
 
         # EOD processing happens after market close, so we don't check is_market_open()
-        logger.info("Processing expired FORTRESS positions...")
 
         try:
-            # Run the EOD expiration processing
+            # PHASE 1: Force close ALL open positions — FORTRESS does NOT hold overnight
+            positions = self.fortress_trader.get_positions()
+            if positions:
+                logger.info(f"FORTRESS EOD Phase 1: Force closing {len(positions)} open position(s) (no swing trades)")
+                close_result = self.fortress_trader.force_close_all(reason="EOD_CLOSE_SAFETY_NET")
+                logger.info(f"FORTRESS EOD Phase 1 results:")
+                logger.info(f"  Closed: {close_result.get('closed', 0)}")
+                logger.info(f"  Partial: {close_result.get('partial', 0)}")
+                logger.info(f"  Failed: {close_result.get('failed', 0)}")
+                logger.info(f"  Total P&L: ${close_result.get('total_pnl', 0):,.2f}")
+            else:
+                logger.info("FORTRESS EOD Phase 1: No open positions to close")
+
+            # PHASE 2: Process expired positions for expiration P&L calculation
+            logger.info("FORTRESS EOD Phase 2: Processing expired positions...")
             result = self.fortress_trader.process_expired_positions()
 
             if result:
-                logger.info(f"FORTRESS EOD processing completed:")
+                logger.info(f"FORTRESS EOD Phase 2 completed:")
                 logger.info(f"  Processed: {result.get('processed_count', 0)} positions")
                 logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
                 logger.info(f"  Winners: {result.get('winners', 0)}")
@@ -1562,7 +1573,7 @@ class AutonomousTraderScheduler:
                     for error in result['errors']:
                         logger.warning(f"    Error: {error}")
             else:
-                logger.info("FORTRESS EOD: No positions to process")
+                logger.info("FORTRESS EOD Phase 2: No expired positions to process")
 
             logger.info(f"FORTRESS EOD processing completed successfully")
             logger.info(f"=" * 80)
@@ -5470,8 +5481,9 @@ class AutonomousTraderScheduler:
             logger.info("✅ FORTRESS job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # FORTRESS EOD JOB: Process expired positions - runs at 3:01 PM CT
-            # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
+            # FORTRESS EOD JOB: Force close ALL + process expired - runs at 3:01 PM CT
+            # Phase 1: force_close_all() — no swing trades allowed
+            # Phase 2: process_expired_positions() — expiration P&L calculation
             # =================================================================
             self.scheduler.add_job(
                 self.scheduled_fortress_eod_logic,
