@@ -965,13 +965,13 @@ llm = None
 llm_init_error = None
 if api_key and LANGCHAIN_AVAILABLE and ChatAnthropic:
     try:
-        # Use Claude 3.5 Haiku for fast, cost-effective AI responses
+        # Use Claude Haiku for fast, cost-effective AI responses
         llm = ChatAnthropic(
-            model="claude-3-5-haiku-latest",
+            model="claude-haiku-4-5-20251001",
             temperature=0.1,
             max_tokens=4096
         )
-        logger.info("AI Intelligence: Claude 3.5 Haiku initialized successfully")
+        logger.info("AI Intelligence: Claude Haiku 4.5 initialized successfully")
     except Exception as e:
         llm_init_error = str(e)
         logger.warning(f"AI Intelligence: Claude initialization failed: {e}")
@@ -1651,11 +1651,22 @@ Keep it concise and actionable. Every recommendation must connect back to the GE
 
         return response
 
+    except HTTPException:
+        raise  # Re-raise 503s from require_api_key / get_safe_connection
     except Exception as e:
         import traceback
         logger.error(f"[ERROR] daily-trading-plan failed: {type(e).__name__}: {str(e)}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate daily plan: {type(e).__name__}: {str(e)}")
+        # Return a safe fallback instead of 500 — the frontend should NOT crash
+        return {
+            "success": False,
+            "data": {
+                "plan": "Daily trading plan temporarily unavailable. The AI service encountered an error — please try refreshing later.",
+                "generated_at": datetime.now().isoformat(),
+                "from_cache": False,
+                "_error": f"{type(e).__name__}: {str(e)}"
+            }
+        }
 
 
 # ============================================================================
@@ -2013,11 +2024,22 @@ Write in short, punchy sentences. No fluff. Every word must add value. Reference
 
         return response
 
+    except HTTPException:
+        raise  # Re-raise 503s from require_api_key / get_safe_connection
     except Exception as e:
         import traceback
         logger.error(f"[ERROR] market-commentary failed: {type(e).__name__}: {str(e)}")
         logger.error(f"[ERROR] Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate commentary: {type(e).__name__}: {str(e)}")
+        # Return a safe fallback instead of 500 — the frontend should NOT crash
+        return {
+            "success": False,
+            "data": {
+                "commentary": "Market commentary temporarily unavailable. The AI service encountered an error — please try refreshing later.",
+                "generated_at": datetime.now().isoformat(),
+                "from_cache": False,
+                "_error": f"{type(e).__name__}: {str(e)}"
+            }
+        }
 
 
 # ============================================================================

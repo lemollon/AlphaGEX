@@ -8,18 +8,32 @@ import { apiClient, api } from '@/lib/api'
 // =============================================================================
 
 const fetchers = {
-  // Dashboard
+  // Dashboard — these endpoints hit the AI layer which can 503/500 when
+  // the Anthropic API key is invalid or the model name is wrong.
+  // Return safe fallback shapes so SWR never propagates a hard error.
   marketCommentary: async () => {
-    const response = await apiClient.getMarketCommentary()
-    return response.data
+    try {
+      const response = await apiClient.getMarketCommentary()
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
   },
   dailyTradingPlan: async () => {
-    const response = await apiClient.getDailyTradingPlan()
-    return response.data
+    try {
+      const response = await apiClient.getDailyTradingPlan()
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
   },
   intelligenceFeed: async () => {
-    const response = await apiClient.getIntelligenceFeed()
-    return response.data
+    try {
+      const response = await apiClient.getIntelligenceFeed()
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
   },
 
   // GEX & Gamma
