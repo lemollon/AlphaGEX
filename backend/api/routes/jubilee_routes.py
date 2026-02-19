@@ -2301,3 +2301,78 @@ async def reset_tracing_metrics():
     except Exception as e:
         logger.error(f"Error resetting tracing metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== Batch Endpoint ==========
+# Collapses 19 individual API calls into 1 request for the /jubilee dashboard.
+# Same pattern as /api/v1/dashboard/batch for /live-trading.
+
+import asyncio
+import time as _time
+
+async def _safe_batch(label: str, coro):
+    """Await coro; on failure return an error dict instead of raising."""
+    try:
+        return await coro
+    except Exception as exc:
+        logger.warning("jubilee batch: %s failed: %s", label, exc)
+        return {"_error": str(exc)}
+
+
+@router.get("/batch/overview")
+async def get_batch_overview():
+    """
+    Batch endpoint for the /jubilee dashboard overview tab.
+
+    Returns all data needed for the default (overview) tab in a single
+    response. Eliminates 7 individual API calls → 1 concurrent batch.
+
+    Sections returned:
+    - status: Box spread system status
+    - positions: Open box spread positions
+    - reconciliation: Full reconciliation (drives all P&L metrics)
+    - ic_status: IC trading status
+    - ic_positions: Open IC positions
+    - ic_performance: IC performance metrics
+    - ic_logs: Recent IC activity logs
+    - capital_flow: Capital deployment breakdown
+    - rate_analysis: Borrowing rate analysis
+    """
+    t0 = _time.time()
+
+    results = await asyncio.gather(
+        _safe_batch("status", get_jubilee_status()),
+        _safe_batch("positions", get_positions()),
+        _safe_batch("reconciliation", get_full_reconciliation()),
+        _safe_batch("ic_status", get_ic_status()),
+        _safe_batch("ic_positions", get_ic_positions()),
+        _safe_batch("ic_performance", get_ic_performance()),
+        _safe_batch("ic_logs", get_ic_logs(50)),
+        _safe_batch("capital_flow", get_capital_flow()),
+        _safe_batch("rate_analysis", get_rate_analysis()),
+        _safe_batch("ic_signals", get_recent_ic_signals(20)),
+        _safe_batch("daily_pnl", get_daily_pnl(14)),
+    )
+
+    elapsed_ms = round((_time.time() - t0) * 1000)
+
+    return {
+        "success": True,
+        "data": {
+            "status": results[0],
+            "positions": results[1],
+            "reconciliation": results[2],
+            "ic_status": results[3],
+            "ic_positions": results[4],
+            "ic_performance": results[5],
+            "ic_logs": results[6],
+            "capital_flow": results[7],
+            "rate_analysis": results[8],
+            "ic_signals": results[9],
+            "daily_pnl": results[10],
+        },
+        "meta": {
+            "elapsed_ms": elapsed_ms,
+            "sections": 11,
+        },
+    }
