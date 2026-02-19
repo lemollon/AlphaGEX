@@ -320,8 +320,8 @@ class OrderExecutor:
         try:
             balance = self.tradier.get_account_balance()
             if not balance:
-                logger.warning("FORTRESS: Could not fetch account balance - proceeding with trade")
-                return True, 0, "Balance check unavailable"
+                logger.warning("FORTRESS: Could not fetch account balance - BLOCKING trade (fail-closed)")
+                return False, 0, "Balance check unavailable - blocking trade"
 
             buying_power = float(balance.get('option_buying_power', 0))
 
@@ -346,8 +346,8 @@ class OrderExecutor:
             return True, buying_power, "OK"
 
         except Exception as e:
-            logger.warning(f"FORTRESS: Balance check failed ({e}) - proceeding with trade")
-            return True, 0, f"Balance check error: {e}"
+            logger.warning(f"FORTRESS: Balance check failed ({e}) - BLOCKING trade (fail-closed)")
+            return False, 0, f"Balance check error: {e} - blocking trade"
 
     def get_execution_status(self) -> dict:
         """Get detailed execution capability status for monitoring."""

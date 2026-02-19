@@ -351,6 +351,10 @@ class FaithTrader:
         """
         Manage open positions: check profit target, stop loss, and EOD cutoff.
 
+        Also handles stale/expired positions from previous days that should
+        have been closed but survived (e.g., server restart, EOD failure).
+        FAITH is a day-trade-only bot — no overnight holds.
+
         Returns:
             Tuple of (positions_managed, total_pnl)
         """
@@ -360,8 +364,50 @@ class FaithTrader:
 
         managed = 0
         total_pnl = 0
+        today_str = now.strftime('%Y-%m-%d')
 
         for position in positions:
+            # PRIORITY CHECK: Close stale/expired positions from previous days immediately.
+            # FAITH is day-trade-only — no overnight holds are allowed.
+            # This catches positions that survived a failed EOD close or server restart.
+            position_date = None
+            if position.open_time:
+                position_date = position.open_time.strftime('%Y-%m-%d') if hasattr(position.open_time, 'strftime') else str(position.open_time)[:10]
+
+            is_stale = position_date and position_date < today_str
+            is_expired = position.expiration < today_str
+
+            if is_stale or is_expired:
+                reason = "expired_previous_day" if is_expired else "stale_overnight_position"
+                logger.warning(
+                    f"FAITH: Position {position.position_id} is from a previous day "
+                    f"(opened={position_date}, exp={position.expiration}, today={today_str}) — "
+                    f"force-closing with reason '{reason}'"
+                )
+                # Try to get MTM, fall back to entry credit
+                close_price = self.signal_generator.get_ic_mark_to_market(
+                    put_short=position.put_short_strike,
+                    put_long=position.put_long_strike,
+                    call_short=position.call_short_strike,
+                    call_long=position.call_long_strike,
+                    expiration=position.expiration,
+                )
+                if close_price is None:
+                    close_price = position.total_credit  # Assume breakeven if no MTM
+                    logger.info(f"FAITH: No MTM for stale position — using entry credit ${close_price:.4f}")
+
+                success, pnl = self.executor.close_paper_position(
+                    position, close_price, reason
+                )
+                if success:
+                    managed += 1
+                    total_pnl += pnl
+                    self._mtm_failure_counts.pop(position.position_id, None)
+                    self.db.log("RECOVERY", f"Stale position {position.position_id} force-closed: {reason}, P&L=${pnl:.2f}")
+                else:
+                    logger.error(f"FAITH: Failed to close stale position {position.position_id}")
+                continue
+
             close_price = self.signal_generator.get_ic_mark_to_market(
                 put_short=position.put_short_strike,
                 put_long=position.put_long_strike,
