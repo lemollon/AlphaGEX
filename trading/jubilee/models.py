@@ -1107,39 +1107,57 @@ class JubileeICConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'JubileeICConfig':
-        """Create config from dictionary"""
+        """Create config from dictionary.
+
+        IMPORTANT: All .get() defaults MUST match the dataclass field defaults above.
+        Mismatched defaults silently change behavior when DB config has the section
+        key but omits a sub-key. This was the root cause of JUBILEE trading 0DTE
+        instead of weekly (prefer_0dte defaulted True here vs False in dataclass).
+        """
         config = cls()
         if 'mode' in data:
             config.mode = TradingMode(data['mode'])
         if 'enabled' in data:
             config.enabled = data['enabled']
 
-        # Handle nested structures
+        # Handle nested structures — defaults MUST match dataclass defaults
         if 'expiration' in data:
             config.target_dte_min = data['expiration'].get('target_dte_min', 0)
             config.target_dte_max = data['expiration'].get('target_dte_max', 7)
-            config.prefer_0dte = data['expiration'].get('prefer_0dte', True)
+            config.prefer_0dte = data['expiration'].get('prefer_0dte', False)  # Match dataclass default
 
         if 'strikes' in data:
+            config.sd_multiplier = data['strikes'].get('sd_multiplier', 0.8)  # Match dataclass default
             config.short_put_delta = data['strikes'].get('short_put_delta', 0.10)
             config.short_call_delta = data['strikes'].get('short_call_delta', 0.10)
-            config.spread_width = data['strikes'].get('spread_width', 10.0)  # Match ANCHOR
+            config.spread_width = data['strikes'].get('spread_width', 12.0)  # Match dataclass default (SAMSON)
+            config.min_credit = data['strikes'].get('min_credit', 0.50)  # Match dataclass default
 
         if 'sizing' in data:
-            config.max_positions = data['sizing'].get('max_positions', 5)  # 5 simultaneous positions
-            config.max_capital_per_trade_pct = data['sizing'].get('max_capital_per_trade_pct', 10.0)
-            config.max_daily_trades = data['sizing'].get('max_daily_trades', 10)  # 10 trades/day (ANCHOR pacing)
-            config.max_contracts = data['sizing'].get('max_contracts', 100)  # 100 contracts max (match ANCHOR)
+            config.max_positions = data['sizing'].get('max_positions', 10)  # Match dataclass default (SAMSON)
+            config.max_capital_per_trade_pct = data['sizing'].get('max_capital_per_trade_pct', 15.0)  # Match dataclass default (SAMSON)
+            config.max_daily_trades = data['sizing'].get('max_daily_trades', 0)  # Match dataclass default (unlimited)
+            config.max_contracts = data['sizing'].get('max_contracts', 100)
 
         if 'risk' in data:
             config.stop_loss_pct = data['risk'].get('stop_loss_pct', 200.0)
-            config.profit_target_pct = data['risk'].get('profit_target_pct', 50.0)
+            config.profit_target_pct = data['risk'].get('profit_target_pct', 30.0)  # Match dataclass default (SAMSON)
             config.time_stop_dte = data['risk'].get('time_stop_dte', 0)
 
         if 'prophet' in data:
             config.require_oracle_approval = data['prophet'].get('require_approval', True)
-            config.min_oracle_confidence = data['prophet'].get('min_confidence', 0.6)
-            config.min_win_probability = data['prophet'].get('min_win_probability', 0.50)
+            config.min_oracle_confidence = data['prophet'].get('min_confidence', 0.2)  # Match dataclass default (SAMSON)
+            config.min_win_probability = data['prophet'].get('min_win_probability', 0.40)  # Match dataclass default (SAMSON)
+
+        # Handle flat keys for backward compatibility
+        if 'starting_capital' in data:
+            config.starting_capital = data['starting_capital']
+        if 'capital' in data and 'starting_capital' not in data:
+            if isinstance(data['capital'], dict):
+                config.starting_capital = data['capital'].get('starting_capital', 500000.0)
+                config.min_capital_per_trade = data['capital'].get('min_per_trade', 5000.0)
+            else:
+                config.starting_capital = data['capital']
 
         return config
 
