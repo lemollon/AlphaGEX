@@ -1496,6 +1496,61 @@ class JubileeICExecutor:
         self.db = db
         self.tradier = _get_production_tradier_client(config.ticker)
 
+    def _validate_ic_structure(self, signal: JubileeICSignal) -> Tuple[bool, str]:
+        """
+        Validate that an IC signal has a valid 4-leg iron condor structure.
+
+        Returns (is_valid, error_message).
+
+        A valid iron condor requires:
+        - Put spread: put_long < put_short (long is further OTM)
+        - Call spread: call_short < call_long (long is further OTM)
+        - Both spreads have positive width
+        - Short strikes don't overlap (put_short < call_short)
+        - Credit received is positive
+        - Contracts > 0
+        """
+        # Check put spread
+        if signal.put_long_strike >= signal.put_short_strike:
+            return False, (
+                f"Invalid put spread: long {signal.put_long_strike} >= short {signal.put_short_strike} "
+                f"(long must be lower/further OTM)"
+            )
+
+        # Check call spread
+        if signal.call_short_strike >= signal.call_long_strike:
+            return False, (
+                f"Invalid call spread: short {signal.call_short_strike} >= long {signal.call_long_strike} "
+                f"(long must be higher/further OTM)"
+            )
+
+        # Check put spread width > 0
+        put_width = signal.put_short_strike - signal.put_long_strike
+        if put_width <= 0:
+            return False, f"Zero-width put spread: {signal.put_short_strike}/{signal.put_long_strike}"
+
+        # Check call spread width > 0
+        call_width = signal.call_long_strike - signal.call_short_strike
+        if call_width <= 0:
+            return False, f"Zero-width call spread: {signal.call_short_strike}/{signal.call_long_strike}"
+
+        # Check short strikes don't overlap (put_short should be below call_short)
+        if signal.put_short_strike >= signal.call_short_strike:
+            return False, (
+                f"Short strikes overlap: put_short {signal.put_short_strike} >= "
+                f"call_short {signal.call_short_strike}"
+            )
+
+        # Check credit > 0
+        if signal.total_credit <= 0:
+            return False, f"No credit received: total_credit={signal.total_credit}"
+
+        # Check contracts > 0
+        if signal.contracts <= 0:
+            return False, f"Invalid contracts: {signal.contracts}"
+
+        return True, ""
+
     def execute_signal(
         self,
         signal: JubileeICSignal
@@ -1507,6 +1562,28 @@ class JubileeICExecutor:
         """
         if not signal.is_valid:
             logger.warning(f"Cannot execute invalid signal: {signal.skip_reason}")
+            return None
+
+        # Validate IC structure before creating position
+        is_valid_structure, validation_error = self._validate_ic_structure(signal)
+        if not is_valid_structure:
+            logger.error(f"IC structure validation FAILED: {validation_error}")
+            self.db.log_action(
+                action="IC_VALIDATION_FAILED",
+                message=f"Rejected signal {signal.signal_id}: {validation_error}",
+                level="ERROR",
+                details={
+                    'signal_id': signal.signal_id,
+                    'put_short': signal.put_short_strike,
+                    'put_long': signal.put_long_strike,
+                    'call_short': signal.call_short_strike,
+                    'call_long': signal.call_long_strike,
+                    'total_credit': signal.total_credit,
+                    'contracts': signal.contracts,
+                    'error': validation_error,
+                },
+                log_type="IC",
+            )
             return None
 
         now = datetime.now(CENTRAL_TZ)
@@ -1733,6 +1810,13 @@ class JubileeICExecutor:
         Check if position should be closed based on exit conditions.
 
         Returns (should_close, reason)
+
+        EXIT PRIORITY ORDER:
+        1. Profit target — always check first (take the win)
+        2. Stop loss — protect against large losses
+        3. Time-based exit — for 0DTE, use clock time (exit_by config);
+           for multi-day, use DTE-based time stop
+        4. Expiration — last resort, position at/past expiration
         """
         # Update MTM first
         self.update_position_mtm(position.position_id)
@@ -1742,21 +1826,38 @@ class JubileeICExecutor:
             return False, "Position not found"
 
         # Check profit target
-        if position.unrealized_pnl >= position.total_credit_received * (position.profit_target_pct / 100):
+        if position.total_credit_received > 0 and position.unrealized_pnl >= position.total_credit_received * (position.profit_target_pct / 100):
             return True, f"Profit target reached ({position.profit_target_pct}%)"
 
         # Check stop loss
-        max_loss_threshold = position.max_loss * (position.stop_loss_pct / 100)
-        if position.unrealized_pnl <= -max_loss_threshold:
-            return True, f"Stop loss triggered ({position.stop_loss_pct}% of max loss)"
+        if position.max_loss > 0:
+            max_loss_threshold = position.max_loss * (position.stop_loss_pct / 100)
+            if position.unrealized_pnl <= -max_loss_threshold:
+                return True, f"Stop loss triggered ({position.stop_loss_pct}% of max loss)"
 
-        # Check time stop
-        if position.current_dte <= position.time_stop_dte:
-            return True, f"Time stop reached ({position.current_dte} DTE <= {position.time_stop_dte})"
+        # Check time-based exit
+        # For 0DTE positions (dte_at_entry == 0): use clock time, NOT DTE
+        # The old logic (current_dte <= time_stop_dte) fires immediately on 0DTE
+        # because current_dte=0 and time_stop_dte>=0 is always True.
+        if position.dte_at_entry == 0:
+            # 0DTE: close based on time of day (exit_by config, default 14:50 CT)
+            now = datetime.now(CENTRAL_TZ)
+            exit_by_str = getattr(self.config, 'exit_by', '14:50')
+            try:
+                exit_by_time = datetime.strptime(exit_by_str, '%H:%M').time()
+            except (ValueError, TypeError):
+                exit_by_time = datetime.strptime('14:50', '%H:%M').time()
 
-        # Check expiration
-        if position.current_dte <= 0:
-            return True, "Position at expiration"
+            if now.time() >= exit_by_time:
+                return True, f"0DTE time exit ({now.strftime('%H:%M')} CT >= {exit_by_str})"
+        else:
+            # Multi-day: use DTE-based time stop (original logic)
+            if position.current_dte <= position.time_stop_dte:
+                return True, f"Time stop reached ({position.current_dte} DTE <= {position.time_stop_dte})"
+
+        # Check expiration (only for non-0DTE; 0DTE handled by time exit above)
+        if position.current_dte < 0:
+            return True, "Position past expiration"
 
         return False, ""
 

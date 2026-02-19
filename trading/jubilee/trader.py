@@ -1728,15 +1728,16 @@ def run_jubilee_ic_mtm_update():
         except Exception as e:
             logger.error(f"MTM update failed for {position.position_id}: {e}")
 
-    # CRITICAL: Record equity snapshot after MTM update to preserve intraday state
-    # This ensures unrealized P&L is tracked for the intraday equity curve
+    # Always record equity snapshot after MTM update to preserve intraday state.
+    # Even if no positions were updated (e.g., no open positions or all MTM fetches
+    # failed), the snapshot captures realized P&L from closed trades so the
+    # intraday chart has data points.
     snapshot_saved = False
-    if updated > 0:
-        try:
-            snapshot_saved = db.record_ic_equity_snapshot()
-            if snapshot_saved:
-                logger.info(f"IC equity snapshot recorded with {updated} positions updated")
-        except Exception as e:
-            logger.error(f"Failed to record IC equity snapshot: {e}")
+    try:
+        snapshot_saved = db.record_ic_equity_snapshot()
+        if snapshot_saved:
+            logger.info(f"IC equity snapshot recorded ({updated} positions updated)")
+    except Exception as e:
+        logger.error(f"Failed to record IC equity snapshot: {e}")
 
     return {'updated': updated, 'total': len(positions), 'snapshot_saved': snapshot_saved}

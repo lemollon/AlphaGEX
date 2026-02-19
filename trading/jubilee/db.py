@@ -490,6 +490,7 @@ class JubileeDatabase:
                 CREATE TABLE IF NOT EXISTS jubilee_logs (
                     id SERIAL PRIMARY KEY,
                     log_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    log_type VARCHAR(20) DEFAULT 'SYSTEM',
                     level VARCHAR(20),
                     action VARCHAR(100),
                     message TEXT,
@@ -498,6 +499,16 @@ class JubileeDatabase:
                     signal_id VARCHAR(50)
                 )
             """)
+
+            # Ensure log_type column exists (fix for tables created before this column was added)
+            try:
+                cursor.execute("SAVEPOINT add_log_type_col")
+                cursor.execute("""
+                    ALTER TABLE jubilee_logs ADD COLUMN IF NOT EXISTS log_type VARCHAR(20) DEFAULT 'SYSTEM'
+                """)
+                cursor.execute("RELEASE SAVEPOINT add_log_type_col")
+            except Exception:
+                cursor.execute("ROLLBACK TO SAVEPOINT add_log_type_col")
 
             # Equity snapshots for intraday tracking with FULL TRANSPARENCY
             cursor.execute("""
@@ -2310,21 +2321,8 @@ class JubileeDatabase:
                 f"P&L=${realized_pnl:,.2f}, reason={close_reason}"
             )
 
-            # Log action for audit trail (per STANDARDS.md)
-            self.log_action(
-                action="IC_POSITION_CLOSED",
-                message=f"Closed IC position {position_id}: P&L=${realized_pnl:,.2f}",
-                level="INFO",
-                details={
-                    'exit_price': exit_price,
-                    'realized_pnl': realized_pnl,
-                    'close_reason': close_reason,
-                    'hold_duration_minutes': hold_duration_minutes,
-                    'entry_credit': entry_credit,
-                    'contracts': contracts,
-                },
-                position_id=position_id,
-            )
+            # NOTE: Activity log entry is written by the caller (executor.close_position)
+            # to avoid duplicate log entries. The executor owns the audit trail.
 
             return True
 
