@@ -38,6 +38,7 @@ try:
         get_archive_list,
         get_archive_stats,
         purge_old_reports,
+        diagnose_report_data,
         VALID_BOTS as GENERATOR_VALID_BOTS
     )
     GENERATOR_AVAILABLE = True
@@ -486,6 +487,49 @@ async def get_all_reports_costs():
         }
     except Exception as e:
         logger.error(f"Error getting report costs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# DIAGNOSTICS - Debug why reports show 0 trades
+# =============================================================================
+
+@router.get("/{bot}/reports/diagnose")
+async def diagnose_bot_report(
+    bot: str,
+    date: Optional[str] = Query(None, description="Date to diagnose (default: today)")
+):
+    """
+    Diagnostic endpoint to debug report generation.
+
+    Shows the exact state of the position table, what the report query finds,
+    and whether there are any errors. Use this to understand why reports show
+    0 trades when you expect trade data.
+
+    Args:
+        bot: Bot name (fortress, solomon, samson, anchor, gideon)
+        date: Optional date (YYYY-MM-DD), defaults to today
+
+    Returns:
+        Diagnostic data including table state, query results, and errors
+    """
+    if not GENERATOR_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Report generator service unavailable")
+
+    bot_lower = _validate_bot(bot)
+
+    report_date = None
+    if date:
+        report_date = _parse_date(date)
+
+    try:
+        diagnostics = diagnose_report_data(bot_lower, report_date)
+        return {
+            "success": True,
+            "data": diagnostics
+        }
+    except Exception as e:
+        logger.error(f"Error running diagnostics for {bot}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
