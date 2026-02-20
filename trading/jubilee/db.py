@@ -2983,6 +2983,81 @@ class JubileeDatabase:
             logger.error(f"Error computing live IC equity snapshot: {e}")
             return None
 
+    def compute_ic_intraday_series(self) -> List[Dict[str, Any]]:
+        """
+        Compute a synthetic intraday series when periodic snapshots are
+        sparse or absent.
+
+        Returns TWO points so the chart draws a LINE (not a single dot):
+          1. Market-open anchor (8:30 AM CT) — realized-only equity at open
+          2. Current live point — realized + unrealized equity now
+
+        This is called by the /ic/equity-curve/intraday endpoint when the
+        periodic snapshot table has fewer than 2 rows for today.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            ic_config = self.load_ic_config()
+            starting_capital = ic_config.starting_capital
+
+            # Total realized P&L from ALL closed trades (cumulative)
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM jubilee_ic_closed_trades
+            """)
+            total_realized = float(cursor.fetchone()[0] or 0)
+
+            # Unrealized P&L from open positions (current)
+            cursor.execute("""
+                SELECT COALESCE(SUM(unrealized_pnl), 0), COUNT(*)
+                FROM jubilee_ic_positions
+                WHERE status = 'open'
+            """)
+            row = cursor.fetchone()
+            total_unrealized = float(row[0] or 0)
+            open_count = int(row[1] or 0)
+
+            cursor.close()
+
+            now = datetime.now(CENTRAL_TZ)
+            market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+            # Market-open equity: realized P&L only (unrealized starts ~0 at open)
+            open_equity = starting_capital + total_realized
+
+            # Current equity: realized + unrealized
+            current_equity = starting_capital + total_realized + total_unrealized
+
+            base = {
+                'starting_capital': starting_capital,
+                'realized_pnl': total_realized,
+                'details': [],
+                'is_live': True,
+            }
+
+            return [
+                {
+                    **base,
+                    'time': market_open.isoformat(),
+                    'total_equity': open_equity,
+                    'unrealized_pnl': 0,
+                    'open_positions': 0,
+                },
+                {
+                    **base,
+                    'time': now.isoformat(),
+                    'total_equity': current_equity,
+                    'unrealized_pnl': total_unrealized,
+                    'open_positions': open_count,
+                },
+            ]
+
+        except Exception as e:
+            logger.error(f"Error computing IC intraday series: {e}")
+            return []
+
     def get_ic_intraday_equity(self) -> List[Dict[str, Any]]:
         """
         Get today's IC equity snapshots for intraday tracking.

@@ -1536,11 +1536,14 @@ async def get_ic_intraday_equity():
         db = _JubileeICDatabase()
         snapshots = db.get_ic_intraday_equity()
 
-        # If no periodic snapshots exist yet today, generate a live one
-        if not snapshots:
-            live = db.compute_ic_equity_snapshot_live()
-            if live:
-                snapshots = [live]
+        if len(snapshots) < 2:
+            # Too few periodic snapshots to draw a line — generate a
+            # synthetic series (market-open anchor + current live point)
+            # so the chart always shows a trajectory, not a single dot.
+            # The scheduler will fill in real periodic snapshots over time.
+            series = db.compute_ic_intraday_series()
+            if series:
+                snapshots = series
 
         return {
             "available": True,
