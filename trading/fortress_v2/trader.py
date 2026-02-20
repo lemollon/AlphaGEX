@@ -1331,12 +1331,14 @@ class FortressTrader(MathOptimizerMixin):
 
         Exit conditions (in priority order):
         1. EOD_CLOSE: Current time >= force exit time ANY day (no swing trades allowed)
-        2. EXPIRED: Position's expiration date is BEFORE today (past expiration)
-        3. PROFIT_TARGET / STOP_LOSS: P&L targets
+        2. STALE_POSITION: Position opened on a prior day but still open (catch-up safety net)
+        3. EXPIRED: Position's expiration date is BEFORE today (past expiration)
+        4. PROFIT_TARGET / STOP_LOSS: P&L targets
 
         FORTRESS RULE: All positions must be closed before market close every day.
         No overnight holds, no swing trades. This is enforced by EOD_CLOSE firing
         at force_exit time regardless of expiration date or day of week.
+        The STALE_POSITION check is a catch-up safety net in case EOD close failed.
         """
         # Get force exit time (handles early close days)
         force_time = self._get_force_exit_time(now, today)
@@ -1354,6 +1356,27 @@ class FortressTrader(MathOptimizerMixin):
             else:
                 logger.info(f"FORTRESS: EOD close (no swing trades) - force closing {pos.position_id} (exp: {pos.expiration})")
                 return True, "EOD_CLOSE"
+
+        # STALE POSITION: Position was opened on a PRIOR trading day but never closed.
+        # FORTRESS does NOT hold positions overnight. If EOD close failed (Tradier API
+        # issue, worker hiccup, etc.), this catch-up forces close at the FIRST scan
+        # of the next day instead of waiting until 14:50 CT force exit time.
+        if pos.open_time:
+            try:
+                open_dt = pos.open_time
+                if isinstance(open_dt, str):
+                    open_dt = datetime.fromisoformat(open_dt)
+                if open_dt.tzinfo is None:
+                    open_dt = open_dt.replace(tzinfo=CENTRAL_TZ)
+                open_date_str = open_dt.astimezone(CENTRAL_TZ).strftime("%Y-%m-%d")
+                if open_date_str < today:
+                    logger.warning(
+                        f"FORTRESS: Position {pos.position_id} opened on {open_date_str} "
+                        f"but still open on {today} - closing immediately (no overnight holds)"
+                    )
+                    return True, "STALE_POSITION"
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Could not parse open_time for stale check: {e}")
 
         # EXPIRED: Position is PAST expiration (should have been closed yesterday/previous day)
         if pos.expiration < today:
