@@ -28,6 +28,9 @@ from .models import (
 from .db import ValorDatabase
 from .signals import ValorSignalGenerator, get_gex_data_for_valor
 from .executor import TastytradeExecutor
+from .margin_manager import (
+    ValorMarginManager, get_margin_requirement, MarginZone, ZONE_EMOJI,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +134,9 @@ class ValorTrader:
             self._loss_streaks[ticker] = 0
             self._loss_pause_until[ticker] = None
             self._daily_losses[ticker] = 0.0
+
+        # Margin manager (zone-based margin protection)
+        self.margin_manager = ValorMarginManager()
 
         # Legacy single-ticker aliases (for backward compatibility)
         self.consecutive_losses: int = 0
@@ -315,6 +321,11 @@ class ValorTrader:
         # ============================================================
         self._log_correlation_exposure()
 
+        # ============================================================
+        # Margin Zone Monitoring + Liquidation
+        # ============================================================
+        self._run_margin_monitoring(results)
+
         self.last_scan_time = datetime.now(CENTRAL_TZ)
         return results
 
@@ -470,6 +481,32 @@ class ValorTrader:
                 # ============================================================
                 essential_valid = signal.entry_price > 0 and signal.stop_price > 0 and signal.contracts >= 1
                 if essential_valid:
+                    # ============================================================
+                    # GATE 6.5: Margin Pre-Trade Check
+                    # ============================================================
+                    ticker_cfg_m = FUTURES_TICKERS.get(ticker, {})
+                    starting_cap = ticker_cfg_m.get("starting_capital", 100000.0)
+                    try:
+                        t_stats = self.db.get_ticker_performance_stats([ticker])
+                        r_pnl = t_stats.get(ticker, {}).get("total_pnl", 0.0)
+                    except Exception:
+                        r_pnl = 0.0
+                    instrument_equity = starting_cap + r_pnl
+                    ticker_positions = self.db.get_open_positions(ticker=ticker)
+
+                    margin_ok, margin_reason, adjusted_contracts = self.margin_manager.can_open_position(
+                        ticker, signal.contracts, ticker_positions, instrument_equity,
+                    )
+                    if not margin_ok:
+                        logger.warning(f"VALOR [{ticker}] GATE 6.5 BLOCKED: {margin_reason}")
+                        self.db.save_signal(signal, was_executed=False, skip_reason=f"Margin: {margin_reason}")
+                        self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                               skip_reason=f"Margin blocked: {margin_reason}", ticker=ticker)
+                        return scan_result
+                    if adjusted_contracts != signal.contracts:
+                        logger.info(f"VALOR [{ticker}] GATE 6.5: contracts adjusted {signal.contracts} → {adjusted_contracts} ({margin_reason})")
+                        signal.contracts = adjusted_contracts
+
                     logger.info(
                         f"VALOR [{ticker}] GATE 6 PASSED: executing {signal.direction.value} "
                         f"{signal.contracts} contracts at {signal.entry_price:.2f}"
@@ -1247,8 +1284,10 @@ class ValorTrader:
 
                     # Update paper trading balance if in paper mode
                     if self.config.mode == TradingMode.PAPER:
-                        # Calculate margin released (approximate MES margin per contract)
-                        margin_per_contract = 1500.0  # Approx MES margin requirement
+                        # Calculate margin released using per-instrument CME rates
+                        pos_ticker_m = getattr(position, 'ticker', 'MES')
+                        req = get_margin_requirement(pos_ticker_m)
+                        margin_per_contract = req["maintenance"]
                         margin_released = -position.contracts * margin_per_contract
                         success, updated_account = self.db.update_paper_balance(
                             realized_pnl=realized_pnl,
@@ -1516,8 +1555,9 @@ class ValorTrader:
 
             # Update paper trading margin if in paper mode
             if self.config.mode == TradingMode.PAPER:
-                # Calculate margin required (approximate MES margin per contract)
-                margin_per_contract = 1500.0  # Approx MES margin requirement
+                # Calculate margin required using per-instrument CME rates
+                req = get_margin_requirement(ticker)
+                margin_per_contract = req["maintenance"]
                 margin_required = signal.contracts * margin_per_contract
                 success, updated_account = self.db.update_paper_balance(
                     realized_pnl=0,  # No P&L yet, just margin allocation
@@ -1525,8 +1565,8 @@ class ValorTrader:
                 )
                 if success:
                     logger.info(
-                        f"Paper margin allocated: ${margin_required:,.2f} for {signal.contracts} contracts "
-                        f"(Available: ${updated_account['margin_available']:,.2f})"
+                        f"Paper margin allocated: ${margin_required:,.2f} for {signal.contracts} {ticker} contracts "
+                        f"@ ${margin_per_contract:,.0f}/ct (Available: ${updated_account['margin_available']:,.2f})"
                     )
 
             # Log
@@ -1654,6 +1694,112 @@ class ValorTrader:
 
         except Exception as e:
             logger.debug(f"Correlation logging error: {e}")
+
+    def _run_margin_monitoring(self, results: Dict[str, Any]) -> None:
+        """
+        Run margin zone monitoring, detect zone changes, and execute
+        liquidations if needed. Called once per scan cycle after all
+        ticker scans complete.
+        """
+        try:
+            # Build per-instrument margin states
+            per_instrument_states = {}
+            all_positions_by_ticker: Dict[str, list] = {}
+            current_prices: Dict[str, float] = {}
+
+            for ticker in self.config.tickers:
+                # Get open positions for this ticker
+                positions = self.db.get_open_positions(ticker=ticker)
+                all_positions_by_ticker[ticker] = positions
+
+                # Get per-instrument equity: starting_capital + realized P&L
+                ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+                starting_capital = ticker_cfg.get("starting_capital", 100000.0)
+                try:
+                    ticker_stats = self.db.get_ticker_performance_stats([ticker])
+                    realized_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
+                except Exception:
+                    realized_pnl = 0.0
+                equity = starting_capital + realized_pnl
+
+                # Get current price
+                try:
+                    quote = self.executor.get_mes_quote(ticker=ticker)
+                    price = quote.get("last", 0) if quote else 0
+                except Exception:
+                    price = 0
+                current_prices[ticker] = price
+
+                state = self.margin_manager.get_instrument_margin_state(
+                    ticker, positions, equity
+                )
+                per_instrument_states[ticker] = state
+
+            # Combined portfolio state
+            combined_state = self.margin_manager.get_combined_margin_state(per_instrument_states)
+
+            # Monitor and log (detects zone changes)
+            monitor_result = self.margin_manager.monitor_and_log(
+                per_instrument_states, combined_state
+            )
+
+            # Execute per-instrument liquidations
+            for ticker in monitor_result.get("needs_liquidation", []):
+                state = per_instrument_states[ticker]
+                zone = state["zone"]
+                positions = all_positions_by_ticker.get(ticker, [])
+
+                if not positions:
+                    continue
+
+                positions_to_close = self.margin_manager.get_positions_to_liquidate(
+                    ticker, positions, state["equity"], current_prices
+                )
+
+                if positions_to_close:
+                    closed = self.margin_manager.execute_liquidations(
+                        ticker, positions_to_close, self._close_position,
+                        current_prices, zone,
+                    )
+                    if closed > 0:
+                        results.setdefault("margin_liquidations", {})[ticker] = closed
+
+            # Combined portfolio check: if combined zone is ORANGE+, target worst across all
+            combined_zone = combined_state["zone"]
+            if combined_zone in (MarginZone.ORANGE, MarginZone.RED, MarginZone.CRITICAL):
+                target = self.margin_manager.get_combined_liquidation_target(
+                    all_positions_by_ticker, per_instrument_states,
+                    combined_state, current_prices,
+                )
+                if target:
+                    target_ticker, target_positions = target
+                    closed = self.margin_manager.execute_liquidations(
+                        target_ticker, target_positions, self._close_position,
+                        current_prices, combined_zone,
+                    )
+                    if closed > 0:
+                        results.setdefault("margin_liquidations", {})["COMBINED_TARGET"] = {
+                            "ticker": target_ticker,
+                            "closed": closed,
+                        }
+
+            # Store margin info in results for API
+            results["margin_status"] = {
+                "combined_zone": combined_state["zone_name"],
+                "combined_utilization_pct": combined_state["utilization_pct"],
+                "instruments": {
+                    k: {
+                        "zone": v["zone_name"],
+                        "utilization_pct": v["utilization_pct"],
+                        "contracts": v["contracts"],
+                        "free_margin": v["free_margin"],
+                    }
+                    for k, v in per_instrument_states.items()
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"[MARGIN] Monitoring error: {e}", exc_info=True)
 
     def _get_vix(self) -> float:
         """

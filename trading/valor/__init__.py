@@ -69,6 +69,13 @@ from .executor import TastytradeExecutor
 
 from .trader import ValorTrader, get_valor_trader, run_valor_scan
 
+from .margin_manager import (
+    ValorMarginManager,
+    MarginZone,
+    VALOR_MARGIN_REQUIREMENTS,
+    get_margin_requirement,
+)
+
 __all__ = [
     # Models
     'FuturesPosition',
@@ -102,4 +109,9 @@ __all__ = [
     'ValorTrader',
     'get_valor_trader',
     'run_valor_scan',
+    # Margin Manager
+    'ValorMarginManager',
+    'MarginZone',
+    'VALOR_MARGIN_REQUIREMENTS',
+    'get_margin_requirement',
 ]
