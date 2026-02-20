@@ -1095,6 +1095,14 @@ except ImportError:
     GEX_AVAILABLE = False
     TradierGEXCalculator = None
 
+# Kelly criterion for position sizing (match SAMSON)
+try:
+    from quant.monte_carlo_kelly import get_safe_position_size
+    KELLY_AVAILABLE = True
+except ImportError:
+    KELLY_AVAILABLE = False
+    get_safe_position_size = None
+
 
 class JubileeICSignalGenerator:
     """
@@ -1457,16 +1465,17 @@ class JubileeICSignalGenerator:
     def calculate_position_size(
         self,
         available_capital: float,
-        max_loss_per_contract: float
+        max_loss_per_contract: float,
+        thompson_weight: float = 1.0
     ) -> int:
         """
-        Calculate position size based on available capital and risk limits.
+        Calculate position size using Kelly criterion + Thompson Sampling (match SAMSON).
 
-        JUBILEE/JUBILEE uses AGGRESSIVE sizing with borrowed capital.
-        Position size is determined by:
-        1. Available capital × max_capital_per_trade_pct = max risk
-        2. max risk ÷ max loss per contract = calculated contracts
-        3. Apply configurable max_contracts limit (safety ceiling)
+        Position sizing priority:
+        1. Kelly-safe sizing (if 20+ historical trades available)
+        2. Config-based sizing (fallback: available_capital × max_capital_per_trade_pct)
+        3. Thompson Sampling weight adjustment (0.5-2.0x multiplier)
+        4. Apply configurable max_contracts limit (safety ceiling)
         """
         # Guard against invalid inputs
         if available_capital <= 0:
@@ -1476,33 +1485,100 @@ class JubileeICSignalGenerator:
             logger.warning("JUBILEE IC: Invalid max_loss_per_contract (<=0)")
             return 1
 
-        # Max capital at risk per trade
-        max_risk = available_capital * (self.config.max_capital_per_trade_pct / 100)
+        # Try Kelly-based sizing first (match SAMSON)
+        sizing_source = "CONFIG"
+        kelly_result = self._get_kelly_position_size(available_capital)
 
-        # Contracts based on max loss
-        calculated_contracts = int(max_risk / max_loss_per_contract)
+        if kelly_result and kelly_result.get('kelly_safe', 0) > 0:
+            kelly_risk_pct = kelly_result['kelly_safe']
+            max_risk = available_capital * (kelly_risk_pct / 100)
+            sizing_source = "KELLY"
+            logger.info(f"[JUBILEE IC] Using Kelly-safe sizing: {kelly_risk_pct:.1f}% risk")
+        else:
+            # Fallback to config-based sizing
+            max_risk = available_capital * (self.config.max_capital_per_trade_pct / 100)
 
-        # Apply configurable max (safety ceiling to prevent data-error blowups)
-        final_contracts = max(1, min(calculated_contracts, self.config.max_contracts))
+        # Base position size from risk calculation
+        base_contracts = max_risk / max_loss_per_contract
+
+        # Apply Thompson Sampling weight (match SAMSON)
+        clamped_weight = max(0.5, min(2.0, thompson_weight))
+        adjusted_contracts = int(base_contracts * clamped_weight)
+
+        # Apply configurable max (safety ceiling)
+        final_contracts = max(1, min(adjusted_contracts, self.config.max_contracts))
 
         # Log position sizing math for transparency
+        if abs(thompson_weight - 1.0) > 0.05:
+            logger.info(
+                f"[JUBILEE IC {sizing_source}] Thompson: weight={thompson_weight:.2f}, "
+                f"base={base_contracts:.1f}, adjusted={adjusted_contracts}"
+            )
         logger.info(
-            f"JUBILEE IC Position Sizing: "
+            f"JUBILEE IC Position Sizing ({sizing_source}): "
             f"available_capital=${available_capital:,.0f}, "
-            f"max_risk_pct={self.config.max_capital_per_trade_pct}%, "
             f"max_risk=${max_risk:,.0f}, "
             f"max_loss_per_contract=${max_loss_per_contract:,.0f}, "
-            f"calculated_contracts={calculated_contracts}, "
-            f"max_contracts_config={self.config.max_contracts}, "
+            f"thompson_weight={clamped_weight:.2f}, "
             f"final_contracts={final_contracts}"
         )
 
         return final_contracts
 
+    def _get_kelly_position_size(self, available_capital: float) -> Optional[Dict]:
+        """Get Monte Carlo Kelly-based position sizing for JUBILEE IC (match SAMSON)."""
+        if not KELLY_AVAILABLE:
+            return None
+
+        try:
+            from database_adapter import DatabaseAdapter
+            db = DatabaseAdapter()
+
+            trades = db.execute_query("""
+                SELECT realized_pnl, entry_credit, contracts
+                FROM jubilee_ic_closed_trades
+                WHERE close_time > NOW() - INTERVAL '90 days'
+                ORDER BY close_time DESC
+                LIMIT 100
+            """)
+
+            if not trades or len(trades) < 20:
+                return None
+
+            wins = [t for t in trades if t['realized_pnl'] > 0]
+            losses = [t for t in trades if t['realized_pnl'] <= 0]
+
+            win_rate = len(wins) / len(trades)
+            avg_win_pct = (
+                sum(t['realized_pnl'] for t in wins) / len(wins) / available_capital * 100
+                if wins else 0
+            )
+            avg_loss_pct = (
+                abs(sum(t['realized_pnl'] for t in losses) / len(losses) / available_capital * 100)
+                if losses else 10
+            )
+
+            kelly_result = get_safe_position_size(
+                win_rate=win_rate,
+                avg_win=avg_win_pct,
+                avg_loss=avg_loss_pct,
+                sample_size=len(trades),
+                account_size=available_capital,
+                max_risk_pct=self.config.max_capital_per_trade_pct * 2
+            )
+
+            logger.info(f"[JUBILEE IC KELLY] Win Rate: {win_rate:.1%}, Safe Kelly: {kelly_result['kelly_safe']:.1f}%")
+            return kelly_result
+
+        except Exception as e:
+            logger.debug(f"[JUBILEE IC KELLY] Error: {e}")
+            return None
+
     def generate_signal(
         self,
         source_box_position_id: str,
         available_capital: float,
+        thompson_weight: float = 1.0,
     ) -> Optional[JubileeICSignal]:
         """
         Generate an Iron Condor signal for JUBILEE.
@@ -1510,6 +1586,7 @@ class JubileeICSignalGenerator:
         Args:
             source_box_position_id: ID of the box spread funding this trade
             available_capital: Capital available for this trade
+            thompson_weight: Thompson Sampling weight for position sizing (0.5-2.0)
 
         Returns:
             JubileeICSignal if conditions are favorable, None otherwise
@@ -1618,10 +1695,11 @@ class JubileeICSignalGenerator:
         if pricing['total_credit'] < self.config.min_credit:
             logger.warning(f"JUBILEE IC: Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} ({pricing.get('source', 'UNKNOWN')})")
 
-        # Calculate position size
+        # Calculate position size (Kelly + Thompson match SAMSON)
         contracts = self.calculate_position_size(
             available_capital,
-            pricing['max_loss']
+            pricing['max_loss'],
+            thompson_weight=thompson_weight,
         )
 
         total_credit = pricing['total_credit']

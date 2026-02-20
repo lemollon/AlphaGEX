@@ -2330,6 +2330,48 @@ class JubileeDatabase:
             logger.error(f"Error closing IC position {position_id}: {e}")
             return False
 
+    def get_ic_daily_realized_pnl(self) -> float:
+        """
+        Get today's total realized P&L from closed IC trades.
+
+        Used by the box spread safety rail to halt IC trading when
+        daily losses exceed the configured threshold (daily_max_ic_loss).
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM jubilee_ic_closed_trades
+                WHERE close_time::date = (NOW() AT TIME ZONE 'America/Chicago')::date
+            """)
+            result = float(cursor.fetchone()[0] or 0)
+            cursor.close()
+            return result
+        except Exception as e:
+            logger.error(f"Error getting IC daily realized P&L: {e}")
+            return 0.0
+
+    def get_ic_total_realized_pnl(self) -> float:
+        """
+        Get total cumulative realized P&L from all closed IC trades.
+
+        Used by the box spread safety rail for max drawdown check.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM jubilee_ic_closed_trades
+            """)
+            result = float(cursor.fetchone()[0] or 0)
+            cursor.close()
+            return result
+        except Exception as e:
+            logger.error(f"Error getting IC total realized P&L: {e}")
+            return 0.0
+
     def expire_ic_position(self, position_id: str, expired_worthless: bool = True) -> bool:
         """
         Mark an IC position as expired.
