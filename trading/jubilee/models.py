@@ -1043,6 +1043,10 @@ class JubileeICConfig:
     cooldown_after_win_minutes: int = 0    # No cooldown after win
     cooldown_minutes_after_trade: int = 0  # No cooldown between trades
 
+    # Box spread safety rail — protect borrowed capital
+    daily_max_ic_loss: float = 25000.0     # Max daily realized IC loss before halting ($25K = 5% of $500K)
+    max_ic_drawdown_pct: float = 10.0      # Max cumulative IC drawdown as % of borrowed capital
+
     # Capital tracking (for equity curve calculations)
     starting_capital: float = 500000.0      # For equity curve baseline (IC uses borrowed capital from box spreads)
     min_capital_per_trade: float = 5000.0   # Minimum capital required per trade
@@ -1079,6 +1083,8 @@ class JubileeICConfig:
                 'stop_loss_pct': self.stop_loss_pct,
                 'profit_target_pct': self.profit_target_pct,
                 'time_stop_dte': self.time_stop_dte,
+                'daily_max_ic_loss': self.daily_max_ic_loss,
+                'max_ic_drawdown_pct': self.max_ic_drawdown_pct,
             },
             'prophet': {
                 'require_approval': self.require_oracle_approval,
@@ -1143,6 +1149,8 @@ class JubileeICConfig:
             config.stop_loss_pct = data['risk'].get('stop_loss_pct', 200.0)
             config.profit_target_pct = data['risk'].get('profit_target_pct', 30.0)  # Match dataclass default (SAMSON)
             config.time_stop_dte = data['risk'].get('time_stop_dte', 0)
+            config.daily_max_ic_loss = data['risk'].get('daily_max_ic_loss', 25000.0)
+            config.max_ic_drawdown_pct = data['risk'].get('max_ic_drawdown_pct', 10.0)
 
         if 'prophet' in data:
             config.require_oracle_approval = data['prophet'].get('require_approval', True)

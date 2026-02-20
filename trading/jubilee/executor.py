@@ -1811,12 +1811,12 @@ class JubileeICExecutor:
 
         Returns (should_close, reason)
 
-        EXIT PRIORITY ORDER:
-        1. Profit target — always check first (take the win)
-        2. Stop loss — protect against large losses
-        3. Time-based exit — for 0DTE, use clock time (exit_by config);
-           for multi-day, use DTE-based time stop
-        4. Expiration — last resort, position at/past expiration
+        EXIT PRIORITY ORDER (matches SAMSON):
+        1. FORCE_EXIT — on expiration day at exit_by time (2:50 PM CT), close regardless of P&L
+        2. EXPIRED — position past expiration date, close immediately
+        3. Profit target — take the win
+        4. Stop loss — protect against large losses
+        5. Time-based exit — DTE-based time stop for multi-day positions
         """
         # Update MTM first
         self.update_position_mtm(position.position_id)
@@ -1825,39 +1825,51 @@ class JubileeICExecutor:
         if not position:
             return False, "Position not found"
 
-        # Check profit target
-        if position.total_credit_received > 0 and position.unrealized_pnl >= position.total_credit_received * (position.profit_target_pct / 100):
-            return True, f"Profit target reached ({position.profit_target_pct}%)"
+        now = datetime.now(CENTRAL_TZ)
+        today_date = now.date()
 
-        # Check stop loss
-        if position.max_loss > 0:
-            max_loss_threshold = position.max_loss * (position.stop_loss_pct / 100)
-            if position.unrealized_pnl <= -max_loss_threshold:
-                return True, f"Stop loss triggered ({position.stop_loss_pct}% of max loss)"
+        # Parse expiration date
+        try:
+            exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            exp_date = None
 
-        # Check time-based exit
-        # For 0DTE positions (dte_at_entry == 0): use clock time, NOT DTE
-        # The old logic (current_dte <= time_stop_dte) fires immediately on 0DTE
-        # because current_dte=0 and time_stop_dte>=0 is always True.
-        if position.dte_at_entry == 0:
-            # 0DTE: close based on time of day (exit_by config, default 14:50 CT)
-            now = datetime.now(CENTRAL_TZ)
+        # EXIT #1: FORCE_EXIT on expiration day at exit_by time (match SAMSON)
+        # On expiration day, force-close at 2:50 PM CT regardless of P&L.
+        # This protects against pin risk and ensures positions don't expire in-the-money
+        # without our control — critical for SPXW weeklies with borrowed capital.
+        if exp_date and exp_date == today_date:
             exit_by_str = getattr(self.config, 'exit_by', '14:50')
             try:
                 exit_by_time = datetime.strptime(exit_by_str, '%H:%M').time()
             except (ValueError, TypeError):
                 exit_by_time = datetime.strptime('14:50', '%H:%M').time()
-
             if now.time() >= exit_by_time:
-                return True, f"0DTE time exit ({now.strftime('%H:%M')} CT >= {exit_by_str})"
-        else:
-            # Multi-day: use DTE-based time stop (original logic)
-            if position.current_dte <= position.time_stop_dte:
-                return True, f"Time stop reached ({position.current_dte} DTE <= {position.time_stop_dte})"
+                return True, f"FORCE_EXIT (expiration day {now.strftime('%H:%M')} CT >= {exit_by_str})"
 
-        # Check expiration (only for non-0DTE; 0DTE handled by time exit above)
-        if position.current_dte < 0:
-            return True, "Position past expiration"
+        # EXIT #2: EXPIRED — position past expiration date
+        if exp_date and exp_date < today_date:
+            logger.warning(
+                f"Position {position.position_id} is PAST expiration "
+                f"({position.expiration}) — closing immediately"
+            )
+            return True, "EXPIRED"
+
+        # EXIT #3: Profit target — take the win
+        if position.total_credit_received > 0 and position.unrealized_pnl >= position.total_credit_received * (position.profit_target_pct / 100):
+            return True, f"PROFIT_{position.profit_target_pct:.0f}%"
+
+        # EXIT #4: Stop loss — protect against large losses
+        if position.max_loss > 0:
+            max_loss_threshold = position.max_loss * (position.stop_loss_pct / 100)
+            if position.unrealized_pnl <= -max_loss_threshold:
+                return True, f"STOP_LOSS ({position.stop_loss_pct:.0f}% of max loss)"
+
+        # EXIT #5: Time-based exit for multi-day positions
+        # For 0DTE positions, FORCE_EXIT above handles them on expiration day.
+        # For multi-day (weekly SPXW), use DTE-based time stop if configured.
+        if position.dte_at_entry > 0 and position.current_dte <= position.time_stop_dte:
+            return True, f"TIME_STOP ({position.current_dte} DTE <= {position.time_stop_dte})"
 
         return False, ""
 

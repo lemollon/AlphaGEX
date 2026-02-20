@@ -51,6 +51,14 @@ except ImportError:
     import pytz
     CENTRAL_TZ = pytz.timezone("America/Chicago")
 
+# Thompson Sampling for position sizing (match SAMSON)
+try:
+    from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
+    MATH_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    MATH_OPTIMIZER_AVAILABLE = False
+    MathOptimizerMixin = None
+
 class JubileeTrader:
     """
     Main orchestrator for the JUBILEE box spread system.
@@ -1187,16 +1195,80 @@ class JubileeICTrader:
         return {'checked': checked, 'closed': closed}
 
     def _can_open_new_position(self) -> bool:
-        """Check if we can open a new IC position - no gates (match SAMSON).
+        """Check if we can open a new IC position.
 
-        SAMSON's _check_conditions only checks: weekend, holiday, trading window.
-        No position limits, no capital checks. Capital is used for position SIZING
-        (how many contracts) not as a GATE (whether to trade at all).
+        Like SAMSON: no position count gates — capital is used for SIZING, not gating.
+        UNLIKE SAMSON: JUBILEE has a box spread safety rail because IC losses
+        can threaten the borrowed capital margin. This is the ONE gate that matters.
         """
+        # BOX SPREAD SAFETY RAIL: Halt if daily IC losses exceed threshold
+        daily_max = getattr(self.config, 'daily_max_ic_loss', 25000.0)
+        if daily_max > 0:
+            daily_pnl = self.db.get_ic_daily_realized_pnl()
+            if daily_pnl < -daily_max:
+                logger.warning(
+                    f"[JUBILEE IC] SAFETY RAIL: Daily IC loss ${daily_pnl:,.2f} exceeds "
+                    f"max ${-daily_max:,.2f} — halting new trades to protect box margin"
+                )
+                return False
+
+        # BOX SPREAD SAFETY RAIL: Halt if cumulative drawdown exceeds threshold
+        max_dd_pct = getattr(self.config, 'max_ic_drawdown_pct', 10.0)
+        if max_dd_pct > 0:
+            total_pnl = self.db.get_ic_total_realized_pnl()
+            borrowed_capital = self._get_borrowed_capital()
+            if borrowed_capital > 0:
+                drawdown_pct = abs(min(0, total_pnl)) / borrowed_capital * 100
+                if drawdown_pct >= max_dd_pct:
+                    logger.warning(
+                        f"[JUBILEE IC] SAFETY RAIL: Cumulative drawdown {drawdown_pct:.1f}% "
+                        f"exceeds max {max_dd_pct:.1f}% — halting to protect box margin"
+                    )
+                    return False
+
         return True
+
+    def _get_borrowed_capital(self) -> float:
+        """Get total borrowed capital from box spreads (before IC margin subtraction)."""
+        box_positions = self.db.get_open_positions()
+        total = 0.0
+        for box in box_positions:
+            try:
+                exp = box.expiration
+                if isinstance(exp, str):
+                    exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
+                elif hasattr(exp, 'date'):
+                    exp_date = exp.date()
+                else:
+                    exp_date = exp
+                if (exp_date - date.today()).days <= 0:
+                    continue
+            except (ValueError, TypeError, AttributeError):
+                total += box.total_cash_deployed
+                continue
+            total += box.total_cash_deployed
+        if total <= 0 and self.config.mode == TradingMode.PAPER:
+            total = self.config.starting_capital
+        return total
 
     def _get_skip_reason(self) -> str:
         """Get reason for not opening new position"""
+        # Check safety rail first
+        daily_max = getattr(self.config, 'daily_max_ic_loss', 25000.0)
+        if daily_max > 0:
+            daily_pnl = self.db.get_ic_daily_realized_pnl()
+            if daily_pnl < -daily_max:
+                return f"Daily IC loss ${daily_pnl:,.2f} exceeds safety rail (${-daily_max:,.2f})"
+
+        max_dd_pct = getattr(self.config, 'max_ic_drawdown_pct', 10.0)
+        if max_dd_pct > 0:
+            total_pnl = self.db.get_ic_total_realized_pnl()
+            borrowed = self._get_borrowed_capital()
+            if borrowed > 0:
+                dd_pct = abs(min(0, total_pnl)) / borrowed * 100
+                if dd_pct >= max_dd_pct:
+                    return f"Cumulative drawdown {dd_pct:.1f}% exceeds max {max_dd_pct:.1f}%"
+
         available = self._get_available_capital()
         if available < self.config.min_capital_per_trade:
             return f"Insufficient capital (${available:,.2f} < ${self.config.min_capital_per_trade:,.2f})"
@@ -1499,6 +1571,22 @@ class JubileeICTrader:
 
         return None
 
+    def _get_thompson_weight(self) -> float:
+        """Get Thompson Sampling allocation weight for position sizing (match SAMSON)."""
+        if not MATH_OPTIMIZER_AVAILABLE:
+            return 1.0
+        try:
+            mixin = MathOptimizerMixin()
+            if hasattr(mixin, 'math_get_allocation'):
+                allocation = mixin.math_get_allocation()
+                jubilee_alloc = allocation.get('allocations', {}).get('JUBILEE', 0.2)
+                weight = jubilee_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"[JUBILEE IC] Thompson weight: {weight:.2f} (allocation: {jubilee_alloc:.1%})")
+                return weight
+        except Exception as e:
+            logger.debug(f"[JUBILEE IC] Thompson allocation not available: {e}")
+        return 1.0
+
     def _generate_and_execute_signal(self) -> Dict[str, Any]:
         """Generate an IC signal and execute if approved"""
         result = {
@@ -1518,10 +1606,14 @@ class JubileeICTrader:
         available_capital = self._get_available_capital()
         logger.info(f"[JUBILEE IC] Available capital: ${available_capital:,.2f}, source box: {source_box_id}")
 
+        # Get Thompson Sampling weight for position sizing (match SAMSON)
+        thompson_weight = self._get_thompson_weight()
+
         # Generate signal
         signal = self.signal_gen.generate_signal(
             source_box_position_id=source_box_id,
             available_capital=available_capital,
+            thompson_weight=thompson_weight,
         )
 
         if not signal:
@@ -1550,6 +1642,9 @@ class JubileeICTrader:
         if position:
             result['new_position'] = position.position_id
             logger.info(f"[JUBILEE IC] Position OPENED: {position.position_id}")
+
+            # Update signal log with execution status (UPSERT marks it as executed)
+            self.db.log_ic_signal(signal, was_executed=True, executed_position_id=position.position_id)
 
             # Save equity snapshot after opening position (match SAMSON: event-driven MTM)
             try:

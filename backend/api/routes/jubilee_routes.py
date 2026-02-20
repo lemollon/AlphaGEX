@@ -1536,11 +1536,14 @@ async def get_ic_intraday_equity():
         db = _JubileeICDatabase()
         snapshots = db.get_ic_intraday_equity()
 
-        # If no periodic snapshots exist yet today, generate a live one
-        if not snapshots:
-            live = db.compute_ic_equity_snapshot_live()
-            if live:
-                snapshots = [live]
+        if len(snapshots) < 2:
+            # Too few periodic snapshots to draw a line — generate a
+            # synthetic series (market-open anchor + current live point)
+            # so the chart always shows a trajectory, not a single dot.
+            # The scheduler will fill in real periodic snapshots over time.
+            series = db.compute_ic_intraday_series()
+            if series:
+                snapshots = series
 
         return {
             "available": True,
@@ -1715,7 +1718,7 @@ async def get_daily_pnl(days: int = Query(30, ge=1, le=90)):
     - Net daily P&L
     - Cumulative running total
     """
-    if not JubileeICTrader or not JubileeTrader:
+    if not _JubileeICDatabase or not JubileeTrader:
         raise HTTPException(status_code=503, detail="JUBILEE modules not available")
 
     try:
@@ -1726,16 +1729,16 @@ async def get_daily_pnl(days: int = Query(30, ge=1, le=90)):
         CENTRAL_TZ = ZoneInfo("America/Chicago")
         now = datetime.now(CENTRAL_TZ)
 
-        # Get traders and database
+        # Use JubileeDatabase directly (avoids fragile JubileeICTrader init)
         box_trader = JubileeTrader()
-        ic_trader = JubileeICTrader()
+        ic_db = _JubileeICDatabase()
 
         # Get box positions for daily borrowing cost calculation
         box_positions = box_trader.get_positions()
         total_daily_borrowing_cost = sum(pos.get('daily_cost', 0) for pos in box_positions)
 
         # Get closed IC trades from the last N days
-        closed_trades = ic_trader.db.get_ic_closed_trades(limit=500)
+        closed_trades = ic_db.get_ic_closed_trades(limit=500)
 
         # Build daily P&L dictionary
         daily_pnl = defaultdict(lambda: {'ic_earned': 0, 'box_cost': total_daily_borrowing_cost, 'trades': 0})
