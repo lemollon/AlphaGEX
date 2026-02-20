@@ -425,6 +425,7 @@ class OrderExecutor:
                 option_type="put",
                 quantity=position.contracts,
                 limit_price=round(put_value, 2),
+                closing=True,
             )
 
             # Close call spread on second account
@@ -436,6 +437,7 @@ class OrderExecutor:
                 option_type="call",
                 quantity=position.contracts,
                 limit_price=round(call_value, 2),
+                closing=True,
             )
 
             logger.info(f"FORTRESS MIRROR: Close mirrored to account 2 for {position.position_id}")
@@ -500,6 +502,7 @@ class OrderExecutor:
                 option_type="put",
                 quantity=position.contracts,
                 limit_price=round(put_value, 2),
+                closing=True,
             )
 
             # Close call spread on third account
@@ -511,6 +514,7 @@ class OrderExecutor:
                 option_type="call",
                 quantity=position.contracts,
                 limit_price=round(call_value, 2),
+                closing=True,
             )
 
             logger.info(f"FORTRESS MIRROR: Close mirrored to account 3 for {position.position_id}")
@@ -1032,16 +1036,39 @@ class OrderExecutor:
             return False, 0, 0
 
         try:
+            # Determine if we should use MARKET orders (guaranteed fill) vs LIMIT
+            # EOD closes, stale positions, and safety net closes use MARKET to ensure
+            # the Tradier sandbox account is flat before market close.
+            eod_reasons = ('EOD', 'STALE', 'EXPIRED', 'SAFETY_NET', 'PRICING_FAILURE', 'MANUAL_CLOSE')
+            use_market = any(r in reason.upper() for r in eod_reasons)
+
             # Get current IC quote
             ic_quote = self._get_position_quote(position)
-            if not ic_quote:
+            if not ic_quote and not use_market:
                 logger.error("Failed to get closing quotes")
                 return False, 0, 0
 
-            close_price = ic_quote['total_value']
+            if ic_quote:
+                close_price = ic_quote['total_value']
+                put_limit = round(ic_quote['put_value'], 2)
+                call_limit = round(ic_quote['call_value'], 2)
+            else:
+                # No quote available but EOD requires close — estimate from entry
+                close_price = 0  # Will be updated after fill
+                put_limit = None
+                call_limit = None
 
-            # Close put spread by reversing (buy back short, sell long = debit spread)
+            if use_market:
+                logger.info(
+                    f"FORTRESS: Using MARKET orders for {reason} close of {position.position_id} "
+                    f"(guaranteed fill for sandbox EOD)"
+                )
+                put_limit = None  # None = market order in place_vertical_spread
+                call_limit = None
+
+            # Close put spread (buy back short, sell long)
             # Using retry wrapper for network resilience
+            # closing=True uses buy_to_close/sell_to_close for proper position netting
             put_result = self._tradier_place_spread_with_retry(
                 symbol=position.ticker,
                 expiration=position.expiration,
@@ -1049,14 +1076,15 @@ class OrderExecutor:
                 short_strike=position.put_long_strike,   # Sell what we bought
                 option_type="put",
                 quantity=position.contracts,
-                limit_price=round(ic_quote['put_value'], 2),
+                limit_price=put_limit,
+                closing=True,
             )
 
             if not put_result or not put_result.get('order'):
                 logger.error(f"Failed to close put spread: {put_result}")
                 return False, 0, 0
 
-            # Close call spread by reversing - with retry
+            # Close call spread - with retry
             call_result = self._tradier_place_spread_with_retry(
                 symbol=position.ticker,
                 expiration=position.expiration,
@@ -1064,7 +1092,8 @@ class OrderExecutor:
                 short_strike=position.call_long_strike,   # Sell what we bought
                 option_type="call",
                 quantity=position.contracts,
-                limit_price=round(ic_quote['call_value'], 2),
+                limit_price=call_limit,
+                closing=True,
             )
 
             if not call_result or not call_result.get('order'):
@@ -1151,7 +1180,7 @@ class OrderExecutor:
 
             call_value = call_quote.get('value', 0)
 
-            # Close call spread by reversing
+            # Close call spread
             call_result = self._tradier_place_spread_with_retry(
                 symbol=position.ticker,
                 expiration=position.expiration,
@@ -1160,6 +1189,7 @@ class OrderExecutor:
                 option_type="call",
                 quantity=position.contracts,
                 limit_price=round(call_value, 2),
+                closing=True,
             )
 
             if not call_result or not call_result.get('order'):

@@ -583,6 +583,10 @@ class OrderExecutor:
             return False, 0, 0
 
         try:
+            # Determine if we should use MARKET orders for guaranteed fill
+            eod_reasons = ('EOD', 'STALE', 'EXPIRED', 'SAFETY_NET', 'PRICING_FAILURE', 'MANUAL_CLOSE')
+            use_market = any(r in reason.upper() for r in eod_reasons)
+
             # Get current quotes for closing
             current_price = self._get_current_spx_price()
             if not current_price:
@@ -590,9 +594,13 @@ class OrderExecutor:
 
             close_value = self._estimate_ic_value(position, current_price)
 
-            # Close put spread by reversing the order (buy to close short, sell to close long)
-            # We swap long/short so the spread becomes a debit (we pay to close)
-            # Using retry wrapper for network resilience
+            put_limit = None if use_market else round(close_value / 2, 2)
+            call_limit = None if use_market else round(close_value / 2, 2)
+
+            if use_market:
+                logger.info(f"ANCHOR: Using MARKET orders for {reason} close (sandbox EOD)")
+
+            # Close put spread (buy to close short, sell to close long)
             put_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=position.expiration,
@@ -600,14 +608,15 @@ class OrderExecutor:
                 short_strike=position.put_long_strike,   # Sell long
                 option_type="put",
                 quantity=position.contracts,
-                limit_price=round(close_value / 2, 2),  # Half of total close value
+                limit_price=put_limit,
+                closing=True,
             )
 
             if not put_result or not put_result.get('order'):
                 logger.error(f"Failed to close put spread: {put_result}")
                 return False, 0, 0
 
-            # Close call spread by reversing the order - with retry
+            # Close call spread
             call_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=position.expiration,
@@ -615,7 +624,8 @@ class OrderExecutor:
                 short_strike=position.call_long_strike,   # Sell long
                 option_type="call",
                 quantity=position.contracts,
-                limit_price=round(close_value / 2, 2),  # Half of total close value
+                limit_price=call_limit,
+                closing=True,
             )
 
             if not call_result or not call_result.get('order'):

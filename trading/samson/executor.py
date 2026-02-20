@@ -545,11 +545,21 @@ class OrderExecutor:
             return False, 0, 0
 
         try:
+            # Determine if we should use MARKET orders for guaranteed fill
+            eod_reasons = ('EOD', 'STALE', 'EXPIRED', 'SAFETY_NET', 'PRICING_FAILURE', 'MANUAL_CLOSE')
+            use_market = any(r in reason.upper() for r in eod_reasons)
+
             current_price = self._get_current_spx_price()
             if not current_price:
                 current_price = position.underlying_at_entry
 
             close_value = self._estimate_ic_value(position, current_price)
+
+            put_limit = None if use_market else round(close_value / 2, 2)
+            call_limit = None if use_market else round(close_value / 2, 2)
+
+            if use_market:
+                logger.info(f"SAMSON: Using MARKET orders for {reason} close (sandbox EOD)")
 
             # Close put spread
             put_result = self._tradier_place_spread_with_retry(
@@ -559,7 +569,8 @@ class OrderExecutor:
                 short_strike=position.put_long_strike,
                 option_type="put",
                 quantity=position.contracts,
-                limit_price=round(close_value / 2, 2),
+                limit_price=put_limit,
+                closing=True,
             )
 
             if not put_result or not put_result.get('order'):
@@ -574,7 +585,8 @@ class OrderExecutor:
                 short_strike=position.call_long_strike,
                 option_type="call",
                 quantity=position.contracts,
-                limit_price=round(close_value / 2, 2),
+                limit_price=call_limit,
+                closing=True,
             )
 
             if not call_result or not call_result.get('order'):

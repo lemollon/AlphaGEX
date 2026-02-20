@@ -2992,3 +2992,77 @@ async def get_sync_status():
     except Exception as e:
         logger.error(f"Sync status check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# TRADIER SANDBOX EOD CLOSE ENDPOINTS
+# =============================================================================
+
+@router.get("/tradier-sandbox/positions")
+async def get_tradier_sandbox_positions():
+    """
+    Get all open positions from the Tradier sandbox account.
+
+    Queries the ACTUAL Tradier API, not the bot database.
+    Useful for verifying what positions Tradier thinks are open.
+    """
+    try:
+        from trading.tradier_eod_closer import TradierEODCloser
+        closer = TradierEODCloser()
+
+        if not closer.api_key or not closer.account_id:
+            return {"success": False, "error": "No sandbox credentials configured"}
+
+        positions = closer.get_all_positions()
+        orders = closer.get_open_orders()
+
+        return {
+            "success": True,
+            "account_id": closer.account_id,
+            "positions": positions,
+            "open_orders": orders,
+            "position_count": len(positions),
+            "order_count": len(orders),
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Tradier EOD Closer module not available")
+    except Exception as e:
+        logger.error(f"Failed to query sandbox positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/tradier-sandbox/close-all")
+async def close_all_tradier_sandbox_positions():
+    """
+    Manually trigger EOD close of ALL Tradier sandbox positions.
+
+    This closes positions across ALL configured sandbox accounts
+    using MARKET orders for guaranteed fills.
+
+    Use this for:
+    - Manual EOD cleanup
+    - Testing the EOD close mechanism
+    - Emergency position flattening
+    """
+    try:
+        from trading.tradier_eod_closer import close_all_sandbox_accounts
+
+        result = close_all_sandbox_accounts()
+
+        return {
+            "success": True,
+            "message": (
+                f"Processed {result.get('accounts_processed', 0)} account(s): "
+                f"found {result.get('total_positions_found', 0)}, "
+                f"closed {result.get('total_positions_closed', 0)}, "
+                f"failed {result.get('total_positions_failed', 0)}"
+            ),
+            "data": result,
+        }
+
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Tradier EOD Closer module not available")
+    except Exception as e:
+        logger.error(f"Failed to close sandbox positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
