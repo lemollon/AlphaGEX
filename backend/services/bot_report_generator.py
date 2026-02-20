@@ -362,7 +362,7 @@ _ensure_report_tables_exist()
 # DATA FETCHING
 # =============================================================================
 
-def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, Any]]:
+def fetch_closed_trades_for_date(bot: str, report_date: date) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """
     Fetch all closed trades for a bot on a specific date.
 
@@ -371,15 +371,14 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
         report_date: Date to fetch trades for
 
     Returns:
-        List of trade dicts
+        Tuple of (list of trade dicts, error message or None)
     """
     if not DB_AVAILABLE:
-        return []
+        return [], "Database not available"
 
     table = BOT_POSITION_TABLES.get(bot)
     if not table:
-        logger.error(f"Unknown bot: {bot}")
-        return []
+        return [], f"Unknown bot: {bot}"
 
     try:
         with _db_connection() as conn:
@@ -416,11 +415,14 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
                 trades.append(trade)
 
             logger.info(f"Fetched {len(trades)} closed trades for {bot} on {report_date}")
-            return trades
+            return trades, None
 
     except Exception as e:
-        logger.error(f"Error fetching trades for {bot}: {e}")
-        return []
+        error_msg = f"Error fetching trades for {bot}: {e}"
+        logger.error(error_msg)
+        import traceback
+        traceback.print_exc()
+        return [], error_msg
 
 
 def _check_column_exists(cursor, table_name: str, column_name: str) -> bool:
@@ -1047,8 +1049,11 @@ def generate_report_for_bot(
     start_time = time.time()
     logger.info(f"Generating report for {bot.upper()} on {report_date}")
 
-    # Step 1: Fetch closed trades
-    trades = fetch_closed_trades_for_date(bot, report_date)
+    # Step 1: Fetch closed trades (returns tuple of trades list + error message)
+    trades, trade_fetch_error = fetch_closed_trades_for_date(bot, report_date)
+
+    if trade_fetch_error:
+        logger.error(f"REPORT {bot.upper()}: Trade fetch error: {trade_fetch_error}")
 
     # Step 2: Fetch scan activity
     scans = fetch_scan_activity_for_date(bot, report_date)
@@ -1082,9 +1087,13 @@ def generate_report_for_bot(
             trades, trade_analyses, market_context, report_date
         )
     else:
+        if trade_fetch_error:
+            summary_msg = f"Could not fetch trades for {bot.upper()} on {report_date.strftime('%A, %B %d, %Y')}: {trade_fetch_error}"
+        else:
+            summary_msg = f"No trades executed by {bot.upper()} on {report_date.strftime('%A, %B %d, %Y')}. The bot was active but no trading opportunities met entry criteria."
         logger.info(f"No trades for {bot.upper()} on {report_date} - generating summary-only report")
         daily_summary_data = {
-            "daily_summary": f"No trades executed by {bot.upper()} on {report_date.strftime('%A, %B %d, %Y')}. The bot was active but no trading opportunities met entry criteria.",
+            "daily_summary": summary_msg,
             "total_pnl": 0,
             "win_rate": "N/A",
             "lessons_learned": [],
@@ -1664,3 +1673,168 @@ def purge_old_reports(days_to_keep: int = 5 * 365) -> Dict[str, int]:
     except Exception as e:
         logger.error(f"Error purging old reports: {e}")
         return {}
+
+
+def diagnose_report_data(bot: str, report_date: Optional[date] = None) -> Dict[str, Any]:
+    """
+    Diagnostic function to show exactly what data exists for report generation.
+
+    Runs the same queries as the report generator but returns diagnostic info
+    instead of generating a report. Helps debug why reports show 0 trades.
+
+    Args:
+        bot: Bot name (lowercase)
+        report_date: Date to diagnose (default: today)
+
+    Returns:
+        Diagnostic data showing table contents, query results, and any errors
+    """
+    bot = bot.lower()
+    if report_date is None:
+        report_date = datetime.now(CENTRAL_TZ).date()
+    elif isinstance(report_date, str):
+        report_date = datetime.strptime(report_date, "%Y-%m-%d").date()
+
+    result = {
+        "bot": bot.upper(),
+        "report_date": report_date.isoformat(),
+        "db_available": DB_AVAILABLE,
+        "position_table": BOT_POSITION_TABLES.get(bot, "UNKNOWN"),
+        "checks": {}
+    }
+
+    if not DB_AVAILABLE:
+        result["error"] = "Database not available"
+        return result
+
+    table = BOT_POSITION_TABLES.get(bot)
+    if not table:
+        result["error"] = f"Unknown bot: {bot}"
+        return result
+
+    try:
+        with _db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check 1: Does the position table exist?
+            cursor.execute("""
+                SELECT COUNT(*)
+                FROM information_schema.tables
+                WHERE table_name = %s AND table_schema = 'public'
+            """, (table,))
+            table_exists = cursor.fetchone()[0] > 0
+            result["checks"]["table_exists"] = table_exists
+
+            if not table_exists:
+                result["error"] = f"Table {table} does not exist"
+                return result
+
+            # Check 2: Total positions by status
+            cursor.execute(f"""
+                SELECT status, COUNT(*) as cnt
+                FROM {table}
+                GROUP BY status
+                ORDER BY cnt DESC
+            """)
+            result["checks"]["positions_by_status"] = {
+                row[0]: row[1] for row in cursor.fetchall()
+            }
+
+            # Check 3: Total closed positions ever
+            cursor.execute(f"""
+                SELECT COUNT(*)
+                FROM {table}
+                WHERE status IN ('closed', 'expired', 'partial_close')
+            """)
+            result["checks"]["total_closed_ever"] = cursor.fetchone()[0]
+
+            # Check 4: Run the EXACT same query the report generator uses
+            start_of_day = datetime.combine(report_date, datetime.min.time())
+            end_of_day = datetime.combine(report_date + timedelta(days=1), datetime.min.time())
+
+            try:
+                cursor.execute(f"""
+                    SELECT COUNT(*)
+                    FROM {table}
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    AND COALESCE(close_time, open_time) >= %s::timestamp AT TIME ZONE 'America/Chicago'
+                    AND COALESCE(close_time, open_time) < %s::timestamp AT TIME ZONE 'America/Chicago'
+                """, (start_of_day, end_of_day))
+                result["checks"]["report_query_count"] = cursor.fetchone()[0]
+                result["checks"]["report_query_error"] = None
+            except Exception as e:
+                result["checks"]["report_query_count"] = 0
+                result["checks"]["report_query_error"] = str(e)
+                conn.rollback()
+
+            # Check 5: Latest 5 closed trades (any date)
+            cursor.execute(f"""
+                SELECT position_id, status,
+                       close_time AT TIME ZONE 'America/Chicago' as close_ct,
+                       DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') as close_date,
+                       realized_pnl
+                FROM {table}
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                ORDER BY COALESCE(close_time, open_time) DESC
+                LIMIT 5
+            """)
+            latest_closed = []
+            for row in cursor.fetchall():
+                latest_closed.append({
+                    "position_id": row[0],
+                    "status": row[1],
+                    "close_ct": row[2].isoformat() if row[2] else None,
+                    "close_date": row[3].isoformat() if row[3] else None,
+                    "realized_pnl": float(row[4]) if row[4] else None,
+                })
+            result["checks"]["latest_closed_trades"] = latest_closed
+
+            # Check 6: Closed trade counts by date (last 10 trading days)
+            cursor.execute(f"""
+                SELECT DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') as close_date,
+                       COUNT(*) as cnt,
+                       COALESCE(SUM(realized_pnl), 0) as total_pnl
+                FROM {table}
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                GROUP BY close_date
+                ORDER BY close_date DESC
+                LIMIT 10
+            """)
+            by_date = []
+            for row in cursor.fetchall():
+                by_date.append({
+                    "date": row[0].isoformat() if row[0] else None,
+                    "trade_count": row[1],
+                    "total_pnl": float(row[2]) if row[2] else 0,
+                })
+            result["checks"]["trades_by_date"] = by_date
+
+            # Check 7: Existing report archive for this date
+            report_table = f"{bot}_daily_reports"
+            try:
+                cursor.execute(f"""
+                    SELECT report_date, trade_count, total_pnl, daily_summary, generated_at
+                    FROM {report_table}
+                    WHERE report_date = %s
+                """, (report_date,))
+                row = cursor.fetchone()
+                if row:
+                    result["checks"]["existing_report"] = {
+                        "report_date": row[0].isoformat() if row[0] else None,
+                        "trade_count": row[1],
+                        "total_pnl": float(row[2]) if row[2] else 0,
+                        "daily_summary_preview": str(row[3])[:200] if row[3] else None,
+                        "generated_at": row[4].isoformat() if row[4] else None,
+                    }
+                else:
+                    result["checks"]["existing_report"] = None
+            except Exception as e:
+                result["checks"]["existing_report_error"] = str(e)
+                conn.rollback()
+
+    except Exception as e:
+        result["error"] = str(e)
+        import traceback
+        result["traceback"] = traceback.format_exc()
+
+    return result
