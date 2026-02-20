@@ -2077,7 +2077,7 @@ async def get_valor_margin_analysis(
         # Include available contract specs for reference
         specs_ref = {}
         for key, spec in FUTURES_MARGIN_SPECS.items():
-            if spec.get("market_type") in ("stock_futures", "energy_futures"):
+            if spec.get("market_type") in ("stock_futures", "energy_futures", "metal_futures"):
                 im = spec["initial_margin"]
                 specs_ref[key] = {
                     "name": spec["name"],
@@ -2099,4 +2099,120 @@ async def get_valor_margin_analysis(
         raise
     except Exception as e:
         logger.error(f"Error getting VALOR margin analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# MARGIN ZONE MANAGEMENT ENDPOINTS
+# =============================================================================
+
+@router.get("/api/valor/margin/zones")
+async def get_valor_margin_zones(
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
+):
+    """Margin zone status for VALOR instruments.
+
+    Returns per-instrument and combined margin zones, utilization,
+    cooldown status, and recent margin events. Uses the zone-based
+    margin protection system (GREEN/YELLOW/ORANGE/RED/CRITICAL).
+    """
+    try:
+        trader = _get_trader()
+        from trading.valor.models import FUTURES_TICKERS
+        from trading.valor.margin_manager import (
+            ValorMarginManager, VALOR_MARGIN_REQUIREMENTS,
+            get_margin_requirement, MarginZone,
+        )
+
+        margin_mgr = trader.margin_manager
+
+        # Build per-instrument states
+        per_instrument_states = {}
+        for tk in trader.config.tickers:
+            if ticker and tk != ticker:
+                continue
+
+            positions = trader.db.get_open_positions(ticker=tk)
+            tk_cfg = FUTURES_TICKERS.get(tk, {})
+            starting_capital = tk_cfg.get("starting_capital", 100000.0)
+            try:
+                tk_stats = trader.db.get_ticker_performance_stats([tk])
+                realized_pnl = tk_stats.get(tk, {}).get("total_pnl", 0.0)
+            except Exception:
+                realized_pnl = 0.0
+            equity = starting_capital + realized_pnl
+
+            state = margin_mgr.get_instrument_margin_state(tk, positions, equity)
+            # Convert zone enum to string for JSON
+            state["zone"] = state["zone"].value
+            per_instrument_states[tk] = state
+
+        # Combined state
+        combined = None
+        if not ticker:
+            # Need states with zone as enum for combined calc
+            states_for_combined = {}
+            for tk in trader.config.tickers:
+                positions = trader.db.get_open_positions(ticker=tk)
+                tk_cfg = FUTURES_TICKERS.get(tk, {})
+                starting_capital = tk_cfg.get("starting_capital", 100000.0)
+                try:
+                    tk_stats = trader.db.get_ticker_performance_stats([tk])
+                    realized_pnl = tk_stats.get(tk, {}).get("total_pnl", 0.0)
+                except Exception:
+                    realized_pnl = 0.0
+                equity = starting_capital + realized_pnl
+                states_for_combined[tk] = margin_mgr.get_instrument_margin_state(
+                    tk, positions, equity
+                )
+
+            combined_raw = margin_mgr.get_combined_margin_state(states_for_combined)
+            combined = {
+                "total_equity": combined_raw["total_equity"],
+                "total_maintenance_margin": combined_raw["total_maintenance_margin"],
+                "total_contracts": combined_raw["total_contracts"],
+                "utilization_pct": combined_raw["utilization_pct"],
+                "zone": combined_raw["zone"].value,
+            }
+
+        # Manager status (cooldowns, events)
+        mgr_status = margin_mgr.get_status_dict()
+
+        return {
+            "success": True,
+            "data": {
+                "instruments": per_instrument_states,
+                "combined": combined,
+                "margin_requirements": VALOR_MARGIN_REQUIREMENTS,
+                "cooldowns": mgr_status["cooldowns"],
+                "recent_events": mgr_status["recent_events"],
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting VALOR margin zones: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/valor/margin/events")
+async def get_valor_margin_events(
+    ticker: Optional[str] = Query(None, description="Filter by ticker"),
+    limit: int = Query(50, description="Max events to return", ge=1, le=200),
+):
+    """Get margin event log (zone changes, forced liquidations, cooldowns)."""
+    try:
+        trader = _get_trader()
+        events = trader.margin_manager.get_margin_events(limit=limit, ticker=ticker)
+        return {
+            "success": True,
+            "data": events,
+            "count": len(events),
+            "timestamp": datetime.now().isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting VALOR margin events: {e}")
         raise HTTPException(status_code=500, detail=str(e))

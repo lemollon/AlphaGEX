@@ -16,15 +16,16 @@ from typing import Dict, Any
 
 FUTURES_MARGIN_SPECS: Dict[str, Dict[str, Any]] = {
     # --- Stock Index Micro Futures ---
+    # --- Stock Index Micro Futures (CME margin rates - update when CME changes) ---
     "MES": {
         "name": "Micro E-mini S&P 500",
         "exchange": "CME",
         "point_value": 5.0,
         "tick_size": 0.25,
         "tick_value": 1.25,
-        "initial_margin": 1500.0,
-        "maintenance_margin": 1350.0,
-        "last_updated": "2025-02-01",
+        "initial_margin": 2300.0,
+        "maintenance_margin": 2100.0,
+        "last_updated": "2026-02-20",
         "market_type": "stock_futures",
     },
     "MNQ": {
@@ -33,9 +34,9 @@ FUTURES_MARGIN_SPECS: Dict[str, Dict[str, Any]] = {
         "point_value": 2.0,
         "tick_size": 0.25,
         "tick_value": 0.50,
-        "initial_margin": 2100.0,
-        "maintenance_margin": 1900.0,
-        "last_updated": "2025-02-01",
+        "initial_margin": 3300.0,
+        "maintenance_margin": 3000.0,
+        "last_updated": "2026-02-20",
         "market_type": "stock_futures",
     },
     "M2K": {
@@ -44,34 +45,59 @@ FUTURES_MARGIN_SPECS: Dict[str, Dict[str, Any]] = {
         "point_value": 5.0,
         "tick_size": 0.10,
         "tick_value": 0.50,
-        "initial_margin": 750.0,
-        "maintenance_margin": 680.0,
-        "last_updated": "2025-02-01",
+        "initial_margin": 950.0,
+        "maintenance_margin": 860.0,
+        "last_updated": "2026-02-20",
+        "market_type": "stock_futures",
+    },
+    # RTY is VALOR's alias for M2K (Micro Russell 2000)
+    "RTY": {
+        "name": "Micro E-mini Russell 2000",
+        "exchange": "CME",
+        "point_value": 5.0,
+        "tick_size": 0.10,
+        "tick_value": 0.50,
+        "initial_margin": 950.0,
+        "maintenance_margin": 860.0,
+        "last_updated": "2026-02-20",
         "market_type": "stock_futures",
     },
 
-    # --- Energy Futures ---
+    # --- Micro Energy Futures ---
     "CL": {
-        "name": "Crude Oil",
+        "name": "Micro WTI Crude Oil (MCL)",
         "exchange": "NYMEX",
-        "point_value": 1000.0,
+        "point_value": 100.0,
         "tick_size": 0.01,
-        "tick_value": 10.0,
-        "initial_margin": 7000.0,
-        "maintenance_margin": 6300.0,
-        "last_updated": "2025-02-01",
+        "tick_value": 1.0,
+        "initial_margin": 575.0,
+        "maintenance_margin": 520.0,
+        "last_updated": "2026-02-20",
         "market_type": "energy_futures",
     },
     "NG": {
-        "name": "Natural Gas",
+        "name": "Micro Natural Gas (MNG)",
         "exchange": "NYMEX",
-        "point_value": 10000.0,
+        "point_value": 100.0,
         "tick_size": 0.001,
-        "tick_value": 10.0,
-        "initial_margin": 2500.0,
-        "maintenance_margin": 2250.0,
-        "last_updated": "2025-02-01",
+        "tick_value": 0.10,
+        "initial_margin": 575.0,
+        "maintenance_margin": 520.0,
+        "last_updated": "2026-02-20",
         "market_type": "energy_futures",
+    },
+
+    # --- Micro Metals ---
+    "MGC": {
+        "name": "Micro Gold",
+        "exchange": "COMEX",
+        "point_value": 10.0,
+        "tick_size": 0.10,
+        "tick_value": 1.0,
+        "initial_margin": 1870.0,
+        "maintenance_margin": 1700.0,
+        "last_updated": "2026-02-20",
+        "market_type": "metal_futures",
     },
 
     # --- CME Crypto Futures ---

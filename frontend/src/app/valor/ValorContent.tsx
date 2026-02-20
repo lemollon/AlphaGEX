@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Activity,
   TrendingUp,
@@ -19,6 +19,9 @@ import {
   Wallet,
   History,
   LayoutDashboard,
+  Shield,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import {
   LineChart,
@@ -173,6 +176,30 @@ export default function ValorPage() {
   const { data: abTestStatus, mutate: refreshABTestStatus } = useValorABTestStatus()
   const { data: abTestResults, mutate: refreshABTestResults } = useValorABTestResults()
   const { data: signalsData } = useValorSignals(50)
+
+  // Margin zone data (inline fetch, 15s refresh)
+  const [marginZoneData, setMarginZoneData] = useState<any>(null)
+  const [marginEventsExpanded, setMarginEventsExpanded] = useState(false)
+  useEffect(() => {
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
+    const fetchMarginZones = async () => {
+      try {
+        const url = selectedTicker
+          ? `${API_BASE}/api/valor/margin/zones?ticker=${selectedTicker}`
+          : `${API_BASE}/api/valor/margin/zones`
+        const res = await fetch(url)
+        if (res.ok) {
+          const json = await res.json()
+          setMarginZoneData(json.data)
+        }
+      } catch {
+        // Silently fail — margin zones are informational
+      }
+    }
+    fetchMarginZones()
+    const interval = setInterval(fetchMarginZones, 15000)
+    return () => clearInterval(interval)
+  }, [selectedTicker])
 
   // ML Training handler
   const handleTrainML = async () => {
@@ -635,6 +662,138 @@ export default function ValorPage() {
 
               {/* Margin Analysis */}
               <MarginAnalysis botName="VALOR" marketType="stock_futures" marginEndpoint={selectedTicker ? `/api/valor/margin?ticker=${selectedTicker}` : '/api/valor/margin'} />
+
+              {/* Margin Zone Protection */}
+              {marginZoneData && (
+                <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold flex items-center gap-2">
+                      <Shield className="h-5 w-5 text-yellow-400" />
+                      Margin Protection Zones
+                    </h3>
+                    {marginZoneData.combined && (
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+                        marginZoneData.combined.zone === 'GREEN' ? 'bg-green-900/50 text-green-400 border border-green-700' :
+                        marginZoneData.combined.zone === 'YELLOW' ? 'bg-yellow-900/50 text-yellow-400 border border-yellow-700' :
+                        marginZoneData.combined.zone === 'ORANGE' ? 'bg-orange-900/50 text-orange-400 border border-orange-700' :
+                        marginZoneData.combined.zone === 'RED' ? 'bg-red-900/50 text-red-400 border border-red-700 animate-pulse' :
+                        'bg-gray-900/50 text-red-300 border border-red-600 animate-pulse'
+                      }`}>
+                        Portfolio: {marginZoneData.combined.zone} ({marginZoneData.combined.utilization_pct}%)
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Per-instrument zone bars */}
+                  <div className="space-y-2">
+                    {Object.entries(marginZoneData.instruments || {}).map(([tk, state]: [string, any]) => {
+                      const utilPct = state.utilization_pct || 0
+                      const zone = state.zone || 'GREEN'
+                      const barColor =
+                        zone === 'GREEN' ? 'bg-green-500' :
+                        zone === 'YELLOW' ? 'bg-yellow-500' :
+                        zone === 'ORANGE' ? 'bg-orange-500' :
+                        zone === 'RED' ? 'bg-red-500' :
+                        'bg-red-600 animate-pulse'
+                      const zoneEmoji =
+                        zone === 'GREEN' ? '' :
+                        zone === 'YELLOW' ? ' ⚠️' :
+                        zone === 'ORANGE' ? ' 🟠' :
+                        zone === 'RED' ? ' 🔴' : ' ⚫'
+
+                      const cooldown = marginZoneData.cooldowns?.[tk]
+                      const inCooldown = cooldown?.in_cooldown
+
+                      return (
+                        <div key={tk} className="flex items-center gap-3">
+                          <span className="text-sm font-mono w-10 text-gray-300">{tk}</span>
+                          <div className="flex-1 bg-gray-800 rounded-full h-4 relative overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                              style={{ width: `${Math.min(utilPct, 100)}%` }}
+                            />
+                            {/* Zone boundary markers */}
+                            <div className="absolute top-0 left-[50%] w-px h-full bg-gray-600 opacity-50" />
+                            <div className="absolute top-0 left-[70%] w-px h-full bg-gray-600 opacity-50" />
+                            <div className="absolute top-0 left-[80%] w-px h-full bg-gray-600 opacity-50" />
+                            <div className="absolute top-0 left-[90%] w-px h-full bg-gray-600 opacity-50" />
+                          </div>
+                          <span className={`text-xs font-mono w-16 text-right ${
+                            zone === 'GREEN' ? 'text-green-400' :
+                            zone === 'YELLOW' ? 'text-yellow-400' :
+                            zone === 'ORANGE' ? 'text-orange-400' :
+                            'text-red-400'
+                          }`}>
+                            {utilPct.toFixed(1)}%{zoneEmoji}
+                          </span>
+                          <span className="text-xs text-gray-500 w-24 text-right">
+                            ${(state.maintenance_margin_used || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                          </span>
+                          {inCooldown && (
+                            <span className="text-xs text-red-400 animate-pulse">
+                              ⏱ {Math.ceil(cooldown.remaining_minutes || 0)}m
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Zone legend */}
+                  <div className="mt-3 flex gap-4 text-xs text-gray-500">
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1" />0-50% Green</span>
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-yellow-500 mr-1" />50-70% Yellow</span>
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-orange-500 mr-1" />70-80% Orange</span>
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-red-500 mr-1" />80-90% Red</span>
+                    <span><span className="inline-block w-2 h-2 rounded-full bg-red-600 mr-1" />90%+ Critical</span>
+                  </div>
+
+                  {/* Margin events log (collapsible) */}
+                  {marginZoneData.recent_events && marginZoneData.recent_events.length > 0 && (
+                    <div className="mt-4 border-t border-gray-800 pt-3">
+                      <button
+                        onClick={() => setMarginEventsExpanded(!marginEventsExpanded)}
+                        className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300 transition-colors"
+                      >
+                        {marginEventsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        Margin Events ({marginZoneData.recent_events.length})
+                      </button>
+                      {marginEventsExpanded && (
+                        <div className="mt-2 max-h-48 overflow-y-auto">
+                          <table className="w-full text-xs">
+                            <thead>
+                              <tr className="text-gray-500 border-b border-gray-800">
+                                <th className="text-left py-1 pr-2">Time</th>
+                                <th className="text-left py-1 pr-2">Ticker</th>
+                                <th className="text-left py-1 pr-2">Event</th>
+                                <th className="text-left py-1">Description</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {marginZoneData.recent_events.map((evt: any, i: number) => (
+                                <tr key={i} className="border-b border-gray-800/50">
+                                  <td className="py-1 pr-2 text-gray-500 font-mono">
+                                    {new Date(evt.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                  </td>
+                                  <td className="py-1 pr-2 text-gray-300 font-mono">{evt.ticker}</td>
+                                  <td className={`py-1 pr-2 ${
+                                    evt.event === 'forced_liquidation' ? 'text-red-400' :
+                                    evt.event === 'zone_change' ? 'text-yellow-400' :
+                                    'text-gray-400'
+                                  }`}>
+                                    {evt.event}
+                                  </td>
+                                  <td className="py-1 text-gray-400">{evt.description}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Equity Curve */}
               <div className="bg-[#0a0a0a] rounded-lg border border-gray-800 p-6">
