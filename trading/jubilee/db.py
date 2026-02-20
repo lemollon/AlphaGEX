@@ -2929,6 +2929,60 @@ class JubileeDatabase:
             logger.error(f"Error recording IC equity snapshot: {e}")
             return False
 
+    def compute_ic_equity_snapshot_live(self) -> Optional[Dict[str, Any]]:
+        """
+        Compute a live equity snapshot without persisting it.
+
+        Used by the /ic/equity-curve/intraday endpoint as a fallback
+        when no periodic snapshots exist for today, so the chart is
+        never blank.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            ic_config = self.load_ic_config()
+            starting_capital = ic_config.starting_capital
+
+            # Total realized P&L from closed trades
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM jubilee_ic_closed_trades
+            """)
+            total_realized = float(cursor.fetchone()[0] or 0)
+
+            # Unrealized P&L from open positions
+            cursor.execute("""
+                SELECT COALESCE(SUM(unrealized_pnl), 0), COUNT(*)
+                FROM jubilee_ic_positions
+                WHERE status = 'open'
+            """)
+            row = cursor.fetchone()
+            total_unrealized = float(row[0] or 0)
+            open_count = int(row[1] or 0)
+
+            total_equity = starting_capital + total_realized + total_unrealized
+
+            cursor.close()
+
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+
+            return {
+                'time': now.isoformat(),
+                'total_equity': total_equity,
+                'starting_capital': starting_capital,
+                'realized_pnl': total_realized,
+                'unrealized_pnl': total_unrealized,
+                'open_positions': open_count,
+                'details': [],
+                'is_live': True,
+            }
+
+        except Exception as e:
+            logger.error(f"Error computing live IC equity snapshot: {e}")
+            return None
+
     def get_ic_intraday_equity(self) -> List[Dict[str, Any]]:
         """
         Get today's IC equity snapshots for intraday tracking.

@@ -1506,6 +1506,9 @@ async def get_ic_intraday_equity():
     - Returns intraday equity snapshots for current trading day
     - Includes unrealized P&L from open positions
     - Required endpoint per Bot-Specific Requirements
+
+    When no periodic snapshots exist for today, generates a live
+    snapshot on-the-fly so the chart is never blank.
     """
     if not JubileeICTrader:
         raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
@@ -1513,6 +1516,13 @@ async def get_ic_intraday_equity():
     try:
         trader = JubileeICTrader()
         snapshots = trader.db.get_ic_intraday_equity()
+
+        # If no periodic snapshots exist yet today, generate a live one
+        if not snapshots:
+            live = trader.db.compute_ic_equity_snapshot_live()
+            if live:
+                snapshots = [live]
+
         return {
             "available": True,
             "date": date.today().isoformat(),
