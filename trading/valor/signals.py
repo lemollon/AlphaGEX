@@ -28,7 +28,8 @@ from zoneinfo import ZoneInfo
 from .models import (
     FuturesSignal, TradeDirection, GammaRegime, SignalSource,
     ValorConfig, BayesianWinTracker, MES_POINT_VALUE, CENTRAL_TZ,
-    FUTURES_TICKERS, get_ticker_point_value
+    FUTURES_TICKERS, get_ticker_point_value, get_proxy_etf,
+    EXPIRATION_SCHEDULES, get_next_gex_expiration,
 )
 
 # ML Advisor - loaded lazily to avoid circular imports
@@ -1413,12 +1414,18 @@ class ValorSignalGenerator:
         return None
 
 
-# GEX Cache for post-options-close trading (3-4 PM CT)
-# MES futures trade until 4 PM but SPX options close at 3 PM
-# After 3 PM, we use n+1 (next day) GEX data for forward-looking levels
+# =============================================================================
+# PER-INSTRUMENT GEX CACHE
+# =============================================================================
+# Each instrument gets its own cached GEX profile.
+# Cache persists until the next trading day's market open (9:30 AM ET).
+# Structure: { "MES": {"data": {...}, "cache_time": datetime, "proxy_etf": "SPY", "expiration_date": "2026-02-21"}, ... }
+_gex_cache_by_ticker: Dict[str, Dict[str, Any]] = {}
+_gex_cache_loaded_from_db: bool = False  # Track if we've loaded from DB this session
+
+# Legacy single-cache aliases (kept for backward compat with DB persistence)
 _gex_cache: Dict[str, Any] = {}
 _gex_cache_time: Optional[datetime] = None
-_gex_cache_loaded_from_db: bool = False  # Track if we've loaded from DB this session
 
 # Singleton Tradier GEX calculator - production mode for SPX
 # SPX requires production keys (sandbox doesn't support SPX)
@@ -1448,35 +1455,38 @@ def _get_tradier_gex_calculator():
         return None
 
 
-def _persist_gex_cache_to_db(gex_data: Dict[str, Any], cache_time: datetime) -> bool:
+def _persist_gex_cache_to_db(gex_data: Dict[str, Any], cache_time: datetime, ticker: str = "") -> bool:
     """
     Persist GEX cache to database for overnight trading resilience.
 
     This ensures VALOR can continue trading with valid GEX levels
     even if the process restarts during overnight hours.
+    Stores per-ticker caches when ticker is provided.
     """
     try:
         import json
         from database_adapter import get_connection
 
+        cache_key = f'gex_cache_{ticker}' if ticker else 'gex_cache'
         cache_record = {
             'gex_data': gex_data,
-            'cache_time': cache_time.isoformat()
+            'cache_time': cache_time.isoformat(),
+            'ticker': ticker,
         }
 
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO valor_config (config_key, config_value, updated_at)
-            VALUES ('gex_cache', %s, NOW())
+            VALUES (%s, %s, NOW())
             ON CONFLICT (config_key) DO UPDATE SET
                 config_value = EXCLUDED.config_value,
                 updated_at = NOW()
-        """, (json.dumps(cache_record),))
+        """, (cache_key, json.dumps(cache_record)))
         conn.commit()
         conn.close()
 
-        logger.debug(f"GEX cache persisted to database at {cache_time.strftime('%H:%M:%S')}")
+        logger.debug(f"GEX cache persisted to database for {ticker or 'legacy'} at {cache_time.strftime('%H:%M:%S')}")
         return True
 
     except Exception as e:
@@ -1484,13 +1494,14 @@ def _persist_gex_cache_to_db(gex_data: Dict[str, Any], cache_time: datetime) -> 
         return False
 
 
-def _load_gex_cache_from_db() -> Tuple[Dict[str, Any], Optional[datetime]]:
+def _load_gex_cache_from_db() -> Dict[str, Dict[str, Any]]:
     """
-    Load GEX cache from database on startup.
+    Load per-ticker GEX caches from database on startup.
 
     Returns:
-        Tuple of (gex_data dict, cache_time datetime) or ({}, None) if not found
+        Dict mapping ticker -> {data: {...}, cache_time: datetime}
     """
+    result = {}
     try:
         import json
         from database_adapter import get_connection
@@ -1498,211 +1509,101 @@ def _load_gex_cache_from_db() -> Tuple[Dict[str, Any], Optional[datetime]]:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT config_value FROM valor_config
-            WHERE config_key = 'gex_cache'
+            SELECT config_key, config_value FROM valor_config
+            WHERE config_key LIKE 'gex_cache_%'
         """)
-        row = cursor.fetchone()
+        rows = cursor.fetchall()
         conn.close()
 
-        if row and row[0]:
-            cache_record = json.loads(row[0])
-            gex_data = cache_record.get('gex_data', {})
-            cache_time_str = cache_record.get('cache_time')
+        for row in rows:
+            if row and row[1]:
+                try:
+                    cache_record = json.loads(row[1])
+                    gex_data = cache_record.get('gex_data', {})
+                    cache_time_str = cache_record.get('cache_time')
+                    ticker = cache_record.get('ticker', '')
 
-            if cache_time_str and gex_data:
-                cache_time = datetime.fromisoformat(cache_time_str)
-                # Ensure timezone
-                if cache_time.tzinfo is None:
-                    cache_time = cache_time.replace(tzinfo=CENTRAL_TZ)
+                    if cache_time_str and gex_data and ticker:
+                        cache_time = datetime.fromisoformat(cache_time_str)
+                        if cache_time.tzinfo is None:
+                            cache_time = cache_time.replace(tzinfo=CENTRAL_TZ)
+                        result[ticker] = {
+                            'data': gex_data,
+                            'cache_time': cache_time,
+                        }
+                except Exception as e:
+                    logger.warning(f"Failed to parse GEX cache record {row[0]}: {e}")
 
-                logger.info(f"Loaded GEX cache from database (cached at {cache_time.strftime('%H:%M:%S')})")
-                return gex_data, cache_time
+        if result:
+            tickers_loaded = list(result.keys())
+            logger.info(f"Loaded GEX cache from database for tickers: {tickers_loaded}")
 
     except Exception as e:
         logger.warning(f"Failed to load GEX cache from database: {e}")
 
-    return {}, None
-
-
-def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
-    """
-    Fetch GEX data for VALOR signal generation.
-
-    This connects to the existing AlphaGEX GEX calculation infrastructure.
-
-    IMPORTANT: VALOR trades MES futures which track the S&P 500 index (~5900 level).
-    We use SPX options data (also at ~5900 level) for accurate GEX levels.
-    SPX requires Tradier PRODUCTION keys (sandbox doesn't support SPX).
-
-    =========================================================================
-    DATA SOURCE RULES (DO NOT CHANGE WITHOUT UNDERSTANDING):
-    =========================================================================
-    MARKET HOURS (8 AM - 3 PM CT):
-      - PRIMARY: Tradier production API (real-time SPX options chain)
-      - FALLBACK: TradingVolatility API
-      - Returns: Current day's GEX levels
-
-    AFTER HOURS & PRE-MARKET (3 PM - 8 AM CT):
-      - PRIMARY: TradingVolatility API (returns FOLLOWING DAY's GEX levels)
-      - FALLBACK: Cache from TradingVolatility (NOT from Tradier market hours)
-      - There is NO Tradier data after hours. Do NOT use Tradier cache here.
-      - TradingVolatility updates their models after market close with the
-        next trading day's expected GEX levels (flip point, call wall, put wall,
-        net_gex, and all other available fields).
-      - Example: On Wednesday evening, VALOR should trade off Thursday's GEX.
-                 On Friday evening, VALOR should trade off Monday's GEX.
-    =========================================================================
-
-    SPX = S&P 500 Index (~5900)
-    MES = Micro E-mini S&P 500 futures (~5900, tracks SPX directly)
-    SPY = SPDR S&P 500 ETF (~590, 1/10th of SPX)
-    """
-    global _gex_cache, _gex_cache_time, _gex_cache_loaded_from_db
-
-    now = datetime.now(CENTRAL_TZ)
-    hour = now.hour
-
-    # If in-memory cache is empty, try loading from database (survives restarts)
-    if not _gex_cache and not _gex_cache_loaded_from_db:
-        _gex_cache_loaded_from_db = True  # Only attempt once per session
-        db_cache, db_cache_time = _load_gex_cache_from_db()
-        if db_cache and db_cache_time:
-            _gex_cache.update(db_cache)
-            _gex_cache_time = db_cache_time
-            logger.info(f"GEX cache restored from database for overnight continuity")
-
-    # =========================================================================
-    # MARKET HOURS (8 AM - 3 PM CT): Use TRADIER for real-time GEX data
-    # AFTER HOURS (3 PM - 8 AM CT): Use TradingVolatility for FOLLOWING DAY GEX
-    #
-    # CRITICAL: After hours, TradingVolatility MUST be called first to get the
-    # following day's GEX levels. Do NOT short-circuit with Tradier market-hours
-    # cache — that is today's data, NOT the following day's.
-    # =========================================================================
-    is_market_hours = 8 <= hour < 15  # 8 AM - 3 PM CT
-
-    if is_market_hours:
-        # =====================================================================
-        # MARKET HOURS: TRADIER FIRST (real-time SPX options data)
-        # Uses singleton calculator with production keys (SPX requires production)
-        # =====================================================================
-        calculator = _get_tradier_gex_calculator()
-        if calculator:
-            try:
-                gex_result = calculator.calculate_gex(symbol)
-
-                if gex_result:
-                    flip_point = gex_result.get('flip_point', 0)
-                    call_wall = gex_result.get('call_wall', 0)
-                    put_wall = gex_result.get('put_wall', 0)
-                    net_gex = gex_result.get('net_gex', 0)
-
-                    if flip_point > 0:
-                        if call_wall <= 0:
-                            call_wall = flip_point * 1.01
-                        if put_wall <= 0:
-                            put_wall = flip_point * 0.99
-
-                        logger.info(
-                            f"VALOR GEX from TRADIER (market hours): flip={flip_point:.2f}, "
-                            f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
-                        )
-
-                        gex_data = {
-                            'flip_point': flip_point,
-                            'call_wall': call_wall,
-                            'put_wall': put_wall,
-                            'net_gex': net_gex,
-                            'gex_ratio': gex_result.get('gex_ratio', 1.0),
-                            'data_source': 'tradier_calculator',
-                        }
-
-                        # Cache for potential fallback
-                        _gex_cache.clear()
-                        _gex_cache.update(gex_data)
-                        _gex_cache_time = now
-                        _persist_gex_cache_to_db(gex_data, now)
-
-                        return gex_data
-                    else:
-                        logger.warning(
-                            f"VALOR Tradier returned flip_point={flip_point} for {symbol} "
-                            f"(full result keys: {list(gex_result.keys())})"
-                        )
-                else:
-                    logger.warning(f"VALOR Tradier calculate_gex returned None for {symbol}")
-
-            except Exception as e:
-                logger.warning(f"VALOR TradierGEXCalculator error for {symbol}: {e}", exc_info=True)
-        else:
-            logger.warning("VALOR Tradier GEX calculator not available (init failed)")
-
-        # Market hours fallback: TradingVolatility
+    # Also try loading legacy single-cache format
+    if not result:
         try:
-            from core_classes_and_engines import TradingVolatilityAPI
+            import json
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT config_value FROM valor_config WHERE config_key = 'gex_cache'")
+            row = cursor.fetchone()
+            conn.close()
+            if row and row[0]:
+                cache_record = json.loads(row[0])
+                gex_data = cache_record.get('gex_data', {})
+                cache_time_str = cache_record.get('cache_time')
+                if cache_time_str and gex_data:
+                    cache_time = datetime.fromisoformat(cache_time_str)
+                    if cache_time.tzinfo is None:
+                        cache_time = cache_time.replace(tzinfo=CENTRAL_TZ)
+                    # Legacy cache was for MES/SPX
+                    result['MES'] = {'data': gex_data, 'cache_time': cache_time}
+                    logger.info(f"Loaded legacy GEX cache from database (MES)")
+        except Exception:
+            pass
 
-            api = TradingVolatilityAPI()
-            gex_result = api.get_net_gamma(symbol)
+    return result
 
-            if gex_result and 'error' not in gex_result:
-                flip_point = float(gex_result.get('flip_point', 0))
-                call_wall = float(gex_result.get('call_wall', 0) or 0)
-                put_wall = float(gex_result.get('put_wall', 0) or 0)
-                net_gex = float(gex_result.get('net_gex', 0))
 
-                if flip_point > 0:
-                    if call_wall <= 0:
-                        call_wall = flip_point * 1.01
-                    if put_wall <= 0:
-                        put_wall = flip_point * 0.99
+def _scale_gex_data(gex_data: Dict[str, Any], scale_factor: float) -> Dict[str, Any]:
+    """
+    Scale GEX levels from proxy ETF price space to futures price space.
 
-                    logger.info(
-                        f"VALOR GEX from TradingVolatility (market hours fallback): flip={flip_point:.2f}, "
-                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
-                    )
+    Example: SPY flip_point=600 with scale=10.0 → MES flip_point=6000
+    Example: QQQ flip_point=530 with scale=50.0 → MNQ flip_point=26500
+    """
+    if not scale_factor or scale_factor <= 0 or scale_factor == 1.0:
+        return gex_data
 
-                    gex_data = {
-                        'flip_point': flip_point,
-                        'call_wall': call_wall,
-                        'put_wall': put_wall,
-                        'net_gex': net_gex,
-                        'gex_ratio': 1.0,
-                        'data_source': 'trading_volatility_api',
-                    }
+    scaled = dict(gex_data)
+    for key in ('flip_point', 'call_wall', 'put_wall', 'n1_flip_point', 'n1_call_wall', 'n1_put_wall'):
+        if key in scaled and scaled[key] and scaled[key] > 0:
+            scaled[key] = scaled[key] * scale_factor
 
-                    _gex_cache.clear()
-                    _gex_cache.update(gex_data)
-                    _gex_cache_time = now
-                    _persist_gex_cache_to_db(gex_data, now)
+    return scaled
 
-                    return gex_data
 
-            logger.warning(f"TradingVolatilityAPI returned no valid data for {symbol}")
+def _fetch_gex_from_trading_volatility(symbol: str, clear_stale_cache: bool = False) -> Optional[Dict[str, Any]]:
+    """
+    Fetch GEX data from TradingVolatility API for a given symbol.
 
-        except ImportError as e:
-            logger.warning(f"TradingVolatilityAPI not available: {e}")
-        except Exception as e:
-            logger.warning(f"TradingVolatilityAPI error: {e}")
+    Args:
+        symbol: Proxy ETF symbol (SPY, QQQ, IWM, USO, UNG, GLD)
+        clear_stale_cache: If True, clear pre-market-close cache entries
 
-    else:
-        # =====================================================================
-        # AFTER HOURS / PRE-MARKET (3 PM - 8 AM CT):
-        # TradingVolatility is the ONLY source for following day's GEX data.
-        # There is NO Tradier data after hours — do not use Tradier cache here.
-        # TradingVolatility returns the FOLLOWING DAY's expected GEX levels
-        # (flip point, call wall, put wall, net_gex) after market close.
-        # =====================================================================
-        logger.info(f"VALOR overnight GEX: Calling TradingVolatility for following day data (hour={hour})")
-        try:
-            from core_classes_and_engines import TradingVolatilityAPI
-            import time as _time
+    Returns:
+        Raw GEX data dict or None if failed
+    """
+    try:
+        from core_classes_and_engines import TradingVolatilityAPI
+        import time as _time
 
-            # CRITICAL FIX: TradingVolatilityAPI has an internal cache with dynamic TTL.
-            # During market hours, cache TTL is 5 minutes. After hours, TTL jumps to 4 hours.
-            # This means data cached at 2:50 PM (during market hours) is still considered
-            # "fresh" at 5 PM because the TTL recalculates to 4 hours at check time.
-            # We must clear stale market-hours data so a fresh API call is made to get
-            # the FOLLOWING DAY's GEX levels.
+        now = datetime.now(CENTRAL_TZ)
+
+        if clear_stale_cache:
             cache_key = f"gex/latest_{symbol}"
             if cache_key in TradingVolatilityAPI._shared_response_cache:
                 _, cache_ts = TradingVolatilityAPI._shared_response_cache[cache_key]
@@ -1710,149 +1611,282 @@ def get_gex_data_for_valor(symbol: str = "SPX") -> Dict[str, Any]:
                 market_close_today = now.replace(hour=15, minute=0, second=0, microsecond=0)
                 if cache_dt < market_close_today:
                     logger.info(
-                        f"VALOR: Clearing stale market-hours TradingVolatility cache "
-                        f"(cached at {cache_dt.strftime('%H:%M:%S')}, market closed at 3 PM). "
-                        f"Need fresh following-day data."
+                        f"[VALOR][{symbol}] Clearing stale market-hours TradingVolatility cache "
+                        f"(cached at {cache_dt.strftime('%H:%M:%S')}, market closed at 3 PM)"
                     )
                     del TradingVolatilityAPI._shared_response_cache[cache_key]
-                else:
-                    cache_age_sec = _time.time() - cache_ts
-                    logger.info(
-                        f"VALOR: TradingVolatility cache is post-close data "
-                        f"(cached at {cache_dt.strftime('%H:%M:%S')}, age={cache_age_sec/60:.0f} min). Using it."
-                    )
 
-            api = TradingVolatilityAPI()
-            gex_result = api.get_net_gamma(symbol)
-            logger.info(f"VALOR overnight TradingVolatility response: {list(gex_result.keys()) if gex_result else 'None'}")
+        api = TradingVolatilityAPI()
+        gex_result = api.get_net_gamma(symbol)
 
-            if gex_result and 'error' not in gex_result:
-                flip_point = float(gex_result.get('flip_point', 0))
-                call_wall = float(gex_result.get('call_wall', 0) or 0)
-                put_wall = float(gex_result.get('put_wall', 0) or 0)
-                net_gex = float(gex_result.get('net_gex', 0))
+        if gex_result and 'error' not in gex_result:
+            flip_point = float(gex_result.get('flip_point', 0))
+            call_wall = float(gex_result.get('call_wall', 0) or 0)
+            put_wall = float(gex_result.get('put_wall', 0) or 0)
+            net_gex = float(gex_result.get('net_gex', 0))
 
-                if flip_point > 0:
-                    if call_wall <= 0:
-                        call_wall = flip_point * 1.01
-                    if put_wall <= 0:
-                        put_wall = flip_point * 0.99
+            if flip_point > 0:
+                if call_wall <= 0:
+                    call_wall = flip_point * 1.01
+                if put_wall <= 0:
+                    put_wall = flip_point * 0.99
 
-                    logger.info(
-                        f"VALOR GEX from TradingVolatility (following day): flip={flip_point:.2f}, "
-                        f"call_wall={call_wall:.2f}, put_wall={put_wall:.2f}, net_gex={net_gex:.2e}"
-                    )
+                return {
+                    'flip_point': flip_point,
+                    'call_wall': call_wall,
+                    'put_wall': put_wall,
+                    'net_gex': net_gex,
+                    'gex_ratio': 1.0,
+                }
 
-                    gex_data = {
-                        'flip_point': flip_point,
-                        'call_wall': call_wall,
-                        'put_wall': put_wall,
-                        'net_gex': net_gex,
-                        'gex_ratio': 1.0,
-                        'data_source': 'trading_volatility_overnight',
-                        # Following day's levels for overnight trading
-                        'n1_flip_point': flip_point,
-                        'n1_call_wall': call_wall,
-                        'n1_put_wall': put_wall,
-                    }
+        logger.warning(f"[VALOR] TradingVolatilityAPI returned no valid data for {symbol}")
+    except ImportError as e:
+        logger.warning(f"[VALOR] TradingVolatilityAPI not available: {e}")
+    except Exception as e:
+        logger.warning(f"[VALOR] TradingVolatilityAPI error for {symbol}: {e}")
 
-                    _gex_cache.clear()
-                    _gex_cache.update(gex_data)
-                    _gex_cache_time = now
-                    _persist_gex_cache_to_db(gex_data, now)
+    return None
 
-                    return gex_data
 
-            logger.warning(f"TradingVolatilityAPI returned no valid data for {symbol}")
+def get_gex_data_for_valor(symbol: str = "SPY", ticker: str = "MES") -> Dict[str, Any]:
+    """
+    Fetch GEX data for VALOR signal generation - PER-INSTRUMENT.
 
-        except ImportError as e:
-            logger.warning(f"TradingVolatilityAPI not available: {e}")
-        except Exception as e:
-            logger.warning(f"TradingVolatilityAPI error: {e}")
+    Each instrument uses its proxy ETF for GEX data:
+      MES → SPY, MNQ → QQQ, RTY → IWM, CL → USO, NG → UNG, MGC → GLD
 
-        # OVERNIGHT FALLBACK: If TradingVolatility failed, use cache but ONLY
-        # if it contains overnight data (from a previous TradingVolatility call).
-        # Do NOT fall back to Tradier market-hours cache — that is today's data,
-        # not the following day's.
-        if _gex_cache and _gex_cache_time:
-            cache_source = _gex_cache.get('data_source', '')
-            cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
-            has_overnight_data = 'n1_flip_point' in _gex_cache
+    GEX levels are SCALED from proxy ETF price space to futures price space
+    using the gex_scale_factor from FUTURES_TICKERS config.
 
-            if has_overnight_data and cache_age_minutes < 1200:
-                n1_flip = _gex_cache.get('n1_flip_point', 0)
-                n1_call = _gex_cache.get('n1_call_wall', 0)
-                n1_put = _gex_cache.get('n1_put_wall', 0)
+    =========================================================================
+    DATA SOURCE RULES:
+    =========================================================================
+    MARKET HOURS (8 AM - 3 PM CT):
+      - PRIMARY: Tradier production API (for SPX only; others use TradingVolatility)
+      - FALLBACK: TradingVolatility API for the proxy ETF
+      - Returns: Current day's GEX levels
 
-                if n1_flip > 0:
-                    logger.info(
-                        f"VALOR using cached overnight GEX (TradingVolatility failed). "
-                        f"Cache age: {cache_age_minutes:.0f} min, source: {cache_source}. "
-                        f"n1_flip={n1_flip:.2f}, n1_call={n1_call:.2f}, n1_put={n1_put:.2f}"
-                    )
-                    return {
-                        'flip_point': n1_flip,
-                        'call_wall': n1_call,
-                        'put_wall': n1_put,
-                        'net_gex': _gex_cache.get('net_gex', 0),
-                        'gex_ratio': _gex_cache.get('gex_ratio', 1.0),
-                        'using_n1_data': True,
-                        'data_source': 'overnight_cache_fallback',
-                        'n1_flip_point': n1_flip,
-                        'n1_call_wall': n1_call,
-                        'n1_put_wall': n1_put,
-                    }
+    AFTER HOURS (3 PM - 8 AM CT):
+      - PRIMARY: Per-ticker cached GEX from close-of-day TradingVolatility pull
+      - FALLBACK: Fresh TradingVolatility API call (rate-limited)
+      - Uses NEXT EXPIRATION's GEX profile (not today's)
+      - Cache is pulled ONCE at close and reused for all overnight scans
+    =========================================================================
 
-            logger.warning(
-                f"Overnight cache not usable: has_overnight_data={has_overnight_data}, "
-                f"cache_age={cache_age_minutes:.0f} min, source={cache_source}"
+    Args:
+        symbol: Proxy ETF symbol (SPY, QQQ, IWM, USO, UNG, GLD)
+        ticker: Futures ticker (MES, MNQ, RTY, CL, NG, MGC) for per-instrument caching
+    """
+    global _gex_cache_by_ticker, _gex_cache_loaded_from_db
+    global _gex_cache, _gex_cache_time  # Legacy compat
+
+    now = datetime.now(CENTRAL_TZ)
+    hour = now.hour
+
+    # Get scale factor for this ticker
+    ticker_cfg = FUTURES_TICKERS.get(ticker, {})
+    scale_factor = ticker_cfg.get('gex_scale_factor', 1.0) or 1.0
+
+    # On first call, load per-ticker caches from database (survives restarts)
+    if not _gex_cache_loaded_from_db:
+        _gex_cache_loaded_from_db = True
+        db_caches = _load_gex_cache_from_db()
+        for tk, cache_entry in db_caches.items():
+            _gex_cache_by_ticker[tk] = cache_entry
+            logger.info(f"[VALOR][{tk}] GEX cache restored from database for overnight continuity")
+
+    is_market_hours = 8 <= hour < 15  # 8 AM - 3 PM CT
+
+    if is_market_hours:
+        # =====================================================================
+        # MARKET HOURS: Real-time GEX data
+        # For MES (SPY/SPX): Use Tradier GEX calculator first
+        # For all instruments: Fall back to TradingVolatility with proxy ETF
+        # =====================================================================
+
+        # MES special path: Tradier calculator for SPX (requires production keys)
+        if ticker == "MES":
+            calculator = _get_tradier_gex_calculator()
+            if calculator:
+                try:
+                    gex_result = calculator.calculate_gex("SPX")
+                    if gex_result:
+                        flip_point = gex_result.get('flip_point', 0)
+                        if flip_point > 0:
+                            call_wall = gex_result.get('call_wall', 0) or flip_point * 1.01
+                            put_wall = gex_result.get('put_wall', 0) or flip_point * 0.99
+                            net_gex = gex_result.get('net_gex', 0)
+
+                            logger.info(
+                                f"[VALOR][MES] Source: Tradier/SPX | flip={flip_point:.2f}, "
+                                f"call={call_wall:.2f}, put={put_wall:.2f}, net_gex={net_gex:.2e} | Status: OK"
+                            )
+
+                            gex_data = {
+                                'flip_point': flip_point,
+                                'call_wall': call_wall,
+                                'put_wall': put_wall,
+                                'net_gex': net_gex,
+                                'gex_ratio': gex_result.get('gex_ratio', 1.0),
+                                'data_source': 'tradier_calculator',
+                            }
+
+                            # Cache per-ticker
+                            _gex_cache_by_ticker[ticker] = {'data': gex_data, 'cache_time': now}
+                            _persist_gex_cache_to_db(gex_data, now, ticker=ticker)
+                            # Legacy compat
+                            _gex_cache.clear()
+                            _gex_cache.update(gex_data)
+                            _gex_cache_time = now
+
+                            return gex_data
+                except Exception as e:
+                    logger.warning(f"[VALOR][MES] Tradier GEX calculator error: {e}")
+
+        # All instruments: TradingVolatility with proxy ETF
+        raw_data = _fetch_gex_from_trading_volatility(symbol)
+        if raw_data:
+            # Scale from proxy ETF to futures price space
+            scaled_data = _scale_gex_data(raw_data, scale_factor)
+            scaled_data['data_source'] = 'trading_volatility_api'
+
+            logger.info(
+                f"[VALOR][{ticker}] Source: TradingVolatility/{symbol} | "
+                f"flip={scaled_data['flip_point']:.2f}, call={scaled_data['call_wall']:.2f}, "
+                f"put={scaled_data['put_wall']:.2f}, net_gex={scaled_data.get('net_gex', 0):.2e} | Status: OK"
             )
 
-    # Try API endpoint as fallback (SPX endpoint)
+            _gex_cache_by_ticker[ticker] = {'data': scaled_data, 'cache_time': now}
+            _persist_gex_cache_to_db(scaled_data, now, ticker=ticker)
+            if ticker == "MES":
+                _gex_cache.clear()
+                _gex_cache.update(scaled_data)
+                _gex_cache_time = now
+
+            return scaled_data
+
+    else:
+        # =====================================================================
+        # AFTER HOURS (3 PM - 8 AM CT): Use cached GEX or fresh TV pull
+        # Each instrument uses its OWN cached GEX profile from close-of-day.
+        # NO repeated TradingVolatility API calls — use cache first.
+        # =====================================================================
+
+        # Check per-ticker cache first
+        ticker_cache = _gex_cache_by_ticker.get(ticker)
+        if ticker_cache:
+            cache_data = ticker_cache.get('data', {})
+            cache_time = ticker_cache.get('cache_time')
+            if cache_data and cache_time:
+                cache_age_minutes = (now - cache_time).total_seconds() / 60
+                cache_source = cache_data.get('data_source', 'cache')
+
+                # Cache is valid if from today's close (< 20 hours old)
+                if cache_age_minutes < 1200:
+                    flip = cache_data.get('flip_point', 0)
+                    if flip > 0:
+                        logger.info(
+                            f"[VALOR][{ticker}] Source: GEX/{symbol} (cached) | "
+                            f"flip={flip:.2f}, Levels: OK | "
+                            f"Age: {cache_age_minutes:.0f}min | Status: OK"
+                        )
+
+                        # Ensure n+1 keys are set for overnight
+                        result = dict(cache_data)
+                        if 'n1_flip_point' not in result:
+                            result['n1_flip_point'] = result.get('flip_point', 0)
+                            result['n1_call_wall'] = result.get('call_wall', 0)
+                            result['n1_put_wall'] = result.get('put_wall', 0)
+                        result['data_source'] = f'overnight_cache_{symbol}'
+                        return result
+
+        # Cache miss or stale — try TradingVolatility (with stale cache clearing)
+        logger.info(f"[VALOR][{ticker}] Overnight GEX cache miss — calling TradingVolatility/{symbol}")
+        raw_data = _fetch_gex_from_trading_volatility(symbol, clear_stale_cache=True)
+        if raw_data:
+            scaled_data = _scale_gex_data(raw_data, scale_factor)
+            scaled_data['data_source'] = 'trading_volatility_overnight'
+            scaled_data['n1_flip_point'] = scaled_data['flip_point']
+            scaled_data['n1_call_wall'] = scaled_data['call_wall']
+            scaled_data['n1_put_wall'] = scaled_data['put_wall']
+
+            next_exp = None
+            proxy_etf = ticker_cfg.get('proxy_etf', symbol)
+            try:
+                next_exp = get_next_gex_expiration(proxy_etf, now.date())
+                scaled_data['expiration_date'] = next_exp.isoformat()
+            except Exception:
+                pass
+
+            logger.info(
+                f"[VALOR][{ticker}] Source: TradingVolatility/{symbol} (overnight) | "
+                f"flip={scaled_data['flip_point']:.2f}, call={scaled_data['call_wall']:.2f}, "
+                f"put={scaled_data['put_wall']:.2f} | "
+                f"Next Exp: {next_exp or 'unknown'} | Status: OK"
+            )
+
+            _gex_cache_by_ticker[ticker] = {'data': scaled_data, 'cache_time': now}
+            _persist_gex_cache_to_db(scaled_data, now, ticker=ticker)
+            if ticker == "MES":
+                _gex_cache.clear()
+                _gex_cache.update(scaled_data)
+                _gex_cache_time = now
+
+            return scaled_data
+
+        # Overnight fallback: No data available for this instrument
+        logger.warning(
+            f"[VALOR][{ticker}] Source: GEX/{symbol} | Levels: 0 | "
+            f"Status: NO DATA — skipping overnight"
+        )
+
+    # Try API endpoint as last resort
     try:
         import requests
-        response = requests.get(f"http://localhost:8000/api/gex/{symbol}", timeout=5)
+        api_symbol = "SPX" if ticker == "MES" else symbol
+        response = requests.get(f"http://localhost:8000/api/gex/{api_symbol}", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            # SPX data is already at correct scale for MES
-            return {
+            raw = {
                 'flip_point': data.get('flip_point', 0),
                 'call_wall': data.get('call_wall', 0),
                 'put_wall': data.get('put_wall', 0),
                 'net_gex': data.get('net_gex', 0),
                 'gex_ratio': data.get('gex_ratio', 1.0),
             }
+            scaled = _scale_gex_data(raw, scale_factor)
+            scaled['data_source'] = 'api_fallback'
+            return scaled
     except Exception as e:
-        logger.warning(f"Could not get GEX data from API: {e}")
+        logger.warning(f"[VALOR][{ticker}] Could not get GEX from local API: {e}")
 
-    # Last resort: use cached data if available and reasonably fresh
-    # This prevents VALOR from halting when all live sources have a temporary outage
-    # or during the transition from overnight to market hours.
-    if _gex_cache and _gex_cache_time:
-        cache_age_minutes = (now - _gex_cache_time).total_seconds() / 60
-        if cache_age_minutes < 120:  # Cache less than 2 hours old
-            logger.warning(
-                f"All live GEX sources failed - using cached data as fallback "
-                f"(age: {cache_age_minutes:.0f} min, source: {_gex_cache.get('data_source', 'cache')}). "
-                f"flip={_gex_cache.get('flip_point', 0):.2f}"
-            )
-            return {
-                'flip_point': _gex_cache.get('flip_point', 0),
-                'call_wall': _gex_cache.get('call_wall', 0),
-                'put_wall': _gex_cache.get('put_wall', 0),
-                'net_gex': _gex_cache.get('net_gex', 0),
-                'gex_ratio': _gex_cache.get('gex_ratio', 1.0),
-                'data_source': 'cache_fallback',
-            }
+    # Last resort: use any per-ticker cache
+    ticker_cache = _gex_cache_by_ticker.get(ticker)
+    if ticker_cache:
+        cache_data = ticker_cache.get('data', {})
+        cache_time = ticker_cache.get('cache_time')
+        if cache_data and cache_time:
+            cache_age_minutes = (now - cache_time).total_seconds() / 60
+            if cache_age_minutes < 120 and cache_data.get('flip_point', 0) > 0:
+                logger.warning(
+                    f"[VALOR][{ticker}] All live GEX sources failed - using stale cache "
+                    f"(age: {cache_age_minutes:.0f}min)"
+                )
+                result = dict(cache_data)
+                result['data_source'] = 'stale_cache_fallback'
+                return result
 
-    # Return empty data if all fails and no valid cache
-    logger.error(f"Failed to get GEX data for {symbol} - no live sources and no valid cache. VALOR will skip trading.")
+    logger.error(
+        f"[VALOR][{ticker}] Failed to get GEX data for {symbol} - "
+        f"no live sources and no valid cache. Skipping this instrument."
+    )
     return {
         'flip_point': 0,
         'call_wall': 0,
         'put_wall': 0,
         'net_gex': 0,
         'gex_ratio': 1.0,
+        'data_source': 'none',
     }
 
 

@@ -127,7 +127,7 @@ async def get_valor_ticker_stats():
 
 @router.get("/api/valor/status")
 async def get_valor_status(
-    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get VALOR bot status and configuration.
@@ -151,7 +151,7 @@ async def get_valor_status(
 
 @router.get("/api/valor/positions")
 async def get_valor_positions(
-    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get all open VALOR positions with unrealized P&L.
@@ -212,7 +212,7 @@ async def get_valor_positions(
 async def get_valor_closed_trades(
     limit: int = Query(1000, ge=1, le=10000, description="Number of trades to return (default: 1000 to show all daily trades)"),
     today_only: bool = Query(False, description="If true, only return today's trades"),
-    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get VALOR closed trade history.
@@ -277,7 +277,7 @@ async def get_valor_closed_trades(
 @router.get("/api/valor/equity-curve")
 async def get_valor_equity_curve(
     days: int = Query(30, ge=1, le=365, description="Number of days of history"),
-    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get VALOR historical equity curve. Optionally filtered by ticker.
@@ -300,7 +300,7 @@ async def get_valor_equity_curve(
 
 @router.get("/api/valor/equity-curve/intraday")
 async def get_valor_intraday_equity(
-    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get VALOR today's equity snapshots. Optionally filtered by ticker.
@@ -327,7 +327,7 @@ async def get_valor_intraday_equity(
 
 @router.get("/api/valor/performance")
 async def get_valor_performance(
-    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """
     Get VALOR performance statistics.
@@ -1981,13 +1981,13 @@ async def get_valor_diagnostics():
 
 @router.get("/api/valor/margin")
 async def get_valor_margin_analysis(
-    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY)")
+    ticker: Optional[str] = Query(None, description="Filter by ticker (MES, MNQ, CL, NG, RTY, MGC)")
 ):
     """Margin analysis for VALOR open positions.
 
     Returns margin usage, liquidation prices, effective leverage,
     and distance to liquidation for CME micro futures contracts.
-    Supports multi-ticker (MES, MNQ, CL, NG, RTY).
+    Supports multi-ticker (MES, MNQ, CL, NG, RTY, MGC).
 
     When ticker is specified:
       - Only that ticker's positions are included

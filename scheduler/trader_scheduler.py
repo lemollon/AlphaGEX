@@ -749,15 +749,16 @@ class AutonomousTraderScheduler:
                 logger.warning(f"JUBILEE IC initialization failed: {e}")
                 self.jubilee_ic_trader = None
 
-        # VALOR - MES Futures Scalping with GEX signals
+        # VALOR - Multi-Instrument Micro Futures Scalping with GEX signals
         # 24/5 trading with 1-minute scan interval
-        # PAPER mode: Simulated trades with $100k starting capital
+        # PAPER mode: 6 instruments × $100k = $600k starting capital
+        # Instruments: MES, MNQ, CL, NG, RTY, MGC
         self.valor_trader = None
         if VALOR_AVAILABLE:
             try:
                 config = ValorConfig(mode=ValorTradingMode.PAPER)
                 self.valor_trader = ValorTrader(config=config)
-                logger.info(f"✅ VALOR initialized (MES Futures Scalping, PAPER mode - $100k starting capital)")
+                logger.info(f"✅ VALOR initialized (6-instrument futures, PAPER mode - $600k total capital)")
             except Exception as e:
                 logger.warning(f"VALOR initialization failed: {e}")
                 self.valor_trader = None

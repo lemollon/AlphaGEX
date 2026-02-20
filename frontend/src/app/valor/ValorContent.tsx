@@ -95,7 +95,7 @@ type ValorTabId = typeof VALOR_TABS[number]['id']
 // TICKER METADATA (matches AGAPE-SPOT TICKER_META pattern)
 // ==============================================================================
 
-const VALOR_TICKERS = ['ALL', 'MES', 'MNQ', 'CL', 'NG', 'RTY'] as const
+const VALOR_TICKERS = ['ALL', 'MES', 'MNQ', 'CL', 'NG', 'RTY', 'MGC'] as const
 type ValorTickerId = typeof VALOR_TICKERS[number]
 
 const TICKER_META: Record<string, {
@@ -113,6 +113,7 @@ const TICKER_META: Record<string, {
   'CL':  { symbol: 'CL',   label: 'Crude Oil',       hexColor: '#F59E0B', bgActive: 'bg-amber-600',   textActive: 'text-amber-400',   bgCard: 'bg-amber-950/30',  borderCard: 'border-amber-700/40' },
   'NG':  { symbol: 'NG',   label: 'Natural Gas',     hexColor: '#22C55E', bgActive: 'bg-green-600',   textActive: 'text-green-400',   bgCard: 'bg-green-950/30',  borderCard: 'border-green-700/40' },
   'RTY': { symbol: 'RTY',  label: 'Micro Russell',   hexColor: '#F97316', bgActive: 'bg-orange-600',  textActive: 'text-orange-400',  bgCard: 'bg-orange-950/30', borderCard: 'border-orange-700/40' },
+  'MGC': { symbol: 'MGC',  label: 'Micro Gold',      hexColor: '#EAB308', bgActive: 'bg-yellow-600', textActive: 'text-yellow-400', bgCard: 'bg-yellow-950/30', borderCard: 'border-yellow-700/40' },
 }
 
 // Per-ticker contract specifications ($100K starting capital each)
@@ -125,9 +126,10 @@ const TICKER_SPECS: Record<string, {
 }> = {
   'MES': { pointValue: '$5.00/point',     tickSize: '0.25 points', tickValue: '$1.25/tick',    dayMargin: '~$1,500',  startingCapital: 100000 },
   'MNQ': { pointValue: '$2.00/point',     tickSize: '0.25 points', tickValue: '$0.50/tick',    dayMargin: '~$1,800',  startingCapital: 100000 },
-  'CL':  { pointValue: '$1,000/point',    tickSize: '0.01 points', tickValue: '$10.00/tick',   dayMargin: '~$6,000',  startingCapital: 100000 },
-  'NG':  { pointValue: '$10,000/point',   tickSize: '0.001 points', tickValue: '$10.00/tick',  dayMargin: '~$2,500',  startingCapital: 100000 },
+  'CL':  { pointValue: '$100/point (MCL)', tickSize: '0.01 points', tickValue: '$1.00/tick',    dayMargin: '~$1,100',  startingCapital: 100000 },
+  'NG':  { pointValue: '$100/point (MNG)', tickSize: '0.001 points', tickValue: '$0.10/tick',  dayMargin: '~$500',    startingCapital: 100000 },
   'RTY': { pointValue: '$5.00/point',     tickSize: '0.10 points', tickValue: '$0.50/tick',    dayMargin: '~$800',    startingCapital: 100000 },
+  'MGC': { pointValue: '$10.00/point',    tickSize: '0.10 points', tickValue: '$1.00/tick',    dayMargin: '~$1,100',  startingCapital: 100000 },
 }
 
 // Helper: get metadata for a ticker (with fallback)
@@ -465,7 +467,7 @@ export default function ValorPage() {
                   Paper Trading Mode - {selectedTicker ? `${selectedTicker} Futures` : 'Multi-Instrument Futures'} Scalping
                 </h3>
                 <p className="text-gray-300 text-sm mt-1">
-                  VALOR is paper trading {selectedTicker || 'MES, MNQ, CL, NG, RTY'} futures with $100K per instrument. Uses GEX signals for mean reversion (positive gamma) and momentum (negative gamma).
+                  VALOR is paper trading {selectedTicker || 'MES, MNQ, CL, NG, RTY, MGC'} futures with $100K per instrument. Uses GEX signals for mean reversion (positive gamma) and momentum (negative gamma).
                 </p>
                 <p className="text-gray-400 text-xs mt-2">
                   24/5 trading: Sun 5pm - Fri 4pm CT with 4-5pm daily maintenance break.
@@ -1914,7 +1916,7 @@ export default function ValorPage() {
                   VALOR Configuration {selectedTicker ? `(${selectedTicker})` : '(All Instruments)'}
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <ConfigItem label="Instruments" value={selectedTicker || 'MES, MNQ, CL, NG, RTY'} />
+                  <ConfigItem label="Instruments" value={selectedTicker || 'MES, MNQ, CL, NG, RTY, MGC'} />
                   <ConfigItem label="Capital / Instrument" value="$100,000" />
                   <ConfigItem label="Risk/Trade" value={`${config.risk_per_trade_pct || 1}%`} />
                   <ConfigItem label="Max Contracts" value={config.max_contracts || 5} />
