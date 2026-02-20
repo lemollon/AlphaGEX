@@ -1174,6 +1174,17 @@ async def get_transparency_summary():
 # ==============================================================================
 
 # Import IC components
+# IMPORTANT: JubileeDatabase is imported SEPARATELY from JubileeICTrader.
+# The equity chart endpoints only need DB access — they must NOT depend on
+# JubileeICTrader which initializes signal generators and executors.
+# If the trader import fails (e.g. ProphetAdvisor unavailable), equity
+# endpoints still work because JubileeDatabase loaded independently.
+_JubileeICDatabase = None
+try:
+    from trading.jubilee.db import JubileeDatabase as _JubileeICDatabase
+except ImportError as e:
+    logger.warning(f"JUBILEE IC Database module not available: {e}")
+
 JubileeICTrader = None
 JubileeICConfig = None
 try:
@@ -1474,17 +1485,21 @@ async def get_ic_equity_curve(
     - days=30: Last 30 days
     - days=90: Last 90 days
     - days=None: All history (default)
+
+    Uses JubileeDatabase directly (not JubileeICTrader) to avoid
+    initializing signal generators and executors — this endpoint
+    only needs DB access to read equity data.
     """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE database not available")
 
     try:
-        trader = JubileeICTrader()
+        db = _JubileeICDatabase()
         # Get starting capital for response
-        ic_config = trader.db.load_ic_config()
+        ic_config = db.load_ic_config()
         starting_capital = ic_config.starting_capital
 
-        curve = trader.db.get_ic_equity_curve(limit=limit, days=days)
+        curve = db.get_ic_equity_curve(limit=limit, days=days)
         return {
             "available": True,
             "count": len(curve),
@@ -1506,13 +1521,27 @@ async def get_ic_intraday_equity():
     - Returns intraday equity snapshots for current trading day
     - Includes unrealized P&L from open positions
     - Required endpoint per Bot-Specific Requirements
+
+    When no periodic snapshots exist for today, generates a live
+    snapshot on-the-fly so the chart is never blank.
+
+    Uses JubileeDatabase directly (not JubileeICTrader) to avoid
+    initializing signal generators and executors — this endpoint
+    only needs DB access to read equity data.
     """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE database not available")
 
     try:
-        trader = JubileeICTrader()
-        snapshots = trader.db.get_ic_intraday_equity()
+        db = _JubileeICDatabase()
+        snapshots = db.get_ic_intraday_equity()
+
+        # If no periodic snapshots exist yet today, generate a live one
+        if not snapshots:
+            live = db.compute_ic_equity_snapshot_live()
+            if live:
+                snapshots = [live]
+
         return {
             "available": True,
             "date": date.today().isoformat(),
