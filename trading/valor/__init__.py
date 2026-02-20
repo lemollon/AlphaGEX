@@ -1,19 +1,31 @@
 """
-VALOR - MES Futures Scalping Bot
-====================================
+VALOR - Multi-Instrument Micro Futures Scalping Bot
+=====================================================
 
 Named after the legendary Greek hero known for strength and perseverance.
 
-VALOR uses GEX (Gamma Exposure) signals to scalp MES (Micro E-mini S&P 500) futures:
+VALOR uses GEX (Gamma Exposure) signals from proxy ETFs to scalp micro futures:
+- MES (Micro S&P 500) via SPY GEX
+- MNQ (Micro Nasdaq 100) via QQQ GEX
+- RTY (Micro Russell 2000) via IWM GEX
+- CL  (Micro Crude Oil - MCL) via USO GEX
+- NG  (Micro Natural Gas - MNG) via UNG GEX
+- MGC (Micro Gold) via GLD GEX
+
+Strategy:
 - POSITIVE GAMMA: Mean reversion strategy - fade moves toward flip point
 - NEGATIVE GAMMA: Momentum strategy - trade breakouts
 
 Features:
+- Per-instrument proxy ETF GEX data with proper scaling
+- Per-instrument GEX cache for overnight trading
+- Next-expiration GEX logic (daily for SPY/QQQ/IWM, 2-3x/week for USO/UNG/GLD)
+- Per-instrument daily loss limits ($2K per instrument, $6K combined)
+- Correlation-aware exposure logging
 - Trailing stops with breakeven activation
 - Fixed Fractional position sizing with ATR adjustment
 - Bayesian → ML win probability tracking
 - 24/5 trading with n+1 GEX for overnight sessions
-- Tastytrade API integration
 
 Usage:
     from trading.valor import ValorTrader, run_valor_scan
@@ -41,9 +53,12 @@ from .models import (
     MES_TICK_VALUE,
     FUTURES_TICKERS,
     DEFAULT_VALOR_TICKERS,
+    EXPIRATION_SCHEDULES,
     get_ticker_config,
     get_ticker_point_value,
     get_front_month_symbol,
+    get_next_gex_expiration,
+    get_proxy_etf,
 )
 
 from .db import ValorDatabase
@@ -70,9 +85,12 @@ __all__ = [
     'MES_TICK_VALUE',
     'FUTURES_TICKERS',
     'DEFAULT_VALOR_TICKERS',
+    'EXPIRATION_SCHEDULES',
     'get_ticker_config',
     'get_ticker_point_value',
     'get_front_month_symbol',
+    'get_next_gex_expiration',
+    'get_proxy_etf',
     # Database
     'ValorDatabase',
     # Signals

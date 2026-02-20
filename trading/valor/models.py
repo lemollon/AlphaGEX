@@ -117,9 +117,11 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "overnight_target_points": 8.0,
         "overnight_emergency_stop": 25.0,
 
-        # GEX source: NQ tracks NDX/QQQ
-        "gex_symbol": "NDX",
-        "gex_scale_factor": 1.0,  # NDX price ≈ MNQ price
+        # GEX source: MNQ tracks QQQ (proxy ETF for Nasdaq-100)
+        # QQQ is used for both Tradier and TradingVolatility GEX data
+        "gex_symbol": "QQQ",
+        "gex_scale_factor": 50.0,  # QQQ * 50 ≈ MNQ price (QQQ ~$530 → MNQ ~$21000)
+        "proxy_etf": "QQQ",
 
         # UI
         "color_class": "purple",
@@ -127,35 +129,35 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
     },
     "CL": {
         "symbol": "CL",
-        "display_name": "Crude Oil",
-        "description": "WTI Crude Oil Futures (full-size)",
+        "display_name": "Micro Crude Oil",
+        "description": "Micro WTI Crude Oil Futures (MCL)",
         "exchange": "NYMEX",
 
-        # Contract specifications
-        "point_value": 1000.0,     # $1,000 per $1 move (1,000 barrels)
+        # Contract specifications - MICRO (MCL), not full-size CL
+        "point_value": 100.0,      # $100 per $1 move (100 barrels for MCL)
         "tick_size": 0.01,         # $0.01 per barrel
-        "tick_value": 10.0,        # $10 per tick (0.01 * $1,000)
+        "tick_value": 1.0,         # $1 per tick (0.01 * $100)
         "contract_months": "FGHJKMNQUVXZ",  # Every month
-        "contract_prefix": "/CL",
+        "contract_prefix": "/MCL",  # Micro WTI Crude
 
         # Quote sources
-        "yahoo_symbol": "CL=F",
-        "dxfeed_symbol": "/CL:XNYM",
+        "yahoo_symbol": "MCL=F",
+        "dxfeed_symbol": "/MCL:XNYM",
         "spy_derive_multiplier": None,
 
         # Capital & risk
         "starting_capital": 100000.0,
         "risk_per_trade_pct": 1.0,
-        "max_contracts": 2,
-        "max_open_positions": 5,
+        "max_contracts": 5,
+        "max_open_positions": 10,
 
-        # Exit parameters (CL moves ~$1-3/day, $1 = $1,000)
-        "initial_stop_points": 0.30,       # $0.30 = $300 risk per contract
-        "no_loss_activation_pts": 0.15,    # +$0.15 ($150) to activate trail
-        "no_loss_trail_distance": 0.20,    # Trail $0.20 ($200) behind
-        "no_loss_emergency_stop": 1.50,    # Emergency: $1.50 ($1,500)
-        "max_unrealized_loss_pts": 0.60,   # Safety: $0.60 ($600)
-        "profit_target_points": 0.80,      # Target: $0.80 ($800)
+        # Exit parameters (CL moves ~$1-3/day, $1 = $100 for MCL)
+        "initial_stop_points": 0.30,       # $0.30 = $30 risk per contract
+        "no_loss_activation_pts": 0.15,    # +$0.15 ($15) to activate trail
+        "no_loss_trail_distance": 0.20,    # Trail $0.20 ($20) behind
+        "no_loss_emergency_stop": 1.50,    # Emergency: $1.50 ($150)
+        "max_unrealized_loss_pts": 0.60,   # Safety: $0.60 ($60)
+        "profit_target_points": 0.80,      # Target: $0.80 ($80)
 
         # SAR parameters
         "sar_trigger_pts": 0.25,
@@ -166,9 +168,11 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "overnight_target_points": 0.40,
         "overnight_emergency_stop": 1.00,
 
-        # GEX source: CL uses SPX GEX as macro regime proxy
-        "gex_symbol": "SPX",
-        "gex_scale_factor": None,  # No price scaling, regime only
+        # GEX source: CL uses USO (United States Oil Fund ETF) as proxy
+        # USO GEX levels inform crude oil support/resistance zones
+        "gex_symbol": "USO",
+        "gex_scale_factor": 1.0,  # USO price ≈ CL/MCL price mapping (levels, not exact)
+        "proxy_etf": "USO",
 
         # UI
         "color_class": "amber",
@@ -176,35 +180,35 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
     },
     "NG": {
         "symbol": "NG",
-        "display_name": "Natural Gas",
-        "description": "Henry Hub Natural Gas Futures",
+        "display_name": "Micro Natural Gas",
+        "description": "Micro Henry Hub Natural Gas Futures (MNG)",
         "exchange": "NYMEX",
 
-        # Contract specifications
-        "point_value": 10000.0,    # $10,000 per $1 move (10,000 mmBtu)
+        # Contract specifications - MICRO (MNG), not full-size NG
+        "point_value": 100.0,      # $100 per $1 move (1,000 mmBtu for MNG)
         "tick_size": 0.001,        # $0.001 per mmBtu
-        "tick_value": 10.0,        # $10 per tick (0.001 * $10,000)
+        "tick_value": 0.10,        # $0.10 per tick (0.001 * $100)
         "contract_months": "FGHJKMNQUVXZ",  # Every month
-        "contract_prefix": "/NG",
+        "contract_prefix": "/MNG",  # Micro Natural Gas
 
         # Quote sources
-        "yahoo_symbol": "NG=F",
-        "dxfeed_symbol": "/NG:XNYM",
+        "yahoo_symbol": "MNG=F",
+        "dxfeed_symbol": "/MNG:XNYM",
         "spy_derive_multiplier": None,
 
         # Capital & risk
         "starting_capital": 100000.0,
         "risk_per_trade_pct": 0.5,   # Lower risk - NG is extremely volatile
-        "max_contracts": 1,
-        "max_open_positions": 3,
+        "max_contracts": 3,
+        "max_open_positions": 5,
 
-        # Exit parameters (NG moves ~$0.05-0.20/day, $0.01 = $100)
-        "initial_stop_points": 0.020,      # $0.020 = $200 risk per contract
-        "no_loss_activation_pts": 0.010,   # +$0.010 ($100) to activate trail
-        "no_loss_trail_distance": 0.015,   # Trail $0.015 ($150) behind
-        "no_loss_emergency_stop": 0.100,   # Emergency: $0.10 ($1,000)
-        "max_unrealized_loss_pts": 0.040,  # Safety: $0.040 ($400)
-        "profit_target_points": 0.050,     # Target: $0.050 ($500)
+        # Exit parameters (NG moves ~$0.05-0.20/day, $0.01 = $1 for MNG)
+        "initial_stop_points": 0.020,      # $0.020 = $2 risk per contract
+        "no_loss_activation_pts": 0.010,   # +$0.010 ($1) to activate trail
+        "no_loss_trail_distance": 0.015,   # Trail $0.015 ($1.50) behind
+        "no_loss_emergency_stop": 0.100,   # Emergency: $0.10 ($10)
+        "max_unrealized_loss_pts": 0.040,  # Safety: $0.040 ($4)
+        "profit_target_points": 0.050,     # Target: $0.050 ($5)
 
         # SAR parameters
         "sar_trigger_pts": 0.015,
@@ -215,9 +219,11 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "overnight_target_points": 0.030,
         "overnight_emergency_stop": 0.060,
 
-        # GEX source: NG uses SPX GEX as macro regime proxy
-        "gex_symbol": "SPX",
-        "gex_scale_factor": None,
+        # GEX source: NG uses UNG (United States Natural Gas Fund ETF) as proxy
+        # UNG GEX levels inform natural gas support/resistance zones
+        "gex_symbol": "UNG",
+        "gex_scale_factor": 1.0,  # UNG price ≈ NG price mapping (levels, not exact)
+        "proxy_etf": "UNG",
 
         # UI
         "color_class": "green",
@@ -264,9 +270,10 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "overnight_target_points": 4.0,
         "overnight_emergency_stop": 12.0,
 
-        # GEX source: RTY tracks IWM
+        # GEX source: RTY tracks IWM (iShares Russell 2000 ETF)
         "gex_symbol": "IWM",
-        "gex_scale_factor": 10.0,  # IWM * 10 ≈ RTY price
+        "gex_scale_factor": 10.0,  # IWM * 10 ≈ RTY price (IWM ~$230 → RTY ~$2300)
+        "proxy_etf": "IWM",
 
         # UI
         "color_class": "red",
@@ -313,18 +320,117 @@ FUTURES_TICKERS: Dict[str, Dict[str, Any]] = {
         "overnight_target_points": 2.0,
         "overnight_emergency_stop": 8.0,
 
-        # GEX source: SPX (direct)
-        "gex_symbol": "SPX",
-        "gex_scale_factor": 1.0,
+        # GEX source: SPY (SPDR S&P 500 ETF) - primary proxy for MES
+        # Tradier uses SPX for options chain; TradingVolatility uses SPY
+        "gex_symbol": "SPY",
+        "gex_scale_factor": 10.0,  # SPY * 10 ≈ MES price (SPY ~$600 → MES ~$6000)
+        "proxy_etf": "SPY",
 
         # UI
         "color_class": "cyan",
         "icon": "Activity",
     },
+    "MGC": {
+        "symbol": "MGC",
+        "display_name": "Micro Gold",
+        "description": "Micro Gold Futures (MGC)",
+        "exchange": "COMEX",
+
+        # Contract specifications
+        "point_value": 10.0,       # $10 per $1 move (10 troy oz for MGC)
+        "tick_size": 0.10,         # $0.10 per troy oz
+        "tick_value": 1.0,         # $1.00 per tick (0.10 * $10)
+        "contract_months": "GJMQVZ",  # Feb, Apr, Jun, Aug, Oct, Dec (even months)
+        "contract_prefix": "/MGC",  # Micro Gold
+
+        # Quote sources
+        "yahoo_symbol": "MGC=F",
+        "dxfeed_symbol": "/MGC:XCEC",
+        "spy_derive_multiplier": None,
+
+        # Capital & risk
+        "starting_capital": 100000.0,
+        "risk_per_trade_pct": 1.0,
+        "max_contracts": 5,
+        "max_open_positions": 10,
+
+        # Exit parameters (Gold moves ~$20-50/day, $1 = $10 for MGC)
+        "initial_stop_points": 5.0,        # $5 = $50 risk per contract
+        "no_loss_activation_pts": 2.0,     # +$2 ($20) to activate trail
+        "no_loss_trail_distance": 3.0,     # Trail $3 ($30) behind
+        "no_loss_emergency_stop": 25.0,    # Emergency: $25 ($250)
+        "max_unrealized_loss_pts": 10.0,   # Safety: $10 ($100)
+        "profit_target_points": 12.0,      # Target: $12 ($120)
+
+        # SAR parameters
+        "sar_trigger_pts": 4.0,
+        "sar_mfe_threshold": 1.0,
+
+        # Overnight
+        "overnight_stop_points": 3.0,
+        "overnight_target_points": 6.0,
+        "overnight_emergency_stop": 15.0,
+
+        # GEX source: MGC uses GLD (SPDR Gold Shares ETF) as proxy
+        # GLD GEX levels inform gold support/resistance zones
+        "gex_symbol": "GLD",
+        "gex_scale_factor": 10.0,  # GLD * 10 ≈ gold price (GLD ~$260 → Gold ~$2600)
+        "proxy_etf": "GLD",
+
+        # UI
+        "color_class": "yellow",
+        "icon": "Gem",
+    },
 }
 
 # Default tickers to trade (can be overridden by config)
-DEFAULT_VALOR_TICKERS = ["MES", "MNQ", "CL", "NG", "RTY"]
+DEFAULT_VALOR_TICKERS = ["MES", "MNQ", "CL", "NG", "RTY", "MGC"]
+
+# =============================================================================
+# OPTIONS EXPIRATION SCHEDULES (for next-expiration GEX logic)
+# =============================================================================
+# Each proxy ETF has different options expiration days.
+# At market close, VALOR pulls the NEXT expiration's GEX profile for overnight.
+# 0=Monday, 1=Tuesday, ..., 4=Friday
+EXPIRATION_SCHEDULES: Dict[str, List[int]] = {
+    "SPY": [0, 1, 2, 3, 4],  # Mon-Fri (daily 0DTE)
+    "QQQ": [0, 1, 2, 3, 4],  # Mon-Fri (daily 0DTE)
+    "IWM": [0, 1, 2, 3, 4],  # Mon-Fri (daily 0DTE)
+    "GLD": [0, 2, 4],         # Mon, Wed, Fri
+    "USO": [2, 4],            # Wed, Fri
+    "UNG": [2, 4],            # Wed, Fri
+}
+
+
+def get_next_gex_expiration(proxy_etf: str, current_date) -> 'date':
+    """
+    Given a proxy ETF and today's date, return the NEXT options expiration date.
+    This determines which GEX profile to pull for overnight futures trading.
+
+    At market close on current_date, we want the NEXT expiration - not today's.
+    """
+    from datetime import date as date_type, timedelta
+    if not isinstance(current_date, date_type):
+        current_date = current_date.date() if hasattr(current_date, 'date') else current_date
+
+    schedule = EXPIRATION_SCHEDULES.get(proxy_etf, [0, 1, 2, 3, 4])
+
+    # Start from tomorrow and find the next expiration day
+    check_date = current_date + timedelta(days=1)
+    for _ in range(7):  # max 7 days to find next expiration (handles weekends)
+        if check_date.weekday() in schedule:
+            return check_date
+        check_date += timedelta(days=1)
+
+    # Should never reach here
+    raise ValueError(f"No expiration found for {proxy_etf} within 7 days of {current_date}")
+
+
+# Map futures ticker to proxy ETF for quick lookups
+def get_proxy_etf(ticker: str) -> str:
+    """Get the proxy ETF symbol for a futures ticker."""
+    cfg = FUTURES_TICKERS.get(ticker, {})
+    return cfg.get("proxy_etf", cfg.get("gex_symbol", "SPY"))
 
 
 def get_ticker_config(ticker: str) -> Dict[str, Any]:
@@ -604,7 +710,7 @@ class ValorConfig:
     tickers: List[str] = field(default_factory=lambda: list(DEFAULT_VALOR_TICKERS))
 
     # Risk limits (shared defaults, overridden per-ticker by FUTURES_TICKERS)
-    capital: float = 500000.0  # Paper trading capital ($100k per instrument × 5)
+    capital: float = 600000.0  # Paper trading capital ($100k per instrument × 6)
     risk_per_trade_pct: float = 1.0  # Risk 1% per trade
     max_contracts: int = 5  # Maximum contracts per trade
     max_open_positions: int = 100  # Effectively unlimited positions per user request

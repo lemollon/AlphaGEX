@@ -120,14 +120,17 @@ class ValorTrader:
         self.daily_pnl: float = 0.0
         self._scan_count: int = 0  # Track scan number for direction tracker
 
-        # Per-ticker state (keyed by ticker symbol: MES, MNQ, CL, NG, RTY)
+        # Per-ticker state (keyed by ticker symbol: MES, MNQ, CL, NG, RTY, MGC)
         self._loss_streaks: Dict[str, int] = {}
         self._loss_pause_until: Dict[str, Optional[datetime]] = {}
+        self._daily_losses: Dict[str, float] = {}  # Per-ticker daily realized loss
+        self._daily_loss_date: Optional[str] = None  # Date string for daily reset
 
         # Initialize per-ticker state for every configured ticker
         for ticker in self.config.tickers:
             self._loss_streaks[ticker] = 0
             self._loss_pause_until[ticker] = None
+            self._daily_losses[ticker] = 0.0
 
         # Legacy single-ticker aliases (for backward compatibility)
         self.consecutive_losses: int = 0
@@ -250,10 +253,45 @@ class ValorTrader:
             account_balance = balance.get("net_liquidating_value", self.config.capital) if balance else self.config.capital
 
         # ============================================================
+        # Daily Loss Limit Reset (midnight CT)
+        # ============================================================
+        today_str = now.strftime('%Y-%m-%d')
+        if self._daily_loss_date != today_str:
+            self._daily_loss_date = today_str
+            for tk in self.config.tickers:
+                self._daily_losses[tk] = 0.0
+            logger.info(f"[VALOR] Daily loss counters reset for {today_str}")
+
+        # ============================================================
         # Per-Ticker Scan Loop
         # ============================================================
         for ticker in self.config.tickers:
             try:
+                # GATE: Per-instrument daily loss limit (-$2,000 per instrument)
+                max_daily_loss_per_instrument = -2000.0
+                max_combined_daily_loss = -6000.0
+                ticker_daily_loss = self._daily_losses.get(ticker, 0.0)
+                combined_daily_loss = sum(self._daily_losses.values())
+
+                if ticker_daily_loss <= max_daily_loss_per_instrument:
+                    logger.warning(
+                        f"[VALOR][{ticker}] Daily loss limit hit: ${ticker_daily_loss:,.2f} > "
+                        f"${max_daily_loss_per_instrument:,.2f} max. {ticker} paused until midnight."
+                    )
+                    results["tickers"][ticker] = {
+                        "status": "daily_loss_limit",
+                        "daily_loss": ticker_daily_loss,
+                    }
+                    continue
+
+                if combined_daily_loss <= max_combined_daily_loss:
+                    logger.warning(
+                        f"[VALOR] Combined daily loss limit hit: ${combined_daily_loss:,.2f} > "
+                        f"${max_combined_daily_loss:,.2f} max. All instruments paused until midnight."
+                    )
+                    results["status"] = "combined_daily_loss_limit"
+                    break
+
                 ticker_result = self._run_ticker_scan(
                     ticker=ticker,
                     vix=vix,
@@ -271,6 +309,11 @@ class ValorTrader:
                 logger.error(f"VALOR: Scan failed for {ticker}: {e}", exc_info=True)
                 results["tickers"][ticker] = {"status": "error", "error": str(e)}
                 results["errors"].append(f"{ticker}: {e}")
+
+        # ============================================================
+        # Correlation-Aware Position Logging
+        # ============================================================
+        self._log_correlation_exposure()
 
         self.last_scan_time = datetime.now(CENTRAL_TZ)
         return results
@@ -348,15 +391,15 @@ class ValorTrader:
                 return scan_result
 
             # ============================================================
-            # GATE 4: GEX Data (per-ticker GEX source)
+            # GATE 4: GEX Data (per-ticker proxy ETF + GEX source)
             # ============================================================
-            gex_symbol = ticker_cfg.get("gex_symbol", "SPX") if ticker_cfg else "SPX"
-            gex_data = get_gex_data_for_valor(gex_symbol)
+            gex_symbol = ticker_cfg.get("gex_symbol", "SPY") if ticker_cfg else "SPY"
+            gex_data = get_gex_data_for_valor(symbol=gex_symbol, ticker=ticker)
             scan_context["gex_data"] = gex_data
             gex_source = gex_data.get('data_source', 'unknown')
             gex_flip = gex_data.get('flip_point', 0)
             logger.info(
-                f"VALOR [{ticker}] GATE 4: GEX source={gex_source} (symbol={gex_symbol}), "
+                f"VALOR [{ticker}] GATE 4: GEX source={gex_source} (proxy={gex_symbol}), "
                 f"flip={gex_flip:.2f}, net_gex={gex_data.get('net_gex', 0):.2e}"
             )
 
@@ -1167,6 +1210,17 @@ class ValorTrader:
                                 f"pausing until {pause_until.strftime('%H:%M:%S')} CT ({pause_minutes} min)"
                             )
 
+                    # Track per-instrument daily P&L for daily loss limits
+                    if realized_pnl < 0:
+                        if pos_ticker not in self._daily_losses:
+                            self._daily_losses[pos_ticker] = 0.0
+                        self._daily_losses[pos_ticker] += realized_pnl
+                        logger.info(
+                            f"[VALOR][{pos_ticker}] Daily loss updated: "
+                            f"${self._daily_losses[pos_ticker]:,.2f} "
+                            f"(this trade: ${realized_pnl:,.2f})"
+                        )
+
                     # Update direction tracker (for nimble direction switching)
                     from .signals import record_trade_outcome, get_direction_tracker
                     direction_tracker = get_direction_tracker()
@@ -1519,6 +1573,88 @@ class ValorTrader:
         # Overnight: 3 PM (15:00) to 8 AM (08:00)
         return hour >= 15 or hour < 8
 
+    def _log_correlation_exposure(self) -> None:
+        """
+        Log correlation-aware directional exposure warnings.
+
+        MES + MNQ + RTY are equity indices (~80-90% correlated).
+        CL + NG are both energy (moderate correlation).
+        MGC (gold) is often inversely correlated with equities.
+
+        This is a WARNING log, not a hard block.
+        """
+        try:
+            all_positions = self.db.get_open_positions()
+            if not all_positions:
+                return
+
+            # Group positions by asset class and direction
+            equity_tickers = {"MES", "MNQ", "RTY"}
+            energy_tickers = {"CL", "NG"}
+            gold_tickers = {"MGC"}
+
+            equity_long = 0
+            equity_short = 0
+            energy_long = 0
+            energy_short = 0
+            gold_long = 0
+            gold_short = 0
+
+            for pos in all_positions:
+                if not pos.is_open:
+                    continue
+                tk = getattr(pos, 'ticker', 'MES')
+                direction = pos.direction.value if hasattr(pos.direction, 'value') else str(pos.direction)
+
+                if tk in equity_tickers:
+                    if direction == "LONG":
+                        equity_long += 1
+                    else:
+                        equity_short += 1
+                elif tk in energy_tickers:
+                    if direction == "LONG":
+                        energy_long += 1
+                    else:
+                        energy_short += 1
+                elif tk in gold_tickers:
+                    if direction == "LONG":
+                        gold_long += 1
+                    else:
+                        gold_short += 1
+
+            # Log warnings for concentrated exposure
+            if equity_long >= 2 or equity_short >= 2:
+                direction = "LONG" if equity_long > equity_short else "SHORT"
+                count = max(equity_long, equity_short)
+                logger.warning(
+                    f"[VALOR][CORRELATION] Equity exposure: {count}x equity {direction} "
+                    f"(MES/MNQ/RTY are ~80-90% correlated)"
+                )
+
+            if energy_long >= 2 or energy_short >= 2:
+                direction = "LONG" if energy_long > energy_short else "SHORT"
+                count = max(energy_long, energy_short)
+                logger.warning(
+                    f"[VALOR][CORRELATION] Energy exposure: {count}x energy {direction} "
+                    f"(CL/NG are moderately correlated)"
+                )
+
+            if (equity_long >= 2 or equity_short >= 2) and (gold_long > 0 or gold_short > 0):
+                eq_dir = "LONG" if equity_long > equity_short else "SHORT"
+                gold_dir = "LONG" if gold_long > gold_short else "SHORT"
+                if eq_dir == gold_dir:
+                    logger.info(
+                        f"[VALOR][CORRELATION] Gold {gold_dir} + Equity {eq_dir} "
+                        f"= unusual alignment (gold typically hedges equities)"
+                    )
+                else:
+                    logger.info(
+                        f"[VALOR][CORRELATION] Gold: MGC {gold_dir} = natural equity hedge"
+                    )
+
+        except Exception as e:
+            logger.debug(f"Correlation logging error: {e}")
+
     def _get_vix(self) -> float:
         """
         Get current VIX level from Tradier production API.
@@ -1596,11 +1732,12 @@ class ValorTrader:
                 "RTY": ("IWM", 10.0),    # IWM * 10 ≈ RTY
                 "CL": ("USO", 1.0),      # USO is not a direct proxy, use estimate
                 "NG": ("UNG", 1.0),      # UNG is not a direct proxy, use estimate
+                "MGC": ("GLD", 10.0),    # GLD * 10 ≈ Gold price
             }
 
             source_symbol, scale = atr_sources.get(ticker, ("SPY", 10.0))
 
-            # For commodities, skip SPY proxy and go straight to estimation
+            # For commodities (CL, NG), skip ETF proxy and go straight to estimation
             if ticker in ("CL", "NG"):
                 raise ValueError(f"No reliable ETF proxy for {ticker} ATR, using estimation")
 
@@ -1651,6 +1788,7 @@ class ValorTrader:
             "CL": {"pct": 0.020, "min": 0.50, "max": 4.00},
             "NG": {"pct": 0.030, "min": 0.05, "max": 0.30},
             "RTY": {"pct": 0.007, "min": 10.0, "max": 35.0},
+            "MGC": {"pct": 0.010, "min": 10.0, "max": 50.0},  # Gold ~$2600, moves ~$20-50/day
         }
 
         profile = atr_profiles.get(ticker, {"pct": 0.003, "min": 10.0, "max": 30.0})
