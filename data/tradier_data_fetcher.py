@@ -922,7 +922,8 @@ class TradierDataFetcher:
         short_strike: float,
         option_type: str,  # 'call' or 'put'
         quantity: int = 1,
-        limit_price: Optional[float] = None
+        limit_price: Optional[float] = None,
+        closing: bool = False
     ) -> Dict:
         """
         Place a vertical spread (bull/bear call/put spread).
@@ -934,7 +935,9 @@ class TradierDataFetcher:
             short_strike: Strike to sell
             option_type: 'call' or 'put'
             quantity: Number of spreads
-            limit_price: Net debit/credit limit
+            limit_price: Net debit/credit limit. None = market order.
+            closing: If True, use buy_to_close/sell_to_close instead of open sides.
+                     Use this when closing an existing spread position.
         """
         opt_char = 'C' if option_type == 'call' else 'P'
         long_symbol = self._build_occ_symbol(symbol, expiration, long_strike, opt_char)
@@ -948,15 +951,23 @@ class TradierDataFetcher:
         else:  # call
             spread_type = 'credit' if short_strike < long_strike else 'debit'
 
+        # Use close sides when closing existing positions
+        if closing:
+            buy_side = 'buy_to_close'
+            sell_side = 'sell_to_close'
+        else:
+            buy_side = 'buy_to_open'
+            sell_side = 'sell_to_open'
+
         data = {
             'class': 'multileg',
             'symbol': symbol,
             'type': spread_type if limit_price else 'market',
             'duration': 'day',
-            'side[0]': 'buy_to_open',
+            'side[0]': buy_side,
             'quantity[0]': str(quantity),
             'option_symbol[0]': long_symbol,
-            'side[1]': 'sell_to_open',
+            'side[1]': sell_side,
             'quantity[1]': str(quantity),
             'option_symbol[1]': short_symbol
         }

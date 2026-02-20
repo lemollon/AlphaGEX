@@ -327,6 +327,16 @@ except ImportError:
     GEXSignalGenerator = None
     print("Warning: GEXSignalGenerator not available. GEX ML training will be disabled.")
 
+# Import Tradier Sandbox EOD Closer for bulletproof position closing
+try:
+    from trading.tradier_eod_closer import close_all_sandbox_accounts, TradierEODCloser
+    TRADIER_EOD_CLOSER_AVAILABLE = True
+except ImportError:
+    TRADIER_EOD_CLOSER_AVAILABLE = False
+    close_all_sandbox_accounts = None
+    TradierEODCloser = None
+    print("Warning: Tradier EOD Closer not available. Sandbox positions may not auto-close.")
+
 # Import FORTRESS ML Advisor for scheduled ML training
 try:
     from quant.fortress_ml_advisor import get_advisor as get_fortress_ml_advisor
@@ -1630,6 +1640,101 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in FORTRESS Friday close-all: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
+
+    def scheduled_tradier_sandbox_eod_close(self):
+        """
+        Tradier Sandbox EOD Close - BULLETPROOF position closer.
+
+        Runs at 2:50 PM CT (10 min before market close) to close ALL positions
+        across ALL Tradier sandbox accounts using MARKET orders.
+
+        This is a safety net that works independently of any bot's internal
+        close logic. It queries the ACTUAL Tradier sandbox account for positions
+        (not the bot database) and closes everything with guaranteed-fill market orders.
+
+        Schedule: 2:50 PM CT Mon-Fri (primary), 2:55 PM CT Mon-Fri (fallback)
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"{'=' * 60}")
+        logger.info(f"TRADIER SANDBOX EOD CLOSE triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not TRADIER_EOD_CLOSER_AVAILABLE or not close_all_sandbox_accounts:
+            logger.warning("Tradier EOD Closer not available - skipping sandbox close")
+            return
+
+        try:
+            result = close_all_sandbox_accounts()
+
+            total_found = result.get('total_positions_found', 0)
+            total_closed = result.get('total_positions_closed', 0)
+            total_failed = result.get('total_positions_failed', 0)
+
+            if total_found == 0:
+                logger.info("TRADIER SANDBOX EOD: All accounts already flat - no positions to close")
+            else:
+                logger.info(f"TRADIER SANDBOX EOD: Found {total_found}, Closed {total_closed}, Failed {total_failed}")
+
+            if total_failed > 0:
+                logger.error(
+                    f"TRADIER SANDBOX EOD: CRITICAL - {total_failed} position(s) failed to close! "
+                    f"Fallback run at 2:55 PM CT will retry."
+                )
+
+            # Log per-account details
+            for acct in result.get('account_results', []):
+                label = acct.get('label', 'unknown')
+                found = acct.get('positions_found', 0)
+                closed = acct.get('positions_closed', 0)
+                failed = acct.get('positions_failed', 0)
+                if found > 0:
+                    logger.info(f"  Account '{label}': {found} found, {closed} closed, {failed} failed")
+                    for detail in acct.get('position_details', []):
+                        logger.info(
+                            f"    {detail['symbol']}: {detail['fill_status']} "
+                            f"(order: {detail.get('order_id', 'N/A')})"
+                        )
+
+            self._save_heartbeat('TRADIER_EOD', 'EOD_CLOSE', {
+                'total_found': total_found,
+                'total_closed': total_closed,
+                'total_failed': total_failed,
+            })
+
+        except Exception as e:
+            logger.error(f"TRADIER SANDBOX EOD CLOSE failed: {e}")
+            logger.error(traceback.format_exc())
+
+        logger.info(f"{'=' * 60}")
+
+    def scheduled_tradier_sandbox_startup_check(self):
+        """
+        Startup check for stale Tradier sandbox positions.
+
+        Called once at scheduler startup. If there are any positions from a
+        previous session that weren't closed, close them immediately.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"TRADIER SANDBOX STARTUP CHECK at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not TRADIER_EOD_CLOSER_AVAILABLE or not close_all_sandbox_accounts:
+            logger.warning("Tradier EOD Closer not available - skipping startup check")
+            return
+
+        try:
+            result = close_all_sandbox_accounts()
+            total_found = result.get('total_positions_found', 0)
+
+            if total_found > 0:
+                logger.warning(
+                    f"TRADIER SANDBOX STARTUP: Found {total_found} stale position(s) from previous session! "
+                    f"Closed {result.get('total_positions_closed', 0)}, "
+                    f"Failed {result.get('total_positions_failed', 0)}"
+                )
+            else:
+                logger.info("TRADIER SANDBOX STARTUP: All accounts clean - no stale positions")
+
+        except Exception as e:
+            logger.error(f"TRADIER SANDBOX STARTUP CHECK failed: {e}")
 
     def scheduled_solomon_eod_logic(self):
         """
@@ -6562,6 +6667,58 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ REPORTS_PURGE job scheduled (WEEKLY on Sunday at 6:30 PM CT)")
+
+        # =================================================================
+        # TRADIER SANDBOX EOD CLOSE: Bulletproof position closer
+        # Runs INDEPENDENTLY of any bot — queries actual Tradier sandbox accounts
+        # and closes ALL positions with MARKET orders before market close.
+        #
+        # Primary: 2:50 PM CT (10 min before close)
+        # Fallback: 2:55 PM CT (5 min before close, catches unfilled orders)
+        # =================================================================
+        if TRADIER_EOD_CLOSER_AVAILABLE:
+            # Primary EOD close: 2:50 PM CT
+            self.scheduler.add_job(
+                self.scheduled_tradier_sandbox_eod_close,
+                trigger=CronTrigger(
+                    hour=14,       # 2:00 PM CT
+                    minute=50,     # 2:50 PM CT
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='tradier_sandbox_eod_primary',
+                name='TRADIER SANDBOX - EOD Close All (Primary 2:50 PM CT)',
+                replace_existing=True
+            )
+            logger.info("✅ TRADIER SANDBOX EOD (primary) scheduled: 2:50 PM CT Mon-Fri")
+
+            # Fallback EOD close: 2:55 PM CT
+            self.scheduler.add_job(
+                self.scheduled_tradier_sandbox_eod_close,
+                trigger=CronTrigger(
+                    hour=14,       # 2:00 PM CT
+                    minute=55,     # 2:55 PM CT
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='tradier_sandbox_eod_fallback',
+                name='TRADIER SANDBOX - EOD Close All (Fallback 2:55 PM CT)',
+                replace_existing=True
+            )
+            logger.info("✅ TRADIER SANDBOX EOD (fallback) scheduled: 2:55 PM CT Mon-Fri")
+
+            # Startup check: close any stale positions from previous session
+            self.scheduler.add_job(
+                self.scheduled_tradier_sandbox_startup_check,
+                trigger='date',  # Run once immediately
+                run_date=datetime.now(CENTRAL_TZ),
+                id='tradier_sandbox_startup_check',
+                name='TRADIER SANDBOX - Startup Position Check',
+                replace_existing=True
+            )
+            logger.info("✅ TRADIER SANDBOX startup check scheduled (runs NOW)")
+        else:
+            logger.warning("⚠️ TRADIER SANDBOX EOD Closer not available - sandbox positions may not auto-close")
 
         # =================================================================
         # CRITICAL: Verify at least one trading bot is available

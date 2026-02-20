@@ -499,6 +499,14 @@ class OrderExecutor:
 
             close_price = spread_quote['mid_price']
 
+            # Use MARKET orders for EOD closes to guarantee fill in sandbox
+            eod_reasons = ('EOD', 'STALE', 'EXPIRED', 'SAFETY_NET', 'PRICING_FAILURE', 'MANUAL_CLOSE')
+            use_market = any(r in reason.upper() for r in eod_reasons)
+            final_limit = None if use_market else round(close_price, 2)
+
+            if use_market:
+                logger.info(f"GIDEON: Using MARKET orders for {reason} close (sandbox EOD)")
+
             # Place closing order with retry logic
             order_result = self._tradier_place_spread_with_retry(
                 symbol=self.config.ticker,
@@ -507,8 +515,8 @@ class OrderExecutor:
                 short_strike=position.short_strike,
                 option_type=option_type,
                 quantity=position.contracts,
-                limit_price=round(close_price, 2),
-                is_closing=True
+                limit_price=final_limit,
+                closing=True
             )
 
             if not order_result or not order_result.get('order'):
