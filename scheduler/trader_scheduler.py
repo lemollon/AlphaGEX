@@ -3305,26 +3305,47 @@ class AutonomousTraderScheduler:
         1. Checks exit conditions on all open IC positions
         2. Generates new signals when capital is available
         3. Executes approved signals
+
+        CRITICAL FIX: Added close-only mode for 15 minutes after market close
+        (matching SAMSON pattern). Without this, positions opened near market close
+        could never be closed by the regular cycle, leading to stranded positions.
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"JUBILEE IC Trading Cycle triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
-        if not self.is_market_open():
-            logger.info("Market is CLOSED. Skipping JUBILEE IC trading cycle.")
-            return
-
         if not self.jubilee_ic_trader:
             logger.warning("JUBILEE IC trader not available - skipping trading cycle")
             return
 
+        is_open, market_status = self.get_market_status()
+
+        # CRITICAL FIX: Allow position management even after market close
+        # JUBILEE IC needs to close expiring positions up to 15 minutes after market close
+        # This matches SAMSON's close-only mode pattern (lines 2268-2278)
+        close_only = False
+        if not is_open and market_status == 'AFTER_WINDOW':
+            market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+            minutes_after_close = (now - market_close).total_seconds() / 60
+            if 0 <= minutes_after_close <= 15:
+                close_only = True
+                logger.info(f"JUBILEE IC: {minutes_after_close:.0f}min after market close - running close-only cycle")
+
+        if not is_open and not close_only:
+            logger.info(f"Market is CLOSED ({market_status}). Skipping JUBILEE IC trading cycle.")
+            return
+
         try:
-            result = self.jubilee_ic_trader.run_trading_cycle()
+            if close_only:
+                result = self.jubilee_ic_trader.run_close_only_cycle()
+            else:
+                result = self.jubilee_ic_trader.run_trading_cycle()
 
             if result.get('skip_reason'):
                 logger.info(f"JUBILEE IC: {result['skip_reason']}")
             else:
-                logger.info(f"JUBILEE IC Cycle completed:")
+                mode_label = "close-only " if close_only else ""
+                logger.info(f"JUBILEE IC {mode_label}Cycle completed:")
                 logger.info(f"  Positions checked: {result.get('positions_checked', 0)}")
                 logger.info(f"  Positions closed: {result.get('positions_closed', 0)}")
                 if result.get('new_position'):
@@ -3396,6 +3417,93 @@ class AutonomousTraderScheduler:
         except Exception as e:
             logger.error(f"ERROR in JUBILEE IC Equity Snapshot: {str(e)}")
             logger.error(traceback.format_exc())
+
+    def scheduled_jubilee_ic_eod_logic(self):
+        """
+        JUBILEE IC End-of-Day processing - runs daily at 3:01 PM CT
+
+        CRITICAL SAFETY NET: Force-closes all open IC positions at EOD.
+        This prevents stranded positions that can never be closed if the
+        regular trading cycle fails (e.g., jubilee_ic_trader init failure).
+
+        Two-tier approach:
+        1. If jubilee_ic_trader is available: use trader's force_close_all()
+           (gets real MTM prices for accurate P&L)
+        2. If jubilee_ic_trader is None (init failure): use DB-direct expire
+           (closes positions at entry_credit = break-even, preventing indefinite stranding)
+
+        This matches SAMSON's scheduled_samson_eod_logic pattern.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"{'=' * 80}")
+        logger.info(f"JUBILEE IC EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        # Tier 1: Use trader if available (accurate MTM-based close)
+        if self.jubilee_ic_trader:
+            try:
+                result = self.jubilee_ic_trader.force_close_all("EOD_EXPIRATION")
+
+                if result:
+                    logger.info(f"JUBILEE IC EOD completed:")
+                    logger.info(f"  Closed: {result.get('closed', 0)}/{result.get('total', 0)} positions")
+                    logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
+                    if result.get('errors'):
+                        for err in result['errors']:
+                            logger.warning(f"  Error: {err}")
+                else:
+                    logger.info("JUBILEE IC EOD: No positions to process")
+
+                logger.info(f"{'=' * 80}")
+                return
+
+            except Exception as e:
+                logger.error(f"JUBILEE IC EOD trader-based close failed: {e}")
+                logger.error(traceback.format_exc())
+                # Fall through to DB-direct fallback
+
+        # Tier 2: DB-direct fallback when trader is not available
+        # This is the CRITICAL safety net that prevents stranded positions.
+        # Without this, positions can be stuck forever if the trader fails to init.
+        logger.warning("JUBILEE IC EOD: Using DB-direct fallback (trader unavailable or failed)")
+        try:
+            from trading.jubilee.db import JubileeDatabase
+            db = JubileeDatabase(bot_name="JUBILEE_IC")
+            positions = db.get_open_ic_positions()
+
+            if not positions:
+                logger.info("JUBILEE IC EOD (DB fallback): No open positions")
+                logger.info(f"{'=' * 80}")
+                return
+
+            logger.info(f"JUBILEE IC EOD (DB fallback): Found {len(positions)} open positions to close")
+            closed = 0
+            for pos in positions:
+                try:
+                    # expire_ic_position handles DB close with P&L calculation
+                    # expired_worthless=False uses entry_credit as exit_price (break-even fallback)
+                    success = db.expire_ic_position(pos.position_id, expired_worthless=False)
+                    if success:
+                        closed += 1
+                        logger.info(f"  Force-expired: {pos.position_id} (exp={pos.expiration}, DTE={pos.current_dte})")
+                    else:
+                        logger.error(f"  Failed to expire: {pos.position_id}")
+                except Exception as e:
+                    logger.error(f"  Error expiring {pos.position_id}: {e}")
+
+            logger.info(f"JUBILEE IC EOD (DB fallback): Closed {closed}/{len(positions)} positions")
+
+            # Record equity snapshot after force-close
+            try:
+                db.record_ic_equity_snapshot()
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.error(f"JUBILEE IC EOD DB-fallback FAILED: {e}")
+            logger.error(traceback.format_exc())
+
+        logger.info(f"{'=' * 80}")
 
     def scheduled_watchtower_logic(self):
         """
@@ -6184,6 +6292,27 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ JUBILEE IC equity snapshot job scheduled (every 5 min)")
+
+        # =================================================================
+        # JUBILEE IC EOD JOB: Force-close all open IC positions - runs at 3:01 PM CT
+        # CRITICAL SAFETY NET: Prevents stranded positions when trader init fails.
+        # This job runs UNCONDITIONALLY (even if jubilee_ic_trader is None)
+        # because it has a DB-direct fallback for closing positions.
+        # Matches SAMSON's scheduled_samson_eod_logic pattern.
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_jubilee_ic_eod_logic,
+            trigger=CronTrigger(
+                hour=15,       # 3:00 PM CT - after market close
+                minute=1,      # 3:01 PM CT - immediate post-close reconciliation
+                day_of_week='mon-fri',
+                timezone='America/Chicago'
+            ),
+            id='jubilee_ic_eod',
+            name='JUBILEE IC - EOD Position Expiration (3:01 PM CT)',
+            replace_existing=True
+        )
+        logger.info("✅ JUBILEE IC EOD job scheduled (3:01 PM CT daily - runs even if trader unavailable)")
 
         # =================================================================
         # WATCHTOWER JOB: Commentary Generation - runs every 5 minutes

@@ -1791,6 +1791,96 @@ class JubileeICTrader:
             'close_reason': reason,
         }
 
+    def force_close_all(self, reason: str = "EOD_EXPIRATION") -> Dict[str, Any]:
+        """
+        Force close ALL open IC positions.
+
+        This is the EOD safety net — called by the scheduler at 3:01 PM CT
+        to ensure no positions are left stranded overnight or past expiration.
+
+        Matches SAMSON's force_close_all() pattern.
+        """
+        positions = self.db.get_open_ic_positions()
+        closed = 0
+        total_pnl = 0.0
+        errors = []
+
+        if not positions:
+            logger.info("JUBILEE IC force_close_all: No open positions")
+            return {'closed': 0, 'total': 0, 'total_pnl': 0.0, 'errors': []}
+
+        logger.info(f"JUBILEE IC force_close_all: Processing {len(positions)} open positions ({reason})")
+
+        for position in positions:
+            try:
+                success = self.executor.close_position(position.position_id, reason)
+                if success:
+                    closed += 1
+                    # Get updated position for realized P&L
+                    updated = self.db.get_ic_position(position.position_id)
+                    if updated and updated.realized_pnl:
+                        total_pnl += updated.realized_pnl
+                    logger.info(f"  Closed {position.position_id}: {reason}")
+                else:
+                    errors.append(f"{position.position_id}: close_position returned False")
+            except Exception as e:
+                logger.error(f"  Failed to close {position.position_id}: {e}")
+                errors.append(f"{position.position_id}: {e}")
+
+        # Record equity snapshot after batch close
+        if closed > 0:
+            try:
+                self.db.record_ic_equity_snapshot()
+                logger.info(f"JUBILEE IC: Equity snapshot recorded after force_close_all")
+            except Exception as e:
+                logger.warning(f"Failed to record equity snapshot after force_close_all: {e}")
+
+        return {
+            'closed': closed,
+            'total': len(positions),
+            'total_pnl': total_pnl,
+            'errors': errors,
+        }
+
+    def run_close_only_cycle(self) -> Dict[str, Any]:
+        """
+        Run exit checks only — no new entries.
+
+        Used for post-market grace period (15 min after close).
+        Matches SAMSON's close_only=True pattern.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"JUBILEE IC close-only cycle at {now.strftime('%H:%M:%S')}")
+
+        result = {
+            'cycle_time': now,
+            'positions_checked': 0,
+            'positions_closed': 0,
+            'close_only': True,
+            'errors': [],
+        }
+
+        try:
+            if not self.config.enabled:
+                result['skip_reason'] = "IC trading disabled"
+                return result
+
+            # Only check exits, no new entries
+            exit_results = self._check_all_exits()
+            result['positions_checked'] = exit_results['checked']
+            result['positions_closed'] = exit_results['closed']
+
+            logger.info(
+                f"JUBILEE IC close-only: checked={result['positions_checked']}, "
+                f"closed={result['positions_closed']}"
+            )
+
+        except Exception as e:
+            logger.error(f"JUBILEE IC close-only cycle error: {e}")
+            result['errors'].append(str(e))
+
+        return result
+
     def get_equity_curve(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get IC trading equity curve"""
         return self.db.get_ic_equity_curve(limit)
