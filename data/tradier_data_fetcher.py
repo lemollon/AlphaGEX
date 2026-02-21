@@ -615,6 +615,32 @@ class TradierDataFetcher:
 
         return orders
 
+    def get_orders_detailed(self, status: str = 'all', days: int = 30) -> List[Dict]:
+        """
+        Get orders with FULL detail including legs, fill prices, and timestamps.
+
+        Unlike get_orders() which strips data into Order dataclass, this returns
+        the raw Tradier order dicts so we can match legs to bot positions.
+
+        Args:
+            status: 'open', 'pending', 'filled', 'all'
+            days: How many days back to look (Tradier default is 30)
+        """
+        response = self._make_request('GET', f'accounts/{self.account_id}/orders')
+        orders_data = response.get('orders', {})
+
+        if orders_data == 'null' or not orders_data:
+            return []
+
+        order_list = orders_data.get('order', [])
+        if isinstance(order_list, dict):
+            order_list = [order_list]
+
+        if status != 'all':
+            order_list = [o for o in order_list if o.get('status', '') == status]
+
+        return order_list
+
     # ==================== ORDER EXECUTION ====================
 
     def place_option_order(
