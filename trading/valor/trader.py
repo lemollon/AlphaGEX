@@ -163,10 +163,14 @@ class ValorTrader:
 
     def _startup_integrity_check(self) -> None:
         """
-        CRITICAL: Check data integrity on startup and auto-reset if corrupted.
+        Check data integrity on startup and RECONCILE if discrepancy found.
 
-        This prevents the recurring bug where paper_account P&L gets out of sync
-        with closed_trades table. If detected, automatically resets to clean slate.
+        If paper_account P&L drifts from closed_trades (due to floating point
+        accumulation or partial transaction failures), reconcile the paper
+        account to match closed_trades (the source of truth).
+
+        NEVER auto-resets/wipes data - that was causing the equity curve,
+        trade history, and P&L to disappear on every restart.
         """
         try:
             integrity = self.db.verify_data_integrity()
@@ -176,26 +180,25 @@ class ValorTrader:
                 paper_pnl = integrity.get("paper_pnl", 0)
                 trades_pnl = integrity.get("trades_pnl", 0)
 
-                logger.error(
-                    f"STARTUP INTEGRITY CHECK FAILED! "
+                logger.warning(
+                    f"Startup integrity check: discrepancy detected. "
                     f"Paper P&L: ${paper_pnl:.2f}, Trades P&L: ${trades_pnl:.2f}, "
-                    f"Discrepancy: ${discrepancy:.2f}"
-                )
-                logger.warning("AUTO-RESETTING to clean slate to fix data corruption...")
-
-                # Auto-reset with full_reset=True to clear all tables
-                success = self.db.reset_paper_account(
-                    starting_capital=self.config.capital,
-                    full_reset=True
+                    f"Discrepancy: ${discrepancy:.2f}. Reconciling..."
                 )
 
-                if success:
-                    logger.warning(
-                        f"AUTO-RESET COMPLETE: Fresh start with ${self.config.capital:,.2f}. "
-                        f"Previous corrupted data cleared."
+                # Reconcile paper_account from closed_trades (source of truth)
+                # This preserves ALL trade history, equity snapshots, and scan data
+                result = self.db.reconcile_paper_account()
+
+                if result.get("reconciled"):
+                    logger.info(
+                        f"Startup reconciliation complete: adjusted by "
+                        f"${result['adjustment']:+.2f}. All data preserved."
                     )
                 else:
-                    logger.error("AUTO-RESET FAILED! Manual intervention required.")
+                    logger.error(
+                        f"Startup reconciliation failed: {result.get('error', 'unknown')}"
+                    )
             else:
                 logger.info("Startup integrity check: OK (data consistent)")
 
