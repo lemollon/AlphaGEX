@@ -744,10 +744,41 @@ class AutonomousTraderScheduler:
             try:
                 ic_config = JubileeICConfig()
                 self.jubilee_ic_trader = JubileeICTrader(config=ic_config)
-                logger.info(f"✅ JUBILEE IC initialized (SPX Iron Condors with borrowed capital, PAPER mode)")
+                # FIX 6: Detailed startup health logging
+                logger.info(f"✅ JUBILEE IC initialized (SPX Iron Condors with borrowed capital)")
+                logger.info(f"   Mode: {self.jubilee_ic_trader.config.mode}")
+                logger.info(f"   DB connected: {self.jubilee_ic_trader.db is not None}")
+                logger.info(f"   Executor: {self.jubilee_ic_trader.executor is not None}")
+                logger.info(f"   Signal gen: {self.jubilee_ic_trader.signal_gen is not None}")
+                try:
+                    open_count = len(self.jubilee_ic_trader.db.get_open_ic_positions())
+                    logger.info(f"   Open positions: {open_count}")
+                except Exception:
+                    pass
             except Exception as e:
-                logger.warning(f"JUBILEE IC initialization failed: {e}")
+                # FIX 6: CRITICAL logging when init fails — the Feb 13-20 outage happened
+                # because this was a silent WARNING. Now it's CRITICAL with full context.
+                logger.critical(
+                    f"❌ JUBILEE IC TRADER FAILED TO INITIALIZE — "
+                    f"IC trading is DISABLED. Monitoring loop will be dead. "
+                    f"Open positions will NOT be monitored until re-init succeeds. "
+                    f"Error: {e}"
+                )
+                logger.critical(traceback.format_exc())
                 self.jubilee_ic_trader = None
+                # FIX 6: Log to DB so it shows on the dashboard
+                try:
+                    from trading.jubilee.db import JubileeDatabase
+                    db = JubileeDatabase(bot_name="JUBILEE_IC")
+                    db.log_action(
+                        action="IC_TRADER_INIT_FAILED",
+                        message=f"JubileeICTrader failed to initialize: {e}",
+                        level="CRITICAL",
+                    )
+                except Exception:
+                    pass  # If even the DB fails, we still logged to stdout
+        else:
+            logger.warning("⚠️ JUBILEE IC not importable — module unavailable")
 
         # VALOR - MES Futures Scalping with GEX signals
         # 24/5 trading with 1-minute scan interval
@@ -3314,8 +3345,28 @@ class AutonomousTraderScheduler:
 
         logger.info(f"JUBILEE IC Trading Cycle triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
+        # FIX 6: Heartbeat — always log cycle execution to DB, even if trader is broken.
+        # This makes the Feb 13-20 "silent death" pattern detectable in the dashboard.
+        try:
+            from trading.jubilee.db import JubileeDatabase
+            _hb_db = JubileeDatabase(bot_name="JUBILEE_IC")
+            _hb_db.log_action(
+                action="IC_HEARTBEAT",
+                message=f"Cycle running. Trader: {'active' if self.jubilee_ic_trader else 'DEAD'}",
+                level="INFO" if self.jubilee_ic_trader else "WARNING",
+                log_type="IC",
+            )
+        except Exception:
+            pass  # Heartbeat is best-effort
+
         if not self.jubilee_ic_trader:
-            logger.warning("JUBILEE IC trader not available - skipping trading cycle")
+            logger.warning("JUBILEE IC trader not available - attempting lazy re-init")
+            # FIX 3: Lazy re-initialization — don't give up forever on a transient init failure
+            self._jubilee_ic_try_reinit()
+
+        if not self.jubilee_ic_trader:
+            # Still None after re-init attempt — run emergency check for stranded positions
+            self._jubilee_ic_emergency_check()
             return
 
         is_open, market_status = self.get_market_status()
@@ -3504,6 +3555,103 @@ class AutonomousTraderScheduler:
             logger.error(traceback.format_exc())
 
         logger.info(f"{'=' * 80}")
+
+    def _jubilee_ic_try_reinit(self):
+        """
+        Attempt to re-initialize jubilee_ic_trader if it's None.
+
+        FIX 3: The original init runs ONCE at startup. If the DB has a transient
+        failure (common on Render cold-starts), the trader stays None forever.
+        This lazy re-init gives it another chance on each 5-minute cycle.
+        """
+        if self.jubilee_ic_trader is not None:
+            return  # Already initialized
+
+        if not JUBILEE_IC_AVAILABLE:
+            return  # Module not importable — nothing to retry
+
+        try:
+            ic_config = JubileeICConfig()
+            self.jubilee_ic_trader = JubileeICTrader(config=ic_config)
+            logger.info("✅ JUBILEE IC Trader RE-INITIALIZED successfully (recovered from init failure)")
+            logger.info(f"   Mode: {self.jubilee_ic_trader.config.mode}")
+        except Exception as e:
+            logger.warning(f"JUBILEE IC re-init failed (will retry next cycle): {e}")
+            self.jubilee_ic_trader = None
+
+    def _jubilee_ic_emergency_check(self):
+        """
+        Emergency position check when jubilee_ic_trader is None.
+
+        Uses JubileeDatabase directly to find stranded positions that have
+        expired or are expiring today. Closes them via DB-only path.
+
+        This prevents a repeat of the Feb 13-20 outage where 5 positions
+        were stranded for 7 days because the trader failed to initialize.
+        """
+        try:
+            from trading.jubilee.db import JubileeDatabase
+            from datetime import date as date_type
+            db = JubileeDatabase(bot_name="JUBILEE_IC")
+            open_positions = db.get_open_ic_positions()
+
+            if not open_positions:
+                return
+
+            # Find positions that are expired or expiring today
+            today = date_type.today()
+            expired = []
+            for p in open_positions:
+                try:
+                    exp = p.expiration
+                    if isinstance(exp, str):
+                        exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
+                    elif hasattr(exp, 'date'):
+                        exp_date = exp.date()
+                    else:
+                        exp_date = exp
+                    if exp_date <= today:
+                        expired.append(p)
+                except (ValueError, TypeError, AttributeError):
+                    # Can't parse expiration — flag it as expired to be safe
+                    expired.append(p)
+
+            if expired:
+                logger.critical(
+                    f"JUBILEE IC EMERGENCY: {len(expired)} expired positions found "
+                    f"but trader is not initialized! Attempting DB-only close."
+                )
+                for position in expired:
+                    try:
+                        success = db.expire_ic_position(
+                            position.position_id, expired_worthless=False
+                        )
+                        if success:
+                            logger.info(
+                                f"  EMERGENCY closed: {position.position_id} "
+                                f"(exp={position.expiration})"
+                            )
+                        else:
+                            logger.error(f"  EMERGENCY close failed: {position.position_id}")
+                    except Exception as e:
+                        logger.error(
+                            f"  EMERGENCY close error for {position.position_id}: {e}"
+                        )
+
+                # Record equity snapshot after emergency closes
+                try:
+                    db.record_ic_equity_snapshot()
+                except Exception:
+                    pass
+            else:
+                # Open positions exist but none expired — just log the situation
+                logger.warning(
+                    f"JUBILEE IC: Trader unavailable, {len(open_positions)} positions open "
+                    f"(none expired today — monitoring via EOD safety net)"
+                )
+
+        except Exception as e:
+            logger.error(f"JUBILEE IC emergency check failed: {e}")
 
     def scheduled_watchtower_logic(self):
         """
