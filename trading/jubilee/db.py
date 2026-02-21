@@ -999,7 +999,12 @@ class JubileeDatabase:
 
         except Exception as e:
             logger.error(f"Error creating JUBILEE tables: {e}")
-            raise
+            # FIX 3: Do NOT re-raise. A transient DB failure at startup (common on
+            # Render cold-starts) would permanently kill jubilee_ic_trader for the
+            # entire process lifetime because the scheduler has no retry logic.
+            # The tables likely already exist from a previous deploy, so this
+            # error is non-fatal. The DB methods will fail gracefully if tables
+            # are truly missing.
 
     # ========== Configuration Methods ==========
 
