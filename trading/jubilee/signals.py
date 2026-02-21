@@ -1531,16 +1531,23 @@ class JubileeICSignalGenerator:
             return None
 
         try:
-            from database_adapter import DatabaseAdapter
-            db = DatabaseAdapter()
+            # FIX 5: DatabaseAdapter.execute_query() doesn't exist.
+            # Use get_connection() which is the pattern used everywhere else.
+            from database_adapter import get_connection
 
-            trades = db.execute_query("""
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
                 SELECT realized_pnl, entry_credit, contracts
                 FROM jubilee_ic_closed_trades
                 WHERE close_time > NOW() - INTERVAL '90 days'
                 ORDER BY close_time DESC
                 LIMIT 100
             """)
+            columns = [desc[0] for desc in cursor.description]
+            trades = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            cursor.close()
+            conn.close()
 
             if not trades or len(trades) < 20:
                 return None
