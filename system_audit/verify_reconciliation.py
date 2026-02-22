@@ -2,13 +2,16 @@
 """
 Post-deploy verification for Tradier-to-Bot Reconciliation System.
 
+Fully self-contained: uses direct DB + direct Tradier API calls.
+Does NOT require the FastAPI web service (no localhost or external API needed).
+
 Run on Render shell:
     python3 system_audit/verify_reconciliation.py
 
 Tests:
 1. All 10 bot position tables exist and have order_id columns
-2. Tradier production API connectivity
-3. Order-to-bot matching logic
+2. Direct Tradier API connectivity (production account)
+3. Cross-validation: Tradier positions vs DB live positions
 4. Orphan detection (both directions)
 """
 
@@ -22,9 +25,7 @@ from datetime import datetime
 # CONFIG
 # ============================================================
 
-# On Render, the worker shell can't reach localhost:8000 (that's the web service).
-# Use the external URL to hit the API. Override with RENDER_EXTERNAL_URL if needed.
-API_BASE = os.environ.get('RENDER_EXTERNAL_URL', 'https://alphagex-api.onrender.com')
+TRADIER_BASE_URL = 'https://api.tradier.com/v1'
 
 BOT_REGISTRY = [
     ("ANCHOR",      "anchor_positions",     ["put_order_id", "call_order_id"]),
@@ -66,11 +67,31 @@ def fail(msg):
     print(f"  ❌ {msg}")
 
 
-def api_get(path):
-    """Hit an API endpoint and return (status_code, data_dict)."""
-    url = f"{API_BASE}{path}"
+def get_db_connection():
+    """Get database connection using psycopg2 directly."""
+    import psycopg2
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        raise RuntimeError("DATABASE_URL not set")
+    return psycopg2.connect(db_url)
+
+
+def tradier_get(path, account_id=None):
+    """Call Tradier API directly. Returns (status_code, data_dict)."""
+    api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_PRODUCTION_TOKEN')
+    if not api_key:
+        return 0, "TRADIER_API_KEY not set"
+
+    if account_id:
+        url = f"{TRADIER_BASE_URL}/accounts/{account_id}{path}"
+    else:
+        url = f"{TRADIER_BASE_URL}{path}"
+
     try:
-        req = urllib.request.Request(url, headers={'Accept': 'application/json'})
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'Bearer {api_key}',
+            'Accept': 'application/json',
+        })
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read())
             return resp.status, data
@@ -83,16 +104,6 @@ def api_get(path):
         return e.code, body
     except Exception as e:
         return 0, str(e)
-
-
-def get_db_connection():
-    """Get database connection."""
-    try:
-        from database_adapter import get_connection
-        return get_connection()
-    except ImportError:
-        import psycopg2
-        return psycopg2.connect(os.environ['DATABASE_URL'])
 
 
 # ============================================================
@@ -171,201 +182,220 @@ def test_database_schema():
 
 
 # ============================================================
-# TEST 2: API Endpoints
+# TEST 2: Direct Tradier API Verification
 # ============================================================
 
-def test_api_endpoints():
+def test_tradier_direct():
     print("\n" + "=" * 60)
-    print("TEST 2: API Endpoint Verification")
+    print("TEST 2: Direct Tradier API Verification")
     print("=" * 60)
 
-    # 2a: Summary endpoint
-    print("\n  --- /api/reconciliation/summary ---")
-    status, data = api_get('/api/reconciliation/summary')
+    api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_PRODUCTION_TOKEN')
+    account_id = os.environ.get('TRADIER_ACCOUNT_ID')
+
+    if not api_key:
+        fail("TRADIER_API_KEY not set in environment — cannot test Tradier connectivity")
+        return [], []
+    if not account_id:
+        fail("TRADIER_ACCOUNT_ID not set in environment — cannot test Tradier connectivity")
+        return [], []
+
+    print(f"  Account ID: {account_id}")
+    print(f"  API Key: {api_key[:8]}...{api_key[-4:]}")
+
+    # 2a: Account balance
+    print("\n  --- Account Balance ---")
+    status, data = tradier_get('/balances', account_id=account_id)
     if status == 200:
-        ok(f"Summary endpoint returned 200")
-        if data.get('status') == 'success':
-            summary = data.get('data', {})
-            bots = summary.get('bots', {})
-            print(f"        Bots found: {len(bots)}")
-            for bot_name, info in bots.items():
-                mode = info.get('mode', '?')
-                open_count = info.get('open', 0)
-                print(f"          {bot_name}: {mode} | {open_count} open")
+        balances = data.get('balances', {})
+        equity = balances.get('total_equity', balances.get('equity', 'N/A'))
+        cash = balances.get('total_cash', balances.get('cash', {}).get('cash_available', 'N/A'))
+        ok(f"Tradier PRODUCTION connected — equity: ${equity}, cash: ${cash}")
+    elif status == 401:
+        fail(f"Tradier API key UNAUTHORIZED (401) — check TRADIER_API_KEY")
+        return [], []
+    else:
+        fail(f"Tradier balance returned {status}: {data}")
+        return [], []
 
-            tradier = summary.get('tradier', {})
-            if tradier.get('connected'):
-                ok(f"Tradier PRODUCTION connected: {tradier.get('open_positions', 0)} positions")
-                if tradier.get('symbols'):
-                    print(f"        Tradier symbols: {tradier['symbols']}")
+    # 2b: Open positions
+    print("\n  --- Tradier Open Positions ---")
+    status, data = tradier_get('/positions', account_id=account_id)
+    tradier_positions = []
+    if status == 200:
+        positions_raw = data.get('positions', {})
+        if positions_raw == 'null' or positions_raw is None:
+            tradier_positions = []
+        elif isinstance(positions_raw, dict):
+            pos = positions_raw.get('position', [])
+            if isinstance(pos, dict):
+                tradier_positions = [pos]
+            elif isinstance(pos, list):
+                tradier_positions = pos
             else:
-                warn(f"Tradier PRODUCTION not connected: {tradier.get('error', 'unknown')}")
+                tradier_positions = []
+        ok(f"Tradier has {len(tradier_positions)} open positions")
+        for p in tradier_positions[:10]:
+            print(f"        {p.get('symbol', '?')}: qty={p.get('quantity', '?')} cost=${p.get('cost_basis', '?')}")
+    else:
+        warn(f"Tradier positions returned {status}: {data}")
 
-            sandbox = summary.get('tradier_sandbox', {})
-            if sandbox.get('connected'):
-                ok(f"Tradier SANDBOX connected: {sandbox.get('open_positions', 0)} positions")
+    # 2c: Recent orders
+    print("\n  --- Tradier Recent Orders ---")
+    status, data = tradier_get('/orders', account_id=account_id)
+    tradier_orders = []
+    if status == 200:
+        orders_raw = data.get('orders', {})
+        if orders_raw == 'null' or orders_raw is None:
+            tradier_orders = []
+        elif isinstance(orders_raw, dict):
+            ords = orders_raw.get('order', [])
+            if isinstance(ords, dict):
+                tradier_orders = [ords]
+            elif isinstance(ords, list):
+                tradier_orders = ords
             else:
-                print(f"        Tradier SANDBOX: not connected (may be expected)")
+                tradier_orders = []
+        ok(f"Tradier has {len(tradier_orders)} orders")
+
+        # Show status breakdown
+        status_counts = {}
+        for o in tradier_orders:
+            s = o.get('status', 'unknown')
+            status_counts[s] = status_counts.get(s, 0) + 1
+        print(f"        Order statuses: {status_counts}")
+
+        # Show recent 5
+        for o in tradier_orders[:5]:
+            print(f"        Order {o.get('id')}: {o.get('class', '?')} "
+                  f"status={o.get('status', '?')} date={o.get('create_date', '?')}")
+    else:
+        warn(f"Tradier orders returned {status}: {data}")
+
+    return tradier_positions, tradier_orders
+
+
+# ============================================================
+# TEST 3: Cross-validation (DB order IDs vs Tradier orders)
+# ============================================================
+
+def test_cross_validation(tradier_positions, tradier_orders):
+    print("\n" + "=" * 60)
+    print("TEST 3: Cross-Validation (DB vs Tradier)")
+    print("=" * 60)
+
+    # Collect all Tradier order IDs
+    tradier_order_ids = set()
+    for o in tradier_orders:
+        oid = o.get('id')
+        if oid:
+            tradier_order_ids.add(str(oid))
+
+    print(f"\n  Tradier order IDs in account: {len(tradier_order_ids)}")
+    print(f"  Tradier open positions: {len(tradier_positions)}")
+
+    # Collect all live order IDs from bot DB tables
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+    except Exception as e:
+        fail(f"Cannot connect to database: {e}")
+        return
+
+    all_db_order_ids = {}  # order_id -> (bot_name, table, status)
+    live_open_count = 0
+
+    for bot_name, table, order_cols in BOT_REGISTRY:
+        for col in order_cols:
+            try:
+                cur.execute(f"""
+                    SELECT {col}, status FROM {table}
+                    WHERE {col} IS NOT NULL
+                    AND {col} != ''
+                    AND {col} NOT LIKE 'PAPER%%'
+                """)
+                rows = cur.fetchall()
+                for order_id, status in rows:
+                    all_db_order_ids[str(order_id)] = (bot_name, table, status)
+                    if status in ('open', 'OPEN', 'pending'):
+                        live_open_count += 1
+            except Exception as e:
+                warn(f"Error querying {table}.{col}: {e}")
+                conn.rollback()
+
+    print(f"  DB live (non-PAPER) order IDs: {len(all_db_order_ids)}")
+    print(f"  DB live open positions: {live_open_count}")
+
+    # 3a: Check DB order IDs exist in Tradier
+    if all_db_order_ids:
+        orphaned_in_db = []
+        matched = []
+        for oid, (bot, table, status) in all_db_order_ids.items():
+            if oid in tradier_order_ids:
+                matched.append((oid, bot, status))
+            else:
+                orphaned_in_db.append((oid, bot, table, status))
+
+        ok(f"{len(matched)} DB order IDs found in Tradier")
+        if orphaned_in_db:
+            warn(f"{len(orphaned_in_db)} DB order IDs NOT found in Tradier (orphaned/expired):")
+            for oid, bot, table, status in orphaned_in_db[:10]:
+                print(f"          {bot}: order_id={oid} status={status} (table={table})")
         else:
-            fail(f"Summary returned non-success: {data}")
-    elif status == 404:
-        fail(f"Summary endpoint returned 404 — route not registered in main.py")
-    elif status == 500:
-        fail(f"Summary endpoint returned 500: {data}")
+            ok("All DB order IDs exist in Tradier — no orphaned DB records")
     else:
-        fail(f"Summary endpoint returned {status}: {data}")
+        print("  No live order IDs in DB (all bots are PAPER mode)")
+        ok("Cross-validation N/A — all bots are PAPER")
 
-    # 2b: Tradier balance
-    print("\n  --- /api/reconciliation/tradier/balance ---")
-    status, data = api_get('/api/reconciliation/tradier/balance')
-    if status == 200:
-        ok(f"Balance endpoint returned 200")
-        balance = data.get('balance', {})
-        equity = balance.get('total_equity', balance.get('equity', 'N/A'))
-        print(f"        Account equity: {equity}")
-    else:
-        warn(f"Balance endpoint returned {status}: {data}")
-
-    # 2c: Tradier positions
-    print("\n  --- /api/reconciliation/tradier/positions ---")
-    status, data = api_get('/api/reconciliation/tradier/positions')
-    if status == 200:
-        ok(f"Positions endpoint returned 200")
-        positions = data.get('positions', [])
-        print(f"        Tradier has {len(positions)} open positions")
-        for p in positions[:10]:
-            print(f"          {p.get('symbol', '?')}: qty={p.get('quantity', '?')} cost=${p.get('cost_basis', '?')}")
-    else:
-        warn(f"Positions endpoint returned {status}: {data}")
-
-    # 2d: Tradier orders (annotated)
-    print("\n  --- /api/reconciliation/tradier/orders ---")
-    status, data = api_get('/api/reconciliation/tradier/orders?status=all')
-    if status == 200:
-        ok(f"Orders endpoint returned 200")
-        orders = data.get('orders', [])
-        print(f"        Total orders: {len(orders)}")
-
-        claimed = [o for o in orders if o.get('bot_owner')]
-        unclaimed = [o for o in orders if not o.get('bot_owner')]
-        print(f"        Claimed by a bot: {len(claimed)}")
-        print(f"        Unclaimed (orphaned): {len(unclaimed)}")
+    # 3b: Check Tradier orders claimed by a bot
+    if tradier_order_ids and all_db_order_ids:
+        unclaimed = tradier_order_ids - set(all_db_order_ids.keys())
+        claimed = tradier_order_ids & set(all_db_order_ids.keys())
 
         if unclaimed:
-            warn(f"{len(unclaimed)} Tradier orders NOT claimed by any bot:")
-            for o in unclaimed[:10]:
-                print(f"          Order {o.get('order_id')}: {o.get('tradier_symbol', '?')} "
-                      f"status={o.get('status', '?')} date={o.get('create_date', '?')}")
+            # Show details of unclaimed orders
+            unclaimed_details = [o for o in tradier_orders if str(o.get('id')) in unclaimed]
+            # Only warn about filled/open orders (expired/canceled are expected)
+            active_unclaimed = [o for o in unclaimed_details
+                                if o.get('status') in ('filled', 'open', 'partially_filled', 'pending')]
+            if active_unclaimed:
+                warn(f"{len(active_unclaimed)} ACTIVE Tradier orders not claimed by any bot:")
+                for o in active_unclaimed[:10]:
+                    print(f"          Order {o.get('id')}: {o.get('class', '?')} "
+                          f"status={o.get('status')} date={o.get('create_date', '?')}")
+            else:
+                ok(f"All active Tradier orders are claimed by bots "
+                   f"({len(unclaimed)} expired/canceled orders excluded)")
         else:
             ok("All Tradier orders are claimed by a bot")
 
-        # Show bot→order mapping
-        if claimed:
-            bot_counts = {}
-            for o in claimed:
-                bot = o.get('bot_owner', '?')
-                bot_counts[bot] = bot_counts.get(bot, 0) + 1
-            print(f"        Orders by bot: {bot_counts}")
+        # Show bot-to-order mapping
+        bot_counts = {}
+        for oid in claimed:
+            bot = all_db_order_ids[oid][0]
+            bot_counts[bot] = bot_counts.get(bot, 0) + 1
+        if bot_counts:
+            print(f"        Orders matched by bot: {bot_counts}")
+    elif not tradier_order_ids:
+        ok("No Tradier orders to reconcile")
+
+    # 3c: Position count check
+    tradier_open = len(tradier_positions)
+    print(f"\n  Position count check:")
+    print(f"    Tradier open positions: {tradier_open}")
+    print(f"    DB live open positions: {live_open_count}")
+
+    if tradier_open == live_open_count:
+        ok(f"Position counts MATCH: {tradier_open}")
+    elif tradier_open == 0 and live_open_count == 0:
+        ok("Both empty (no open positions)")
+    elif tradier_open > live_open_count:
+        warn(f"Tradier has {tradier_open - live_open_count} MORE positions than DB — possible stranded orders")
     else:
-        warn(f"Orders endpoint returned {status}: {data}")
+        warn(f"DB has {live_open_count - tradier_open} MORE live positions than Tradier — possible ghost positions")
 
-    # 2e: Full reconciliation
-    print("\n  --- /api/reconciliation/full ---")
-    status, data = api_get('/api/reconciliation/full')
-    if status == 200:
-        ok(f"Full reconciliation returned 200")
-        report = data.get('data', {})
-        summary = report.get('summary', {})
-
-        print(f"        Tradier connected: {summary.get('tradier_connected')}")
-        print(f"        Tradier positions: {summary.get('tradier_positions', 0)}")
-        print(f"        Tradier orders: {summary.get('tradier_orders', 0)}")
-        print(f"        DB positions (total): {summary.get('db_positions_total', 0)}")
-        print(f"        DB positions (paper): {summary.get('db_positions_paper', 0)}")
-        print(f"        DB positions (live): {summary.get('db_positions_live', 0)}")
-        print(f"        Matched orders: {summary.get('matched_orders', 0)}")
-        print(f"        Orphaned on Tradier: {summary.get('orphaned_on_tradier', 0)}")
-        print(f"        Orphaned in DB: {summary.get('orphaned_in_db', 0)}")
-        print(f"        Health: {summary.get('health', '?')}")
-
-        orphaned_tradier = report.get('orphaned_tradier', [])
-        if orphaned_tradier:
-            warn(f"{len(orphaned_tradier)} orders on Tradier not claimed by any bot:")
-            for o in orphaned_tradier[:10]:
-                print(f"          Order {o.get('tradier_order_id')}: {o.get('tradier_symbol', '?')} "
-                      f"status={o.get('tradier_status', '?')} date={o.get('tradier_create_date', '?')}")
-
-        orphaned_db = report.get('orphaned_db', [])
-        if orphaned_db:
-            warn(f"{len(orphaned_db)} bot positions with order IDs NOT found in Tradier:")
-            for o in orphaned_db[:10]:
-                print(f"          {o.get('bot')}: {o.get('position_id')} "
-                      f"order={o.get('order_id')} status={o.get('status')}")
-
-        # Per-bot summary
-        bots = report.get('bots', {})
-        if bots:
-            print(f"\n        Per-bot breakdown:")
-            for bot_name, info in bots.items():
-                print(f"          {bot_name}: {info.get('open', 0)} open, "
-                      f"{info.get('closed', 0)} closed, "
-                      f"{info.get('paper', 0)} paper, "
-                      f"{info.get('live', 0)} live, "
-                      f"{info.get('order_ids_tracked', 0)} order IDs tracked")
-    elif status == 500:
-        fail(f"Full reconciliation returned 500: {json.dumps(data, indent=2) if isinstance(data, dict) else data}")
-    else:
-        fail(f"Full reconciliation returned {status}: {data}")
-
-    # 2f: Per-bot endpoint (test a few)
-    print("\n  --- /api/reconciliation/bot/{name}/positions ---")
-    for bot_name in ['ANCHOR', 'SAMSON', 'JUBILEE_IC', 'FORTRESS']:
-        status, data = api_get(f'/api/reconciliation/bot/{bot_name}/positions?status=all')
-        if status == 200:
-            total = data.get('total', 0)
-            positions = data.get('positions', [])
-            live = [p for p in positions if not p.get('is_paper')]
-            paper = [p for p in positions if p.get('is_paper')]
-            ok(f"{bot_name}: {total} positions ({len(live)} live, {len(paper)} paper)")
-        elif status == 404:
-            warn(f"{bot_name}: 404 (bot not found in registry)")
-        else:
-            warn(f"{bot_name}: returned {status}")
-
-
-# ============================================================
-# TEST 3: Cross-validation
-# ============================================================
-
-def test_cross_validation():
-    print("\n" + "=" * 60)
-    print("TEST 3: Cross-Validation")
-    print("=" * 60)
-
-    # Get Tradier positions
-    _, tradier_data = api_get('/api/reconciliation/tradier/positions')
-    tradier_positions = tradier_data.get('positions', []) if isinstance(tradier_data, dict) else []
-
-    # Get summary
-    _, summary_data = api_get('/api/reconciliation/summary')
-    summary = summary_data.get('data', {}) if isinstance(summary_data, dict) else {}
-    bots = summary.get('bots', {})
-
-    # Count live open across all bots
-    total_live_open = sum(b.get('live_open', 0) for b in bots.values())
-    tradier_count = len(tradier_positions)
-
-    print(f"\n  Tradier open positions: {tradier_count}")
-    print(f"  DB live open positions: {total_live_open}")
-
-    if tradier_count == total_live_open:
-        ok(f"Position counts MATCH: {tradier_count}")
-    elif tradier_count == 0 and total_live_open == 0:
-        ok("Both empty (all bots are PAPER mode)")
-    elif tradier_count > total_live_open:
-        warn(f"Tradier has {tradier_count - total_live_open} MORE positions than DB tracks — possible stranded orders")
-    elif total_live_open > tradier_count:
-        warn(f"DB has {total_live_open - tradier_count} MORE live positions than Tradier — possible ghost positions")
+    cur.close()
+    conn.close()
 
 
 # ============================================================
@@ -376,12 +406,12 @@ if __name__ == '__main__':
     print("=" * 60)
     print("  TRADIER-TO-BOT RECONCILIATION VERIFICATION")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  API: {API_BASE}")
+    print(f"  Mode: Direct DB + Direct Tradier API (no FastAPI needed)")
     print("=" * 60)
 
     test_database_schema()
-    test_api_endpoints()
-    test_cross_validation()
+    tradier_positions, tradier_orders = test_tradier_direct()
+    test_cross_validation(tradier_positions, tradier_orders)
 
     print("\n" + "=" * 60)
     print(f"  RESULTS: {passed} passed, {warned} warnings, {failed} failed")
