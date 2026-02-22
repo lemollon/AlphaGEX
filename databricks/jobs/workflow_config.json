@@ -58,8 +58,8 @@
       "TRADIER_API_KEY"
     ],
     "optional": [
-      "DATABRICKS_CATALOG (default: alphagex)",
-      "DATABRICKS_SCHEMA (default: trading)"
+      "DATABRICKS_CATALOG (default: alpha_prime)",
+      "DATABRICKS_SCHEMA (default: default)"
     ]
   }
 }
