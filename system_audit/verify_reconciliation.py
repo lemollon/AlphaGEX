@@ -22,12 +22,9 @@ from datetime import datetime
 # CONFIG
 # ============================================================
 
-API_BASE = os.environ.get('RENDER_EXTERNAL_URL', 'http://localhost:8000')
-
-# If running on Render, the API is localhost:8000 on the same service
-# If running separately, set RENDER_EXTERNAL_URL
-if 'RENDER' in os.environ or os.path.exists('/opt/render'):
-    API_BASE = 'http://localhost:8000'
+# On Render, the worker shell can't reach localhost:8000 (that's the web service).
+# Use the external URL to hit the API. Override with RENDER_EXTERNAL_URL if needed.
+API_BASE = os.environ.get('RENDER_EXTERNAL_URL', 'https://alphagex-api.onrender.com')
 
 BOT_REGISTRY = [
     ("ANCHOR",      "anchor_positions",     ["put_order_id", "call_order_id"]),
