@@ -2,8 +2,7 @@
 Databricks SQL Database Layer
 ==============================
 
-Unified database operations for FAITH and GRACE bots on Delta Lake.
-Replaces the PostgreSQL-based FaithDatabase and GraceDatabase classes.
+Unified database operations for FLAME and SPARK bots on Delta Lake.
 
 Key differences from PostgreSQL version:
 - Uses Databricks SQL connector (not psycopg2)
@@ -31,15 +30,15 @@ logger = logging.getLogger(__name__)
 
 class TradingDatabase:
     """
-    Unified database operations for both FAITH and GRACE.
+    Unified database operations for both FLAME and SPARK.
 
     Parameterized by bot name to target the correct tables.
     """
 
-    def __init__(self, bot_name: str = "FAITH", dte_mode: str = "2DTE"):
+    def __init__(self, bot_name: str = "FLAME", dte_mode: str = "2DTE"):
         self.bot_name = bot_name
         self.dte_mode = dte_mode
-        self._prefix = bot_name.lower().split("_")[0]  # "faith" or "grace"
+        self._prefix = bot_name.lower().split("_")[0]  # "flame" or "spark"
 
     def _t(self, suffix: str) -> str:
         """Get fully qualified table name for this bot."""

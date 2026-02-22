@@ -18,8 +18,8 @@ class DatabricksConfig:
     ACCESS_TOKEN = os.getenv("DATABRICKS_TOKEN", "")
 
     # Unity Catalog settings
-    CATALOG = os.getenv("DATABRICKS_CATALOG", "alphagex")
-    SCHEMA = os.getenv("DATABRICKS_SCHEMA", "trading")
+    CATALOG = os.getenv("DATABRICKS_CATALOG", "alpha_prime")
+    SCHEMA = os.getenv("DATABRICKS_SCHEMA", "default")
 
     # Tradier API (for live market data)
     TRADIER_API_KEY = os.getenv("TRADIER_API_KEY", "")

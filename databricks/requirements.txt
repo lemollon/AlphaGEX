@@ -1,4 +1,4 @@
-# Databricks FAITH + GRACE Trading System
+# Databricks FLAME + SPARK Trading System (IronForge)
 # Install in Databricks cluster or job environment
 
 # Databricks SQL connector
@@ -12,6 +12,3 @@ dash>=2.14.0
 dash-bootstrap-components>=1.5.0
 plotly>=5.18.0
 pandas>=2.0.0
-
-# Scheduling (for local dev; Databricks uses Workflows in prod)
-apscheduler>=3.10.0
