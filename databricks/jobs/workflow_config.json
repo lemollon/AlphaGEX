@@ -1,0 +1,65 @@
+{
+  "name": "IronForge Trading Workflows",
+  "description": "SPARK (1DTE) and FLAME (2DTE) Iron Condor paper trading bots",
+  "workflows": [
+    {
+      "name": "flame_trading",
+      "description": "FLAME 2DTE Iron Condor - runs every 5 min during market hours",
+      "schedule": {
+        "quartz_cron_expression": "0 */5 14-20 ? * MON-FRI",
+        "timezone_id": "UTC",
+        "note": "14:30-20:45 UTC = 8:30-14:45 CT (market hours)"
+      },
+      "tasks": [
+        {
+          "task_key": "run_flame_cycle",
+          "python_script_task": {
+            "source": "WORKSPACE",
+            "script_path": "/Workspace/ironforge/jobs/run_flame.py"
+          },
+          "cluster_spec": {
+            "existing_cluster_id": "${CLUSTER_ID}",
+            "note": "Use a small single-node cluster or SQL warehouse"
+          },
+          "timeout_seconds": 120,
+          "max_retries": 1
+        }
+      ]
+    },
+    {
+      "name": "spark_trading",
+      "description": "SPARK 1DTE Iron Condor - runs every 5 min during market hours",
+      "schedule": {
+        "quartz_cron_expression": "0 */5 14-20 ? * MON-FRI",
+        "timezone_id": "UTC",
+        "note": "14:30-20:45 UTC = 8:30-14:45 CT (market hours)"
+      },
+      "tasks": [
+        {
+          "task_key": "run_spark_cycle",
+          "python_script_task": {
+            "source": "WORKSPACE",
+            "script_path": "/Workspace/ironforge/jobs/run_spark.py"
+          },
+          "cluster_spec": {
+            "existing_cluster_id": "${CLUSTER_ID}"
+          },
+          "timeout_seconds": 120,
+          "max_retries": 1
+        }
+      ]
+    }
+  ],
+  "environment_variables": {
+    "required": [
+      "DATABRICKS_SERVER_HOSTNAME",
+      "DATABRICKS_HTTP_PATH",
+      "DATABRICKS_TOKEN",
+      "TRADIER_API_KEY"
+    ],
+    "optional": [
+      "DATABRICKS_CATALOG (default: alphagex)",
+      "DATABRICKS_SCHEMA (default: trading)"
+    ]
+  }
+}
