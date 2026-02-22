@@ -55,7 +55,7 @@ for bot in ["flame", "spark"]:
             total_credit DECIMAL(10, 4) NOT NULL,
             max_loss DECIMAL(10, 2) NOT NULL,
             max_profit DECIMAL(10, 2) NOT NULL,
-            collateral_required DECIMAL(10, 2) DEFAULT 0,
+            collateral_required DECIMAL(10, 2),
 
             underlying_at_entry DECIMAL(10, 2) NOT NULL,
             vix_at_entry DECIMAL(6, 2),
@@ -71,16 +71,16 @@ for bot in ["flame", "spark"]:
             oracle_advice STRING,
             oracle_reasoning STRING,
             oracle_top_factors STRING,
-            oracle_use_gex_walls BOOLEAN DEFAULT FALSE,
+            oracle_use_gex_walls BOOLEAN,
 
-            wings_adjusted BOOLEAN DEFAULT FALSE,
+            wings_adjusted BOOLEAN,
             original_put_width DECIMAL(10, 2),
             original_call_width DECIMAL(10, 2),
 
-            put_order_id STRING DEFAULT 'PAPER',
-            call_order_id STRING DEFAULT 'PAPER',
+            put_order_id STRING,
+            call_order_id STRING,
 
-            status STRING NOT NULL DEFAULT 'open',
+            status STRING NOT NULL,
             open_time TIMESTAMP NOT NULL,
             open_date DATE,
             close_time TIMESTAMP,
@@ -88,10 +88,10 @@ for bot in ["flame", "spark"]:
             close_reason STRING,
             realized_pnl DECIMAL(10, 2),
 
-            dte_mode STRING DEFAULT '2DTE',
+            dte_mode STRING,
 
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+            created_at TIMESTAMP,
+            updated_at TIMESTAMP
         )
     """)
     print(f"  {bot}_positions OK")
@@ -107,7 +107,7 @@ for bot in ["flame", "spark"]:
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {_t(f'{bot}_signals')} (
             id BIGINT GENERATED ALWAYS AS IDENTITY,
-            signal_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+            signal_time TIMESTAMP,
             spot_price DECIMAL(10, 2),
             vix DECIMAL(6, 2),
             expected_move DECIMAL(10, 2),
@@ -120,11 +120,11 @@ for bot in ["flame", "spark"]:
             call_long DECIMAL(10, 2),
             total_credit DECIMAL(10, 4),
             confidence DECIMAL(5, 4),
-            was_executed BOOLEAN DEFAULT FALSE,
+            was_executed BOOLEAN,
             skip_reason STRING,
             reasoning STRING,
-            wings_adjusted BOOLEAN DEFAULT FALSE,
-            dte_mode STRING DEFAULT '2DTE'
+            wings_adjusted BOOLEAN,
+            dte_mode STRING
         )
     """)
     print(f"  {bot}_signals OK")
@@ -141,10 +141,10 @@ for bot in ["flame", "spark"]:
         CREATE TABLE IF NOT EXISTS {_t(f'{bot}_daily_perf')} (
             id BIGINT GENERATED ALWAYS AS IDENTITY,
             trade_date DATE NOT NULL,
-            trades_executed INT DEFAULT 0,
-            positions_closed INT DEFAULT 0,
-            realized_pnl DECIMAL(10, 2) DEFAULT 0,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+            trades_executed INT,
+            positions_closed INT,
+            realized_pnl DECIMAL(10, 2),
+            updated_at TIMESTAMP
         )
     """)
     print(f"  {bot}_daily_perf OK")
@@ -152,11 +152,11 @@ for bot in ["flame", "spark"]:
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {_t(f'{bot}_logs')} (
             id BIGINT GENERATED ALWAYS AS IDENTITY,
-            log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+            log_time TIMESTAMP,
             level STRING,
             message STRING,
             details STRING,
-            dte_mode STRING DEFAULT '2DTE'
+            dte_mode STRING
         )
     """)
     print(f"  {bot}_logs OK")
@@ -164,14 +164,14 @@ for bot in ["flame", "spark"]:
     spark.sql(f"""
         CREATE TABLE IF NOT EXISTS {_t(f'{bot}_equity_snapshots')} (
             id BIGINT GENERATED ALWAYS AS IDENTITY,
-            snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+            snapshot_time TIMESTAMP,
             balance DECIMAL(12, 2) NOT NULL,
-            unrealized_pnl DECIMAL(12, 2) DEFAULT 0,
-            realized_pnl DECIMAL(12, 2) DEFAULT 0,
-            open_positions INT DEFAULT 0,
+            unrealized_pnl DECIMAL(12, 2),
+            realized_pnl DECIMAL(12, 2),
+            open_positions INT,
             note STRING,
-            dte_mode STRING DEFAULT '2DTE',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+            dte_mode STRING,
+            created_at TIMESTAMP
         )
     """)
     print(f"  {bot}_equity_snapshots OK")
@@ -181,16 +181,16 @@ for bot in ["flame", "spark"]:
             id BIGINT GENERATED ALWAYS AS IDENTITY,
             starting_capital DECIMAL(12, 2) NOT NULL,
             current_balance DECIMAL(12, 2) NOT NULL,
-            cumulative_pnl DECIMAL(12, 2) DEFAULT 0,
-            total_trades INT DEFAULT 0,
-            collateral_in_use DECIMAL(12, 2) DEFAULT 0,
+            cumulative_pnl DECIMAL(12, 2),
+            total_trades INT,
+            collateral_in_use DECIMAL(12, 2),
             buying_power DECIMAL(12, 2) NOT NULL,
             high_water_mark DECIMAL(12, 2) NOT NULL,
-            max_drawdown DECIMAL(12, 2) DEFAULT 0,
-            is_active BOOLEAN DEFAULT TRUE,
-            dte_mode STRING DEFAULT '2DTE',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+            max_drawdown DECIMAL(12, 2),
+            is_active BOOLEAN,
+            dte_mode STRING,
+            created_at TIMESTAMP,
+            updated_at TIMESTAMP
         )
     """)
     print(f"  {bot}_paper_account OK")
@@ -203,14 +203,14 @@ for bot in ["flame", "spark"]:
             position_id STRING NOT NULL,
             opened_at TIMESTAMP NOT NULL,
             closed_at TIMESTAMP,
-            is_day_trade BOOLEAN DEFAULT FALSE,
+            is_day_trade BOOLEAN,
             contracts INT NOT NULL,
             entry_credit DECIMAL(10, 4),
             exit_cost DECIMAL(10, 4),
             pnl DECIMAL(10, 2),
             close_reason STRING,
-            dte_mode STRING DEFAULT '2DTE',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+            dte_mode STRING,
+            created_at TIMESTAMP
         )
     """)
     print(f"  {bot}_pdt_log OK")
@@ -227,7 +227,7 @@ spark.sql(f"""
         bot_name STRING NOT NULL,
         last_heartbeat TIMESTAMP,
         status STRING,
-        scan_count BIGINT DEFAULT 0,
+        scan_count BIGINT,
         details STRING
     )
 """)
@@ -240,8 +240,12 @@ print("  bot_heartbeats OK")
 
 # COMMAND ----------
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+now_str = datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d %H:%M:%S")
+
 for bot, dte_mode in [("flame", "2DTE"), ("spark", "1DTE")]:
-    # Check if account exists
     existing = spark.sql(f"""
         SELECT id FROM {_t(f'{bot}_paper_account')}
         WHERE is_active = TRUE AND dte_mode = '{dte_mode}'
@@ -253,8 +257,11 @@ for bot, dte_mode in [("flame", "2DTE"), ("spark", "1DTE")]:
     else:
         spark.sql(f"""
             INSERT INTO {_t(f'{bot}_paper_account')}
-            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
-            VALUES (5000.0, 5000.0, 0, 5000.0, 5000.0, '{dte_mode}')
+            (starting_capital, current_balance, cumulative_pnl, total_trades,
+             collateral_in_use, buying_power, high_water_mark, max_drawdown,
+             is_active, dte_mode, created_at, updated_at)
+            VALUES (5000.0, 5000.0, 0, 0, 0, 5000.0, 5000.0, 0,
+                    TRUE, '{dte_mode}', '{now_str}', '{now_str}')
         """)
         print(f"  {bot.upper()} account initialized: $5,000")
 
