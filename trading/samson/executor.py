@@ -768,6 +768,39 @@ class OrderExecutor:
             return min(position.spread_width, intrinsic)
 
     def get_position_current_value(self, position: IronCondorPosition) -> Optional[float]:
+        """Get current IC value using real Tradier quotes, falling back to estimation.
+
+        FIX 4: The original code went straight to _estimate_ic_value(), which
+        returns total_credit * 0.1 for SPX (always $0.08 when entry=$0.80).
+        This caused every profit target to fire after one 5-minute cycle,
+        producing 537 identical trades with 100% win rate and fake P&L.
+
+        Now tries calculate_ic_mark_to_market() first to get real bid/ask
+        quotes from Tradier production API, only falling back to estimation
+        when quotes are unavailable (market closed, API error, etc.)
+        """
+        # Try real Tradier quotes first (production API for SPX)
+        try:
+            from trading.mark_to_market import calculate_ic_mark_to_market
+            mtm = calculate_ic_mark_to_market(
+                underlying=position.ticker if hasattr(position, 'ticker') else "SPX",
+                expiration=position.expiration,
+                put_short=position.put_short_strike,
+                put_long=position.put_long_strike,
+                call_short=position.call_short_strike,
+                call_long=position.call_long_strike,
+                contracts=position.contracts,
+                entry_credit=position.total_credit,
+                use_cache=True  # 30s cache is fine for exit checks
+            )
+            if mtm.get('success') and mtm.get('current_value') is not None:
+                return mtm['current_value']
+            else:
+                logger.debug(f"MTM unavailable for {position.position_id}: {mtm.get('error', 'unknown')}")
+        except Exception as e:
+            logger.debug(f"MTM failed for {position.position_id}: {e}")
+
+        # Fallback: estimation (only when Tradier quotes unavailable)
         current_price = self._get_current_spx_price()
         if current_price:
             return self._estimate_ic_value(position, current_price)
