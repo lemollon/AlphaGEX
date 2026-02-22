@@ -15,7 +15,8 @@
 CATALOG = "alpha_prime"
 SCHEMA = "default"
 
-spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG}")
+# Catalog already exists — skip CREATE CATALOG to avoid storage root error
+# spark.sql(f"CREATE CATALOG IF NOT EXISTS {CATALOG}")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 
 print(f"Catalog: {CATALOG}")
