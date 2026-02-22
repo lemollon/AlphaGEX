@@ -9,7 +9,7 @@ from trading.db import TradingDatabase
 from trading.models import spark_config
 from webapp.components.status_card import bot_status_card, performance_card
 from webapp.components.equity_chart import create_equity_chart
-from webapp.components.position_table import trade_history_table
+from webapp.components.position_table import trade_history_table, open_positions_table
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +18,15 @@ _db = TradingDatabase(bot_name="SPARK", dte_mode="1DTE")
 
 
 def _get_status() -> dict:
+    from datetime import datetime
+    from trading.models import CENTRAL_TZ
+
     account = _db.get_paper_account()
     open_positions = _db.get_open_positions()
     heartbeat = _db.get_heartbeat_info()
+    today_str = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+    trades_today = _db.get_trades_today_count(today_str)
+    pdt_count = _db.get_day_trade_count_rolling_5_days()
 
     return {
         "bot_name": "SPARK",
@@ -29,7 +35,7 @@ def _get_status() -> dict:
         "ticker": "SPY",
         "dte": 1,
         "open_positions": len(open_positions),
-        "trades_today": 0,
+        "trades_today": trades_today,
         "max_trades_per_day": 1,
         "profit_target_pct": _config.profit_target_pct,
         "stop_loss_pct": _config.stop_loss_pct,
@@ -38,8 +44,8 @@ def _get_status() -> dict:
         "last_scan": heartbeat.get("last_heartbeat") if heartbeat else "Never",
         "paper_account": account.to_dict(),
         "pdt": {
-            "day_trades_rolling_5": 0,
-            "day_trades_remaining": 3,
+            "day_trades_rolling_5": pdt_count,
+            "day_trades_remaining": max(0, _config.pdt_max_day_trades - pdt_count),
         },
     }
 
@@ -93,15 +99,7 @@ def register_spark_callbacks(app):
             if not positions:
                 return dbc.Alert("No open positions", color="secondary")
             pos_dicts = [p.to_dict() for p in positions]
-            return html.Pre(
-                "\n".join([
-                    f"{p['position_id']}: {p['put_long_strike']}/{p['put_short_strike']}P-"
-                    f"{p['call_short_strike']}/{p['call_long_strike']}C "
-                    f"x{p['contracts']} @ ${p['total_credit']:.2f}"
-                    for p in pos_dicts
-                ]),
-                className="text-light",
-            )
+            return open_positions_table(pos_dicts)
         except Exception as e:
             return dbc.Alert(f"Error: {e}", color="danger")
 

@@ -2,7 +2,7 @@
 Signal Generator
 =================
 
-Unified signal generator for FAITH (2DTE) and GRACE (1DTE) Iron Condor bots.
+Unified signal generator for FLAME (2DTE) and SPARK (1DTE) Iron Condor bots.
 Self-contained — uses the standalone TradierClient instead of AlphaGEX imports.
 """
 
@@ -21,7 +21,7 @@ class SignalGenerator:
     """
     Generates Iron Condor signals using real Tradier market data.
 
-    Works for both FAITH (2DTE) and GRACE (1DTE) — the only difference
+    Works for both FLAME (2DTE) and SPARK (1DTE) — the only difference
     is config.min_dte which controls expiration targeting.
     """
 

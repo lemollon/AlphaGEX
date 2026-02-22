@@ -3,8 +3,7 @@ Trading Models
 ==============
 
 Shared data models for FLAME (2DTE) and SPARK (1DTE) Iron Condor bots.
-Part of the IronSight Databricks trading system.
-Ported from AlphaGEX FAITH/GRACE bots.
+Part of the IronForge Databricks trading system.
 """
 
 from dataclasses import dataclass
@@ -30,7 +29,7 @@ class PositionStatus(Enum):
 @dataclass
 class BotConfig:
     """
-    Unified bot configuration for both FAITH and GRACE.
+    Unified bot configuration for both FLAME and SPARK.
 
     The only difference between the two bots is min_dte and dte_mode.
     """

@@ -4,7 +4,7 @@ Standalone Tradier API Client
 
 Lightweight Tradier API client for market data.
 Replaces the dependency on AlphaGEX's data.tradier_data_fetcher module.
-Only implements the methods needed by FAITH and GRACE signal generators.
+Only implements the methods needed by FLAME and SPARK signal generators.
 """
 
 import logging

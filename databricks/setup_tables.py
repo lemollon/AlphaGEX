@@ -88,7 +88,7 @@ def _position_table_ddl(bot: str) -> str:
         close_reason STRING,
         realized_pnl DECIMAL(10, 2),
 
-        -- DTE mode (FAITH only: '2DTE' or '1DTE')
+        -- DTE mode ('2DTE' or '1DTE')
         dte_mode STRING DEFAULT '2DTE',
 
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
@@ -219,7 +219,7 @@ def _heartbeats_table_ddl() -> str:
 
 
 def setup_all_tables():
-    """Create all Delta Lake tables for FAITH and GRACE."""
+    """Create all Delta Lake tables for FLAME and SPARK."""
     valid, msg = DatabricksConfig.validate()
     if not valid:
         logger.error(f"Configuration invalid: {msg}")
