@@ -404,18 +404,23 @@ class OrderExecutor:
     def _mirror_close_to_second_account(
         self,
         position: IronCondorPosition,
-        put_value: float,
-        call_value: float
+        put_value: Optional[float],
+        call_value: Optional[float]
     ) -> None:
         """
         Mirror a close order to the second sandbox account.
 
         Fire and forget - no tracking, no error propagation.
+        When put_value/call_value are None, uses MARKET orders (guaranteed fill for EOD).
         """
         if not self.tradier_2:
             return
 
         try:
+            # Use MARKET orders when quotes unavailable (None = market order)
+            put_limit = round(put_value, 2) if put_value is not None else None
+            call_limit = round(call_value, 2) if call_value is not None else None
+
             # Close put spread on second account
             self.tradier_2.place_vertical_spread(
                 symbol=position.ticker,
@@ -424,7 +429,7 @@ class OrderExecutor:
                 short_strike=position.put_long_strike,
                 option_type="put",
                 quantity=position.contracts,
-                limit_price=round(put_value, 2),
+                limit_price=put_limit,
                 closing=True,
             )
 
@@ -436,11 +441,12 @@ class OrderExecutor:
                 short_strike=position.call_long_strike,
                 option_type="call",
                 quantity=position.contracts,
-                limit_price=round(call_value, 2),
+                limit_price=call_limit,
                 closing=True,
             )
 
-            logger.info(f"FORTRESS MIRROR: Close mirrored to account 2 for {position.position_id}")
+            order_type = "MARKET" if put_limit is None else "LIMIT"
+            logger.info(f"FORTRESS MIRROR: Close mirrored to account 2 for {position.position_id} ({order_type} orders)")
         except Exception as e:
             logger.warning(f"FORTRESS MIRROR: Close mirror to account 2 failed (non-blocking): {e}")
 
@@ -481,18 +487,23 @@ class OrderExecutor:
     def _mirror_close_to_third_account(
         self,
         position: IronCondorPosition,
-        put_value: float,
-        call_value: float
+        put_value: Optional[float],
+        call_value: Optional[float]
     ) -> None:
         """
         Mirror a close order to the third sandbox account.
 
         Fire and forget - no tracking, no error propagation.
+        When put_value/call_value are None, uses MARKET orders (guaranteed fill for EOD).
         """
         if not self.tradier_3:
             return
 
         try:
+            # Use MARKET orders when quotes unavailable (None = market order)
+            put_limit = round(put_value, 2) if put_value is not None else None
+            call_limit = round(call_value, 2) if call_value is not None else None
+
             # Close put spread on third account
             self.tradier_3.place_vertical_spread(
                 symbol=position.ticker,
@@ -501,7 +512,7 @@ class OrderExecutor:
                 short_strike=position.put_long_strike,
                 option_type="put",
                 quantity=position.contracts,
-                limit_price=round(put_value, 2),
+                limit_price=put_limit,
                 closing=True,
             )
 
@@ -513,11 +524,12 @@ class OrderExecutor:
                 short_strike=position.call_long_strike,
                 option_type="call",
                 quantity=position.contracts,
-                limit_price=round(call_value, 2),
+                limit_price=call_limit,
                 closing=True,
             )
 
-            logger.info(f"FORTRESS MIRROR: Close mirrored to account 3 for {position.position_id}")
+            order_type = "MARKET" if put_limit is None else "LIMIT"
+            logger.info(f"FORTRESS MIRROR: Close mirrored to account 3 for {position.position_id} ({order_type} orders)")
         except Exception as e:
             logger.warning(f"FORTRESS MIRROR: Close mirror to account 3 failed (non-blocking): {e}")
 
@@ -1099,11 +1111,13 @@ class OrderExecutor:
             if not call_result or not call_result.get('order'):
                 logger.error(f"Failed to close call spread (put was closed!): {call_result}")
                 # Partial close - put side closed but call failed
-                partial_pnl = (position.put_credit - ic_quote['put_value']) * 100 * position.contracts
+                # Guard against ic_quote being None (MARKET orders when quotes unavailable)
+                put_close_value = ic_quote['put_value'] if ic_quote else 0
+                partial_pnl = (position.put_credit - put_close_value) * 100 * position.contracts
                 logger.warning(f"PARTIAL CLOSE: Put side closed, P&L=${partial_pnl:.2f}")
                 # Return special tuple indicating partial close (success=False but with 'partial' marker)
                 # Caller should handle this by marking position as partial_close in DB
-                return 'partial_put', ic_quote['put_value'], partial_pnl
+                return 'partial_put', put_close_value, partial_pnl
 
             # P&L calculation
             pnl_per_contract = (position.total_credit - close_price) * 100
@@ -1115,8 +1129,15 @@ class OrderExecutor:
             )
 
             # Mirror close to additional accounts (fire and forget)
-            self._mirror_close_to_second_account(position, ic_quote['put_value'], ic_quote['call_value'])
-            self._mirror_close_to_third_account(position, ic_quote['put_value'], ic_quote['call_value'])
+            # Guard against ic_quote being None (common for 0DTE near EOD when quotes fail)
+            # When quotes are unavailable, pass None to mirror methods so they use MARKET orders
+            try:
+                mirror_put = ic_quote['put_value'] if ic_quote else None
+                mirror_call = ic_quote['call_value'] if ic_quote else None
+                self._mirror_close_to_second_account(position, mirror_put, mirror_call)
+                self._mirror_close_to_third_account(position, mirror_put, mirror_call)
+            except Exception as mirror_err:
+                logger.warning(f"FORTRESS: Mirror close failed (non-blocking, primary close succeeded): {mirror_err}")
 
             return True, close_price, realized_pnl
 

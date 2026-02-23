@@ -505,8 +505,17 @@ def get_all_sandbox_accounts() -> List[Dict[str, str]]:
         })
 
     # Second sandbox account (FORTRESS mirrors to this)
-    second_key = os.getenv('TRADIER_SANDBOX_API_KEY_2')
-    second_id = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_2')
+    # Check both generic and FORTRESS-specific env vars (FORTRESS uses TRADIER_FORTRESS_SANDBOX_*)
+    second_key = os.getenv('TRADIER_SANDBOX_API_KEY_2') or os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_2')
+    second_id = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_2') or os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2')
+    if not second_key or not second_id:
+        # Also check unified_config for FORTRESS-specific credentials
+        try:
+            from unified_config import APIConfig
+            second_key = second_key or APIConfig.TRADIER_FORTRESS_SANDBOX_API_KEY_2
+            second_id = second_id or APIConfig.TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2
+        except (ImportError, AttributeError):
+            pass
     if second_key and second_id:
         accounts.append({
             'api_key': second_key,
@@ -515,8 +524,16 @@ def get_all_sandbox_accounts() -> List[Dict[str, str]]:
         })
 
     # Third sandbox account
-    third_key = os.getenv('TRADIER_SANDBOX_API_KEY_3')
-    third_id = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_3')
+    # Check both generic and FORTRESS-specific env vars
+    third_key = os.getenv('TRADIER_SANDBOX_API_KEY_3') or os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_3')
+    third_id = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_3') or os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3')
+    if not third_key or not third_id:
+        try:
+            from unified_config import APIConfig
+            third_key = third_key or APIConfig.TRADIER_FORTRESS_SANDBOX_API_KEY_3
+            third_id = third_id or APIConfig.TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3
+        except (ImportError, AttributeError):
+            pass
     if third_key and third_id:
         accounts.append({
             'api_key': third_key,
@@ -524,7 +541,17 @@ def get_all_sandbox_accounts() -> List[Dict[str, str]]:
             'label': 'tertiary',
         })
 
-    return accounts
+    # Deduplicate by account_id (same account may appear via different env var names)
+    seen_ids = set()
+    unique_accounts = []
+    for acct in accounts:
+        if acct['account_id'] not in seen_ids:
+            seen_ids.add(acct['account_id'])
+            unique_accounts.append(acct)
+        else:
+            logger.debug(f"TradierEODCloser: Skipping duplicate account '{acct['label']}' ({acct['account_id']})")
+
+    return unique_accounts
 
 
 def close_all_sandbox_accounts() -> Dict[str, Any]:
