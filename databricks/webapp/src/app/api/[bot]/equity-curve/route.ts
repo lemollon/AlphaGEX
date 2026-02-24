@@ -68,7 +68,7 @@ export async function GET(
         default:
           cutoff = new Date(0)
       }
-      curve = curve.filter((pt) => new Date(pt.timestamp) >= cutoff)
+      curve = curve.filter((pt) => pt.timestamp && new Date(pt.timestamp) >= cutoff)
     }
 
     return NextResponse.json({ starting_capital: startingCapital, curve, period })
