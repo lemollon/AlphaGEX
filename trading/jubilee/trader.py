@@ -1163,6 +1163,31 @@ class JubileeICTrader:
             logger.error(f"JUBILEE IC trading cycle error: {e}")
             result['errors'].append(str(e))
 
+        # Log scan activity to DB so we can diagnose silent failures
+        # (e.g., the 2/13-2/24 gap where no signals appeared but dashboard said Active)
+        try:
+            outcome = "TRADE" if result.get('new_position') else (
+                "SKIP" if result.get('skip_reason') else (
+                "NO_SIGNAL" if not result.get('signal_generated') else "SIGNAL_NOT_EXECUTED"
+            ))
+            details = {
+                'positions_checked': result.get('positions_checked', 0),
+                'positions_closed': result.get('positions_closed', 0),
+                'signal_generated': result.get('signal_generated', False),
+                'new_position': result.get('new_position'),
+                'skip_reason': result.get('skip_reason', ''),
+                'errors': result.get('errors', []),
+            }
+            self.db.log_action(
+                action=f"IC_SCAN_{outcome}",
+                message=result.get('skip_reason') or result.get('errors', ['cycle complete'])[0] if result.get('errors') else 'cycle complete',
+                level="INFO" if outcome in ("TRADE", "SKIP") else "WARNING",
+                log_type="IC",
+                details=details,
+            )
+        except Exception:
+            pass  # Scan logging is best-effort
+
         return result
 
     def _check_all_exits(self) -> Dict[str, Any]:
