@@ -21,7 +21,7 @@ class TradierClient:
     """
     Minimal Tradier API client for option quotes and chain data.
 
-    Uses production Tradier API (not sandbox) for real market data.
+    Uses Tradier sandbox API for paper trading (configurable via DatabricksConfig).
     """
 
     def __init__(self, api_key: str = None, base_url: str = None):

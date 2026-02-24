@@ -20,17 +20,11 @@
 
 # COMMAND ----------
 
-# Tradier Sandbox API key (real quotes, paper execution)
-TRADIER_API_KEY = dbutils.widgets.get("tradier_api_key") if "tradier_api_key" in [w.name for w in dbutils.widgets.getAll()] else ""
+# Tradier Sandbox API key
+TRADIER_API_KEY = "iPidGGnYrhzjp6vGBBQw8HyqF0xj"
+TRADIER_ACCOUNT_ID = ""
 
-# If not set via widget, try secrets
-if not TRADIER_API_KEY:
-    try:
-        TRADIER_API_KEY = dbutils.secrets.get("ironforge", "tradier-sandbox-api-key")
-    except Exception:
-        pass
-
-TRADIER_ACCOUNT_ID = "VA39284047"
+# Use Tradier SANDBOX API for paper trading
 TRADIER_BASE_URL = "https://sandbox.tradier.com/v1"
 
 # Bot config

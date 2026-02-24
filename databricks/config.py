@@ -21,9 +21,9 @@ class DatabricksConfig:
     CATALOG = os.getenv("DATABRICKS_CATALOG", "alpha_prime")
     SCHEMA = os.getenv("DATABRICKS_SCHEMA", "default")
 
-    # Tradier API (for live market data)
+    # Tradier API (sandbox for paper trading, production for live)
     TRADIER_API_KEY = os.getenv("TRADIER_API_KEY", "")
-    TRADIER_BASE_URL = "https://api.tradier.com/v1"
+    TRADIER_BASE_URL = os.getenv("TRADIER_BASE_URL", "https://sandbox.tradier.com/v1")
 
     @classmethod
     def get_full_table_name(cls, table: str) -> str:
