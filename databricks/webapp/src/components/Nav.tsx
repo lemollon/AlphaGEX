@@ -14,9 +14,10 @@ export default function Nav() {
   const pathname = usePathname()
 
   return (
-    <nav className="border-b border-slate-800 bg-slate-900">
+    <nav className="border-b border-amber-900/30 bg-forge-bg/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-8">
-        <Link href="/" className="text-xl font-bold">
+        <Link href="/" className="text-xl font-bold flex items-center gap-1.5">
+          <span className="text-amber-500">&#9632;</span>
           <span className="text-white">Iron</span>
           <span className="text-amber-400">Forge</span>
         </Link>
@@ -29,7 +30,7 @@ export default function Nav() {
                 href={link.href}
                 className={`text-sm font-medium transition-colors ${
                   isActive
-                    ? 'text-white underline underline-offset-4'
+                    ? 'text-white underline underline-offset-4 decoration-amber-500'
                     : link.className || 'text-gray-400 hover:text-gray-200'
                 }`}
               >

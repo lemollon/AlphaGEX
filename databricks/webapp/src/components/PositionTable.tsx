@@ -17,17 +17,17 @@ interface Position {
 export default function PositionTable({ positions }: { positions: Position[] }) {
   if (!positions.length) {
     return (
-      <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-6 text-center">
-        <p className="text-gray-500">No open positions</p>
+      <div className="rounded-xl border border-forge-border bg-forge-card/80 p-6 text-center">
+        <p className="text-forge-muted">No open positions</p>
       </div>
     )
   }
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800/50 overflow-x-auto">
+    <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-slate-700 text-gray-400 text-xs">
+          <tr className="border-b border-forge-border text-forge-muted text-xs">
             <th className="text-left p-3">ID</th>
             <th className="text-left p-3">Exp</th>
             <th className="text-left p-3">Strikes</th>
@@ -40,7 +40,7 @@ export default function PositionTable({ positions }: { positions: Position[] }) 
         </thead>
         <tbody>
           {positions.map((pos) => (
-            <tr key={pos.position_id} className="border-b border-slate-800 hover:bg-slate-800/80">
+            <tr key={pos.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
               <td className="p-3 font-mono text-xs">{pos.position_id.slice(0, 16)}</td>
               <td className="p-3">{pos.expiration}</td>
               <td className="p-3 font-mono">

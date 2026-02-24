@@ -32,8 +32,8 @@ export default function EquityChart({
 }) {
   if (!data.length) {
     return (
-      <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-8 text-center">
-        <p className="text-gray-500">No closed trades yet</p>
+      <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
+        <p className="text-forge-muted">No closed trades yet</p>
       </div>
     )
   }
@@ -57,25 +57,25 @@ export default function EquityChart({
   }
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+    <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
       {title && <h3 className="text-sm font-medium text-gray-400 mb-3">{title}</h3>}
       <ResponsiveContainer width="100%" height={320}>
         <ComposedChart data={chartData}>
           <XAxis
             dataKey="timestamp"
             tickFormatter={formatDate}
-            stroke="#475569"
-            tick={{ fill: '#94a3b8', fontSize: 11 }}
+            stroke="#44403c"
+            tick={{ fill: '#a8a29e', fontSize: 11 }}
           />
           <YAxis
             tickFormatter={(v) => `$${v.toLocaleString()}`}
-            stroke="#475569"
-            tick={{ fill: '#94a3b8', fontSize: 11 }}
+            stroke="#44403c"
+            tick={{ fill: '#a8a29e', fontSize: 11 }}
             domain={['auto', 'auto']}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
-            labelStyle={{ color: '#94a3b8' }}
+            contentStyle={{ backgroundColor: '#1c1917', border: '1px solid #292524', borderRadius: 8 }}
+            labelStyle={{ color: '#a8a29e' }}
             formatter={(value: number) => [`$${value.toFixed(2)}`, 'Equity']}
             labelFormatter={(label) => {
               if (!label) return ''
@@ -89,12 +89,12 @@ export default function EquityChart({
           />
           <ReferenceLine
             y={startingCapital}
-            stroke="#6b7280"
+            stroke="#78716c"
             strokeDasharray="4 4"
             label={{
               value: `Start: $${startingCapital.toLocaleString()}`,
               position: 'insideTopLeft',
-              fill: '#6b7280',
+              fill: '#78716c',
               fontSize: 11,
             }}
           />
@@ -123,8 +123,8 @@ export function ComparisonChart({
 }) {
   if (!flameData.length && !sparkData.length) {
     return (
-      <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-8 text-center">
-        <p className="text-gray-500">No closed trades yet for either bot</p>
+      <div className="rounded-xl border border-forge-border bg-forge-card/80 p-8 text-center">
+        <p className="text-forge-muted">No closed trades yet for either bot</p>
       </div>
     )
   }
@@ -178,24 +178,24 @@ export function ComparisonChart({
   }
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-4">
+    <div className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
       <h3 className="text-sm font-medium text-gray-400 mb-3">Equity Comparison</h3>
       <ResponsiveContainer width="100%" height={380}>
         <ComposedChart data={chartData}>
           <XAxis
             dataKey="timestamp"
             tickFormatter={formatDate}
-            stroke="#475569"
-            tick={{ fill: '#94a3b8', fontSize: 11 }}
+            stroke="#44403c"
+            tick={{ fill: '#a8a29e', fontSize: 11 }}
           />
           <YAxis
             tickFormatter={(v) => `$${v.toLocaleString()}`}
-            stroke="#475569"
-            tick={{ fill: '#94a3b8', fontSize: 11 }}
+            stroke="#44403c"
+            tick={{ fill: '#a8a29e', fontSize: 11 }}
             domain={['auto', 'auto']}
           />
           <Tooltip
-            contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
+            contentStyle={{ backgroundColor: '#1c1917', border: '1px solid #292524', borderRadius: 8 }}
             formatter={(value: number, name: string) => [
               `$${value.toFixed(2)}`,
               name === 'flame' ? 'FLAME' : 'SPARK',
@@ -203,7 +203,7 @@ export function ComparisonChart({
           />
           <ReferenceLine
             y={startingCapital}
-            stroke="#6b7280"
+            stroke="#78716c"
             strokeDasharray="4 4"
           />
           <Area

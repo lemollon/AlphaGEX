@@ -20,15 +20,18 @@
 
 # COMMAND ----------
 
-# CHANGE THIS: Your Tradier production API key
+# Tradier Sandbox API key (real quotes, paper execution)
 TRADIER_API_KEY = dbutils.widgets.get("tradier_api_key") if "tradier_api_key" in [w.name for w in dbutils.widgets.getAll()] else ""
 
 # If not set via widget, try secrets
 if not TRADIER_API_KEY:
     try:
-        TRADIER_API_KEY = dbutils.secrets.get("ironforge", "tradier-api-key")
+        TRADIER_API_KEY = dbutils.secrets.get("ironforge", "tradier-sandbox-api-key")
     except Exception:
         pass
+
+TRADIER_ACCOUNT_ID = "VA39284047"
+TRADIER_BASE_URL = "https://sandbox.tradier.com/v1"
 
 # Bot config
 BOT_NAME = "SPARK"
@@ -99,13 +102,13 @@ def _bot_table(suffix):
 class TradierClient:
     """Minimal Tradier API client for option quotes and chain data."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: str = "https://sandbox.tradier.com/v1"):
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
         })
-        self.base_url = "https://api.tradier.com/v1"
+        self.base_url = base_url
 
     def _get(self, endpoint, params=None):
         try:
@@ -726,7 +729,7 @@ def run_cycle():
         logger.error("TRADIER_API_KEY not set! Set it via widget or secrets.")
         return {"action": "error", "reason": "No Tradier API key"}
 
-    tradier = TradierClient(TRADIER_API_KEY)
+    tradier = TradierClient(TRADIER_API_KEY, TRADIER_BASE_URL)
 
     # Step 1: ALWAYS manage positions
     managed, manage_pnl, mtm_failures = manage_positions(tradier, now, mtm_failures)
