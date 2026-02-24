@@ -13,7 +13,8 @@ This script:
 4. Tests TradierEODCloser safety net (the fixed env var lookup)
 5. Verifies ALL sandbox accounts are flat
 
-MUST be run during market hours (8:30 AM - 3:00 PM CT).
+*** MUST be run during market hours (8:30 AM - 2:45 PM CT) ***
+Tradier sandbox rejects orders after market close.
 
 Usage:
     python scripts/test_fortress_eod_close.py
@@ -57,6 +58,15 @@ def check(label, condition, detail=""):
         print(f"  ❌ {label}")
     if detail:
         print(f"     {detail}")
+
+
+def is_market_open(now):
+    """Check if we're within market hours when Tradier will accept orders."""
+    if now.weekday() >= 5:  # Saturday/Sunday
+        return False
+    market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+    return market_open <= now <= market_close
 
 
 def get_sandbox_positions(api_key, account_id, label="primary"):
@@ -111,6 +121,22 @@ def main():
     print(f"Weekday: {now.strftime('%A')}")
     print(f"Mode:    {'DRY RUN (no orders)' if args.dry_run else 'LIVE TEST (sandbox orders)'}")
     print()
+
+    # ======================================================================
+    # MARKET HOURS CHECK
+    # ======================================================================
+    if not is_market_open(now) and not args.dry_run:
+        print("  ⛔ MARKET IS CLOSED")
+        print()
+        print("  Tradier sandbox rejects ALL orders outside market hours.")
+        print("  This test MUST be run between 8:30 AM - 3:00 PM CT, Mon-Fri.")
+        print()
+        print(f"  Current time: {now.strftime('%I:%M %p CT %A')}")
+        print()
+        print("  Run with --dry-run to test credential checks without orders.")
+        print("  Or re-run this script during market hours tomorrow.")
+        print("=" * 70)
+        return False
 
     # ======================================================================
     # PHASE 0: Environment checks
@@ -183,32 +209,44 @@ def main():
         total_existing += len(existing_acct3)
 
     if total_existing > 0:
-        print(f"\n  Cleaning up {total_existing} existing position(s) across all accounts...")
-        cleanup_result = close_all_sandbox_accounts()
-        cleanup_closed = cleanup_result.get('total_positions_closed', 0)
-        cleanup_failed = cleanup_result.get('total_positions_failed', 0)
-        print(f"  Cleanup: closed {cleanup_closed}, failed {cleanup_failed}")
+        if is_market_open(now):
+            print(f"\n  Cleaning up {total_existing} existing position(s) across all accounts...")
+            cleanup_result = close_all_sandbox_accounts()
+            cleanup_closed = cleanup_result.get('total_positions_closed', 0)
+            cleanup_failed = cleanup_result.get('total_positions_failed', 0)
+            print(f"  Cleanup: closed {cleanup_closed}, failed {cleanup_failed}")
 
-        # Wait for settlement
-        time.sleep(3)
+            # Wait for settlement
+            time.sleep(3)
 
-        # Verify clean
-        remaining = get_sandbox_positions(primary_key, primary_id, "primary")
-        check("Primary sandbox cleaned", len(remaining) == 0,
-              f"Still {len(remaining)} position(s)" if remaining else "Clean")
+            # Verify clean
+            remaining = get_sandbox_positions(primary_key, primary_id, "primary")
+            check("Primary sandbox cleaned", len(remaining) == 0,
+                  f"Still {len(remaining)} position(s)" if remaining else "Clean")
+        else:
+            print(f"\n  ⚠️  Market closed — cannot clean up existing positions via orders")
+            print(f"  These positions will need to be closed during market hours")
+            check("Starting from clean state", False,
+                  "Cannot close positions after hours — run during market hours")
     else:
         print(f"  All accounts already flat — no cleanup needed")
         check("Starting from clean state", True)
 
     # Also close any Fortress DB positions that might be stale
     try:
-        from trading.fortress_v2 import FortressTrader, TradingMode
-        fortress = FortressTrader(mode=TradingMode.LIVE, initial_capital=200_000)
+        from trading.fortress_v2 import FortressTrader
+        from trading.fortress_v2.models import FortressConfig, TradingMode
+
+        config = FortressConfig()
+        config.mode = TradingMode.LIVE
+        fortress = FortressTrader(config=config)
         db_positions = fortress.get_positions()
         if db_positions:
             print(f"\n  Fortress DB has {len(db_positions)} stale position(s) — force closing...")
             cleanup_db = fortress.force_close_all(reason="TEST_CLEANUP")
             print(f"  DB cleanup: {cleanup_db.get('closed', 0)} closed, {cleanup_db.get('failed', 0)} failed")
+        else:
+            print(f"  Fortress DB: no stale positions")
     except Exception as e:
         print(f"  Fortress DB cleanup skipped: {e}")
 
@@ -240,7 +278,7 @@ def main():
     expected_move = spy_price * vix / math.sqrt(252) / 100
     print(f"  VIX: {vix:.1f}, Expected Move: ${expected_move:.2f}")
 
-    # Get nearest expiration
+    # Get expirations
     expirations = tradier.get_option_expirations('SPY')
     check("SPY expirations available", bool(expirations))
 
@@ -248,25 +286,32 @@ def main():
         print("\n❌ No expirations available. Is market open?")
         return False
 
-    # Pick nearest expiration (0-1 DTE)
+    # Pick a FUTURE expiration (at least 1 DTE to avoid expired symbols)
     today = now.date()
     expiration = None
     for exp in expirations:
         exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
         days_to_exp = (exp_date - today).days
-        if 0 <= days_to_exp <= 2:
+        if 1 <= days_to_exp <= 5:
             expiration = exp
             break
     if not expiration:
+        # Fallback: first expiration that's in the future
+        for exp in expirations:
+            exp_date = datetime.strptime(exp, '%Y-%m-%d').date()
+            if exp_date > today:
+                expiration = exp
+                break
+    if not expiration and expirations:
         expiration = expirations[0]
 
     print(f"  Using expiration: {expiration}")
 
-    # Calculate IC strikes (~1 SD away)
+    # Calculate IC strikes (~1 SD away), use $1 strikes for SPY
     spread_width = 2.0
-    put_short = round((spy_price - expected_move) * 2) / 2  # Round to 0.50
+    put_short = round(spy_price - expected_move)  # Round to $1
     put_long = put_short - spread_width
-    call_short = round((spy_price + expected_move) * 2) / 2
+    call_short = round(spy_price + expected_move)
     call_long = call_short + spread_width
 
     print(f"  IC Strikes: {put_long}/{put_short}P — {call_short}/{call_long}C")
@@ -274,7 +319,7 @@ def main():
 
     if args.dry_run:
         print("\n  🔸 DRY RUN — Skipping order placement")
-        print("  🔸 Re-run without --dry-run to execute real test")
+        print("  🔸 Re-run without --dry-run during market hours to execute real test")
         print()
         print_summary()
         return True
@@ -301,24 +346,25 @@ def main():
           f"Order ID: {order_id}, Status: {order_status}" if order_id else f"Response: {ic_result}")
 
     if not order_id:
-        print("\n❌ Order submission failed. Check sandbox buying power.")
-        print("   Reset sandbox at: https://dash.tradier.com/")
+        print("\n⚠️  Order submission failed. Possible causes:")
+        print("   - Market is closed (Tradier rejects after-hours orders)")
+        print("   - Sandbox buying power is $0 (reset at https://dash.tradier.com/)")
+        print("   - Option symbols don't exist for this expiration")
         print()
-        print_summary()
-        return False
+        print("   Continuing to test close logic with any existing positions...")
 
-    # Wait for fill
-    print(f"  Waiting for fill...")
-    time.sleep(3)
+    if order_id:
+        # Wait for fill
+        print(f"  Waiting for fill...")
+        time.sleep(5)
 
-    # Verify positions exist on sandbox
-    positions_before = get_sandbox_positions(primary_key, primary_id, "primary")
-    check("Position(s) exist on primary sandbox", len(positions_before) > 0,
-          f"Found {len(positions_before)} position(s)")
-
-    if len(positions_before) == 0:
-        print("\n⚠️  No positions found after order. Sandbox may not have filled.")
-        print("   Continuing with close tests anyway (TradierEODCloser will verify).")
+        # Verify positions exist on sandbox
+        positions_before = get_sandbox_positions(primary_key, primary_id, "primary")
+        # Filter to only positions we just opened (matching our expiration)
+        new_positions = [p for p in positions_before if expiration.replace('-', '') in p['symbol']]
+        check("New position(s) exist on primary sandbox", len(new_positions) > 0,
+              f"Found {len(new_positions)} new position(s) from our IC" if new_positions
+              else f"Total positions: {len(positions_before)} (may include stale ones)")
 
     # ======================================================================
     # PHASE 2: Test Fortress force_close_all() — the fixed code path
@@ -329,9 +375,12 @@ def main():
     print("─" * 70)
 
     try:
-        from trading.fortress_v2 import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader
+        from trading.fortress_v2.models import FortressConfig, TradingMode
 
-        fortress = FortressTrader(mode=TradingMode.LIVE, initial_capital=200_000)
+        config = FortressConfig()
+        config.mode = TradingMode.LIVE
+        fortress = FortressTrader(config=config)
 
         # Check if Fortress has positions in its DB
         db_positions = fortress.get_positions()
@@ -359,6 +408,8 @@ def main():
 
     except Exception as e:
         check("Fortress force_close_all() executes without crash", False, str(e))
+        import traceback
+        traceback.print_exc()
 
     # ======================================================================
     # PHASE 3: Test TradierEODCloser — the independent safety net
