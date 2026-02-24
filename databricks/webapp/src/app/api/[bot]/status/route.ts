@@ -13,32 +13,42 @@ export async function GET(
   const dte = bot === 'flame' ? '2DTE' : '1DTE'
 
   try {
-    const [accountRows, positionCountRows, heartbeatRows] = await Promise.all([
-      query(`
-        SELECT starting_capital, current_balance, cumulative_pnl,
-               total_trades, collateral_in_use, buying_power,
-               high_water_mark, max_drawdown, is_active
-        FROM ${botTable(bot, 'paper_account')}
-        WHERE is_active = TRUE AND dte_mode = '${dte}'
-        ORDER BY id DESC LIMIT 1
-      `),
-      query(`
-        SELECT COUNT(*) as cnt
-        FROM ${botTable(bot, 'positions')}
-        WHERE status = 'open' AND dte_mode = '${dte}'
-      `),
-      query(`
-        SELECT scan_count, last_heartbeat, status
-        FROM ${t('bot_heartbeats')}
-        WHERE bot_name = '${bot.toUpperCase()}'
-      `),
-    ])
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows] =
+      await Promise.all([
+        query(`
+          SELECT starting_capital, current_balance, cumulative_pnl,
+                 total_trades, collateral_in_use, buying_power,
+                 high_water_mark, max_drawdown, is_active
+          FROM ${botTable(bot, 'paper_account')}
+          WHERE is_active = TRUE AND dte_mode = '${dte}'
+          ORDER BY id DESC LIMIT 1
+        `),
+        query(`
+          SELECT COUNT(*) as cnt
+          FROM ${botTable(bot, 'positions')}
+          WHERE status = 'open' AND dte_mode = '${dte}'
+        `),
+        query(`
+          SELECT scan_count, last_heartbeat, status
+          FROM ${t('bot_heartbeats')}
+          WHERE bot_name = '${bot.toUpperCase()}'
+        `),
+        query(`
+          SELECT unrealized_pnl, open_positions, snapshot_time
+          FROM ${botTable(bot, 'equity_snapshots')}
+          WHERE dte_mode = '${dte}'
+          ORDER BY snapshot_time DESC
+          LIMIT 1
+        `),
+      ])
 
     const acct = accountRows[0]
     const balance = num(acct?.current_balance)
     const startingCapital = num(acct?.starting_capital)
-    const pnl = num(acct?.cumulative_pnl)
-    const returnPct = startingCapital > 0 ? (pnl / startingCapital) * 100 : 0
+    const realizedPnl = num(acct?.cumulative_pnl)
+    const unrealizedPnl = num(snapshotRows[0]?.unrealized_pnl)
+    const totalPnl = realizedPnl + unrealizedPnl
+    const returnPct = startingCapital > 0 ? (totalPnl / startingCapital) * 100 : 0
 
     const hb = heartbeatRows[0]
 
@@ -51,7 +61,9 @@ export async function GET(
       account: {
         starting_capital: startingCapital,
         balance,
-        cumulative_pnl: pnl,
+        cumulative_pnl: realizedPnl,
+        unrealized_pnl: unrealizedPnl,
+        total_pnl: Math.round(totalPnl * 100) / 100,
         return_pct: Math.round(returnPct * 100) / 100,
         total_trades: int(acct?.total_trades),
         collateral_in_use: num(acct?.collateral_in_use),
@@ -61,6 +73,7 @@ export async function GET(
       },
       open_positions: int(positionCountRows[0]?.cnt),
       last_scan: hb?.last_heartbeat || null,
+      last_snapshot: snapshotRows[0]?.snapshot_time || null,
       scan_count: int(hb?.scan_count),
     })
   } catch (err: any) {
