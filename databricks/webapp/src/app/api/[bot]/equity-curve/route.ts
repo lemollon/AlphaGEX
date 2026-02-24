@@ -4,13 +4,14 @@ import { query, botTable, num, validateBot } from '@/lib/databricks'
 export const dynamic = 'force-dynamic'
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { bot: string } },
 ) {
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
   const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const period = req.nextUrl.searchParams.get('period') || 'all'
 
   try {
     const [capitalRows, curveRows] = await Promise.all([
@@ -36,7 +37,8 @@ export async function GET(
 
     const startingCapital = num(capitalRows[0]?.starting_capital) || 5000
 
-    const curve = curveRows.map((row) => {
+    // Build full curve with correct cumulative P&L
+    let curve = curveRows.map((row) => {
       const cumPnl = num(row.cumulative_pnl)
       return {
         timestamp: row.close_time,
@@ -46,7 +48,30 @@ export async function GET(
       }
     })
 
-    return NextResponse.json({ starting_capital: startingCapital, curve })
+    // Apply period filter client-side so cumulative P&L stays correct
+    if (period !== 'all' && curve.length > 0) {
+      const now = new Date()
+      let cutoff: Date
+      switch (period) {
+        case '1d':
+          cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+          break
+        case '1w':
+          cutoff = new Date(now.getTime() - 7 * 86_400_000)
+          break
+        case '1m':
+          cutoff = new Date(now.getTime() - 30 * 86_400_000)
+          break
+        case '3m':
+          cutoff = new Date(now.getTime() - 90 * 86_400_000)
+          break
+        default:
+          cutoff = new Date(0)
+      }
+      curve = curve.filter((pt) => pt.timestamp && new Date(pt.timestamp) >= cutoff)
+    }
+
+    return NextResponse.json({ starting_capital: startingCapital, curve, period })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })
   }

@@ -383,8 +383,8 @@ def db_save_equity_snapshot(balance, realized_pnl=0, unrealized_pnl=0, open_posi
     note_safe = note.replace("'", "''")
     spark.sql(f"""
         INSERT INTO {_bot_table('equity_snapshots')}
-        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-        VALUES ({balance}, {realized_pnl}, {unrealized_pnl}, {open_positions}, '{note_safe}', '{DTE_MODE}')
+        (snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, created_at)
+        VALUES (CURRENT_TIMESTAMP(), {balance}, {realized_pnl}, {unrealized_pnl}, {open_positions}, '{note_safe}', '{DTE_MODE}', CURRENT_TIMESTAMP())
     """)
 
 
@@ -737,11 +737,36 @@ def run_cycle():
         logger.info(f"  {window_msg}")
         return {"action": "outside_window", "reason": window_msg}
 
-    # Step 3: Check for open positions
-    if db_get_open_positions():
+    # Step 3: Check for open positions — monitor and save equity snapshot
+    open_positions = db_get_open_positions()
+    if open_positions:
+        # Calculate unrealized P&L via live Tradier quotes
+        unrealized_pnl = 0.0
+        for pos in open_positions:
+            mtm = get_ic_mark_to_market(
+                tradier,
+                float(pos["put_short_strike"]),
+                float(pos["put_long_strike"]),
+                float(pos["call_short_strike"]),
+                float(pos["call_long_strike"]),
+                str(pos["expiration"]),
+            )
+            if mtm is not None:
+                entry_credit = float(pos["total_credit"])
+                contracts = int(pos["contracts"])
+                unrealized_pnl += round((entry_credit - mtm) * 100 * contracts, 2)
+
+        account = db_get_paper_account()
+        db_save_equity_snapshot(
+            account["balance"],
+            realized_pnl=0,
+            unrealized_pnl=unrealized_pnl,
+            open_positions=len(open_positions),
+            note=f"Monitoring {len(open_positions)} position(s)",
+        )
         db_update_heartbeat("active", "monitoring")
-        logger.info("  Monitoring open position(s)")
-        return {"action": "monitoring"}
+        logger.info(f"  Monitoring {len(open_positions)} position(s), unrealized: ${unrealized_pnl:.2f}")
+        return {"action": "monitoring", "unrealized_pnl": unrealized_pnl, "positions": len(open_positions)}
 
     # Step 4: Already traded today?
     if db_has_traded_today(today_str):
