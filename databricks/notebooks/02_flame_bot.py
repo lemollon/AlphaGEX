@@ -710,11 +710,44 @@ def manage_positions(tradier, now, mtm_failures):
 
 # COMMAND ----------
 
+def _save_cycle_snapshot(tradier_client, action):
+    """Save an equity snapshot every cycle so intraday chart has continuous 5-min data."""
+    try:
+        account = db_get_paper_account()
+        positions = db_get_open_positions()
+        unrealized = 0.0
+        if tradier_client:
+            for pos in positions:
+                mtm = get_ic_mark_to_market(
+                    tradier_client,
+                    float(pos["put_short_strike"]),
+                    float(pos["put_long_strike"]),
+                    float(pos["call_short_strike"]),
+                    float(pos["call_long_strike"]),
+                    str(pos["expiration"]),
+                )
+                if mtm is not None:
+                    entry_credit = float(pos["total_credit"])
+                    contracts = int(pos["contracts"])
+                    unrealized += (entry_credit - mtm) * 100 * contracts
+        db_save_equity_snapshot(
+            account["balance"],
+            realized_pnl=account["cumulative_pnl"],
+            unrealized_pnl=round(unrealized, 2),
+            open_positions=len(positions),
+            note=f"cycle:{action}",
+        )
+    except Exception as e:
+        logger.warning(f"Periodic snapshot failed: {e}")
+
+
 def run_cycle():
     """Execute one complete trading cycle."""
     now = datetime.now(CENTRAL_TZ)
     today_str = now.strftime("%Y-%m-%d")
     mtm_failures = {}
+    tradier = None
+    result = {"action": "unknown"}
 
     logger.info(f"=== {BOT_NAME} SCAN @ {now.strftime('%H:%M:%S')} CT ===")
 
@@ -724,6 +757,20 @@ def run_cycle():
         return {"action": "error", "reason": "No Tradier API key"}
 
     tradier = TradierClient(TRADIER_API_KEY, TRADIER_BASE_URL)
+
+    try:
+        result = _run_cycle_inner(tradier, now, today_str, mtm_failures)
+        return result
+    except Exception as e:
+        logger.error(f"Run cycle failed: {e}")
+        result = {"action": "error", "reason": str(e)}
+        return result
+    finally:
+        _save_cycle_snapshot(tradier, result.get("action", "unknown"))
+
+
+def _run_cycle_inner(tradier, now, today_str, mtm_failures):
+    """Inner cycle logic — called by run_cycle() with finally snapshot."""
 
     # Step 1: ALWAYS manage positions
     managed, manage_pnl, mtm_failures = manage_positions(tradier, now, mtm_failures)
