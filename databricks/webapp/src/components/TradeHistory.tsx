@@ -26,17 +26,17 @@ const reasonColors: Record<string, string> = {
 export default function TradeHistory({ trades }: { trades: Trade[] }) {
   if (!trades.length) {
     return (
-      <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-6 text-center">
-        <p className="text-gray-500">No closed trades yet</p>
+      <div className="rounded-xl border border-forge-border bg-forge-card/80 p-6 text-center">
+        <p className="text-forge-muted">No closed trades yet</p>
       </div>
     )
   }
 
   return (
-    <div className="rounded-lg border border-slate-700 bg-slate-800/50 overflow-x-auto">
+    <div className="rounded-xl border border-forge-border bg-forge-card/80 overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-slate-700 text-gray-400 text-xs">
+          <tr className="border-b border-forge-border text-forge-muted text-xs">
             <th className="text-left p-3">Closed</th>
             <th className="text-left p-3">Strikes</th>
             <th className="text-right p-3">Qty</th>
@@ -50,7 +50,7 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
           {trades.map((trade) => {
             const positive = trade.realized_pnl >= 0
             return (
-              <tr key={trade.position_id} className="border-b border-slate-800 hover:bg-slate-800/80">
+              <tr key={trade.position_id} className="border-b border-forge-border/50 hover:bg-forge-border/20">
                 <td className="p-3 text-xs text-gray-400">{trade.close_time?.slice(0, 16)}</td>
                 <td className="p-3 font-mono">
                   {trade.put_long_strike}/{trade.put_short_strike}P-{trade.call_short_strike}/{trade.call_long_strike}C
@@ -62,7 +62,7 @@ export default function TradeHistory({ trades }: { trades: Trade[] }) {
                   {positive ? '+' : ''}${trade.realized_pnl.toFixed(2)}
                 </td>
                 <td className="p-3">
-                  <span className={`text-xs px-2 py-0.5 rounded ${reasonColors[trade.close_reason] || 'bg-slate-600/30 text-gray-400'}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded ${reasonColors[trade.close_reason] || 'bg-stone-600/30 text-gray-400'}`}>
                     {trade.close_reason}
                   </span>
                 </td>

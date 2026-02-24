@@ -3,5 +3,14 @@
 @tailwind utilities;
 
 body {
-  @apply bg-slate-950 text-gray-100;
+  @apply bg-forge-bg text-gray-100;
+  background-image:
+    radial-gradient(ellipse at 50% -10%, rgba(245,158,11,0.07) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(217,119,6,0.03) 0%, transparent 40%);
+}
+
+/* Fire divider line */
+.fire-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(245,158,11,0.4), rgba(217,119,6,0.6), rgba(245,158,11,0.4), transparent);
 }

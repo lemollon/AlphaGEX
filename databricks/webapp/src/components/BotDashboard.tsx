@@ -33,7 +33,7 @@ export default function BotDashboard({
 
   if (statusErr) {
     return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4">
         <p className="text-red-400">Failed to load {bot.toUpperCase()} status: {statusErr.message}</p>
       </div>
     )
@@ -47,13 +47,13 @@ export default function BotDashboard({
         <h1 className={`text-2xl font-bold ${accent === 'amber' ? 'text-amber-400' : 'text-blue-400'}`}>
           {bot.toUpperCase()}
         </h1>
-        <span className="text-gray-500">{bot === 'flame' ? '2DTE' : '1DTE'} Iron Condor</span>
+        <span className="text-forge-muted">{bot === 'flame' ? '2DTE' : '1DTE'} Iron Condor</span>
       </div>
 
       {status && <StatusCard data={status} accent={accent} />}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-700">
+      <div className="flex gap-1 border-b border-forge-border">
         {TABS.map((t) => (
           <button
             key={t}

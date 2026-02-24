@@ -14,7 +14,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="font-sans antialiased">
+      <body className="font-sans antialiased min-h-screen">
         <Nav />
         <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
       </body>
