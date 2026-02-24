@@ -313,6 +313,37 @@ class Trader:
             self.db.log("ERROR", f"Run cycle error: {e}")
             self.last_scan_result = result
             return result
+        finally:
+            # Save an equity snapshot every cycle so intraday chart has 5-min data
+            self._save_periodic_snapshot(result.get("action", "unknown"))
+
+    def _save_periodic_snapshot(self, action: str):
+        """Save an equity snapshot every cycle for intraday chart continuity."""
+        try:
+            account = self.db.get_paper_account()
+            positions = self.db.get_open_positions()
+            unrealized = 0.0
+
+            for pos in positions:
+                mtm = self.signal_generator.get_ic_mark_to_market(
+                    put_short=pos.put_short_strike,
+                    put_long=pos.put_long_strike,
+                    call_short=pos.call_short_strike,
+                    call_long=pos.call_long_strike,
+                    expiration=pos.expiration,
+                )
+                if mtm is not None:
+                    unrealized += (pos.total_credit - mtm) * 100 * pos.contracts
+
+            self.db.save_equity_snapshot(
+                balance=account.balance,
+                realized_pnl=account.cumulative_pnl,
+                unrealized_pnl=round(unrealized, 2),
+                open_positions=len(positions),
+                note=f"cycle:{action}",
+            )
+        except Exception as e:
+            logger.warning(f"{self.config.bot_name}: Periodic snapshot failed: {e}")
 
     def _manage_positions(self, now: datetime) -> Tuple[int, float]:
         """Manage open positions: profit target, stop loss, EOD cutoff."""
