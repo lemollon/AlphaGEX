@@ -1603,7 +1603,7 @@ class JubileeICSignalGenerator:
         # Get market data
         market = self.get_market_data()
         if not market:
-            logger.warning("JUBILEE IC: No market data available")
+            logger.warning("JUBILEE IC: No market data available — Tradier SPX/VIX quotes failed. Check TRADIER_API_KEY.")
             return None
 
         spot = market['spot_price']
@@ -1693,8 +1693,9 @@ class JubileeICSignalGenerator:
 
         if not pricing:
             logger.warning(
-                "JUBILEE IC: Tradier quotes unavailable after retries - skipping signal. "
-                "Will retry on next scan cycle."
+                f"JUBILEE IC: Tradier option quotes unavailable for {expiration} "
+                f"P {strikes['put_short']}/{strikes['put_long']} C {strikes['call_short']}/{strikes['call_long']} — "
+                f"skipping signal. Will retry next cycle."
             )
             return None
 
