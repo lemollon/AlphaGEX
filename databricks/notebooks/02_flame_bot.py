@@ -20,30 +20,9 @@
 
 # COMMAND ----------
 
-# Tradier API key — loaded from widget, secrets, or environment
-TRADIER_API_KEY = dbutils.widgets.get("tradier_api_key") if "tradier_api_key" in [w.name for w in dbutils.widgets.getAll()] else ""
-
-# If not set via widget, try Databricks secrets (multiple possible names)
-if not TRADIER_API_KEY:
-    for secret_name in ["tradier-api-key", "tradier-sandbox-api-key"]:
-        try:
-            TRADIER_API_KEY = dbutils.secrets.get("ironforge", secret_name)
-            if TRADIER_API_KEY:
-                break
-        except Exception:
-            pass
-
-# Last resort: environment variable
-if not TRADIER_API_KEY:
-    import os
-    TRADIER_API_KEY = os.environ.get("TRADIER_API_KEY", "")
-
-# Account ID from secrets (optional, for future live trading)
+# Tradier Sandbox API key
+TRADIER_API_KEY = "iPidGGnYrhzjp6vGBBQw8HyqF0xj"
 TRADIER_ACCOUNT_ID = ""
-try:
-    TRADIER_ACCOUNT_ID = dbutils.secrets.get("ironforge", "tradier-account-id")
-except Exception:
-    pass
 
 # Use Tradier SANDBOX API for paper trading
 TRADIER_BASE_URL = "https://sandbox.tradier.com/v1"
