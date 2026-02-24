@@ -1230,45 +1230,96 @@ async def get_ic_status():
     - Open positions and unrealized P&L
     - Performance metrics
     - Available capital for new trades
+
+    FIX: Uses JubileeDatabase directly as primary path, with JubileeICTrader
+    as optional enhancement. The trader constructor can fail (ProphetAdvisor,
+    Tradier init, etc.), which would make this endpoint return 500 — but we
+    always have data in the database to show.
     """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    # Try full trader for complete status (includes trading window, cooldown, capital)
+    if JubileeICTrader:
+        try:
+            trader = JubileeICTrader()
+            status = trader.get_status()
+            return {
+                "available": True,
+                "status": status,
+            }
+        except Exception as e:
+            logger.warning(f"IC status via trader failed ({e}), falling back to DB-direct")
+
+    # Fallback: DB-direct status (always works if DB is available)
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
-        status = trader.get_status()
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        ic_positions = db.get_open_ic_positions()
+        ic_performance = db.get_ic_performance()
+        ic_config = db.load_ic_config()
+
+        total_unrealized = sum(p.unrealized_pnl for p in ic_positions)
+        total_credit = sum(p.total_credit_received for p in ic_positions)
+
         return {
             "available": True,
-            "status": status,
+            "status": {
+                'enabled': ic_config.enabled if ic_config else True,
+                'trading_active': False,  # Can't determine without trader
+                'inactive_reason': 'Trader unavailable — showing DB-only status',
+                'mode': ic_config.mode.value if ic_config and hasattr(ic_config, 'mode') else 'paper',
+                'ticker': ic_config.ticker if ic_config else 'SPX',
+                'open_positions': len(ic_positions),
+                'total_credit_outstanding': total_credit,
+                'total_unrealized_pnl': total_unrealized,
+                'performance': ic_performance,
+                'in_trading_window': None,
+                'in_cooldown': None,
+                'available_capital': None,
+                'can_trade': None,
+                'daily_trades': db.get_daily_ic_trades_count(),
+                'last_updated': datetime.now().isoformat(),
+            },
         }
     except Exception as e:
-        logger.error(f"Error getting IC status: {e}")
+        logger.error(f"Error getting IC status (DB fallback): {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/ic/config")
 async def get_ic_config():
-    """Get current IC trading configuration"""
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    """
+    Get current IC trading configuration.
+
+    FIX: Uses JubileeDatabase directly to load config. No need
+    for full JubileeICTrader (signal generator, executor, etc.)
+    just to read configuration from the database.
+    """
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        config = db.load_ic_config()
+        if not config:
+            from trading.jubilee.models import JubileeICConfig
+            config = JubileeICConfig()
+
         return {
             "available": True,
-            "config": trader.config.to_dict() if hasattr(trader.config, 'to_dict') else {
-                'enabled': trader.config.enabled,
-                'mode': trader.config.mode.value,
-                'ticker': trader.config.ticker,
-                'spread_width': trader.config.spread_width,
-                'short_put_delta': trader.config.short_put_delta,
-                'short_call_delta': trader.config.short_call_delta,
-                'max_positions': trader.config.max_positions,
-                'max_trades_per_day': trader.config.max_trades_per_day,
-                'require_oracle_approval': trader.config.require_oracle_approval,
-                'min_oracle_confidence': trader.config.min_oracle_confidence,
-                'stop_loss_pct': trader.config.stop_loss_pct,
-                'profit_target_pct': trader.config.profit_target_pct,
+            "config": config.to_dict() if hasattr(config, 'to_dict') else {
+                'enabled': config.enabled,
+                'mode': config.mode.value if hasattr(config.mode, 'value') else str(config.mode),
+                'ticker': config.ticker,
+                'spread_width': config.spread_width,
+                'short_put_delta': config.short_put_delta,
+                'short_call_delta': config.short_call_delta,
+                'max_positions': config.max_positions,
+                'max_trades_per_day': config.max_trades_per_day,
+                'require_oracle_approval': config.require_oracle_approval,
+                'min_oracle_confidence': config.min_oracle_confidence,
+                'stop_loss_pct': config.stop_loss_pct,
+                'profit_target_pct': config.profit_target_pct,
             },
         }
     except Exception as e:
@@ -1278,26 +1329,35 @@ async def get_ic_config():
 
 @router.post("/ic/config")
 async def update_ic_config(request: ICConfigUpdateRequest):
-    """Update IC trading configuration"""
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    """
+    Update IC trading configuration.
+
+    FIX: Uses JubileeDatabase directly to load and save config.
+    """
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        config = db.load_ic_config()
+        if not config:
+            from trading.jubilee.models import JubileeICConfig
+            config = JubileeICConfig()
+
         updates = request.dict(exclude_none=True)
 
         # Apply updates to config
         for key, value in updates.items():
-            if hasattr(trader.config, key):
-                setattr(trader.config, key, value)
+            if hasattr(config, key):
+                setattr(config, key, value)
 
         # Save to database
-        trader.db.save_ic_config(trader.config)
+        db.save_ic_config(config)
 
         return {
             "success": True,
             "updated_fields": list(updates.keys()),
-            "config": trader.config.to_dict() if hasattr(trader.config, 'to_dict') else updates,
+            "config": config.to_dict() if hasattr(config, 'to_dict') else updates,
         }
     except Exception as e:
         logger.error(f"Error updating IC config: {e}")
@@ -1317,9 +1377,11 @@ async def reset_ic_config_aggressive():
     - max_capital_per_trade_pct: 10%
 
     Use this when trades are showing 1 contract instead of expected 50.
+
+    FIX: Uses JubileeDatabase directly to save config.
     """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
         from trading.jubilee.models import JubileeICConfig
@@ -1335,8 +1397,8 @@ async def reset_ic_config_aggressive():
         aggressive_config.max_capital_per_trade_pct = 10.0
 
         # Save to database
-        trader = JubileeICTrader()
-        trader.db.save_ic_config(aggressive_config)
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        db.save_ic_config(aggressive_config)
 
         return {
             "success": True,
@@ -1367,17 +1429,55 @@ async def get_ic_positions():
     - Entry credit and current value
     - Unrealized P&L
     - Prophet confidence at entry
+
+    FIX: Uses JubileeDatabase directly. Position data is in the DB —
+    no need for full JubileeICTrader (signal generator, executor, Tradier).
     """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
-        positions = trader.get_positions()
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        positions = db.get_open_ic_positions()
+
+        # Convert to dicts (same logic as JubileeICTrader._position_to_dict)
+        position_dicts = []
+        for p in positions:
+            position_dicts.append({
+                'position_id': p.position_id,
+                'source_box_position_id': p.source_box_position_id,
+                'ticker': p.ticker,
+                'put_short_strike': p.put_short_strike,
+                'put_long_strike': p.put_long_strike,
+                'call_short_strike': p.call_short_strike,
+                'call_long_strike': p.call_long_strike,
+                'put_spread': f"{p.put_long_strike}/{p.put_short_strike}",
+                'call_spread': f"{p.call_short_strike}/{p.call_long_strike}",
+                'spread_width': p.spread_width,
+                'expiration': p.expiration,
+                'dte': p.current_dte,
+                'contracts': p.contracts,
+                'entry_credit': p.entry_credit,
+                'total_credit_received': p.total_credit_received,
+                'max_loss': p.max_loss,
+                'current_value': p.current_value,
+                'unrealized_pnl': p.unrealized_pnl,
+                'pnl_pct': (p.unrealized_pnl / p.total_credit_received * 100) if p.total_credit_received else 0,
+                'status': p.status.value if hasattr(p.status, 'value') else str(p.status),
+                'open_time': p.open_time.isoformat() if p.open_time else None,
+                'oracle_confidence': p.oracle_confidence_at_entry,
+                'oracle_reasoning': p.oracle_reasoning,
+                'spot_at_entry': p.spot_at_entry,
+                'vix_at_entry': p.vix_at_entry,
+                'gamma_regime_at_entry': p.gamma_regime_at_entry,
+                'stop_loss_pct': p.stop_loss_pct,
+                'profit_target_pct': p.profit_target_pct,
+            })
+
         return {
             "available": True,
-            "count": len(positions),
-            "positions": positions,
+            "count": len(position_dicts),
+            "positions": position_dicts,
         }
     except Exception as e:
         logger.error(f"Error getting IC positions: {e}")
@@ -1386,20 +1486,54 @@ async def get_ic_positions():
 
 @router.get("/ic/positions/{position_id}")
 async def get_ic_position(position_id: str):
-    """Get a specific IC position by ID"""
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    """
+    Get a specific IC position by ID.
+
+    FIX: Uses JubileeDatabase directly.
+    """
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
-        position = trader.db.get_ic_position(position_id)
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        position = db.get_ic_position(position_id)
 
         if not position:
             raise HTTPException(status_code=404, detail="Position not found")
 
+        p = position
         return {
             "available": True,
-            "position": trader._position_to_dict(position),
+            "position": {
+                'position_id': p.position_id,
+                'source_box_position_id': p.source_box_position_id,
+                'ticker': p.ticker,
+                'put_short_strike': p.put_short_strike,
+                'put_long_strike': p.put_long_strike,
+                'call_short_strike': p.call_short_strike,
+                'call_long_strike': p.call_long_strike,
+                'put_spread': f"{p.put_long_strike}/{p.put_short_strike}",
+                'call_spread': f"{p.call_short_strike}/{p.call_long_strike}",
+                'spread_width': p.spread_width,
+                'expiration': p.expiration,
+                'dte': p.current_dte,
+                'contracts': p.contracts,
+                'entry_credit': p.entry_credit,
+                'total_credit_received': p.total_credit_received,
+                'max_loss': p.max_loss,
+                'current_value': p.current_value,
+                'unrealized_pnl': p.unrealized_pnl,
+                'pnl_pct': (p.unrealized_pnl / p.total_credit_received * 100) if p.total_credit_received else 0,
+                'status': p.status.value if hasattr(p.status, 'value') else str(p.status),
+                'open_time': p.open_time.isoformat() if p.open_time else None,
+                'oracle_confidence': p.oracle_confidence_at_entry,
+                'oracle_reasoning': p.oracle_reasoning,
+                'spot_at_entry': p.spot_at_entry,
+                'vix_at_entry': p.vix_at_entry,
+                'gamma_regime_at_entry': p.gamma_regime_at_entry,
+                'stop_loss_pct': p.stop_loss_pct,
+                'profit_target_pct': p.profit_target_pct,
+            },
         }
     except HTTPException:
         raise
@@ -1410,16 +1544,44 @@ async def get_ic_position(position_id: str):
 
 @router.post("/ic/positions/close")
 async def close_ic_position(request: ICClosePositionRequest):
-    """Manually close an IC position"""
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    """
+    Manually close an IC position.
+
+    FIX: Falls back to DB-direct close if JubileeICTrader fails to init.
+    The DB close sets status=closed and realized_pnl based on last MTM.
+    """
+    # Try full trader path first (does MTM quote fetch + Tradier live close)
+    if JubileeICTrader:
+        try:
+            trader = JubileeICTrader()
+            result = trader.close_position(request.position_id, request.reason)
+            return result
+        except Exception as e:
+            logger.warning(f"IC close via trader failed ({e}), trying DB-direct fallback")
+
+    # Fallback: DB-direct close (uses last known MTM value)
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC not available")
 
     try:
-        trader = JubileeICTrader()
-        result = trader.close_position(request.position_id, request.reason)
-        return result
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        position = db.get_ic_position(request.position_id)
+        if not position:
+            raise HTTPException(status_code=404, detail="Position not found")
+
+        # Use last known value for exit price
+        exit_price = position.current_value if position.current_value else position.entry_credit
+        success = db.close_ic_position(request.position_id, exit_price, request.reason)
+        return {
+            'success': success,
+            'position_id': request.position_id,
+            'close_reason': request.reason,
+            'method': 'db_direct_fallback',
+        }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error closing IC position: {e}")
+        logger.error(f"Error closing IC position (DB fallback): {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1427,13 +1589,17 @@ async def close_ic_position(request: ICClosePositionRequest):
 
 @router.get("/ic/closed-trades")
 async def get_ic_closed_trades(limit: int = Query(50, ge=1, le=500)):
-    """Get closed IC trade history"""
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    """
+    Get closed IC trade history.
+
+    FIX: Uses JubileeDatabase directly — purely a DB read.
+    """
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
-        trades = trader.get_closed_trades(limit)
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        trades = db.get_ic_closed_trades(limit)
         return {
             "available": True,
             "count": len(trades),
@@ -1455,13 +1621,15 @@ async def get_ic_performance():
     - Profit factor
     - Today's stats
     - Streak information
+
+    FIX: Uses JubileeDatabase directly — purely a DB read.
     """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
-        performance = trader.db.get_ic_performance()
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        performance = db.get_ic_performance()
         return {
             "available": True,
             "performance": performance,
@@ -1588,13 +1756,17 @@ async def get_ic_logs(limit: int = Query(50, ge=1, le=500)):
 
 @router.get("/ic/signals/recent")
 async def get_recent_ic_signals(limit: int = Query(50, ge=1, le=200)):
-    """Get recent IC trading signals (both executed and skipped)"""
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
+    """
+    Get recent IC trading signals (both executed and skipped).
+
+    FIX: Uses JubileeDatabase directly — purely a DB read.
+    """
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        trader = JubileeICTrader()
-        signals = trader.db.get_recent_ic_signals(limit)
+        db = _JubileeICDatabase(bot_name="JUBILEE_IC")
+        signals = db.get_recent_ic_signals(limit)
         return {
             "available": True,
             "count": len(signals),
@@ -1639,10 +1811,12 @@ async def update_ic_mtm():
 
     Uses real-time Tradier production quotes to calculate
     current values and unrealized P&L.
-    """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
 
+    FIX: Uses run_jubilee_ic_mtm_update() which creates its own
+    JubileeDatabase + JubileeICExecutor (not a full JubileeICTrader).
+    Removed the JubileeICTrader guard — MTM update doesn't need the
+    signal generator or full trader init.
+    """
     try:
         from trading.jubilee.trader import run_jubilee_ic_mtm_update
         result = run_jubilee_ic_mtm_update()
@@ -1670,12 +1844,11 @@ async def get_combined_performance():
     - Net profit calculation
     - ROI on borrowed capital
     """
-    if not JubileeTrader or not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE modules not available")
+    if not _JubileeICDatabase:
+        raise HTTPException(status_code=503, detail="JUBILEE IC Database not available")
 
     try:
-        from trading.jubilee.db import JubileeDatabase
-        db = JubileeDatabase()
+        db = _JubileeICDatabase()
         summary = db.get_combined_performance_summary()
 
         return {
@@ -1819,7 +1992,7 @@ async def get_full_reconciliation():
     - Net profit reconciliation with all components
     - Config values (no hardcoded 15% reserve, etc.)
     """
-    if not JubileeTrader or not JubileeICTrader:
+    if not JubileeTrader and not _JubileeICDatabase:
         raise HTTPException(status_code=503, detail="JUBILEE modules not available")
 
     try:
@@ -1830,9 +2003,14 @@ async def get_full_reconciliation():
         CENTRAL_TZ = ZoneInfo("America/Chicago")
         now = datetime.now(CENTRAL_TZ)
 
-        # Get traders
-        box_trader = JubileeTrader()
-        ic_trader = JubileeICTrader()
+        # Get traders - box_trader needed, ic_trader optional
+        box_trader = JubileeTrader() if JubileeTrader else None
+        ic_trader = None
+        if JubileeICTrader:
+            try:
+                ic_trader = JubileeICTrader()
+            except Exception as e:
+                logger.warning(f"JubileeICTrader init failed for reconciliation: {e}")
         db = JubileeDatabase()
 
         # Get config (real values, not hardcoded)
@@ -1843,13 +2021,52 @@ async def get_full_reconciliation():
         # In PAPER mode, IC trading capital is guaranteed by config,
         # but the dashboard needs a box spread position to show capital source.
         try:
-            ic_trader._ensure_paper_box_spread()
+            if ic_trader:
+                ic_trader._ensure_paper_box_spread()
+            elif box_trader:
+                box_trader._create_emergency_paper_position() if not db.get_open_positions() else None
         except Exception as e:
             logger.warning(f"Failed to ensure paper box spread for reconciliation: {e}")
 
         # Get all positions
-        box_positions = box_trader.get_positions()
-        ic_positions = ic_trader.get_positions()
+        box_positions = box_trader.get_positions() if box_trader else []
+        if ic_trader:
+            ic_positions = ic_trader.get_positions()
+        else:
+            # DB-direct fallback for IC positions
+            raw_positions = db.get_open_ic_positions()
+            ic_positions = []
+            for p in raw_positions:
+                ic_positions.append({
+                    'position_id': p.position_id,
+                    'source_box_position_id': p.source_box_position_id,
+                    'ticker': p.ticker,
+                    'put_short_strike': p.put_short_strike,
+                    'put_long_strike': p.put_long_strike,
+                    'call_short_strike': p.call_short_strike,
+                    'call_long_strike': p.call_long_strike,
+                    'put_spread': f"{p.put_long_strike}/{p.put_short_strike}",
+                    'call_spread': f"{p.call_short_strike}/{p.call_long_strike}",
+                    'spread_width': p.spread_width,
+                    'expiration': p.expiration,
+                    'dte': p.current_dte,
+                    'contracts': p.contracts,
+                    'entry_credit': p.entry_credit,
+                    'total_credit_received': p.total_credit_received,
+                    'max_loss': p.max_loss,
+                    'current_value': p.current_value,
+                    'unrealized_pnl': p.unrealized_pnl,
+                    'pnl_pct': (p.unrealized_pnl / p.total_credit_received * 100) if p.total_credit_received else 0,
+                    'status': p.status.value if hasattr(p.status, 'value') else str(p.status),
+                    'open_time': p.open_time.isoformat() if p.open_time else None,
+                    'oracle_confidence': p.oracle_confidence_at_entry,
+                    'oracle_reasoning': p.oracle_reasoning,
+                    'spot_at_entry': p.spot_at_entry,
+                    'vix_at_entry': p.vix_at_entry,
+                    'gamma_regime_at_entry': p.gamma_regime_at_entry,
+                    'stop_loss_pct': p.stop_loss_pct,
+                    'profit_target_pct': p.profit_target_pct,
+                })
 
         # Get performance data
         ic_performance = db.get_ic_performance()
