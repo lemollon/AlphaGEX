@@ -335,7 +335,7 @@ def main():
         call_short=call_short,
         call_long=call_long,
         quantity=1,
-        limit_price=0.01,  # Very low limit to guarantee fill on sandbox
+        limit_price=None,  # Market order — sandbox fills at any price
     )
 
     order_info = ic_result.get('order', {}) if ic_result else {}
@@ -416,7 +416,7 @@ def main():
     # ======================================================================
     print()
     print("─" * 70)
-    print("PHASE 3: Test TradierEODCloser Safety Net [Bug 3 Fix]")
+    print("PHASE 3: Test TradierEODCloser Safety Net [Spread-Pair Close Fix]")
     print("─" * 70)
 
     try:

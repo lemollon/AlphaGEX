@@ -25,9 +25,11 @@ Usage:
 
 import logging
 import os
+import re
 import time
+from collections import defaultdict
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -228,15 +230,240 @@ class TradierEODCloser:
         logger.info(f"TradierEODCloser: Cancelled {cancelled} orders, {failed} failures")
         return {'cancelled': cancelled, 'failed': failed, 'orders': details}
 
-    def _close_single_position(self, position: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _parse_occ_symbol(symbol: str) -> Optional[Dict[str, Any]]:
         """
-        Close a single position with a MARKET order.
+        Parse an OCC option symbol into its components.
 
-        Determines correct closing side based on position quantity:
-        - Long (quantity > 0) → sell_to_close
-        - Short (quantity < 0) → buy_to_close
+        OCC format: ROOT + YYMMDD + C/P + Strike*1000 (8 digits)
+        Example: SPY260225C00693000 → SPY, 2026-02-25, C, 693.0
+                 SPXW260224P05915000 → SPXW, 2026-02-24, P, 5915.0
+
+        Returns dict with underlying, expiration, option_type, strike, or None if not parseable.
+        """
+        # OCC symbol pattern: 1-6 char root, 6 digit date, C or P, 8 digit strike
+        match = re.match(r'^([A-Z]{1,6})(\d{6})([CP])(\d{8})$', symbol)
+        if not match:
+            return None
+
+        root, date_str, opt_type, strike_str = match.groups()
+        try:
+            exp_date = datetime.strptime(date_str, '%y%m%d')
+            expiration = exp_date.strftime('%Y-%m-%d')
+            strike = int(strike_str) / 1000.0
+            return {
+                'underlying': root,
+                'expiration': expiration,
+                'option_type': opt_type,  # 'C' or 'P'
+                'strike': strike,
+            }
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _is_option_symbol(symbol: str) -> bool:
+        """Check if a symbol is an OCC option symbol."""
+        return bool(re.match(r'^[A-Z]{1,6}\d{6}[CP]\d{8}$', symbol))
+
+    def _group_positions_into_spreads(
+        self, positions: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Group option positions into spread pairs for multileg closing.
+
+        Iron Condor positions appear as 4 legs on Tradier:
+          - Short put (qty < 0) + Long put (qty > 0)  → Put spread
+          - Short call (qty < 0) + Long call (qty > 0) → Call spread
+
+        Groups by underlying + expiration + option_type, then pairs
+        short legs with long legs of matching quantity.
+
+        Returns:
+            (spread_pairs, unpaired_positions)
+            - spread_pairs: list of dicts with 'short' and 'long' position info
+            - unpaired_positions: positions that couldn't be paired (close individually)
+        """
+        # Separate options from equities
+        option_positions = []
+        equity_positions = []
+
+        for pos in positions:
+            parsed = self._parse_occ_symbol(pos['symbol'])
+            if parsed:
+                pos['_parsed'] = parsed
+                option_positions.append(pos)
+            else:
+                equity_positions.append(pos)
+
+        # Group options by (underlying, expiration, option_type)
+        groups: Dict[Tuple[str, str, str], List[Dict]] = defaultdict(list)
+        for pos in option_positions:
+            p = pos['_parsed']
+            key = (p['underlying'], p['expiration'], p['option_type'])
+            groups[key].append(pos)
+
+        spread_pairs = []
+        unpaired = list(equity_positions)  # Equities are always unpaired
+
+        for (underlying, expiration, opt_type), group in groups.items():
+            # Separate into short legs (qty < 0) and long legs (qty > 0)
+            shorts = [p for p in group if p['quantity'] < 0]
+            longs = [p for p in group if p['quantity'] > 0]
+
+            # Sort by strike for consistent pairing
+            shorts.sort(key=lambda p: p['_parsed']['strike'])
+            longs.sort(key=lambda p: p['_parsed']['strike'])
+
+            # Pair shorts with longs by matching quantities
+            used_longs = set()
+            for short_pos in shorts:
+                short_qty = abs(short_pos['quantity'])
+                matched = False
+
+                for i, long_pos in enumerate(longs):
+                    if i in used_longs:
+                        continue
+                    long_qty = long_pos['quantity']
+
+                    if long_qty == short_qty:
+                        # Perfect match — pair them
+                        spread_pairs.append({
+                            'underlying': underlying,
+                            'expiration': expiration,
+                            'option_type': opt_type,
+                            'short_symbol': short_pos['symbol'],
+                            'short_strike': short_pos['_parsed']['strike'],
+                            'short_qty': short_qty,
+                            'long_symbol': long_pos['symbol'],
+                            'long_strike': long_pos['_parsed']['strike'],
+                            'long_qty': long_qty,
+                            'quantity': short_qty,
+                        })
+                        used_longs.add(i)
+                        matched = True
+                        break
+
+                if not matched:
+                    # No matching long leg — close individually
+                    unpaired.append(short_pos)
+
+            # Any unmatched long legs
+            for i, long_pos in enumerate(longs):
+                if i not in used_longs:
+                    unpaired.append(long_pos)
+
+        logger.info(
+            f"TradierEODCloser: Grouped {len(option_positions)} option legs into "
+            f"{len(spread_pairs)} spread pair(s), {len(unpaired)} unpaired position(s)"
+        )
+
+        return spread_pairs, unpaired
+
+    def _close_spread_pair(self, spread: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Close a spread pair with a multileg MARKET order.
+
+        The short leg gets buy_to_close, the long leg gets sell_to_close.
 
         Returns result dict with order status.
+        """
+        underlying = spread['underlying']
+        quantity = spread['quantity']
+        short_symbol = spread['short_symbol']
+        long_symbol = spread['long_symbol']
+
+        logger.info(
+            f"TradierEODCloser: Closing spread — "
+            f"buy_to_close {short_symbol} / sell_to_close {long_symbol} "
+            f"x{quantity} @ MARKET"
+        )
+
+        order_data = {
+            'class': 'multileg',
+            'symbol': underlying,
+            'type': 'market',
+            'duration': 'day',
+            # Leg 0: Buy back the short leg
+            'side[0]': 'buy_to_close',
+            'quantity[0]': str(quantity),
+            'option_symbol[0]': short_symbol,
+            # Leg 1: Sell the long leg
+            'side[1]': 'sell_to_close',
+            'quantity[1]': str(quantity),
+            'option_symbol[1]': long_symbol,
+        }
+
+        result = {
+            'type': 'spread',
+            'short_symbol': short_symbol,
+            'long_symbol': long_symbol,
+            'quantity': quantity,
+            'order_id': None,
+            'fill_status': 'not_sent',
+            'error': None,
+        }
+
+        for attempt in range(MAX_CLOSE_RETRIES):
+            try:
+                response = self._api_request(
+                    'POST',
+                    f'accounts/{self.account_id}/orders',
+                    data=order_data
+                )
+
+                order_info = response.get('order', {})
+                order_id = order_info.get('id')
+                order_status = order_info.get('status', 'unknown')
+
+                if order_id:
+                    result['order_id'] = str(order_id)
+                    result['fill_status'] = order_status
+                    logger.info(
+                        f"TradierEODCloser: Spread order placed — "
+                        f"ID: {order_id}, Status: {order_status}"
+                    )
+
+                    if order_status != 'filled':
+                        filled = self._wait_for_fill(str(order_id))
+                        result['fill_status'] = 'filled' if filled else 'unfilled'
+
+                    return result
+                else:
+                    errors = response.get('errors', {})
+                    error_msg = errors.get('error', []) if isinstance(errors, dict) else str(errors)
+                    result['error'] = str(error_msg) if error_msg else f"No order ID: {response}"
+                    logger.warning(
+                        f"TradierEODCloser: Spread order attempt "
+                        f"{attempt + 1}/{MAX_CLOSE_RETRIES} failed: {result['error']}"
+                    )
+
+            except Exception as e:
+                result['error'] = str(e)
+                logger.error(
+                    f"TradierEODCloser: Spread close attempt {attempt + 1}/{MAX_CLOSE_RETRIES} "
+                    f"failed: {e}"
+                )
+
+            if attempt < MAX_CLOSE_RETRIES - 1:
+                delay = 2 ** (attempt + 1)
+                logger.info(f"TradierEODCloser: Retrying in {delay}s...")
+                time.sleep(delay)
+
+        result['fill_status'] = 'failed'
+        logger.error(
+            f"TradierEODCloser: CRITICAL — Failed to close spread "
+            f"{short_symbol}/{long_symbol} after {MAX_CLOSE_RETRIES} attempts"
+        )
+        return result
+
+    def _close_single_position(self, position: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Close a single (unpaired) position with a MARKET order.
+
+        Used for equity positions or option legs that couldn't be paired into spreads.
+
+        For options: uses class=option (single leg).
+        For equities: uses class=equity.
         """
         symbol = position['symbol']
         quantity = position['quantity']
@@ -248,13 +475,17 @@ class TradierEODCloser:
             side = 'buy_to_close'
             close_qty = abs(quantity)
 
-        # Determine if this is an option or equity
-        # Options have OCC format: ROOT + 6-digit date + C/P + 8-digit strike
-        is_option = len(symbol) > 10 and any(c in symbol for c in ('C', 'P'))
+        is_option = self._is_option_symbol(symbol)
+
+        if is_option:
+            parsed = self._parse_occ_symbol(symbol)
+            underlying = parsed['underlying'] if parsed else symbol[:6].rstrip('0123456789')
+        else:
+            underlying = symbol
 
         order_data = {
             'class': 'option' if is_option else 'equity',
-            'symbol': symbol[:6].rstrip('0123456789') if is_option else symbol,  # Extract underlying
+            'symbol': underlying,
             'side': side,
             'quantity': str(close_qty),
             'type': 'market',
@@ -265,11 +496,12 @@ class TradierEODCloser:
             order_data['option_symbol'] = symbol
 
         logger.info(
-            f"TradierEODCloser: Closing {symbol} — "
+            f"TradierEODCloser: Closing single {symbol} — "
             f"{side} {close_qty} @ MARKET"
         )
 
         result = {
+            'type': 'single',
             'symbol': symbol,
             'quantity': quantity,
             'side': side,
@@ -439,13 +671,32 @@ class TradierEODCloser:
         for pos in positions:
             logger.info(f"  {pos['symbol']}: qty={pos['quantity']}")
 
-        # Step 4: Close each position with MARKET orders
-        for pos in positions:
+        # Step 4: Group option legs into spread pairs for multileg closing
+        # Tradier sandbox rejects single-leg option close orders (class=option),
+        # so we must close spreads as multileg orders (class=multileg).
+        spread_pairs, unpaired = self._group_positions_into_spreads(positions)
+
+        # Step 4a: Close spread pairs as multileg orders
+        for spread in spread_pairs:
+            close_result = self._close_spread_pair(spread)
+            result['position_details'].append(close_result)
+
+            if close_result['fill_status'] in ('filled', 'open'):
+                # Each spread pair covers 2 position legs
+                result['positions_closed'] += 2
+            else:
+                result['positions_failed'] += 2
+                result['errors'].append(
+                    f"Failed to close spread {spread['short_symbol']}/{spread['long_symbol']}: "
+                    f"{close_result.get('error', 'unknown')}"
+                )
+
+        # Step 4b: Close any unpaired positions individually (equities or orphan legs)
+        for pos in unpaired:
             close_result = self._close_single_position(pos)
             result['position_details'].append(close_result)
 
             if close_result['fill_status'] in ('filled', 'open'):
-                # 'open' means order was accepted; sandbox often fills market orders instantly
                 result['positions_closed'] += 1
             else:
                 result['positions_failed'] += 1
