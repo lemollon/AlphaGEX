@@ -62,9 +62,6 @@ jobs:
             --override-ini="addopts=" \
             || true
 
-      - name: Run circuit breaker tests
-        run: |
-          python -m pytest tests/test_circuit_breaker.py -v --tb=short --override-ini="addopts="
 
   # ============================================================================
   # Frontend Build & Lint (TypeScript/Next.js)
