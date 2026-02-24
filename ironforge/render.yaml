@@ -1,0 +1,66 @@
+# IronForge on Render
+# ====================
+# Deploy FLAME + SPARK Iron Condor paper trading bots on Render.
+
+databases:
+  - name: ironforge-db
+    plan: free
+    databaseName: ironforge
+    user: ironforge
+
+services:
+  # ---- Next.js Dashboard ----
+  - type: web
+    name: ironforge-dashboard
+    runtime: node
+    plan: free
+    rootDir: ironforge/webapp
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ironforge-db
+          property: connectionString
+      - key: TRADIER_API_KEY
+        sync: false
+      - key: TRADIER_BASE_URL
+        value: https://sandbox.tradier.com/v1
+      - key: NODE_ENV
+        value: production
+
+  # ---- FLAME Trading Bot (2DTE) ----
+  - type: worker
+    name: ironforge-flame
+    runtime: python
+    plan: free
+    rootDir: ironforge
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import time, sys; sys.path.insert(0,'.'); from jobs.run_flame import main; [main() or time.sleep(300) for _ in iter(int, 1)]"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ironforge-db
+          property: connectionString
+      - key: TRADIER_API_KEY
+        sync: false
+      - key: TRADIER_BASE_URL
+        value: https://sandbox.tradier.com/v1
+
+  # ---- SPARK Trading Bot (1DTE) ----
+  - type: worker
+    name: ironforge-spark
+    runtime: python
+    plan: free
+    rootDir: ironforge
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -c "import time, sys; sys.path.insert(0,'.'); from jobs.run_spark import main; [main() or time.sleep(300) for _ in iter(int, 1)]"
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ironforge-db
+          property: connectionString
+      - key: TRADIER_API_KEY
+        sync: false
+      - key: TRADIER_BASE_URL
+        value: https://sandbox.tradier.com/v1
