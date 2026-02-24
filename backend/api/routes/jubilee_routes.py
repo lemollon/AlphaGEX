@@ -1564,13 +1564,16 @@ async def get_ic_logs(limit: int = Query(50, ge=1, le=500)):
     STANDARDS.md COMPLIANCE:
     - Returns activity log for IC trading actions
     - Required endpoint per Bot-Specific Requirements
-    """
-    if not JubileeICTrader:
-        raise HTTPException(status_code=503, detail="JUBILEE IC Trader not available")
 
+    FIX: Uses JubileeDatabase directly instead of creating a full
+    JubileeICTrader instance. The trader constructor can fail (and has
+    historically failed), which caused this endpoint to return 0 logs
+    even when heartbeat entries exist in the database.
+    """
     try:
-        trader = JubileeICTrader()
-        logs = trader.db.get_recent_ic_logs(limit)
+        from trading.jubilee.db import JubileeDatabase
+        db = JubileeDatabase(bot_name="JUBILEE_IC")
+        logs = db.get_recent_ic_logs(limit)
         return {
             "available": True,
             "count": len(logs),

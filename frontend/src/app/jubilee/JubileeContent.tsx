@@ -2355,6 +2355,8 @@ export default function PrometheusBoxDashboard() {
                           <tr className="text-gray-400 border-b border-gray-700">
                             <th className="text-left py-2 px-3">Close Time</th>
                             <th className="text-left py-2 px-3">Strikes</th>
+                            <th className="text-right py-2 px-3">DTE</th>
+                            <th className="text-right py-2 px-3">Cts</th>
                             <th className="text-right py-2 px-3">Entry</th>
                             <th className="text-right py-2 px-3">Exit</th>
                             <th className="text-right py-2 px-3">P&L</th>
@@ -2362,7 +2364,7 @@ export default function PrometheusBoxDashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {icClosedTrades.trades.slice(0, 10).map((trade: any, idx: number) => (
+                          {icClosedTrades.trades.slice(0, 20).map((trade: any, idx: number) => (
                             <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                               <td className="py-2 px-3 text-xs">
                                 {trade.close_time ? new Date(trade.close_time).toLocaleString() : '-'}
@@ -2370,6 +2372,8 @@ export default function PrometheusBoxDashboard() {
                               <td className="py-2 px-3 font-mono text-xs">
                                 P:{trade.put_short_strike}/{trade.put_long_strike} C:{trade.call_short_strike}/{trade.call_long_strike}
                               </td>
+                              <td className="py-2 px-3 text-right text-xs text-gray-400">{trade.dte_at_entry ?? '-'}</td>
+                              <td className="py-2 px-3 text-right text-xs">{trade.contracts ?? '-'}</td>
                               <td className="py-2 px-3 text-right">${trade.entry_credit?.toFixed(2)}</td>
                               <td className="py-2 px-3 text-right">${trade.exit_price?.toFixed(2)}</td>
                               <td className={`py-2 px-3 text-right font-bold ${
@@ -2587,8 +2591,10 @@ export default function PrometheusBoxDashboard() {
                       <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-gray-800">
                           <tr className="text-gray-400 border-b border-gray-700">
-                            <th className="text-left py-2 px-3">Time</th>
+                            <th className="text-left py-2 px-3">Date/Time</th>
                             <th className="text-left py-2 px-3">Structure</th>
+                            <th className="text-right py-2 px-3">DTE</th>
+                            <th className="text-right py-2 px-3">Cts</th>
                             <th className="text-right py-2 px-3">Credit</th>
                             <th className="text-right py-2 px-3">Prophet</th>
                             <th className="text-left py-2 px-3">Status</th>
@@ -2598,11 +2604,13 @@ export default function PrometheusBoxDashboard() {
                           {icSignals.signals.map((signal: any, idx: number) => (
                             <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                               <td className="py-2 px-3 text-xs">
-                                {signal.signal_time ? new Date(signal.signal_time).toLocaleTimeString() : '-'}
+                                {signal.signal_time ? new Date(signal.signal_time).toLocaleString() : '-'}
                               </td>
                               <td className="py-2 px-3 font-mono text-xs">
-                                {signal.put_long_strike}/{signal.put_short_strike} - {signal.call_short_strike}/{signal.call_long_strike}
+                                P:{signal.put_short_strike}/{signal.put_long_strike} C:{signal.call_short_strike}/{signal.call_long_strike}
                               </td>
+                              <td className="py-2 px-3 text-right text-xs text-gray-400">{signal.dte ?? '-'}</td>
+                              <td className="py-2 px-3 text-right text-xs">{signal.contracts ?? '-'}</td>
                               <td className="py-2 px-3 text-right text-green-400">${signal.total_credit?.toFixed(2) || '0.00'}</td>
                               <td className="py-2 px-3 text-right">
                                 <span className={signal.oracle_approved ? 'text-green-400' : 'text-red-400'}>
@@ -2611,7 +2619,11 @@ export default function PrometheusBoxDashboard() {
                               </td>
                               <td className="py-2 px-3">
                                 <span className={`px-2 py-0.5 rounded text-xs ${
-                                  signal.was_executed ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                                  signal.was_executed
+                                    ? 'bg-green-500/20 text-green-400'
+                                    : signal.skip_reason
+                                      ? 'bg-yellow-500/20 text-yellow-400'
+                                      : 'bg-gray-500/20 text-gray-400'
                                 }`}>
                                   {signal.was_executed ? 'EXECUTED' : signal.skip_reason || 'SKIPPED'}
                                 </span>
@@ -2631,7 +2643,11 @@ export default function PrometheusBoxDashboard() {
                 {/* IC Activity Logs - per STANDARDS.md */}
                 <div className="bg-gray-800 rounded-lg p-6">
                   <h3 className="text-lg font-bold mb-4">IC Activity Log ({icLogs?.count || 0})</h3>
-                  {icLogs?.logs?.length > 0 ? (
+                  {icLogs?._error ? (
+                    <div className="p-4 text-center text-red-400 text-sm">
+                      <p>Error loading IC logs: {icLogs._error}</p>
+                    </div>
+                  ) : icLogs?.logs?.length > 0 ? (
                     <div className="overflow-x-auto max-h-60">
                       <table className="w-full text-sm">
                         <thead className="sticky top-0 bg-gray-800">
@@ -2646,7 +2662,7 @@ export default function PrometheusBoxDashboard() {
                           {icLogs.logs.map((log: any, idx: number) => (
                             <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
                               <td className="py-2 px-3 text-xs">
-                                {log.time ? new Date(log.time).toLocaleTimeString() : '-'}
+                                {log.time ? new Date(log.time).toLocaleString() : '-'}
                               </td>
                               <td className="py-2 px-3">
                                 <span className={`px-2 py-0.5 rounded text-xs ${
