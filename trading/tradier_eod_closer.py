@@ -505,8 +505,15 @@ def get_all_sandbox_accounts() -> List[Dict[str, str]]:
         })
 
     # Second sandbox account (FORTRESS mirrors to this)
-    second_key = os.getenv('TRADIER_SANDBOX_API_KEY_2')
-    second_id = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_2')
+    # Check both naming conventions: TRADIER_FORTRESS_SANDBOX_* (canonical) and TRADIER_SANDBOX_* (legacy)
+    try:
+        from unified_config import APIConfig
+        second_key = APIConfig.TRADIER_FORTRESS_SANDBOX_API_KEY_2 or os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_2') or os.getenv('TRADIER_SANDBOX_API_KEY_2')
+        second_id = APIConfig.TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2 or os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2') or os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_2')
+    except ImportError:
+        second_key = os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_2') or os.getenv('TRADIER_SANDBOX_API_KEY_2')
+        second_id = os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_2') or os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_2')
+
     if second_key and second_id:
         accounts.append({
             'api_key': second_key,
@@ -514,9 +521,16 @@ def get_all_sandbox_accounts() -> List[Dict[str, str]]:
             'label': 'secondary',
         })
 
-    # Third sandbox account
-    third_key = os.getenv('TRADIER_SANDBOX_API_KEY_3')
-    third_id = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_3')
+    # Third sandbox account (FORTRESS mirrors to this)
+    # Check both naming conventions: TRADIER_FORTRESS_SANDBOX_* (canonical) and TRADIER_SANDBOX_* (legacy)
+    try:
+        from unified_config import APIConfig
+        third_key = APIConfig.TRADIER_FORTRESS_SANDBOX_API_KEY_3 or os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_3') or os.getenv('TRADIER_SANDBOX_API_KEY_3')
+        third_id = APIConfig.TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3 or os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3') or os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_3')
+    except ImportError:
+        third_key = os.getenv('TRADIER_FORTRESS_SANDBOX_API_KEY_3') or os.getenv('TRADIER_SANDBOX_API_KEY_3')
+        third_id = os.getenv('TRADIER_FORTRESS_SANDBOX_ACCOUNT_ID_3') or os.getenv('TRADIER_SANDBOX_ACCOUNT_ID_3')
+
     if third_key and third_id:
         accounts.append({
             'api_key': third_key,
