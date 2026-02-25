@@ -402,9 +402,9 @@ class TradingDatabase:
                     SELECT trade_date, symbol, position_id, opened_at, closed_at,
                            is_day_trade, contracts, entry_credit, exit_cost, pnl, close_reason
                     FROM {self._t('pdt_log')}
-                    WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days' AND dte_mode = %s
+                    WHERE trade_date >= CURRENT_DATE - (%s || ' days')::interval AND dte_mode = %s
                     ORDER BY opened_at DESC
-                """, [days, self.dte_mode])
+                """, [str(days), self.dte_mode])
                 for row in c.fetchall():
                     entries.append({
                         'trade_date': str(row[0]),
@@ -543,7 +543,10 @@ class TradingDatabase:
                 c.execute(f"""
                     INSERT INTO {self._t('daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
                     VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (trade_date) DO UPDATE SET
+                        trades_executed = {self._t('daily_perf')}.trades_executed + EXCLUDED.trades_executed,
+                        positions_closed = {self._t('daily_perf')}.positions_closed + EXCLUDED.positions_closed,
+                        realized_pnl = {self._t('daily_perf')}.realized_pnl + EXCLUDED.realized_pnl
                 """, [summary.date, summary.trades_executed, summary.positions_closed, summary.realized_pnl])
                 return True
         except Exception as e:

@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List
 
 import requests
 
-from config import DatabricksConfig
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -21,12 +21,12 @@ class TradierClient:
     """
     Minimal Tradier API client for option quotes and chain data.
 
-    Uses Tradier sandbox API for paper trading (configurable via DatabricksConfig).
+    Uses Tradier sandbox API for paper trading (configurable via Config).
     """
 
     def __init__(self, api_key: str = None, base_url: str = None):
-        self.api_key = api_key or DatabricksConfig.TRADIER_API_KEY
-        self.base_url = base_url or DatabricksConfig.TRADIER_BASE_URL
+        self.api_key = api_key or Config.TRADIER_API_KEY
+        self.base_url = base_url or Config.TRADIER_BASE_URL
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {self.api_key}",

@@ -109,7 +109,7 @@ export default function Home() {
           </span>
         </h1>
         <p className="text-forge-muted text-sm">
-          SPY Iron Condor Paper Trading &middot; Databricks + Tradier
+          SPY Iron Condor Paper Trading &middot; Render + Tradier
         </p>
       </div>
 
@@ -218,7 +218,7 @@ export default function Home() {
             { step: '1', title: 'Market Data', desc: 'SPY spot + VIX from Tradier production API', icon: '&#9673;' },
             { step: '2', title: 'Filter Gates', desc: 'VIX < 32, not max trades, PDT compliant, within window', icon: '&#9670;' },
             { step: '3', title: 'Strike Calc', desc: 'SD-based strikes, $5 wings, real option chain credits', icon: '&#9651;' },
-            { step: '4', title: 'Execute', desc: 'Size position, log to Databricks, monitor MTM every 5 min', icon: '&#9632;' },
+            { step: '4', title: 'Execute', desc: 'Size position, log to PostgreSQL, monitor MTM every 5 min', icon: '&#9632;' },
           ].map((s) => (
             <div key={s.step} className="rounded-xl border border-forge-border bg-forge-card/40 p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -283,7 +283,7 @@ export default function Home() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm pb-4">
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Platform</p>
-          <p className="font-medium">Databricks</p>
+          <p className="font-medium">Render</p>
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Data Source</p>
@@ -291,7 +291,7 @@ export default function Home() {
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Storage</p>
-          <p className="font-medium">Delta Lake</p>
+          <p className="font-medium">PostgreSQL</p>
         </div>
         <div>
           <p className="text-forge-muted text-xs mb-0.5">Ticker</p>

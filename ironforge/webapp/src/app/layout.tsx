@@ -4,7 +4,7 @@ import Nav from '@/components/Nav'
 
 export const metadata: Metadata = {
   title: 'IronForge',
-  description: 'FLAME vs SPARK Iron Condor Paper Trading on Databricks',
+  description: 'FLAME vs SPARK Iron Condor Paper Trading on Render',
 }
 
 export default function RootLayout({
