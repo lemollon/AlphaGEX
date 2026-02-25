@@ -1,15 +1,10 @@
 """
-Databricks Job: SPARK (1DTE Iron Condor)
-=========================================
+Render Worker: SPARK (1DTE Iron Condor)
+========================================
 
-Entry point for the SPARK trading bot as a Databricks Job.
+Entry point for the SPARK trading bot as a Render worker.
 
-Scheduling options:
-  - Databricks Workflow: Run every 5 minutes during market hours (8:30-14:45 CT)
-  - Cron expression: */5 14-20 * * 1-5 (UTC, Mon-Fri 14:30-20:45 UTC = 8:30-14:45 CT)
-
-Usage:
-  As a Databricks notebook or Python script task in a Workflow.
+Scheduling: Runs every 5 minutes via Render worker loop during market hours (8:30-14:45 CT).
 """
 
 import sys
@@ -26,9 +21,9 @@ logger = logging.getLogger("spark_job")
 
 
 def main():
-    from config import DatabricksConfig
+    from config import Config
 
-    valid, msg = DatabricksConfig.validate()
+    valid, msg = Config.validate()
     if not valid:
         logger.error(f"Config invalid: {msg}")
         sys.exit(1)

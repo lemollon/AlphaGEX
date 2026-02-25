@@ -3,7 +3,7 @@ Trading Models
 ==============
 
 Shared data models for FLAME (2DTE) and SPARK (1DTE) Iron Condor bots.
-Part of the IronForge Databricks trading system.
+Part of the IronForge trading system.
 """
 
 from dataclasses import dataclass

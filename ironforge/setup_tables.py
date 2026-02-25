@@ -110,7 +110,7 @@ def _daily_perf_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {bot}_daily_perf (
         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        trade_date DATE NOT NULL,
+        trade_date DATE NOT NULL UNIQUE,
         trades_executed INT DEFAULT 0,
         positions_closed INT DEFAULT 0,
         realized_pnl NUMERIC(10, 2) DEFAULT 0,
