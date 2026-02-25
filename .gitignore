@@ -22,6 +22,9 @@ restart_streamlit.sh
 .next/
 frontend/.next/
 
+# Node modules
+node_modules/
+
 # IDE
 .vscode/
 .idea/
