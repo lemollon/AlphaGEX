@@ -5,7 +5,7 @@ import {
   getOptionExpirations,
   getIcEntryCredit,
   isConfigured,
-  placeIcOrder,
+  placeIcOrderAllAccounts,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -289,24 +289,23 @@ export async function POST(
       ],
     )
 
-    // 10b. Mirror to Tradier sandbox (FLAME only)
-    let sandboxOrderId: number | null = null
+    // 10b. Mirror to all 3 Tradier sandbox accounts (FLAME only)
+    let sandboxOrderIds: Record<string, number> = {}
     if (bot === 'flame') {
       try {
-        const sbResult = await placeIcOrder(
+        sandboxOrderIds = await placeIcOrderAllAccounts(
           'SPY', expiration,
           strikes.putShort, strikes.putLong,
           strikes.callShort, strikes.callLong,
           maxContracts, credits.totalCredit,
           positionId,
         )
-        if (sbResult?.orderId) {
-          sandboxOrderId = sbResult.orderId
+        if (Object.keys(sandboxOrderIds).length > 0) {
           await query(
             `UPDATE ${botTable(bot, 'positions')}
              SET sandbox_order_id = $1, updated_at = NOW()
              WHERE position_id = $2`,
-            [String(sandboxOrderId), positionId],
+            [JSON.stringify(sandboxOrderIds), positionId],
           )
         }
       } catch (sbErr: any) {
@@ -354,7 +353,7 @@ export async function POST(
           credit: credits.totalCredit,
           collateral: totalCollateral,
           source: 'force_trade_api',
-          sandbox_order_id: sandboxOrderId,
+          sandbox_order_ids: sandboxOrderIds,
         }),
         dte,
       ],
@@ -411,7 +410,7 @@ export async function POST(
       spot_price: spot,
       vix,
       source: credits.source,
-      sandbox_order_id: sandboxOrderId,
+      sandbox_order_ids: sandboxOrderIds,
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

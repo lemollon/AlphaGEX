@@ -654,10 +654,10 @@ class Trader:
 
     def _sandbox_only_trade(self, now: datetime) -> None:
         """
-        Place a trade in Tradier sandbox only (no paper account changes).
+        Place a trade in all 3 Tradier sandbox accounts (no paper account changes).
 
-        Called when PDT blocks FLAME's paper trade but the sandbox account
-        has no PDT restriction and should still execute.
+        Called when PDT blocks FLAME's paper trade but the sandbox accounts
+        have no PDT restriction and should still execute.
         """
         try:
             signal = self.signal_generator.generate_signal()
@@ -677,34 +677,45 @@ class Trader:
                 logger.info(f"{self.config.bot_name}: Sandbox-only skipped — 0 contracts")
                 return
 
-            from .tradier_client import TradierClient
-            client = TradierClient()
-            result = client.place_ic_order(
-                ticker=self.config.ticker,
-                expiration=signal.expiration,
-                put_short=signal.put_short,
-                put_long=signal.put_long,
-                call_short=signal.call_short,
-                call_long=signal.call_long,
-                contracts=contracts,
-                total_credit=signal.total_credit,
-                tag=f"SANDBOX-PDT-{now.strftime('%Y%m%d')}",
-            )
-            order_id = result.get("order_id") if result else None
-            logger.info(
-                f"{self.config.bot_name} SANDBOX-ONLY (PDT blocked paper): "
-                f"{signal.put_long}/{signal.put_short}P-"
-                f"{signal.call_short}/{signal.call_long}C "
-                f"x{contracts} → sandbox order {order_id}"
-            )
+            # Mirror to all 3 sandbox accounts
+            sandbox_orders = {}
+            for sandbox in self.executor.sandbox_clients:
+                name = sandbox["name"]
+                client = sandbox["client"]
+                try:
+                    result = client.place_ic_order(
+                        ticker=self.config.ticker,
+                        expiration=signal.expiration,
+                        put_short=signal.put_short,
+                        put_long=signal.put_long,
+                        call_short=signal.call_short,
+                        call_long=signal.call_long,
+                        contracts=contracts,
+                        total_credit=signal.total_credit,
+                        tag=f"SANDBOX-PDT-{now.strftime('%Y%m%d')}",
+                    )
+                    order_id = result.get("order_id") if result else None
+                    if order_id:
+                        sandbox_orders[name] = str(order_id)
+                        logger.info(
+                            f"{self.config.bot_name} SANDBOX-ONLY [{name}] (PDT blocked): "
+                            f"{signal.put_long}/{signal.put_short}P-"
+                            f"{signal.call_short}/{signal.call_long}C "
+                            f"x{contracts} → order {order_id}"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"{self.config.bot_name} SANDBOX-ONLY [{name}] ERROR: {e}"
+                    )
+
             self.db.log(
                 "TRADE_OPEN",
                 f"SANDBOX-ONLY (PDT blocked): "
                 f"{signal.put_long}/{signal.put_short}P-"
                 f"{signal.call_short}/{signal.call_long}C "
                 f"x{contracts} @ ${signal.total_credit:.2f} "
-                f"[sandbox:{order_id}]",
-                {"sandbox_order_id": order_id, "pdt_blocked_paper": True},
+                f"[sandbox:{sandbox_orders}]",
+                {"sandbox_order_ids": sandbox_orders, "pdt_blocked_paper": True},
             )
         except Exception as e:
             logger.warning(f"{self.config.bot_name}: Sandbox-only trade failed: {e}")

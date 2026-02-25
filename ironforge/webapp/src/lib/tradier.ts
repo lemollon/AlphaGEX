@@ -212,23 +212,43 @@ export function isConfigured(): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sandbox Order Execution                                            */
+/*  Sandbox Order Execution (3 accounts: User, Matt, Logan)            */
 /* ------------------------------------------------------------------ */
 
-const TRADIER_ACCOUNT_ID = process.env.TRADIER_ACCOUNT_ID || ''
+interface SandboxAccount {
+  name: string
+  apiKey: string
+  cachedAccountId?: string
+}
 
-async function tradierPost(
+/** Load all configured sandbox accounts from env vars. */
+function getSandboxAccounts(): SandboxAccount[] {
+  const accounts: SandboxAccount[] = []
+  const userKey = process.env.TRADIER_SANDBOX_KEY_USER || ''
+  const mattKey = process.env.TRADIER_SANDBOX_KEY_MATT || ''
+  const loganKey = process.env.TRADIER_SANDBOX_KEY_LOGAN || ''
+
+  if (userKey) accounts.push({ name: 'User', apiKey: userKey })
+  if (mattKey) accounts.push({ name: 'Matt', apiKey: mattKey })
+  if (loganKey) accounts.push({ name: 'Logan', apiKey: loganKey })
+  return accounts
+}
+
+const _sandboxAccounts = getSandboxAccounts()
+
+async function tradierPostWithKey(
   endpoint: string,
   body: Record<string, string>,
+  apiKey: string,
 ): Promise<any> {
-  if (!TRADIER_API_KEY) return null
+  if (!apiKey) return null
 
   const url = `${TRADIER_BASE_URL}${endpoint}`
 
   const res = await fetch(url, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${TRADIER_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       Accept: 'application/json',
       'Content-Type': 'application/x-www-form-urlencoded',
     },
@@ -240,29 +260,52 @@ async function tradierPost(
   return res.json()
 }
 
-/** Auto-discover sandbox account ID from profile if not configured. */
-let _cachedAccountId: string | null = null
+async function tradierGetWithKey(
+  endpoint: string,
+  params: Record<string, string> | undefined,
+  apiKey: string,
+): Promise<any> {
+  if (!apiKey) return null
 
-export async function getAccountId(): Promise<string | null> {
-  if (TRADIER_ACCOUNT_ID) return TRADIER_ACCOUNT_ID
-  if (_cachedAccountId) return _cachedAccountId
+  const url = new URL(`${TRADIER_BASE_URL}${endpoint}`)
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
+  }
 
-  const data = await tradierGet('/user/profile')
+  const res = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
+    cache: 'no-store',
+  })
+
+  if (!res.ok) return null
+  return res.json()
+}
+
+/** Auto-discover sandbox account ID from profile. */
+const _accountIdCache: Record<string, string> = {}
+
+async function getAccountIdForKey(apiKey: string): Promise<string | null> {
+  if (_accountIdCache[apiKey]) return _accountIdCache[apiKey]
+
+  const data = await tradierGetWithKey('/user/profile', undefined, apiKey)
   if (!data) return null
 
   let account = data.profile?.account
   if (Array.isArray(account)) account = account[0]
   const accountId = account?.account_number?.toString()
-  if (accountId) _cachedAccountId = accountId
+  if (accountId) _accountIdCache[apiKey] = accountId
   return accountId || null
 }
 
 /**
- * Place an Iron Condor as a multileg order in Tradier sandbox.
+ * Place an Iron Condor in ALL configured sandbox accounts.
  *
- * Returns { orderId, status } or null on failure.
+ * Returns Record<accountName, orderId> for successful placements.
  */
-export async function placeIcOrder(
+export async function placeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
   putShort: number,
@@ -272,11 +315,10 @@ export async function placeIcOrder(
   contracts: number,
   totalCredit: number,
   tag?: string,
-): Promise<{ orderId: number; status: string } | null> {
-  const accountId = await getAccountId()
-  if (!accountId) return null
+): Promise<Record<string, number>> {
+  const results: Record<string, number> = {}
 
-  const body: Record<string, string> = {
+  const orderBody: Record<string, string> = {
     class: 'multileg',
     symbol: ticker,
     type: 'credit',
@@ -295,21 +337,37 @@ export async function placeIcOrder(
     'side[3]': 'buy_to_open',
     'quantity[3]': String(contracts),
   }
-  if (tag) body.tag = tag.slice(0, 255)
+  if (tag) orderBody.tag = tag.slice(0, 255)
 
-  const result = await tradierPost(`/accounts/${accountId}/orders`, body)
-  if (!result?.order) return null
+  await Promise.all(
+    _sandboxAccounts.map(async (acct) => {
+      try {
+        const accountId = await getAccountIdForKey(acct.apiKey)
+        if (!accountId) return
 
-  return {
-    orderId: result.order.id,
-    status: result.order.status || 'unknown',
-  }
+        const result = await tradierPostWithKey(
+          `/accounts/${accountId}/orders`,
+          orderBody,
+          acct.apiKey,
+        )
+        if (result?.order?.id) {
+          results[acct.name] = result.order.id
+        }
+      } catch (err: any) {
+        console.warn(`Sandbox IC order failed [${acct.name}]: ${err.message}`)
+      }
+    }),
+  )
+
+  return results
 }
 
 /**
- * Close an Iron Condor by placing the opposite multileg order in sandbox.
+ * Close an Iron Condor in ALL configured sandbox accounts.
+ *
+ * Returns Record<accountName, orderId> for successful closes.
  */
-export async function closeIcOrder(
+export async function closeIcOrderAllAccounts(
   ticker: string,
   expiration: string,
   putShort: number,
@@ -319,11 +377,10 @@ export async function closeIcOrder(
   contracts: number,
   closePrice: number,
   tag?: string,
-): Promise<{ orderId: number; status: string } | null> {
-  const accountId = await getAccountId()
-  if (!accountId) return null
+): Promise<Record<string, number>> {
+  const results: Record<string, number> = {}
 
-  const body: Record<string, string> = {
+  const orderBody: Record<string, string> = {
     class: 'multileg',
     symbol: ticker,
     type: 'debit',
@@ -342,13 +399,27 @@ export async function closeIcOrder(
     'side[3]': 'sell_to_close',
     'quantity[3]': String(contracts),
   }
-  if (tag) body.tag = tag.slice(0, 255)
+  if (tag) orderBody.tag = tag.slice(0, 255)
 
-  const result = await tradierPost(`/accounts/${accountId}/orders`, body)
-  if (!result?.order) return null
+  await Promise.all(
+    _sandboxAccounts.map(async (acct) => {
+      try {
+        const accountId = await getAccountIdForKey(acct.apiKey)
+        if (!accountId) return
 
-  return {
-    orderId: result.order.id,
-    status: result.order.status || 'unknown',
-  }
+        const result = await tradierPostWithKey(
+          `/accounts/${accountId}/orders`,
+          orderBody,
+          acct.apiKey,
+        )
+        if (result?.order?.id) {
+          results[acct.name] = result.order.id
+        }
+      } catch (err: any) {
+        console.warn(`Sandbox IC close failed [${acct.name}]: ${err.message}`)
+      }
+    }),
+  )
+
+  return results
 }

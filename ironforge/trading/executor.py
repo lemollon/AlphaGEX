@@ -4,7 +4,7 @@ Paper Trade Executor
 
 Executes paper trades using real Tradier market data.
 Paper fills use real bid/ask prices, then mirrors the same trade
-to the Tradier sandbox account for simulated execution.
+to all three Tradier sandbox accounts for simulated execution.
 
 Fill rules:
 - Sells fill at bid (conservative)
@@ -16,7 +16,7 @@ import uuid
 import json
 import logging
 from datetime import datetime
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 
 from .models import (
     IronCondorPosition,
@@ -38,96 +38,134 @@ class PaperExecutor:
 
     Uses real Tradier bid/ask for fill simulation.
     Tracks paper account balance, collateral, and P&L.
-    FLAME trades are mirrored to Tradier sandbox; SPARK is paper-only.
+    FLAME trades are mirrored to all 3 Tradier sandbox accounts;
+    SPARK is paper-only.
     """
 
     def __init__(self, config: BotConfig, db: TradingDatabase):
         self.config = config
         self.db = db
         self._tradier: Optional[TradierClient] = None
+        self._sandbox_clients: Optional[List[Dict]] = None
 
     @property
     def tradier(self) -> TradierClient:
-        """Lazy-init Tradier client for sandbox mirroring."""
+        """Lazy-init Tradier client for market data."""
         if self._tradier is None:
             self._tradier = TradierClient()
         return self._tradier
 
-    def _mirror_open_to_sandbox(self, position: IronCondorPosition) -> Optional[str]:
-        """
-        Mirror a paper open to Tradier sandbox.
-
-        Returns sandbox order ID or None if mirroring failed (non-fatal).
-        """
-        try:
-            result = self.tradier.place_ic_order(
-                ticker=position.ticker,
-                expiration=position.expiration,
-                put_short=position.put_short_strike,
-                put_long=position.put_long_strike,
-                call_short=position.call_short_strike,
-                call_long=position.call_long_strike,
-                contracts=position.contracts,
-                total_credit=position.total_credit,
-                tag=position.position_id,
-            )
-            if result and result.get("order_id"):
-                order_id = str(result["order_id"])
+    @property
+    def sandbox_clients(self) -> List[Dict]:
+        """Lazy-init list of sandbox TradierClient instances (one per account)."""
+        if self._sandbox_clients is None:
+            from config import Config
+            accounts = Config.get_sandbox_accounts()
+            self._sandbox_clients = []
+            for acct in accounts:
+                client = TradierClient(api_key=acct["api_key"])
+                self._sandbox_clients.append({
+                    "name": acct["name"],
+                    "client": client,
+                })
+            if self._sandbox_clients:
                 logger.info(
-                    f"{self.config.bot_name} SANDBOX MIRROR: "
-                    f"{position.position_id} → sandbox order {order_id}"
+                    f"{self.config.bot_name}: Loaded {len(self._sandbox_clients)} "
+                    f"sandbox accounts: {[c['name'] for c in self._sandbox_clients]}"
                 )
-                return order_id
             else:
                 logger.warning(
-                    f"{self.config.bot_name} SANDBOX MIRROR FAILED: "
-                    f"{position.position_id} — no order ID returned"
+                    f"{self.config.bot_name}: No sandbox accounts configured"
                 )
-        except Exception as e:
-            logger.warning(
-                f"{self.config.bot_name} SANDBOX MIRROR ERROR: "
-                f"{position.position_id} — {e}"
-            )
-        return None
+        return self._sandbox_clients
 
-    def _mirror_close_to_sandbox(
+    def _mirror_open_to_all_sandboxes(
+        self, position: IronCondorPosition
+    ) -> Dict[str, str]:
+        """
+        Mirror a paper open to all 3 Tradier sandbox accounts.
+
+        Returns dict of {account_name: order_id} for successful mirrors.
+        Non-fatal: failures are logged but don't block paper trading.
+        """
+        results = {}
+        for sandbox in self.sandbox_clients:
+            name = sandbox["name"]
+            client: TradierClient = sandbox["client"]
+            try:
+                result = client.place_ic_order(
+                    ticker=position.ticker,
+                    expiration=position.expiration,
+                    put_short=position.put_short_strike,
+                    put_long=position.put_long_strike,
+                    call_short=position.call_short_strike,
+                    call_long=position.call_long_strike,
+                    contracts=position.contracts,
+                    total_credit=position.total_credit,
+                    tag=position.position_id,
+                )
+                if result and result.get("order_id"):
+                    order_id = str(result["order_id"])
+                    results[name] = order_id
+                    logger.info(
+                        f"{self.config.bot_name} SANDBOX MIRROR [{name}]: "
+                        f"{position.position_id} → order {order_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"{self.config.bot_name} SANDBOX MIRROR FAILED [{name}]: "
+                        f"{position.position_id} — no order ID returned"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"{self.config.bot_name} SANDBOX MIRROR ERROR [{name}]: "
+                    f"{position.position_id} — {e}"
+                )
+        return results
+
+    def _mirror_close_to_all_sandboxes(
         self, position: IronCondorPosition, close_price: float
-    ) -> Optional[str]:
+    ) -> Dict[str, str]:
         """
-        Mirror a paper close to Tradier sandbox.
+        Mirror a paper close to all 3 Tradier sandbox accounts.
 
-        Returns sandbox close order ID or None if mirroring failed (non-fatal).
+        Returns dict of {account_name: order_id} for successful closes.
+        Non-fatal: failures are logged but don't block paper trading.
         """
-        try:
-            result = self.tradier.close_ic_order(
-                ticker=position.ticker,
-                expiration=position.expiration,
-                put_short=position.put_short_strike,
-                put_long=position.put_long_strike,
-                call_short=position.call_short_strike,
-                call_long=position.call_long_strike,
-                contracts=position.contracts,
-                close_price=close_price,
-                tag=f"CLOSE-{position.position_id}",
-            )
-            if result and result.get("order_id"):
-                order_id = str(result["order_id"])
-                logger.info(
-                    f"{self.config.bot_name} SANDBOX CLOSE: "
-                    f"{position.position_id} → sandbox order {order_id}"
+        results = {}
+        for sandbox in self.sandbox_clients:
+            name = sandbox["name"]
+            client: TradierClient = sandbox["client"]
+            try:
+                result = client.close_ic_order(
+                    ticker=position.ticker,
+                    expiration=position.expiration,
+                    put_short=position.put_short_strike,
+                    put_long=position.put_long_strike,
+                    call_short=position.call_short_strike,
+                    call_long=position.call_long_strike,
+                    contracts=position.contracts,
+                    close_price=close_price,
+                    tag=f"CLOSE-{position.position_id}",
                 )
-                return order_id
-            else:
+                if result and result.get("order_id"):
+                    order_id = str(result["order_id"])
+                    results[name] = order_id
+                    logger.info(
+                        f"{self.config.bot_name} SANDBOX CLOSE [{name}]: "
+                        f"{position.position_id} → order {order_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"{self.config.bot_name} SANDBOX CLOSE FAILED [{name}]: "
+                        f"{position.position_id} — no order ID returned"
+                    )
+            except Exception as e:
                 logger.warning(
-                    f"{self.config.bot_name} SANDBOX CLOSE FAILED: "
-                    f"{position.position_id} — no order ID returned"
+                    f"{self.config.bot_name} SANDBOX CLOSE ERROR [{name}]: "
+                    f"{position.position_id} — {e}"
                 )
-        except Exception as e:
-            logger.warning(
-                f"{self.config.bot_name} SANDBOX CLOSE ERROR: "
-                f"{position.position_id} — {e}"
-            )
-        return None
+        return results
 
     def calculate_collateral(self, spread_width: float, net_credit: float) -> float:
         """
@@ -251,27 +289,32 @@ class PaperExecutor:
                 f"(collateral: ${total_collateral:.2f})"
             )
 
-            # Mirror to Tradier sandbox (FLAME only)
-            sandbox_order_id = None
+            # Mirror to all Tradier sandbox accounts (FLAME only)
+            sandbox_orders = {}
             if self.config.bot_name == "FLAME":
-                sandbox_order_id = self._mirror_open_to_sandbox(position)
-                if sandbox_order_id:
-                    self.db.update_sandbox_order_id(position_id, sandbox_order_id)
+                sandbox_orders = self._mirror_open_to_all_sandboxes(position)
+                if sandbox_orders:
+                    self.db.update_sandbox_order_id(
+                        position_id, json.dumps(sandbox_orders)
+                    )
 
+            sandbox_summary = (
+                f" [sandbox:{sandbox_orders}]" if sandbox_orders else ""
+            )
             self.db.log(
                 "TRADE_OPEN",
                 f"Opened {position_id}: "
                 f"{signal.put_long}/{signal.put_short}P-"
                 f"{signal.call_short}/{signal.call_long}C "
                 f"x{contracts} @ ${signal.total_credit:.2f}"
-                f"{f' [sandbox:{sandbox_order_id}]' if sandbox_order_id else ''}",
+                f"{sandbox_summary}",
                 {
                     "position_id": position_id,
                     "contracts": contracts,
                     "credit": signal.total_credit,
                     "collateral": total_collateral,
                     "wings_adjusted": signal.wings_adjusted,
-                    "sandbox_order_id": sandbox_order_id,
+                    "sandbox_order_ids": sandbox_orders,
                 },
             )
 
@@ -340,29 +383,36 @@ class PaperExecutor:
                 note=f"Closed {position.position_id}: {reason}",
             )
 
-            # Mirror close to Tradier sandbox (FLAME only)
-            sandbox_close_id = None
+            # Mirror close to all Tradier sandbox accounts (FLAME only)
+            sandbox_close_orders = {}
             if self.config.bot_name == "FLAME":
-                sandbox_close_id = self._mirror_close_to_sandbox(position, close_price)
+                sandbox_close_orders = self._mirror_close_to_all_sandboxes(
+                    position, close_price
+                )
 
+            sandbox_summary = (
+                f" [sandbox:{sandbox_close_orders}]"
+                if sandbox_close_orders
+                else ""
+            )
             logger.info(
                 f"{self.config.bot_name} PAPER CLOSE: "
                 f"{position.position_id} @ ${close_price:.4f} "
                 f"P&L=${realized_pnl:.2f} [{reason}]"
-                f"{f' [sandbox:{sandbox_close_id}]' if sandbox_close_id else ''}"
+                f"{sandbox_summary}"
             )
 
             self.db.log(
                 "TRADE_CLOSE",
                 f"Closed {position.position_id}: ${realized_pnl:.2f} [{reason}]"
-                f"{f' [sandbox:{sandbox_close_id}]' if sandbox_close_id else ''}",
+                f"{sandbox_summary}",
                 {
                     "position_id": position.position_id,
                     "close_price": close_price,
                     "realized_pnl": realized_pnl,
                     "close_reason": reason,
                     "entry_credit": position.total_credit,
-                    "sandbox_close_order_id": sandbox_close_id,
+                    "sandbox_close_order_ids": sandbox_close_orders,
                 },
             )
 
