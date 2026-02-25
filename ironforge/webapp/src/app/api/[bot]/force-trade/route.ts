@@ -10,6 +10,61 @@ import {
 export const dynamic = 'force-dynamic'
 
 /* ------------------------------------------------------------------ */
+/*  Lightweight advisor — mirrors Python advisor.py rules              */
+/* ------------------------------------------------------------------ */
+
+function evaluateAdvisor(vix: number, spot: number, expectedMove: number, dteMode: string) {
+  const BASE_WP = 0.65
+  let winProb = BASE_WP
+  const factors: [string, number][] = []
+
+  // VIX scoring
+  if (vix >= 15 && vix <= 22) { const a = 0.10; winProb += a; factors.push(['VIX_IDEAL', a]) }
+  else if (vix < 15) { const a = -0.05; winProb += a; factors.push(['VIX_LOW_PREMIUMS', a]) }
+  else if (vix <= 28) { const a = -0.05; winProb += a; factors.push(['VIX_ELEVATED', a]) }
+  else { const a = -0.15; winProb += a; factors.push(['VIX_HIGH_RISK', a]) }
+
+  // Day of week (0=Sun, 6=Sat in JS)
+  const dow = new Date().getDay()
+  if (dow >= 2 && dow <= 4) { const a = 0.08; winProb += a; factors.push(['DAY_OPTIMAL', a]) }
+  else if (dow === 1) { const a = 0.03; winProb += a; factors.push(['DAY_MONDAY', a]) }
+  else if (dow === 5) { const a = -0.10; winProb += a; factors.push(['DAY_FRIDAY_RISK', a]) }
+  else { const a = -0.20; winProb += a; factors.push(['DAY_WEEKEND', a]) }
+
+  // Expected move ratio
+  const emRatio = spot > 0 ? (expectedMove / spot * 100) : 1.0
+  if (emRatio < 1.0) { const a = 0.08; winProb += a; factors.push(['EM_TIGHT', a]) }
+  else if (emRatio <= 2.0) { factors.push(['EM_NORMAL', 0]) }
+  else { const a = -0.08; winProb += a; factors.push(['EM_WIDE', a]) }
+
+  // DTE factor
+  if (dteMode === '2DTE') { const a = 0.03; winProb += a; factors.push(['DTE_2DAY_DECAY', a]) }
+  else { const a = -0.02; winProb += a; factors.push(['DTE_1DAY_TIGHT', a]) }
+
+  winProb = Math.max(0.10, Math.min(0.95, winProb))
+
+  const pos = factors.filter(([, a]) => a > 0).length
+  const neg = factors.filter(([, a]) => a < 0).length
+  let confidence = pos === factors.length ? 0.85
+    : neg === factors.length ? 0.25
+    : pos > neg ? 0.60 + (pos / factors.length) * 0.20
+    : 0.40
+  confidence = Math.max(0.10, Math.min(0.95, confidence))
+
+  const advice = winProb >= 0.60 && confidence >= 0.50 ? 'TRADE_FULL'
+    : winProb >= 0.42 && confidence >= 0.35 ? 'TRADE_REDUCED'
+    : 'SKIP'
+
+  return {
+    advice,
+    winProbability: Math.round(winProb * 10000) / 10000,
+    confidence: Math.round(confidence * 10000) / 10000,
+    topFactors: factors,
+    reasoning: `Advisor: ${advice} WP=${winProb.toFixed(2)} conf=${confidence.toFixed(2)}`,
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Strike calculation — mirrors Python signals.py exactly             */
 /* ------------------------------------------------------------------ */
 
@@ -185,13 +240,16 @@ export async function POST(
     const maxProfit = credits.totalCredit * 100 * maxContracts
     const maxLoss = totalCollateral
 
-    // 8. Generate position ID
+    // 8. Run advisor for oracle fields
+    const adv = evaluateAdvisor(vix, spot, expectedMove, dte)
+
+    // 9. Generate position ID
     const now = new Date()
     const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '')
     const hex = Math.random().toString(16).slice(2, 8).toUpperCase()
     const positionId = `${botName}-${dateStr}-${hex}`
 
-    // 9. Insert position
+    // 10. Insert position
     await query(
       `INSERT INTO ${botTable(bot, 'positions')} (
         position_id, ticker, expiration,
@@ -222,15 +280,15 @@ export async function POST(
         spot, vix, expectedMove,
         0, 0, 'UNKNOWN',
         0, 0,
-        0, 0, 'force_trade',
-        'Force trade via API', null, false,
+        adv.confidence, adv.winProbability, adv.advice,
+        adv.reasoning, JSON.stringify(adv.topFactors), false,
         false, spreadWidth, spreadWidth,
         'PAPER', 'PAPER',
         'open', dte,
       ],
     )
 
-    // 10. Update paper account (deduct collateral)
+    // 11. Update paper account (deduct collateral)
     await query(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET collateral_in_use = collateral_in_use + $1,
@@ -240,7 +298,7 @@ export async function POST(
       [totalCollateral, acct.id],
     )
 
-    // 11. Log the signal
+    // 12. Log the signal
     await query(
       `INSERT INTO ${botTable(bot, 'signals')} (
         spot_price, vix, expected_move, call_wall, put_wall,
@@ -251,12 +309,12 @@ export async function POST(
       [
         spot, vix, expectedMove, 0, 0,
         'UNKNOWN', strikes.putShort, strikes.putLong, strikes.callShort, strikes.callLong,
-        credits.totalCredit, 0.5, true, 'Force trade via API',
+        credits.totalCredit, adv.confidence, true, `Force trade via API | ${adv.reasoning}`,
         false, dte,
       ],
     )
 
-    // 12. Log
+    // 13. Log
     await query(
       `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
        VALUES ($1, $2, $3, $4)`,
@@ -274,7 +332,7 @@ export async function POST(
       ],
     )
 
-    // 13. Save equity snapshot
+    // 14. Save equity snapshot
     const updatedAcct = await query(
       `SELECT current_balance, cumulative_pnl FROM ${botTable(bot, 'paper_account')}
        WHERE id = $1`,
@@ -288,7 +346,15 @@ export async function POST(
       [bal, num(updatedAcct[0]?.cumulative_pnl), `force_trade:${positionId}`, dte],
     )
 
-    // 14. Update heartbeat
+    // 15. Update daily_perf
+    await query(
+      `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
+       VALUES (CURRENT_DATE, 1, 0, 0)
+       ON CONFLICT (trade_date) DO UPDATE SET
+         trades_executed = ${botTable(bot, 'daily_perf')}.trades_executed + 1`,
+    )
+
+    // 16. Update heartbeat
     await query(
       `INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
        VALUES ($1, NOW(), 'active', 1, $2)

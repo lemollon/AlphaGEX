@@ -51,6 +51,9 @@ class Trader:
         )
         self.db.initialize_paper_account(config.starting_capital)
 
+        # Apply persisted config overrides from DB (if any)
+        self._apply_db_config_overrides()
+
         self.signal_generator = SignalGenerator(config)
         self.executor = PaperExecutor(config, self.db)
 
@@ -68,6 +71,21 @@ class Trader:
         )
 
         self._recover_orphaned_positions()
+
+    def _apply_db_config_overrides(self) -> None:
+        """Load config overrides from DB and apply them to self.config."""
+        try:
+            overrides = self.db.load_config()
+            if overrides:
+                for key, value in overrides.items():
+                    if hasattr(self.config, key):
+                        setattr(self.config, key, value)
+                logger.info(
+                    f"{self.config.bot_name}: Applied {len(overrides)} config "
+                    f"overrides from DB: {list(overrides.keys())}"
+                )
+        except Exception as e:
+            logger.warning(f"{self.config.bot_name}: Could not load DB config: {e}")
 
     def _recover_orphaned_positions(self):
         """Recover orphaned open positions on startup."""
@@ -129,7 +147,8 @@ class Trader:
                 if managed > 0:
                     result["details"]["managed_pnl"] = manage_pnl
 
-            # Step 2: Check if bot is active
+            # Step 2: Check if bot is active (read persisted state from DB)
+            self.is_active = self.db.get_bot_active()
             if not self.is_active:
                 result["action"] = "inactive"
                 note = "Bot disabled"
@@ -630,8 +649,9 @@ class Trader:
         }
 
     def toggle(self, active: bool) -> Dict[str, Any]:
-        """Enable or disable the bot."""
+        """Enable or disable the bot (persisted to DB)."""
         self.is_active = active
+        self.db.set_bot_active(active)
         status = "enabled" if active else "disabled"
         self.db.log("CONFIG", f"{self.config.bot_name} bot {status}")
         return {"is_active": self.is_active, "message": f"{self.config.bot_name} {status}"}

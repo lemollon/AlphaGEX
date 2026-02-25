@@ -486,6 +486,117 @@ class TradingDatabase:
             return None
 
     # =========================================================================
+    # BOT TOGGLE
+    # =========================================================================
+
+    def set_bot_active(self, active: bool) -> bool:
+        """Persist is_active state in the paper_account table."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    UPDATE {self._t('paper_account')}
+                    SET is_active = %s, updated_at = NOW()
+                    WHERE dte_mode = %s
+                """, [active, self.dte_mode])
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to set bot active: {e}")
+            return False
+
+    def get_bot_active(self) -> bool:
+        """Read persisted is_active state from paper_account."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    SELECT is_active FROM {self._t('paper_account')}
+                    WHERE dte_mode = %s ORDER BY id DESC LIMIT 1
+                """, [self.dte_mode])
+                row = c.fetchone()
+                if row is not None:
+                    return bool(row[0])
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get bot active state: {e}")
+        return True  # default to active
+
+    # =========================================================================
+    # CONFIG PERSISTENCE
+    # =========================================================================
+
+    def save_config(self, overrides: Dict[str, Any]) -> bool:
+        """Save config overrides to the config table (upsert by dte_mode)."""
+        allowed_fields = {
+            'sd_multiplier', 'spread_width', 'min_credit', 'profit_target_pct',
+            'stop_loss_pct', 'vix_skip', 'max_contracts', 'max_trades_per_day',
+            'buying_power_usage_pct', 'risk_per_trade_pct', 'min_win_probability',
+            'entry_start', 'entry_end', 'eod_cutoff_et', 'pdt_max_day_trades',
+            'starting_capital',
+        }
+        filtered = {k: v for k, v in overrides.items() if k in allowed_fields}
+        if not filtered:
+            return False
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                # Build dynamic SET clause for upsert
+                columns = ['dte_mode'] + list(filtered.keys())
+                values = [self.dte_mode] + list(filtered.values())
+                placeholders = ', '.join(f'%s' for _ in values)
+                col_names = ', '.join(columns)
+                update_clause = ', '.join(
+                    f'{k} = EXCLUDED.{k}' for k in filtered.keys()
+                )
+
+                c.execute(f"""
+                    INSERT INTO {self._t('config')} ({col_names})
+                    VALUES ({placeholders})
+                    ON CONFLICT (dte_mode) DO UPDATE SET
+                        {update_clause}, updated_at = NOW()
+                """, values)
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to save config: {e}")
+            return False
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Load config overrides from the config table."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    SELECT sd_multiplier, spread_width, min_credit, profit_target_pct,
+                           stop_loss_pct, vix_skip, max_contracts, max_trades_per_day,
+                           buying_power_usage_pct, risk_per_trade_pct, min_win_probability,
+                           entry_start, entry_end, eod_cutoff_et, pdt_max_day_trades,
+                           starting_capital
+                    FROM {self._t('config')}
+                    WHERE dte_mode = %s LIMIT 1
+                """, [self.dte_mode])
+                row = c.fetchone()
+                if not row:
+                    return None
+                keys = [
+                    'sd_multiplier', 'spread_width', 'min_credit', 'profit_target_pct',
+                    'stop_loss_pct', 'vix_skip', 'max_contracts', 'max_trades_per_day',
+                    'buying_power_usage_pct', 'risk_per_trade_pct', 'min_win_probability',
+                    'entry_start', 'entry_end', 'eod_cutoff_et', 'pdt_max_day_trades',
+                    'starting_capital',
+                ]
+                result = {}
+                for i, key in enumerate(keys):
+                    if row[i] is not None:
+                        result[key] = float(row[i]) if isinstance(row[i], (int, float, str)) and key not in ('entry_start', 'entry_end', 'eod_cutoff_et') else row[i]
+                        # Ensure int fields stay int
+                        if key in ('max_contracts', 'max_trades_per_day', 'pdt_max_day_trades'):
+                            result[key] = int(result[key])
+                return result if result else None
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to load config: {e}")
+            return None
+
+    # =========================================================================
     # CONFIG & LOGGING
     # =========================================================================
 

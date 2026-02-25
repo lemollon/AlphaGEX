@@ -157,6 +157,28 @@ CREATE TABLE IF NOT EXISTS ${bot}_pdt_log (
   dte_mode TEXT DEFAULT '2DTE',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS ${bot}_config (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  dte_mode TEXT NOT NULL UNIQUE,
+  sd_multiplier NUMERIC(5,2) DEFAULT 1.2,
+  spread_width NUMERIC(5,2) DEFAULT 5.0,
+  min_credit NUMERIC(5,4) DEFAULT 0.05,
+  profit_target_pct NUMERIC(5,2) DEFAULT 30.0,
+  stop_loss_pct NUMERIC(5,2) DEFAULT 100.0,
+  vix_skip NUMERIC(5,2) DEFAULT 32.0,
+  max_contracts INT DEFAULT 10,
+  max_trades_per_day INT DEFAULT 1,
+  buying_power_usage_pct NUMERIC(5,4) DEFAULT 0.85,
+  risk_per_trade_pct NUMERIC(5,4) DEFAULT 0.15,
+  min_win_probability NUMERIC(5,4) DEFAULT 0.42,
+  entry_start TEXT DEFAULT '08:30',
+  entry_end TEXT DEFAULT '14:00',
+  eod_cutoff_et TEXT DEFAULT '15:45',
+  pdt_max_day_trades INT DEFAULT 3,
+  starting_capital NUMERIC(12,2) DEFAULT 5000.0,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
 `).join('')
 
 /**
