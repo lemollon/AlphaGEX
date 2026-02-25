@@ -672,8 +672,8 @@ class TradierEODCloser:
             logger.info(f"  {pos['symbol']}: qty={pos['quantity']}")
 
         # Step 4: Group option legs into spread pairs for multileg closing
-        # Tradier sandbox rejects single-leg option close orders (class=option),
-        # so we must close spreads as multileg orders (class=multileg).
+        # Prefer multileg spread closes, but fall back to individual legs
+        # if the spread order is rejected (e.g., 0DTE, pre-market).
         spread_pairs, unpaired = self._group_positions_into_spreads(positions)
 
         # Step 4a: Close spread pairs as multileg orders
@@ -685,11 +685,34 @@ class TradierEODCloser:
                 # Each spread pair covers 2 position legs
                 result['positions_closed'] += 2
             else:
-                result['positions_failed'] += 2
-                result['errors'].append(
-                    f"Failed to close spread {spread['short_symbol']}/{spread['long_symbol']}: "
-                    f"{close_result.get('error', 'unknown')}"
+                # Spread order rejected — fall back to closing each leg individually
+                logger.warning(
+                    f"TradierEODCloser: Spread close failed for "
+                    f"{spread['short_symbol']}/{spread['long_symbol']} "
+                    f"— falling back to individual leg closes"
                 )
+
+                short_pos = {
+                    'symbol': spread['short_symbol'],
+                    'quantity': -spread['short_qty'],
+                }
+                long_pos = {
+                    'symbol': spread['long_symbol'],
+                    'quantity': spread['long_qty'],
+                }
+
+                for leg_pos in [short_pos, long_pos]:
+                    leg_result = self._close_single_position(leg_pos)
+                    result['position_details'].append(leg_result)
+
+                    if leg_result['fill_status'] in ('filled', 'open'):
+                        result['positions_closed'] += 1
+                    else:
+                        result['positions_failed'] += 1
+                        result['errors'].append(
+                            f"Failed to close leg {leg_pos['symbol']}: "
+                            f"{leg_result.get('error', 'unknown')}"
+                        )
 
         # Step 4b: Close any unpaired positions individually (equities or orphan legs)
         for pos in unpaired:
