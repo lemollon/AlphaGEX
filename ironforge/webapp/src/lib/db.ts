@@ -2,6 +2,7 @@
  * PostgreSQL client for IronForge on Render.
  *
  * Replaces the Databricks REST API client. Uses node-postgres (pg) directly.
+ * Auto-creates tables on first use so the dashboard works before workers start.
  */
 
 import { Pool } from 'pg'
@@ -17,14 +18,188 @@ export function botTable(bot: string, suffix: string): string {
   return `${bot}_${suffix}`
 }
 
+// ---- Auto-create tables on first use ----
+
+let tablesReady = false
+
+const INIT_DDL = `
+CREATE TABLE IF NOT EXISTS bot_heartbeats (
+  bot_name TEXT NOT NULL PRIMARY KEY,
+  last_heartbeat TIMESTAMPTZ,
+  status TEXT,
+  scan_count BIGINT DEFAULT 0,
+  details TEXT
+);
+` + ['flame', 'spark'].map(bot => `
+CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  starting_capital NUMERIC(12,2) NOT NULL,
+  current_balance NUMERIC(12,2) NOT NULL,
+  cumulative_pnl NUMERIC(12,2) DEFAULT 0,
+  total_trades INT DEFAULT 0,
+  collateral_in_use NUMERIC(12,2) DEFAULT 0,
+  buying_power NUMERIC(12,2) NOT NULL,
+  high_water_mark NUMERIC(12,2) NOT NULL,
+  max_drawdown NUMERIC(12,2) DEFAULT 0,
+  is_active BOOLEAN DEFAULT TRUE,
+  dte_mode TEXT DEFAULT '2DTE',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ${bot}_positions (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  position_id TEXT NOT NULL,
+  ticker TEXT NOT NULL,
+  expiration DATE NOT NULL,
+  put_short_strike NUMERIC(10,2) NOT NULL,
+  put_long_strike NUMERIC(10,2) NOT NULL,
+  put_credit NUMERIC(10,4) NOT NULL,
+  call_short_strike NUMERIC(10,2) NOT NULL,
+  call_long_strike NUMERIC(10,2) NOT NULL,
+  call_credit NUMERIC(10,4) NOT NULL,
+  contracts INT NOT NULL,
+  spread_width NUMERIC(10,2) NOT NULL,
+  total_credit NUMERIC(10,4) NOT NULL,
+  max_loss NUMERIC(10,2) NOT NULL,
+  max_profit NUMERIC(10,2) NOT NULL,
+  collateral_required NUMERIC(10,2) DEFAULT 0,
+  underlying_at_entry NUMERIC(10,2) NOT NULL,
+  vix_at_entry NUMERIC(6,2),
+  expected_move NUMERIC(10,2),
+  call_wall NUMERIC(10,2),
+  put_wall NUMERIC(10,2),
+  gex_regime TEXT,
+  flip_point NUMERIC(10,2),
+  net_gex NUMERIC(15,2),
+  oracle_confidence NUMERIC(5,4),
+  oracle_win_probability NUMERIC(8,4),
+  oracle_advice TEXT,
+  oracle_reasoning TEXT,
+  oracle_top_factors TEXT,
+  oracle_use_gex_walls BOOLEAN DEFAULT FALSE,
+  wings_adjusted BOOLEAN DEFAULT FALSE,
+  original_put_width NUMERIC(10,2),
+  original_call_width NUMERIC(10,2),
+  put_order_id TEXT DEFAULT 'PAPER',
+  call_order_id TEXT DEFAULT 'PAPER',
+  status TEXT NOT NULL DEFAULT 'open',
+  open_time TIMESTAMPTZ NOT NULL,
+  open_date DATE,
+  close_time TIMESTAMPTZ,
+  close_price NUMERIC(10,4),
+  close_reason TEXT,
+  realized_pnl NUMERIC(10,2),
+  dte_mode TEXT DEFAULT '2DTE',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ${bot}_signals (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  signal_time TIMESTAMPTZ DEFAULT NOW(),
+  spot_price NUMERIC(10,2),
+  vix NUMERIC(6,2),
+  expected_move NUMERIC(10,2),
+  call_wall NUMERIC(10,2),
+  put_wall NUMERIC(10,2),
+  gex_regime TEXT,
+  put_short NUMERIC(10,2),
+  put_long NUMERIC(10,2),
+  call_short NUMERIC(10,2),
+  call_long NUMERIC(10,2),
+  total_credit NUMERIC(10,4),
+  confidence NUMERIC(5,4),
+  was_executed BOOLEAN DEFAULT FALSE,
+  skip_reason TEXT,
+  reasoning TEXT,
+  wings_adjusted BOOLEAN DEFAULT FALSE,
+  dte_mode TEXT DEFAULT '2DTE'
+);
+CREATE TABLE IF NOT EXISTS ${bot}_equity_snapshots (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  snapshot_time TIMESTAMPTZ DEFAULT NOW(),
+  balance NUMERIC(12,2) NOT NULL,
+  unrealized_pnl NUMERIC(12,2) DEFAULT 0,
+  realized_pnl NUMERIC(12,2) DEFAULT 0,
+  open_positions INT DEFAULT 0,
+  note TEXT,
+  dte_mode TEXT DEFAULT '2DTE',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ${bot}_logs (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  log_time TIMESTAMPTZ DEFAULT NOW(),
+  level TEXT,
+  message TEXT,
+  details TEXT,
+  dte_mode TEXT DEFAULT '2DTE'
+);
+CREATE TABLE IF NOT EXISTS ${bot}_daily_perf (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  trade_date DATE NOT NULL UNIQUE,
+  trades_executed INT DEFAULT 0,
+  positions_closed INT DEFAULT 0,
+  realized_pnl NUMERIC(10,2) DEFAULT 0,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS ${bot}_pdt_log (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  trade_date DATE NOT NULL,
+  symbol TEXT NOT NULL,
+  position_id TEXT NOT NULL,
+  opened_at TIMESTAMPTZ NOT NULL,
+  closed_at TIMESTAMPTZ,
+  is_day_trade BOOLEAN DEFAULT FALSE,
+  contracts INT NOT NULL,
+  entry_credit NUMERIC(10,4),
+  exit_cost NUMERIC(10,4),
+  pnl NUMERIC(10,2),
+  close_reason TEXT,
+  dte_mode TEXT DEFAULT '2DTE',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+`).join('')
+
+/**
+ * Ensure all tables exist. Runs once per server cold start.
+ * Uses CREATE TABLE IF NOT EXISTS so it's safe to call repeatedly.
+ */
+async function ensureTables(): Promise<void> {
+  if (tablesReady) return
+  const client = await pool.connect()
+  try {
+    await client.query(INIT_DDL)
+    // Seed paper accounts if empty
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE']] as const) {
+      const res = await client.query(
+        `SELECT id FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1 LIMIT 1`,
+        [dte],
+      )
+      if (res.rows.length === 0) {
+        await client.query(
+          `INSERT INTO ${bot}_paper_account
+            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
+           VALUES (5000, 5000, 0, 5000, 5000, $1)`,
+          [dte],
+        )
+      }
+    }
+    tablesReady = true
+  } catch (err) {
+    console.error('ensureTables failed:', err)
+  } finally {
+    client.release()
+  }
+}
+
 /**
  * Execute a SQL query and return rows as objects.
- * Uses parameterized queries when params provided.
+ * Auto-creates tables on first call.
  */
 export async function query<T = Record<string, any>>(
   sql: string,
   params?: any[],
 ): Promise<T[]> {
+  await ensureTables()
   const client = await pool.connect()
   try {
     const result = await client.query(sql, params)

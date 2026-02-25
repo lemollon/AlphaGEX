@@ -29,6 +29,10 @@ def main():
         logger.error(f"Config invalid: {msg}")
         sys.exit(1)
 
+    # Ensure tables exist on first run
+    from setup_tables import setup_all_tables
+    setup_all_tables()
+
     from trading.trader import create_flame_trader
 
     trader = create_flame_trader()
