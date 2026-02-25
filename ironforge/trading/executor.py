@@ -38,7 +38,7 @@ class PaperExecutor:
 
     Uses real Tradier bid/ask for fill simulation.
     Tracks paper account balance, collateral, and P&L.
-    Mirrors all trades to Tradier sandbox for simulated execution.
+    FLAME trades are mirrored to Tradier sandbox; SPARK is paper-only.
     """
 
     def __init__(self, config: BotConfig, db: TradingDatabase):
@@ -251,10 +251,12 @@ class PaperExecutor:
                 f"(collateral: ${total_collateral:.2f})"
             )
 
-            # Mirror to Tradier sandbox
-            sandbox_order_id = self._mirror_open_to_sandbox(position)
-            if sandbox_order_id:
-                self.db.update_sandbox_order_id(position_id, sandbox_order_id)
+            # Mirror to Tradier sandbox (FLAME only)
+            sandbox_order_id = None
+            if self.config.bot_name == "FLAME":
+                sandbox_order_id = self._mirror_open_to_sandbox(position)
+                if sandbox_order_id:
+                    self.db.update_sandbox_order_id(position_id, sandbox_order_id)
 
             self.db.log(
                 "TRADE_OPEN",
@@ -338,8 +340,10 @@ class PaperExecutor:
                 note=f"Closed {position.position_id}: {reason}",
             )
 
-            # Mirror close to Tradier sandbox
-            sandbox_close_id = self._mirror_close_to_sandbox(position, close_price)
+            # Mirror close to Tradier sandbox (FLAME only)
+            sandbox_close_id = None
+            if self.config.bot_name == "FLAME":
+                sandbox_close_id = self._mirror_close_to_sandbox(position, close_price)
 
             logger.info(
                 f"{self.config.bot_name} PAPER CLOSE: "
