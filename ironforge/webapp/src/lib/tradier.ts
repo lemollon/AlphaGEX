@@ -147,6 +147,65 @@ export async function getIcMarkToMarket(
   }
 }
 
+/** Get available option expirations for a symbol. */
+export async function getOptionExpirations(
+  symbol: string,
+): Promise<string[]> {
+  const data = await tradierGet('/markets/options/expirations', {
+    symbol,
+    includeAllRoots: 'true',
+  })
+  if (!data) return []
+  const dates = data.expirations?.date
+  if (!dates) return []
+  return Array.isArray(dates) ? dates : [dates]
+}
+
+/** Get the entry credit for an Iron Condor (sell at bid, buy at ask). */
+export async function getIcEntryCredit(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+  callShort: number,
+  callLong: number,
+): Promise<{
+  putCredit: number
+  callCredit: number
+  totalCredit: number
+  source: string
+} | null> {
+  const [psQ, plQ, csQ, clQ] = await Promise.all([
+    getOptionQuote(buildOccSymbol(ticker, expiration, putShort, 'P')),
+    getOptionQuote(buildOccSymbol(ticker, expiration, putLong, 'P')),
+    getOptionQuote(buildOccSymbol(ticker, expiration, callShort, 'C')),
+    getOptionQuote(buildOccSymbol(ticker, expiration, callLong, 'C')),
+  ])
+
+  if (!psQ || !plQ || !csQ || !clQ) return null
+
+  // Conservative paper fills: sell at bid, buy at ask
+  let putCredit = psQ.bid - plQ.ask
+  let callCredit = csQ.bid - clQ.ask
+
+  // Mid-price fallback if negative
+  if (putCredit <= 0 || callCredit <= 0) {
+    const psMid = (psQ.bid + psQ.ask) / 2
+    const plMid = (plQ.bid + plQ.ask) / 2
+    const csMid = (csQ.bid + csQ.ask) / 2
+    const clMid = (clQ.bid + clQ.ask) / 2
+    putCredit = Math.max(0, psMid - plMid)
+    callCredit = Math.max(0, csMid - clMid)
+  }
+
+  return {
+    putCredit: Math.round(putCredit * 10000) / 10000,
+    callCredit: Math.round(callCredit * 10000) / 10000,
+    totalCredit: Math.round((putCredit + callCredit) * 10000) / 10000,
+    source: 'TRADIER_LIVE',
+  }
+}
+
 /** Whether the Tradier API key is configured. */
 export function isConfigured(): boolean {
   return !!TRADIER_API_KEY

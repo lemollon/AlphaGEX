@@ -14,6 +14,12 @@ from typing import Optional, Dict, Any
 from .models import IronCondorSignal, BotConfig, CENTRAL_TZ
 from .tradier_client import TradierClient
 
+# Lightweight rule-based advisor (Oracle-compatible output)
+try:
+    from . import advisor as _advisor
+except ImportError:
+    _advisor = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -454,6 +460,54 @@ class SignalGenerator:
                 reasoning=f"Credit ${total_credit:.2f} below minimum ${self.config.min_credit}",
             )
 
+        # Run advisor for Oracle-compatible fields
+        adv_result = None
+        if _advisor:
+            try:
+                adv_result = _advisor.evaluate(
+                    vix=vix,
+                    spot=spot,
+                    expected_move=expected_move,
+                    dte_mode=dte_label,
+                    config=self.config,
+                )
+            except Exception as e:
+                logger.warning(f"{self.config.bot_name}: Advisor failed: {e}")
+
+        oracle_confidence = adv_result.confidence if adv_result else 0.5
+        oracle_win_prob = adv_result.win_probability if adv_result else 0.5
+        oracle_advice = adv_result.advice if adv_result else "TRADE_FULL"
+        oracle_factors = adv_result.top_factors if adv_result else None
+        oracle_suggested_sd = adv_result.suggested_sd if adv_result else 0.0
+        advisor_reasoning = adv_result.reasoning if adv_result else ""
+
+        # Gate: if advisor says SKIP and win_prob < min_win_probability, invalidate
+        if adv_result and adv_result.advice == "SKIP" and adv_result.win_probability < self.config.min_win_probability:
+            return IronCondorSignal(
+                spot_price=spot,
+                vix=vix,
+                expected_move=expected_move,
+                put_short=put_short,
+                put_long=put_long,
+                call_short=call_short,
+                call_long=call_long,
+                expiration=expiration,
+                total_credit=total_credit,
+                confidence=oracle_confidence,
+                oracle_win_probability=oracle_win_prob,
+                oracle_confidence=oracle_confidence,
+                oracle_advice=oracle_advice,
+                oracle_top_factors=oracle_factors,
+                oracle_suggested_sd=oracle_suggested_sd,
+                is_valid=False,
+                reasoning=f"Advisor SKIP: WP={oracle_win_prob:.2f} < min {self.config.min_win_probability} | {advisor_reasoning}",
+            )
+
+        base_reasoning = (
+            f"{dte_label} IC: {put_long}P/{put_short}P-{call_short}C/{call_long}C "
+            f"@ ${total_credit:.2f} ({credits.get('source', 'UNKNOWN')})"
+        )
+
         signal = IronCondorSignal(
             spot_price=spot,
             vix=vix,
@@ -468,12 +522,14 @@ class SignalGenerator:
             total_credit=total_credit,
             max_loss=credits["max_loss"],
             max_profit=credits["max_profit"],
-            confidence=0.5,
+            confidence=oracle_confidence,
+            oracle_win_probability=oracle_win_prob,
+            oracle_confidence=oracle_confidence,
+            oracle_advice=oracle_advice,
+            oracle_top_factors=oracle_factors,
+            oracle_suggested_sd=oracle_suggested_sd,
             is_valid=True,
-            reasoning=(
-                f"{dte_label} IC: {put_long}P/{put_short}P-{call_short}C/{call_long}C "
-                f"@ ${total_credit:.2f} ({credits.get('source', 'UNKNOWN')})"
-            ),
+            reasoning=f"{base_reasoning} | {advisor_reasoning}" if advisor_reasoning else base_reasoning,
             source=credits.get("source", "UNKNOWN"),
             wings_adjusted=wings_adjusted,
             original_put_width=symmetric["original_put_width"],
@@ -484,6 +540,7 @@ class SignalGenerator:
             f"{self.config.bot_name} SIGNAL: "
             f"{put_long}P/{put_short}P-{call_short}C/{call_long}C "
             f"exp={expiration} credit=${total_credit:.2f} "
+            f"WP={oracle_win_prob:.2f} conf={oracle_confidence:.2f} "
             f"{'(wings adjusted)' if wings_adjusted else '(symmetric)'}"
         )
 

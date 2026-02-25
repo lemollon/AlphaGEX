@@ -22,6 +22,7 @@ from .models import (
     IronCondorSignal,
     BotConfig,
     PositionStatus,
+    DailySummary,
     CENTRAL_TZ,
 )
 from .db import TradingDatabase
@@ -178,6 +179,14 @@ class PaperExecutor:
                 },
             )
 
+            # Update daily performance
+            self.db.update_daily_performance(DailySummary(
+                date=now.strftime("%Y-%m-%d"),
+                trades_executed=1,
+                positions_closed=0,
+                realized_pnl=0,
+            ))
+
             return position
 
         except Exception as e:
@@ -252,6 +261,14 @@ class PaperExecutor:
                     "entry_credit": position.total_credit,
                 },
             )
+
+            # Update daily performance
+            self.db.update_daily_performance(DailySummary(
+                date=now.strftime("%Y-%m-%d"),
+                trades_executed=0,
+                positions_closed=1,
+                realized_pnl=realized_pnl,
+            ))
 
             return True, realized_pnl
 
