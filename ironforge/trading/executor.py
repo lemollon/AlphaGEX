@@ -61,9 +61,13 @@ class PaperExecutor:
         if self._sandbox_clients is None:
             from config import Config
             accounts = Config.get_sandbox_accounts()
+            sandbox_url = Config.TRADIER_SANDBOX_URL
             self._sandbox_clients = []
             for acct in accounts:
-                client = TradierClient(api_key=acct["api_key"])
+                client = TradierClient(
+                    api_key=acct["api_key"],
+                    base_url=sandbox_url,
+                )
                 self._sandbox_clients.append({
                     "name": acct["name"],
                     "client": client,

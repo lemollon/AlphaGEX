@@ -13,14 +13,14 @@ class Config:
 
     DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://localhost:5432/ironforge")
 
-    # Tradier API (sandbox for paper trading)
-    # Primary key used for market data quotes (any sandbox key works)
+    # Tradier API — production key for live market data quotes
     TRADIER_API_KEY = os.getenv("TRADIER_API_KEY", "")
     TRADIER_BASE_URL = os.getenv(
-        "TRADIER_BASE_URL", "https://sandbox.tradier.com/v1"
+        "TRADIER_BASE_URL", "https://api.tradier.com/v1"
     )
-    # Account ID for sandbox order execution (auto-discovered if blank)
-    TRADIER_ACCOUNT_ID = os.getenv("TRADIER_ACCOUNT_ID", "")
+
+    # Sandbox URL — always sandbox.tradier.com for order execution
+    TRADIER_SANDBOX_URL = "https://sandbox.tradier.com/v1"
 
     # Three sandbox accounts for FLAME trade mirroring
     TRADIER_SANDBOX_KEY_USER = os.getenv("TRADIER_SANDBOX_KEY_USER", "")

@@ -215,6 +215,11 @@ export function isConfigured(): boolean {
 /*  Sandbox Order Execution (3 accounts: User, Matt, Logan)            */
 /* ------------------------------------------------------------------ */
 
+// Sandbox URL is always sandbox.tradier.com — never production.
+// TRADIER_BASE_URL may point to production for live quotes, but
+// sandbox keys only work against the sandbox API.
+const SANDBOX_URL = 'https://sandbox.tradier.com/v1'
+
 interface SandboxAccount {
   name: string
   apiKey: string
@@ -236,14 +241,14 @@ function getSandboxAccounts(): SandboxAccount[] {
 
 const _sandboxAccounts = getSandboxAccounts()
 
-async function tradierPostWithKey(
+async function sandboxPost(
   endpoint: string,
   body: Record<string, string>,
   apiKey: string,
 ): Promise<any> {
   if (!apiKey) return null
 
-  const url = `${TRADIER_BASE_URL}${endpoint}`
+  const url = `${SANDBOX_URL}${endpoint}`
 
   const res = await fetch(url, {
     method: 'POST',
@@ -260,14 +265,14 @@ async function tradierPostWithKey(
   return res.json()
 }
 
-async function tradierGetWithKey(
+async function sandboxGet(
   endpoint: string,
   params: Record<string, string> | undefined,
   apiKey: string,
 ): Promise<any> {
   if (!apiKey) return null
 
-  const url = new URL(`${TRADIER_BASE_URL}${endpoint}`)
+  const url = new URL(`${SANDBOX_URL}${endpoint}`)
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
   }
@@ -290,7 +295,7 @@ const _accountIdCache: Record<string, string> = {}
 async function getAccountIdForKey(apiKey: string): Promise<string | null> {
   if (_accountIdCache[apiKey]) return _accountIdCache[apiKey]
 
-  const data = await tradierGetWithKey('/user/profile', undefined, apiKey)
+  const data = await sandboxGet('/user/profile', undefined, apiKey)
   if (!data) return null
 
   let account = data.profile?.account
@@ -345,7 +350,7 @@ export async function placeIcOrderAllAccounts(
         const accountId = await getAccountIdForKey(acct.apiKey)
         if (!accountId) return
 
-        const result = await tradierPostWithKey(
+        const result = await sandboxPost(
           `/accounts/${accountId}/orders`,
           orderBody,
           acct.apiKey,
@@ -407,7 +412,7 @@ export async function closeIcOrderAllAccounts(
         const accountId = await getAccountIdForKey(acct.apiKey)
         if (!accountId) return
 
-        const result = await tradierPostWithKey(
+        const result = await sandboxPost(
           `/accounts/${accountId}/orders`,
           orderBody,
           acct.apiKey,
