@@ -23,18 +23,14 @@ const DEFAULTS: Record<string, Record<string, any>> = {
   },
 }
 
-const NUMERIC_FIELDS_LIST = [
+const NUMERIC_FIELDS = [
   'sd_multiplier', 'spread_width', 'min_credit', 'profit_target_pct',
   'stop_loss_pct', 'vix_skip', 'buying_power_usage_pct', 'risk_per_trade_pct',
   'min_win_probability', 'starting_capital',
 ]
-const INT_FIELDS_LIST = ['max_contracts', 'max_trades_per_day', 'pdt_max_day_trades']
-const STRING_FIELDS_LIST = ['entry_start', 'entry_end', 'eod_cutoff_et']
-
-const NUMERIC_FIELDS = new Set(NUMERIC_FIELDS_LIST)
-const INT_FIELDS = new Set(INT_FIELDS_LIST)
-const STRING_FIELDS = new Set(STRING_FIELDS_LIST)
-const ALL_FIELDS = new Set(NUMERIC_FIELDS_LIST.concat(INT_FIELDS_LIST, STRING_FIELDS_LIST))
+const INT_FIELDS = ['max_contracts', 'max_trades_per_day', 'pdt_max_day_trades']
+const STRING_FIELDS = ['entry_start', 'entry_end', 'eod_cutoff_et']
+const ALL_FIELDS = NUMERIC_FIELDS.concat(INT_FIELDS, STRING_FIELDS)
 
 /**
  * GET /api/[bot]/config
@@ -69,10 +65,11 @@ export async function GET(
 
     const row = rows[0]
     const merged: Record<string, any> = { ...defaults }
-    for (const key of ALL_FIELDS) {
+    for (let i = 0; i < ALL_FIELDS.length; i++) {
+      const key = ALL_FIELDS[i]
       if (row[key] != null) {
-        if (INT_FIELDS.has(key)) merged[key] = int(row[key])
-        else if (NUMERIC_FIELDS.has(key)) merged[key] = num(row[key])
+        if (INT_FIELDS.indexOf(key) >= 0) merged[key] = int(row[key])
+        else if (NUMERIC_FIELDS.indexOf(key) >= 0) merged[key] = num(row[key])
         else merged[key] = row[key]
       }
     }
@@ -106,12 +103,12 @@ export async function PUT(
     // Filter to only allowed fields
     const filtered: Record<string, any> = {}
     for (const [key, val] of Object.entries(body)) {
-      if (!ALL_FIELDS.has(key)) continue
-      if (INT_FIELDS.has(key)) {
+      if (ALL_FIELDS.indexOf(key) < 0) continue
+      if (INT_FIELDS.indexOf(key) >= 0) {
         const v = parseInt(String(val), 10)
         if (isNaN(v) || v < 0) continue
         filtered[key] = v
-      } else if (NUMERIC_FIELDS.has(key)) {
+      } else if (NUMERIC_FIELDS.indexOf(key) >= 0) {
         const v = parseFloat(String(val))
         if (isNaN(v) || v < 0) continue
         filtered[key] = v
@@ -136,9 +133,9 @@ export async function PUT(
     }
 
     // Build upsert
-    const columns = ['dte_mode', ...Object.keys(filtered)]
-    const values = [dte, ...Object.values(filtered)]
-    const placeholders = values.map((_, i) => `$${i + 1}`).join(', ')
+    const columns = ['dte_mode'].concat(Object.keys(filtered))
+    const values = ([dte] as any[]).concat(Object.values(filtered))
+    const placeholders = values.map((_: any, i: number) => `$${i + 1}`).join(', ')
     const colNames = columns.join(', ')
     const updateParts = Object.keys(filtered).map(k => `${k} = EXCLUDED.${k}`)
     updateParts.push('updated_at = NOW()')
