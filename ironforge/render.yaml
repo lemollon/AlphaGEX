@@ -38,7 +38,7 @@ services:
     plan: free
     rootDir: ironforge
     buildCommand: pip install -r requirements.txt
-    startCommand: python -c "import time, sys; sys.path.insert(0,'.'); from jobs.run_flame import main; [main() or time.sleep(300) for _ in iter(int, 1)]"
+    startCommand: python jobs/run_flame.py
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -56,7 +56,7 @@ services:
     plan: free
     rootDir: ironforge
     buildCommand: pip install -r requirements.txt
-    startCommand: python -c "import time, sys; sys.path.insert(0,'.'); from jobs.run_spark import main; [main() or time.sleep(300) for _ in iter(int, 1)]"
+    startCommand: python jobs/run_spark.py
     envVars:
       - key: DATABASE_URL
         fromDatabase:
