@@ -23,14 +23,18 @@ const DEFAULTS: Record<string, Record<string, any>> = {
   },
 }
 
-const NUMERIC_FIELDS = new Set([
+const NUMERIC_FIELDS_LIST = [
   'sd_multiplier', 'spread_width', 'min_credit', 'profit_target_pct',
   'stop_loss_pct', 'vix_skip', 'buying_power_usage_pct', 'risk_per_trade_pct',
   'min_win_probability', 'starting_capital',
-])
-const INT_FIELDS = new Set(['max_contracts', 'max_trades_per_day', 'pdt_max_day_trades'])
-const STRING_FIELDS = new Set(['entry_start', 'entry_end', 'eod_cutoff_et'])
-const ALL_FIELDS = new Set([...NUMERIC_FIELDS, ...INT_FIELDS, ...STRING_FIELDS])
+]
+const INT_FIELDS_LIST = ['max_contracts', 'max_trades_per_day', 'pdt_max_day_trades']
+const STRING_FIELDS_LIST = ['entry_start', 'entry_end', 'eod_cutoff_et']
+
+const NUMERIC_FIELDS = new Set(NUMERIC_FIELDS_LIST)
+const INT_FIELDS = new Set(INT_FIELDS_LIST)
+const STRING_FIELDS = new Set(STRING_FIELDS_LIST)
+const ALL_FIELDS = new Set(NUMERIC_FIELDS_LIST.concat(INT_FIELDS_LIST, STRING_FIELDS_LIST))
 
 /**
  * GET /api/[bot]/config
