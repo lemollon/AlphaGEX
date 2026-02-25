@@ -193,9 +193,9 @@ class Trader:
                 self.last_scan_result = result
                 return result
 
-            # Step 7: PDT check
+            # Step 7: PDT check (FLAME exempt — sandbox account has no PDT)
             can_trade, pdt_count, pdt_msg = self.can_trade_today()
-            if not can_trade:
+            if not can_trade and self.config.bot_name != "FLAME":
                 result["action"] = "pdt_blocked"
                 result["details"]["reason"] = pdt_msg
                 self.db.log("SKIP", f"PDT blocked: {pdt_msg}")
