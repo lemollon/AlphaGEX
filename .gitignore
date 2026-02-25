@@ -33,6 +33,8 @@ node_modules/
 
 # API Keys (CRITICAL - NEVER COMMIT)
 .env
+.env.local
+.env*.local
 *secrets*.toml
 *_api_key.txt
 *.pem
