@@ -209,7 +209,7 @@ def main():
         from trading.db import TradingDatabase
 
         db = TradingDatabase(bot_name="FLAME", dte_mode="2DTE")
-        db.initialize_paper_account(5000.0)
+        db.initialize_paper_account(10000.0)
         account = db.get_paper_account()
         check("Paper account", True, f"balance=${account.balance:.2f}, BP=${account.buying_power:.2f}")
         check("Buying power sufficient", account.buying_power >= 200, f"${account.buying_power:.2f} (min $200)")

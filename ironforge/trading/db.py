@@ -43,7 +43,7 @@ class TradingDatabase:
     # PAPER ACCOUNT OPERATIONS
     # =========================================================================
 
-    def initialize_paper_account(self, starting_capital: float = 5000.0) -> bool:
+    def initialize_paper_account(self, starting_capital: float = 10000.0) -> bool:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -803,7 +803,7 @@ class TradingDatabase:
                     WHERE is_active = TRUE AND dte_mode = %s LIMIT 1
                 """, [self.dte_mode])
                 row = c.fetchone()
-                starting_capital = float(row[0]) if row else 5000.0
+                starting_capital = float(row[0]) if row else 10000.0
 
                 c.execute(f"""
                     SELECT close_time, realized_pnl,

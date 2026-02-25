@@ -210,7 +210,7 @@ def _config_table_ddl(bot: str) -> str:
         entry_end TEXT DEFAULT '14:00',
         eod_cutoff_et TEXT DEFAULT '15:45',
         pdt_max_day_trades INT DEFAULT 3,
-        starting_capital NUMERIC(12, 2) DEFAULT 5000.0,
+        starting_capital NUMERIC(12, 2) DEFAULT 10000.0,
         created_at TIMESTAMPTZ DEFAULT NOW(),
         updated_at TIMESTAMPTZ DEFAULT NOW()
     )

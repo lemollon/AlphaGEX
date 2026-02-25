@@ -42,7 +42,7 @@ class BotConfig:
     dte_mode: str = "2DTE"
 
     # Capital
-    starting_capital: float = 5000.0
+    starting_capital: float = 10000.0
     risk_per_trade_pct: float = 0.15
 
     # Strike selection
@@ -239,13 +239,13 @@ class IronCondorSignal:
 @dataclass
 class PaperAccount:
     """Paper trading account state."""
-    starting_balance: float = 5000.0
-    balance: float = 5000.0
-    buying_power: float = 5000.0
+    starting_balance: float = 10000.0
+    balance: float = 10000.0
+    buying_power: float = 10000.0
     collateral_in_use: float = 0.0
     total_trades: int = 0
     cumulative_pnl: float = 0.0
-    high_water_mark: float = 5000.0
+    high_water_mark: float = 10000.0
     max_drawdown: float = 0.0
     is_active: bool = True
 
