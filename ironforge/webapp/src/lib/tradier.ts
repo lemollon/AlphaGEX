@@ -210,3 +210,145 @@ export async function getIcEntryCredit(
 export function isConfigured(): boolean {
   return !!TRADIER_API_KEY
 }
+
+/* ------------------------------------------------------------------ */
+/*  Sandbox Order Execution                                            */
+/* ------------------------------------------------------------------ */
+
+const TRADIER_ACCOUNT_ID = process.env.TRADIER_ACCOUNT_ID || ''
+
+async function tradierPost(
+  endpoint: string,
+  body: Record<string, string>,
+): Promise<any> {
+  if (!TRADIER_API_KEY) return null
+
+  const url = `${TRADIER_BASE_URL}${endpoint}`
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${TRADIER_API_KEY}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams(body).toString(),
+    cache: 'no-store',
+  })
+
+  if (!res.ok) return null
+  return res.json()
+}
+
+/** Auto-discover sandbox account ID from profile if not configured. */
+let _cachedAccountId: string | null = null
+
+export async function getAccountId(): Promise<string | null> {
+  if (TRADIER_ACCOUNT_ID) return TRADIER_ACCOUNT_ID
+  if (_cachedAccountId) return _cachedAccountId
+
+  const data = await tradierGet('/user/profile')
+  if (!data) return null
+
+  let account = data.profile?.account
+  if (Array.isArray(account)) account = account[0]
+  const accountId = account?.account_number?.toString()
+  if (accountId) _cachedAccountId = accountId
+  return accountId || null
+}
+
+/**
+ * Place an Iron Condor as a multileg order in Tradier sandbox.
+ *
+ * Returns { orderId, status } or null on failure.
+ */
+export async function placeIcOrder(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  totalCredit: number,
+  tag?: string,
+): Promise<{ orderId: number; status: string } | null> {
+  const accountId = await getAccountId()
+  if (!accountId) return null
+
+  const body: Record<string, string> = {
+    class: 'multileg',
+    symbol: ticker,
+    type: 'credit',
+    duration: 'day',
+    price: totalCredit.toFixed(2),
+    'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
+    'side[0]': 'sell_to_open',
+    'quantity[0]': String(contracts),
+    'option_symbol[1]': buildOccSymbol(ticker, expiration, putLong, 'P'),
+    'side[1]': 'buy_to_open',
+    'quantity[1]': String(contracts),
+    'option_symbol[2]': buildOccSymbol(ticker, expiration, callShort, 'C'),
+    'side[2]': 'sell_to_open',
+    'quantity[2]': String(contracts),
+    'option_symbol[3]': buildOccSymbol(ticker, expiration, callLong, 'C'),
+    'side[3]': 'buy_to_open',
+    'quantity[3]': String(contracts),
+  }
+  if (tag) body.tag = tag.slice(0, 255)
+
+  const result = await tradierPost(`/accounts/${accountId}/orders`, body)
+  if (!result?.order) return null
+
+  return {
+    orderId: result.order.id,
+    status: result.order.status || 'unknown',
+  }
+}
+
+/**
+ * Close an Iron Condor by placing the opposite multileg order in sandbox.
+ */
+export async function closeIcOrder(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  closePrice: number,
+  tag?: string,
+): Promise<{ orderId: number; status: string } | null> {
+  const accountId = await getAccountId()
+  if (!accountId) return null
+
+  const body: Record<string, string> = {
+    class: 'multileg',
+    symbol: ticker,
+    type: 'debit',
+    duration: 'day',
+    price: closePrice.toFixed(2),
+    'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
+    'side[0]': 'buy_to_close',
+    'quantity[0]': String(contracts),
+    'option_symbol[1]': buildOccSymbol(ticker, expiration, putLong, 'P'),
+    'side[1]': 'sell_to_close',
+    'quantity[1]': String(contracts),
+    'option_symbol[2]': buildOccSymbol(ticker, expiration, callShort, 'C'),
+    'side[2]': 'buy_to_close',
+    'quantity[2]': String(contracts),
+    'option_symbol[3]': buildOccSymbol(ticker, expiration, callLong, 'C'),
+    'side[3]': 'sell_to_close',
+    'quantity[3]': String(contracts),
+  }
+  if (tag) body.tag = tag.slice(0, 255)
+
+  const result = await tradierPost(`/accounts/${accountId}/orders`, body)
+  if (!result?.order) return null
+
+  return {
+    orderId: result.order.id,
+    status: result.order.status || 'unknown',
+  }
+}

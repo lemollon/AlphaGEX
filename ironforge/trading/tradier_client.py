@@ -2,12 +2,13 @@
 Standalone Tradier API Client
 ==============================
 
-Lightweight Tradier API client for market data.
+Lightweight Tradier API client for market data and sandbox order execution.
 Replaces the dependency on AlphaGEX's data.tradier_data_fetcher module.
-Only implements the methods needed by FLAME and SPARK signal generators.
+Implements methods for FLAME/SPARK signal generation + sandbox order mirroring.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 import requests
@@ -17,16 +18,36 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
+def build_occ_symbol(ticker: str, expiration: str, strike: float, option_type: str) -> str:
+    """
+    Build OCC option symbol: SPY260227P00585000
+
+    Args:
+        ticker: e.g. "SPY"
+        expiration: "YYYY-MM-DD"
+        strike: e.g. 585.0
+        option_type: "P" or "C"
+    """
+    dt = datetime.strptime(expiration, "%Y-%m-%d")
+    yy = dt.strftime("%y")
+    mm = dt.strftime("%m")
+    dd = dt.strftime("%d")
+    strike_part = str(int(round(strike * 1000))).zfill(8)
+    return f"{ticker}{yy}{mm}{dd}{option_type}{strike_part}"
+
+
 class TradierClient:
     """
-    Minimal Tradier API client for option quotes and chain data.
+    Tradier API client for option quotes, chain data, and sandbox order execution.
 
     Uses Tradier sandbox API for paper trading (configurable via Config).
+    Sandbox orders mirror paper trades for real simulated execution.
     """
 
-    def __init__(self, api_key: str = None, base_url: str = None):
+    def __init__(self, api_key: str = None, base_url: str = None, account_id: str = None):
         self.api_key = api_key or Config.TRADIER_API_KEY
         self.base_url = base_url or Config.TRADIER_BASE_URL
+        self._account_id = account_id or Config.TRADIER_ACCOUNT_ID
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {self.api_key}",
@@ -42,6 +63,17 @@ class TradierClient:
             return resp.json()
         except requests.exceptions.RequestException as e:
             logger.warning(f"Tradier API error: {e}")
+            return None
+
+    def _post(self, endpoint: str, data: Dict = None) -> Optional[Dict]:
+        """Make a POST request to Tradier API (form-encoded for orders)."""
+        try:
+            url = f"{self.base_url}{endpoint}"
+            resp = self.session.post(url, data=data, timeout=15)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Tradier API POST error: {e}")
             return None
 
     def get_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
@@ -104,3 +136,201 @@ class TradierClient:
         if quote:
             return float(quote.get("last", 0)) or None
         return None
+
+    # ------------------------------------------------------------------
+    #  Sandbox order execution (mirrors paper trades in Tradier sandbox)
+    # ------------------------------------------------------------------
+
+    def get_account_id(self) -> Optional[str]:
+        """
+        Get sandbox account ID.
+
+        Uses configured TRADIER_ACCOUNT_ID if set, otherwise auto-discovers
+        from the user profile endpoint.
+        """
+        if self._account_id:
+            return self._account_id
+
+        data = self._get("/user/profile")
+        if not data:
+            logger.warning("Could not fetch Tradier profile for account ID")
+            return None
+
+        account = data.get("profile", {}).get("account", {})
+        if isinstance(account, list):
+            account_id = account[0].get("account_number") if account else None
+        else:
+            account_id = account.get("account_number")
+
+        if account_id:
+            self._account_id = str(account_id)
+            logger.info(f"Auto-discovered Tradier account ID: {self._account_id}")
+        return self._account_id
+
+    def place_ic_order(
+        self,
+        ticker: str,
+        expiration: str,
+        put_short: float,
+        put_long: float,
+        call_short: float,
+        call_long: float,
+        contracts: int,
+        total_credit: float,
+        tag: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Place an Iron Condor as a multileg order in Tradier sandbox.
+
+        Sends a 4-leg credit order:
+          - Sell put_short (sell to open)
+          - Buy put_long  (buy to open)
+          - Sell call_short (sell to open)
+          - Buy call_long  (buy to open)
+
+        Returns: {"order_id": int, "status": str} or None on failure.
+        """
+        account_id = self.get_account_id()
+        if not account_id:
+            logger.error("Cannot place sandbox order: no account ID")
+            return None
+
+        ps_occ = build_occ_symbol(ticker, expiration, put_short, "P")
+        pl_occ = build_occ_symbol(ticker, expiration, put_long, "P")
+        cs_occ = build_occ_symbol(ticker, expiration, call_short, "C")
+        cl_occ = build_occ_symbol(ticker, expiration, call_long, "C")
+
+        order_data = {
+            "class": "multileg",
+            "symbol": ticker,
+            "type": "credit",
+            "duration": "day",
+            "price": f"{total_credit:.2f}",
+            "option_symbol[0]": ps_occ,
+            "side[0]": "sell_to_open",
+            "quantity[0]": str(contracts),
+            "option_symbol[1]": pl_occ,
+            "side[1]": "buy_to_open",
+            "quantity[1]": str(contracts),
+            "option_symbol[2]": cs_occ,
+            "side[2]": "sell_to_open",
+            "quantity[2]": str(contracts),
+            "option_symbol[3]": cl_occ,
+            "side[3]": "buy_to_open",
+            "quantity[3]": str(contracts),
+        }
+        if tag:
+            order_data["tag"] = tag[:255]
+
+        result = self._post(f"/accounts/{account_id}/orders", data=order_data)
+        if not result:
+            logger.error(f"Sandbox IC order failed for {ticker} {expiration}")
+            return None
+
+        order = result.get("order", {})
+        order_id = order.get("id")
+        status = order.get("status", "unknown")
+
+        logger.info(
+            f"SANDBOX IC ORDER: {ticker} {expiration} "
+            f"{put_long}/{put_short}P-{call_short}/{call_long}C "
+            f"x{contracts} @ ${total_credit:.2f} → order_id={order_id} [{status}]"
+        )
+        return {"order_id": order_id, "status": status}
+
+    def close_ic_order(
+        self,
+        ticker: str,
+        expiration: str,
+        put_short: float,
+        put_long: float,
+        call_short: float,
+        call_long: float,
+        contracts: int,
+        close_price: float,
+        tag: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Close an Iron Condor by placing the opposite multileg order.
+
+        Sends a 4-leg debit order to close:
+          - Buy put_short  (buy to close)
+          - Sell put_long   (sell to close)
+          - Buy call_short  (buy to close)
+          - Sell call_long   (sell to close)
+
+        Returns: {"order_id": int, "status": str} or None on failure.
+        """
+        account_id = self.get_account_id()
+        if not account_id:
+            logger.error("Cannot close sandbox order: no account ID")
+            return None
+
+        ps_occ = build_occ_symbol(ticker, expiration, put_short, "P")
+        pl_occ = build_occ_symbol(ticker, expiration, put_long, "P")
+        cs_occ = build_occ_symbol(ticker, expiration, call_short, "C")
+        cl_occ = build_occ_symbol(ticker, expiration, call_long, "C")
+
+        order_data = {
+            "class": "multileg",
+            "symbol": ticker,
+            "type": "debit",
+            "duration": "day",
+            "price": f"{close_price:.2f}",
+            "option_symbol[0]": ps_occ,
+            "side[0]": "buy_to_close",
+            "quantity[0]": str(contracts),
+            "option_symbol[1]": pl_occ,
+            "side[1]": "sell_to_close",
+            "quantity[1]": str(contracts),
+            "option_symbol[2]": cs_occ,
+            "side[2]": "buy_to_close",
+            "quantity[2]": str(contracts),
+            "option_symbol[3]": cl_occ,
+            "side[3]": "sell_to_close",
+            "quantity[3]": str(contracts),
+        }
+        if tag:
+            order_data["tag"] = tag[:255]
+
+        result = self._post(f"/accounts/{account_id}/orders", data=order_data)
+        if not result:
+            logger.error(f"Sandbox IC close order failed for {ticker} {expiration}")
+            return None
+
+        order = result.get("order", {})
+        order_id = order.get("id")
+        status = order.get("status", "unknown")
+
+        logger.info(
+            f"SANDBOX IC CLOSE: {ticker} {expiration} "
+            f"{put_long}/{put_short}P-{call_short}/{call_long}C "
+            f"x{contracts} @ ${close_price:.2f} → order_id={order_id} [{status}]"
+        )
+        return {"order_id": order_id, "status": status}
+
+    def get_sandbox_positions(self) -> Optional[List[Dict]]:
+        """Get all open positions in the sandbox account."""
+        account_id = self.get_account_id()
+        if not account_id:
+            return None
+        data = self._get(f"/accounts/{account_id}/positions")
+        if not data:
+            return None
+        positions = data.get("positions", {}).get("position", [])
+        if isinstance(positions, dict):
+            return [positions]
+        return positions if positions else []
+
+    def get_sandbox_orders(self) -> Optional[List[Dict]]:
+        """Get recent orders in the sandbox account."""
+        account_id = self.get_account_id()
+        if not account_id:
+            return None
+        data = self._get(f"/accounts/{account_id}/orders")
+        if not data:
+            return None
+        orders = data.get("orders", {}).get("order", [])
+        if isinstance(orders, dict):
+            return [orders]
+        return orders if orders else []

@@ -5,6 +5,7 @@ import {
   getOptionExpirations,
   getIcEntryCredit,
   isConfigured,
+  placeIcOrder,
 } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
@@ -288,6 +289,30 @@ export async function POST(
       ],
     )
 
+    // 10b. Mirror to Tradier sandbox
+    let sandboxOrderId: number | null = null
+    try {
+      const sbResult = await placeIcOrder(
+        'SPY', expiration,
+        strikes.putShort, strikes.putLong,
+        strikes.callShort, strikes.callLong,
+        maxContracts, credits.totalCredit,
+        positionId,
+      )
+      if (sbResult?.orderId) {
+        sandboxOrderId = sbResult.orderId
+        await query(
+          `UPDATE ${botTable(bot, 'positions')}
+           SET sandbox_order_id = $1, updated_at = NOW()
+           WHERE position_id = $2`,
+          [String(sandboxOrderId), positionId],
+        )
+      }
+    } catch (sbErr: any) {
+      // Sandbox mirror is non-fatal — paper trade still succeeds
+      console.warn(`Sandbox mirror failed for ${positionId}: ${sbErr.message}`)
+    }
+
     // 11. Update paper account (deduct collateral)
     await query(
       `UPDATE ${botTable(bot, 'paper_account')}
@@ -327,6 +352,7 @@ export async function POST(
           credit: credits.totalCredit,
           collateral: totalCollateral,
           source: 'force_trade_api',
+          sandbox_order_id: sandboxOrderId,
         }),
         dte,
       ],
@@ -383,6 +409,7 @@ export async function POST(
       spot_price: spot,
       vix,
       source: credits.source,
+      sandbox_order_id: sandboxOrderId,
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

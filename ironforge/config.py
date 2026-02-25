@@ -18,6 +18,8 @@ class Config:
     TRADIER_BASE_URL = os.getenv(
         "TRADIER_BASE_URL", "https://sandbox.tradier.com/v1"
     )
+    # Account ID for sandbox order execution (auto-discovered if blank)
+    TRADIER_ACCOUNT_ID = os.getenv("TRADIER_ACCOUNT_ID", "")
 
     @classmethod
     def validate(cls) -> tuple:

@@ -63,6 +63,7 @@ def _position_table_ddl(bot: str) -> str:
 
         put_order_id TEXT DEFAULT 'PAPER',
         call_order_id TEXT DEFAULT 'PAPER',
+        sandbox_order_id TEXT,
 
         status TEXT NOT NULL DEFAULT 'open',
         open_time TIMESTAMPTZ NOT NULL,
@@ -262,6 +263,14 @@ def setup_all_tables():
 
         cursor.execute(_heartbeats_table_ddl())
         logger.info("  bot_heartbeats OK")
+
+        # Migrations: add columns that may not exist on older deployments
+        for bot in ['flame', 'spark']:
+            cursor.execute(f"""
+                ALTER TABLE {bot}_positions
+                ADD COLUMN IF NOT EXISTS sandbox_order_id TEXT
+            """)
+        logger.info("  sandbox_order_id migration OK")
 
     logger.info("All tables created successfully.")
 
