@@ -359,6 +359,179 @@ class TradierEODCloser:
 
         return spread_pairs, unpaired
 
+    def _group_spreads_into_iron_condors(
+        self, spread_pairs: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """
+        Pair call spreads with put spreads to reconstruct full Iron Condors.
+
+        FORTRESS opens ICs as a single 4-leg atomic multileg order, so closing
+        them the same way (4 legs) is more reliable than 2-leg spread closes.
+
+        Matches by (underlying, expiration, quantity). Each IC needs exactly
+        one call spread and one put spread with the same quantity.
+
+        Returns:
+            (iron_condors, remaining_spreads)
+        """
+        call_spreads = [s for s in spread_pairs if s['option_type'] == 'C']
+        put_spreads = [s for s in spread_pairs if s['option_type'] == 'P']
+
+        iron_condors = []
+        used_puts = set()
+
+        for cs in call_spreads:
+            key = (cs['underlying'], cs['expiration'], cs['quantity'])
+            matched = False
+
+            for j, ps in enumerate(put_spreads):
+                if j in used_puts:
+                    continue
+                ps_key = (ps['underlying'], ps['expiration'], ps['quantity'])
+                if ps_key == key:
+                    iron_condors.append({
+                        'underlying': cs['underlying'],
+                        'expiration': cs['expiration'],
+                        'quantity': cs['quantity'],
+                        'call_short_symbol': cs['short_symbol'],
+                        'call_long_symbol': cs['long_symbol'],
+                        'put_short_symbol': ps['short_symbol'],
+                        'put_long_symbol': ps['long_symbol'],
+                    })
+                    used_puts.add(j)
+                    matched = True
+                    break
+
+            if not matched:
+                pass  # Will remain in remaining_spreads
+
+        # Collect unmatched spreads
+        matched_call_indices = set()
+        for ic in iron_condors:
+            for i, cs in enumerate(call_spreads):
+                if (cs['short_symbol'] == ic['call_short_symbol'] and
+                        cs['long_symbol'] == ic['call_long_symbol']):
+                    matched_call_indices.add(i)
+                    break
+
+        remaining = []
+        for i, cs in enumerate(call_spreads):
+            if i not in matched_call_indices:
+                remaining.append(cs)
+        for j, ps in enumerate(put_spreads):
+            if j not in used_puts:
+                remaining.append(ps)
+
+        logger.info(
+            f"TradierEODCloser: Reconstructed {len(iron_condors)} Iron Condor(s), "
+            f"{len(remaining)} unpaired spread(s)"
+        )
+
+        return iron_condors, remaining
+
+    def _close_iron_condor(self, ic: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Close a full Iron Condor with a single 4-leg multileg MARKET order.
+
+        Mirrors how FORTRESS opens ICs — all 4 legs in one atomic order.
+        """
+        underlying = ic['underlying']
+        quantity = ic['quantity']
+
+        logger.info(
+            f"TradierEODCloser: Closing IC — "
+            f"buy_to_close {ic['call_short_symbol']} + {ic['put_short_symbol']} / "
+            f"sell_to_close {ic['call_long_symbol']} + {ic['put_long_symbol']} "
+            f"x{quantity} @ MARKET"
+        )
+
+        order_data = {
+            'class': 'multileg',
+            'symbol': underlying,
+            'type': 'market',
+            'duration': 'day',
+            # Leg 0: Buy back short call
+            'side[0]': 'buy_to_close',
+            'quantity[0]': str(quantity),
+            'option_symbol[0]': ic['call_short_symbol'],
+            # Leg 1: Sell long call
+            'side[1]': 'sell_to_close',
+            'quantity[1]': str(quantity),
+            'option_symbol[1]': ic['call_long_symbol'],
+            # Leg 2: Buy back short put
+            'side[2]': 'buy_to_close',
+            'quantity[2]': str(quantity),
+            'option_symbol[2]': ic['put_short_symbol'],
+            # Leg 3: Sell long put
+            'side[3]': 'sell_to_close',
+            'quantity[3]': str(quantity),
+            'option_symbol[3]': ic['put_long_symbol'],
+        }
+
+        result = {
+            'type': 'iron_condor',
+            'call_short': ic['call_short_symbol'],
+            'call_long': ic['call_long_symbol'],
+            'put_short': ic['put_short_symbol'],
+            'put_long': ic['put_long_symbol'],
+            'quantity': quantity,
+            'order_id': None,
+            'fill_status': 'not_sent',
+            'error': None,
+        }
+
+        for attempt in range(MAX_CLOSE_RETRIES):
+            try:
+                response = self._api_request(
+                    'POST',
+                    f'accounts/{self.account_id}/orders',
+                    data=order_data
+                )
+
+                order_info = response.get('order', {})
+                order_id = order_info.get('id')
+                order_status = order_info.get('status', 'unknown')
+
+                if order_id:
+                    result['order_id'] = str(order_id)
+                    result['fill_status'] = order_status
+                    logger.info(
+                        f"TradierEODCloser: IC order placed — "
+                        f"ID: {order_id}, Status: {order_status}"
+                    )
+
+                    if order_status != 'filled':
+                        filled = self._wait_for_fill(str(order_id))
+                        result['fill_status'] = 'filled' if filled else 'unfilled'
+
+                    return result
+                else:
+                    errors = response.get('errors', {})
+                    error_msg = errors.get('error', []) if isinstance(errors, dict) else str(errors)
+                    result['error'] = str(error_msg) if error_msg else f"No order ID: {response}"
+                    logger.warning(
+                        f"TradierEODCloser: IC order attempt "
+                        f"{attempt + 1}/{MAX_CLOSE_RETRIES} failed: {result['error']}"
+                    )
+
+            except Exception as e:
+                result['error'] = str(e)
+                logger.error(
+                    f"TradierEODCloser: IC close attempt {attempt + 1}/{MAX_CLOSE_RETRIES} "
+                    f"failed: {e}"
+                )
+
+            if attempt < MAX_CLOSE_RETRIES - 1:
+                delay = 2 ** (attempt + 1)
+                logger.info(f"TradierEODCloser: Retrying in {delay}s...")
+                time.sleep(delay)
+
+        result['fill_status'] = 'failed'
+        logger.error(
+            f"TradierEODCloser: CRITICAL — Failed to close IC after {MAX_CLOSE_RETRIES} attempts"
+        )
+        return result
+
     def _close_spread_pair(self, spread: Dict[str, Any]) -> Dict[str, Any]:
         """
         Close a spread pair with a multileg MARKET order.
@@ -671,21 +844,56 @@ class TradierEODCloser:
         for pos in positions:
             logger.info(f"  {pos['symbol']}: qty={pos['quantity']}")
 
-        # Step 4: Group option legs into spread pairs for multileg closing
-        # Prefer multileg spread closes, but fall back to individual legs
-        # if the spread order is rejected (e.g., 0DTE, pre-market).
+        # Step 4: Group positions into spreads, then reconstruct full Iron Condors.
+        # Close strategy: 4-leg IC → 2-leg spread → individual leg (cascade fallback)
         spread_pairs, unpaired = self._group_positions_into_spreads(positions)
 
-        # Step 4a: Close spread pairs as multileg orders
-        for spread in spread_pairs:
+        # Step 4a: Reconstruct full ICs from matching call+put spread pairs
+        iron_condors, remaining_spreads = self._group_spreads_into_iron_condors(spread_pairs)
+
+        # Step 4b: Close full ICs as 4-leg multileg orders (mirrors how they were opened)
+        for ic in iron_condors:
+            ic_result = self._close_iron_condor(ic)
+            result['position_details'].append(ic_result)
+
+            if ic_result['fill_status'] in ('filled', 'open'):
+                result['positions_closed'] += 4
+            else:
+                # 4-leg IC failed — demote to 2 spread pairs and try those
+                logger.warning(
+                    f"TradierEODCloser: IC close failed — "
+                    f"falling back to 2-leg spread closes"
+                )
+                remaining_spreads.append({
+                    'underlying': ic['underlying'],
+                    'expiration': ic['expiration'],
+                    'option_type': 'C',
+                    'short_symbol': ic['call_short_symbol'],
+                    'long_symbol': ic['call_long_symbol'],
+                    'short_qty': ic['quantity'],
+                    'long_qty': ic['quantity'],
+                    'quantity': ic['quantity'],
+                })
+                remaining_spreads.append({
+                    'underlying': ic['underlying'],
+                    'expiration': ic['expiration'],
+                    'option_type': 'P',
+                    'short_symbol': ic['put_short_symbol'],
+                    'long_symbol': ic['put_long_symbol'],
+                    'short_qty': ic['quantity'],
+                    'long_qty': ic['quantity'],
+                    'quantity': ic['quantity'],
+                })
+
+        # Step 4c: Close remaining 2-leg spreads (unmatched or demoted from failed ICs)
+        for spread in remaining_spreads:
             close_result = self._close_spread_pair(spread)
             result['position_details'].append(close_result)
 
             if close_result['fill_status'] in ('filled', 'open'):
-                # Each spread pair covers 2 position legs
                 result['positions_closed'] += 2
             else:
-                # Spread order rejected — fall back to closing each leg individually
+                # 2-leg spread failed — fall back to individual legs
                 logger.warning(
                     f"TradierEODCloser: Spread close failed for "
                     f"{spread['short_symbol']}/{spread['long_symbol']} "
@@ -714,7 +922,7 @@ class TradierEODCloser:
                             f"{leg_result.get('error', 'unknown')}"
                         )
 
-        # Step 4b: Close any unpaired positions individually (equities or orphan legs)
+        # Step 4d: Close any unpaired positions individually (equities or orphan legs)
         for pos in unpaired:
             close_result = self._close_single_position(pos)
             result['position_details'].append(close_result)
