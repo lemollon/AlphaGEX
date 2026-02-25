@@ -15,7 +15,7 @@ services:
     runtime: node
     plan: free
     rootDir: ironforge/webapp
-    buildCommand: npm install && npm run build && cp -r .next/static .next/standalone/.next/static
+    buildCommand: npm install && npm run build
     startCommand: node .next/standalone/server.js
     envVars:
       - key: DATABASE_URL
@@ -28,6 +28,8 @@ services:
         value: https://sandbox.tradier.com/v1
       - key: NODE_ENV
         value: production
+      - key: HOSTNAME
+        value: "0.0.0.0"
 
   # ---- FLAME Trading Bot (2DTE) ----
   - type: worker
