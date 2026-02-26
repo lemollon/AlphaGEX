@@ -40,16 +40,31 @@ def main():
     trader = create_spark_trader()
     logger.info("SPARK trader initialized, starting 5-min loop...")
 
+    scan_num = 0
     while True:
+        scan_num += 1
         try:
+            logger.info(f"SPARK scan #{scan_num} started")
             result = trader.run_cycle()
-            logger.info(
-                f"SPARK cycle: action={result['action']}, traded={result['traded']}"
+            action = result.get("action", "unknown")
+            md = result.get("market_data", {})
+            details = result.get("details", {})
+            reason = details.get("reason", "") if isinstance(details, dict) else str(details)
+
+            spy_str = f" SPY=${md['spy']}" if md.get("spy") else ""
+            vix_str = f" VIX={md['vix']}" if md.get("vix") else ""
+
+            next_time = time.strftime(
+                "%H:%M CT", time.localtime(time.time() + CYCLE_INTERVAL)
             )
-            if result.get("details"):
-                logger.info(f"  Details: {result['details']}")
+            logger.info(
+                f"SPARK scan #{scan_num}: {action}{spy_str}{vix_str}"
+                f" | traded={result['traded']}"
+                f" | {reason}"
+                f" | next={next_time}"
+            )
         except Exception as e:
-            logger.error(f"SPARK cycle error: {e}", exc_info=True)
+            logger.error(f"SPARK cycle #{scan_num} error: {e}", exc_info=True)
 
         time.sleep(CYCLE_INTERVAL)
 

@@ -24,8 +24,15 @@ services:
           property: connectionString
       - key: TRADIER_API_KEY
         sync: false
-      - key: TRADIER_BASE_URL
-        value: https://sandbox.tradier.com/v1
+      # TRADIER_BASE_URL intentionally omitted — defaults to production
+      # (https://api.tradier.com/v1) for live market data quotes.
+      # Sandbox orders use the hardcoded SANDBOX_URL in tradier.ts.
+      - key: TRADIER_SANDBOX_KEY_USER
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_MATT
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_LOGAN
+        sync: false
       - key: NODE_ENV
         value: production
 
@@ -44,8 +51,14 @@ services:
           property: connectionString
       - key: TRADIER_API_KEY
         sync: false
-      - key: TRADIER_BASE_URL
-        value: https://sandbox.tradier.com/v1
+      # TRADIER_BASE_URL intentionally omitted — defaults to production
+      # for live quotes. Sandbox orders use Config.TRADIER_SANDBOX_URL.
+      - key: TRADIER_SANDBOX_KEY_USER
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_MATT
+        sync: false
+      - key: TRADIER_SANDBOX_KEY_LOGAN
+        sync: false
 
   # ---- SPARK Trading Bot (1DTE) ----
   - type: worker
@@ -62,5 +75,5 @@ services:
           property: connectionString
       - key: TRADIER_API_KEY
         sync: false
-      - key: TRADIER_BASE_URL
-        value: https://sandbox.tradier.com/v1
+      # TRADIER_BASE_URL intentionally omitted — defaults to production
+      # for live quotes. SPARK doesn't use sandbox orders.
