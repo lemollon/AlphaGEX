@@ -34,6 +34,13 @@ export default function BotDashboard({
     { refreshInterval: STATUS_REFRESH },
   )
 
+  /* ---- Config (always fetched, slow refresh) ---- */
+  const { data: config } = useSWR(
+    `/api/${bot}/config`,
+    fetcher,
+    { refreshInterval: 60_000 },
+  )
+
   /* ---- Equity curve (historical, fetched based on period) ---- */
   const historicalPeriod = equityPeriod === 'intraday' ? 'all' : equityPeriod
   const { data: equity } = useSWR(
@@ -109,7 +116,7 @@ export default function BotDashboard({
       </div>
 
       {/* Status card */}
-      {status && <StatusCard data={status} accent={accent} />}
+      {status && <StatusCard data={status} accent={accent} config={config} />}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-forge-border">

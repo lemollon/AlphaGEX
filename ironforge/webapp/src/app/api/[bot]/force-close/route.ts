@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, botTable, num, validateBot } from '@/lib/db'
-import { getIcMarkToMarket, isConfigured } from '@/lib/tradier'
+import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts } from '@/lib/tradier'
 
 export const dynamic = 'force-dynamic'
 
@@ -137,7 +137,27 @@ export async function POST(
       [bal, cumPnl, num(openCount[0]?.cnt), `force_close:${position_id}`, dte],
     )
 
-    // 8. Log
+    // 8. Mirror close to all Tradier sandbox accounts (FLAME only)
+    let sandboxCloseIds: Record<string, number> = {}
+    if (bot === 'flame') {
+      try {
+        sandboxCloseIds = await closeIcOrderAllAccounts(
+          pos.ticker,
+          String(pos.expiration).slice(0, 10),
+          num(pos.put_short_strike),
+          num(pos.put_long_strike),
+          num(pos.call_short_strike),
+          num(pos.call_long_strike),
+          contracts,
+          closePrice,
+          position_id,
+        )
+      } catch (sbErr: any) {
+        console.warn(`Sandbox close mirror failed for ${position_id}: ${sbErr.message}`)
+      }
+    }
+
+    // 9. Log
     await query(
       `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
        VALUES ($1, $2, $3, $4)`,
@@ -151,12 +171,13 @@ export async function POST(
           close_reason: 'manual_close',
           entry_credit: totalCredit,
           source: 'force_close_api',
+          sandbox_close_ids: sandboxCloseIds,
         }),
         dte,
       ],
     )
 
-    // 9. Update daily_perf
+    // 10. Update daily_perf
     await query(
       `INSERT INTO ${botTable(bot, 'daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
        VALUES (CURRENT_DATE, 0, 1, $1)
@@ -173,6 +194,7 @@ export async function POST(
       realized_pnl: realizedPnl,
       entry_credit: totalCredit,
       contracts,
+      sandbox_close_ids: sandboxCloseIds,
     })
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 })

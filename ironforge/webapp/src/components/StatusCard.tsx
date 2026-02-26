@@ -20,12 +20,24 @@ interface StatusData {
   scan_count: number
 }
 
+interface ConfigData {
+  sd_multiplier?: number
+  spread_width?: number
+  buying_power_usage_pct?: number
+  profit_target_pct?: number
+  stop_loss_pct?: number
+  vix_skip?: number
+  max_contracts?: number
+}
+
 export default function StatusCard({
   data,
   accent,
+  config,
 }: {
   data: StatusData
   accent: 'amber' | 'blue'
+  config?: ConfigData | null
 }) {
   const { account } = data
   const realizedPositive = account.cumulative_pnl >= 0
@@ -133,6 +145,20 @@ export default function StatusCard({
           <p className="font-medium">{data.scan_count}</p>
         </div>
       </div>
+
+      {/* Config summary */}
+      {config && (
+        <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-forge-border/50">
+          <span className="text-[10px] text-forge-muted uppercase tracking-wider">Config</span>
+          <span className="text-xs font-mono text-gray-400">{config.sd_multiplier ?? 1.2}x SD</span>
+          <span className="text-xs font-mono text-gray-400">${config.spread_width ?? 5} wings</span>
+          <span className="text-xs font-mono text-gray-400">{((config.buying_power_usage_pct ?? 0.85) * 100).toFixed(0)}% BP</span>
+          <span className="text-xs font-mono text-gray-400">PT {config.profit_target_pct ?? 30}%</span>
+          <span className="text-xs font-mono text-gray-400">SL {config.stop_loss_pct ?? 100}%</span>
+          <span className="text-xs font-mono text-gray-400">VIX&gt;{config.vix_skip ?? 32} skip</span>
+          <span className="text-xs font-mono text-gray-400">max {config.max_contracts ?? 10}x</span>
+        </div>
+      )}
 
       {data.last_scan && (
         <p className="text-xs text-forge-muted mt-3">Last scan: {data.last_scan}</p>
