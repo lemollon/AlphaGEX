@@ -16,7 +16,7 @@ services:
     plan: free
     rootDir: ironforge/webapp
     buildCommand: npm install && npm run build
-    startCommand: HOSTNAME=0.0.0.0 node .next/standalone/server.js
+    startCommand: node start.js
     envVars:
       - key: DATABASE_URL
         fromDatabase:
