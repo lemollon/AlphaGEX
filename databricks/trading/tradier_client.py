@@ -12,7 +12,10 @@ from typing import Optional, Dict, Any, List
 
 import requests
 
-from config import DatabricksConfig
+try:
+    from databricks.config import DatabricksConfig
+except ImportError:
+    from config import DatabricksConfig
 
 logger = logging.getLogger(__name__)
 

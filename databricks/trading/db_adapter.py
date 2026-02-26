@@ -1,35 +1,27 @@
 """
-Databricks SQL Adapter
-======================
+PostgreSQL Database Adapter for IronForge
+==========================================
 
-Provides database connectivity using the Databricks SQL connector.
-Replaces psycopg2-based database_adapter from the parent AlphaGEX project.
+Provides database connectivity using psycopg2 via the shared AlphaGEX
+database_adapter. Migrated from Databricks SQL to run on Render.
 """
 
 import logging
 from contextlib import contextmanager
 
-from databricks import sql as databricks_sql
-
-from config import DatabricksConfig
+from database_adapter import get_connection as _get_pg_connection
 
 logger = logging.getLogger(__name__)
 
 
 def get_connection():
-    """Get a Databricks SQL connection."""
-    return databricks_sql.connect(
-        server_hostname=DatabricksConfig.SERVER_HOSTNAME,
-        http_path=DatabricksConfig.HTTP_PATH,
-        access_token=DatabricksConfig.ACCESS_TOKEN,
-        catalog=DatabricksConfig.CATALOG,
-        schema=DatabricksConfig.SCHEMA,
-    )
+    """Get a PostgreSQL connection from the shared AlphaGEX pool."""
+    return _get_pg_connection()
 
 
 @contextmanager
 def db_connection():
-    """Context manager for Databricks SQL connections."""
+    """Context manager for PostgreSQL connections."""
     conn = None
     try:
         conn = get_connection()
@@ -61,5 +53,5 @@ def _to_python(val):
 
 
 def table(name: str) -> str:
-    """Get fully qualified table name."""
-    return DatabricksConfig.get_full_table_name(name)
+    """Get table name (no catalog/schema prefix needed for PostgreSQL)."""
+    return name

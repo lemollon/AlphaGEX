@@ -15,8 +15,8 @@ Tests cover:
   - Job entry points existence and structure
   - Workflow scheduling configuration
 
-These tests mock all external dependencies (Tradier API, Databricks SQL)
-so they run locally in pytest without a Databricks workspace.
+These tests mock all external dependencies (Tradier API, PostgreSQL)
+so they run locally in pytest without a database connection.
 
 Run:
     python -m pytest tests/test_ironforge_premarket_health.py -v
@@ -51,14 +51,13 @@ def ironforge_env():
     When FORTRESS tests run first, AlphaGEX's `trading` package gets cached.
     This fixture saves those modules, removes them, inserts databricks/ into
     sys.path, and restores everything on teardown.
+
+    IronForge now uses PostgreSQL (via database_adapter) instead of Databricks SQL.
+    We mock database_adapter.get_connection to avoid needing a real database.
     """
     env_vars = {
-        'DATABRICKS_SERVER_HOSTNAME': 'test.cloud.databricks.com',
-        'DATABRICKS_HTTP_PATH': '/sql/1.0/warehouses/test',
-        'DATABRICKS_TOKEN': 'test_token',
+        'DATABASE_URL': 'postgresql://test:test@localhost:5432/testdb',
         'TRADIER_API_KEY': 'test_tradier_key',
-        'DATABRICKS_CATALOG': 'alpha_prime',
-        'DATABRICKS_SCHEMA': 'default',
     }
 
     # Save original state
@@ -71,7 +70,8 @@ def ironforge_env():
         if any(mod_name == p or mod_name.startswith(p + '.') for p in conflict_prefixes):
             saved_modules[mod_name] = sys.modules.pop(mod_name)
 
-    # Also save/remove databricks connector mock if present
+    # Also save/remove database_adapter if already loaded (will be re-imported
+    # by IronForge's db_adapter.py from the project root)
     for mod_name in ('databricks', 'databricks.sql'):
         if mod_name in sys.modules:
             saved_modules[mod_name] = sys.modules.pop(mod_name)
@@ -80,9 +80,14 @@ def ironforge_env():
         # Insert databricks dir at front of path
         sys.path.insert(0, str(DATABRICKS_DIR))
 
-        # Mock the databricks SQL connector
-        sys.modules['databricks'] = MagicMock()
-        sys.modules['databricks.sql'] = MagicMock()
+        # Mock database_adapter so db_adapter.py can import get_connection
+        # without needing a real PostgreSQL connection
+        mock_db_adapter = MagicMock()
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_db_adapter.get_connection.return_value = mock_conn
+        sys.modules['database_adapter'] = mock_db_adapter
 
         yield
 
@@ -97,7 +102,7 @@ def ironforge_env():
         mod_file = getattr(mod, '__file__', '') or ''
         if db_str in mod_file:
             to_remove.append(mod_name)
-    for mod_name in ('databricks', 'databricks.sql'):
+    for mod_name in ('databricks', 'databricks.sql', 'database_adapter'):
         to_remove.append(mod_name)
     for mod_name in list(sys.modules):
         if any(mod_name == p or mod_name.startswith(p + '.') for p in conflict_prefixes):
@@ -859,7 +864,7 @@ class TestDatabaseLayer:
         from trading.db import TradingDatabase
         db = TradingDatabase(bot_name="FLAME", dte_mode="2DTE")
         assert db._prefix == "flame"
-        # _t() calls table() which uses DatabricksConfig
+        # _t() calls table() for PostgreSQL table naming
         table_name = db._t("positions")
         assert "flame_positions" in table_name
 
@@ -871,13 +876,11 @@ class TestDatabaseLayer:
         table_name = db._t("positions")
         assert "spark_positions" in table_name
 
-    def test_fully_qualified_table_name(self):
-        """Table names should include catalog and schema."""
+    def test_table_name_is_plain(self):
+        """Table names should be plain (no catalog/schema prefix for PostgreSQL)."""
         from trading.db_adapter import table
-        full = table("flame_positions")
-        assert "alpha_prime" in full
-        assert "default" in full
-        assert "flame_positions" in full
+        name = table("flame_positions")
+        assert name == "flame_positions"
 
     def test_to_python_conversion(self):
         """_to_python should convert various types to native Python."""
@@ -1067,45 +1070,38 @@ class TestWorkflowScheduling:
             config = json.load(f)
 
         required = config.get('environment_variables', {}).get('required', [])
-        assert 'DATABRICKS_SERVER_HOSTNAME' in required
-        assert 'DATABRICKS_HTTP_PATH' in required
-        assert 'DATABRICKS_TOKEN' in required
         assert 'TRADIER_API_KEY' in required
 
 
 # ===========================================================================
-# 12. DATABRICKS CONFIG TESTS
+# 12. IRONFORGE CONFIG TESTS
 # ===========================================================================
 
 class TestDatabricksConfig:
-    """Verify Databricks configuration is correct."""
+    """Verify IronForge configuration is correct."""
 
     def test_config_validates_with_env_vars(self):
-        """Config should validate when env vars are set."""
+        """Config should validate when DATABASE_URL is set."""
         from config import DatabricksConfig
         valid, msg = DatabricksConfig.validate()
         assert valid is True
         assert msg == "OK"
 
-    def test_config_rejects_missing_vars(self):
-        """Config should fail if required vars are missing."""
-        with patch.dict(os.environ, {
-            'DATABRICKS_SERVER_HOSTNAME': '',
-            'DATABRICKS_HTTP_PATH': '',
-            'DATABRICKS_TOKEN': '',
-        }):
+    def test_config_rejects_missing_database_url(self):
+        """Config should fail if DATABASE_URL is missing."""
+        with patch.dict(os.environ, {'DATABASE_URL': ''}, clear=False):
             import importlib
             import config as cfg_module
             importlib.reload(cfg_module)
             valid, msg = cfg_module.DatabricksConfig.validate()
             assert valid is False
-            assert "Missing" in msg
+            assert "DATABASE_URL" in msg
 
-    def test_full_table_name_format(self):
-        """get_full_table_name should return catalog.schema.table."""
+    def test_table_name_is_plain(self):
+        """get_full_table_name should return just the table name (no catalog prefix)."""
         from config import DatabricksConfig
         name = DatabricksConfig.get_full_table_name("flame_positions")
-        assert name == "alpha_prime.default.flame_positions"
+        assert name == "flame_positions"
 
     def test_tradier_production_url(self):
         """Tradier should point to production API, not sandbox."""

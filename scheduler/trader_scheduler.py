@@ -263,6 +263,16 @@ except ImportError:
     FaithTrader = None
     print("Warning: FAITH not available. 2DTE paper IC trading will be disabled.")
 
+# Import IronForge FLAME (2DTE Paper IC) and SPARK (1DTE Paper IC)
+try:
+    from databricks.trading.trader import create_flame_trader, create_spark_trader
+    IRONFORGE_AVAILABLE = True
+except ImportError:
+    IRONFORGE_AVAILABLE = False
+    create_flame_trader = None
+    create_spark_trader = None
+    print("Warning: IronForge not available. FLAME/SPARK paper IC trading will be disabled.")
+
 # Import GRACE (1DTE Paper Iron Condor - for comparison with FAITH)
 try:
     from trading.grace.trader import GraceTrader
@@ -709,6 +719,31 @@ class AutonomousTraderScheduler:
                 logger.warning(f"GRACE initialization failed: {e}")
                 self.grace_trader = None
 
+        # IronForge FLAME (2DTE) and SPARK (1DTE) Paper Iron Condors
+        self.flame_trader = None
+        self.spark_trader = None
+        if IRONFORGE_AVAILABLE:
+            # Ensure IronForge tables exist in PostgreSQL
+            try:
+                from databricks.setup_tables import setup_all_tables as setup_ironforge_tables
+                setup_ironforge_tables()
+                logger.info("✅ IronForge tables verified/created in PostgreSQL")
+            except Exception as e:
+                logger.warning(f"IronForge table setup failed (may already exist): {e}")
+
+            try:
+                self.flame_trader = create_flame_trader()
+                logger.info(f"✅ FLAME initialized (IronForge 2DTE Paper Iron Condor)")
+            except Exception as e:
+                logger.warning(f"FLAME initialization failed: {e}")
+                self.flame_trader = None
+            try:
+                self.spark_trader = create_spark_trader()
+                logger.info(f"✅ SPARK initialized (IronForge 1DTE Paper Iron Condor)")
+            except Exception as e:
+                logger.warning(f"SPARK initialization failed: {e}")
+                self.spark_trader = None
+
         # JUBILEE - Box Spread Synthetic Borrowing
         # Generates cash through box spreads to fund IC bot volume scaling
         # PAPER mode: Simulated trades for testing the strategy
@@ -944,6 +979,8 @@ class AutonomousTraderScheduler:
         self.samson_execution_count = 0
         self.faith_execution_count = 0
         self.grace_execution_count = 0
+        self.flame_execution_count = 0
+        self.spark_execution_count = 0
         self.watchtower_execution_count = 0
         self.valor_execution_count = 0
 
@@ -2692,6 +2729,158 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in GRACE EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"=" * 80)
+
+    # ========================================================================
+    # IronForge FLAME - 2DTE Paper Iron Condor (SPY)
+    # ========================================================================
+
+    def scheduled_flame_logic(self):
+        """
+        FLAME (2DTE Paper Iron Condor) trading logic - runs every 5 minutes during market hours.
+        IronForge paper-only bot: real Tradier data, simulated fills, $5K capital.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"FLAME (IronForge 2DTE Paper IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.flame_trader:
+            logger.warning("FLAME trader not available - skipping")
+            self._save_heartbeat('FLAME', 'UNAVAILABLE')
+            return
+
+        try:
+            result = self.flame_trader.run_cycle()
+
+            action = result.get('action', 'none')
+            traded = result.get('traded', False)
+            managed = result.get('positions_managed', 0)
+
+            logger.info(f"FLAME cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW PAPER TRADE OPENED")
+            if managed > 0:
+                logger.info(f"  Positions managed: {managed}")
+
+            self.flame_execution_count += 1
+            self._save_heartbeat('FLAME', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.flame_execution_count,
+                'traded': traded,
+                'action': action
+            })
+
+            logger.info(f"FLAME scan #{self.flame_execution_count} completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in FLAME: {str(e)}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('FLAME', 'ERROR', {'error': str(e)})
+            logger.info(f"=" * 80)
+
+    def scheduled_flame_eod_logic(self):
+        """FLAME End-of-Day processing - safety net close at 3:50 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"FLAME EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.flame_trader:
+            logger.warning("FLAME trader not available - skipping EOD processing")
+            return
+
+        try:
+            result = self.flame_trader.run_cycle(close_only=True)
+            managed = result.get('positions_managed', 0)
+
+            if managed > 0:
+                logger.info(f"FLAME EOD: Closed {managed} remaining position(s)")
+            else:
+                logger.info("FLAME EOD: No positions to process")
+
+            logger.info(f"FLAME EOD processing completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in FLAME EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"=" * 80)
+
+    # ========================================================================
+    # IronForge SPARK - 1DTE Paper Iron Condor (SPY)
+    # ========================================================================
+
+    def scheduled_spark_logic(self):
+        """
+        SPARK (1DTE Paper Iron Condor) trading logic - runs every 5 minutes during market hours.
+        IronForge paper-only bot: real Tradier data, simulated fills, $5K capital.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"SPARK (IronForge 1DTE Paper IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.spark_trader:
+            logger.warning("SPARK trader not available - skipping")
+            self._save_heartbeat('SPARK', 'UNAVAILABLE')
+            return
+
+        try:
+            result = self.spark_trader.run_cycle()
+
+            action = result.get('action', 'none')
+            traded = result.get('traded', False)
+            managed = result.get('positions_managed', 0)
+
+            logger.info(f"SPARK cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW PAPER TRADE OPENED")
+            if managed > 0:
+                logger.info(f"  Positions managed: {managed}")
+
+            self.spark_execution_count += 1
+            self._save_heartbeat('SPARK', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.spark_execution_count,
+                'traded': traded,
+                'action': action
+            })
+
+            logger.info(f"SPARK scan #{self.spark_execution_count} completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in SPARK: {str(e)}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('SPARK', 'ERROR', {'error': str(e)})
+            logger.info(f"=" * 80)
+
+    def scheduled_spark_eod_logic(self):
+        """SPARK End-of-Day processing - safety net close at 3:50 PM CT."""
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"SPARK EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.spark_trader:
+            logger.warning("SPARK trader not available - skipping EOD processing")
+            return
+
+        try:
+            result = self.spark_trader.run_cycle(close_only=True)
+            managed = result.get('positions_managed', 0)
+
+            if managed > 0:
+                logger.info(f"SPARK EOD: Closed {managed} remaining position(s)")
+            else:
+                logger.info("SPARK EOD: No positions to process")
+
+            logger.info(f"SPARK EOD processing completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in SPARK EOD: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
@@ -6119,6 +6308,74 @@ class AutonomousTraderScheduler:
             logger.info("✅ GRACE EOD job scheduled (3:50 PM CT daily)")
         else:
             logger.warning("⚠️ GRACE not available - 1DTE paper IC comparison disabled")
+
+        # =================================================================
+        # IronForge FLAME JOB: 2DTE Paper Iron Condor - every 5 min
+        # =================================================================
+        if self.flame_trader:
+            self.scheduler.add_job(
+                self.scheduled_flame_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='flame_trading',
+                name='FLAME - IronForge 2DTE Paper Iron Condor (5-min intervals)',
+                replace_existing=True,
+                max_instances=1
+            )
+            logger.info("✅ FLAME job scheduled (every 5 min, checks market hours internally)")
+
+            self.scheduler.add_job(
+                self.scheduled_flame_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=50,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='flame_eod',
+                name='FLAME - EOD Safety Net Close',
+                replace_existing=True,
+                max_instances=1
+            )
+            logger.info("✅ FLAME EOD job scheduled (3:50 PM CT daily)")
+        else:
+            logger.warning("⚠️ IronForge FLAME not available - 2DTE paper IC trading disabled")
+
+        # =================================================================
+        # IronForge SPARK JOB: 1DTE Paper Iron Condor - every 5 min
+        # =================================================================
+        if self.spark_trader:
+            self.scheduler.add_job(
+                self.scheduled_spark_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    timezone='America/Chicago'
+                ),
+                id='spark_trading',
+                name='SPARK - IronForge 1DTE Paper Iron Condor (5-min intervals)',
+                replace_existing=True,
+                max_instances=1
+            )
+            logger.info("✅ SPARK job scheduled (every 5 min, checks market hours internally)")
+
+            self.scheduler.add_job(
+                self.scheduled_spark_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,
+                    minute=50,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='spark_eod',
+                name='SPARK - EOD Safety Net Close',
+                replace_existing=True,
+                max_instances=1
+            )
+            logger.info("✅ SPARK EOD job scheduled (3:50 PM CT daily)")
+        else:
+            logger.warning("⚠️ IronForge SPARK not available - 1DTE paper IC trading disabled")
 
         # =================================================================
         # VALOR JOB: MES Futures Scalping - runs every 1 minute (24/5)

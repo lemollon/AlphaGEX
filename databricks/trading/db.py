@@ -1,15 +1,9 @@
 """
-Databricks SQL Database Layer
-==============================
+IronForge Database Layer
+=========================
 
-Unified database operations for FLAME and SPARK bots on Delta Lake.
-
-Key differences from PostgreSQL version:
-- Uses Databricks SQL connector (not psycopg2)
-- Delta Lake tables (not PostgreSQL)
-- No RETURNING clause — uses separate SELECT after mutations
-- No ON CONFLICT — uses MERGE INTO for upserts
-- Parameters use %s markers (databricks-sql-connector supports this)
+Unified database operations for FLAME and SPARK bots on PostgreSQL.
+Migrated from Databricks SQL to run on Render.
 """
 
 import json
@@ -143,7 +137,7 @@ class TradingDatabase:
                         buying_power = %s,
                         high_water_mark = %s,
                         max_drawdown = %s,
-                        updated_at = CURRENT_TIMESTAMP()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                 """, [
                     new_balance, new_cumulative_pnl, new_total_trades,
@@ -301,11 +295,11 @@ class TradingDatabase:
                 c.execute(f"""
                     UPDATE {self._t('positions')}
                     SET status = 'closed',
-                        close_time = CURRENT_TIMESTAMP(),
+                        close_time = CURRENT_TIMESTAMP,
                         close_price = %s,
                         realized_pnl = %s,
                         close_reason = %s,
-                        updated_at = CURRENT_TIMESTAMP()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE position_id = %s AND status = 'open' AND dte_mode = %s
                 """, [close_price, realized_pnl, close_reason, position_id, self.dte_mode])
                 logger.info(f"{self.bot_name}: Closed {position_id}, P&L=${realized_pnl:.2f}")
@@ -322,11 +316,11 @@ class TradingDatabase:
                 c.execute(f"""
                     UPDATE {self._t('positions')}
                     SET status = 'expired',
-                        close_time = CURRENT_TIMESTAMP(),
+                        close_time = CURRENT_TIMESTAMP,
                         close_reason = 'EXPIRED',
                         close_price = %s,
                         realized_pnl = %s,
-                        updated_at = CURRENT_TIMESTAMP()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE position_id = %s AND status = 'open' AND dte_mode = %s
                 """, [_to_python(close_price), _to_python(realized_pnl), position_id, self.dte_mode])
                 return True
@@ -438,8 +432,8 @@ class TradingDatabase:
                     FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE
                     AND dte_mode = %s
-                    AND trade_date >= DATE_SUB(CURRENT_DATE(), 8)
-                    AND DAYOFWEEK(trade_date) BETWEEN 2 AND 6
+                    AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
+                    AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5
                 """, [self.dte_mode])
                 result = c.fetchone()
                 return result[0] if result else 0
@@ -456,7 +450,7 @@ class TradingDatabase:
                     SELECT trade_date, symbol, position_id, opened_at, closed_at,
                            is_day_trade, contracts, entry_credit, exit_cost, pnl, close_reason
                     FROM {self._t('pdt_log')}
-                    WHERE trade_date >= DATE_SUB(CURRENT_DATE(), %s) AND dte_mode = %s
+                    WHERE trade_date >= CURRENT_DATE - (%s || ' days')::INTERVAL AND dte_mode = %s
                     ORDER BY opened_at DESC
                 """, [days, self.dte_mode])
                 for row in c.fetchall():
@@ -486,7 +480,7 @@ class TradingDatabase:
                     FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE
                     AND dte_mode = %s
-                    AND trade_date >= DATE_SUB(CURRENT_DATE(), 8)
+                    AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
                 """, [self.dte_mode])
                 result = c.fetchone()
                 if result and result[0]:
@@ -534,7 +528,7 @@ class TradingDatabase:
                     was_executed, skip_reason, reasoning, wings_adjusted,
                     self.dte_mode,
                 ])
-                return 1  # Databricks doesn't support RETURNING
+                return 1
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to log signal: {e}")
             return None
@@ -559,19 +553,16 @@ class TradingDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 hb_table = table('bot_heartbeats')
-                # Use MERGE for upsert (Databricks doesn't have ON CONFLICT)
+                details_json = json.dumps({"last_action": action})
                 c.execute(f"""
-                    MERGE INTO {hb_table} AS t
-                    USING (SELECT %s AS bot_name, %s AS status, %s AS details) AS s
-                    ON t.bot_name = s.bot_name
-                    WHEN MATCHED THEN UPDATE SET
-                        last_heartbeat = CURRENT_TIMESTAMP(),
-                        status = s.status,
-                        scan_count = t.scan_count + 1,
-                        details = s.details
-                    WHEN NOT MATCHED THEN INSERT (bot_name, last_heartbeat, status, scan_count, details)
-                        VALUES (s.bot_name, CURRENT_TIMESTAMP(), s.status, 1, s.details)
-                """, [self.bot_name, status, json.dumps({"last_action": action})])
+                    INSERT INTO {hb_table} (bot_name, last_heartbeat, status, scan_count, details)
+                    VALUES (%s, CURRENT_TIMESTAMP, %s, 1, %s)
+                    ON CONFLICT (bot_name) DO UPDATE SET
+                        last_heartbeat = CURRENT_TIMESTAMP,
+                        status = EXCLUDED.status,
+                        scan_count = {hb_table}.scan_count + 1,
+                        details = EXCLUDED.details
+                """, [self.bot_name, status, details_json])
         except Exception as e:
             logger.debug(f"Failed to update heartbeat: {e}")
 
@@ -601,17 +592,13 @@ class TradingDatabase:
                 c = conn.cursor()
                 perf_table = self._t('daily_perf')
                 c.execute(f"""
-                    MERGE INTO {perf_table} AS t
-                    USING (SELECT %s AS trade_date, %s AS trades_executed,
-                           %s AS positions_closed, %s AS realized_pnl) AS s
-                    ON t.trade_date = s.trade_date
-                    WHEN MATCHED THEN UPDATE SET
-                        trades_executed = t.trades_executed + s.trades_executed,
-                        positions_closed = t.positions_closed + s.positions_closed,
-                        realized_pnl = t.realized_pnl + s.realized_pnl,
-                        updated_at = CURRENT_TIMESTAMP()
-                    WHEN NOT MATCHED THEN INSERT (trade_date, trades_executed, positions_closed, realized_pnl)
-                        VALUES (s.trade_date, s.trades_executed, s.positions_closed, s.realized_pnl)
+                    INSERT INTO {perf_table} (trade_date, trades_executed, positions_closed, realized_pnl)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (trade_date) DO UPDATE SET
+                        trades_executed = {perf_table}.trades_executed + EXCLUDED.trades_executed,
+                        positions_closed = {perf_table}.positions_closed + EXCLUDED.positions_closed,
+                        realized_pnl = {perf_table}.realized_pnl + EXCLUDED.realized_pnl,
+                        updated_at = CURRENT_TIMESTAMP
                 """, [summary.date, summary.trades_executed, summary.positions_closed, summary.realized_pnl])
                 return True
         except Exception as e:
@@ -627,7 +614,7 @@ class TradingDatabase:
                 c.execute(f"""
                     INSERT INTO {self._t('equity_snapshots')}
                     (snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-                    VALUES (CURRENT_TIMESTAMP(), %s, %s, %s, %s, %s, %s)
+                    VALUES (CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s)
                 """, [balance, realized_pnl, unrealized_pnl, open_positions, note, self.dte_mode])
                 return True
         except Exception as e:
