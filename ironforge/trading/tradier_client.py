@@ -47,7 +47,7 @@ class TradierClient:
     def __init__(self, api_key: str = None, base_url: str = None, account_id: str = None):
         self.api_key = api_key or Config.TRADIER_API_KEY
         self.base_url = base_url or Config.TRADIER_BASE_URL
-        self._account_id = account_id or Config.TRADIER_ACCOUNT_ID
+        self._account_id = account_id or getattr(Config, 'TRADIER_ACCOUNT_ID', '') or None
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {self.api_key}",
