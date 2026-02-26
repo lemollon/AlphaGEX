@@ -21,6 +21,8 @@ interface Position {
   stop_loss_price?: number
   distance_to_pt?: number | null
   distance_to_sl?: number | null
+  // Tradier sandbox order IDs (FLAME only)
+  sandbox_order_ids?: Record<string, string> | null
 }
 
 export default function PositionTable({
@@ -187,6 +189,21 @@ function PositionCard({ pos, hasLiveData }: { pos: Position; hasLiveData: boolea
               }`}
               style={{ left: `${progressPct}%`, transform: 'translateX(-50%)' }}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Sandbox Order IDs (FLAME only) */}
+      {pos.sandbox_order_ids && Object.keys(pos.sandbox_order_ids).length > 0 && (
+        <div className="border-t border-forge-border/50 pt-2 space-y-1">
+          <p className="text-[10px] text-forge-muted uppercase tracking-wider">Tradier Sandbox Orders</p>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(pos.sandbox_order_ids).map(([name, orderId]) => (
+              <span key={name} className="text-xs font-mono">
+                <span className="text-forge-muted">{name}:</span>{' '}
+                <span className="text-amber-400">#{orderId}</span>
+              </span>
+            ))}
           </div>
         </div>
       )}

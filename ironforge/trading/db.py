@@ -43,7 +43,7 @@ class TradingDatabase:
     # PAPER ACCOUNT OPERATIONS
     # =========================================================================
 
-    def initialize_paper_account(self, starting_capital: float = 5000.0) -> bool:
+    def initialize_paper_account(self, starting_capital: float = 10000.0) -> bool:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -272,6 +272,21 @@ class TradingDatabase:
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to close position: {e}")
+            return False
+
+    def update_sandbox_order_id(self, position_id: str, sandbox_order_id: str) -> bool:
+        """Store the Tradier sandbox order ID on a position."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    UPDATE {self._t('positions')}
+                    SET sandbox_order_id = %s, updated_at = NOW()
+                    WHERE position_id = %s AND dte_mode = %s
+                """, [sandbox_order_id, position_id, self.dte_mode])
+                return True
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Failed to store sandbox order ID: {e}")
             return False
 
     def expire_position(self, position_id: str, realized_pnl: float,
@@ -788,7 +803,7 @@ class TradingDatabase:
                     WHERE is_active = TRUE AND dte_mode = %s LIMIT 1
                 """, [self.dte_mode])
                 row = c.fetchone()
-                starting_capital = float(row[0]) if row else 5000.0
+                starting_capital = float(row[0]) if row else 10000.0
 
                 c.execute(f"""
                     SELECT close_time, realized_pnl,

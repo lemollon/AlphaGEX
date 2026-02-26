@@ -210,3 +210,219 @@ export async function getIcEntryCredit(
 export function isConfigured(): boolean {
   return !!TRADIER_API_KEY
 }
+
+/* ------------------------------------------------------------------ */
+/*  Sandbox Order Execution (3 accounts: User, Matt, Logan)            */
+/* ------------------------------------------------------------------ */
+
+// Sandbox URL is always sandbox.tradier.com — never production.
+// TRADIER_BASE_URL may point to production for live quotes, but
+// sandbox keys only work against the sandbox API.
+const SANDBOX_URL = 'https://sandbox.tradier.com/v1'
+
+interface SandboxAccount {
+  name: string
+  apiKey: string
+  cachedAccountId?: string
+}
+
+/** Load all configured sandbox accounts from env vars. */
+function getSandboxAccounts(): SandboxAccount[] {
+  const accounts: SandboxAccount[] = []
+  const userKey = process.env.TRADIER_SANDBOX_KEY_USER || ''
+  const mattKey = process.env.TRADIER_SANDBOX_KEY_MATT || ''
+  const loganKey = process.env.TRADIER_SANDBOX_KEY_LOGAN || ''
+
+  if (userKey) accounts.push({ name: 'User', apiKey: userKey })
+  if (mattKey) accounts.push({ name: 'Matt', apiKey: mattKey })
+  if (loganKey) accounts.push({ name: 'Logan', apiKey: loganKey })
+  return accounts
+}
+
+const _sandboxAccounts = getSandboxAccounts()
+
+async function sandboxPost(
+  endpoint: string,
+  body: Record<string, string>,
+  apiKey: string,
+): Promise<any> {
+  if (!apiKey) return null
+
+  const url = `${SANDBOX_URL}${endpoint}`
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams(body).toString(),
+    cache: 'no-store',
+  })
+
+  if (!res.ok) return null
+  return res.json()
+}
+
+async function sandboxGet(
+  endpoint: string,
+  params: Record<string, string> | undefined,
+  apiKey: string,
+): Promise<any> {
+  if (!apiKey) return null
+
+  const url = new URL(`${SANDBOX_URL}${endpoint}`)
+  if (params) {
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v))
+  }
+
+  const res = await fetch(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
+    cache: 'no-store',
+  })
+
+  if (!res.ok) return null
+  return res.json()
+}
+
+/** Auto-discover sandbox account ID from profile. */
+const _accountIdCache: Record<string, string> = {}
+
+async function getAccountIdForKey(apiKey: string): Promise<string | null> {
+  if (_accountIdCache[apiKey]) return _accountIdCache[apiKey]
+
+  const data = await sandboxGet('/user/profile', undefined, apiKey)
+  if (!data) return null
+
+  let account = data.profile?.account
+  if (Array.isArray(account)) account = account[0]
+  const accountId = account?.account_number?.toString()
+  if (accountId) _accountIdCache[apiKey] = accountId
+  return accountId || null
+}
+
+/**
+ * Place an Iron Condor in ALL configured sandbox accounts.
+ *
+ * Returns Record<accountName, orderId> for successful placements.
+ */
+export async function placeIcOrderAllAccounts(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  totalCredit: number,
+  tag?: string,
+): Promise<Record<string, number>> {
+  const results: Record<string, number> = {}
+
+  const orderBody: Record<string, string> = {
+    class: 'multileg',
+    symbol: ticker,
+    type: 'market',
+    duration: 'day',
+    'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
+    'side[0]': 'sell_to_open',
+    'quantity[0]': String(contracts),
+    'option_symbol[1]': buildOccSymbol(ticker, expiration, putLong, 'P'),
+    'side[1]': 'buy_to_open',
+    'quantity[1]': String(contracts),
+    'option_symbol[2]': buildOccSymbol(ticker, expiration, callShort, 'C'),
+    'side[2]': 'sell_to_open',
+    'quantity[2]': String(contracts),
+    'option_symbol[3]': buildOccSymbol(ticker, expiration, callLong, 'C'),
+    'side[3]': 'buy_to_open',
+    'quantity[3]': String(contracts),
+  }
+  if (tag) orderBody.tag = tag.slice(0, 255)
+
+  await Promise.all(
+    _sandboxAccounts.map(async (acct) => {
+      try {
+        const accountId = await getAccountIdForKey(acct.apiKey)
+        if (!accountId) return
+
+        const result = await sandboxPost(
+          `/accounts/${accountId}/orders`,
+          orderBody,
+          acct.apiKey,
+        )
+        if (result?.order?.id) {
+          results[acct.name] = result.order.id
+        }
+      } catch (err: any) {
+        console.warn(`Sandbox IC order failed [${acct.name}]: ${err.message}`)
+      }
+    }),
+  )
+
+  return results
+}
+
+/**
+ * Close an Iron Condor in ALL configured sandbox accounts.
+ *
+ * Returns Record<accountName, orderId> for successful closes.
+ */
+export async function closeIcOrderAllAccounts(
+  ticker: string,
+  expiration: string,
+  putShort: number,
+  putLong: number,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  closePrice: number,
+  tag?: string,
+): Promise<Record<string, number>> {
+  const results: Record<string, number> = {}
+
+  const orderBody: Record<string, string> = {
+    class: 'multileg',
+    symbol: ticker,
+    type: 'market',
+    duration: 'day',
+    'option_symbol[0]': buildOccSymbol(ticker, expiration, putShort, 'P'),
+    'side[0]': 'buy_to_close',
+    'quantity[0]': String(contracts),
+    'option_symbol[1]': buildOccSymbol(ticker, expiration, putLong, 'P'),
+    'side[1]': 'sell_to_close',
+    'quantity[1]': String(contracts),
+    'option_symbol[2]': buildOccSymbol(ticker, expiration, callShort, 'C'),
+    'side[2]': 'buy_to_close',
+    'quantity[2]': String(contracts),
+    'option_symbol[3]': buildOccSymbol(ticker, expiration, callLong, 'C'),
+    'side[3]': 'sell_to_close',
+    'quantity[3]': String(contracts),
+  }
+  if (tag) orderBody.tag = tag.slice(0, 255)
+
+  await Promise.all(
+    _sandboxAccounts.map(async (acct) => {
+      try {
+        const accountId = await getAccountIdForKey(acct.apiKey)
+        if (!accountId) return
+
+        const result = await sandboxPost(
+          `/accounts/${accountId}/orders`,
+          orderBody,
+          acct.apiKey,
+        )
+        if (result?.order?.id) {
+          results[acct.name] = result.order.id
+        }
+      } catch (err: any) {
+        console.warn(`Sandbox IC close failed [${acct.name}]: ${err.message}`)
+      }
+    }),
+  )
+
+  return results
+}
