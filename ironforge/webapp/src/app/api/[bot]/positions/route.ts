@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot } from '@/lib/db'
+import { query, botTable, num, int, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,22 +10,36 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dte = dteMode(bot)
 
   try {
-    const rows = await query(`
-      SELECT
-        position_id, ticker, expiration,
-        put_short_strike, put_long_strike, put_credit,
-        call_short_strike, call_long_strike, call_credit,
-        contracts, spread_width, total_credit, max_loss, max_profit,
-        underlying_at_entry, vix_at_entry, collateral_required,
-        oracle_win_probability, oracle_advice,
-        wings_adjusted, status, open_time, sandbox_order_id
-      FROM ${botTable(bot, 'positions')}
-      WHERE status = 'open' AND dte_mode = $1
-      ORDER BY open_time DESC
-    `, [dte])
+    const rows = dte
+      ? await query(`
+          SELECT
+            position_id, ticker, expiration,
+            put_short_strike, put_long_strike, put_credit,
+            call_short_strike, call_long_strike, call_credit,
+            contracts, spread_width, total_credit, max_loss, max_profit,
+            underlying_at_entry, vix_at_entry, collateral_required,
+            oracle_win_probability, oracle_advice,
+            wings_adjusted, status, open_time
+          FROM ${botTable(bot, 'positions')}
+          WHERE status = 'open' AND dte_mode = $1
+          ORDER BY open_time DESC
+        `, [dte])
+      : await query(`
+          SELECT
+            position_id, ticker, expiration,
+            put_short_strike, put_long_strike, put_credit,
+            call_short_strike, call_long_strike, call_credit,
+            contracts, spread_width, total_credit, max_loss, max_profit,
+            underlying_at_entry, vix_at_entry, collateral_required,
+            oracle_win_probability, oracle_advice,
+            wings_adjusted, status, open_time
+          FROM ${botTable(bot, 'positions')}
+          WHERE status = 'open'
+          ORDER BY open_time DESC
+        `)
 
     const positions = rows.map((r) => ({
       position_id: r.position_id,
@@ -49,7 +63,6 @@ export async function GET(
       oracle_advice: r.oracle_advice,
       wings_adjusted: r.wings_adjusted === true,
       open_time: r.open_time?.toISOString?.() || r.open_time,
-      sandbox_order_ids: r.sandbox_order_id ? JSON.parse(r.sandbox_order_id) : null,
     }))
 
     return NextResponse.json({ positions })

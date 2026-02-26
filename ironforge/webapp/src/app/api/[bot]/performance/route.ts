@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot } from '@/lib/db'
+import { query, botTable, num, int, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,24 +10,39 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dte = dteMode(bot)
 
   try {
-    const rows = await query(`
-      SELECT
-        COUNT(*) as total_trades,
-        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-        SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
-        COALESCE(SUM(realized_pnl), 0) as total_pnl,
-        COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
-        COALESCE(AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END), 0) as avg_loss,
-        COALESCE(MAX(realized_pnl), 0) as best_trade,
-        COALESCE(MIN(realized_pnl), 0) as worst_trade
-      FROM ${botTable(bot, 'positions')}
-      WHERE status IN ('closed', 'expired')
-        AND realized_pnl IS NOT NULL
-        AND dte_mode = $1
-    `, [dte])
+    const rows = dte
+      ? await query(`
+          SELECT
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
+            COALESCE(SUM(realized_pnl), 0) as total_pnl,
+            COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
+            COALESCE(AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END), 0) as avg_loss,
+            COALESCE(MAX(realized_pnl), 0) as best_trade,
+            COALESCE(MIN(realized_pnl), 0) as worst_trade
+          FROM ${botTable(bot, 'positions')}
+          WHERE status IN ('closed', 'expired')
+            AND realized_pnl IS NOT NULL
+            AND dte_mode = $1
+        `, [dte])
+      : await query(`
+          SELECT
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
+            COALESCE(SUM(realized_pnl), 0) as total_pnl,
+            COALESCE(AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as avg_win,
+            COALESCE(AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END), 0) as avg_loss,
+            COALESCE(MAX(realized_pnl), 0) as best_trade,
+            COALESCE(MIN(realized_pnl), 0) as worst_trade
+          FROM ${botTable(bot, 'positions')}
+          WHERE status IN ('closed', 'expired')
+            AND realized_pnl IS NOT NULL
+        `)
 
     const r = rows[0]
     const total = int(r?.total_trades)
