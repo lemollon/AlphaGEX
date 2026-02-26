@@ -15,6 +15,7 @@ class Config:
 
     # Tradier API — production key for live market data quotes
     TRADIER_API_KEY = os.getenv("TRADIER_API_KEY", "")
+    TRADIER_ACCOUNT_ID = os.getenv("TRADIER_ACCOUNT_ID", "")
     TRADIER_BASE_URL = os.getenv(
         "TRADIER_BASE_URL", "https://api.tradier.com/v1"
     )
