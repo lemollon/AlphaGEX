@@ -35,7 +35,7 @@ const HEARTBEAT_MAP: Record<string, string> = {
   spark: 'SPARK',
 }
 
-/** Bot-specific table name, mapped to AlphaGEX table prefix. */
+/** Bot-specific table name: {prefix}_{suffix}. */
 export function botTable(bot: string, suffix: string): string {
   const prefix = DB_PREFIX[bot] || bot
   return `${prefix}_${suffix}`
