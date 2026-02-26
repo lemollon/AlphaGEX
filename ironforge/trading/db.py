@@ -1,16 +1,22 @@
 """
-IronForge Database Layer
-=========================
+PostgreSQL Database Layer
+==========================
 
-Unified database operations for FLAME and SPARK bots on PostgreSQL.
-Migrated from Databricks SQL to run on Render.
+Unified database operations for FLAME and SPARK bots on PostgreSQL (Render).
+
+Key differences from Databricks version:
+- Uses psycopg2 (not Databricks SQL connector)
+- PostgreSQL tables (not Delta Lake)
+- ON CONFLICT for upserts (not MERGE INTO)
+- DATE_SUB → CURRENT_DATE - INTERVAL
+- DAYOFWEEK → EXTRACT(DOW FROM ...)
+- CURRENT_TIMESTAMP() → NOW()
 """
 
 import json
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from contextlib import contextmanager
 
 from .db_adapter import db_connection, _to_python, table
 from .models import (
@@ -23,26 +29,21 @@ logger = logging.getLogger(__name__)
 
 
 class TradingDatabase:
-    """
-    Unified database operations for both FLAME and SPARK.
-
-    Parameterized by bot name to target the correct tables.
-    """
+    """Unified database operations for both FLAME and SPARK on PostgreSQL."""
 
     def __init__(self, bot_name: str = "FLAME", dte_mode: str = "2DTE"):
         self.bot_name = bot_name
         self.dte_mode = dte_mode
-        self._prefix = bot_name.lower().split("_")[0]  # "flame" or "spark"
+        self._prefix = bot_name.lower().split("_")[0]
 
     def _t(self, suffix: str) -> str:
-        """Get fully qualified table name for this bot."""
         return table(f"{self._prefix}_{suffix}")
 
     # =========================================================================
     # PAPER ACCOUNT OPERATIONS
     # =========================================================================
 
-    def initialize_paper_account(self, starting_capital: float = 5000.0) -> bool:
+    def initialize_paper_account(self, starting_capital: float = 10000.0) -> bool:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -51,9 +52,8 @@ class TradingDatabase:
                     [self.dte_mode],
                 )
                 if c.fetchone():
-                    logger.info(f"{self.bot_name}: Paper account already exists (dte_mode={self.dte_mode})")
+                    logger.info(f"{self.bot_name}: Paper account already exists")
                     return True
-
                 c.execute(f"""
                     INSERT INTO {self._t('paper_account')} (
                         starting_capital, current_balance, cumulative_pnl,
@@ -108,46 +108,26 @@ class TradingDatabase:
                 """, [self.dte_mode])
                 row = c.fetchone()
                 if not row:
-                    logger.error(f"{self.bot_name}: No active paper account found")
                     return False
 
                 account_id = row[0]
-                current_balance = float(row[1])
-                cumulative_pnl_val = float(row[2])
-                total_trades = int(row[3])
-                collateral_in_use = float(row[4])
-                high_water_mark = float(row[5])
-                max_drawdown = float(row[6])
-
-                new_balance = current_balance + realized_pnl
-                new_cumulative_pnl = cumulative_pnl_val + realized_pnl
-                new_collateral = max(0, collateral_in_use + collateral_change)
-                new_buying_power = new_balance - new_collateral
-                new_total_trades = total_trades + (1 if realized_pnl != 0 else 0)
-                new_hwm = max(high_water_mark, new_balance)
-                current_dd = new_hwm - new_balance
-                new_max_dd = max(max_drawdown, current_dd)
+                new_balance = float(row[1]) + realized_pnl
+                new_cum_pnl = float(row[2]) + realized_pnl
+                new_collateral = max(0, float(row[4]) + collateral_change)
+                new_bp = new_balance - new_collateral
+                new_trades = int(row[3]) + (1 if realized_pnl != 0 else 0)
+                new_hwm = max(float(row[5]), new_balance)
+                new_max_dd = max(float(row[6]), new_hwm - new_balance)
 
                 c.execute(f"""
                     UPDATE {self._t('paper_account')}
-                    SET current_balance = %s,
-                        cumulative_pnl = %s,
-                        total_trades = %s,
-                        collateral_in_use = %s,
-                        buying_power = %s,
-                        high_water_mark = %s,
-                        max_drawdown = %s,
-                        updated_at = CURRENT_TIMESTAMP
+                    SET current_balance = %s, cumulative_pnl = %s,
+                        total_trades = %s, collateral_in_use = %s,
+                        buying_power = %s, high_water_mark = %s,
+                        max_drawdown = %s, updated_at = NOW()
                     WHERE id = %s
-                """, [
-                    new_balance, new_cumulative_pnl, new_total_trades,
-                    new_collateral, new_buying_power, new_hwm, new_max_dd,
-                    account_id,
-                ])
-                logger.info(
-                    f"{self.bot_name}: Paper account updated: "
-                    f"balance=${new_balance:.2f}, P&L=${realized_pnl:.2f}"
-                )
+                """, [new_balance, new_cum_pnl, new_trades, new_collateral,
+                      new_bp, new_hwm, new_max_dd, account_id])
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to update paper balance: {e}")
@@ -184,28 +164,20 @@ class TradingDatabase:
 
                 for row in c.fetchall():
                     pos = IronCondorPosition(
-                        position_id=row[0],
-                        ticker=row[1],
-                        expiration=str(row[2]),
-                        put_short_strike=float(row[3]),
-                        put_long_strike=float(row[4]),
+                        position_id=row[0], ticker=row[1], expiration=str(row[2]),
+                        put_short_strike=float(row[3]), put_long_strike=float(row[4]),
                         put_credit=float(row[5]),
-                        call_short_strike=float(row[6]),
-                        call_long_strike=float(row[7]),
+                        call_short_strike=float(row[6]), call_long_strike=float(row[7]),
                         call_credit=float(row[8]),
-                        contracts=int(row[9]),
-                        spread_width=float(row[10]),
-                        total_credit=float(row[11]),
-                        max_loss=float(row[12]),
+                        contracts=int(row[9]), spread_width=float(row[10]),
+                        total_credit=float(row[11]), max_loss=float(row[12]),
                         max_profit=float(row[13]),
                         underlying_at_entry=float(row[14]),
                         vix_at_entry=float(row[15] or 0),
                         expected_move=float(row[16] or 0),
-                        call_wall=float(row[17] or 0),
-                        put_wall=float(row[18] or 0),
+                        call_wall=float(row[17] or 0), put_wall=float(row[18] or 0),
                         gex_regime=row[19] or "",
-                        flip_point=float(row[20] or 0),
-                        net_gex=float(row[21] or 0),
+                        flip_point=float(row[20] or 0), net_gex=float(row[21] or 0),
                         oracle_confidence=float(row[22] or 0),
                         oracle_win_probability=float(row[23] or 0),
                         oracle_advice=row[24] or "",
@@ -218,8 +190,7 @@ class TradingDatabase:
                         put_order_id=row[31] or "PAPER",
                         call_order_id=row[32] or "PAPER",
                         status=PositionStatus(row[33]),
-                        open_time=row[34],
-                        close_time=row[35],
+                        open_time=row[34], close_time=row[35],
                         close_price=float(row[36] or 0),
                         close_reason=row[37] or "",
                         realized_pnl=float(row[38] or 0),
@@ -281,7 +252,6 @@ class TradingDatabase:
                     pos.open_time.date() if pos.open_time else datetime.now(CENTRAL_TZ).date(),
                     self.dte_mode,
                 ])
-                logger.info(f"{self.bot_name}: Saved position {pos.position_id}")
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to save position: {e}")
@@ -294,12 +264,9 @@ class TradingDatabase:
                 c = conn.cursor()
                 c.execute(f"""
                     UPDATE {self._t('positions')}
-                    SET status = 'closed',
-                        close_time = CURRENT_TIMESTAMP,
-                        close_price = %s,
-                        realized_pnl = %s,
-                        close_reason = %s,
-                        updated_at = CURRENT_TIMESTAMP
+                    SET status = 'closed', close_time = NOW(),
+                        close_price = %s, realized_pnl = %s,
+                        close_reason = %s, updated_at = NOW()
                     WHERE position_id = %s AND status = 'open' AND dte_mode = %s
                 """, [close_price, realized_pnl, close_reason, position_id, self.dte_mode])
                 if c.rowcount == 0:
@@ -308,10 +275,24 @@ class TradingDatabase:
                         f"{position_id} not found or already closed"
                     )
                     return False
-                logger.info(f"{self.bot_name}: Closed {position_id}, P&L=${realized_pnl:.2f}")
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to close position: {e}")
+            return False
+
+    def update_sandbox_order_id(self, position_id: str, sandbox_order_id: str) -> bool:
+        """Store the Tradier sandbox order ID on a position."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    UPDATE {self._t('positions')}
+                    SET sandbox_order_id = %s, updated_at = NOW()
+                    WHERE position_id = %s AND dte_mode = %s
+                """, [sandbox_order_id, position_id, self.dte_mode])
+                return True
+        except Exception as e:
+            logger.warning(f"{self.bot_name}: Failed to store sandbox order ID: {e}")
             return False
 
     def expire_position(self, position_id: str, realized_pnl: float,
@@ -321,12 +302,9 @@ class TradingDatabase:
                 c = conn.cursor()
                 c.execute(f"""
                     UPDATE {self._t('positions')}
-                    SET status = 'expired',
-                        close_time = CURRENT_TIMESTAMP,
+                    SET status = 'expired', close_time = NOW(),
                         close_reason = 'EXPIRED',
-                        close_price = %s,
-                        realized_pnl = %s,
-                        updated_at = CURRENT_TIMESTAMP
+                        close_price = %s, realized_pnl = %s, updated_at = NOW()
                     WHERE position_id = %s AND status = 'open' AND dte_mode = %s
                 """, [_to_python(close_price), _to_python(realized_pnl), position_id, self.dte_mode])
                 if c.rowcount == 0:
@@ -357,9 +335,8 @@ class TradingDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute(f"""
-                    SELECT COUNT(*)
-                    FROM {self._t('positions')}
-                    WHERE CAST(open_time AS DATE) = %s AND dte_mode = %s
+                    SELECT COUNT(*) FROM {self._t('positions')}
+                    WHERE open_time::date = %s AND dte_mode = %s
                 """, [date, self.dte_mode])
                 return c.fetchone()[0] > 0
         except Exception:
@@ -370,9 +347,8 @@ class TradingDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute(f"""
-                    SELECT COUNT(*)
-                    FROM {self._t('positions')}
-                    WHERE CAST(open_time AS DATE) = %s AND dte_mode = %s
+                    SELECT COUNT(*) FROM {self._t('positions')}
+                    WHERE open_time::date = %s AND dte_mode = %s
                 """, [date, self.dte_mode])
                 return c.fetchone()[0]
         except Exception:
@@ -392,10 +368,8 @@ class TradingDatabase:
                         trade_date, symbol, position_id, opened_at,
                         contracts, entry_credit, dte_mode
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, [
-                    opened_at.date(), symbol, position_id,
-                    opened_at, contracts, entry_credit, self.dte_mode,
-                ])
+                """, [opened_at.date(), symbol, position_id,
+                      opened_at, contracts, entry_credit, self.dte_mode])
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to log PDT entry: {e}")
@@ -406,11 +380,9 @@ class TradingDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                # First get opened_at to determine if day trade
                 c.execute(f"""
                     SELECT opened_at FROM {self._t('pdt_log')}
-                    WHERE position_id = %s AND dte_mode = %s
-                    LIMIT 1
+                    WHERE position_id = %s AND dte_mode = %s LIMIT 1
                 """, [position_id, self.dte_mode])
                 row = c.fetchone()
                 is_day_trade = False
@@ -421,11 +393,8 @@ class TradingDatabase:
 
                 c.execute(f"""
                     UPDATE {self._t('pdt_log')}
-                    SET closed_at = %s,
-                        exit_cost = %s,
-                        pnl = %s,
-                        close_reason = %s,
-                        is_day_trade = %s
+                    SET closed_at = %s, exit_cost = %s, pnl = %s,
+                        close_reason = %s, is_day_trade = %s
                     WHERE position_id = %s AND dte_mode = %s
                 """, [closed_at, exit_cost, pnl, close_reason, is_day_trade,
                       position_id, self.dte_mode])
@@ -438,10 +407,8 @@ class TradingDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                # Calculate 5 business days ago (approx 7-8 calendar days)
                 c.execute(f"""
-                    SELECT COUNT(*)
-                    FROM {self._t('pdt_log')}
+                    SELECT COUNT(*) FROM {self._t('pdt_log')}
                     WHERE is_day_trade = TRUE
                     AND dte_mode = %s
                     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
@@ -462,9 +429,9 @@ class TradingDatabase:
                     SELECT trade_date, symbol, position_id, opened_at, closed_at,
                            is_day_trade, contracts, entry_credit, exit_cost, pnl, close_reason
                     FROM {self._t('pdt_log')}
-                    WHERE trade_date >= CURRENT_DATE - (%s || ' days')::INTERVAL AND dte_mode = %s
+                    WHERE trade_date >= CURRENT_DATE - (%s || ' days')::interval AND dte_mode = %s
                     ORDER BY opened_at DESC
-                """, [days, self.dte_mode])
+                """, [str(days), self.dte_mode])
                 for row in c.fetchall():
                     entries.append({
                         'trade_date': str(row[0]),
@@ -488,10 +455,8 @@ class TradingDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute(f"""
-                    SELECT MIN(trade_date)
-                    FROM {self._t('pdt_log')}
-                    WHERE is_day_trade = TRUE
-                    AND dte_mode = %s
+                    SELECT MIN(trade_date) FROM {self._t('pdt_log')}
+                    WHERE is_day_trade = TRUE AND dte_mode = %s
                     AND trade_date >= CURRENT_DATE - INTERVAL '8 days'
                 """, [self.dte_mode])
                 result = c.fetchone()
@@ -531,6 +496,7 @@ class TradingDatabase:
                         total_credit, confidence, was_executed, skip_reason, reasoning,
                         wings_adjusted, dte_mode
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
                 """, [
                     _to_python(spot_price), _to_python(vix), _to_python(expected_move),
                     _to_python(call_wall), _to_python(put_wall),
@@ -540,9 +506,121 @@ class TradingDatabase:
                     was_executed, skip_reason, reasoning, wings_adjusted,
                     self.dte_mode,
                 ])
-                return 1
+                row = c.fetchone()
+                return row[0] if row else 1
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to log signal: {e}")
+            return None
+
+    # =========================================================================
+    # BOT TOGGLE
+    # =========================================================================
+
+    def set_bot_active(self, active: bool) -> bool:
+        """Persist is_active state in the paper_account table."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    UPDATE {self._t('paper_account')}
+                    SET is_active = %s, updated_at = NOW()
+                    WHERE dte_mode = %s
+                """, [active, self.dte_mode])
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to set bot active: {e}")
+            return False
+
+    def get_bot_active(self) -> bool:
+        """Read persisted is_active state from paper_account."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    SELECT is_active FROM {self._t('paper_account')}
+                    WHERE dte_mode = %s ORDER BY id DESC LIMIT 1
+                """, [self.dte_mode])
+                row = c.fetchone()
+                if row is not None:
+                    return bool(row[0])
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get bot active state: {e}")
+        return True  # default to active
+
+    # =========================================================================
+    # CONFIG PERSISTENCE
+    # =========================================================================
+
+    def save_config(self, overrides: Dict[str, Any]) -> bool:
+        """Save config overrides to the config table (upsert by dte_mode)."""
+        allowed_fields = {
+            'sd_multiplier', 'spread_width', 'min_credit', 'profit_target_pct',
+            'stop_loss_pct', 'vix_skip', 'max_contracts', 'max_trades_per_day',
+            'buying_power_usage_pct', 'risk_per_trade_pct', 'min_win_probability',
+            'entry_start', 'entry_end', 'eod_cutoff_et', 'pdt_max_day_trades',
+            'starting_capital',
+        }
+        filtered = {k: v for k, v in overrides.items() if k in allowed_fields}
+        if not filtered:
+            return False
+
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                # Build dynamic SET clause for upsert
+                columns = ['dte_mode'] + list(filtered.keys())
+                values = [self.dte_mode] + list(filtered.values())
+                placeholders = ', '.join(f'%s' for _ in values)
+                col_names = ', '.join(columns)
+                update_clause = ', '.join(
+                    f'{k} = EXCLUDED.{k}' for k in filtered.keys()
+                )
+
+                c.execute(f"""
+                    INSERT INTO {self._t('config')} ({col_names})
+                    VALUES ({placeholders})
+                    ON CONFLICT (dte_mode) DO UPDATE SET
+                        {update_clause}, updated_at = NOW()
+                """, values)
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to save config: {e}")
+            return False
+
+    def load_config(self) -> Optional[Dict[str, Any]]:
+        """Load config overrides from the config table."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute(f"""
+                    SELECT sd_multiplier, spread_width, min_credit, profit_target_pct,
+                           stop_loss_pct, vix_skip, max_contracts, max_trades_per_day,
+                           buying_power_usage_pct, risk_per_trade_pct, min_win_probability,
+                           entry_start, entry_end, eod_cutoff_et, pdt_max_day_trades,
+                           starting_capital
+                    FROM {self._t('config')}
+                    WHERE dte_mode = %s LIMIT 1
+                """, [self.dte_mode])
+                row = c.fetchone()
+                if not row:
+                    return None
+                keys = [
+                    'sd_multiplier', 'spread_width', 'min_credit', 'profit_target_pct',
+                    'stop_loss_pct', 'vix_skip', 'max_contracts', 'max_trades_per_day',
+                    'buying_power_usage_pct', 'risk_per_trade_pct', 'min_win_probability',
+                    'entry_start', 'entry_end', 'eod_cutoff_et', 'pdt_max_day_trades',
+                    'starting_capital',
+                ]
+                result = {}
+                for i, key in enumerate(keys):
+                    if row[i] is not None:
+                        result[key] = float(row[i]) if isinstance(row[i], (int, float, str)) and key not in ('entry_start', 'entry_end', 'eod_cutoff_et') else row[i]
+                        # Ensure int fields stay int
+                        if key in ('max_contracts', 'max_trades_per_day', 'pdt_max_day_trades'):
+                            result[key] = int(result[key])
+                return result if result else None
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to load config: {e}")
             return None
 
     # =========================================================================
@@ -564,17 +642,15 @@ class TradingDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                hb_table = table('bot_heartbeats')
-                details_json = json.dumps({"last_action": action})
                 c.execute(f"""
-                    INSERT INTO {hb_table} (bot_name, last_heartbeat, status, scan_count, details)
-                    VALUES (%s, CURRENT_TIMESTAMP, %s, 1, %s)
+                    INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
+                    VALUES (%s, NOW(), %s, 1, %s)
                     ON CONFLICT (bot_name) DO UPDATE SET
-                        last_heartbeat = CURRENT_TIMESTAMP,
+                        last_heartbeat = NOW(),
                         status = EXCLUDED.status,
-                        scan_count = {hb_table}.scan_count + 1,
+                        scan_count = bot_heartbeats.scan_count + 1,
                         details = EXCLUDED.details
-                """, [self.bot_name, status, details_json])
+                """, [self.bot_name, status, json.dumps({"last_action": action})])
         except Exception as e:
             logger.debug(f"Failed to update heartbeat: {e}")
 
@@ -582,9 +658,9 @@ class TradingDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                c.execute(f"""
+                c.execute("""
                     SELECT scan_count, last_heartbeat, status, details
-                    FROM {table('bot_heartbeats')} WHERE bot_name = %s
+                    FROM bot_heartbeats WHERE bot_name = %s
                 """, [self.bot_name])
                 row = c.fetchone()
                 if row:
@@ -602,15 +678,13 @@ class TradingDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
-                perf_table = self._t('daily_perf')
                 c.execute(f"""
-                    INSERT INTO {perf_table} (trade_date, trades_executed, positions_closed, realized_pnl)
+                    INSERT INTO {self._t('daily_perf')} (trade_date, trades_executed, positions_closed, realized_pnl)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (trade_date) DO UPDATE SET
-                        trades_executed = {perf_table}.trades_executed + EXCLUDED.trades_executed,
-                        positions_closed = {perf_table}.positions_closed + EXCLUDED.positions_closed,
-                        realized_pnl = {perf_table}.realized_pnl + EXCLUDED.realized_pnl,
-                        updated_at = CURRENT_TIMESTAMP
+                        trades_executed = {self._t('daily_perf')}.trades_executed + EXCLUDED.trades_executed,
+                        positions_closed = {self._t('daily_perf')}.positions_closed + EXCLUDED.positions_closed,
+                        realized_pnl = {self._t('daily_perf')}.realized_pnl + EXCLUDED.realized_pnl
                 """, [summary.date, summary.trades_executed, summary.positions_closed, summary.realized_pnl])
                 return True
         except Exception as e:
@@ -626,7 +700,7 @@ class TradingDatabase:
                 c.execute(f"""
                     INSERT INTO {self._t('equity_snapshots')}
                     (snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-                    VALUES (CURRENT_TIMESTAMP, %s, %s, %s, %s, %s, %s)
+                    VALUES (NOW(), %s, %s, %s, %s, %s, %s)
                 """, [balance, realized_pnl, unrealized_pnl, open_positions, note, self.dte_mode])
                 return True
         except Exception as e:
@@ -634,8 +708,7 @@ class TradingDatabase:
             return False
 
     def get_current_balance(self) -> float:
-        account = self.get_paper_account()
-        return account.balance
+        return self.get_paper_account().balance
 
     # =========================================================================
     # TRADE HISTORY & PERFORMANCE
@@ -658,16 +731,14 @@ class TradingDatabase:
                         wings_adjusted, original_put_width, original_call_width
                     FROM {self._t('positions')}
                     WHERE status IN ('closed', 'expired') AND dte_mode = %s
-                    ORDER BY close_time DESC
-                    LIMIT %s
+                    ORDER BY close_time DESC LIMIT %s
                 """, [self.dte_mode, limit])
 
                 for row in c.fetchall():
                     put_width = float(row[3]) - float(row[4])
                     call_width = float(row[6]) - float(row[5])
                     trades.append({
-                        'position_id': row[0],
-                        'ticker': row[1],
+                        'position_id': row[0], 'ticker': row[1],
                         'expiration': str(row[2]),
                         'put_short_strike': float(row[3]),
                         'put_long_strike': float(row[4]),
@@ -686,8 +757,7 @@ class TradingDatabase:
                         'wings_adjusted': bool(row[17]),
                         'original_put_width': float(row[18] or 0),
                         'original_call_width': float(row[19] or 0),
-                        'put_width': put_width,
-                        'call_width': call_width,
+                        'put_width': put_width, 'call_width': call_width,
                         'wings_symmetric': abs(put_width - call_width) < 0.01,
                     })
         except Exception as e:
@@ -710,8 +780,7 @@ class TradingDatabase:
                         COALESCE(MIN(realized_pnl), 0) as worst_trade
                     FROM {self._t('positions')}
                     WHERE status IN ('closed', 'expired')
-                    AND realized_pnl IS NOT NULL
-                    AND dte_mode = %s
+                    AND realized_pnl IS NOT NULL AND dte_mode = %s
                 """, [self.dte_mode])
                 row = c.fetchone()
                 if row:
@@ -719,8 +788,7 @@ class TradingDatabase:
                     wins = int(row[1])
                     win_rate = (wins / total * 100) if total > 0 else 0
                     return {
-                        'total_trades': total,
-                        'wins': wins,
+                        'total_trades': total, 'wins': wins,
                         'losses': int(row[2]),
                         'win_rate': round(win_rate, 1),
                         'total_pnl': round(float(row[3]), 2),
@@ -731,7 +799,6 @@ class TradingDatabase:
                     }
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to get performance stats: {e}")
-
         return {
             'total_trades': 0, 'wins': 0, 'losses': 0, 'win_rate': 0,
             'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0,
@@ -748,17 +815,14 @@ class TradingDatabase:
                     WHERE is_active = TRUE AND dte_mode = %s LIMIT 1
                 """, [self.dte_mode])
                 row = c.fetchone()
-                starting_capital = float(row[0]) if row else 5000.0
+                starting_capital = float(row[0]) if row else 10000.0
 
                 c.execute(f"""
-                    SELECT
-                        close_time,
-                        realized_pnl,
-                        SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
+                    SELECT close_time, realized_pnl,
+                           SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
                     FROM {self._t('positions')}
                     WHERE status IN ('closed', 'expired')
-                    AND realized_pnl IS NOT NULL
-                    AND close_time IS NOT NULL
+                    AND realized_pnl IS NOT NULL AND close_time IS NOT NULL
                     AND dte_mode = %s
                     ORDER BY close_time
                 """, [self.dte_mode])
@@ -782,16 +846,12 @@ class TradingDatabase:
                 c.execute(f"""
                     SELECT log_time, level, message, details
                     FROM {self._t('logs')}
-                    WHERE dte_mode = %s
-                    ORDER BY log_time DESC
-                    LIMIT %s
+                    WHERE dte_mode = %s ORDER BY log_time DESC LIMIT %s
                 """, [self.dte_mode, limit])
                 for row in c.fetchall():
                     logs.append({
                         'timestamp': row[0].isoformat() if row[0] else None,
-                        'level': row[1],
-                        'message': row[2],
-                        'details': row[3],
+                        'level': row[1], 'message': row[2], 'details': row[3],
                     })
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to get logs: {e}")
