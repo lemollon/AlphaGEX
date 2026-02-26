@@ -20,10 +20,8 @@ function getPool(): Pool {
   return _pool
 }
 
-/**
- * Map Iron Forge bot names to database table prefixes.
- * IronForge has its own database — tables use flame_*/spark_* prefixes.
- */
+// Map Iron Forge bot names to database table prefixes.
+// IronForge has its own database — tables use flame_/spark_ prefixes.
 const DB_PREFIX: Record<string, string> = {
   flame: 'flame',
   spark: 'spark',
