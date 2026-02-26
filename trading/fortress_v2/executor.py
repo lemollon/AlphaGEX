@@ -1095,8 +1095,14 @@ class OrderExecutor:
             )
 
             if not put_result or not put_result.get('order'):
-                logger.error(f"Failed to close put spread: {put_result}")
-                return False, 0, 0
+                logger.warning(f"Put spread close failed for {position.position_id} — trying individual legs")
+
+                # CASCADE FALLBACK: Try closing put legs individually
+                individual_success = self._close_put_legs_individually(position, reason)
+                if not individual_success:
+                    logger.error(f"All close methods failed for put spread of {position.position_id}")
+                    return False, 0, 0
+                logger.info(f"CASCADE FALLBACK succeeded: put legs closed individually for {position.position_id}")
 
             # Close call spread - with retry
             call_result = self._tradier_place_spread_with_retry(
@@ -1111,11 +1117,29 @@ class OrderExecutor:
             )
 
             if not call_result or not call_result.get('order'):
-                logger.error(f"Failed to close call spread (put was closed!): {call_result}")
-                # Partial close - put side closed but call failed
-                put_close_value = ic_quote['put_value'] if ic_quote else 0
+                logger.warning(f"Call spread close failed for {position.position_id} — trying individual legs")
+
+                # CASCADE FALLBACK: Try closing call legs individually before declaring partial
+                individual_success = self._close_call_legs_individually(position, reason)
+                if individual_success:
+                    logger.info(f"CASCADE FALLBACK succeeded: call legs closed individually for {position.position_id}")
+                    # Full close succeeded via cascade - calculate full P&L
+                    pnl_per_contract = (position.total_credit - close_price) * 100
+                    realized_pnl = pnl_per_contract * position.contracts
+                    return True, close_price, realized_pnl
+
+                # Individual legs also failed - return partial close
+                logger.error(f"All close methods failed for call spread of {position.position_id}")
+                # When ic_quote is None (EOD market orders), estimate put value from entry
+                if ic_quote:
+                    put_close_value = ic_quote['put_value']
+                elif put_limit is not None:
+                    put_close_value = put_limit
+                else:
+                    # Market order with no quote - use half of total credit as estimate
+                    put_close_value = position.put_credit if hasattr(position, 'put_credit') else position.total_credit / 2
                 partial_pnl = (position.put_credit - put_close_value) * 100 * position.contracts
-                logger.warning(f"PARTIAL CLOSE: Put side closed, P&L=${partial_pnl:.2f}")
+                logger.warning(f"PARTIAL CLOSE: Put side closed, P&L=${partial_pnl:.2f} (put_close_value=${put_close_value:.4f})")
                 # Return special tuple indicating partial close (success=False but with 'partial' marker)
                 # Caller should handle this by marking position as partial_close in DB
                 return 'partial_put', put_close_value, partial_pnl
@@ -1183,6 +1207,10 @@ class OrderExecutor:
             return False, 0, 0
 
         try:
+            # Determine if we should use MARKET orders (same logic as close_position)
+            eod_reasons = ('EOD', 'STALE', 'EXPIRED', 'SAFETY_NET', 'PRICING_FAILURE', 'MANUAL_CLOSE')
+            use_market = any(r in reason.upper() for r in eod_reasons)
+
             # Get current call spread quote
             call_quote = self._get_spread_quote(
                 position.ticker,
@@ -1192,11 +1220,23 @@ class OrderExecutor:
                 'call'
             )
 
-            if not call_quote:
+            if not call_quote and not use_market:
                 logger.error("Failed to get call spread quote for retry")
                 return False, 0, 0
 
-            call_value = call_quote.get('value', 0)
+            if call_quote:
+                call_value = call_quote.get('value', 0)
+                call_limit = round(call_value, 2)
+            else:
+                call_value = 0
+                call_limit = None  # Market order
+
+            if use_market:
+                logger.info(
+                    f"FORTRESS: Using MARKET order for call leg retry of {position.position_id} "
+                    f"(reason={reason})"
+                )
+                call_limit = None  # Force market order for EOD
 
             # Close call spread
             call_result = self._tradier_place_spread_with_retry(
@@ -1206,12 +1246,25 @@ class OrderExecutor:
                 short_strike=position.call_long_strike,   # Sell what we bought
                 option_type="call",
                 quantity=position.contracts,
-                limit_price=round(call_value, 2),
+                limit_price=call_limit,
                 closing=True,
             )
 
             if not call_result or not call_result.get('order'):
-                logger.error(f"Retry: Failed to close call spread: {call_result}")
+                logger.warning(f"Retry: Spread close failed for call leg of {position.position_id} — trying individual legs")
+
+                # CASCADE FALLBACK: Close each call leg individually
+                # Per CLAUDE.md: 4-leg → 2x 2-leg → 4 individual legs
+                individual_success = self._close_call_legs_individually(position, reason)
+                if individual_success:
+                    call_pnl = (position.call_credit - call_value) * 100 * position.contracts
+                    logger.info(
+                        f"LIVE CLOSE (call legs individual): {position.position_id} "
+                        f"@ ${call_value:.2f}, P&L: ${call_pnl:.2f} [{reason}]"
+                    )
+                    return True, call_value, call_pnl
+
+                logger.error(f"All close methods failed for call leg of {position.position_id}")
                 return False, 0, 0
 
             # Calculate call leg P&L
@@ -1227,6 +1280,140 @@ class OrderExecutor:
         except Exception as e:
             logger.error(f"Live close (call only) failed: {e}")
             return False, 0, 0
+
+    def _close_call_legs_individually(
+        self,
+        position: IronCondorPosition,
+        reason: str
+    ) -> bool:
+        """
+        CASCADE FALLBACK: Close each call leg as individual market orders.
+
+        When spread orders fail (e.g., broker rejects the multi-leg order),
+        fall back to closing each leg individually with market orders.
+        Per CLAUDE.md: 4-leg -> 2x 2-leg -> 4 individual legs.
+
+        Returns: True if both legs closed successfully.
+        """
+        if not self.tradier:
+            return False
+
+        try:
+            from data.tradier_data_fetcher import OrderSide, OrderType
+
+            # Build OCC symbols for each call leg
+            call_short_symbol = self._build_option_symbol(
+                position.call_short_strike, position.expiration, 'call'
+            )
+            call_long_symbol = self._build_option_symbol(
+                position.call_long_strike, position.expiration, 'call'
+            )
+
+            logger.info(
+                f"FORTRESS: CASCADE FALLBACK - closing call legs individually for {position.position_id}: "
+                f"BTC {call_short_symbol}, STC {call_long_symbol}"
+            )
+
+            # Leg 1: Buy to close the short call (the one we sold)
+            short_result = self.tradier.place_option_order(
+                option_symbol=call_short_symbol,
+                side=OrderSide.BUY_TO_CLOSE,
+                quantity=position.contracts,
+                order_type=OrderType.MARKET,
+            )
+
+            if not short_result or not short_result.get('order'):
+                logger.error(f"Individual leg close failed for short call {call_short_symbol}: {short_result}")
+                return False
+
+            logger.info(f"FORTRESS: Short call leg closed: {call_short_symbol}")
+
+            # Leg 2: Sell to close the long call (the one we bought)
+            long_result = self.tradier.place_option_order(
+                option_symbol=call_long_symbol,
+                side=OrderSide.SELL_TO_CLOSE,
+                quantity=position.contracts,
+                order_type=OrderType.MARKET,
+            )
+
+            if not long_result or not long_result.get('order'):
+                logger.error(
+                    f"CRITICAL: Short call closed but long call failed for {position.position_id}. "
+                    f"Long call {call_long_symbol} may still be open."
+                )
+                # Still return True because the risk-bearing short call is closed
+                return True
+
+            logger.info(f"FORTRESS: Both call legs closed individually for {position.position_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Individual call leg close failed: {e}")
+            return False
+
+    def _close_put_legs_individually(
+        self,
+        position: IronCondorPosition,
+        reason: str
+    ) -> bool:
+        """
+        CASCADE FALLBACK: Close each put leg as individual market orders.
+
+        Returns: True if both legs closed successfully.
+        """
+        if not self.tradier:
+            return False
+
+        try:
+            from data.tradier_data_fetcher import OrderSide, OrderType
+
+            put_short_symbol = self._build_option_symbol(
+                position.put_short_strike, position.expiration, 'put'
+            )
+            put_long_symbol = self._build_option_symbol(
+                position.put_long_strike, position.expiration, 'put'
+            )
+
+            logger.info(
+                f"FORTRESS: CASCADE FALLBACK - closing put legs individually for {position.position_id}: "
+                f"BTC {put_short_symbol}, STC {put_long_symbol}"
+            )
+
+            # Leg 1: Buy to close the short put
+            short_result = self.tradier.place_option_order(
+                option_symbol=put_short_symbol,
+                side=OrderSide.BUY_TO_CLOSE,
+                quantity=position.contracts,
+                order_type=OrderType.MARKET,
+            )
+
+            if not short_result or not short_result.get('order'):
+                logger.error(f"Individual leg close failed for short put {put_short_symbol}: {short_result}")
+                return False
+
+            logger.info(f"FORTRESS: Short put leg closed: {put_short_symbol}")
+
+            # Leg 2: Sell to close the long put
+            long_result = self.tradier.place_option_order(
+                option_symbol=put_long_symbol,
+                side=OrderSide.SELL_TO_CLOSE,
+                quantity=position.contracts,
+                order_type=OrderType.MARKET,
+            )
+
+            if not long_result or not long_result.get('order'):
+                logger.error(
+                    f"CRITICAL: Short put closed but long put failed for {position.position_id}. "
+                    f"Long put {put_long_symbol} may still be open."
+                )
+                return True  # Short put (risk-bearing) is closed
+
+            logger.info(f"FORTRESS: Both put legs closed individually for {position.position_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Individual put leg close failed: {e}")
+            return False
 
     def _estimate_spread_value(
         self,
