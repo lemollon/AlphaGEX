@@ -47,4 +47,16 @@ class Config:
             missing.append("DATABASE_URL")
         if missing:
             return False, f"Missing env vars: {', '.join(missing)}"
-        return True, "OK"
+
+        warnings = []
+        if not cls.TRADIER_API_KEY:
+            warnings.append("TRADIER_API_KEY not set — market data quotes disabled")
+        if not cls.TRADIER_ACCOUNT_ID:
+            warnings.append("TRADIER_ACCOUNT_ID not set — sandbox orders disabled")
+        if not any(cls.get_sandbox_accounts()):
+            warnings.append("No sandbox account keys set — FLAME mirroring disabled")
+
+        msg = "OK"
+        if warnings:
+            msg = f"OK (warnings: {'; '.join(warnings)})"
+        return True, msg
