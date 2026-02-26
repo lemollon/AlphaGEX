@@ -10,7 +10,11 @@ accept GEX walls at 0.5% (~0.5 SD) while the SD fallback uses 1.2 SD.
 
 import pytest
 import math
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 class TestFortressStrikeValidation:
@@ -82,22 +86,19 @@ class TestFortressStrikeValidation:
             f"Call strike too close: {actual_call_distance:.2f} < {min_put_distance:.2f}"
         )
 
-    def test_wide_gex_walls_accepted(self, signal_generator):
+    def test_gex_walls_ignored_sd_only(self, signal_generator):
         """
-        Test that GEX walls >= 1.2 SD are accepted.
+        Test that GEX walls are ignored - strikes are always SD-based.
 
-        Scenario:
-        - Spot: $600
-        - VIX: 15 → Expected Move = ~$5.67
-        - 1.2 SD = $6.80
-        - GEX Put Wall: $592 (1.33% = ~1.4 SD away) - VALID
-        - GEX Call Wall: $608 (1.33% = ~1.4 SD away) - VALID
+        FIX (Feb 2026): calculate_strikes was rewritten to use SD-based math only.
+        Prophet/GEX wall strike tiers were removed after causing $9,500+ in losses.
+        GEX walls are passed in but no longer influence strike selection.
         """
         spot_price = 600.0
         vix = 15.0
         expected_move = spot_price * (vix / 100) / math.sqrt(252)  # ~$5.67
 
-        # GEX walls that are wide enough (> 1.2 SD)
+        # GEX walls that are wide enough (> 1.2 SD) - but should be ignored
         put_wall = 592.0  # ~1.4 SD below
         call_wall = 608.0  # ~1.4 SD above
 
@@ -108,9 +109,22 @@ class TestFortressStrikeValidation:
             put_wall=put_wall,
         )
 
-        # Should use GEX walls because they're wide enough
-        assert strikes['using_gex'] is True, "GEX walls should be accepted (>= 1.2 SD)"
-        assert strikes['source'] == 'GEX', f"Should use GEX source, got {strikes['source']}"
+        # Since Feb 2026, strikes are ALWAYS SD-based (GEX walls ignored)
+        assert strikes['source'].startswith('SD'), (
+            f"Strikes should always be SD-based now, got {strikes['source']}"
+        )
+
+        # Verify strikes are at least 1.2 SD from spot
+        min_distance = 1.2 * expected_move
+        put_distance = spot_price - strikes['put_short']
+        call_distance = strikes['call_short'] - spot_price
+
+        assert put_distance >= min_distance - 1, (
+            f"Put strike too close: {put_distance:.2f} < {min_distance:.2f}"
+        )
+        assert call_distance >= min_distance - 1, (
+            f"Call strike too close: {call_distance:.2f} < {min_distance:.2f}"
+        )
 
     def test_sd_fallback_minimum_12_sd(self, signal_generator):
         """

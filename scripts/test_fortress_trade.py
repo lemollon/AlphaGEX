@@ -33,36 +33,32 @@ def main():
     print("=" * 60)
 
     try:
-        from trading.fortress_v2 import FortressTrader, TradingMode
+        from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode
 
         mode = TradingMode.LIVE if args.mode == 'live' else TradingMode.PAPER
         print(f"\nInitializing FORTRESS in {mode.value} mode...")
 
-        fortress = FortressTrader(mode=mode, initial_capital=200_000)
+        config = FortressConfig(mode=mode, capital=200_000)
+        fortress = FortressTrader(config=config)
 
         # Get status
         status = fortress.get_status()
-        print(f"\nARES Status:")
+        print(f"\nFORTRESS Status:")
         print(f"  Mode: {status.get('mode', 'unknown')}")
         print(f"  Capital: ${status.get('capital', 0):,.2f}")
         print(f"  Open Positions: {status.get('open_positions', 0)}")
         print(f"  Traded Today: {status.get('traded_today', False)}")
         print(f"  In Trading Window: {status.get('in_trading_window', False)}")
 
-        # Get Tradier status
+        # Get Tradier status via executor
         print(f"\nTradier Connection:")
-        tradier_status = fortress.get_tradier_account_status()
-        if tradier_status.get('success'):
-            account = tradier_status.get('data', {}).get('account', {})
-            print(f"  Account: {account.get('account_number', 'N/A')}")
-            print(f"  Equity: ${account.get('equity', 0):,.2f}")
-            print(f"  Cash: ${account.get('cash', 0):,.2f}")
-            print(f"  Day Trading Buying Power: ${account.get('day_trade_buying_power', 0):,.2f}")
-        else:
-            print(f"  Error: {tradier_status.get('error', 'Unknown')}")
+        exec_status = fortress.executor.get_execution_status()
+        print(f"  Can Execute: {exec_status.get('can_execute', False)}")
+        print(f"  Primary Tradier: {'Initialized' if exec_status.get('tradier_initialized') else 'Not initialized'}")
+        print(f"  Second Tradier: {'Initialized' if exec_status.get('tradier_2_initialized') else 'Not configured'}")
 
         if args.dry_run:
-            print("\n[DRY RUN] Would run daily cycle here...")
+            print("\n[DRY RUN] Would run trading cycle here...")
             print("\nTo execute for real, run without --dry-run flag")
             return
 
@@ -79,27 +75,27 @@ def main():
             print("Aborted.")
             return
 
-        # Run the daily cycle
-        print("\nRunning FORTRESS daily cycle...")
-        result = fortress.run_daily_cycle()
+        # Run the trading cycle
+        print("\nRunning FORTRESS cycle...")
+        result = fortress.run_cycle()
 
         print("\n" + "=" * 60)
         print("RESULT:")
         print("=" * 60)
 
-        if result.get('success'):
+        if result.get('trade_opened'):
             print("✅ Trade executed successfully!")
-            trade = result.get('trade', {})
-            print(f"  Order ID: {trade.get('order_id', 'N/A')}")
-            print(f"  Strikes: {trade.get('put_long')}/{trade.get('put_short')}P - {trade.get('call_short')}/{trade.get('call_long')}C")
-            print(f"  Credit: ${trade.get('credit', 0):.2f}")
-            print(f"  Contracts: {trade.get('contracts', 0)}")
+            details = result.get('details', {})
+            print(f"  Action: {result.get('action', 'N/A')}")
+            print(f"  Realized P&L: ${result.get('realized_pnl', 0):.2f}")
         else:
-            print(f"❌ Trade not executed: {result.get('reason', 'Unknown reason')}")
-            if result.get('skipped'):
-                print(f"  Skipped: {result.get('skipped')}")
-            if result.get('error'):
-                print(f"  Error: {result.get('error')}")
+            print(f"Action: {result.get('action', 'none')}")
+            errors = result.get('errors', [])
+            if errors:
+                for err in errors:
+                    print(f"  Error: {err}")
+            else:
+                print("  No trade opened this cycle (conditions may not be met)")
 
     except ImportError as e:
         print(f"❌ Import error: {e}")
