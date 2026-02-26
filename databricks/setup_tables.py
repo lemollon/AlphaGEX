@@ -1,21 +1,23 @@
 """
-Delta Lake Table Setup
-======================
+IronForge Table Setup (PostgreSQL)
+===================================
 
-Creates all required Delta Lake tables for FLAME and SPARK bots (IronSight).
-Run this once to initialize the schema in your Databricks workspace.
+Creates all required PostgreSQL tables for FLAME and SPARK bots.
+Run this once to initialize the schema.
 
 Usage:
     python setup_tables.py
-
-Or run as a Databricks notebook cell.
 """
 
 import logging
 import sys
 
-from config import DatabricksConfig
-from trading.db_adapter import db_connection, table
+try:
+    from databricks.config import DatabricksConfig
+    from databricks.trading.db_adapter import db_connection, table
+except ImportError:
+    from config import DatabricksConfig
+    from trading.db_adapter import db_connection, table
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -29,9 +31,9 @@ def _position_table_ddl(bot: str) -> str:
     """DDL for the main positions table (parameterized by bot name)."""
     return f"""
     CREATE TABLE IF NOT EXISTS {table(f'{bot}_positions')} (
-        id BIGINT GENERATED ALWAYS AS IDENTITY,
-        position_id STRING NOT NULL,
-        ticker STRING NOT NULL,
+        id BIGSERIAL PRIMARY KEY,
+        position_id TEXT NOT NULL,
+        ticker TEXT NOT NULL,
         expiration DATE NOT NULL,
 
         -- Put spread
@@ -58,16 +60,16 @@ def _position_table_ddl(bot: str) -> str:
         expected_move DECIMAL(10, 2),
         call_wall DECIMAL(10, 2),
         put_wall DECIMAL(10, 2),
-        gex_regime STRING,
+        gex_regime TEXT,
         flip_point DECIMAL(10, 2),
         net_gex DECIMAL(15, 2),
 
         -- Oracle context
         oracle_confidence DECIMAL(5, 4),
         oracle_win_probability DECIMAL(8, 4),
-        oracle_advice STRING,
-        oracle_reasoning STRING,
-        oracle_top_factors STRING,
+        oracle_advice TEXT,
+        oracle_reasoning TEXT,
+        oracle_top_factors TEXT,
         oracle_use_gex_walls BOOLEAN DEFAULT FALSE,
 
         -- Wing symmetry tracking
@@ -76,23 +78,23 @@ def _position_table_ddl(bot: str) -> str:
         original_call_width DECIMAL(10, 2),
 
         -- Order tracking
-        put_order_id STRING DEFAULT 'PAPER',
-        call_order_id STRING DEFAULT 'PAPER',
+        put_order_id TEXT DEFAULT 'PAPER',
+        call_order_id TEXT DEFAULT 'PAPER',
 
         -- Status
-        status STRING NOT NULL DEFAULT 'open',
+        status TEXT NOT NULL DEFAULT 'open',
         open_time TIMESTAMP NOT NULL,
         open_date DATE,
         close_time TIMESTAMP,
         close_price DECIMAL(10, 4),
-        close_reason STRING,
+        close_reason TEXT,
         realized_pnl DECIMAL(10, 2),
 
         -- DTE mode ('2DTE' or '1DTE')
-        dte_mode STRING DEFAULT '2DTE',
+        dte_mode TEXT DEFAULT '2DTE',
 
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """
 
@@ -100,14 +102,14 @@ def _position_table_ddl(bot: str) -> str:
 def _signals_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table(f'{bot}_signals')} (
-        id BIGINT GENERATED ALWAYS AS IDENTITY,
-        signal_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+        id BIGSERIAL PRIMARY KEY,
+        signal_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         spot_price DECIMAL(10, 2),
         vix DECIMAL(6, 2),
         expected_move DECIMAL(10, 2),
         call_wall DECIMAL(10, 2),
         put_wall DECIMAL(10, 2),
-        gex_regime STRING,
+        gex_regime TEXT,
         put_short DECIMAL(10, 2),
         put_long DECIMAL(10, 2),
         call_short DECIMAL(10, 2),
@@ -115,10 +117,10 @@ def _signals_table_ddl(bot: str) -> str:
         total_credit DECIMAL(10, 4),
         confidence DECIMAL(5, 4),
         was_executed BOOLEAN DEFAULT FALSE,
-        skip_reason STRING,
-        reasoning STRING,
+        skip_reason TEXT,
+        reasoning TEXT,
         wings_adjusted BOOLEAN DEFAULT FALSE,
-        dte_mode STRING DEFAULT '2DTE'
+        dte_mode TEXT DEFAULT '2DTE'
     )
     """
 
@@ -126,12 +128,12 @@ def _signals_table_ddl(bot: str) -> str:
 def _daily_perf_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table(f'{bot}_daily_perf')} (
-        id BIGINT GENERATED ALWAYS AS IDENTITY,
-        trade_date DATE NOT NULL,
+        id BIGSERIAL PRIMARY KEY,
+        trade_date DATE NOT NULL UNIQUE,
         trades_executed INT DEFAULT 0,
         positions_closed INT DEFAULT 0,
         realized_pnl DECIMAL(10, 2) DEFAULT 0,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """
 
@@ -139,12 +141,12 @@ def _daily_perf_table_ddl(bot: str) -> str:
 def _logs_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table(f'{bot}_logs')} (
-        id BIGINT GENERATED ALWAYS AS IDENTITY,
-        log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-        level STRING,
-        message STRING,
-        details STRING,
-        dte_mode STRING DEFAULT '2DTE'
+        id BIGSERIAL PRIMARY KEY,
+        log_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        level TEXT,
+        message TEXT,
+        details TEXT,
+        dte_mode TEXT DEFAULT '2DTE'
     )
     """
 
@@ -152,15 +154,15 @@ def _logs_table_ddl(bot: str) -> str:
 def _equity_snapshots_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table(f'{bot}_equity_snapshots')} (
-        id BIGINT GENERATED ALWAYS AS IDENTITY,
-        snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
+        id BIGSERIAL PRIMARY KEY,
+        snapshot_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         balance DECIMAL(12, 2) NOT NULL,
         unrealized_pnl DECIMAL(12, 2) DEFAULT 0,
         realized_pnl DECIMAL(12, 2) DEFAULT 0,
         open_positions INT DEFAULT 0,
-        note STRING,
-        dte_mode STRING DEFAULT '2DTE',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+        note TEXT,
+        dte_mode TEXT DEFAULT '2DTE',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """
 
@@ -168,7 +170,7 @@ def _equity_snapshots_table_ddl(bot: str) -> str:
 def _paper_account_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table(f'{bot}_paper_account')} (
-        id BIGINT GENERATED ALWAYS AS IDENTITY,
+        id BIGSERIAL PRIMARY KEY,
         starting_capital DECIMAL(12, 2) NOT NULL,
         current_balance DECIMAL(12, 2) NOT NULL,
         cumulative_pnl DECIMAL(12, 2) DEFAULT 0,
@@ -178,9 +180,9 @@ def _paper_account_table_ddl(bot: str) -> str:
         high_water_mark DECIMAL(12, 2) NOT NULL,
         max_drawdown DECIMAL(12, 2) DEFAULT 0,
         is_active BOOLEAN DEFAULT TRUE,
-        dte_mode STRING DEFAULT '2DTE',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+        dte_mode TEXT DEFAULT '2DTE',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """
 
@@ -188,10 +190,10 @@ def _paper_account_table_ddl(bot: str) -> str:
 def _pdt_log_table_ddl(bot: str) -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table(f'{bot}_pdt_log')} (
-        id BIGINT GENERATED ALWAYS AS IDENTITY,
+        id BIGSERIAL PRIMARY KEY,
         trade_date DATE NOT NULL,
-        symbol STRING NOT NULL,
-        position_id STRING NOT NULL,
+        symbol TEXT NOT NULL,
+        position_id TEXT NOT NULL,
         opened_at TIMESTAMP NOT NULL,
         closed_at TIMESTAMP,
         is_day_trade BOOLEAN DEFAULT FALSE,
@@ -199,9 +201,9 @@ def _pdt_log_table_ddl(bot: str) -> str:
         entry_credit DECIMAL(10, 4),
         exit_cost DECIMAL(10, 4),
         pnl DECIMAL(10, 2),
-        close_reason STRING,
-        dte_mode STRING DEFAULT '2DTE',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+        close_reason TEXT,
+        dte_mode TEXT DEFAULT '2DTE',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """
 
@@ -209,32 +211,26 @@ def _pdt_log_table_ddl(bot: str) -> str:
 def _heartbeats_table_ddl() -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS {table('bot_heartbeats')} (
-        bot_name STRING NOT NULL,
+        bot_name TEXT NOT NULL UNIQUE,
         last_heartbeat TIMESTAMP,
-        status STRING,
+        status TEXT,
         scan_count BIGINT DEFAULT 0,
-        details STRING
+        details TEXT
     )
     """
 
 
 def setup_all_tables():
-    """Create all Delta Lake tables for FLAME and SPARK."""
+    """Create all PostgreSQL tables for FLAME and SPARK."""
     valid, msg = DatabricksConfig.validate()
     if not valid:
         logger.error(f"Configuration invalid: {msg}")
         sys.exit(1)
 
-    logger.info(f"Setting up tables in {DatabricksConfig.CATALOG}.{DatabricksConfig.SCHEMA}")
+    logger.info("Setting up IronForge tables in PostgreSQL")
 
     with db_connection() as conn:
         cursor = conn.cursor()
-
-        # Create catalog and schema if they don't exist
-        cursor.execute(f"CREATE CATALOG IF NOT EXISTS {DatabricksConfig.CATALOG}")
-        cursor.execute(
-            f"CREATE SCHEMA IF NOT EXISTS {DatabricksConfig.CATALOG}.{DatabricksConfig.SCHEMA}"
-        )
 
         # Create tables for both bots
         for bot in ['flame', 'spark']:
@@ -258,6 +254,8 @@ def setup_all_tables():
         # Shared heartbeats table
         cursor.execute(_heartbeats_table_ddl())
         logger.info("  bot_heartbeats OK")
+
+        conn.commit()
 
     logger.info("All tables created successfully.")
 
