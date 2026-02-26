@@ -302,6 +302,12 @@ class TradingDatabase:
                         updated_at = CURRENT_TIMESTAMP
                     WHERE position_id = %s AND status = 'open' AND dte_mode = %s
                 """, [close_price, realized_pnl, close_reason, position_id, self.dte_mode])
+                if c.rowcount == 0:
+                    logger.warning(
+                        f"{self.bot_name}: close_position no-op — "
+                        f"{position_id} not found or already closed"
+                    )
+                    return False
                 logger.info(f"{self.bot_name}: Closed {position_id}, P&L=${realized_pnl:.2f}")
                 return True
         except Exception as e:
@@ -323,6 +329,12 @@ class TradingDatabase:
                         updated_at = CURRENT_TIMESTAMP
                     WHERE position_id = %s AND status = 'open' AND dte_mode = %s
                 """, [_to_python(close_price), _to_python(realized_pnl), position_id, self.dte_mode])
+                if c.rowcount == 0:
+                    logger.warning(
+                        f"{self.bot_name}: expire_position no-op — "
+                        f"{position_id} not found or already closed"
+                    )
+                    return False
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to expire position: {e}")
