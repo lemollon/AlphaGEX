@@ -129,11 +129,12 @@ export async function POST(
        WHERE status = 'open' AND dte_mode = $1`,
       [dte],
     )
+    const cumPnl = num(acctRows[0]?.cumulative_pnl)
     await query(
       `INSERT INTO ${botTable(bot, 'equity_snapshots')}
        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
        VALUES ($1, $2, 0, $3, $4, $5)`,
-      [bal, realizedPnl, num(openCount[0]?.cnt), `force_close:${position_id}`, dte],
+      [bal, cumPnl, num(openCount[0]?.cnt), `force_close:${position_id}`, dte],
     )
 
     // 8. Log

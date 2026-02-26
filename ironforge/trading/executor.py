@@ -281,6 +281,7 @@ class PaperExecutor:
             account = self.db.get_paper_account()
             self.db.save_equity_snapshot(
                 balance=account.balance,
+                realized_pnl=account.cumulative_pnl,
                 open_positions=self.db.get_position_count(),
                 note=f"Opened {position_id}",
             )
@@ -382,7 +383,7 @@ class PaperExecutor:
             account = self.db.get_paper_account()
             self.db.save_equity_snapshot(
                 balance=account.balance,
-                realized_pnl=realized_pnl,
+                realized_pnl=account.cumulative_pnl,
                 open_positions=self.db.get_position_count(),
                 note=f"Closed {position.position_id}: {reason}",
             )
