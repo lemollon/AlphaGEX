@@ -7,11 +7,18 @@
 
 import { Pool } from 'pg'
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
-  max: 5,
-})
+let _pool: Pool | null = null
+
+function getPool(): Pool {
+  if (!_pool) {
+    _pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+      max: 5,
+    })
+  }
+  return _pool
+}
 
 /** Bot-specific table name */
 export function botTable(bot: string, suffix: string): string {
@@ -187,7 +194,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_config (
  */
 async function ensureTables(): Promise<void> {
   if (tablesReady) return
-  const client = await pool.connect()
+  const client = await getPool().connect()
   try {
     await client.query(INIT_DDL)
     // Seed paper accounts if empty
@@ -222,7 +229,7 @@ export async function query<T = Record<string, any>>(
   params?: any[],
 ): Promise<T[]> {
   await ensureTables()
-  const client = await pool.connect()
+  const client = await getPool().connect()
   try {
     const result = await client.query(sql, params)
     return result.rows as T[]

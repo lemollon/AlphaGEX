@@ -1002,10 +1002,10 @@ class OrderExecutor:
                 mtm = calculate_ic_mark_to_market(
                     underlying="SPY",
                     expiration=position.expiration,
-                    put_short=position.put_short_strike,
-                    put_long=position.put_long_strike,
-                    call_short=position.call_short_strike,
-                    call_long=position.call_long_strike,
+                    put_short_strike=position.put_short_strike,
+                    put_long_strike=position.put_long_strike,
+                    call_short_strike=position.call_short_strike,
+                    call_long_strike=position.call_long_strike,
                     contracts=position.contracts,
                     entry_credit=position.total_credit,
                     use_cache=False

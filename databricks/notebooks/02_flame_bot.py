@@ -20,15 +20,12 @@
 
 # COMMAND ----------
 
-# CHANGE THIS: Your Tradier production API key
-TRADIER_API_KEY = dbutils.widgets.get("tradier_api_key") if "tradier_api_key" in [w.name for w in dbutils.widgets.getAll()] else ""
+# Tradier Sandbox API key
+TRADIER_API_KEY = "iPidGGnYrhzjp6vGBBQw8HyqF0xj"
+TRADIER_ACCOUNT_ID = ""
 
-# If not set via widget, try secrets
-if not TRADIER_API_KEY:
-    try:
-        TRADIER_API_KEY = dbutils.secrets.get("ironforge", "tradier-api-key")
-    except Exception:
-        pass
+# Use Tradier SANDBOX API for paper trading
+TRADIER_BASE_URL = "https://sandbox.tradier.com/v1"
 
 # Bot config
 BOT_NAME = "FLAME"
@@ -99,13 +96,13 @@ def _bot_table(suffix):
 class TradierClient:
     """Minimal Tradier API client for option quotes and chain data."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: str = "https://sandbox.tradier.com/v1"):
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
         })
-        self.base_url = "https://api.tradier.com/v1"
+        self.base_url = base_url
 
     def _get(self, endpoint, params=None):
         try:
@@ -386,8 +383,8 @@ def db_save_equity_snapshot(balance, realized_pnl=0, unrealized_pnl=0, open_posi
     note_safe = note.replace("'", "''")
     spark.sql(f"""
         INSERT INTO {_bot_table('equity_snapshots')}
-        (balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode)
-        VALUES ({balance}, {realized_pnl}, {unrealized_pnl}, {open_positions}, '{note_safe}', '{DTE_MODE}')
+        (snapshot_time, balance, realized_pnl, unrealized_pnl, open_positions, note, dte_mode, created_at)
+        VALUES (CURRENT_TIMESTAMP(), {balance}, {realized_pnl}, {unrealized_pnl}, {open_positions}, '{note_safe}', '{DTE_MODE}', CURRENT_TIMESTAMP())
     """)
 
 
@@ -713,11 +710,44 @@ def manage_positions(tradier, now, mtm_failures):
 
 # COMMAND ----------
 
+def _save_cycle_snapshot(tradier_client, action):
+    """Save an equity snapshot every cycle so intraday chart has continuous 5-min data."""
+    try:
+        account = db_get_paper_account()
+        positions = db_get_open_positions()
+        unrealized = 0.0
+        if tradier_client:
+            for pos in positions:
+                mtm = get_ic_mark_to_market(
+                    tradier_client,
+                    float(pos["put_short_strike"]),
+                    float(pos["put_long_strike"]),
+                    float(pos["call_short_strike"]),
+                    float(pos["call_long_strike"]),
+                    str(pos["expiration"]),
+                )
+                if mtm is not None:
+                    entry_credit = float(pos["total_credit"])
+                    contracts = int(pos["contracts"])
+                    unrealized += (entry_credit - mtm) * 100 * contracts
+        db_save_equity_snapshot(
+            account["balance"],
+            realized_pnl=account["cumulative_pnl"],
+            unrealized_pnl=round(unrealized, 2),
+            open_positions=len(positions),
+            note=f"cycle:{action}",
+        )
+    except Exception as e:
+        logger.warning(f"Periodic snapshot failed: {e}")
+
+
 def run_cycle():
     """Execute one complete trading cycle."""
     now = datetime.now(CENTRAL_TZ)
     today_str = now.strftime("%Y-%m-%d")
     mtm_failures = {}
+    tradier = None
+    result = {"action": "unknown"}
 
     logger.info(f"=== {BOT_NAME} SCAN @ {now.strftime('%H:%M:%S')} CT ===")
 
@@ -726,7 +756,21 @@ def run_cycle():
         logger.error("TRADIER_API_KEY not set! Set it via widget or secrets.")
         return {"action": "error", "reason": "No Tradier API key"}
 
-    tradier = TradierClient(TRADIER_API_KEY)
+    tradier = TradierClient(TRADIER_API_KEY, TRADIER_BASE_URL)
+
+    try:
+        result = _run_cycle_inner(tradier, now, today_str, mtm_failures)
+        return result
+    except Exception as e:
+        logger.error(f"Run cycle failed: {e}")
+        result = {"action": "error", "reason": str(e)}
+        return result
+    finally:
+        _save_cycle_snapshot(tradier, result.get("action", "unknown"))
+
+
+def _run_cycle_inner(tradier, now, today_str, mtm_failures):
+    """Inner cycle logic — called by run_cycle() with finally snapshot."""
 
     # Step 1: ALWAYS manage positions
     managed, manage_pnl, mtm_failures = manage_positions(tradier, now, mtm_failures)
@@ -740,11 +784,36 @@ def run_cycle():
         logger.info(f"  {window_msg}")
         return {"action": "outside_window", "reason": window_msg}
 
-    # Step 3: Check for open positions
-    if db_get_open_positions():
+    # Step 3: Check for open positions — monitor and save equity snapshot
+    open_positions = db_get_open_positions()
+    if open_positions:
+        # Calculate unrealized P&L via live Tradier quotes
+        unrealized_pnl = 0.0
+        for pos in open_positions:
+            mtm = get_ic_mark_to_market(
+                tradier,
+                float(pos["put_short_strike"]),
+                float(pos["put_long_strike"]),
+                float(pos["call_short_strike"]),
+                float(pos["call_long_strike"]),
+                str(pos["expiration"]),
+            )
+            if mtm is not None:
+                entry_credit = float(pos["total_credit"])
+                contracts = int(pos["contracts"])
+                unrealized_pnl += round((entry_credit - mtm) * 100 * contracts, 2)
+
+        account = db_get_paper_account()
+        db_save_equity_snapshot(
+            account["balance"],
+            realized_pnl=0,
+            unrealized_pnl=unrealized_pnl,
+            open_positions=len(open_positions),
+            note=f"Monitoring {len(open_positions)} position(s)",
+        )
         db_update_heartbeat("active", "monitoring")
-        logger.info("  Monitoring open position(s)")
-        return {"action": "monitoring"}
+        logger.info(f"  Monitoring {len(open_positions)} position(s), unrealized: ${unrealized_pnl:.2f}")
+        return {"action": "monitoring", "unrealized_pnl": unrealized_pnl, "positions": len(open_positions)}
 
     # Step 4: Already traded today?
     if db_has_traded_today(today_str):

@@ -6769,7 +6769,13 @@ class AutonomousTraderScheduler:
         # Trades SPX Iron Condors using borrowed capital from box spreads
         # This generates the returns that (should) exceed borrowing costs
         # =================================================================
-        if self.jubilee_ic_trader:
+        # CRITICAL: Schedule UNCONDITIONALLY (matching EOD job pattern).
+        # The scheduled_jubilee_ic_cycle function has lazy re-init (FIX 3) that
+        # will recover from transient init failures. If we gate on self.jubilee_ic_trader,
+        # the job is never scheduled when init fails, and the lazy re-init code
+        # (which lives INSIDE the scheduled function) never gets a chance to run.
+        # This was the root cause of JUBILEE going silent after 2/13.
+        if JUBILEE_IC_AVAILABLE:
             self.scheduler.add_job(
                 self.scheduled_jubilee_ic_cycle,
                 trigger=IntervalTrigger(
@@ -6780,13 +6786,16 @@ class AutonomousTraderScheduler:
                 name='JUBILEE IC - Iron Condor Trading (5-min intervals, MATCHES ANCHOR)',
                 replace_existing=True
             )
-            logger.info("✅ JUBILEE IC job scheduled (every 5 min - MATCHES ANCHOR)")
+            if self.jubilee_ic_trader:
+                logger.info("✅ JUBILEE IC job scheduled (every 5 min - trader active)")
+            else:
+                logger.warning("⚠️ JUBILEE IC job scheduled (every 5 min - trader PENDING, will lazy-init)")
 
             # JUBILEE IC MTM: Event-driven (on open/close) to match SAMSON
             # No separate scheduled MTM job needed
             logger.info("✅ JUBILEE IC MTM is event-driven (on trade open/close, matches SAMSON)")
         else:
-            logger.warning("⚠️ JUBILEE IC trader not available - IC trading with borrowed capital disabled")
+            logger.warning("⚠️ JUBILEE IC module not importable - IC trading disabled")
 
         # JUBILEE IC Equity Snapshots - runs every 5 minutes during market hours
         # Records periodic equity snapshots so the intraday chart always has data,
