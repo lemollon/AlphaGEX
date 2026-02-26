@@ -40,8 +40,8 @@ node_modules/
 *.pem
 *.key
 
-# Claude AI assistant memory (contains credentials)
-.claude/database-connection.md
+# Claude AI assistant
+.claude/
 
 # OS
 .DS_Store
