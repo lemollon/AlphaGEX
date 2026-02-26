@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && cp -r .next/static .next/standalone/.next/static && sed -i \"s/const hostname = process.env.HOSTNAME || '0.0.0.0'/const hostname = '0.0.0.0'/\" .next/standalone/server.js",
+    "build": "next build && cp -r .next/static .next/standalone/.next/static && node scripts/patch-hostname.js",
     "start": "next start",
     "lint": "next lint"
   },
