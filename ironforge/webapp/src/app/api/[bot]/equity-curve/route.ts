@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, validateBot } from '@/lib/db'
+import { query, botTable, num, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,30 +10,50 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dte = dteMode(bot)
   const period = req.nextUrl.searchParams.get('period') || 'all'
 
   try {
-    const [capitalRows, curveRows] = await Promise.all([
-      query(`
-        SELECT starting_capital
-        FROM ${botTable(bot, 'paper_account')}
-        WHERE is_active = TRUE AND dte_mode = $1
-        LIMIT 1
-      `, [dte]),
-      query(`
-        SELECT
-          close_time,
-          realized_pnl,
-          SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
-        FROM ${botTable(bot, 'positions')}
-        WHERE status IN ('closed', 'expired')
-          AND realized_pnl IS NOT NULL
-          AND close_time IS NOT NULL
-          AND dte_mode = $1
-        ORDER BY close_time
-      `, [dte]),
-    ])
+    const capitalQuery = dte
+      ? query(`
+          SELECT starting_capital
+          FROM ${botTable(bot, 'paper_account')}
+          WHERE is_active = TRUE AND dte_mode = $1
+          LIMIT 1
+        `, [dte])
+      : query(`
+          SELECT starting_capital
+          FROM ${botTable(bot, 'paper_account')}
+          WHERE is_active = TRUE
+          LIMIT 1
+        `)
+
+    const curveQuery = dte
+      ? query(`
+          SELECT
+            close_time,
+            realized_pnl,
+            SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
+          FROM ${botTable(bot, 'positions')}
+          WHERE status IN ('closed', 'expired')
+            AND realized_pnl IS NOT NULL
+            AND close_time IS NOT NULL
+            AND dte_mode = $1
+          ORDER BY close_time
+        `, [dte])
+      : query(`
+          SELECT
+            close_time,
+            realized_pnl,
+            SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
+          FROM ${botTable(bot, 'positions')}
+          WHERE status IN ('closed', 'expired')
+            AND realized_pnl IS NOT NULL
+            AND close_time IS NOT NULL
+          ORDER BY close_time
+        `)
+
+    const [capitalRows, curveRows] = await Promise.all([capitalQuery, curveQuery])
 
     const startingCapital = num(capitalRows[0]?.starting_capital) || 5000
 

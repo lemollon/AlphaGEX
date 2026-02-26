@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, validateBot } from '@/lib/db'
+import { query, botTable, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,16 +10,23 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dte = dteMode(bot)
 
   try {
-    const rows = await query(`
-      SELECT log_time, level, message, details
-      FROM ${botTable(bot, 'logs')}
-      WHERE dte_mode = $1
-      ORDER BY log_time DESC
-      LIMIT 50
-    `, [dte])
+    const rows = dte
+      ? await query(`
+          SELECT log_time, level, message, details
+          FROM ${botTable(bot, 'logs')}
+          WHERE dte_mode = $1
+          ORDER BY log_time DESC
+          LIMIT 50
+        `, [dte])
+      : await query(`
+          SELECT log_time, level, message, details
+          FROM ${botTable(bot, 'logs')}
+          ORDER BY log_time DESC
+          LIMIT 50
+        `)
 
     const logs = rows.map((r) => ({
       timestamp: r.log_time?.toISOString?.() || r.log_time,

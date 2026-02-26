@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query, botTable, num, int, validateBot } from '@/lib/db'
+import { query, botTable, num, int, validateBot, heartbeatName, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,37 +10,63 @@ export async function GET(
   const bot = validateBot(params.bot)
   if (!bot) return NextResponse.json({ error: 'Invalid bot' }, { status: 400 })
 
-  const dte = bot === 'flame' ? '2DTE' : '1DTE'
+  const dte = dteMode(bot)
 
   try {
-    const [accountRows, positionCountRows, heartbeatRows, snapshotRows] =
-      await Promise.all([
-        query(`
+    const accountQuery = dte
+      ? query(`
           SELECT starting_capital, current_balance, cumulative_pnl,
                  total_trades, collateral_in_use, buying_power,
                  high_water_mark, max_drawdown, is_active
           FROM ${botTable(bot, 'paper_account')}
           WHERE is_active = TRUE AND dte_mode = $1
           ORDER BY id DESC LIMIT 1
-        `, [dte]),
-        query(`
+        `, [dte])
+      : query(`
+          SELECT starting_capital, current_balance, cumulative_pnl,
+                 total_trades, collateral_in_use, buying_power,
+                 high_water_mark, max_drawdown, is_active
+          FROM ${botTable(bot, 'paper_account')}
+          WHERE is_active = TRUE
+          ORDER BY id DESC LIMIT 1
+        `)
+
+    const positionCountQuery = dte
+      ? query(`
           SELECT COUNT(*) as cnt
           FROM ${botTable(bot, 'positions')}
           WHERE status = 'open' AND dte_mode = $1
-        `, [dte]),
-        query(`
-          SELECT scan_count, last_heartbeat, status
-          FROM bot_heartbeats
-          WHERE bot_name = $1
-        `, [bot.toUpperCase()]),
-        query(`
-          SELECT unrealized_pnl, open_positions, snapshot_time
+        `, [dte])
+      : query(`
+          SELECT COUNT(*) as cnt
+          FROM ${botTable(bot, 'positions')}
+          WHERE status = 'open'
+        `)
+
+    const heartbeatQuery = query(`
+      SELECT scan_count, last_heartbeat, status
+      FROM bot_heartbeats
+      WHERE bot_name = $1
+    `, [heartbeatName(bot)])
+
+    // faith/grace equity_snapshots use "timestamp" column, not "snapshot_time"
+    const snapshotQuery = dte
+      ? query(`
+          SELECT unrealized_pnl, open_positions, "timestamp" as snapshot_time
           FROM ${botTable(bot, 'equity_snapshots')}
           WHERE dte_mode = $1
-          ORDER BY snapshot_time DESC
+          ORDER BY "timestamp" DESC
           LIMIT 1
-        `, [dte]),
-      ])
+        `, [dte])
+      : query(`
+          SELECT unrealized_pnl, open_positions, "timestamp" as snapshot_time
+          FROM ${botTable(bot, 'equity_snapshots')}
+          ORDER BY "timestamp" DESC
+          LIMIT 1
+        `)
+
+    const [accountRows, positionCountRows, heartbeatRows, snapshotRows] =
+      await Promise.all([accountQuery, positionCountQuery, heartbeatQuery, snapshotQuery])
 
     const acct = accountRows[0]
     const balance = num(acct?.current_balance)
