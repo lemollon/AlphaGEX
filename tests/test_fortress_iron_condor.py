@@ -3,7 +3,7 @@ FORTRESS Iron Condor Strategy Tests
 
 Tests for the FORTRESS iron condor trading strategy.
 
-Run with: pytest tests/test_fortress_iron_condor.py -v
+Run with: python -m pytest tests/test_fortress_iron_condor.py -v
 """
 
 import pytest
@@ -32,13 +32,11 @@ class TestFortressTraderInitialization:
     def test_trader_initialization(self):
         """Test trader can be initialized"""
         try:
-            from trading.fortress_v2 import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode
 
-            with patch('database_adapter.get_connection', return_value=MagicMock()):
-                trader = FortressTrader(
-                    initial_capital=200000,
-                    mode=TradingMode.PAPER
-                )
+            with patch('trading.fortress_v2.db.get_connection', return_value=MagicMock()):
+                config = FortressConfig(mode=TradingMode.PAPER, capital=200000)
+                trader = FortressTrader(config=config)
                 assert trader is not None
         except ImportError:
             pytest.skip("FORTRESS iron condor not available")
@@ -50,13 +48,11 @@ class TestIronCondorConstruction:
     def test_build_iron_condor(self, mock_spx_option_chain):
         """Test IC construction"""
         try:
-            from trading.fortress_v2 import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode
 
-            with patch('database_adapter.get_connection', return_value=MagicMock()):
-                trader = FortressTrader(
-                    initial_capital=200000,
-                    mode=TradingMode.PAPER
-                )
+            with patch('trading.fortress_v2.db.get_connection', return_value=MagicMock()):
+                config = FortressConfig(mode=TradingMode.PAPER, capital=200000)
+                trader = FortressTrader(config=config)
                 if hasattr(trader, 'build_iron_condor'):
                     with patch.object(trader, 'build_iron_condor') as mock_build:
                         mock_build.return_value = {
@@ -78,13 +74,11 @@ class TestIronCondorEntryLogic:
     def test_should_enter_trade(self, mock_market_data):
         """Test entry logic"""
         try:
-            from trading.fortress_v2 import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode
 
-            with patch('database_adapter.get_connection', return_value=MagicMock()):
-                trader = FortressTrader(
-                    initial_capital=200000,
-                    mode=TradingMode.PAPER
-                )
+            with patch('trading.fortress_v2.db.get_connection', return_value=MagicMock()):
+                config = FortressConfig(mode=TradingMode.PAPER, capital=200000)
+                trader = FortressTrader(config=config)
                 if hasattr(trader, 'should_enter'):
                     with patch.object(trader, 'should_enter') as mock_enter:
                         mock_enter.return_value = True
@@ -100,13 +94,11 @@ class TestIronCondorExitLogic:
     def test_should_exit_trade(self, mock_iron_condor_position):
         """Test exit logic"""
         try:
-            from trading.fortress_v2 import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode
 
-            with patch('database_adapter.get_connection', return_value=MagicMock()):
-                trader = FortressTrader(
-                    initial_capital=200000,
-                    mode=TradingMode.PAPER
-                )
+            with patch('trading.fortress_v2.db.get_connection', return_value=MagicMock()):
+                config = FortressConfig(mode=TradingMode.PAPER, capital=200000)
+                trader = FortressTrader(config=config)
                 if hasattr(trader, 'should_exit'):
                     with patch.object(trader, 'should_exit') as mock_exit:
                         mock_exit.return_value = {'exit': True, 'reason': 'profit_target'}
@@ -122,13 +114,11 @@ class TestIronCondorRiskManagement:
     def test_position_sizing(self):
         """Test position sizing"""
         try:
-            from trading.fortress_v2 import FortressTrader, TradingMode
+            from trading.fortress_v2 import FortressTrader, FortressConfig, TradingMode
 
-            with patch('database_adapter.get_connection', return_value=MagicMock()):
-                trader = FortressTrader(
-                    initial_capital=200000,
-                    mode=TradingMode.PAPER
-                )
+            with patch('trading.fortress_v2.db.get_connection', return_value=MagicMock()):
+                config = FortressConfig(mode=TradingMode.PAPER, capital=200000)
+                trader = FortressTrader(config=config)
                 if hasattr(trader, 'calculate_position_size'):
                     with patch.object(trader, 'calculate_position_size') as mock_size:
                         mock_size.return_value = 10
