@@ -21,21 +21,21 @@ function getPool(): Pool {
 }
 
 /**
- * Map Iron Forge display names to AlphaGEX database table prefixes.
- * FLAME (2DTE) → faith tables, SPARK (1DTE) → grace tables.
+ * Map Iron Forge bot names to database table prefixes.
+ * IronForge has its own database — tables use flame_*/spark_* prefixes.
  */
 const DB_PREFIX: Record<string, string> = {
-  flame: 'faith',
-  spark: 'grace',
+  flame: 'flame',
+  spark: 'spark',
 }
 
 /** Map display names to heartbeat bot_name values in bot_heartbeats table. */
 const HEARTBEAT_MAP: Record<string, string> = {
-  flame: 'FAITH',
-  spark: 'GRACE',
+  flame: 'FLAME',
+  spark: 'SPARK',
 }
 
-/** Bot-specific table name, mapped to AlphaGEX table prefix. */
+/** Bot-specific table name: {prefix}_{suffix}. */
 export function botTable(bot: string, suffix: string): string {
   const prefix = DB_PREFIX[bot] || bot
   return `${prefix}_${suffix}`
@@ -47,14 +47,12 @@ export function heartbeatName(bot: string): string {
 }
 
 /**
- * Returns the dte_mode value for this bot, or null if the bot's tables
- * don't have a dte_mode column.
- *
- * faith tables have dte_mode (added via ALTER TABLE).
- * grace tables do NOT have dte_mode.
+ * Returns the dte_mode value for this bot.
+ * Both flame and spark tables have a dte_mode column.
  */
 export function dteMode(bot: string): string | null {
   if (bot === 'flame') return '2DTE'
+  if (bot === 'spark') return '1DTE'
   return null
 }
 

@@ -27,22 +27,21 @@ export async function GET(
           LIMIT 1
         `)
 
-    // faith/grace equity_snapshots use "timestamp" column, not "snapshot_time"
     const snapshotQuery = dte
       ? query(`
-          SELECT "timestamp" as snapshot_time, balance, realized_pnl, unrealized_pnl,
+          SELECT snapshot_time, balance, realized_pnl, unrealized_pnl,
                  open_positions, note
           FROM ${botTable(bot, 'equity_snapshots')}
           WHERE dte_mode = $1
-            AND "timestamp"::date = CURRENT_DATE
-          ORDER BY "timestamp" ASC
+            AND snapshot_time::date = CURRENT_DATE
+          ORDER BY snapshot_time ASC
         `, [dte])
       : query(`
-          SELECT "timestamp" as snapshot_time, balance, realized_pnl, unrealized_pnl,
+          SELECT snapshot_time, balance, realized_pnl, unrealized_pnl,
                  open_positions, note
           FROM ${botTable(bot, 'equity_snapshots')}
-          WHERE "timestamp"::date = CURRENT_DATE
-          ORDER BY "timestamp" ASC
+          WHERE snapshot_time::date = CURRENT_DATE
+          ORDER BY snapshot_time ASC
         `)
 
     const [capitalRows, snapshotRows] = await Promise.all([capitalQuery, snapshotQuery])
